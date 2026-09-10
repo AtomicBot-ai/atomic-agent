@@ -8,6 +8,7 @@
  */
 
 import { composioIntegration } from "./composio-integration.js";
+import { atomicMailIntegration } from "./atomic-mail-integration.js";
 import { discordIntegration } from "./discord-integration.js";
 import { githubIntegration } from "./github-integration.js";
 import { telegramIntegration } from "./telegram-integration.js";
@@ -20,12 +21,11 @@ export function listIntegrations(): readonly IntegrationDescriptor[] {
     githubIntegration,
     telegramIntegration,
     discordIntegration,
+    atomicMailIntegration,
   ];
 }
 
 /** Look one up by id. `undefined` when nothing matches. */
-export function findIntegration(
-  id: string,
-): IntegrationDescriptor | undefined {
+export function findIntegration(id: string): IntegrationDescriptor | undefined {
   return listIntegrations().find((i) => i.id === id);
 }

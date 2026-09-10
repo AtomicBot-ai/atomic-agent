@@ -43,7 +43,14 @@ export interface HuggingFaceRepoChoices {
 }
 
 /** Best-known quants first; anything unrecognised sorts by size after them. */
-const QUANT_PREFERENCE = ["q4_k_xl", "q4_k_m", "q4_k_s", "q4_0", "q5_k_m", "q8_0"];
+const QUANT_PREFERENCE = [
+  "q4_k_xl",
+  "q4_k_m",
+  "q4_k_s",
+  "q4_0",
+  "q5_k_m",
+  "q8_0",
+];
 
 function quantRank(path: string): number {
   const lower = path.toLowerCase();
@@ -91,7 +98,9 @@ export async function resolveHuggingFaceGgufChoices(
   if (ref.filePath) {
     const named = files.find((file) => file.path === ref.filePath);
     if (!named) {
-      throw new Error(`${ref.filePath} is not in ${ref.repoId} @ ${ref.revision}.`);
+      throw new Error(
+        `${ref.filePath} is not in ${ref.repoId} @ ${ref.revision}.`,
+      );
     }
     const judgement = judgeGgufFile(named.path);
     if (judgement.verdict !== "usable") {
@@ -120,7 +129,10 @@ export async function resolveHuggingFaceGgufChoices(
     );
   }
   const choices = usable
-    .sort((a, b) => quantRank(a.path) - quantRank(b.path) || a.sizeBytes - b.sizeBytes)
+    .sort(
+      (a, b) =>
+        quantRank(a.path) - quantRank(b.path) || a.sizeBytes - b.sizeBytes,
+    )
     .map(toChoice);
   return {
     repoId: ref.repoId,

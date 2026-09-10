@@ -37,7 +37,10 @@ export function readBackendVersion(dataDir: string): BackendVersionInfo | null {
   }
 }
 
-export function writeBackendVersion(dataDir: string, info: BackendVersionInfo): void {
+export function writeBackendVersion(
+  dataDir: string,
+  info: BackendVersionInfo,
+): void {
   writeVersionFile(resolveVersionFilePath(dataDir), info);
 }
 

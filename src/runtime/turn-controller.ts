@@ -7,13 +7,7 @@ import type { AgentLoopEvent } from "../agent/agent-loop.js";
  * (recorder, metrics, scheduler audit) can.
  */
 export type TurnOrigin =
-  | "cli"
-  | "tui"
-  | "http"
-  | "sidecar"
-  | "scheduler"
-  | "telegram"
-  | "discord";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "telegram" | "discord";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts
@@ -84,18 +78,20 @@ export class TurnController {
     context: { sessionId: string; origin: TurnOrigin },
   ) => void;
 
-  constructor(opts: {
-    /**
-     * Optional sink for `eventHook` failures. Called once per thrown
-     * value with the originating session id and submission origin.
-     * When unset, hook errors are swallowed silently — the queue is
-     * never affected either way.
-     */
-    onHookError?: (
-      err: unknown,
-      context: { sessionId: string; origin: TurnOrigin },
-    ) => void;
-  } = {}) {
+  constructor(
+    opts: {
+      /**
+       * Optional sink for `eventHook` failures. Called once per thrown
+       * value with the originating session id and submission origin.
+       * When unset, hook errors are swallowed silently — the queue is
+       * never affected either way.
+       */
+      onHookError?: (
+        err: unknown,
+        context: { sessionId: string; origin: TurnOrigin },
+      ) => void;
+    } = {},
+  ) {
     if (opts.onHookError) this.onHookError = opts.onHookError;
   }
 

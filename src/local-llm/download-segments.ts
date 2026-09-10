@@ -67,12 +67,19 @@ export function planSegments(
   connections: number,
   minSegmentBytes: number,
 ): Segment[] {
-  const asSegment = ([start, end]: ByteRange): Segment => ({ start, end, written: 0 });
+  const asSegment = ([start, end]: ByteRange): Segment => ({
+    start,
+    end,
+    written: 0,
+  });
   const finite = holes.every(([, end]) => Number.isFinite(end));
   if (connections <= 1 || !finite) return holes.map(asSegment);
   const remaining = sumRanges(holes);
   if (remaining < 2 * minSegmentBytes) return holes.map(asSegment);
-  const pieceSize = Math.max(minSegmentBytes, Math.ceil(remaining / connections));
+  const pieceSize = Math.max(
+    minSegmentBytes,
+    Math.ceil(remaining / connections),
+  );
   const out: Segment[] = [];
   for (const [start, end] of holes) {
     for (let at = start; at < end; at += pieceSize) {
@@ -86,7 +93,8 @@ export function planSegments(
 export function linkedAbort(parent: AbortSignal): AbortController {
   const controller = new AbortController();
   if (parent.aborted) controller.abort();
-  else parent.addEventListener("abort", () => controller.abort(), { once: true });
+  else
+    parent.addEventListener("abort", () => controller.abort(), { once: true });
   return controller;
 }
 
@@ -125,8 +133,14 @@ export async function requestSegment(
     throw new DownloadHttpError(res.status, res.statusText);
   }
   const cr = parseContentRange(res.headers.get("content-range"));
-  const totalMismatch = ctx.total > 0 && cr !== null && cr.total > 0 && cr.total !== ctx.total;
-  if (!cr || cr.start !== from || totalMismatch || !validatorsMatch(ctx.validators, res)) {
+  const totalMismatch =
+    ctx.total > 0 && cr !== null && cr.total > 0 && cr.total !== ctx.total;
+  if (
+    !cr ||
+    cr.start !== from ||
+    totalMismatch ||
+    !validatorsMatch(ctx.validators, res)
+  ) {
     await res.body.cancel().catch(() => undefined);
     throw new RangeRejectedError("server range did not match the partial file");
   }
@@ -187,7 +201,10 @@ export async function streamIntoSegment(
       if (next.done) break;
       armStallTimer();
       const room = seg.end - (seg.start + seg.written);
-      const chunk = next.value.byteLength > room ? next.value.subarray(0, room) : next.value;
+      const chunk =
+        next.value.byteLength > room
+          ? next.value.subarray(0, room)
+          : next.value;
       if (chunk.byteLength > 0) {
         // Chunks are written one at a time with an explicit position
         // rather than piped through a WriteStream: a pipeline that fails
@@ -254,14 +271,26 @@ export async function runSegment(
       const error = err instanceof Error ? err : new Error(String(err));
       if (ctx.attemptSignal.aborted) throw createAbortError();
       if (!ctx.retryInPlace) throw error;
-      if (error instanceof RangeRejectedError || error instanceof RangesUnsupportedError) {
+      if (
+        error instanceof RangeRejectedError ||
+        error instanceof RangesUnsupportedError
+      ) {
         throw error;
       }
       if (seg.written > before) failures = 0;
-      if (failures >= ctx.maxRetries || !isRetryableDownloadError(error)) throw error;
-      const delayMs = Math.min(ctx.retryDelayMs * 2 ** failures, ctx.maxRetryDelayMs);
+      if (failures >= ctx.maxRetries || !isRetryableDownloadError(error))
+        throw error;
+      const delayMs = Math.min(
+        ctx.retryDelayMs * 2 ** failures,
+        ctx.maxRetryDelayMs,
+      );
       failures += 1;
-      ctx.onRetry?.({ attempt: failures, maxRetries: ctx.maxRetries, delayMs, error });
+      ctx.onRetry?.({
+        attempt: failures,
+        maxRetries: ctx.maxRetries,
+        delayMs,
+        error,
+      });
       await sleep(delayMs, ctx.attemptSignal);
     }
   }
@@ -298,7 +327,10 @@ async function openSegment(
 }
 
 /** Drain `queue` one segment at a time; several of these run in parallel. */
-export async function runSegmentQueue(queue: Segment[], ctx: SegmentContext): Promise<void> {
+export async function runSegmentQueue(
+  queue: Segment[],
+  ctx: SegmentContext,
+): Promise<void> {
   for (;;) {
     const seg = queue.shift();
     if (!seg) return;

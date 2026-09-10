@@ -27,3 +27,7 @@ export {
   GITHUB_TOKEN_FIELD,
   githubIntegration,
 } from "./github-integration.js";
+export {
+  ATOMIC_MAIL_INTEGRATION_ID,
+  atomicMailIntegration,
+} from "./atomic-mail-integration.js";

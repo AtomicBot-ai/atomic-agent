@@ -48,7 +48,12 @@ describe("parseListDevices", () => {
   it("handles lines without a MiB figure (totalMemMiB = 0)", () => {
     const devices = parseListDevices("  CUDA0: NVIDIA H100");
     expect(devices).toEqual<GpuDevice[]>([
-      { id: "CUDA0", description: "NVIDIA H100", totalMemMiB: 0, freeMemMiB: 0 },
+      {
+        id: "CUDA0",
+        description: "NVIDIA H100",
+        totalMemMiB: 0,
+        freeMemMiB: 0,
+      },
     ]);
   });
 
@@ -213,7 +218,6 @@ describe("pickBestDevice", () => {
     expect(pickBestDevice(devices)).toBe("Vulkan0");
   });
 
-
   it("treats Apple Silicon Metal devices as auto-pickable (not discarded)", () => {
     const devices: GpuDevice[] = [
       {
@@ -225,7 +229,6 @@ describe("pickBestDevice", () => {
     ];
     expect(pickBestDevice(devices)).toBe("MTL0");
   });
-
 });
 
 describe("resolveManagedDevice", () => {

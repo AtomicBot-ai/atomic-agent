@@ -138,11 +138,14 @@ describe("Variant B smoke — JSON Schema response_format round-trip", () => {
       },
     });
     // Schema body forwarded verbatim — enum values, required keys.
-    const jsonSchema = (req.body.response_format as {
-      json_schema: { schema: Record<string, unknown> };
-    }).json_schema.schema;
-    expect((jsonSchema.properties as Record<string, unknown>).kind)
-      .toMatchObject({ enum: ["none", "links"] });
+    const jsonSchema = (
+      req.body.response_format as {
+        json_schema: { schema: Record<string, unknown> };
+      }
+    ).json_schema.schema;
+    expect(
+      (jsonSchema.properties as Record<string, unknown>).kind,
+    ).toMatchObject({ enum: ["none", "links"] });
 
     // Parser roundtrip.
     expect(result.content).toBe(cloudReply);
@@ -178,20 +181,17 @@ describe("Variant B smoke — JSON Schema response_format round-trip", () => {
       type: "json_schema",
       json_schema: { name: "vote_runner_v1", strict: true },
     });
-    const jsonSchema = (captured[0]!.body.response_format as {
-      json_schema: { schema: Record<string, unknown> };
-    }).json_schema.schema;
+    const jsonSchema = (
+      captured[0]!.body.response_format as {
+        json_schema: { schema: Record<string, unknown> };
+      }
+    ).json_schema.schema;
     const voteItems = (
-      ((jsonSchema.properties as Record<string, unknown>).votes as {
+      (jsonSchema.properties as Record<string, unknown>).votes as {
         items: { properties: { target_kind: { enum: string[] } } };
-      }).items.properties.target_kind
-    ).enum;
-    expect(voteItems).toEqual([
-      "memory",
-      "lesson",
-      "profile",
-      "procedure",
-    ]);
+      }
+    ).items.properties.target_kind.enum;
+    expect(voteItems).toEqual(["memory", "lesson", "profile", "procedure"]);
 
     const parsed = parseVoteOutput(result.content, {
       allowlist: {
@@ -305,11 +305,14 @@ describe("Variant B smoke — JSON Schema response_format round-trip", () => {
     // The combined schema must include the procedure half — assert
     // its presence rather than the full anyOf shape (libraries that
     // normalise schemas can collapse anyOf differently).
-    const distillSchema = (captured[0]!.body.response_format as {
-      json_schema: { schema: Record<string, unknown> };
-    }).json_schema.schema;
-    expect((distillSchema.properties as Record<string, unknown>).procedure)
-      .toBeDefined();
+    const distillSchema = (
+      captured[0]!.body.response_format as {
+        json_schema: { schema: Record<string, unknown> };
+      }
+    ).json_schema.schema;
+    expect(
+      (distillSchema.properties as Record<string, unknown>).procedure,
+    ).toBeDefined();
     expect(distillSchema.required).toContain("procedure");
 
     const parsed = parseDistillWithProcedureOutput(result.content);

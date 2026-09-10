@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,7 +76,10 @@ function parked(data: Buffer): ReadableStream {
   });
 }
 
-function parseRange(header: string | null, total: number): [number, number] | null {
+function parseRange(
+  header: string | null,
+  total: number,
+): [number, number] | null {
   if (!header) return null;
   const m = /^bytes=(\d+)-(\d*)$/.exec(header);
   if (!m) return null;
@@ -84,13 +93,19 @@ function parseRange(header: string | null, total: number): [number, number] | nu
  */
 function rangeServer(opts?: {
   acceptRanges?: boolean;
-  override?: Record<number, (req: Call, slice: Buffer, range: [number, number]) => Response>;
+  override?: Record<
+    number,
+    (req: Call, slice: Buffer, range: [number, number]) => Response
+  >;
 }): { calls: Call[]; fn: typeof fetch } {
   const calls: Call[] = [];
   const acceptRanges = opts?.acceptRanges ?? true;
   const fn = vi.fn(async (_url: unknown, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
-    const call: Call = { range: headers.get("range"), ifRange: headers.get("if-range") };
+    const call: Call = {
+      range: headers.get("range"),
+      ifRange: headers.get("if-range"),
+    };
     calls.push(call);
     const range = parseRange(call.range, DATA.length);
     const [start, end] = range ?? [0, DATA.length];
@@ -119,14 +134,24 @@ function rangeServer(opts?: {
   return { calls, fn };
 }
 
-function partial206(slice: Buffer, [start, end]: [number, number], etag = ETAG): Response {
+function partial206(
+  slice: Buffer,
+  [start, end]: [number, number],
+  etag = ETAG,
+): Response {
   return new Response(chunked(slice), {
     status: 206,
-    headers: { "content-range": `bytes ${start}-${end - 1}/${DATA.length}`, etag },
+    headers: {
+      "content-range": `bytes ${start}-${end - 1}/${DATA.length}`,
+      etag,
+    },
   });
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error("waitUntil timed out");
@@ -150,7 +175,8 @@ describe("download-file parallel segments", () => {
 
   afterEach(() => {
     globalThis.fetch = prevFetch;
-    if (prevEnv === undefined) delete process.env.ATOMIC_AGENT_DOWNLOAD_CONNECTIONS;
+    if (prevEnv === undefined)
+      delete process.env.ATOMIC_AGENT_DOWNLOAD_CONNECTIONS;
     else process.env.ATOMIC_AGENT_DOWNLOAD_CONNECTIONS = prevEnv;
     rmSync(dir, { recursive: true, force: true });
   });
@@ -168,7 +194,12 @@ describe("download-file parallel segments", () => {
 
     // The plain GET doubles as segment 0; the other three ask for their
     // slices with closed ranges bound to the lead's validator.
-    expect(calls.map((c) => c.range)).toEqual([null, "bytes=16-31", "bytes=32-47", "bytes=48-63"]);
+    expect(calls.map((c) => c.range)).toEqual([
+      null,
+      "bytes=16-31",
+      "bytes=32-47",
+      "bytes=48-63",
+    ]);
     expect(calls.slice(1).every((c) => c.ifRange === ETAG)).toBe(true);
     expect(readFileSync(dest).equals(DATA)).toBe(true);
     expect(seen.at(-1)).toEqual([100, 64, 64]);
@@ -220,7 +251,11 @@ describe("download-file parallel segments", () => {
     });
 
     expect(calls[0]).toEqual({ range: "bytes=16-", ifRange: ETAG });
-    expect(calls.slice(1).map((c) => c.range)).toEqual(["bytes=24-31", "bytes=48-55", "bytes=56-63"]);
+    expect(calls.slice(1).map((c) => c.range)).toEqual([
+      "bytes=24-31",
+      "bytes=48-55",
+      "bytes=56-63",
+    ]);
     expect(seen[0]).toEqual([50, 32, 64]);
     expect(readFileSync(dest).equals(DATA)).toBe(true);
   });
@@ -248,7 +283,9 @@ describe("download-file parallel segments", () => {
   it("records every written interval on abort, in a sidecar an old build will not misread", async () => {
     const { fn } = rangeServer({
       // Segment [48, 64) delivers four bytes and then hangs.
-      override: { 4: (_req, slice, range) => partialParked(slice.subarray(0, 4), range) },
+      override: {
+        4: (_req, slice, range) => partialParked(slice.subarray(0, 4), range),
+      },
     });
     globalThis.fetch = fn;
     const controller = new AbortController();
@@ -260,7 +297,10 @@ describe("download-file parallel segments", () => {
     await waitUntil(() => {
       try {
         const bytes = readFileSync(resolvePartialPath(dest));
-        return bytes.length >= 52 && bytes.subarray(0, 52).equals(DATA.subarray(0, 52));
+        return (
+          bytes.length >= 52 &&
+          bytes.subarray(0, 52).equals(DATA.subarray(0, 52))
+        );
       } catch {
         return false;
       }
@@ -286,10 +326,16 @@ describe("download-file parallel segments", () => {
     const { calls, fn } = rangeServer({
       override: {
         3: (_req, slice, [start, end]) =>
-          new Response(dying(slice.subarray(0, 5), new Error("read ECONNRESET")), {
-            status: 206,
-            headers: { "content-range": `bytes ${start}-${end - 1}/${DATA.length}`, etag: ETAG },
-          }),
+          new Response(
+            dying(slice.subarray(0, 5), new Error("read ECONNRESET")),
+            {
+              status: 206,
+              headers: {
+                "content-range": `bytes ${start}-${end - 1}/${DATA.length}`,
+                etag: ETAG,
+              },
+            },
+          ),
       },
     });
     globalThis.fetch = fn;
@@ -298,7 +344,8 @@ describe("download-file parallel segments", () => {
     await downloadFile(URL, dest, {
       ...FAST,
       connections: 4,
-      onRetry: (info) => retries.push({ attempt: info.attempt, message: info.error.message }),
+      onRetry: (info) =>
+        retries.push({ attempt: info.attempt, message: info.error.message }),
     });
 
     expect(calls.map((c) => c.range)).toEqual([
@@ -333,7 +380,11 @@ describe("download-file parallel segments", () => {
         2: () =>
           new Response(chunked(DATA), {
             status: 200,
-            headers: { "content-length": "64", etag: ETAG, "accept-ranges": "bytes" },
+            headers: {
+              "content-length": "64",
+              etag: ETAG,
+              "accept-ranges": "bytes",
+            },
           }),
       },
     });
@@ -358,7 +409,13 @@ describe("download-file parallel segments", () => {
     const part = Buffer.alloc(64);
     DATA.copy(part, 16, 16, 64);
     writeFileSync(resolvePartialPath(dest), part);
-    writePartialMeta(dest, { url: URL, total: 64, etag: ETAG, lastModified: null, done: [[16, 64]] });
+    writePartialMeta(dest, {
+      url: URL,
+      total: 64,
+      etag: ETAG,
+      lastModified: null,
+      done: [[16, 64]],
+    });
     const { calls, fn } = rangeServer();
     globalThis.fetch = fn;
 
@@ -372,7 +429,13 @@ describe("download-file parallel segments", () => {
 
   it("refuses a sidecar that claims bytes the .part file does not have", async () => {
     // `.part` gone (deleted to free space), sidecar left behind.
-    writePartialMeta(dest, { url: URL, total: 64, etag: ETAG, lastModified: null, done: [[0, 52]] });
+    writePartialMeta(dest, {
+      url: URL,
+      total: 64,
+      etag: ETAG,
+      lastModified: null,
+      done: [[0, 52]],
+    });
     expect(readPartialDownload(dest)).toBeNull();
     const { calls, fn } = rangeServer();
     globalThis.fetch = fn;
@@ -385,7 +448,13 @@ describe("download-file parallel segments", () => {
     // Truncated `.part`: the same answer.
     rmSync(dest);
     writeFileSync(resolvePartialPath(dest), DATA.subarray(0, 20));
-    writePartialMeta(dest, { url: URL, total: 64, etag: ETAG, lastModified: null, done: [[0, 52]] });
+    writePartialMeta(dest, {
+      url: URL,
+      total: 64,
+      etag: ETAG,
+      lastModified: null,
+      done: [[0, 52]],
+    });
     expect(readPartialDownload(dest)).toBeNull();
   });
 
@@ -413,9 +482,15 @@ describe("download-file parallel segments", () => {
   });
 });
 
-function partialParked(slice: Buffer, [start, end]: [number, number]): Response {
+function partialParked(
+  slice: Buffer,
+  [start, end]: [number, number],
+): Response {
   return new Response(parked(slice), {
     status: 206,
-    headers: { "content-range": `bytes ${start}-${end - 1}/${DATA.length}`, etag: ETAG },
+    headers: {
+      "content-range": `bytes ${start}-${end - 1}/${DATA.length}`,
+      etag: ETAG,
+    },
   });
 }

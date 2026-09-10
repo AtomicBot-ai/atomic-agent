@@ -253,7 +253,7 @@ function hint(panel: IntegrationsPanelState): string {
   if (panel.mode === "detail") {
     const row = panel.rows[panel.selected];
     const field = row?.fields[panel.selectedField];
-    const verb = field?.kind === "boolean" ? "enter toggle" : "e edit · d clear";
+    const verb = field?.kind === "boolean" ? "enter toggle" : field?.readonly ? "assigned" : "e edit · d clear";
     return `↑/↓ field · ${verb} · esc back`;
   }
   return "↑/↓ move · enter open · r refresh";

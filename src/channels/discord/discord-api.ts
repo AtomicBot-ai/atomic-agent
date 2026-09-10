@@ -46,6 +46,8 @@ export interface DiscordApiOptions {
   token: string;
   baseUrl?: string;
   timeoutMs?: number;
+  /** Test seam; defaults to the global `fetch`. */
+  fetchImpl?: typeof fetch;
 }
 
 export class DiscordApi {
@@ -187,7 +189,7 @@ export class DiscordApi {
     const multipart = body instanceof FormData;
     let res: Response;
     try {
-      res = await fetch(`${this.base}${path}`, {
+      res = await (this.opts.fetchImpl ?? fetch)(`${this.base}${path}`, {
         method,
         headers: {
           Authorization: `Bot ${this.opts.token}`,

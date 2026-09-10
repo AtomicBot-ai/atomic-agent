@@ -49,3 +49,8 @@ export {
   writeTelegramToken,
 } from "./telegram-settings.js";
 export type { PersistedTelegramSettings } from "./telegram-settings.js";
+export {
+  fetchTelegramApi,
+  sendTelegramOneShot,
+  type OneShotTelegramInput,
+} from "./one-shot-sender.js";

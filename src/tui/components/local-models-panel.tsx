@@ -16,6 +16,8 @@ import {
   type LocalModelsPanelState,
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
+import { describePullWaiting } from "../local-models/describe-pull-waiting.js";
+import { NotifyPromptBox } from "./notify-prompt-box.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
@@ -205,10 +207,12 @@ function DownloadBanner({
     total !== null ? ` / ${formatDownloadBytes(total)}` : "";
   const isModel = pull.modelId !== "_backend";
   const modelLine = isModel ? `model: ${pull.modelId}` : "target: backend zip";
+  const waiting = pull.waiting ?? null;
   return (
     <Box flexDirection="column">
-      <Text bold color={theme.colors.accentSoft}>
-        downloading — {pull.label}
+      <Text bold color={waiting ? theme.colors.warn : theme.colors.accentSoft}>
+        {waiting ? "download paused — " : "downloading — "}
+        {pull.label}
       </Text>
       <Text color={theme.colors.muted}>{modelLine}</Text>
       <Text>
@@ -222,9 +226,13 @@ function DownloadBanner({
           {totalPart}
         </Text>
       </Text>
+      {waiting ? (
+        <Text color={theme.colors.warn}>{describePullWaiting(waiting)}</Text>
+      ) : null}
     </Box>
   );
 }
+
 
 export function LocalModelsPanel({
   panel,
@@ -326,12 +334,16 @@ export function LocalModelsPanel({
   const useFullFooter = maxRows >= FULL_FOOTER_ROWS + FULL_FOOTER_MIN_LIST;
   const footerRows = useFullFooter ? FULL_FOOTER_ROWS : COMPACT_FOOTER_ROWS;
   const modalRows =
+    (panel.notifyPrompt ? 7 : 0) +
     (panel.embeddingOnboardingPrompt ? 6 : 0) +
     (panel.removeConfirmId ? 5 : 0) +
     (panel.embeddingRemoveConfirmId ? 5 : 0);
   const listBudget = Math.max(3, maxRows - footerRows - modalRows);
   return (
     <Box flexDirection="column">
+      {panel.notifyPrompt ? (
+        <NotifyPromptBox prompt={panel.notifyPrompt} pull={panel.pull ?? panel.embeddingPull} />
+      ) : null}
       {panel.embeddingOnboardingPrompt ? (
         <Box
           flexDirection="column"

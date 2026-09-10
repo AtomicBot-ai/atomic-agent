@@ -114,16 +114,14 @@ export type UserModelEntry = {
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
   reasoningFormat?:
-    | "none"
-    | "delta_reasoning"
-    | "delta_thinking"
-    | "delta_reasoning_content";
+    "none" | "delta_reasoning" | "delta_thinking" | "delta_reasoning_content";
   pricing?: {
     input: number;
     output: number;
     cacheRead?: number;
     cacheWrite?: number;
-  };};
+  };
+};
 
 export type UserLlmFallbackConfig = {
   chain?: string[];
@@ -163,10 +161,7 @@ function parseProviderId(raw: unknown, field: string): string {
   return raw;
 }
 
-function parseOptionalString(
-  raw: unknown,
-  field: string,
-): string | undefined {
+function parseOptionalString(raw: unknown, field: string): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string" || raw.length === 0) {
     throw new ConfigValidationError(field, "expected non-empty string");
@@ -227,7 +222,10 @@ export function parseLlmProviderEntry(
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
     model: parseOptionalString(obj.model, `${field}.model`),
     baseUrl: parseOptionalString(obj.baseUrl, `${field}.baseUrl`),
-    apiKeyEnvVar: parseOptionalString(obj.apiKeyEnvVar, `${field}.apiKeyEnvVar`),
+    apiKeyEnvVar: parseOptionalString(
+      obj.apiKeyEnvVar,
+      `${field}.apiKeyEnvVar`,
+    ),
     defaultChatModel: parseOptionalString(
       obj.defaultChatModel,
       `${field}.defaultChatModel`,
@@ -391,7 +389,10 @@ function parseOptionalEnum<T extends string>(
 ): T | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string" || !allowed.has(raw)) {
-    throw new ConfigValidationError(field, `expected ${[...allowed].join("|")}`);
+    throw new ConfigValidationError(
+      field,
+      `expected ${[...allowed].join("|")}`,
+    );
   }
   return raw as T;
 }
@@ -564,7 +565,10 @@ export function parseLlmFallbackConfig(
 
   if (obj.chain !== undefined) {
     if (!Array.isArray(obj.chain)) {
-      throw new ConfigValidationError(`${field}.chain`, "expected array of provider ids");
+      throw new ConfigValidationError(
+        `${field}.chain`,
+        "expected array of provider ids",
+      );
     }
     const chain = obj.chain.map((v, i) =>
       parseProviderId(v, `${field}.chain[${i}]`),
@@ -582,7 +586,10 @@ export function parseLlmFallbackConfig(
 
   if (obj.appendLocal !== undefined) {
     if (typeof obj.appendLocal !== "boolean") {
-      throw new ConfigValidationError(`${field}.appendLocal`, "expected boolean");
+      throw new ConfigValidationError(
+        `${field}.appendLocal`,
+        "expected boolean",
+      );
     }
     out.appendLocal = obj.appendLocal;
   }

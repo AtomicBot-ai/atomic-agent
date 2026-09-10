@@ -36,7 +36,8 @@ export function resolveDownloadConnections(explicit?: number): number {
   const env = (process.env.ATOMIC_AGENT_DOWNLOAD_CONNECTIONS ?? "").trim();
   if (env) {
     const parsed = Number.parseInt(env, 10);
-    if (Number.isFinite(parsed) && parsed >= 1) return clampDownloadConnections(parsed);
+    if (Number.isFinite(parsed) && parsed >= 1)
+      return clampDownloadConnections(parsed);
   }
   return configuredConnections;
 }

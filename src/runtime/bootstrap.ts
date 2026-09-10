@@ -17,10 +17,7 @@ import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
 import { TelegramChannel } from "../channels/telegram/index.js";
-import {
-  DiscordChannel,
-  DiscordLockfile,
-} from "../channels/discord/index.js";
+import { DiscordChannel, DiscordLockfile } from "../channels/discord/index.js";
 import { SwarmRegistry } from "../channels/swarm/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 
@@ -159,6 +156,7 @@ import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
+import { readAtomicMailApiKey } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { minUsableContextWindow } from "../prompt/token-budget.js";
 import type {
@@ -483,9 +481,7 @@ export interface AgentRuntime {
    * Create a fresh session state (id, workingDir, optional metadata),
    * persist it, and return it. User messages are fed through `runTurn`.
    */
-  createSession(input?: {
-    metadata?: Record<string, unknown>;
-  }): SessionState;
+  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
   /**
    * Drive one chat turn: append the user message, run the agent loop
    * until the model emits `reply` (or `finish`), persist the resulting
@@ -655,7 +651,9 @@ export async function createAgentRuntime(
     level: config.log.level,
     sinks: logSinks,
   });
-  const metrics = new AgentMetrics(new MetricsCollector({ sinks: metricSinks }));
+  const metrics = new AgentMetrics(
+    new MetricsCollector({ sinks: metricSinks }),
+  );
 
   // Anonymous product analytics (PostHog). Opt-out via
   // `config.analytics.enabled = false`. The client is `null` when
@@ -993,9 +991,12 @@ export async function createAgentRuntime(
           url: config.localModels.url,
         });
         if (config.localModels.mode === "managed") {
-          logger.warn(managedLocalLlmHealthFailureHint(config.localModels.managed.port), {
-            mode: "managed",
-          });
+          logger.warn(
+            managedLocalLlmHealthFailureHint(config.localModels.managed.port),
+            {
+              mode: "managed",
+            },
+          );
         }
       } else {
         logger.info("llama-server reachable", {
@@ -1004,19 +1005,25 @@ export async function createAgentRuntime(
         });
       }
     } else if (options.overrides?.deferLlamaHealthCheck) {
-      logger.info("llama-server health check deferred; runtime will refresh on first turn", {
-        url: config.localModels.url,
-      });
+      logger.info(
+        "llama-server health check deferred; runtime will refresh on first turn",
+        {
+          url: config.localModels.url,
+        },
+      );
     }
   };
 
   if (localTextActiveAtBoot) {
     await runBootHealthProbe();
   } else {
-    logger.info("local llama probes skipped; active text provider is not local", {
-      activeTextProvider: resolveLlmConfig(config).activeTextProvider,
-      url: config.localModels.url,
-    });
+    logger.info(
+      "local llama probes skipped; active text provider is not local",
+      {
+        activeTextProvider: resolveLlmConfig(config).activeTextProvider,
+        url: config.localModels.url,
+      },
+    );
   }
 
   const llama = new LlamaServerClient();
@@ -1110,6 +1117,8 @@ export async function createAgentRuntime(
   const capabilities = await buildCapabilities({
     workingDir,
     browserChannel: config.browser.channel,
+    // Only an inbox this machine holds the key for is the agent's to use.
+    emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
   });
 
   // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
@@ -1567,7 +1576,8 @@ export async function createAgentRuntime(
   const forgetContextWindowBelow = (tokens: number): void => {
     const key = activeModelKey();
     const known = observedContextWindows.get(key);
-    if (known !== undefined && tokens > known) observedContextWindows.delete(key);
+    if (known !== undefined && tokens > known)
+      observedContextWindows.delete(key);
   };
   const resolveCatalogContextWindow = (): number | null => {
     const observed = observedContextWindows.get(activeModelKey());
@@ -1675,7 +1685,8 @@ export async function createAgentRuntime(
     grammar = applyMcpToolNameRule(baseGrammar, rule);
     logger.info("mcp: manager started", {
       configured: mcpServerConfigs.length,
-      connected: mcpManager.listStatuses().filter((s) => s.state === "up").length,
+      connected: mcpManager.listStatuses().filter((s) => s.state === "up")
+        .length,
       tools: mcpToolMetas.length,
     });
   }
@@ -1716,6 +1727,10 @@ export async function createAgentRuntime(
       tasks: {
         agentToolsEnabled:
           config.tasks.enabled && config.tasks.agentToolsEnabled,
+      },
+      email: {
+        available:
+          readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
       },
       mcp: { enabled: liveMcpEnabled },
       // Read at rebuild time, not boot time: the Integrations hub calls
@@ -1808,10 +1823,10 @@ export async function createAgentRuntime(
 
   const llmCompleteStream = options.overrides?.disableStreaming
     ? undefined
-    : options.overrides?.llamaCompleteStream ??
+    : (options.overrides?.llamaCompleteStream ??
       (options.overrides?.llamaComplete
         ? undefined
-        : createFallbackStreamer(fallbackSeamDeps));
+        : createFallbackStreamer(fallbackSeamDeps)));
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
@@ -2213,8 +2228,7 @@ export async function createAgentRuntime(
             enabled: true,
             triggerEveryTurns:
               config.memory.reflection.segmentation.triggerEveryTurns,
-            windowTurns:
-              config.memory.reflection.segmentation.windowTurns,
+            windowTurns: config.memory.reflection.segmentation.windowTurns,
           },
         }
       : {}),
@@ -2736,8 +2750,7 @@ export async function createAgentRuntime(
     taskStore,
     taskRunner,
     createSession,
-    agentToolsEnabled:
-      config.tasks.enabled && config.tasks.agentToolsEnabled,
+    agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     defaultMaxAttempts: config.tasks.maxAttempts,
     defaultListLimit: 20,
   });
@@ -2768,10 +2781,7 @@ export async function createAgentRuntime(
   // when no slot was reserved (memory.reflection disabled or only one
   // llama-server slot) we fall back to slotId=-1 (no KV-cache reuse).
   let consolidatorJob: ConsolidatorJob | null = null;
-  if (
-    config.memory.lessons.enabled &&
-    config.memory.consolidation.enabled
-  ) {
+  if (config.memory.lessons.enabled && config.memory.consolidation.enabled) {
     // One monotonic counter shared by every consolidator-origin trace
     // event (distill outcome + lesson/procedure deprecation) so the
     // synthetic `consolidator.ndjson` file stays totally ordered across
@@ -2849,8 +2859,7 @@ export async function createAgentRuntime(
         intervalMs: config.memory.consolidation.intervalMs,
         cooldownMs: config.memory.consolidation.cooldownMs,
         minClusterSize: config.memory.consolidation.minClusterSize,
-        maxClustersPerTick:
-          config.memory.consolidation.maxClustersPerTick,
+        maxClustersPerTick: config.memory.consolidation.maxClustersPerTick,
         requireSharedTag: config.memory.consolidation.requireSharedTag,
         consolidationLeaseMs: 60_000,
         // Memory-v2 phase 6 — wire the age-based deprecation
@@ -3194,7 +3203,8 @@ function logResolvedProfile(
   logger: StructuredLogger,
 ): ResolvedModelProfile {
   const resolved = detectModelProfile(props);
-  const alias = typeof props.model_alias === "string" ? props.model_alias : null;
+  const alias =
+    typeof props.model_alias === "string" ? props.model_alias : null;
   const totalSlots = extractTotalSlots(props);
   logger.info("model profile resolved", {
     id: resolved.id,
@@ -3311,9 +3321,7 @@ function buildReflectionRunner(args: {
     reflectionSlotId,
     timeoutMs: memory.reflection.timeoutMs,
     maxFactsPerCall: memory.reflection.maxFactsPerCall,
-    maxNotesPerCall: notesWriteEnabled
-      ? memory.reflection.maxNotesPerCall
-      : 0,
+    maxNotesPerCall: notesWriteEnabled ? memory.reflection.maxNotesPerCall : 0,
     // v2.5 typed-NOTE extraction (Phase C). Threaded as a
     // boolean dep so the runner can pick the typed reflection prefix
     // and the parser can project [type=X] into the `type:<X>` tag.

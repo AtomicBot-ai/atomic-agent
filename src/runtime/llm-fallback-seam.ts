@@ -85,7 +85,7 @@ function promptFor(
 ): string {
   return transport === "native_tools"
     ? params.prompt
-    : params.grammarPrompt?.() ?? params.prompt;
+    : (params.grammarPrompt?.() ?? params.prompt);
 }
 
 /**
@@ -104,42 +104,42 @@ export function createFallbackCompleter(
     runWithFallback(
       deps.fallbackChain,
       async (providerId) => {
-      await deps.prepareLink?.(providerId);
-      const { provider, transport } = deps.resolveSlice(providerId);
-      const base = {
-        prompt: promptFor(params, transport),
-        sessionId: params.sessionId,
-        ...(typeof params.maxTokens === "number"
-          ? { maxTokens: params.maxTokens }
-          : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-      };
-      const result =
-        transport === "native_tools"
-          ? await provider.complete({
-              ...base,
-              ...(params.tools ? { tools: params.tools } : {}),
-              ...(params.toolChoice !== undefined
-                ? { toolChoice: params.toolChoice }
-                : {}),
-              ...(params.parallelToolCalls !== undefined
-                ? { parallelToolCalls: params.parallelToolCalls }
-                : {}),
-              // Cloud sub-runners forward a `responseFormat` JSON-Schema
-              // envelope; the main agent loop never sets it (it uses
-              // `tools`), so this branch is a no-op there.
-              ...(params.responseFormat
-                ? { responseFormat: params.responseFormat }
-                : {}),
-            })
-          : await provider.complete({
-              ...base,
-              grammar: params.grammar,
-              slotId: params.slotId,
-              cachePrompt: params.slotId >= 0,
-            });
-      deps.recordUnaryUsage(params, result);
-      return { ...result, servedTransport: transport };
+        await deps.prepareLink?.(providerId);
+        const { provider, transport } = deps.resolveSlice(providerId);
+        const base = {
+          prompt: promptFor(params, transport),
+          sessionId: params.sessionId,
+          ...(typeof params.maxTokens === "number"
+            ? { maxTokens: params.maxTokens }
+            : {}),
+          ...(params.signal ? { signal: params.signal } : {}),
+        };
+        const result =
+          transport === "native_tools"
+            ? await provider.complete({
+                ...base,
+                ...(params.tools ? { tools: params.tools } : {}),
+                ...(params.toolChoice !== undefined
+                  ? { toolChoice: params.toolChoice }
+                  : {}),
+                ...(params.parallelToolCalls !== undefined
+                  ? { parallelToolCalls: params.parallelToolCalls }
+                  : {}),
+                // Cloud sub-runners forward a `responseFormat` JSON-Schema
+                // envelope; the main agent loop never sets it (it uses
+                // `tools`), so this branch is a no-op there.
+                ...(params.responseFormat
+                  ? { responseFormat: params.responseFormat }
+                  : {}),
+              })
+            : await provider.complete({
+                ...base,
+                grammar: params.grammar,
+                slotId: params.slotId,
+                cachePrompt: params.slotId >= 0,
+              });
+        deps.recordUnaryUsage(params, result);
+        return { ...result, servedTransport: transport };
       },
       params.sessionId,
     );

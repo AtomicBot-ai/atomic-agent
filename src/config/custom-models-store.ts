@@ -6,7 +6,10 @@
  * asks the orchestrator to pull it in the same tick.
  */
 
-import { ensureUserConfigFileSync, writeUserConfigFileSync } from "./config-file.js";
+import {
+  ensureUserConfigFileSync,
+  writeUserConfigFileSync,
+} from "./config-file.js";
 import { parseUserConfigFile } from "./config-schema.js";
 import { getConfig, resetConfigCache } from "./config-cache.js";
 import { setCustomLocalModels } from "../local-llm/models-catalog.js";

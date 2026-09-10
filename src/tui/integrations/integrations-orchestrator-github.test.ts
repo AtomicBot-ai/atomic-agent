@@ -26,7 +26,11 @@ function makeBus() {
 }
 
 function makeHub(deps: {
-  whoami?: () => Promise<{ login: string; name: string | null; scopes: string[] }>;
+  whoami?: () => Promise<{
+    login: string;
+    name: string | null;
+    scopes: string[];
+  }>;
   ghToken?: () => Promise<string | null>;
 }) {
   const bus = makeBus();
@@ -39,7 +43,9 @@ function makeHub(deps: {
   } as unknown as AgentRuntime;
   const hub = new IntegrationsOrchestrator(runtime, bus, undefined, {
     apiFactory: () => ({
-      whoami: deps.whoami ?? (async () => ({ login: "octo", name: null, scopes: ["repo"] })),
+      whoami:
+        deps.whoami ??
+        (async () => ({ login: "octo", name: null, scopes: ["repo"] })),
     }),
     readGhCliToken: deps.ghToken ?? (async () => null),
   });
@@ -54,8 +60,13 @@ function githubRow(bus: ReturnType<typeof makeBus>): IntegrationRow {
   return row;
 }
 
-function settled(bus: ReturnType<typeof makeBus>): { message?: string; error?: string } {
-  const events = bus.actions.filter((a) => a.type === "integrations_action_settled");
+function settled(bus: ReturnType<typeof makeBus>): {
+  message?: string;
+  error?: string;
+} {
+  const events = bus.actions.filter(
+    (a) => a.type === "integrations_action_settled",
+  );
   return (events.at(-1) ?? {}) as { message?: string; error?: string };
 }
 
@@ -91,7 +102,9 @@ describe("IntegrationsOrchestrator — GitHub", () => {
     await hub.saveField("github", "token", TOKEN);
     expect(settled(bus).error).toBeUndefined();
     expect(process.env.GITHUB_TOKEN).toBe(TOKEN);
-    expect(readFileSync(join(stateDir, ".env"), "utf8")).toContain(`GITHUB_TOKEN=${TOKEN}`);
+    expect(readFileSync(join(stateDir, ".env"), "utf8")).toContain(
+      `GITHUB_TOKEN=${TOKEN}`,
+    );
     // The `github.*` descriptors are gated on the token, so the runtime
     // has to rebuild its catalog now, not on the next boot.
     expect(refreshMcp).toHaveBeenCalledTimes(1);
@@ -112,11 +125,17 @@ describe("IntegrationsOrchestrator — GitHub", () => {
 
   it("verify turns a saved token into a connected identity", async () => {
     const { hub, bus } = makeHub({
-      whoami: async () => ({ login: "octo", name: "Octo", scopes: ["repo", "workflow"] }),
+      whoami: async () => ({
+        login: "octo",
+        name: "Octo",
+        scopes: ["repo", "workflow"],
+      }),
     });
     await hub.saveField("github", "token", TOKEN);
     await hub.runAction("github", "verify");
-    expect(settled(bus).message).toBe("GitHub token works — connected as @octo");
+    expect(settled(bus).message).toBe(
+      "GitHub token works — connected as @octo",
+    );
     const row = githubRow(bus);
     expect(row.level).toBe("connected");
     expect(row.detail).toBe("@octo · repo, workflow");
@@ -152,7 +171,9 @@ describe("IntegrationsOrchestrator — GitHub", () => {
   });
 
   it("import copies the gh CLI token through the same write path", async () => {
-    const { hub, bus, refreshMcp } = makeHub({ ghToken: async () => `gho_${"C".repeat(36)}` });
+    const { hub, bus, refreshMcp } = makeHub({
+      ghToken: async () => `gho_${"C".repeat(36)}`,
+    });
     await hub.runAction("github", "import");
     expect(settled(bus).error).toBeUndefined();
     expect(settled(bus).message).toMatch(/imported from gh/);

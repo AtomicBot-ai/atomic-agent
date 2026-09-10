@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCustomLocalModel, parseCustomLocalModels } from "./custom-models-schema.js";
+import {
+  parseCustomLocalModel,
+  parseCustomLocalModels,
+} from "./custom-models-schema.js";
 import { USER_CONFIG_DEFAULTS, parseUserConfigFile } from "./config-schema.js";
 
 const MINIMAL = {
@@ -21,16 +24,48 @@ describe("parseCustomLocalModel", () => {
   });
 
   const bad: { name: string; entry: unknown; field: RegExp }[] = [
-    { name: "a missing id", entry: { ...MINIMAL, id: undefined }, field: /e\.id/ },
+    {
+      name: "a missing id",
+      entry: { ...MINIMAL, id: undefined },
+      field: /e\.id/,
+    },
     // The id becomes a directory name under `<dataDir>/models/`.
-    { name: "an id with a path separator", entry: { ...MINIMAL, id: "custom-a/b" }, field: /e\.id/ },
-    { name: "an id without the prefix", entry: { ...MINIMAL, id: "qwen-3.5-4b" }, field: /e\.id/ },
+    {
+      name: "an id with a path separator",
+      entry: { ...MINIMAL, id: "custom-a/b" },
+      field: /e\.id/,
+    },
+    {
+      name: "an id without the prefix",
+      entry: { ...MINIMAL, id: "qwen-3.5-4b" },
+      field: /e\.id/,
+    },
     // Filenames land in a path join under the model's own directory.
-    { name: "a filename with a path separator", entry: { ...MINIMAL, filename: "a/b.gguf" }, field: /e\.filename/ },
-    { name: "a filename that climbs out", entry: { ...MINIMAL, filename: "../../../x.gguf" }, field: /e\.filename/ },
-    { name: "a backslashed filename", entry: { ...MINIMAL, filename: "..\\x.gguf" }, field: /e\.filename/ },
-    { name: "an unparseable URL", entry: { ...MINIMAL, huggingFaceUrl: "nope" }, field: /huggingFaceUrl/ },
-    { name: "a negative size", entry: { ...MINIMAL, fileSizeGb: -1 }, field: /fileSizeGb/ },
+    {
+      name: "a filename with a path separator",
+      entry: { ...MINIMAL, filename: "a/b.gguf" },
+      field: /e\.filename/,
+    },
+    {
+      name: "a filename that climbs out",
+      entry: { ...MINIMAL, filename: "../../../x.gguf" },
+      field: /e\.filename/,
+    },
+    {
+      name: "a backslashed filename",
+      entry: { ...MINIMAL, filename: "..\\x.gguf" },
+      field: /e\.filename/,
+    },
+    {
+      name: "an unparseable URL",
+      entry: { ...MINIMAL, huggingFaceUrl: "nope" },
+      field: /huggingFaceUrl/,
+    },
+    {
+      name: "a negative size",
+      entry: { ...MINIMAL, fileSizeGb: -1 },
+      field: /fileSizeGb/,
+    },
     { name: "a bare string", entry: "custom-x", field: /^invalid config: e/ },
   ];
 
@@ -67,7 +102,9 @@ describe("parseCustomLocalModels", () => {
   });
 
   it("refuses two entries under one id", () => {
-    expect(() => parseCustomLocalModels([MINIMAL, MINIMAL], "f")).toThrow(/duplicate/);
+    expect(() => parseCustomLocalModels([MINIMAL, MINIMAL], "f")).toThrow(
+      /duplicate/,
+    );
   });
 });
 
@@ -78,7 +115,10 @@ describe("localModels.customModels in a whole config file", () => {
       localModels: {
         ...USER_CONFIG_DEFAULTS.localModels,
         customModels: [MINIMAL],
-        managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, modelId: MINIMAL.id },
+        managed: {
+          ...USER_CONFIG_DEFAULTS.localModels.managed,
+          modelId: MINIMAL.id,
+        },
       },
     });
     expect(parsed.localModels.managed.modelId).toBe(MINIMAL.id);
@@ -92,7 +132,10 @@ describe("localModels.customModels in a whole config file", () => {
         localModels: {
           ...USER_CONFIG_DEFAULTS.localModels,
           customModels: [],
-          managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, modelId: MINIMAL.id },
+          managed: {
+            ...USER_CONFIG_DEFAULTS.localModels.managed,
+            modelId: MINIMAL.id,
+          },
         },
       }),
     ).toThrow(/unknown managed local model id/);
@@ -101,7 +144,10 @@ describe("localModels.customModels in a whole config file", () => {
   // The key is additive, so a file written before it existed has to read
   // exactly as it did then.
   it("upgrades a file from the previous version with an empty list", () => {
-    const previous = { ...USER_CONFIG_DEFAULTS, version: 43 } as Record<string, unknown>;
+    const previous = { ...USER_CONFIG_DEFAULTS, version: 43 } as Record<
+      string,
+      unknown
+    >;
     delete (previous.localModels as Record<string, unknown>).customModels;
     expect(parseUserConfigFile(previous).localModels.customModels).toEqual([]);
   });

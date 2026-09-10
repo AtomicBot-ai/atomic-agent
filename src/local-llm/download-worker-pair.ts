@@ -1,11 +1,15 @@
-import { resolveMmprojFilePath, resolveModelFilePath } from "./backend-paths.js";
+import {
+  resolveMmprojFilePath,
+  resolveModelFilePath,
+} from "./backend-paths.js";
 import { readPartialDownload } from "./download-file.js";
 import type { DownloadJob } from "./download-jobs.js";
 import type { DownloadWorkerInput } from "./download-worker.js";
 import { downloadMmproj, downloadModel } from "./model-installer.js";
 import type { LocalModelDef } from "./models-catalog.js";
 
-const gb = (n: number | undefined): number => Math.round((n ?? 0) * 1024 * 1024 * 1024);
+const gb = (n: number | undefined): number =>
+  Math.round((n ?? 0) * 1024 * 1024 * 1024);
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
@@ -31,7 +35,11 @@ export async function downloadGgufAndMmprojTogether(
   },
 ): Promise<void> {
   const ggufDest = resolveModelFilePath(input.dataDir, def.id, def.filename);
-  const mmprojDest = resolveMmprojFilePath(input.dataDir, def.id, def.mmprojFilename ?? "");
+  const mmprojDest = resolveMmprojFilePath(
+    input.dataDir,
+    def.id,
+    def.mmprojFilename ?? "",
+  );
   const parts = {
     gguf: openingNumbers(ggufDest, gb(def.fileSizeGb)),
     mmproj: openingNumbers(mmprojDest, gb(def.mmprojFileSizeGb ?? 1)),
@@ -64,11 +72,19 @@ export async function downloadGgufAndMmprojTogether(
     return {
       signal: pair.signal,
       onProgress: (_percent: number, transferred: number, total: number) => {
-        parts[key] = { transferred, total: total > 0 ? total : parts[key].total };
+        parts[key] = {
+          transferred,
+          total: total > 0 ? total : parts[key].total,
+        };
         report(first);
         first = false;
       },
-      onRetry: (info: { attempt: number; maxRetries: number; delayMs: number; error: Error }) => {
+      onRetry: (info: {
+        attempt: number;
+        maxRetries: number;
+        delayMs: number;
+        error: Error;
+      }) => {
         io.log(
           `[${io.stamp()}] ${key} interrupted (${info.error.message}) — retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s`,
         );
@@ -96,7 +112,9 @@ export async function downloadGgufAndMmprojTogether(
         }),
       ),
     ]);
-    const failures = results.flatMap((r) => (r.status === "rejected" ? [r.reason as unknown] : []));
+    const failures = results.flatMap((r) =>
+      r.status === "rejected" ? [r.reason as unknown] : [],
+    );
     if (failures.length > 0) {
       // The real cause comes first; the other file's AbortError is the
       // echo of our own cancel.
@@ -107,7 +125,13 @@ export async function downloadGgufAndMmprojTogether(
   }
 }
 
-function openingNumbers(dest: string, estTotal: number): { transferred: number; total: number } {
+function openingNumbers(
+  dest: string,
+  estTotal: number,
+): { transferred: number; total: number } {
   const partial = readPartialDownload(dest);
-  return { transferred: partial?.transferred ?? 0, total: partial?.total || estTotal };
+  return {
+    transferred: partial?.transferred ?? 0,
+    total: partial?.total || estTotal,
+  };
 }

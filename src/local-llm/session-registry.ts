@@ -1,9 +1,4 @@
-import {
-  mkdirSync,
-  readdirSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -91,8 +86,7 @@ export function hasOtherLiveSessions(dataDir: string): boolean {
   let others = false;
   for (const entry of entries) {
     const pid = Number.parseInt(entry, 10);
-    const valid =
-      Number.isFinite(pid) && pid > 0 && String(pid) === entry;
+    const valid = Number.isFinite(pid) && pid > 0 && String(pid) === entry;
     if (valid && pid === process.pid) continue;
     if (valid && isAlive(pid)) {
       others = true;

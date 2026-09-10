@@ -60,9 +60,9 @@ describe("shouldFallBackToCpuBackend", () => {
   });
 
   it("never falls back off Windows", () => {
-    expect(shouldFallBackToCpuBackend({ ...eligible, platform: "darwin" })).toBe(
-      false,
-    );
+    expect(
+      shouldFallBackToCpuBackend({ ...eligible, platform: "darwin" }),
+    ).toBe(false);
     expect(shouldFallBackToCpuBackend({ ...eligible, platform: "linux" })).toBe(
       false,
     );
@@ -104,7 +104,9 @@ describe("shouldFallBackToCpuBackend", () => {
 describe("fallBackToCpuBackend", () => {
   beforeEach(() => {
     setConfiguredBackendVariant("auto");
-    downloadBackendMock.mockReset().mockResolvedValue({ ok: true, tag: "turboquant-x" });
+    downloadBackendMock
+      .mockReset()
+      .mockResolvedValue({ ok: true, tag: "turboquant-x" });
     stopBothMock.mockReset().mockResolvedValue(undefined);
   });
 

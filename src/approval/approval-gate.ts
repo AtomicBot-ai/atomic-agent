@@ -201,7 +201,8 @@ export class ApprovalGate {
     const approvalId = params.approvalId ?? randomUUID();
     const request: ApprovalRequest = { ...params, approvalId };
     const auto = this.autoApproval(request);
-    if (auto) return Promise.resolve({ approvalId, approved: true, reason: auto });
+    if (auto)
+      return Promise.resolve({ approvalId, approved: true, reason: auto });
     return new Promise<ApprovalDecision>((resolve, reject) => {
       const onAbort = (): void => {
         this.pending.delete(approvalId);
@@ -291,9 +292,10 @@ export class ApprovalGate {
   }
 
   /** Get (or lazily create) the grant set for a session id. */
-  private grantsForSession(
-    sessionId: string,
-  ): { categories: Set<ApprovalCategory>; shapes: Set<string> } {
+  private grantsForSession(sessionId: string): {
+    categories: Set<ApprovalCategory>;
+    shapes: Set<string>;
+  } {
     let entry = this.grantsBySession.get(sessionId);
     if (!entry) {
       entry = { categories: new Set(), shapes: new Set() };

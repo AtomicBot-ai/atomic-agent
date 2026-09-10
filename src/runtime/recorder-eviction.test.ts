@@ -53,13 +53,19 @@ function makeRecorderMap(cap: number) {
       return created;
     },
     drop(id: string) {
-      if (active.has(id)) { pendingDrops.add(id); return; }
+      if (active.has(id)) {
+        pendingDrops.add(id);
+        return;
+      }
       pendingDrops.delete(id);
       recorders.delete(id);
     },
     endTurn(id: string) {
       active.delete(id);
-      if (pendingDrops.has(id)) { pendingDrops.delete(id); recorders.delete(id); }
+      if (pendingDrops.has(id)) {
+        pendingDrops.delete(id);
+        recorders.delete(id);
+      }
       evict();
     },
   };

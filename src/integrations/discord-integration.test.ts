@@ -39,9 +39,7 @@ describe("discordIntegration", () => {
     expect(discordIntegration.status(ctx(BOTH, "starting")).level).toBe(
       "configured",
     );
-    expect(discordIntegration.status(ctx(BOTH, "up")).level).toBe(
-      "connected",
-    );
+    expect(discordIntegration.status(ctx(BOTH, "up")).level).toBe("connected");
     expect(discordIntegration.status(ctx(BOTH, "down")).level).toBe("error");
   });
 
@@ -81,7 +79,11 @@ describe("discordIntegration", () => {
     // was useless twice over: it told the operator nothing actionable,
     // and it pointed at a tab that does not exist.
     const status = discordIntegration.status(
-      ctx(BOTH, "down", "another atomic-agent (pid 42) is already running the Discord channel — stop it first"),
+      ctx(
+        BOTH,
+        "down",
+        "another atomic-agent (pid 42) is already running the Discord channel — stop it first",
+      ),
     );
     expect(status.level).toBe("error");
     expect(status.detail).toMatch(/already running/);
@@ -110,12 +112,16 @@ describe("discordIntegration", () => {
       ctx(BOTH, "down", formatChannelLockHeld(4242)),
     );
     expect(status.level).toBe("configured");
-    expect(status.detail).toBe("already running in another atomic-agent (pid 4242)");
+    expect(status.detail).toBe(
+      "already running in another atomic-agent (pid 4242)",
+    );
     expect(status.detail).not.toContain("channel-locked:");
   });
 
   it("still badges a genuine failure as an error", () => {
-    const status = discordIntegration.status(ctx(BOTH, "down", "token rejected (HTTP 401)"));
+    const status = discordIntegration.status(
+      ctx(BOTH, "down", "token rejected (HTTP 401)"),
+    );
     expect(status.level).toBe("error");
     expect(status.detail).toMatch(/401/);
   });

@@ -65,7 +65,9 @@ describe("backend-installer", () => {
   });
 
   it("downloads zip, extracts llama-server, writes backend-version.json", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const zip = new JSZip();
     zip.file("release-root/llama-server", Buffer.from("#!/bin/sh\necho ok\n"));
@@ -122,7 +124,9 @@ describe("backend-installer", () => {
   });
 
   it("flattens nested build/bin/llama-server layout into backend root", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const zip = new JSZip();
     zip.file("build/bin/llama-server", Buffer.from("#!/bin/sh\necho nested\n"));
@@ -177,7 +181,9 @@ describe("backend-installer", () => {
   });
 
   it("handles flat archives where llama-server is at the zip root", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const zip = new JSZip();
     zip.file("llama-server", Buffer.from("#!/bin/sh\necho flat\n"));
@@ -222,7 +228,9 @@ describe("backend-installer", () => {
   });
 
   it("keeps the working install when the download fails mid-flight", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     // Pre-existing, working install.
     const backendDir = join(dir, "backend");
@@ -248,10 +256,15 @@ describe("backend-installer", () => {
     }) as typeof fetch;
 
     try {
-      // One quick retry: the failure has to survive the downloader's own
-      // resume-and-retry loop before the staging cleanup is exercised.
+      // No patience: a dropped connection is retried for days by default,
+      // and the staging cleanup is only exercised once the downloader has
+      // given up. A zero no-progress window makes that the first failure.
       await expect(
-        downloadBackend(dir, { maxRetries: 1, retryDelayMs: 1 }),
+        downloadBackend(dir, {
+          maxRetries: 1,
+          retryDelayMs: 1,
+          giveUpAfterMs: 0,
+        }),
       ).rejects.toThrow(/socket hang up/);
 
       const binPath = resolveServerBinPath(dir, "llama-server");
@@ -270,7 +283,9 @@ describe("backend-installer", () => {
   });
 
   it("keeps the working install when the archive has no server binary", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const backendDir = join(dir, "backend");
     mkdirSync(backendDir, { recursive: true });
@@ -298,7 +313,9 @@ describe("backend-installer", () => {
     }) as typeof fetch;
 
     try {
-      await expect(downloadBackend(dir)).rejects.toThrow(/not found after extract/);
+      await expect(downloadBackend(dir)).rejects.toThrow(
+        /not found after extract/,
+      );
       const binPath = resolveServerBinPath(dir, "llama-server");
       expect(readFileSync(binPath, "utf-8").includes("echo old")).toBe(true);
       expect(existsSync(`${join(dir, "backend")}.next`)).toBe(false);
@@ -309,7 +326,9 @@ describe("backend-installer", () => {
   });
 
   it("replaces a stale staging dir left by a previous crash", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     // Crash leftovers: a half-extracted `.next` carrying a foreign
     // wrapper dir that would poison the flatten step, and a `.old`.
@@ -349,7 +368,9 @@ describe("backend-installer", () => {
   });
 
   it("records the release timestamp so later checks can order against it", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const zip = new JSZip();
     zip.file("llama-server", Buffer.from("#!/bin/sh\necho ok\n"));
@@ -378,7 +399,9 @@ describe("backend-installer", () => {
   });
 
   it("does not downgrade when a re-published older tag heads the list", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     writeBackendVersion(dir, {
       tag: "turboquant-june",
@@ -407,7 +430,9 @@ describe("backend-installer", () => {
   });
 
   it("does not downgrade when the newest available release predates the install", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     writeBackendVersion(dir, {
       tag: "turboquant-june",
@@ -434,7 +459,9 @@ describe("backend-installer", () => {
   });
 
   it("still updates when the resolved release is genuinely newer", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     writeBackendVersion(dir, {
       tag: "turboquant-june",
@@ -460,7 +487,9 @@ describe("backend-installer", () => {
   });
 
   it("updates on a variant change even though the tag is unchanged", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("win32");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("x64");
     // Installed the Vulkan build; the machine now warrants CUDA. Same
     // tag, same timestamp — recency must not veto the variant re-pull.
@@ -494,7 +523,9 @@ describe("backend-installer", () => {
     // backendVariant "cpu", the staleness check must resolve the CPU
     // asset — not re-detect Vulkan and reinstall the build that just
     // failed on this machine.
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("win32");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("x64");
     setConfiguredBackendVariant("cpu");
     writeBackendVersion(dir, {
@@ -524,7 +555,9 @@ describe("backend-installer", () => {
   });
 
   it("treats a page-1 miss for this platform as 'no update', not an error", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     writeBackendVersion(dir, {
       tag: "turboquant-installed",
@@ -554,7 +587,9 @@ describe("backend-installer", () => {
   });
 
   it("bounds the releases request with a timeout signal", async () => {
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
     const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     let seenSignal: AbortSignal | undefined;
     globalThis.fetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {

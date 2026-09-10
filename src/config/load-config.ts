@@ -9,10 +9,7 @@ import {
   type BrowserChannel,
   type LogLevel,
 } from "./config-schema.js";
-import {
-  ensureUserConfigFileSync,
-  getUserConfigPath,
-} from "./config-file.js";
+import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/models-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/huggingface-endpoint.js";
@@ -52,7 +49,10 @@ function readBool(key: string, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
 }
 
-function readBrowserChannel(key: string, fallback: BrowserChannel): BrowserChannel {
+function readBrowserChannel(
+  key: string,
+  fallback: BrowserChannel,
+): BrowserChannel {
   const raw = readEnv(key)?.toLowerCase();
   if (raw === "chrome" || raw === "msedge" || raw === "chromium") return raw;
   return fallback;
@@ -337,7 +337,10 @@ export function loadConfig(): AtomicAgentConfig {
     },
     log: { level: logLevel },
     tasks: {
-      enabled: readBool("ATOMIC_AGENT_TASKS_ENABLED", ENV_DEFAULTS.TASKS_ENABLED),
+      enabled: readBool(
+        "ATOMIC_AGENT_TASKS_ENABLED",
+        ENV_DEFAULTS.TASKS_ENABLED,
+      ),
       maxAttempts: readInt(
         "ATOMIC_AGENT_TASKS_MAX_ATTEMPTS",
         ENV_DEFAULTS.TASKS_MAX_ATTEMPTS,
@@ -536,6 +539,18 @@ export function loadConfig(): AtomicAgentConfig {
     },
     swarm: {
       units: user.swarm.units.map((u) => ({ ...u })),
+    },
+    notifications: {
+      downloads: {
+        channel: user.notifications.downloads.channel,
+      },
+    },
+    atomicMail: {
+      address: user.atomicMail.address,
+      accountId: user.atomicMail.accountId,
+      ownerEmail: user.atomicMail.ownerEmail,
+      ownerVerifiedAt: user.atomicMail.ownerVerifiedAt,
+      pendingVerification: user.atomicMail.pendingVerification,
     },
     composio: {
       enabled: user.composio.enabled,

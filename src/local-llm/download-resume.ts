@@ -35,7 +35,8 @@ export function describeResume(
   headers: Record<string, string>,
 ): ResumePlan {
   const stored = readPartialMeta(destPath);
-  let done: ByteRange[] = stored && stored.url === url ? completedRanges(destPath, stored) : [];
+  let done: ByteRange[] =
+    stored && stored.url === url ? completedRanges(destPath, stored) : [];
   const total = done.length > 0 && stored ? stored.total : 0;
   const first = done[0];
   if (first && total === 0 && (done.length !== 1 || first[0] !== 0)) {
@@ -67,7 +68,14 @@ export function describeResume(
     const validator = stored?.etag ?? stored?.lastModified;
     if (validator) leadHeaders["If-Range"] = validator;
   }
-  return { stored, done, total: done.length > 0 ? total : 0, offset, sentRange, leadHeaders };
+  return {
+    stored,
+    done,
+    total: done.length > 0 ? total : 0,
+    offset,
+    sentRange,
+    leadHeaders,
+  };
 }
 
 /** Publish the finished `.part` and report the terminal number once. */

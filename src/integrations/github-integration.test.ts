@@ -18,7 +18,9 @@ function ctx(
     configured: present.includes(GITHUB_TOKEN_FIELD),
     ...(opts.identity === undefined
       ? {}
-      : { verifiedIdentities: new Map([[GITHUB_INTEGRATION_ID, opts.identity]]) }),
+      : {
+          verifiedIdentities: new Map([[GITHUB_INTEGRATION_ID, opts.identity]]),
+        }),
     ...(opts.error === undefined
       ? {}
       : { verifyErrors: new Map([[GITHUB_INTEGRATION_ID, opts.error]]) }),
@@ -46,10 +48,13 @@ describe("githubIntegration", () => {
       detail: "token saved — press v to verify",
     });
     expect(
-      githubIntegration.status(ctx([GITHUB_TOKEN_FIELD], { identity: "@octo · repo" })),
+      githubIntegration.status(
+        ctx([GITHUB_TOKEN_FIELD], { identity: "@octo · repo" }),
+      ),
     ).toEqual({ level: "connected", detail: "@octo · repo" });
     expect(
-      githubIntegration.status(ctx([GITHUB_TOKEN_FIELD], { error: "HTTP 401" })).level,
+      githubIntegration.status(ctx([GITHUB_TOKEN_FIELD], { error: "HTTP 401" }))
+        .level,
     ).toBe("error");
   });
 
@@ -64,7 +69,9 @@ describe("githubIntegration", () => {
   it("rejects a paste that is not a token", () => {
     const validate = githubIntegration.fields[0]?.validate;
     expect(validate?.(VALID)).toBeUndefined();
-    expect(validate?.("my-token-name")).toMatch(/Doesn't look like a GitHub token/);
+    expect(validate?.("my-token-name")).toMatch(
+      /Doesn't look like a GitHub token/,
+    );
   });
 
   it("offers verify only once a token exists, and import always", () => {

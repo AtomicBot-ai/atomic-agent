@@ -1,13 +1,16 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  hasOtherLiveSessions,
-  registerSession,
-} from "./session-registry.js";
+import { hasOtherLiveSessions, registerSession } from "./session-registry.js";
 
 describe("session-registry", () => {
   let dataDir: string;

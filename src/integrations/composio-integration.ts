@@ -7,7 +7,10 @@
  * asks for something. See AGENTS.md §"Composio".
  */
 
-import { COMPOSIO_API_KEY_ENV, COMPOSIO_SERVER_NAME } from "../composio/index.js";
+import {
+  COMPOSIO_API_KEY_ENV,
+  COMPOSIO_SERVER_NAME,
+} from "../composio/index.js";
 import { isAsciiOnly } from "../llm/provider/openai/ascii-header-guard.js";
 import type {
   IntegrationDescriptor,
@@ -28,7 +31,7 @@ export const composioIntegration: IntegrationDescriptor = {
   setupSteps: [
     "Sign up at composio.dev and copy an API key from the dashboard.",
     "Press e on API key below, paste it, press enter — the tools mount straight away.",
-    "Ask the agent to do something in an app (\"email this to …\"); it searches Composio for the tool.",
+    'Ask the agent to do something in an app ("email this to …"); it searches Composio for the tool.',
     "First use of an app returns a sign-in link in the chat — open it to connect that account.",
   ],
   fields: [

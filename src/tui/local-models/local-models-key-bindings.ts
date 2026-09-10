@@ -3,6 +3,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
+import { handleNotifyPromptKey } from "./local-models-notify-keys.js";
 import {
   resolveRowAt,
   type EmbeddingModelRow,
@@ -24,6 +25,14 @@ export function handleLocalModelsTabKey(
   const { state, dispatch, callbacks } = ctx;
   if (state.uiMode !== "debug" || state.activeTab !== "models") return false;
   const panel = state.localModelsPanel;
+
+  // "Tell me when it lands?" is pushed the moment a pull starts, so it
+  // sits above every other modal: the operator's next keypress is the
+  // answer. Esc means "not this time" without remembering anything.
+  if (panel.notifyPrompt) {
+    if (handleNotifyPromptKey(input, key, callbacks)) return true;
+    return true;
+  }
 
   // Memory-v2 phase 1B onboarding modal takes precedence over all
   // other keys — including the chat-remove modal — because it is
@@ -114,6 +123,13 @@ export function handleLocalModelsTabKey(
   }
   if (key.upArrow || input === "k") {
     dispatch({ type: "local_models_cursor_up" });
+    return true;
+  }
+
+  // `N` (uppercase) reopens the "tell me when it lands?" prompt — for
+  // the download in flight, or as the default for the next ones.
+  if (input === "N") {
+    callbacks.onLocalModelsNotifyPromptRequested?.();
     return true;
   }
 

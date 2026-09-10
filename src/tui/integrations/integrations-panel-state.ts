@@ -24,6 +24,8 @@ export interface IntegrationFieldRow {
   /** Already masked when the field is a secret — never the raw value. */
   display: string;
   present: boolean;
+  /** Shown, never edited or cleared. */
+  readonly?: boolean;
   help?: string;
 }
 

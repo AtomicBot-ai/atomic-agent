@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./backend-installer.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./backend-installer.js")>(
-      "./backend-installer.js",
-    );
+  const actual = await vi.importActual<typeof import("./backend-installer.js")>(
+    "./backend-installer.js",
+  );
   return {
     ...actual,
     checkForBackendUpdate: vi.fn(),
@@ -14,10 +13,9 @@ vi.mock("./backend-installer.js", async () => {
 });
 
 vi.mock("./daemon-lifecycle.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./daemon-lifecycle.js")>(
-      "./daemon-lifecycle.js",
-    );
+  const actual = await vi.importActual<typeof import("./daemon-lifecycle.js")>(
+    "./daemon-lifecycle.js",
+  );
   return {
     ...actual,
     readRunningPid: vi.fn(),
@@ -26,10 +24,9 @@ vi.mock("./daemon-lifecycle.js", async () => {
 });
 
 vi.mock("./session-registry.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./session-registry.js")>(
-      "./session-registry.js",
-    );
+  const actual = await vi.importActual<typeof import("./session-registry.js")>(
+    "./session-registry.js",
+  );
   return {
     ...actual,
     hasOtherLiveSessions: vi.fn(),
@@ -61,7 +58,9 @@ describe("maybeAutoUpdateBackend", () => {
   });
 
   it("is a no-op when autoUpdate is off", async () => {
-    const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: false });
+    const result = await maybeAutoUpdateBackend("/tmp/data", {
+      enabled: false,
+    });
     expect(result).toEqual({ action: "skipped" });
     expect(checkForBackendUpdate).not.toHaveBeenCalled();
     expect(downloadBackend).not.toHaveBeenCalled();

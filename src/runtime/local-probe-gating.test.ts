@@ -88,10 +88,13 @@ function installCountingFetch(): LocalTraffic {
       if (cloudRateLimited) {
         // The shape that makes `runWithFallback` advance to the next
         // link rather than fail the turn.
-        return new Response(JSON.stringify({ error: { message: "slow down" } }), {
-          status: 429,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ error: { message: "slow down" } }),
+          {
+            status: 429,
+            headers: { "content-type": "application/json" },
+          },
+        );
       }
       return new Response(
         JSON.stringify({
@@ -247,7 +250,11 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
         ...cloudLlm,
         providers: [
           CLOUD_PROVIDER,
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:8080",
+          },
           LOCAL_EMBED_PROVIDER,
         ],
       },
@@ -323,7 +330,11 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
         ...cloudLlm,
         providers: [
           CLOUD_PROVIDER,
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:8080",
+          },
           LOCAL_EMBED_PROVIDER,
         ],
       },
@@ -340,7 +351,11 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
           activeTextProvider: "local-llama",
           providers: [
             CLOUD_PROVIDER,
-            { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+            {
+              id: "local-llama",
+              kind: "llama-server",
+              url: "http://127.0.0.1:8080",
+            },
             LOCAL_EMBED_PROVIDER,
           ],
         },
@@ -381,7 +396,11 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
         ...cloudLlm,
         providers: [
           CLOUD_PROVIDER,
-          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:8080",
+          },
           LOCAL_EMBED_PROVIDER,
         ],
       },
@@ -439,7 +458,10 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
       },
       memory: {
         ...USER_CONFIG_DEFAULTS.memory,
-        embeddings: { ...USER_CONFIG_DEFAULTS.memory.embeddings, enabled: true },
+        embeddings: {
+          ...USER_CONFIG_DEFAULTS.memory.embeddings,
+          enabled: true,
+        },
       },
     });
     const runtime = await boot();

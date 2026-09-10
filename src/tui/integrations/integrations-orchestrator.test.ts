@@ -104,9 +104,10 @@ describe("IntegrationsOrchestrator — live channel controls", () => {
     return { hub, bus };
   }
 
-  function settled(
-    bus: ReturnType<typeof makeBus>,
-  ): { message?: string; error?: string } {
+  function settled(bus: ReturnType<typeof makeBus>): {
+    message?: string;
+    error?: string;
+  } {
     const events = bus.actions.filter(
       (a) => a.type === "integrations_action_settled",
     );

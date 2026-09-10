@@ -193,6 +193,10 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         ...state,
         localModelsPanel: { ...p, embeddingOnboardingPrompt: null },
       };
+    case "local_models_notify_prompt_opened":
+      return { ...state, localModelsPanel: { ...p, notifyPrompt: action.prompt } };
+    case "local_models_notify_prompt_closed":
+      return { ...state, localModelsPanel: { ...p, notifyPrompt: null } };
     case "local_models_pull_started":
       // Keep list visible so the active row can show a live download indicator.
       if (action.pull.kind === "embedding") {
@@ -227,6 +231,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
               percent: action.percent,
               transferredBytes: action.transferredBytes,
               totalBytes: action.totalBytes,
+              ...(action.waiting !== undefined ? { waiting: action.waiting } : {}),
             },
           },
         };
@@ -241,6 +246,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
             percent: action.percent,
             transferredBytes: action.transferredBytes,
             totalBytes: action.totalBytes,
+            ...(action.waiting !== undefined ? { waiting: action.waiting } : {}),
           },
         },
       };

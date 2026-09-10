@@ -15,7 +15,10 @@
  * paste one.
  */
 
-import { GITHUB_TOKEN_ENV, looksLikeGithubToken } from "../github/github-token.js";
+import {
+  GITHUB_TOKEN_ENV,
+  looksLikeGithubToken,
+} from "../github/github-token.js";
 import type {
   IntegrationDescriptor,
   IntegrationStatus,

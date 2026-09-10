@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 
 import { classifyPidLiveness } from "./daemon-lifecycle.js";
+import type { DownloadNotifyChannel } from "./download-notify-file.js";
 
 /**
  * Background model downloads: the on-disk contract between the worker
@@ -30,6 +31,12 @@ import { classifyPidLiveness } from "./daemon-lifecycle.js";
  * again resumes rather than restarts.
  */
 
+/**
+ * Still 1: `waiting` and `resumable` (0.5.7) are additive, and a reader
+ * that does not know them — an older binary sharing the state dir, or
+ * a downgrade — must keep seeing the record, or it would spawn a second
+ * worker onto a partial that is being written.
+ */
 export const DOWNLOAD_JOB_VERSION = 1;
 
 export type DownloadJobKind = "chat" | "embedding";
@@ -44,6 +51,29 @@ export type DownloadJobStatus =
   | "cancelled"
   /** Recorded `running`, but the worker pid is gone. Resumable. */
   | "interrupted";
+
+/**
+ * The worker is between attempts, waiting out a transport failure. The
+ * bytes on disk are not moving and that is expected; a UI shows this
+ * instead of a frozen counter.
+ */
+export interface DownloadJobWaiting {
+  /** The last attempt's error, e.g. `fetch failed`. */
+  reason: string;
+  /** Consecutive attempts without progress. */
+  attempt: number;
+  nextRetryAt: string;
+  /** When the no-progress streak began. */
+  since: string;
+}
+
+/** What became of the end-of-job ping. Written with the terminal status. */
+export interface DownloadJobNotified {
+  channel: DownloadNotifyChannel;
+  outcome: "sent" | "not_configured" | "failed";
+  reason: string | null;
+  at: string;
+}
 
 export interface DownloadJob {
   version: typeof DOWNLOAD_JOB_VERSION;
@@ -60,6 +90,22 @@ export interface DownloadJob {
   transferredBytes: number;
   totalBytes: number;
   error: string | null;
+  /** Set while the worker waits between attempts; `null` while bytes flow. */
+  waiting: DownloadJobWaiting | null;
+  /**
+   * For a `failed` job: the outage, not the file, was the problem, so
+   * starting the same job again resumes it. A relaunch does that by
+   * itself. `false` for a 404, a full disk, a changed file.
+   */
+  resumable: boolean;
+  /**
+   * The ping the operator asked for, once the job ended: sent, or why
+   * not. Absent while running and when nothing was armed. Lives in the
+   * record — not only in the log — because the TUI removes both the
+   * moment it lands the job, and the operator still deserves to hear
+   * "Telegram ping failed: Unauthorized".
+   */
+  notified?: DownloadJobNotified | null;
   startedAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -84,6 +130,14 @@ export function resolveDownloadJobPath(dataDir: string, jobId: string): string {
 
 export function resolveDownloadLogPath(dataDir: string, jobId: string): string {
   return join(resolveDownloadsDir(dataDir), `${jobId}.log`);
+}
+
+/** `<jobId>.notify` — see `download-notify-file.ts`. */
+export function resolveDownloadNotifyPath(
+  dataDir: string,
+  jobId: string,
+): string {
+  return join(resolveDownloadsDir(dataDir), `${jobId}.notify`);
 }
 
 /**
@@ -114,7 +168,30 @@ function parseDownloadJob(raw: string): DownloadJob | null {
   if (typeof j.id !== "string" || typeof j.modelId !== "string") return null;
   if (j.kind !== "chat" && j.kind !== "embedding") return null;
   if (typeof j.pid !== "number" || typeof j.status !== "string") return null;
-  return j as unknown as DownloadJob;
+  return fillAdditiveFields(j);
+}
+
+/**
+ * 0.5.6 wrote neither `waiting` nor `resumable`, and its worker recorded
+ * an exhausted network budget as a plain `failed`, indistinguishable
+ * from a 404 — that is the record a 0.5.6 user has on disk after going
+ * offline. Read such a failure as resumable unless the error names an
+ * HTTP status a retry cannot change, so the relaunch picks it back up.
+ */
+function fillAdditiveFields(j: Record<string, unknown>): DownloadJob {
+  const error = typeof j.error === "string" ? j.error : null;
+  const resumable =
+    typeof j.resumable === "boolean"
+      ? j.resumable
+      : j.status === "failed" && !/HTTP 4(?!08|29)\d\d/.test(error ?? "");
+  return {
+    ...(j as unknown as DownloadJob),
+    waiting:
+      j.waiting && typeof j.waiting === "object"
+        ? (j.waiting as DownloadJob["waiting"])
+        : null,
+    resumable,
+  };
 }
 
 /**
@@ -147,7 +224,10 @@ function pidIsAlive(pid: number): boolean {
  * what happened) agree, and so the interruption timestamp is not lost
  * to a later rewrite.
  */
-export function readDownloadJob(dataDir: string, jobId: string): DownloadJob | null {
+export function readDownloadJob(
+  dataDir: string,
+  jobId: string,
+): DownloadJob | null {
   let raw: string;
   try {
     raw = readFileSync(resolveDownloadJobPath(dataDir, jobId), "utf-8");
@@ -184,11 +264,12 @@ export function listDownloadJobs(dataDir: string): DownloadJob[] {
   return jobs.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
 }
 
-/** Forget a job: its record and its log. The partial file is not touched. */
+/** Forget a job: its record, its log and its notify request. The partial file is not touched. */
 export function removeDownloadJob(dataDir: string, jobId: string): void {
   for (const path of [
     resolveDownloadJobPath(dataDir, jobId),
     resolveDownloadLogPath(dataDir, jobId),
+    resolveDownloadNotifyPath(dataDir, jobId),
   ]) {
     try {
       rmSync(path, { force: true });

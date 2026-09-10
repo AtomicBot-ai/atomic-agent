@@ -23,11 +23,15 @@ describe("planSegments", () => {
   });
 
   it("keeps a remainder below two minimum pieces as one stream", () => {
-    expect(planSegments([[10, 25]], 4, MIN)).toEqual([{ start: 10, end: 25, written: 0 }]);
+    expect(planSegments([[10, 25]], 4, MIN)).toEqual([
+      { start: 10, end: 25, written: 0 },
+    ]);
   });
 
   it("keeps one stream when one connection is configured", () => {
-    expect(planSegments([[0, 1000]], 1, MIN)).toEqual([{ start: 0, end: 1000, written: 0 }]);
+    expect(planSegments([[0, 1000]], 1, MIN)).toEqual([
+      { start: 0, end: 1000, written: 0 },
+    ]);
   });
 
   it("cannot split an open-ended download", () => {

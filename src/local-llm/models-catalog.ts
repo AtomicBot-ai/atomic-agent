@@ -177,7 +177,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojUrl:
       "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
     mmprojFilename: "mmproj-BF16.gguf",
-    mmprojFileSizeGb: 1.20,
+    mmprojFileSizeGb: 1.2,
   },
   {
     id: "qwen-3.8-27b",
@@ -238,7 +238,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
     mmprojFilename: "mmproj-F16.gguf",
-    mmprojFileSizeGb: 0.90,
+    mmprojFileSizeGb: 0.9,
   },
   {
     id: "qwen-3.5-4b",
@@ -300,7 +300,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
     mmprojFilename: "mmproj-F16.gguf",
-    mmprojFileSizeGb: 0.90,
+    mmprojFileSizeGb: 0.9,
   },
   {
     id: "nemotron-3.5-30b-a3b",
@@ -552,8 +552,6 @@ export function getEmbeddingModelDef(id: EmbeddingModelId): EmbeddingModelDef {
   return found;
 }
 
-export function isKnownEmbeddingModelId(
-  raw: string,
-): raw is EmbeddingModelId {
+export function isKnownEmbeddingModelId(raw: string): raw is EmbeddingModelId {
   return EMBEDDING_MODELS_CATALOG.some((m) => m.id === raw);
 }

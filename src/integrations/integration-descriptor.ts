@@ -29,8 +29,13 @@ export interface IntegrationField {
    * can run (an owner id, an endpoint). Without this the hub could
    * only ever be half a setup surface: the operator would paste a
    * token here and then hand-edit JSON for the rest.
+   *
+   * `"transient"` is a value that is *acted on*, not stored — a
+   * verification code typed back from a mail. The hub's edit flow
+   * collects it like any field and hands it to the orchestrator, which
+   * does something with it and keeps nothing.
    */
-  store?: "env" | "config";
+  store?: "env" | "config" | "transient";
   /**
    * Env var this field is stored under in `<stateDir>/.env`. Secrets
    * never enter `config.json`; this is the same split Telegram's bot
@@ -53,6 +58,8 @@ export interface IntegrationField {
   kind?: "text" | "boolean";
   /** Mask the value in the UI and never log it. */
   secret: boolean;
+  /** Shown, never edited or cleared: an address the service assigned. */
+  readonly?: boolean;
   /** A field the integration cannot work without. */
   required: boolean;
   /** Short hint rendered under the input. */
@@ -65,10 +72,7 @@ export interface IntegrationField {
 }
 
 export type IntegrationStatusLevel =
-  | "not_configured"
-  | "configured"
-  | "connected"
-  | "error";
+  "not_configured" | "configured" | "connected" | "error";
 
 export interface IntegrationStatus {
   level: IntegrationStatusLevel;
@@ -177,9 +181,7 @@ export interface IntegrationDescriptor {
 
 /** Default status: configured-or-not, with no runtime signal. */
 export function basicStatus(ctx: IntegrationStatusContext): IntegrationStatus {
-  return ctx.configured
-    ? { level: "configured" }
-    : { level: "not_configured" };
+  return ctx.configured ? { level: "configured" } : { level: "not_configured" };
 }
 
 /** Every required field of `descriptor` that has a value. */

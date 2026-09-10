@@ -24,6 +24,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
     lessons: { enabled: true },
     procedures: { enabled: true },
   },
+  atomicMail: { address: "atag-1@atomicmail.ai" },
   tasks: { enabled: true, agentToolsEnabled: true },
   mcp: { servers: [{}] },
 };
@@ -56,7 +57,13 @@ describe("effectiveToolDescriptors", () => {
     const names = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map(
       (d) => d.name,
     );
+    process.env.ATOMIC_MAIL_API_KEY = "k";
+    try {
+    const names = effectiveToolDescriptors(ALL_ENABLED).map((d) => d.name);
     expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
+    } finally {
+      delete process.env.ATOMIC_MAIL_API_KEY;
+    }
   });
 
   it("drops github.* when the hub holds no token", () => {
@@ -85,6 +92,7 @@ describe("effectiveToolDescriptors", () => {
   it("drops tasks.* when agent task tools are off", () => {
     const names = effectiveToolDescriptors({
       ...ALL_ENABLED,
+      atomicMail: { address: "atag-1@atomicmail.ai" },
       tasks: { enabled: true, agentToolsEnabled: false },
     }).map((d) => d.name);
     expect(names.some((n) => n.startsWith("tasks."))).toBe(false);

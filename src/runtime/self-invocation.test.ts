@@ -7,7 +7,12 @@ describe("selfInvocation", () => {
     expect(
       selfInvocation({
         execPath: "/usr/local/bin/atomic-agent",
-        argv: ["/usr/local/bin/atomic-agent", "/usr/local/bin/atomic-agent", "models", "pull"],
+        argv: [
+          "/usr/local/bin/atomic-agent",
+          "/usr/local/bin/atomic-agent",
+          "models",
+          "pull",
+        ],
         isSea: true,
       }),
     ).toEqual({ cmd: "/usr/local/bin/atomic-agent", args: [] });
@@ -17,7 +22,12 @@ describe("selfInvocation", () => {
     expect(
       selfInvocation({
         execPath: "/opt/node/bin/node",
-        argv: ["/opt/node/bin/node", "/repo/dist/cli/index.js", "models", "pull"],
+        argv: [
+          "/opt/node/bin/node",
+          "/repo/dist/cli/index.js",
+          "models",
+          "pull",
+        ],
         isSea: false,
       }),
     ).toEqual({ cmd: "/opt/node/bin/node", args: ["/repo/dist/cli/index.js"] });
@@ -39,7 +49,11 @@ describe("selfInvocation", () => {
 
   it("refuses a node run with no script path rather than guessing", () => {
     expect(() =>
-      selfInvocation({ execPath: "/opt/node/bin/node", argv: ["/opt/node/bin/node"], isSea: false }),
+      selfInvocation({
+        execPath: "/opt/node/bin/node",
+        argv: ["/opt/node/bin/node"],
+        isSea: false,
+      }),
     ).toThrow(/no script path/);
   });
 });

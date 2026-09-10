@@ -43,12 +43,17 @@ function fakeProvider(
       supportsPromptCache: false,
       reasoningFormat: "none",
     },
-    toolCallAdapter: transport === "native_tools" ? openAiToolCallAdapter : null,
+    toolCallAdapter:
+      transport === "native_tools" ? openAiToolCallAdapter : null,
     streamConsumer: null,
     complete: serve,
     async *completeStream(request) {
       const result = await serve(request);
-      yield { delta: result.content, reasoningDelta: "", done: true } as StreamChunk;
+      yield {
+        delta: result.content,
+        reasoningDelta: "",
+        done: true,
+      } as StreamChunk;
       return result;
     },
     async describeImage() {
@@ -67,7 +72,12 @@ function answer(id: string): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 1,
+      predictedTokens: 1,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: `${id}-model`,
@@ -76,7 +86,10 @@ function answer(id: string): CompletionResult {
 
 function seamDeps(providers: Map<string, LlmProvider>): FallbackSeamDeps {
   const chain = new ProviderFallbackChain({
-    resolve: () => ({ chain: ["cloud", "local"], timing: DEFAULT_FALLBACK_TIMING }),
+    resolve: () => ({
+      chain: ["cloud", "local"],
+      timing: DEFAULT_FALLBACK_TIMING,
+    }),
   });
   return {
     fallbackChain: chain,
@@ -100,7 +113,10 @@ const baseParams = {
 describe("createFallbackCompleter (real bootstrap seam)", () => {
   it("stamps servedTransport with the primary's transport when it answers", async () => {
     const providers = new Map<string, LlmProvider>([
-      ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => answer("cloud")),
+      ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
     ]);
     const complete = createFallbackCompleter(seamDeps(providers));
@@ -114,7 +130,14 @@ describe("createFallbackCompleter (real bootstrap seam)", () => {
       [
         "cloud",
         fakeProvider("cloud", "native_tools", async () => {
-          throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+          throw new OpenAiHttpError(
+            "rate limited",
+            429,
+            "http://cloud",
+            false,
+            null,
+            "cloud",
+          );
         }),
       ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
@@ -136,7 +159,12 @@ describe("createFallbackCompleter (real bootstrap seam)", () => {
         "cloud",
         fakeProvider("cloud", "native_tools", async () => ({
           ...answer("cloud"),
-          usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
         })),
       ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
@@ -163,7 +191,14 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
       [
         "cloud",
         fakeProvider("cloud", "native_tools", async () => {
-          throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+          throw new OpenAiHttpError(
+            "rate limited",
+            429,
+            "http://cloud",
+            false,
+            null,
+            "cloud",
+          );
         }),
       ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
@@ -197,7 +232,10 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
 
   it("stamps the primary's transport when the stream opens on the primary", async () => {
     const providers = new Map<string, LlmProvider>([
-      ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => answer("cloud")),
+      ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
     ]);
     const streamer = createFallbackStreamer(seamDeps(providers));
@@ -210,7 +248,14 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
       [
         "cloud",
         fakeProvider("cloud", "native_tools", async () => {
-          throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+          throw new OpenAiHttpError(
+            "rate limited",
+            429,
+            "http://cloud",
+            false,
+            null,
+            "cloud",
+          );
         }),
       ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
@@ -258,7 +303,14 @@ describe("per-link prompt substitution (grammarPrompt)", () => {
         fakeProvider("cloud", "native_tools", async (request) => {
           cloudPrompts.push(request.prompt);
           if (cloudFails) {
-            throw new OpenAiHttpError("rate limited", 429, "http://cloud", false, null, "cloud");
+            throw new OpenAiHttpError(
+              "rate limited",
+              429,
+              "http://cloud",
+              false,
+              null,
+              "cloud",
+            );
           }
           return answer("cloud");
         }),
@@ -368,9 +420,9 @@ describe("prepareLink — warming a link before it serves (issue #112)", () => {
         }),
       ],
     ]);
-    const result = await createFallbackCompleter(
-      tracingDeps(providers, trace),
-    )(baseParams);
+    const result = await createFallbackCompleter(tracingDeps(providers, trace))(
+      baseParams,
+    );
 
     expect(result.modelId).toBe("local-model");
     // The load-bearing ordering: `prepare:local` sits BEFORE
@@ -425,10 +477,15 @@ describe("prepareLink — warming a link before it serves (issue #112)", () => {
 
   it("is optional — an unwired seam behaves exactly as before", async () => {
     const providers = new Map<string, LlmProvider>([
-      ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async () => answer("cloud")),
+      ],
       ["local", fakeProvider("local", "grammar", async () => answer("local"))],
     ]);
-    const result = await createFallbackCompleter(seamDeps(providers))(baseParams);
+    const result = await createFallbackCompleter(seamDeps(providers))(
+      baseParams,
+    );
     expect(result.modelId).toBe("cloud-model");
   });
 });

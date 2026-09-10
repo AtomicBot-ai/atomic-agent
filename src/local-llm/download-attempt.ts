@@ -4,7 +4,9 @@ import { dirname } from "node:path";
 import {
   createAbortError,
   DownloadHttpError,
+  InterceptedError,
   parseContentRange,
+  sameValidator,
   RangeRejectedError,
   StalledError,
   throwIfAborted,
@@ -29,7 +31,10 @@ import {
 } from "./download-segments.js";
 import { resolveDownloadConnections } from "./download-settings.js";
 import { huggingFaceToken } from "./huggingface-api.js";
-import { isHuggingFaceUrl, rewriteHuggingFaceUrl } from "./huggingface-endpoint.js";
+import {
+  isHuggingFaceUrl,
+  rewriteHuggingFaceUrl,
+} from "./huggingface-endpoint.js";
 
 export interface AttemptOptions {
   onProgress?: (percent: number, transferred: number, total: number) => void;
@@ -56,7 +61,11 @@ function baseHeaders(url: string, userAgent?: string): Record<string, string> {
   const isGitHub =
     url.includes("github.com") || url.includes("githubusercontent.com");
   if (isGitHub) {
-    const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
+    const token = (
+      process.env.GITHUB_TOKEN ||
+      process.env.GH_TOKEN ||
+      ""
+    ).trim();
     if (token) headers.Authorization = `Bearer ${token}`;
   } else if (isHuggingFaceUrl(url)) {
     // Gated repos answer 401 without this; public ones ignore it, so it
@@ -129,7 +138,11 @@ export async function downloadAttempt(
       // Otherwise the server's idea of the file differs from ours.
       const cr = parseContentRange(res.headers.get("content-range"));
       const confirmed = cr?.total || total;
-      if (confirmed > 0 && offset === confirmed && sumRanges(done) === confirmed) {
+      if (
+        confirmed > 0 &&
+        offset === confirmed &&
+        sumRanges(done) === confirmed
+      ) {
         finalize(destPath, offset, confirmed, opts.onProgress);
         return;
       }
@@ -138,6 +151,17 @@ export async function downloadAttempt(
     }
     if (!res.ok || !res.body) {
       throw new DownloadHttpError(res.status, res.statusText);
+    }
+
+    // A page where a file should be is a captive portal or a proxy's
+    // block page, never the model. Writing it over the partial — or
+    // publishing it as a GGUF — would be worse than waiting.
+    const contentType = res.headers.get("content-type") ?? "";
+    if (/^text\/html\b/i.test(contentType.trim())) {
+      await res.body.cancel().catch(() => undefined);
+      throw new InterceptedError(
+        `the server answered with a web page (${contentType.trim()})`,
+      );
     }
 
     let resumed = false;
@@ -152,22 +176,46 @@ export async function downloadAttempt(
         // A 206 whose range does not line up with our offset cannot be
         // placed; drain nothing, start over on the next attempt.
         await res.body.cancel().catch(() => undefined);
-        throw new RangeRejectedError("server range did not match the partial file");
+        throw new RangeRejectedError(
+          "server range did not match the partial file",
+        );
       }
     } else {
       // A full body (200) — either a fresh download or the server would
       // not (or could not, validators changed) honour the range. Whatever
       // is on disk is not this file's prefix.
+      const totalRaw = res.headers.get("content-length");
+      let full = totalRaw ? parseInt(totalRaw, 10) : 0;
+      if (!Number.isFinite(full) || full < 0) full = 0;
+      if (
+        offset > 0 &&
+        stored &&
+        stored.total > 0 &&
+        full > 0 &&
+        full !== stored.total &&
+        sameValidator(stored, res)
+      ) {
+        // The server says this is the very file we have half of, yet
+        // sends a different length: not a new upload but something
+        // standing in for it. Keep the partial. A server that names no
+        // validator gets no such benefit of the doubt — its 200 is a
+        // restart, as it always was.
+        await res.body.cancel().catch(() => undefined);
+        throw new InterceptedError(
+          `full body of ${full} bytes for a ${stored.total}-byte file`,
+        );
+      }
       discardPartialDownload(destPath);
       done = [];
-      const totalRaw = res.headers.get("content-length");
-      total = totalRaw ? parseInt(totalRaw, 10) : 0;
-      if (!Number.isFinite(total) || total < 0) total = 0;
-      rangesSupported = total > 0 && res.headers.get("accept-ranges") === "bytes";
+      total = full;
+      rangesSupported =
+        total > 0 && res.headers.get("accept-ranges") === "bytes";
     }
 
     const connections =
-      opts.singleStream || !rangesSupported ? 1 : resolveDownloadConnections(opts.connections);
+      opts.singleStream || !rangesSupported
+        ? 1
+        : resolveDownloadConnections(opts.connections);
     let remaining: ByteRange[] = resumed
       ? total > 0
         ? holesIn(done, total)
@@ -186,7 +234,9 @@ export async function downloadAttempt(
       // A 206 for a range that starts past the end: the server's file is
       // not the one the sidecar describes.
       await res.body.cancel().catch(() => undefined);
-      throw new RangeRejectedError("server answered a range past the end of the file");
+      throw new RangeRejectedError(
+        "server answered a range past the end of the file",
+      );
     }
 
     fs.mkdirSync(dirname(destPath), { recursive: true });
@@ -209,7 +259,12 @@ export async function downloadAttempt(
           .map((seg): ByteRange => [seg.start, seg.start + seg.written]),
       ]);
     const persistMeta = (): void =>
-      writePartialMeta(destPath, { url, total, ...validators, done: doneNow() });
+      writePartialMeta(destPath, {
+        url,
+        total,
+        ...validators,
+        done: doneNow(),
+      });
     persistMeta();
 
     // Progress is emitted on a time base: one percent of a 4 GB GGUF is
@@ -269,7 +324,11 @@ export async function downloadAttempt(
     // more pieces than connections (a fragmented partial resumed on one
     // stream, say) still drains every hole.
     const workers = [
-      guard(runSegment(lead, ctx, { res, abort: leadAbort }).then(() => runSegmentQueue(queue, ctx))),
+      guard(
+        runSegment(lead, ctx, { res, abort: leadAbort }).then(() =>
+          runSegmentQueue(queue, ctx),
+        ),
+      ),
       ...Array.from({ length: Math.min(connections - 1, queue.length) }, () =>
         guard(runSegmentQueue(queue, ctx)),
       ),
@@ -291,7 +350,9 @@ export async function downloadAttempt(
 
     const transferred = transferredNow();
     if (total > 0 && transferred !== total) {
-      throw new Error(`Download ended early: ${transferred} of ${total} bytes received`);
+      throw new Error(
+        `Download ended early: ${transferred} of ${total} bytes received`,
+      );
     }
     finalize(destPath, transferred, total, opts.onProgress);
   } finally {

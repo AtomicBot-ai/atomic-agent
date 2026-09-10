@@ -872,6 +872,10 @@ export interface AtomicAgentConfig {
   discord: DiscordConfig;
   /** Extra Telegram / Discord bots. Mirrors `UserConfigFile.swarm`. */
   swarm: SwarmConfig;
+  /** Out-of-band pings. Mirrors `UserConfigFile.notifications`. */
+  notifications: NotificationsConfig;
+  /** The agent's own inbox. Mirrors `UserConfigFile.atomicMail`. */
+  atomicMail: AtomicMailConfig;
   /**
    * Composio integration. Mirrors `UserConfigFile.composio`. The API
    * key is not stored here — see `ComposioConfig`.
@@ -1110,6 +1114,47 @@ export interface TelegramConfig {
    * `true` via the defaults-fallback in `parseUserConfigFile`.
    */
   progressIndicator: boolean;
+}
+
+/** Where a finished (or failed) background model download is reported. */
+export type DownloadNotifyChannelSetting =
+  "telegram" | "discord" | "email" | "off";
+
+export interface NotificationsConfig {
+  downloads: {
+    /**
+     * `null` means the operator has not been asked yet: the Models tab
+     * asks once, the first time a pull starts, and remembers the answer
+     * here. `"off"` is a remembered "no". Added in config v52.
+     */
+    channel: DownloadNotifyChannelSetting | null;
+  };
+}
+
+/**
+ * Atomic Mail — the agent's own `@atomicmail.ai` inbox. The API key
+ * lives in `<stateDir>/.env` as `ATOMIC_MAIL_API_KEY`; this block holds
+ * what is not secret: the address, and the owner's verified e-mail.
+ * Added in config v53.
+ */
+export interface AtomicMailConfig {
+  /** `name@atomicmail.ai`, once registered. */
+  address: string | null;
+  /** The JMAP account id that goes with it. */
+  accountId: string | null;
+  /** Where the operator wants to be reached. */
+  ownerEmail: string | null;
+  /** ISO time the operator typed the code back; `null` = not yet. */
+  ownerVerifiedAt: string | null;
+  /** A code has been sent and not yet typed back. Never the code itself. */
+  pendingVerification: {
+    email: string;
+    /** sha256 of the six digits. */
+    codeHash: string;
+    expiresAt: string;
+    /** Wrong guesses so far; the code is dropped after a few. */
+    attempts: number;
+  } | null;
 }
 
 /**
@@ -1801,6 +1846,18 @@ export interface UserConfigFile {
    */
   swarm: SwarmConfig;
   /**
+   * Out-of-band pings — today, where a background model download
+   * reports when it lands. Added in config v55. Older files are
+   * transparently upgraded with `{ downloads: { channel: null } }`,
+   * which means "ask on the next pull".
+   */
+  notifications: NotificationsConfig;
+  /**
+   * Atomic Mail. Added in config v56. Older files are transparently
+   * upgraded with every field `null`: no inbox, no owner, nothing sent.
+   */
+  atomicMail: AtomicMailConfig;
+  /**
    * Composio integration. Added in config v50. Older files are
    * transparently upgraded with the defaults below, which leave the
    * integration inert until a key is written to `<stateDir>/.env`.
@@ -1924,7 +1981,13 @@ export interface UserConfigFile {
 // v54: `download.hfEndpoint` — the origin that serves Hugging Face (a
 // mirror for regions where huggingface.co is slow or blocked). Default is
 // the canonical host; `HF_ENDPOINT` in the environment overrides it.
-export const USER_CONFIG_VERSION = 54;
+// v55: new `notifications` block — where a background model download
+// reports when it lands. Additive: `channel: null` means "not asked yet",
+// which is what every older file has always implied.
+// v56: new `atomicMail` block — the agent's own inbox and the owner's
+// verified e-mail. Additive and inert: every field starts `null`; the API
+// key lives in `<stateDir>/.env`, never here.
+export const USER_CONFIG_VERSION = 56;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2063,7 +2126,12 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   47,
   48,
   49,
-  50, 51, 52, 53,
+  50,
+  51,
+  52,
+  53,
+  54,
+  55,
   USER_CONFIG_VERSION,
 ];
 
@@ -2090,7 +2158,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
-    download: { connections: DEFAULT_DOWNLOAD_CONNECTIONS, hfEndpoint: DEFAULT_HF_ENDPOINT },
+    download: {
+      connections: DEFAULT_DOWNLOAD_CONNECTIONS,
+      hfEndpoint: DEFAULT_HF_ENDPOINT,
+    },
     customModels: [],
   },
   log: { level: "info" },
@@ -2362,6 +2433,20 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // Added in v52. No extra bots until the operator adds one.
     units: [],
   },
+  notifications: {
+    // Added in v55. `null` = not asked yet; the Models tab asks once.
+    downloads: {
+      channel: null,
+    },
+  },
+  atomicMail: {
+    // Added in v56. Nothing until the operator registers an inbox.
+    address: null,
+    accountId: null,
+    ownerEmail: null,
+    ownerVerifiedAt: null,
+    pendingVerification: null,
+  },
   composio: {
     // Added in v50. `enabled: true` is safe because the key, not this
     // flag, is what actually mounts anything: with no key in the env
@@ -2505,7 +2590,10 @@ function parseOptionalManagedModelId(
   return s;
 }
 
-export function parseBrowserChannel(raw: unknown, field: string): BrowserChannel {
+export function parseBrowserChannel(
+  raw: unknown,
+  field: string,
+): BrowserChannel {
   if (raw === "chrome" || raw === "msedge" || raw === "chromium") return raw;
   throw new ConfigValidationError(
     field,
@@ -2517,7 +2605,12 @@ export function parseWebSearchProviderName(
   raw: unknown,
   field: string,
 ): WebSearchProviderName {
-  if (raw === "duckduckgo" || raw === "searxng" || raw === "exa" || raw === "brave") {
+  if (
+    raw === "duckduckgo" ||
+    raw === "searxng" ||
+    raw === "exa" ||
+    raw === "brave"
+  ) {
     return raw;
   }
   throw new ConfigValidationError(
@@ -2756,10 +2849,7 @@ export function parseUnitInterval(raw: unknown, field: string): number {
  * which trivially destroys all signal) but `1` is allowed (no
  * decay at all, mostly useful for tests and offline replay).
  */
-export function parseHalfOpenUnitInterval(
-  raw: unknown,
-  field: string,
-): number {
+export function parseHalfOpenUnitInterval(raw: unknown, field: string): number {
   const value = coerceFloatLike(raw);
   if (!Number.isFinite(value) || value <= 0 || value > 1) {
     throw new ConfigValidationError(
@@ -2769,7 +2859,6 @@ export function parseHalfOpenUnitInterval(
   }
   return value;
 }
-
 
 export function parseBool(raw: unknown, field: string): boolean {
   if (typeof raw === "boolean") return raw;
@@ -2864,32 +2953,54 @@ function parseSwarmUnits(value: unknown, field: string): SwarmUnitConfig[] {
     const u = raw as Record<string, unknown>;
     const id = parseNonEmptyString(u.id, `${at}.id`);
     if (!SWARM_UNIT_ID.test(id)) {
-      throw new ConfigValidationError(`${at}.id`, "must match [a-z0-9][a-z0-9-]{0,31}");
+      throw new ConfigValidationError(
+        `${at}.id`,
+        "must match [a-z0-9][a-z0-9-]{0,31}",
+      );
     }
-    if (ids.has(id)) throw new ConfigValidationError(`${at}.id`, `duplicate id '${id}'`);
+    if (ids.has(id))
+      throw new ConfigValidationError(`${at}.id`, `duplicate id '${id}'`);
     ids.add(id);
     if (u.kind !== "telegram" && u.kind !== "discord") {
-      throw new ConfigValidationError(`${at}.kind`, 'must be "telegram" or "discord"');
+      throw new ConfigValidationError(
+        `${at}.kind`,
+        'must be "telegram" or "discord"',
+      );
     }
     const label = parseNonEmptyString(u.label, `${at}.label`);
     if (label.length > SWARM_LABEL_MAX) {
-      throw new ConfigValidationError(`${at}.label`, `must be at most ${SWARM_LABEL_MAX} characters`);
+      throw new ConfigValidationError(
+        `${at}.label`,
+        `must be at most ${SWARM_LABEL_MAX} characters`,
+      );
     }
     const role = u.role === undefined || u.role === null ? "" : u.role;
     if (typeof role !== "string" || role.length > SWARM_ROLE_MAX) {
-      throw new ConfigValidationError(`${at}.role`, `must be a string of at most ${SWARM_ROLE_MAX} characters`);
+      throw new ConfigValidationError(
+        `${at}.role`,
+        `must be a string of at most ${SWARM_ROLE_MAX} characters`,
+      );
     }
     const tokenEnv = parseNonEmptyString(u.tokenEnv, `${at}.tokenEnv`);
     if (!SWARM_TOKEN_ENV.test(tokenEnv)) {
-      throw new ConfigValidationError(`${at}.tokenEnv`, "must be an env var name ([A-Z_][A-Z0-9_]*)");
+      throw new ConfigValidationError(
+        `${at}.tokenEnv`,
+        "must be an env var name ([A-Z_][A-Z0-9_]*)",
+      );
     }
     if (envs.has(tokenEnv)) {
-      throw new ConfigValidationError(`${at}.tokenEnv`, `duplicate token env '${tokenEnv}'`);
+      throw new ConfigValidationError(
+        `${at}.tokenEnv`,
+        `duplicate token env '${tokenEnv}'`,
+      );
     }
     envs.add(tokenEnv);
     const ownerUserId = parseNullableString(u.ownerUserId, `${at}.ownerUserId`);
     if (ownerUserId !== null && !/^\d{1,25}$/.test(ownerUserId)) {
-      throw new ConfigValidationError(`${at}.ownerUserId`, "must be a numeric user id");
+      throw new ConfigValidationError(
+        `${at}.ownerUserId`,
+        "must be a numeric user id",
+      );
     }
     return {
       id,
@@ -2903,10 +3014,7 @@ function parseSwarmUnits(value: unknown, field: string): SwarmUnitConfig[] {
   });
 }
 
-function parseNullableString(
-  raw: unknown,
-  field: string,
-): string | null {
+function parseNullableString(raw: unknown, field: string): string | null {
   if (raw === undefined || raw === null) return null;
   if (typeof raw === "string") {
     const trimmed = raw.trim();
@@ -2941,10 +3049,16 @@ function resolveHttpApprovalMode(
   raw: unknown,
   field: string,
 ): HttpApprovalMode {
-  if (inputVersion < 25 && (raw === undefined || raw === null || raw === "writes")) {
+  if (
+    inputVersion < 25 &&
+    (raw === undefined || raw === null || raw === "writes")
+  ) {
     return "never";
   }
-  return parseHttpApprovalMode(raw ?? USER_CONFIG_DEFAULTS.http.approvalMode, field);
+  return parseHttpApprovalMode(
+    raw ?? USER_CONFIG_DEFAULTS.http.approvalMode,
+    field,
+  );
 }
 
 export function parseApprovalLevel(raw: unknown, field: string): ApprovalLevel {
@@ -3113,7 +3227,8 @@ export function parseSkillNameArray(raw: unknown, field: string): string[] {
   return result;
 }
 
-const TAP_REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+const TAP_REPO_RE =
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 
 /**
  * Parse the skill hub `taps` list — GitHub `owner/repo` repository
@@ -3214,7 +3329,11 @@ export function parseWebhookMap(
         "webhook name must match [a-zA-Z0-9_-]+",
       );
     }
-    if (rawCfg === null || typeof rawCfg !== "object" || Array.isArray(rawCfg)) {
+    if (
+      rawCfg === null ||
+      typeof rawCfg !== "object" ||
+      Array.isArray(rawCfg)
+    ) {
       throw new ConfigValidationError(
         `${field}.${name}`,
         `expected object, got ${JSON.stringify(rawCfg)}`,
@@ -3238,7 +3357,10 @@ export function parseWebhookMap(
     }
     let sessionId: string | undefined;
     if (cfg.sessionId !== undefined && cfg.sessionId !== null) {
-      sessionId = parseNonEmptyString(cfg.sessionId, `${field}.${name}.sessionId`);
+      sessionId = parseNonEmptyString(
+        cfg.sessionId,
+        `${field}.${name}.sessionId`,
+      );
     }
     if (sessionMode === "named" && !sessionId) {
       throw new ConfigValidationError(
@@ -3252,7 +3374,10 @@ export function parseWebhookMap(
     }
     let schedule: TaskSchedule | undefined;
     if (cfg.schedule !== undefined && cfg.schedule !== null) {
-      schedule = parseWebhookSchedule(cfg.schedule, `${field}.${name}.schedule`);
+      schedule = parseWebhookSchedule(
+        cfg.schedule,
+        `${field}.${name}.schedule`,
+      );
     }
     out[name] = {
       userMessageTemplate,
@@ -3273,13 +3398,20 @@ function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {
   if (obj.kind === "at") {
     const at = obj.at;
     if (typeof at !== "number" || !Number.isFinite(at)) {
-      throw new ConfigValidationError(`${field}.at`, "expected finite number (Unix ms)");
+      throw new ConfigValidationError(
+        `${field}.at`,
+        "expected finite number (Unix ms)",
+      );
     }
     return { kind: "at", at };
   }
   if (obj.kind === "interval") {
     const everyMs = obj.everyMs;
-    if (typeof everyMs !== "number" || !Number.isInteger(everyMs) || everyMs <= 0) {
+    if (
+      typeof everyMs !== "number" ||
+      !Number.isInteger(everyMs) ||
+      everyMs <= 0
+    ) {
       throw new ConfigValidationError(
         `${field}.everyMs`,
         "expected positive integer",
@@ -3288,7 +3420,10 @@ function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {
     return { kind: "interval", everyMs };
   }
   if (obj.kind === "cron") {
-    const expression = parseNonEmptyString(obj.expression, `${field}.expression`);
+    const expression = parseNonEmptyString(
+      obj.expression,
+      `${field}.expression`,
+    );
     const tz = typeof obj.tz === "string" ? obj.tz : undefined;
     return { kind: "cron", expression, ...(tz ? { tz } : {}) };
   }
@@ -3304,7 +3439,10 @@ export function parseUrl(raw: unknown, field: string): string {
     new URL(str);
     return str;
   } catch {
-    throw new ConfigValidationError(field, `expected valid URL, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected valid URL, got ${JSON.stringify(raw)}`,
+    );
   }
 }
 
@@ -3322,7 +3460,10 @@ function parseMcpEnv(
 ): Record<string, string> | undefined {
   if (raw === null || raw === undefined) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -3333,7 +3474,10 @@ function parseMcpEnv(
       );
     }
     if (typeof v !== "string") {
-      throw new ConfigValidationError(`${field}.${k}`, "env value must be a string");
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "env value must be a string",
+      );
     }
     out[k] = v;
   }
@@ -3351,7 +3495,10 @@ function parseMcpHeaders(
 ): Record<string, string> | undefined {
   if (raw === null || raw === undefined) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
   }
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -3362,7 +3509,10 @@ function parseMcpHeaders(
       );
     }
     if (typeof v !== "string") {
-      throw new ConfigValidationError(`${field}.${k}`, "http header value must be a string");
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "http header value must be a string",
+      );
     }
     out[k] = v;
   }
@@ -3376,7 +3526,10 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
   const obj = raw as Record<string, unknown>;
   if (obj.kind === "stdio") {
     const command = parseNonEmptyString(obj.command, `${field}.command`);
-    const args = obj.args === undefined ? undefined : parseStringArrayOrNull(obj.args, `${field}.args`);
+    const args =
+      obj.args === undefined
+        ? undefined
+        : parseStringArrayOrNull(obj.args, `${field}.args`);
     const cwd =
       obj.cwd === undefined || obj.cwd === null
         ? undefined
@@ -3431,7 +3584,10 @@ export function parseMcpServers(
 ): McpServerConfig[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
-    throw new ConfigValidationError(field, `expected array, got ${JSON.stringify(raw)}`);
+    throw new ConfigValidationError(
+      field,
+      `expected array, got ${JSON.stringify(raw)}`,
+    );
   }
   const out: McpServerConfig[] = [];
   const seen = new Set<string>();
@@ -3472,7 +3628,10 @@ export function parseMcpServers(
       cfg.description === undefined || cfg.description === null
         ? undefined
         : parseNonEmptyString(cfg.description, `${field}[${i}].description`);
-    const transport = parseMcpTransport(cfg.transport, `${field}[${i}].transport`);
+    const transport = parseMcpTransport(
+      cfg.transport,
+      `${field}[${i}].transport`,
+    );
     const trust =
       cfg.trust === undefined || cfg.trust === null
         ? undefined
@@ -3540,7 +3699,8 @@ function unknownTopLevelKeys(
  * *inside* a known block are still dropped.
  */
 function parseHfEndpoint(value: unknown, path: string): string {
-  const normalized = typeof value === "string" ? normalizeHuggingFaceEndpoint(value) : null;
+  const normalized =
+    typeof value === "string" ? normalizeHuggingFaceEndpoint(value) : null;
   if (!normalized) {
     throw new ConfigValidationError(
       path,
@@ -3556,7 +3716,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   }
   const obj = raw as Record<string, unknown>;
   const version = obj.version ?? USER_CONFIG_VERSION;
-  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) {
+  if (
+    typeof version !== "number" ||
+    !Number.isSafeInteger(version) ||
+    version < 1
+  ) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected a positive whole number`,
@@ -3572,7 +3736,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   // them — and turns any rollback to an older build into a dead install.
   // The newer number is preserved in the result (and unknown top-level
   // keys with it) so writing the file back cannot downgrade it.
-  if (!SUPPORTED_INPUT_VERSIONS.includes(version) && version < USER_CONFIG_VERSION) {
+  if (
+    !SUPPORTED_INPUT_VERSIONS.includes(version) &&
+    version < USER_CONFIG_VERSION
+  ) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected one of ${SUPPORTED_INPUT_VERSIONS.join(", ")}`,
@@ -3641,15 +3808,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const memoryReflectionTypedNotes =
     (memoryReflection.typedNotes as Record<string, unknown> | undefined) ?? {};
   const memoryReflectionSegmentation =
-    (memoryReflection.segmentation as Record<string, unknown> | undefined) ?? {};
+    (memoryReflection.segmentation as Record<string, unknown> | undefined) ??
+    {};
   const memoryRetrieve =
     (memory.retrieve as Record<string, unknown> | undefined) ?? {};
   const memoryRetrieveRewriter =
     (memoryRetrieve.rewriter as Record<string, unknown> | undefined) ?? {};
   const memoryRetrieveRewriterEmbeddingGate =
     (memoryRetrieveRewriter.embeddingGate as
-      | Record<string, unknown>
-      | undefined) ?? {};
+      Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
@@ -3657,6 +3824,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const composio = (obj.composio as Record<string, unknown> | undefined) ?? {};
   const discord = (obj.discord as Record<string, unknown> | undefined) ?? {};
   const swarm = (obj.swarm as Record<string, unknown> | undefined) ?? {};
+  const notifications =
+    (obj.notifications as Record<string, unknown> | undefined) ?? {};
+  const notificationsDownloads =
+    (notifications.downloads as Record<string, unknown> | undefined) ?? {};
+  const atomicMail =
+    (obj.atomicMail as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const analytics =
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
@@ -3682,7 +3855,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       "localModels.managed.port",
     ),
     dataDirOverride:
-      rawManaged.dataDirOverride === null || rawManaged.dataDirOverride === undefined
+      rawManaged.dataDirOverride === null ||
+      rawManaged.dataDirOverride === undefined
         ? null
         : parseNonEmptyString(
             rawManaged.dataDirOverride,
@@ -3738,13 +3912,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (localModels.download as Record<string, unknown> | undefined) ?? {};
   const download: LocalModelDownloadConfig = {
     connections: parseBoundedPositiveInt(
-      rawDownload.connections ?? USER_CONFIG_DEFAULTS.localModels.download.connections,
+      rawDownload.connections ??
+        USER_CONFIG_DEFAULTS.localModels.download.connections,
       "localModels.download.connections",
       1,
       MAX_DOWNLOAD_CONNECTIONS,
     ),
     hfEndpoint: parseHfEndpoint(
-      rawDownload.hfEndpoint ?? USER_CONFIG_DEFAULTS.localModels.download.hfEndpoint,
+      rawDownload.hfEndpoint ??
+        USER_CONFIG_DEFAULTS.localModels.download.hfEndpoint,
       "localModels.download.hfEndpoint",
     ),
   };
@@ -3799,7 +3975,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       customModels,
     },
     log: {
-      level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),
+      level: parseLogLevel(
+        log.level ?? USER_CONFIG_DEFAULTS.log.level,
+        "log.level",
+      ),
     },
     agent: {
       tokenBudget: parsePositiveInt(
@@ -3893,7 +4072,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           1440,
         ),
         persistCache: parseBool(
-          webSearch.persistCache ?? USER_CONFIG_DEFAULTS.web.search.persistCache,
+          webSearch.persistCache ??
+            USER_CONFIG_DEFAULTS.web.search.persistCache,
           "web.search.persistCache",
         ),
         fallback: parseWebSearchFallback(
@@ -3913,7 +4093,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         },
         exa: {
           endpoint: parseNonEmptyString(
-            webSearchExa.endpoint ?? USER_CONFIG_DEFAULTS.web.search.exa.endpoint,
+            webSearchExa.endpoint ??
+              USER_CONFIG_DEFAULTS.web.search.exa.endpoint,
             "web.search.exa.endpoint",
           ),
           apiEndpoint: parseNonEmptyString(
@@ -3922,7 +4103,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             "web.search.exa.apiEndpoint",
           ),
           apiKeyEnv: parseNonEmptyString(
-            webSearchExa.apiKeyEnv ?? USER_CONFIG_DEFAULTS.web.search.exa.apiKeyEnv,
+            webSearchExa.apiKeyEnv ??
+              USER_CONFIG_DEFAULTS.web.search.exa.apiKeyEnv,
             "web.search.exa.apiKeyEnv",
           ),
         },
@@ -4434,7 +4616,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
         "tui.whileBusySubmit",
       ),
-      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
+      mouse: parseBool(
+        tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse,
+        "tui.mouse",
+      ),
       onboarding: parseOnboardingState(tui.onboarding),
     },
     analytics: {
@@ -4474,6 +4659,34 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     },
     swarm: {
       units: parseSwarmUnits(swarm.units, "swarm.units"),
+    },
+    notifications: {
+      downloads: {
+        channel: parseDownloadNotifyChannel(
+          notificationsDownloads.channel ??
+            USER_CONFIG_DEFAULTS.notifications.downloads.channel,
+          "notifications.downloads.channel",
+        ),
+      },
+    },
+    atomicMail: {
+      address: parseNullableString(atomicMail.address, "atomicMail.address"),
+      accountId: parseNullableString(
+        atomicMail.accountId,
+        "atomicMail.accountId",
+      ),
+      ownerEmail: parseNullableString(
+        atomicMail.ownerEmail,
+        "atomicMail.ownerEmail",
+      ),
+      ownerVerifiedAt: parseNullableString(
+        atomicMail.ownerVerifiedAt,
+        "atomicMail.ownerVerifiedAt",
+      ),
+      pendingVerification: parsePendingVerification(
+        atomicMail.pendingVerification,
+        "atomicMail.pendingVerification",
+      ),
     },
     composio: {
       enabled: parseBool(
@@ -4576,8 +4789,14 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
   }
   const obj = raw as Record<string, unknown>;
   return {
-    completedAt: parseTimestampOrNull(obj.completedAt, "tui.onboarding.completedAt"),
-    introSeenAt: parseTimestampOrNull(obj.introSeenAt, "tui.onboarding.introSeenAt"),
+    completedAt: parseTimestampOrNull(
+      obj.completedAt,
+      "tui.onboarding.completedAt",
+    ),
+    introSeenAt: parseTimestampOrNull(
+      obj.introSeenAt,
+      "tui.onboarding.introSeenAt",
+    ),
     skippedAt: parseTimestampOrNull(obj.skippedAt, "tui.onboarding.skippedAt"),
     proposedSecondBackendAt: parseTimestampOrNull(
       obj.proposedSecondBackendAt,
@@ -4600,7 +4819,10 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
  * stamp is rejected at load instead of producing an `Invalid Date`
  * somewhere far away.
  */
-export function parseTimestampOrNull(raw: unknown, field: string): string | null {
+export function parseTimestampOrNull(
+  raw: unknown,
+  field: string,
+): string | null {
   if (raw === undefined || raw === null) return null;
   const s = parseNonEmptyString(raw, field);
   if (Number.isNaN(Date.parse(s))) {
@@ -4623,12 +4845,56 @@ export function parseThemeName(raw: unknown, field: string): string {
   return trimmed.length === 0 ? "auto" : trimmed;
 }
 
+function parsePendingVerification(
+  raw: unknown,
+  field: string,
+): AtomicMailConfig["pendingVerification"] {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected an object or null");
+  }
+  const o = raw as Record<string, unknown>;
+  const email = parseNullableString(o.email, `${field}.email`);
+  const codeHash = parseNullableString(o.codeHash, `${field}.codeHash`);
+  const expiresAt = parseNullableString(o.expiresAt, `${field}.expiresAt`);
+  if (!email || !codeHash || !expiresAt) {
+    throw new ConfigValidationError(
+      field,
+      "expected email, codeHash and expiresAt",
+    );
+  }
+  const attempts =
+    typeof o.attempts === "number" && o.attempts >= 0
+      ? Math.floor(o.attempts)
+      : 0;
+  return { email, codeHash, expiresAt, attempts };
+}
+
 /**
  * Parse the agent-reply parse mode for outbound Telegram messages.
  * Accepts `"plain"` and `"html"` only — `markdownV2` is intentionally
  * excluded (see `TelegramParseMode` doc-comment for rationale).
  */
-export function parseTelegramParseMode(
+export function parseDownloadNotifyChannel(
+  raw: unknown,
+  field: string,
+): DownloadNotifyChannelSetting | null {
+  if (raw === null || raw === undefined) return null;
+  if (
+    raw === "telegram" ||
+    raw === "discord" ||
+    raw === "email" ||
+    raw === "off"
+  ) {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected "telegram", "discord", "email", "off" or null, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseTelegramParseMode(
   raw: unknown,
   field: string,
 ): TelegramParseMode {
@@ -4653,11 +4919,7 @@ export function parseTelegramOwnerId(
 ): number | null {
   if (raw === null || raw === undefined) return null;
   const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number(raw)
-        : NaN;
+    typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
   if (
     !Number.isFinite(value) ||
     !Number.isInteger(value) ||

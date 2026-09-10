@@ -26,10 +26,7 @@ export {
 export type { ApprovalCategory, ApprovalLevel } from "./approval-level.js";
 export { ApprovalRouter } from "./approval-router.js";
 export type { ApprovalHandler } from "./approval-router.js";
-export {
-  requireApproval,
-  ApprovalDeniedError,
-} from "./dangerous-tool.js";
+export { requireApproval, ApprovalDeniedError } from "./dangerous-tool.js";
 export type {
   DangerousToolOptions,
   ApprovalPrompt,

@@ -6,6 +6,9 @@ export type {
   LogLevel,
   OnboardingState,
   TelegramConfig,
+  NotificationsConfig,
+  DownloadNotifyChannelSetting,
+  AtomicMailConfig,
   TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,
@@ -55,10 +58,7 @@ export {
   SUBSCRIPTION_CLI_KIND,
   usesExternalCliAuth,
 } from "./provider-auth-mode.js";
-export type {
-  DotenvLoadResult,
-  DotenvReadFailure,
-} from "./load-dotenv.js";
+export type { DotenvLoadResult, DotenvReadFailure } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";
 export { addCustomModel, removeCustomModel } from "./custom-models-store.js";

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { MAC_UNIFIED_GPU_FRACTION, resolveGpuBudgetGb } from "./gpu-memory-budget.js";
+import {
+  MAC_UNIFIED_GPU_FRACTION,
+  resolveGpuBudgetGb,
+} from "./gpu-memory-budget.js";
 import type { GpuDevice } from "./gpu-devices.js";
 
 const GB = 1_000_000_000;

@@ -15,11 +15,18 @@ export function formatGb(bytes: number): string {
  */
 export function renderPullRetry(info: {
   attempt: number;
+  kind?: "transport" | "server";
   maxRetries: number;
   delayMs: number;
   error: Error;
 }): string {
-  return `download interrupted (${info.error.message}) — retry ${info.attempt}/${info.maxRetries} in ${Math.round(info.delayMs / 1000)}s, resuming from the partial file`;
+  const wait = `${Math.round(info.delayMs / 1000)}s`;
+  if (info.kind === "server") {
+    return `download interrupted (${info.error.message}) — retry ${info.attempt}/${info.maxRetries} in ${wait}, resuming from the partial file`;
+  }
+  // The link, not the server: there is no count to run out of. The
+  // partial waits for the network to come back — for days if it must.
+  return `download interrupted (${info.error.message}) — waiting for the network, attempt ${info.attempt}, next try in ${wait}; the partial file is kept`;
 }
 
 export function renderPullProgress(

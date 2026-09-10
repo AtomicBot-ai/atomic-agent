@@ -73,7 +73,10 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
  * `http.approvalMode`. Downgrading the label silently reverts choices
  * the user made.
  */
-export function writeUserConfigFileSync(path: string, data: UserConfigFile): void {
+export function writeUserConfigFileSync(
+  path: string,
+  data: UserConfigFile,
+): void {
   mkdirSync(dirname(path), { recursive: true });
   const onDisk = readVersionFieldFromFileSync(path);
   const raised = onDisk !== null && onDisk > data.version;
@@ -84,8 +87,11 @@ export function writeUserConfigFileSync(path: string, data: UserConfigFile): voi
     );
   }
   const payload =
-    JSON.stringify(version === data.version ? data : { ...data, version }, null, 2) +
-    "\n";
+    JSON.stringify(
+      version === data.version ? data : { ...data, version },
+      null,
+      2,
+    ) + "\n";
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, payload, "utf8");
   renameSync(tmp, path);
@@ -145,12 +151,17 @@ export function ensureUserConfigFileSync(path: string): UserConfigFile {
     emitConfigNotice(`[atomic-agent] created default config at ${path}`);
     return USER_CONFIG_DEFAULTS;
   }
-  const parsed = withConfigPathInError(path, () => parseUserConfigFile(raw.parsed));
+  const parsed = withConfigPathInError(path, () =>
+    parseUserConfigFile(raw.parsed),
+  );
   // Migrate upward only. `!==` would treat "written by a newer build" as
   // "needs migrating" and rewrite the file down to this build's schema at
   // startup, before the user has touched anything — the exact move that
   // turns a rollback into data loss.
-  if (raw.originalVersion === null || raw.originalVersion < USER_CONFIG_VERSION) {
+  if (
+    raw.originalVersion === null ||
+    raw.originalVersion < USER_CONFIG_VERSION
+  ) {
     writeUserConfigFileSync(path, parsed);
     emitConfigNotice(
       `[atomic-agent] migrated config v${raw.originalVersion} → v${USER_CONFIG_VERSION} at ${path}`,
@@ -224,7 +235,8 @@ function readVersionFieldFromFileSync(path: string): number | null {
 }
 
 function readVersionField(parsed: unknown): number | null {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
   const value = (parsed as Record<string, unknown>).version;
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

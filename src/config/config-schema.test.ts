@@ -77,7 +77,10 @@ describe("tui.onboarding (config v43, extended in v45)", () => {
 
   it("rejects a non-object onboarding block", () => {
     expect(() =>
-      parseUserConfigFile({ version: USER_CONFIG_VERSION, tui: { onboarding: true } }),
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { onboarding: true },
+      }),
     ).toThrow(ConfigValidationError);
   });
 });
@@ -206,9 +209,9 @@ describe("parseUserConfigFile", () => {
   });
 
   it("keeps a newer version rather than stamping its own", () => {
-    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION + 7 }).version).toBe(
-      USER_CONFIG_VERSION + 7,
-    );
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION + 7 }).version,
+    ).toBe(USER_CONFIG_VERSION + 7);
   });
 
   // Every version-gated rule in the parse is a `<` comparison against the
@@ -893,7 +896,12 @@ describe("parseUserConfigFile", () => {
   });
 
   it("rejects negative, non-numeric, and non-finite tensorSplit ratios", () => {
-    for (const bad of [[1, -1], [1, "1"], [1, Number.NaN], [1, null]]) {
+    for (const bad of [
+      [1, -1],
+      [1, "1"],
+      [1, Number.NaN],
+      [1, null],
+    ]) {
       expect(() =>
         parseUserConfigFile({
           version: USER_CONFIG_VERSION,
@@ -1006,9 +1014,15 @@ describe("parseUserConfigFile", () => {
   });
 
   it("accepts a v52 file and fills in localModels.download.hfEndpoint (mirror support)", () => {
-    const parsed = parseUserConfigFile({ version: 52, localModels: { download: { connections: 4 } } });
+    const parsed = parseUserConfigFile({
+      version: 52,
+      localModels: { download: { connections: 4 } },
+    });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.localModels.download).toEqual({ connections: 4, hfEndpoint: "https://huggingface.co" });
+    expect(parsed.localModels.download).toEqual({
+      connections: 4,
+      hfEndpoint: "https://huggingface.co",
+    });
   });
 
   it("normalizes an explicit hfEndpoint to an origin", () => {
@@ -1016,7 +1030,9 @@ describe("parseUserConfigFile", () => {
       version: USER_CONFIG_VERSION,
       localModels: { download: { hfEndpoint: "https://hf-mirror.com/" } },
     });
-    expect(parsed.localModels.download.hfEndpoint).toBe("https://hf-mirror.com");
+    expect(parsed.localModels.download.hfEndpoint).toBe(
+      "https://hf-mirror.com",
+    );
   });
 
   it("rejects an hfEndpoint that is not an http(s) origin", () => {
@@ -1062,6 +1078,69 @@ describe("parseUserConfigFile", () => {
     const parsed = parseUserConfigFile({ version: 50 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.discord).toEqual(USER_CONFIG_DEFAULTS.discord);
+  });
+
+  it("applies notifications defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+    // `null` = not asked yet: the Models tab asks on the next pull.
+    expect(parsed.notifications.downloads.channel).toBeNull();
+  });
+
+  it("accepts a v51 file and fills in notifications.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 51 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.notifications).toEqual(USER_CONFIG_DEFAULTS.notifications);
+  });
+
+  it("keeps a remembered download-notify channel and rejects an unknown one", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "telegram" } },
+      }).notifications.downloads.channel,
+    ).toBe("telegram");
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "off" } },
+      }).notifications.downloads.channel,
+    ).toBe("off");
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        notifications: { downloads: { channel: "pager" } },
+      }),
+    ).toThrow(/notifications\.downloads\.channel/);
+  });
+
+  it("applies atomicMail defaults when the section is absent, and accepts a v52 file", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).atomicMail,
+    ).toEqual(USER_CONFIG_DEFAULTS.atomicMail);
+    const parsed = parseUserConfigFile({ version: 52 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.atomicMail.address).toBeNull();
+  });
+
+  it("keeps a pending verification only when it is whole", () => {
+    const whole = {
+      email: "a@b.co",
+      codeHash: "ab".repeat(32),
+      expiresAt: "2026-09-09T00:00:00.000Z",
+    };
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        atomicMail: { pendingVerification: whole },
+      }).atomicMail.pendingVerification,
+    ).toEqual({ ...whole, attempts: 0 });
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        atomicMail: { pendingVerification: { email: "a@b.co" } },
+      }),
+    ).toThrow(/atomicMail\.pendingVerification/);
   });
 
   it("keeps discord.ownerUserId a string", () => {
@@ -1547,7 +1626,6 @@ describe("tui.whileBusySubmit", () => {
   });
 });
 
-
 describe("numeric coercion of string config values", () => {
   const base = { version: USER_CONFIG_VERSION };
 
@@ -1610,26 +1688,69 @@ describe("swarm units (config v52)", () => {
   });
 
   it("accepts a well-formed unit list and fills optional fields", () => {
-    const parsed = parseUserConfigFile({ ...base, swarm: { units: [unit, { ...unit, id: "g", kind: "discord", tokenEnv: "DISCORD_BOT_TOKEN_G", role: undefined, ownerUserId: null, enabled: undefined }] } });
+    const parsed = parseUserConfigFile({
+      ...base,
+      swarm: {
+        units: [
+          unit,
+          {
+            ...unit,
+            id: "g",
+            kind: "discord",
+            tokenEnv: "DISCORD_BOT_TOKEN_G",
+            role: undefined,
+            ownerUserId: null,
+            enabled: undefined,
+          },
+        ],
+      },
+    });
     expect(parsed.swarm.units).toEqual([
       unit,
-      { id: "g", kind: "discord", label: "Ops", role: "", enabled: false, tokenEnv: "DISCORD_BOT_TOKEN_G", ownerUserId: null },
+      {
+        id: "g",
+        kind: "discord",
+        label: "Ops",
+        role: "",
+        enabled: false,
+        tokenEnv: "DISCORD_BOT_TOKEN_G",
+        ownerUserId: null,
+      },
     ]);
   });
 
   it("rejects malformed units with the field named", () => {
     const bad = (patch: Record<string, unknown>) => () =>
-      parseUserConfigFile({ ...base, swarm: { units: [{ ...unit, ...patch }] } });
+      parseUserConfigFile({
+        ...base,
+        swarm: { units: [{ ...unit, ...patch }] },
+      });
     expect(bad({ id: "Ops Bot" })).toThrow(/swarm\.units\[0\]\.id/);
     expect(bad({ kind: "slack" })).toThrow(/swarm\.units\[0\]\.kind/);
     expect(bad({ label: "" })).toThrow(/swarm\.units\[0\]\.label/);
-    expect(bad({ tokenEnv: "lower-case" })).toThrow(/swarm\.units\[0\]\.tokenEnv/);
-    expect(bad({ ownerUserId: "not-a-number" })).toThrow(/swarm\.units\[0\]\.ownerUserId/);
-    expect(() => parseUserConfigFile({ ...base, swarm: { units: "nope" } })).toThrow(/swarm\.units/);
+    expect(bad({ tokenEnv: "lower-case" })).toThrow(
+      /swarm\.units\[0\]\.tokenEnv/,
+    );
+    expect(bad({ ownerUserId: "not-a-number" })).toThrow(
+      /swarm\.units\[0\]\.ownerUserId/,
+    );
+    expect(() =>
+      parseUserConfigFile({ ...base, swarm: { units: "nope" } }),
+    ).toThrow(/swarm\.units/);
   });
 
   it("rejects duplicate ids and duplicate token env names", () => {
-    expect(() => parseUserConfigFile({ ...base, swarm: { units: [unit, { ...unit, tokenEnv: "TELEGRAM_BOT_TOKEN_X" }] } })).toThrow(/duplicate id/);
-    expect(() => parseUserConfigFile({ ...base, swarm: { units: [unit, { ...unit, id: "two" }] } })).toThrow(/duplicate token env/);
+    expect(() =>
+      parseUserConfigFile({
+        ...base,
+        swarm: { units: [unit, { ...unit, tokenEnv: "TELEGRAM_BOT_TOKEN_X" }] },
+      }),
+    ).toThrow(/duplicate id/);
+    expect(() =>
+      parseUserConfigFile({
+        ...base,
+        swarm: { units: [unit, { ...unit, id: "two" }] },
+      }),
+    ).toThrow(/duplicate token env/);
   });
 });

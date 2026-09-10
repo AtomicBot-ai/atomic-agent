@@ -121,6 +121,12 @@ export function handleLlmPanelKey(
     openAddProvider(dispatch);
     return true;
   }
+  // `N` — reopen "tell me when it lands?" for the download in flight,
+  // or to change the remembered answer for the next ones.
+  if (input === "N") {
+    callbacks.onLocalModelsNotifyPromptRequested?.();
+    return true;
+  }
   if (input === "c") {
     dispatch({ type: "llm_mode_set", mode: "cloud" });
     openProviderConfig(state, dispatch);

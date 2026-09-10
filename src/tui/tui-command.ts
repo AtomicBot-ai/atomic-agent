@@ -633,6 +633,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.removeEmbeddingModel(id),
         onLocalModelsEmbeddingOnboardingResolved: (accept) =>
           void orchestrator.localModels.resolveEmbeddingOnboarding(accept),
+        onLocalModelsNotifyChoice: (choice) =>
+          orchestrator.localModels.chooseDownloadNotify(choice),
+        onLocalModelsNotifyDismissed: () =>
+          orchestrator.localModels.dismissDownloadNotify(),
+        onLocalModelsNotifyPromptRequested: () =>
+          orchestrator.localModels.openDownloadNotifyPrompt(),
         onLocalLlmLogsAutoRefreshStart: () =>
           orchestrator.localModels.startLogsAutoRefresh(),
         onLocalLlmLogsAutoRefreshStop: () =>

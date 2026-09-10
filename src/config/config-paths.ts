@@ -47,12 +47,20 @@ function buildIndex(): {
       const key = path.join(".");
       // Arrays and null are leaves: `null` is a real value in this schema
       // (tri-state toggles, "no override"), not an empty branch to descend.
-      if (value !== null && !Array.isArray(value) && typeof value === "object") {
+      if (
+        value !== null &&
+        !Array.isArray(value) &&
+        typeof value === "object"
+      ) {
         branches.add(key);
         walk(value as Record<string, unknown>, path);
         continue;
       }
-      leaves.set(key, { key, defaultValue: value, isArray: Array.isArray(value) });
+      leaves.set(key, {
+        key,
+        defaultValue: value,
+        isArray: Array.isArray(value),
+      });
     }
   };
   walk(USER_CONFIG_DEFAULTS as unknown as Record<string, unknown>, []);
@@ -123,7 +131,11 @@ function editDistance(a: string, b: string): number {
     current[0] = i;
     for (let j = 1; j <= b.length; j += 1) {
       const substitution = previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1);
-      current[j] = Math.min(previous[j]! + 1, current[j - 1]! + 1, substitution);
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        substitution,
+      );
     }
     [previous, current] = [current, previous];
   }
@@ -158,9 +170,7 @@ export function isSecretConfigKey(key: string): boolean {
   const words = last.split(/(?=[A-Z])/).map((word) => word.toLowerCase());
   if (words.some((word) => SECRET_NAMES.has(word))) return true;
   // `apiKey`/`apiKeyEnv`: the secret noun spans two camelCase words.
-  return words.some(
-    (word, i) => SECRET_NAMES.has(word + (words[i + 1] ?? "")),
-  );
+  return words.some((word, i) => SECRET_NAMES.has(word + (words[i + 1] ?? "")));
 }
 
 /** Render a value for `get`/`list`, masking anything secret-shaped. */

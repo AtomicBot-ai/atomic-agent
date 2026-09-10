@@ -22,7 +22,8 @@ const KEY_FIELD: IntegrationField = {
   envVar: "TEST_INTEGRATION_KEY",
   secret: true,
   required: true,
-  validate: (raw) => (raw.startsWith("ok_") ? undefined : "must start with ok_"),
+  validate: (raw) =>
+    raw.startsWith("ok_") ? undefined : "must start with ok_",
 };
 
 const PLAIN_FIELD: IntegrationField = {
@@ -61,7 +62,9 @@ describe("readFieldValue", () => {
 
   it("reads an unset or blank value as absent", () => {
     expect(readFieldValue(KEY_FIELD, {})).toBeUndefined();
-    expect(readFieldValue(KEY_FIELD, { TEST_INTEGRATION_KEY: "  " })).toBeUndefined();
+    expect(
+      readFieldValue(KEY_FIELD, { TEST_INTEGRATION_KEY: "  " }),
+    ).toBeUndefined();
   });
 });
 
@@ -164,9 +167,9 @@ describe("config-backed fields", () => {
 
   it("reads a numeric config value as a string", () => {
     // A hand-edited config may hold a number; the UI is string-shaped.
-    expect(readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: 7 } })).toBe(
-      "7",
-    );
+    expect(
+      readFieldValue(OWNER_FIELD, {}, { discord: { ownerUserId: 7 } }),
+    ).toBe("7");
   });
 
   it("reads an unset or null config value as absent", () => {
@@ -181,9 +184,13 @@ describe("config-backed fields", () => {
       ...DESCRIPTOR,
       fields: [OWNER_FIELD],
     };
-    const present = presentFieldKeys(descriptor, {}, {
-      discord: { ownerUserId: "123" },
-    });
+    const present = presentFieldKeys(
+      descriptor,
+      {},
+      {
+        discord: { ownerUserId: "123" },
+      },
+    );
     expect([...present]).toEqual(["ownerUserId"]);
   });
 

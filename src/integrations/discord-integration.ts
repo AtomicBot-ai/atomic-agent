@@ -27,12 +27,14 @@ const TOKEN_FIELD = "botToken";
  * same portal page, neither of which has this shape and both of which
  * would otherwise fail as an opaque 401 at connect.
  */
-const TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}$/;
+const TOKEN_SHAPE =
+  /^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}$/;
 
 export const discordIntegration: IntegrationDescriptor = {
   id: "discord",
   label: "Discord",
-  summary: "Drive the agent from Discord — DM the bot or @mention it in a channel",
+  summary:
+    "Drive the agent from Discord — DM the bot or @mention it in a channel",
   docsUrl: "https://discord.com/developers/applications",
   // Live since the hub stopped relying on `restart()`: the token is
   // resolved at start(), the kill switch and the owner have their own
@@ -102,8 +104,7 @@ export const discordIntegration: IntegrationDescriptor = {
     switch (ctx.channelStates?.get("discord")) {
       case "up":
         return { level: "connected", detail: "gateway connected" };
-      case "down":
-      {
+      case "down": {
         const reason = ctx.channelErrors?.get("discord");
         // Another process already running the channel is not a
         // failure -- the bot is up, just not served from here.

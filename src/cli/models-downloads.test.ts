@@ -14,15 +14,23 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, spawn: spawnMock };
 });
 
-import { getConfig, resetConfigCache } from "../config/index.js";
+import {
+  ensureUserConfigFileSync,
+  getConfig,
+  resetConfigCache,
+  writeUserConfigFileSync,
+} from "../config/index.js";
 import {
   downloadJobId,
+  getEmbeddingModelDef,
   readDownloadJob,
+  readDownloadNotify,
   writeDownloadJob,
+  writeDownloadNotify,
   type DownloadJob,
 } from "../local-llm/index.js";
 import { modelsCommand } from "./models-command.js";
-import { followDownloadJob } from "./models-downloads.js";
+import { followDownloadJob, runLocalModelsPullWorker } from "./models-downloads.js";
 
 const DEAD_PID = 2_000_000_000;
 
@@ -41,8 +49,10 @@ function job(patch: Partial<DownloadJob> = {}): DownloadJob {
     transferredBytes: 4_000_000,
     totalBytes: 10_000_000,
     error: null,
+    waiting: null,
+    resumable: false,
     startedAt: "2026-09-07T10:00:00.000Z",
-    updatedAt: "2026-09-07T10:00:05.000Z",
+    updatedAt: new Date().toISOString(),
     finishedAt: null,
     ...patch,
   };
@@ -130,6 +140,112 @@ describe("background model downloads (CLI)", () => {
     expect(embLine).toMatch(/\bdone\b/);
     // Newest start first.
     expect(lines.indexOf(embLine!)).toBeLessThan(lines.indexOf(chatLine!));
+  });
+
+  it("models pull --background --notify arms the ping and says so", async () => {
+    vi.spyOn(process, "execPath", "get").mockReturnValue("/opt/node/bin/node");
+    vi.spyOn(process, "argv", "get").mockReturnValue(["/opt/node/bin/node", "/repo/dist/cli/index.js"]);
+    spawnMock.mockReset();
+    spawnMock.mockReturnValue({ pid: DEAD_PID, unref: vi.fn() } as unknown as ChildProcess);
+
+    const code = await modelsCommand(["pull", "--background", "--notify", "discord", "qwen-3.5-4b"]);
+
+    expect(code).toBe(0);
+    expect(readDownloadNotify(dataDir, downloadJobId("chat", "qwen-3.5-4b"))).toBe("discord");
+    expect(stdoutChunks.join("")).toMatch(/ping:\s+discord when it lands/);
+  });
+
+  it("--notify rejects what it cannot deliver and demands --background", async () => {
+    vi.spyOn(process, "execPath", "get").mockReturnValue("/opt/node/bin/node");
+    vi.spyOn(process, "argv", "get").mockReturnValue(["/opt/node/bin/node", "/repo/dist/cli/index.js"]);
+    spawnMock.mockReset();
+    spawnMock.mockReturnValue({ pid: DEAD_PID, unref: vi.fn() } as unknown as ChildProcess);
+
+    expect(await modelsCommand(["pull", "--notify", "telegram", "qwen-3.5-4b"])).toBe(2);
+    expect(stderrChunks.join("")).toMatch(/only applies to a background pull/);
+    await expect(modelsCommand(["pull", "--background", "qwen-3.5-4b", "--notify"])).rejects.toThrow(/got nothing/);
+    await expect(modelsCommand(["pull", "--background", "--notify=pager", "qwen-3.5-4b"])).rejects.toThrow(
+      /telegram, discord, email or off/,
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("--notify on a pull that is already running re-arms the live job", async () => {
+    writeDownloadJob(dataDir, job({ pid: process.pid }));
+    const pending = modelsCommand(["pull", "--background", "--notify", "discord", "qwen-3.5-4b"]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(readDownloadNotify(dataDir, job().id)).toBe("discord");
+    // Let the follower see the job end.
+    writeDownloadJob(dataDir, job({ status: "done", percent: 100 }));
+    expect(await pending).toBe(0);
+    expect(stderrChunks.join("")).toMatch(/ping: discord when it lands/);
+  });
+
+  it("models downloads shows where a job will report, and how the ping went", async () => {
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID }));
+    writeDownloadNotify(dataDir, job().id, "telegram");
+    writeDownloadJob(
+      dataDir,
+      job({
+        id: "chat-qwen-3.5-9b",
+        modelId: "qwen-3.5-9b",
+        status: "done",
+        percent: 100,
+        startedAt: "2026-09-07T09:00:00.000Z",
+        notified: { channel: "discord", outcome: "failed", reason: "Unauthorized", at: "2026-09-07T09:30:00.000Z" },
+      }),
+    );
+    const code = await modelsCommand(["downloads"]);
+    expect(code).toBe(0);
+    const lines = stdoutChunks.join("").split("\n");
+    expect(lines.find((l) => l.startsWith("chat-qwen-3.5-4b"))).toMatch(/→ telegram$/);
+    expect(lines.find((l) => l.startsWith("chat-qwen-3.5-9b"))).toMatch(/→ discord ✗ Unauthorized$/);
+  });
+
+  it("the worker pings the armed channel when the job lands, and logs the outcome", async () => {
+    // Credentials as the hub stores them: token in the environment
+    // (`.env` is merged by loadConfig), owner id in config.json.
+    const configPath = getConfig().paths.userConfigFile;
+    const prev = ensureUserConfigFileSync(configPath);
+    writeUserConfigFileSync(configPath, {
+      ...prev,
+      telegram: { ...prev.telegram, ownerUserId: 4242 },
+    });
+    resetConfigCache();
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+    const emb = getEmbeddingModelDef("nomic-embed-text-v1.5");
+    const jobId = downloadJobId("embedding", emb.id);
+    writeDownloadNotify(dataDir, jobId, "telegram");
+
+    const telegramBodies: Record<string, unknown>[] = [];
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("api.telegram.org")) {
+        telegramBodies.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("gguf", { status: 200, headers: { "content-length": "4" } });
+    }) as typeof fetch;
+    try {
+      const code = await runLocalModelsPullWorker(["embedding", emb.id, "gguf-only"]);
+      expect(code).toBe(0);
+    } finally {
+      globalThis.fetch = prevFetch;
+      delete process.env.TELEGRAM_BOT_TOKEN;
+    }
+
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({ chat_id: 4242 });
+    expect(String(telegramBodies[0].text)).toMatch(/Model ready: nomic/i);
+    expect(stdoutChunks.join("")).toMatch(/notify telegram sent/);
+    expect(readDownloadJob(dataDir, jobId)).toMatchObject({
+      status: "done",
+      notified: { channel: "telegram", outcome: "sent", reason: null },
+    });
   });
 
   it("models downloads cancel on a job that is not running says so and succeeds", async () => {

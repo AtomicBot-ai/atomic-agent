@@ -11,7 +11,10 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
-import { createAgentRuntime, managedLocalLlmHealthFailureHint } from "./bootstrap.js";
+import {
+  createAgentRuntime,
+  managedLocalLlmHealthFailureHint,
+} from "./bootstrap.js";
 import {
   getConfig,
   getUserConfigPath,
@@ -28,10 +31,7 @@ import {
   buildSearchCacheKey,
   createPersistentSearchCache,
 } from "../tools/os/web-search/transport/index.js";
-import type {
-  BotFactory,
-  BotInstance,
-} from "../channels/telegram/index.js";
+import type { BotFactory, BotInstance } from "../channels/telegram/index.js";
 import type {
   ApprovalGate,
   ApprovalRequest,
@@ -70,7 +70,9 @@ class FakeBackend implements BrowserBackend {
       text: "url: https://example.com/\ntitle: Example\n",
     };
   }
-  async navigate(input: NavigateInput): Promise<{ url: string; title: string }> {
+  async navigate(
+    input: NavigateInput,
+  ): Promise<{ url: string; title: string }> {
     return { url: input.url, title: "Example" };
   }
   async click(input: ClickInput): Promise<{ clickedRef: string }> {
@@ -128,7 +130,10 @@ describe("createAgentRuntime", () => {
       },
     });
     try {
-      const names = runtime.toolRegistry.list().map((t) => t.name).sort();
+      const names = runtime.toolRegistry
+        .list()
+        .map((t) => t.name)
+        .sort();
       expect(names).toContain("finish");
       expect(names).toContain("browser.navigate");
       expect(names).toContain("browser.click");
@@ -538,7 +543,9 @@ describe("createAgentRuntime", () => {
             approved: true,
             // Only grant a shape for the git binary; deny-by-approve the
             // rest so a second unrelated binary still prompts.
-            ...(request.commandShape === "git" ? { grant: "shape" as const } : {}),
+            ...(request.commandShape === "git"
+              ? { grant: "shape" as const }
+              : {}),
           });
         },
       },
@@ -663,7 +670,12 @@ describe("createAgentRuntime", () => {
               reasoningContent: "",
               stop: true,
               truncated: false,
-              timing: { promptMs: 0, predictedMs: 0, promptTokens: 1, predictedTokens: 1 },
+              timing: {
+                promptMs: 0,
+                predictedMs: 0,
+                promptTokens: 1,
+                predictedTokens: 1,
+              },
               cacheHitTokens: 0,
               slotId: params.slotId,
               modelId: null,
@@ -677,7 +689,12 @@ describe("createAgentRuntime", () => {
               reasoningContent: "",
               stop: true,
               truncated: false,
-              timing: { promptMs: 0, predictedMs: 0, promptTokens: 1, predictedTokens: 1 },
+              timing: {
+                promptMs: 0,
+                predictedMs: 0,
+                promptTokens: 1,
+                predictedTokens: 1,
+              },
               cacheHitTokens: 0,
               slotId: -1,
               modelId: null,
@@ -689,7 +706,12 @@ describe("createAgentRuntime", () => {
             reasoningContent: "",
             stop: true,
             truncated: false,
-            timing: { promptMs: 0, predictedMs: 0, promptTokens: 5, predictedTokens: 3 },
+            timing: {
+              promptMs: 0,
+              predictedMs: 0,
+              promptTokens: 5,
+              predictedTokens: 3,
+            },
             cacheHitTokens: 0,
             slotId: params.slotId,
             modelId: null,
@@ -714,7 +736,9 @@ describe("createAgentRuntime", () => {
         "user",
         "assistant_reply",
       ]);
-      expect((second.session.turns[1] as { text: string }).text).toBe("hi back");
+      expect((second.session.turns[1] as { text: string }).text).toBe(
+        "hi back",
+      );
       expect((second.session.turns[3] as { text: string }).text).toBe(
         "second answer",
       );
@@ -749,7 +773,10 @@ describe("createAgentRuntime", () => {
       const result = await runtime.runTurn(session, "hello", { maxSteps: 5 });
       expect(result.reason).toBe("reply");
       expect(result.session.turnCount).toBe(1);
-      expect(result.session.turns[0]).toMatchObject({ kind: "user", text: "hello" });
+      expect(result.session.turns[0]).toMatchObject({
+        kind: "user",
+        text: "hello",
+      });
       expect(result.session.turns.at(-1)).toMatchObject({
         kind: "assistant_reply",
         text: "hi back",
@@ -904,8 +931,12 @@ describe("createAgentRuntime", () => {
   });
 
   it("managedLocalLlmHealthFailureHint documents CLI daemon control", () => {
-    expect(managedLocalLlmHealthFailureHint(18991)).toContain("atomic-agent models start");
-    expect(managedLocalLlmHealthFailureHint(18991)).toContain("127.0.0.1:18991");
+    expect(managedLocalLlmHealthFailureHint(18991)).toContain(
+      "atomic-agent models start",
+    );
+    expect(managedLocalLlmHealthFailureHint(18991)).toContain(
+      "127.0.0.1:18991",
+    );
   });
 
   // -----------------------------------------------------------------
@@ -952,7 +983,10 @@ describe("createAgentRuntime", () => {
   /** Spin until `predicate` is true or `timeoutMs` elapses. */
   async function waitFor(
     predicate: () => boolean,
-    { timeoutMs = 1000, stepMs = 5 }: { timeoutMs?: number; stepMs?: number } = {},
+    {
+      timeoutMs = 1000,
+      stepMs = 5,
+    }: { timeoutMs?: number; stepMs?: number } = {},
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!predicate()) {
@@ -1019,7 +1053,8 @@ describe("createAgentRuntime", () => {
   it("telegramChannel reaches `up` when enabled and a fake bot factory is wired", async () => {
     enableTelegramInConfig();
     const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-    process.env.TELEGRAM_BOT_TOKEN = "1234:test-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    process.env.TELEGRAM_BOT_TOKEN =
+      "1234:test-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const statuses: ChannelStatus[] = [];
     const { factory } = makeFakeBotFactory();
     try {
@@ -1051,7 +1086,8 @@ describe("createAgentRuntime", () => {
   it("shutdown stops the Telegram channel before closing the session store", async () => {
     enableTelegramInConfig();
     const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-    process.env.TELEGRAM_BOT_TOKEN = "1234:test-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    process.env.TELEGRAM_BOT_TOKEN =
+      "1234:test-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const { factory, stopSpy } = makeFakeBotFactory();
     try {
       const runtime = await createAgentRuntime({
@@ -1106,11 +1142,15 @@ describe("createAgentRuntime", () => {
       },
     });
     try {
-      const result = await runtime.runTurn(runtime.createSession(), "hello", { maxSteps: 2 });
+      const result = await runtime.runTurn(runtime.createSession(), "hello", {
+        maxSteps: 2,
+      });
       expect(result.reason).toBe("reply");
       expect(runtime.grammar).toContain("root ::= tool-call");
       const warnings = logs.filter(
-        (record) => record.level === "warn" && record.message === "model profile probe failed; using plain fallback",
+        (record) =>
+          record.level === "warn" &&
+          record.message === "model profile probe failed; using plain fallback",
       );
       expect(warnings).toHaveLength(1);
     } finally {
@@ -1145,7 +1185,10 @@ describe("createAgentRuntime steering", () => {
     const runtime = await createAgentRuntime({
       workingDir,
       approvalLevel: 5,
-      overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+      },
     });
     try {
       const session = runtime.createSession();
@@ -1162,7 +1205,10 @@ describe("createAgentRuntime steering", () => {
     const runtime = await createAgentRuntime({
       workingDir,
       approvalLevel: 5,
-      overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+      },
     });
     try {
       const session = runtime.createSession();
@@ -1189,7 +1235,9 @@ describe("createAgentRuntime steering", () => {
       release();
       await inFlight;
       // Still pending: only the agent loop drains it.
-      expect(runtime.steeringInbox.drain(session.id)).toEqual(["change course"]);
+      expect(runtime.steeringInbox.drain(session.id)).toEqual([
+        "change course",
+      ]);
     } finally {
       await runtime.shutdown();
     }
@@ -1316,7 +1364,10 @@ describe("createAgentRuntime steering", () => {
     const runtime = await createAgentRuntime({
       workingDir,
       approvalLevel: 5,
-      overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+      },
     });
     const session = runtime.createSession();
     runtime.steeringInbox.open(session.id);
@@ -1334,10 +1385,14 @@ function completion(content: string): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 10,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: "mock",
   };
 }
-

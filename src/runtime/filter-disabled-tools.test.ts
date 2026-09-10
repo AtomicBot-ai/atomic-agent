@@ -20,10 +20,13 @@ const ALL_OPEN: ToolGateConfig = {
   tasks: { agentToolsEnabled: true },
   mcp: { enabled: true },
   github: { connected: true },
+  email: { available: true },
 };
 
 function nameSet(
-  result: readonly { name: string }[] | ReturnType<typeof filterToolDescriptorsByConfig>,
+  result:
+    | readonly { name: string }[]
+    | ReturnType<typeof filterToolDescriptorsByConfig>,
 ): Set<string> {
   return new Set(Array.from(result, (d) => d.name));
 }
@@ -146,6 +149,7 @@ describe("filterToolDescriptorsByConfig", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       ...ALL_OPEN,
       mcp: { enabled: false },
+      email: { available: false },
     });
     const names = nameSet(filtered);
     for (const dropped of GATED_TOOL_NAMES.mcp) {
@@ -167,6 +171,7 @@ describe("filterToolDescriptorsByConfig", () => {
       tasks: { agentToolsEnabled: false },
       mcp: { enabled: false },
       github: { connected: false },
+      email: { available: false },
     });
     const names = nameSet(filtered);
     const allGated = [
@@ -203,5 +208,25 @@ describe("filterToolDescriptorsByConfig", () => {
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);
     }
+  });
+});
+
+describe("e-mail gate", () => {
+  it("drops os.email.* from the prefix when no inbox is registered, keeps them otherwise", () => {
+    const withInbox = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN),
+    );
+    expect(withInbox.has("os.email.inbox")).toBe(true);
+    expect(withInbox.has("os.email.send")).toBe(true);
+    const without = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        email: { available: false },
+      }),
+    );
+    expect(without.has("os.email.inbox")).toBe(false);
+    expect(without.has("os.email.send")).toBe(false);
+    // Nothing else moves with it.
+    expect(without.size).toBe(withInbox.size - 2);
   });
 });

@@ -21,7 +21,10 @@ export type ModelDownloadOptions = Pick<
   "onProgress" | "onRetry" | "signal"
 >;
 
-export function isModelDownloaded(dataDir: string, model: LocalModelDef): boolean {
+export function isModelDownloaded(
+  dataDir: string,
+  model: LocalModelDef,
+): boolean {
   return existsSync(resolveModelFilePath(dataDir, model.id, model.filename));
 }
 

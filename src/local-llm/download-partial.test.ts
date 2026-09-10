@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,7 +40,12 @@ describe("download-partial ranges", () => {
   });
 
   it("sumRanges counts bytes", () => {
-    expect(sumRanges([[0, 10], [20, 25]])).toBe(15);
+    expect(
+      sumRanges([
+        [0, 10],
+        [20, 25],
+      ]),
+    ).toBe(15);
     expect(sumRanges([])).toBe(0);
   });
 
@@ -102,7 +113,12 @@ describe("download-partial sidecar", () => {
     writeFileSync(resolvePartialPath(dest), "abcde");
     writeFileSync(
       resolvePartialMetaPath(dest),
-      JSON.stringify({ url: "https://example.com/x", total: 10, etag: null, lastModified: null }),
+      JSON.stringify({
+        url: "https://example.com/x",
+        total: 10,
+        etag: null,
+        lastModified: null,
+      }),
     );
     const meta = readPartialMeta(dest);
     expect(meta?.done).toBeNull();
@@ -115,7 +131,12 @@ describe("download-partial sidecar", () => {
     writeFileSync(resolvePartialPath(dest), "toolongforthis");
     writeFileSync(
       resolvePartialMetaPath(dest),
-      JSON.stringify({ url: "https://example.com/x", total: 4, etag: null, lastModified: null }),
+      JSON.stringify({
+        url: "https://example.com/x",
+        total: 4,
+        etag: null,
+        lastModified: null,
+      }),
     );
     expect(completedRanges(dest, readPartialMeta(dest)!)).toEqual([]);
     expect(readPartialDownload(dest)).toBeNull();
@@ -125,7 +146,12 @@ describe("download-partial sidecar", () => {
     const dest = join(dir, "out.bin");
     writeFileSync(
       resolvePartialMetaPath(dest),
-      JSON.stringify({ version: 2, source: "https://example.com/x", total: 8, done: [[4, 2]] }),
+      JSON.stringify({
+        version: 2,
+        source: "https://example.com/x",
+        total: 8,
+        done: [[4, 2]],
+      }),
     );
     expect(readPartialMeta(dest)).toBeNull();
     writeFileSync(resolvePartialMetaPath(dest), "{ not json");

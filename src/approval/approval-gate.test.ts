@@ -23,7 +23,10 @@ describe("ApprovalGate", () => {
       category: "shell",
       reason: "r",
     });
-    const denied = gate.denyPendingForSession("s-leaving", "operator switched away");
+    const denied = gate.denyPendingForSession(
+      "s-leaving",
+      "operator switched away",
+    );
     expect(denied).toBe(1);
     const decision = await mine;
     expect(decision.approved).toBe(false);
@@ -60,7 +63,9 @@ describe("ApprovalGate", () => {
     const gate = new ApprovalGate({
       emit: (req) => {
         capturedId = req.approvalId;
-        setImmediate(() => gate.resolve({ approvalId: req.approvalId, approved: true }));
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        );
       },
     });
     const decision = await gate.request({
@@ -187,7 +192,12 @@ describe("ApprovalGate", () => {
         );
       },
     });
-    const shell = { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" } as const;
+    const shell = {
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
+    } as const;
     await gate.request(shell);
     await gate.request(shell);
     expect(emitted).toBe(2);
@@ -200,12 +210,19 @@ describe("ApprovalGate", () => {
       emit: (req) => {
         emitted += 1;
         setImmediate(() =>
-          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+          gate.resolve({
+            approvalId: req.approvalId,
+            approved: true,
+            grant: "category",
+          }),
         );
       },
     });
     const first = await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
     });
     expect(first.approved).toBe(true);
     expect(emitted).toBe(1);
@@ -213,7 +230,10 @@ describe("ApprovalGate", () => {
 
     // Same category: silent, no new prompt.
     const second = await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
     });
     expect(second.approved).toBe(true);
     expect(second.reason).toBe("auto-approved (session grant)");
@@ -221,7 +241,10 @@ describe("ApprovalGate", () => {
 
     // Different category: still asks.
     const other = await gate.request({
-      sessionId: "s", tool: "os.http.request", category: "http", reason: "r",
+      sessionId: "s",
+      tool: "os.http.request",
+      category: "http",
+      reason: "r",
     });
     expect(other.approved).toBe(true);
     expect(emitted).toBe(2);
@@ -233,19 +256,29 @@ describe("ApprovalGate", () => {
       emit: (req) => {
         emitted += 1;
         setImmediate(() =>
-          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "shape" }),
+          gate.resolve({
+            approvalId: req.approvalId,
+            approved: true,
+            grant: "shape",
+          }),
         );
       },
     });
     await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
       commandShape: "git",
     });
     expect(gate.sessionGrants().shapes).toEqual(["git"]);
     expect(gate.sessionGrants().categories).toEqual([]);
 
     const sameShape = await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
       commandShape: "git",
     });
     expect(sameShape.approved).toBe(true);
@@ -253,7 +286,10 @@ describe("ApprovalGate", () => {
     expect(emitted).toBe(1);
 
     const otherShape = await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
       commandShape: "curl",
     });
     expect(otherShape.approved).toBe(true);
@@ -266,12 +302,19 @@ describe("ApprovalGate", () => {
       emit: (req) => {
         emitted += 1;
         setImmediate(() =>
-          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+          gate.resolve({
+            approvalId: req.approvalId,
+            approved: true,
+            grant: "category",
+          }),
         );
       },
     });
     const trust = {
-      sessionId: "s", tool: "os.fs.write", category: "trust_config", reason: "config write",
+      sessionId: "s",
+      tool: "os.fs.write",
+      category: "trust_config",
+      reason: "config write",
     } as const;
     await gate.request(trust);
     expect(gate.sessionGrants().categories).toEqual([]);
@@ -284,10 +327,19 @@ describe("ApprovalGate", () => {
   it("clearSessionGrants drops grants but leaves the standing level", async () => {
     const gate = new ApprovalGate({
       emit: (req) =>
-        gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+        gate.resolve({
+          approvalId: req.approvalId,
+          approved: true,
+          grant: "category",
+        }),
       level: 3,
     });
-    await gate.request({ sessionId: "s", tool: "t", category: "shell", reason: "r" });
+    await gate.request({
+      sessionId: "s",
+      tool: "t",
+      category: "shell",
+      reason: "r",
+    });
     expect(gate.sessionGrants().categories).toEqual(["shell"]);
     gate.clearSessionGrants();
     expect(gate.sessionGrants().categories).toEqual([]);
@@ -301,17 +353,28 @@ describe("ApprovalGate", () => {
       emit: (req) => {
         emitted += 1;
         setImmediate(() =>
-          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "shape" }),
+          gate.resolve({
+            approvalId: req.approvalId,
+            approved: true,
+            grant: "shape",
+          }),
         );
       },
     });
     await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r", commandShape: "git",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
+      commandShape: "git",
     });
     // A shell request without a shape (unusual, but defensive) must not
     // ride the shape grant; it still prompts.
     const noShape = await gate.request({
-      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
     });
     expect(noShape.approved).toBe(true);
     expect(emitted).toBe(2);
@@ -353,7 +416,10 @@ describe("ApprovalGate", () => {
     });
     // Session A grants the shell category.
     await gate.request({
-      sessionId: "A", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "A",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
     });
     expect(gate.sessionGrants("A").categories).toEqual(["shell"]);
     expect(emitted).toBe(1);
@@ -361,7 +427,10 @@ describe("ApprovalGate", () => {
     // A background-task turn on a *different* session shares the same gate
     // but must NOT ride A's grant — it still prompts.
     const taskTurn = await gate.request({
-      sessionId: "B", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "B",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
     });
     expect(taskTurn.approved).toBe(true);
     expect(emitted).toBe(2);
@@ -384,12 +453,18 @@ describe("ApprovalGate", () => {
       },
     });
     await gate.request({
-      sessionId: "A", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "A",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
       commandShape: "git",
     });
     // Same binary, different session → still prompts.
     const otherSession = await gate.request({
-      sessionId: "B", tool: "os.shell.run", category: "shell", reason: "r",
+      sessionId: "B",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
       commandShape: "git",
     });
     expect(otherSession.approved).toBe(true);
@@ -405,8 +480,18 @@ describe("ApprovalGate", () => {
           grant: "category",
         }),
     });
-    await gate.request({ sessionId: "A", tool: "t", category: "shell", reason: "r" });
-    await gate.request({ sessionId: "B", tool: "t", category: "http", reason: "r" });
+    await gate.request({
+      sessionId: "A",
+      tool: "t",
+      category: "shell",
+      reason: "r",
+    });
+    await gate.request({
+      sessionId: "B",
+      tool: "t",
+      category: "http",
+      reason: "r",
+    });
     // No-arg snapshot unions across sessions; per-session snapshot is isolated.
     expect(gate.sessionGrants().categories.slice().sort()).toEqual([
       "http",
@@ -425,20 +510,33 @@ describe("ApprovalGate", () => {
 
   it("canGrantCategory / canGrantShape gate the prompt's [s] / [a] offer", () => {
     const shellWithShape = {
-      approvalId: "x", sessionId: "s", tool: "os.shell.run",
-      category: "shell", reason: "r", commandShape: "git",
+      approvalId: "x",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
+      commandShape: "git",
     } as const;
     const shellNoShape = {
-      approvalId: "x", sessionId: "s", tool: "os.shell.run",
-      category: "shell", reason: "r",
+      approvalId: "x",
+      sessionId: "s",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "r",
     } as const;
     const httpReq = {
-      approvalId: "x", sessionId: "s", tool: "os.http.request",
-      category: "http", reason: "r",
+      approvalId: "x",
+      sessionId: "s",
+      tool: "os.http.request",
+      category: "http",
+      reason: "r",
     } as const;
     const trust = {
-      approvalId: "x", sessionId: "s", tool: "os.fs.write",
-      category: "trust_config", reason: "r",
+      approvalId: "x",
+      sessionId: "s",
+      tool: "os.fs.write",
+      category: "trust_config",
+      reason: "r",
     } as const;
 
     // [s] offered for any grantable category, never for trust_config.
@@ -462,7 +560,11 @@ describe("ApprovalGate", () => {
 // until the whole turn was torn down.
 describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
   /** An AbortSignal wrapper that counts currently-attached listeners. */
-  function countingSignal(): { signal: AbortSignal; live: () => number; abort: () => void } {
+  function countingSignal(): {
+    signal: AbortSignal;
+    live: () => number;
+    abort: () => void;
+  } {
     const controller = new AbortController();
     const real = controller.signal;
     let live = 0;
@@ -470,7 +572,11 @@ describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
       get aborted() {
         return real.aborted;
       },
-      addEventListener(type: string, fn: EventListener, opts?: AddEventListenerOptions) {
+      addEventListener(
+        type: string,
+        fn: EventListener,
+        opts?: AddEventListenerOptions,
+      ) {
         live += 1;
         real.addEventListener(type, fn, opts);
       },
@@ -486,12 +592,20 @@ describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
     const { signal, live } = countingSignal();
     const gate = new ApprovalGate({
       emit: (req) =>
-        setImmediate(() => gate.resolve({ approvalId: req.approvalId, approved: true })),
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        ),
     });
     // One turn-lifetime signal, many gated tool calls.
     for (let i = 0; i < 20; i += 1) {
       const decision = await gate.request(
-        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r", preview: `cmd ${i}` },
+        {
+          sessionId: "s",
+          tool: "os.shell.run",
+          category: "shell",
+          reason: "r",
+          preview: `cmd ${i}`,
+        },
         { signal },
       );
       expect(decision.approved).toBe(true);
@@ -507,7 +621,12 @@ describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
     });
     for (let i = 0; i < 5; i += 1) {
       const decision = await gate.request(
-        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" },
+        {
+          sessionId: "s",
+          tool: "os.shell.run",
+          category: "shell",
+          reason: "r",
+        },
         { signal },
       );
       expect(decision.approved).toBe(false);
@@ -520,7 +639,12 @@ describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
     const gate = new ApprovalGate({ emit: () => setImmediate(abort) });
     await expect(
       gate.request(
-        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" },
+        {
+          sessionId: "s",
+          tool: "os.shell.run",
+          category: "shell",
+          reason: "r",
+        },
         { signal },
       ),
     ).rejects.toThrow(/aborted/);
@@ -533,7 +657,12 @@ describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
     const gate = new ApprovalGate({ emit: () => {} });
     await expect(
       gate.request(
-        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" },
+        {
+          sessionId: "s",
+          tool: "os.shell.run",
+          category: "shell",
+          reason: "r",
+        },
         { signal },
       ),
     ).rejects.toThrow(/aborted/);

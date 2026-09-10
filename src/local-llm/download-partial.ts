@@ -79,7 +79,10 @@ export function sumRanges(ranges: readonly ByteRange[]): number {
 }
 
 /** The complement of `done` (already merged) inside `[0, total)`. */
-export function holesIn(done: readonly ByteRange[], total: number): ByteRange[] {
+export function holesIn(
+  done: readonly ByteRange[],
+  total: number,
+): ByteRange[] {
   const holes: ByteRange[] = [];
   let cursor = 0;
   for (const [start, end] of done) {
@@ -122,9 +125,11 @@ export function readPartialMeta(destPath: string): PartialDownloadMeta | null {
     const raw = JSON.parse(
       fs.readFileSync(resolvePartialMetaPath(destPath), "utf-8"),
     ) as Record<string, unknown>;
-    const total = typeof raw.total === "number" && raw.total > 0 ? raw.total : 0;
+    const total =
+      typeof raw.total === "number" && raw.total > 0 ? raw.total : 0;
     const etag = typeof raw.etag === "string" ? raw.etag : null;
-    const lastModified = typeof raw.lastModified === "string" ? raw.lastModified : null;
+    const lastModified =
+      typeof raw.lastModified === "string" ? raw.lastModified : null;
     if (raw.version === PARTIAL_META_VERSION) {
       if (typeof raw.source !== "string") return null;
       const done = parseRanges(raw.done);
@@ -142,7 +147,10 @@ export function readPartialMeta(destPath: string): PartialDownloadMeta | null {
  * Written atomically: a process killed mid-write must leave the previous
  * sidecar, not half a JSON document that reads as "no partial".
  */
-export function writePartialMeta(destPath: string, meta: PartialDownloadMeta): void {
+export function writePartialMeta(
+  destPath: string,
+  meta: PartialDownloadMeta,
+): void {
   const path = resolvePartialMetaPath(destPath);
   const tmp = `${path}.tmp`;
   fs.writeFileSync(

@@ -108,7 +108,9 @@ function lookupOnPath(
   if (pathVar.length === 0) return null;
   const segments = pathVar.split(delimiter);
   const candidates =
-    platform === "win32" ? [binaryName, "rg.exe", "rg.cmd", "rg.bat"] : [binaryName];
+    platform === "win32"
+      ? [binaryName, "rg.exe", "rg.cmd", "rg.bat"]
+      : [binaryName];
   for (const segment of segments) {
     if (segment.length === 0) continue;
     for (const name of candidates) {

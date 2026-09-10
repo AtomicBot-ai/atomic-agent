@@ -37,14 +37,18 @@ describe("models-catalog", () => {
   // reasoning marker `detectModelProfile` keys on) — not a silent field.
   it("ships no chat template override on any catalog entry", () => {
     for (const def of LOCAL_MODELS_CATALOG) {
-      expect(def.chatTemplateAsset, `${def.id} must not override its chat template`)
-        .toBeUndefined();
+      expect(
+        def.chatTemplateAsset,
+        `${def.id} must not override its chat template`,
+      ).toBeUndefined();
     }
   });
 
   it("throws on unknown id", () => {
     expect(() =>
-      getLocalModelDef("not-a-model" as import("./models-catalog.js").LocalModelId),
+      getLocalModelDef(
+        "not-a-model" as import("./models-catalog.js").LocalModelId,
+      ),
     ).toThrow(/unknown local model id/);
   });
 

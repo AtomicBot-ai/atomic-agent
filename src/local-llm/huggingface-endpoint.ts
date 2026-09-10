@@ -11,7 +11,11 @@
  */
 export const DEFAULT_HF_ENDPOINT = "https://huggingface.co";
 
-const CANONICAL_HOSTS = ["https://huggingface.co", "https://hf.co", "https://www.huggingface.co"];
+const CANONICAL_HOSTS = [
+  "https://huggingface.co",
+  "https://hf.co",
+  "https://www.huggingface.co",
+];
 
 let configuredEndpoint = DEFAULT_HF_ENDPOINT;
 
@@ -30,7 +34,8 @@ export function normalizeHuggingFaceEndpoint(raw: string): string | null {
 
 /** Push-in from config load (`localModels.download.hfEndpoint`). */
 export function setDefaultHuggingFaceEndpoint(endpoint: string): void {
-  configuredEndpoint = normalizeHuggingFaceEndpoint(endpoint) ?? DEFAULT_HF_ENDPOINT;
+  configuredEndpoint =
+    normalizeHuggingFaceEndpoint(endpoint) ?? DEFAULT_HF_ENDPOINT;
 }
 
 /** `HF_ENDPOINT` env var first, then the configured value. */
@@ -46,7 +51,10 @@ export function resolveHuggingFaceEndpoint(): string {
 /** Whether `url` names Hugging Face — canonically or via the active endpoint. */
 export function isHuggingFaceUrl(url: string): boolean {
   const endpoint = resolveHuggingFaceEndpoint();
-  return CANONICAL_HOSTS.some((h) => url.startsWith(`${h}/`)) || url.startsWith(`${endpoint}/`);
+  return (
+    CANONICAL_HOSTS.some((h) => url.startsWith(`${h}/`)) ||
+    url.startsWith(`${endpoint}/`)
+  );
 }
 
 /**
@@ -58,7 +66,8 @@ export function rewriteHuggingFaceUrl(url: string): string {
   const endpoint = resolveHuggingFaceEndpoint();
   if (endpoint === DEFAULT_HF_ENDPOINT) return url;
   for (const host of CANONICAL_HOSTS) {
-    if (url.startsWith(`${host}/`)) return `${endpoint}${url.slice(host.length)}`;
+    if (url.startsWith(`${host}/`))
+      return `${endpoint}${url.slice(host.length)}`;
   }
   return url;
 }

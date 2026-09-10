@@ -36,7 +36,12 @@ function completion(content: string): CompletionResult {
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 10,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: "mock",
@@ -89,7 +94,10 @@ describe("runTurn queued behind a foreign turn", () => {
           // while the second caller enqueues with its stale snapshot.
           if (inferences === 1) await foreignTurnGate;
           return completion(
-            JSON.stringify({ tool: "reply", args: { text: `reply ${inferences}` } }),
+            JSON.stringify({
+              tool: "reply",
+              args: { text: `reply ${inferences}` },
+            }),
           );
         },
       },

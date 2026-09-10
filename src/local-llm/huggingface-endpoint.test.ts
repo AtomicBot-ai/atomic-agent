@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { downloadFile, resolvePartialMetaPath, resolvePartialPath } from "./download-file.js";
+import {
+  downloadFile,
+  resolvePartialMetaPath,
+  resolvePartialPath,
+} from "./download-file.js";
 import { listHuggingFaceGgufFiles } from "./huggingface-api.js";
 import {
   DEFAULT_HF_ENDPOINT,
@@ -16,7 +20,8 @@ import {
   setDefaultHuggingFaceEndpoint,
 } from "./huggingface-endpoint.js";
 
-const CANONICAL = "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf";
+const CANONICAL =
+  "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf";
 
 describe("huggingface-endpoint", () => {
   let prevEnv: string | undefined;
@@ -34,9 +39,15 @@ describe("huggingface-endpoint", () => {
   });
 
   it("normalizes to an origin, dropping trailing slashes and rejecting junk", () => {
-    expect(normalizeHuggingFaceEndpoint("https://hf-mirror.com/")).toBe("https://hf-mirror.com");
-    expect(normalizeHuggingFaceEndpoint("  http://localhost:8080//  ")).toBe("http://localhost:8080");
-    expect(normalizeHuggingFaceEndpoint("https://proxy.example/hf/")).toBe("https://proxy.example/hf");
+    expect(normalizeHuggingFaceEndpoint("https://hf-mirror.com/")).toBe(
+      "https://hf-mirror.com",
+    );
+    expect(normalizeHuggingFaceEndpoint("  http://localhost:8080//  ")).toBe(
+      "http://localhost:8080",
+    );
+    expect(normalizeHuggingFaceEndpoint("https://proxy.example/hf/")).toBe(
+      "https://proxy.example/hf",
+    );
     expect(normalizeHuggingFaceEndpoint("hf-mirror.com")).toBeNull();
     expect(normalizeHuggingFaceEndpoint("ftp://x")).toBeNull();
     expect(normalizeHuggingFaceEndpoint("")).toBeNull();
@@ -63,10 +74,13 @@ describe("huggingface-endpoint", () => {
     expect(rewriteHuggingFaceUrl("https://hf.co/o/r/resolve/main/f.gguf")).toBe(
       "https://hf-mirror.com/o/r/resolve/main/f.gguf",
     );
-    const github = "https://github.com/ggml-org/llama.cpp/releases/download/b1/x.zip";
+    const github =
+      "https://github.com/ggml-org/llama.cpp/releases/download/b1/x.zip";
     expect(rewriteHuggingFaceUrl(github)).toBe(github);
     expect(isHuggingFaceUrl(CANONICAL)).toBe(true);
-    expect(isHuggingFaceUrl("https://hf-mirror.com/o/r/resolve/main/f.gguf")).toBe(true);
+    expect(
+      isHuggingFaceUrl("https://hf-mirror.com/o/r/resolve/main/f.gguf"),
+    ).toBe(true);
     expect(isHuggingFaceUrl(github)).toBe(false);
   });
 
@@ -89,13 +103,18 @@ describe("huggingface-endpoint", () => {
       const urls: string[] = [];
       globalThis.fetch = vi.fn(async (url: unknown) => {
         urls.push(String(url));
-        return new Response(JSON.stringify([{ path: "a.gguf", size: 5, lfs: { size: 500 } }]), {
-          status: 200,
-        });
+        return new Response(
+          JSON.stringify([{ path: "a.gguf", size: 5, lfs: { size: 500 } }]),
+          {
+            status: 200,
+          },
+        );
       }) as typeof fetch;
 
       const files = await listHuggingFaceGgufFiles("owner/repo");
-      expect(urls).toEqual(["https://hf-mirror.com/api/models/owner/repo/tree/main?recursive=true"]);
+      expect(urls).toEqual([
+        "https://hf-mirror.com/api/models/owner/repo/tree/main?recursive=true",
+      ]);
       expect(files).toEqual([{ path: "a.gguf", sizeBytes: 500 }]);
     });
 
@@ -120,12 +139,22 @@ describe("huggingface-endpoint", () => {
         });
       }) as typeof fetch;
       await expect(
-        downloadFile(CANONICAL, dest, { retryDelayMs: 1, stallTimeoutMs: 0, maxRetries: 0 }),
+        // `giveUpAfterMs: 0` is how a caller says "do not wait this
+        // outage out": since #356 a transport failure retries for as
+        // long as the no-progress window allows, not `maxRetries` times.
+        downloadFile(CANONICAL, dest, {
+          retryDelayMs: 1,
+          stallTimeoutMs: 0,
+          maxRetries: 0,
+          giveUpAfterMs: 0,
+        }),
       ).rejects.toThrow(/ECONNRESET/);
       expect(urls[0]).toBe(
         "https://hf-mirror.com/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
       );
-      const sidecar = JSON.parse(readFileSync(resolvePartialMetaPath(dest), "utf-8"));
+      const sidecar = JSON.parse(
+        readFileSync(resolvePartialMetaPath(dest), "utf-8"),
+      );
       expect(sidecar.source).toBe(CANONICAL);
       expect(readFileSync(resolvePartialPath(dest), "utf-8")).toBe("ab");
 
@@ -141,7 +170,10 @@ describe("huggingface-endpoint", () => {
           headers: { "content-range": "bytes 2-3/4", etag: '"v1"' },
         });
       }) as typeof fetch;
-      await downloadFile(CANONICAL, dest, { retryDelayMs: 1, stallTimeoutMs: 0 });
+      await downloadFile(CANONICAL, dest, {
+        retryDelayMs: 1,
+        stallTimeoutMs: 0,
+      });
       expect(urls[1]).toBe(CANONICAL);
       expect(ranges).toEqual(["bytes=2-"]);
       expect(readFileSync(dest, "utf-8")).toBe("abcd");

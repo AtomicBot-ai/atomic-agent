@@ -6,7 +6,10 @@
  * "does not exist" and the message has to cover both.
  */
 
-import { huggingFaceEndpointHost, resolveHuggingFaceEndpoint } from "./huggingface-endpoint.js";
+import {
+  huggingFaceEndpointHost,
+  resolveHuggingFaceEndpoint,
+} from "./huggingface-endpoint.js";
 
 export interface HuggingFaceFile {
   path: string;
@@ -14,7 +17,11 @@ export interface HuggingFaceFile {
 }
 
 export function huggingFaceToken(): string | null {
-  const raw = (process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || "").trim();
+  const raw = (
+    process.env.HF_TOKEN ||
+    process.env.HUGGING_FACE_HUB_TOKEN ||
+    ""
+  ).trim();
   return raw.length > 0 ? raw : null;
 }
 
@@ -51,10 +58,14 @@ async function fetchHfJson(
     );
   }
   if (res.status === 404) {
-    throw new Error("Hugging Face returned 404: no repo or revision by that name.");
+    throw new Error(
+      "Hugging Face returned 404: no repo or revision by that name.",
+    );
   }
   if (!res.ok) {
-    throw new Error(`Hugging Face returned HTTP ${res.status} ${res.statusText}.`);
+    throw new Error(
+      `Hugging Face returned HTTP ${res.status} ${res.statusText}.`,
+    );
   }
   return res.json();
 }

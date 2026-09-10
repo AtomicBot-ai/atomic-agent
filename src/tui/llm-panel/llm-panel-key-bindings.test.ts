@@ -403,3 +403,36 @@ function localDef(id: LocalModelDef["id"]): LocalModelDef {
     supportsVision: false,
   };
 }
+
+describe("handleLlmPanelKey — tell me when it lands", () => {
+  function llmState() {
+    const initial = createInitialTuiState(fakeSession());
+    return { ...initial, uiMode: "debug" as const, activeTab: "llm" as const };
+  }
+
+  it("N asks to reopen the prompt from the live LLM pane", () => {
+    const onRequest = vi.fn();
+    const handled = handleLlmPanelKey("N", emptyKey({ shift: true }), {
+      state: llmState(),
+      dispatch: vi.fn(),
+      callbacks: callbacks({ onLocalModelsNotifyPromptRequested: onRequest }),
+    });
+    expect(handled).toBe(true);
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers the open prompt before any pane hotkey — n is 'no', not Add Provider", () => {
+    const onChoice = vi.fn();
+    const dispatch = vi.fn();
+    const base = llmState();
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, notifyPrompt: { label: "Qwen", current: null } },
+    };
+    const cb = callbacks({ onLocalModelsNotifyChoice: onChoice });
+    expect(handleLlmPanelKey("n", emptyKey(), { state, dispatch, callbacks: cb })).toBe(true);
+    expect(handleLlmPanelKey("t", emptyKey(), { state, dispatch, callbacks: cb })).toBe(true);
+    expect(onChoice.mock.calls.map((c) => c[0])).toEqual(["off", "telegram"]);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
