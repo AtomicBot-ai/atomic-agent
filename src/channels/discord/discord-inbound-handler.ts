@@ -22,6 +22,7 @@ import {
   type AttachmentInbox,
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
+import { withSenderIdentity, type SenderIdentity } from "../sender-identity.js";
 import type { DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
 import {
@@ -40,7 +41,15 @@ export interface DiscordMessageEvent {
   channel_id: string;
   guild_id?: string;
   content: string;
-  author?: { id: string; bot?: boolean; username?: string };
+  author?: {
+    id: string;
+    bot?: boolean;
+    username?: string;
+    /** The post-2023 unique display name; falls back to `username`. */
+    global_name?: string | null;
+  };
+  /** Guild membership of the author — carries the per-server nickname. */
+  member?: { nick?: string | null };
   mentions?: ReadonlyArray<{ id: string }>;
   /**
    * Files on the message. Discord delivers these (like `content`)
@@ -196,15 +205,46 @@ async function route(
   // the text is empty or looks like a command — download first, then
   // run one turn that names every saved path. It belongs to this
   // channel's session, exactly like a text message from here.
+  //
+  // Who is speaking. Always announced on Discord: a guild channel is
+  // multi-author by nature and `ownerUserIds` is a list, so without
+  // this the model sees several different people as one anonymous
+  // voice. See `shouldAnnounceSender` for the full rule.
+  const sender = senderOf(event, ref);
   if (attachments.length > 0) {
-    await dispatchWithAttachments(text, attachments, ref, ctx);
+    await dispatchWithAttachments(text, attachments, ref, sender, ctx);
     return;
   }
   if (text.startsWith("/")) {
     await handleSlashCommand(text, ref, ctx);
     return;
   }
-  await dispatchToRuntime(text, ref, ctx);
+  await dispatchToRuntime(text, ref, ctx, sender);
+}
+
+/**
+ * The identity block's inputs for one event. Discord offers three
+ * names for the same person and they are tried most-specific first:
+ * the per-guild nickname the operator chose here, then the account's
+ * global display name, then the handle. All three are attacker-chosen
+ * text — `formatSenderLine` is what makes them safe to embed.
+ *
+ * No `thread=` field: a Discord thread is itself a channel with its own
+ * `channel_id`, so `chat=` already names it exactly. (Telegram forum
+ * topics are the surface that needs the extra id.)
+ */
+function senderOf(event: DiscordMessageEvent, ref: ChannelRef): SenderIdentity {
+  const displayName =
+    event.member?.nick ??
+    event.author?.global_name ??
+    event.author?.username ??
+    undefined;
+  return {
+    platform: "discord",
+    ...(typeof displayName === "string" ? { displayName } : {}),
+    userId: event.author?.id ?? "",
+    chatId: ref.channelId,
+  };
 }
 
 /**
@@ -387,6 +427,7 @@ async function dispatchWithAttachments(
   text: string,
   attachments: ReadonlyArray<DiscordAttachment>,
   ref: ChannelRef,
+  sender: SenderIdentity | null,
   ctx: DiscordInboundContext,
 ): Promise<void> {
   const items = await Promise.all(
@@ -403,7 +444,15 @@ async function dispatchWithAttachments(
   }
   const anySaved = items.some((item) => item.status === "saved");
   if (!anySaved && text.length === 0) return;
-  await dispatchToRuntime(buildAttachmentUserMessage(text, items), ref, ctx);
+  // Identity wraps the attachment message rather than the other way
+  // round, so the `[from]` line stays the first line of the turn even
+  // when files are involved — see `withSenderIdentity`.
+  await dispatchToRuntime(
+    buildAttachmentUserMessage(text, items),
+    ref,
+    ctx,
+    sender,
+  );
 }
 
 /**
@@ -469,7 +518,9 @@ async function dispatchToRuntime(
   text: string,
   ref: ChannelRef,
   ctx: DiscordInboundContext,
+  sender: SenderIdentity | null = null,
 ): Promise<void> {
+  const prompt = withSenderIdentity(text, sender);
   const session = acquireOrCreateSession(ref, ctx);
   // Bind approvals before any step can request one, so a destructive
   // tool prompts in the Discord channel that asked for it rather than
@@ -493,7 +544,7 @@ async function dispatchToRuntime(
   };
 
   try {
-    await ctx.runtime.runTurn(session, text, {
+    await ctx.runtime.runTurn(session, prompt, {
       origin: "discord",
       signal: controller.signal,
       eventHook,

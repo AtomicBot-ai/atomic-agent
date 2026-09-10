@@ -11,6 +11,11 @@ import {
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
 import {
+  shouldAnnounceSender,
+  withSenderIdentity,
+  type SenderIdentity,
+} from "../sender-identity.js";
+import {
   formatAttachmentFailure,
   sendAttachments,
 } from "./outbound-attachments.js";
@@ -58,7 +63,13 @@ function toTelegramLogger(logger: StructuredLogger): TelegramLogger {
  * shape.
  */
 export interface InboundTextUpdate {
-  from?: { id: number };
+  from?: {
+    id: number;
+    /** Telegram's own display fields, for the `[from]` line. Untrusted. */
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
   chat: { id: number; type: string; title?: string };
   text: string;
   message_id: number;
@@ -319,7 +330,42 @@ export async function handleInboundText(
     await handleSlashCommand(text, ref, ctx);
     return;
   }
-  await dispatchToRuntime(text, ref, ctx);
+  // Who is speaking, and in which group/topic. Skipped in a DM: a
+  // private chat only ever reaches this line for the single configured
+  // `ownerUserId`, so the block would restate a constant on every turn
+  // forever. See `shouldAnnounceSender`.
+  await dispatchToRuntime(text, ref, ctx, senderOf(update, ref));
+}
+
+/**
+ * The identity block's inputs for one update, or `null` when this chat
+ * type does not warrant one. Telegram has no single "display name":
+ * `first_name` is mandatory and `last_name`/`username` are not, so the
+ * name is assembled most-human-readable first and falls back to the
+ * handle. All of it is user-chosen text — `formatSenderLine` is what
+ * makes it safe to embed in the prompt.
+ */
+function senderOf(
+  update: InboundTextUpdate,
+  ref: ChatRef,
+): SenderIdentity | null {
+  if (!shouldAnnounceSender("telegram", ref.chatType)) return null;
+  const from = update.from;
+  if (!from) return null;
+  const full = [from.first_name, from.last_name]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ")
+    .trim();
+  const displayName = full.length > 0 ? full : from.username;
+  return {
+    platform: "telegram",
+    ...(typeof displayName === "string" ? { displayName } : {}),
+    userId: String(from.id),
+    chatId: String(ref.target.chatId),
+    ...(ref.target.threadId === undefined
+      ? {}
+      : { threadId: String(ref.target.threadId) }),
+  };
 }
 
 /**
@@ -557,6 +603,12 @@ async function dispatchAttachments(
   const anySaved = items.some((item) => item.status === "saved");
   const text = caption?.trim() ?? "";
   if (!anySaved && text.length === 0) return;
+  // No `[from]` line here on purpose: `handleInboundFile` accepts
+  // private chats only, and a Telegram DM has exactly one possible
+  // sender (the configured `ownerUserId`). If the file path ever grows
+  // group support, pass a `senderOf(...)` result as the 4th argument —
+  // `withSenderIdentity` already composes correctly around an
+  // attachments block.
   await dispatchToRuntime(buildAttachmentUserMessage(caption, items), ref, ctx);
 }
 
@@ -755,7 +807,9 @@ async function dispatchToRuntime(
   text: string,
   ref: ChatRef,
   ctx: InboundContext,
+  sender: SenderIdentity | null = null,
 ): Promise<void> {
+  const prompt = withSenderIdentity(text, sender);
   const session = acquireOrCreateSession(ref, ctx);
   // Count agent-visible inbound messages (post owner-check, post
   // slash-command-shortcut). Slash commands and dropped non-owner
@@ -809,7 +863,7 @@ async function dispatchToRuntime(
   progress?.start("🤔 Thinking…");
   const stopKeepalive = startTypingKeepalive(ctx, ref.target);
   try {
-    const result = await ctx.runtime.runTurn(session, text, {
+    const result = await ctx.runtime.runTurn(session, prompt, {
       origin: "telegram",
       signal: controller.signal,
       eventHook,
