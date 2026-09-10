@@ -376,6 +376,7 @@ describe("handleLlmPanelKey", () => {
     expect(hint(withMissing(true))).toBe(
       "Enter: download projector for qwen-3.5-4b (text chat works without it)",
     );
+  });
 
   it("restarts the local model server on `R`, without touching stop/start", () => {
     const onRestart = vi.fn();
