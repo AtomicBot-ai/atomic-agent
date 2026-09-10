@@ -91,6 +91,13 @@
           "y": 200,
           "type": "link",
           "path": "/Applications"
+        },
+        {
+          "x": 270,
+          "y": 330,
+          "type": "file",
+          "path": "dmg-readme.txt",
+          "name": "READ ME FIRST.txt"
         }
       ]
     },

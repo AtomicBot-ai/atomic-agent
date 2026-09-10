@@ -82,7 +82,7 @@ that. The ask's intent — a plain button with no keycaps and no icon — is kep
 | **F1** unchecked key sold as ready | **fixed**, 7 driven checks |
 | **F2** failure names nothing | **fixed** app-side, 5 driven checks; agent-side trace fields not done |
 | **F3** turn declared dead while retrying | **partly** — see below |
-| **F4** coding mode dead | **fixed** (honest message + Update agent) |
+| **F4** coding mode dead | **fixed properly** — the agent ships in the DMG |
 | **F5** duplicate label / stale error | **fixed** (B.4) |
 | **F6** no model choice after the key | **fixed**, driven |
 | **F7** import runs blind | **fixed** (B.5) |
@@ -196,6 +196,55 @@ some spots rather than as a filled square and the word DONE. The provider
 list and the model step carry proper annunciators; the model-download rows do
 not yet.
 
+## The DMG carries its own agent
+
+F4's preferred fix, and the one that makes the artifact publishable: the app
+now ships the agent it was built against, in `Resources/agent`, and a
+packaged build prefers it over anything installed. Nothing else needs
+installing, and the pair can never be version-skewed.
+
+That is what actually fixes the coding-mode chip. It was greyed out with four
+dead stances and a caption naming an internal route because the agent the app
+found — a released install — has no `/api/coding-mode`. Driven from a copy of
+the app **outside this checkout**, on a state directory that has never been
+used, the agent connects and reports `supported: true`.
+
+`ATOMIC_AGENT_BIN` still wins over the bundled agent, so a driven test can aim
+the app at one build. Nothing repoints `~/.local/bin/atag`.
+
+Two things nearly shipped broken here, and the packaged suite is what caught
+them:
+
+- `better-sqlite3` stays external to the SEA, and the copy in the repo's
+  `node_modules` is built for Node 22 while the SEA embeds Node 25. Shipping
+  that gives `NODE_MODULE_VERSION 141` vs `127` the moment the agent opens
+  its profile store.
+- **electron-builder silently drops any `node_modules` subtree inside
+  `extraResources`.** The agent shipped without its native module, its
+  anchored `createRequire` walked up out of the bundle, found the checkout's
+  copy, and `atag serve` died — reported as `agent connected — state=error`
+  on check 8. The agent is copied by the `afterPack` hook instead, and the
+  hook asserts the native module survived, so an incomplete agent fails the
+  build rather than the app.
+
+Rebuilding the agent needs Node ≥ 25.7 (`BUNDLING.md`), which is what CI
+pins. The pipeline is `npm run build && npm run bundle:sea && npm run
+bundle:fetch-assets && npm run bundle:build-binary && npm run bundle:package`
+at the repo root, and then `better_sqlite3.node` must be the one built
+against that same Node.
+
+## What is still not signed
+
+The build is **ad-hoc signed and not notarised**. macOS refuses the first
+launch and says it cannot check the app for malicious software; the
+recipient has to right-click → Open once (the DMG carries a `READ ME
+FIRST.txt` that says so). This also means the microphone grant does not
+survive a rebuild, because macOS keys that permission to the code signature
+and an ad-hoc signature changes every time.
+
+A paid Apple Developer ID is the only thing that fixes either. Everything
+else in this report is done; this one is a purchase, not a patch.
+
 ## One operational trap worth knowing about
 
 The shared smoke fixture's `config.json` carried `version: 51`. Every agent
@@ -246,6 +295,10 @@ had upgraded the file — before checking that the shim's own agent is 49 too.
   would drop the faces silently and fall back to Helvetica. `document.fonts`
   says both are loaded.
 - `npm run smoke` — **498 checks, 0 failures**, on the repaired fixture.
+- The **packaged app**, copied out of the checkout and run on its own
+  bundled agent — **497 passed, 0 failed, 1 skipped** (the skip is a
+  source-file scan; a packaged app ships only the compiled emit, and the
+  source run covers it).
 - `drive:onboarding` 60/60 (one honest skip: that run has no
   `OPENROUTER_API_KEY` for the empty-box case). `drive:wizard` 16/16.
   `drive:hover` 22/22. `drive:models` 29/29.
