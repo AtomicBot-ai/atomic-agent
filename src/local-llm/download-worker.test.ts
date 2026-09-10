@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveModelFilePath } from "./backend-paths.js";
+import { resolveMmprojFilePath, resolveModelFilePath } from "./backend-paths.js";
 import { resolvePartialMetaPath, resolvePartialPath } from "./download-file.js";
 import { downloadJobId, readDownloadJob } from "./download-jobs.js";
 import { initialDownloadJob, runDownloadWorker } from "./download-worker.js";
@@ -20,6 +20,7 @@ import { getEmbeddingModelDef, getLocalModelDef } from "./models-catalog.js";
 
 const EMB = getEmbeddingModelDef("nomic-embed-text-v1.5");
 const CHAT = getLocalModelDef("qwen-3.5-4b");
+const VISION = getLocalModelDef("gemma-4-e4b");
 
 function bodyOf(chunks: readonly string[]): ReadableStream {
   const queue = [...chunks];
@@ -149,6 +150,126 @@ describe("download-worker", () => {
     const dest = resolveModelFilePath(dataDir, CHAT.id, CHAT.filename);
     expect(existsSync(dest)).toBe(false);
     expect(readFileSync(resolvePartialPath(dest), "utf-8")).toBe("ab");
+  });
+
+  it("fetches a vision model's GGUF and mmproj together under one summed record", async () => {
+    // Each body parks until the other request has arrived, so the test
+    // only completes when the two downloads overlap in time.
+    let arrived = 0;
+    const releases: Array<() => void> = [];
+    const bothArrived = new Promise<void>((resolve) => releases.push(resolve));
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      arrived += 1;
+      if (arrived === 2) releases.forEach((r) => r());
+      const isMmproj = String(url) === VISION.mmprojUrl;
+      const payload = isMmproj ? "mm" : "weights!";
+      const body = new ReadableStream({
+        async pull(controller) {
+          await bothArrived;
+          controller.enqueue(Buffer.from(payload));
+          controller.close();
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-length": String(payload.length) },
+      });
+    }) as typeof fetch;
+
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: VISION.id,
+      mode: "with-mmproj",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+
+    expect(outcome).toBe("done");
+    expect(
+      readFileSync(resolveModelFilePath(dataDir, VISION.id, VISION.filename), "utf-8"),
+    ).toBe("weights!");
+    expect(
+      readFileSync(
+        resolveMmprojFilePath(dataDir, VISION.id, VISION.mmprojFilename ?? ""),
+        "utf-8",
+      ),
+    ).toBe("mm");
+    const job = readDownloadJob(dataDir, downloadJobId("chat", VISION.id));
+    expect(job).toMatchObject({
+      status: "done",
+      label: `${VISION.name} (gguf + mmproj)`,
+      percent: 100,
+      transferredBytes: 10,
+      totalBytes: 10,
+    });
+    expect(log.some((l) => /gguf complete/.test(l))).toBe(true);
+    expect(log.some((l) => /mmproj complete/.test(l))).toBe(true);
+  });
+
+  it("a failing mmproj cancels the GGUF transfer and keeps its partial", async () => {
+    let releaseGguf: (() => void) | null = null;
+    const ggufDest = resolveModelFilePath(dataDir, VISION.id, VISION.filename);
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      if (String(url) === VISION.mmprojUrl) {
+        // Fail only once the weights have bytes on disk, so the test
+        // shows the cancel keeps them rather than racing the first chunk.
+        await waitFor(() => {
+          try {
+            return readFileSync(resolvePartialPath(ggufDest), "utf-8") === "ab";
+          } catch {
+            return false;
+          }
+        });
+        return new Response(null, { status: 404, statusText: "Not Found" });
+      }
+      const body = new ReadableStream({
+        async pull(controller) {
+          if (releaseGguf === null) {
+            controller.enqueue(Buffer.from("ab"));
+            await new Promise<void>((resolve) => {
+              releaseGguf = resolve;
+            });
+            controller.enqueue(Buffer.from("cd"));
+            return;
+          }
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-length": "4" } });
+    }) as typeof fetch;
+
+    const outcome = await runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: VISION.id,
+      mode: "with-mmproj",
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+    releaseGguf?.();
+
+    expect(outcome).toBe("failed");
+    const job = readDownloadJob(dataDir, downloadJobId("chat", VISION.id));
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toMatch(/HTTP 404/);
+    const dest = resolveModelFilePath(dataDir, VISION.id, VISION.filename);
+    expect(existsSync(dest)).toBe(false);
+    expect(readFileSync(resolvePartialPath(dest), "utf-8")).toBe("ab");
+  });
+
+  it("initialDownloadJob sums both files of a vision pull that needs both", () => {
+    const job = initialDownloadJob({
+      dataDir,
+      kind: "chat",
+      modelId: VISION.id,
+      mode: "with-mmproj",
+      pid: 1,
+    });
+    const gb = (n: number): number => Math.round(n * 1024 * 1024 * 1024);
+    expect(job.label).toBe(`${VISION.name} (gguf + mmproj)`);
+    expect(job.phase).toBe("gguf");
+    expect(job.totalBytes).toBe(gb(VISION.fileSizeGb) + gb(VISION.mmprojFileSizeGb ?? 1));
   });
 
   it("initialDownloadJob reports the partial already on disk instead of 0%", () => {

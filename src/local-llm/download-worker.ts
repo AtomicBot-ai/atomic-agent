@@ -7,6 +7,7 @@ import {
   type DownloadJobKind,
   type DownloadJobMode,
 } from "./download-jobs.js";
+import { downloadGgufAndMmprojTogether } from "./download-worker-pair.js";
 import {
   downloadEmbeddingModel,
   downloadMmproj,
@@ -24,8 +25,8 @@ import {
 /**
  * The body of a background download: fetch the files for one job while
  * keeping its record on disk current. Runs inside the detached worker
- * process (`models pull-worker`), but takes everything as arguments so
- * a test can drive it in-process against a mocked `fetch`.
+ * (`models pull-worker`) but takes everything as arguments, so a test can
+ * drive it in-process against a mocked `fetch`.
  */
 export interface DownloadWorkerInput {
   dataDir: string;
@@ -46,16 +47,15 @@ export type DownloadWorkerOutcome = "done" | "failed" | "cancelled";
 
 const DEFAULT_WRITE_INTERVAL_MS = 500;
 
-function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
+const isAbortError = (err: unknown): boolean =>
+  err instanceof Error && err.name === "AbortError";
 
 /**
  * Seed the record a spawner writes the instant the worker is launched,
  * so `models downloads` lists the job before the worker has opened its
  * first socket. The worker overwrites it with real numbers as soon as
- * they exist. The partial already on disk (if any) is reported from
- * the start, so a resumed job never shows 0% even for a moment.
+ * they exist; partials already on disk count from the start, so a
+ * resumed job never shows 0% even for a moment.
  */
 export function initialDownloadJob(input: {
   dataDir: string;
@@ -66,10 +66,14 @@ export function initialDownloadJob(input: {
   now?: Date;
 }): DownloadJob {
   const now = (input.now ?? new Date()).toISOString();
-  const { label, dest, estTotal } = describeFirstPhase(input);
-  const partial = readPartialDownload(dest);
-  const transferred = partial?.transferred ?? 0;
-  const total = partial?.total || estTotal;
+  const { label, phase, files } = describeJobFiles(input);
+  let transferred = 0;
+  let total = 0;
+  for (const file of files) {
+    const partial = readPartialDownload(file.dest);
+    transferred += partial?.transferred ?? 0;
+    total += partial?.total || file.estTotal;
+  }
   return {
     version: 1,
     id: downloadJobId(input.kind, input.modelId),
@@ -78,7 +82,7 @@ export function initialDownloadJob(input: {
     mode: input.mode,
     pid: input.pid,
     status: "running",
-    phase: input.kind === "chat" && input.mode === "mmproj-only" ? "mmproj" : "gguf",
+    phase,
     label,
     percent: total > 0 ? Math.round((transferred / total) * 100) : 0,
     transferredBytes: transferred,
@@ -90,44 +94,68 @@ export function initialDownloadJob(input: {
   };
 }
 
-function describeFirstPhase(input: {
+const gb = (n: number | undefined): number => Math.round((n ?? 0) * 1024 * 1024 * 1024);
+
+interface JobFile {
+  dest: string;
+  estTotal: number;
+}
+
+/**
+ * What a job is about to fetch, as the record describes it from its
+ * first write. A vision pull that still needs both files is one job over
+ * two files fetched together: the label names both and the byte counts
+ * are their sum, so the TUI's bar never resets between files.
+ */
+function describeJobFiles(input: {
   dataDir: string;
   kind: DownloadJobKind;
   modelId: string;
   mode: DownloadJobMode;
-}): { label: string; dest: string; estTotal: number } {
-  const gb = (n: number | undefined): number => Math.round((n ?? 0) * 1024 * 1024 * 1024);
+}): { label: string; phase: DownloadJob["phase"]; files: JobFile[] } {
   if (input.kind === "embedding") {
     const def = getEmbeddingModelDef(input.modelId as EmbeddingModelId);
     return {
       label: def.name,
-      dest: resolveModelFilePath(input.dataDir, def.id, def.filename),
-      estTotal: gb(def.fileSizeGb),
+      phase: "gguf",
+      files: [
+        {
+          dest: resolveModelFilePath(input.dataDir, def.id, def.filename),
+          estTotal: gb(def.fileSizeGb),
+        },
+      ],
     };
   }
   const def = getLocalModelDef(input.modelId as LocalModelId);
-  const ggufDone = isModelDownloaded(input.dataDir, def);
-  const mmprojPhase =
-    input.mode === "mmproj-only" || (input.mode === "with-mmproj" && ggufDone);
-  if (mmprojPhase && def.mmprojFilename) {
-    return {
-      label: `${def.name} (mmproj)`,
-      dest: resolveMmprojFilePath(input.dataDir, def.id, def.mmprojFilename),
-      estTotal: gb(def.mmprojFileSizeGb ?? 1),
-    };
-  }
-  return {
-    label: `${def.name} (gguf)`,
+  const gguf: JobFile = {
     dest: resolveModelFilePath(input.dataDir, def.id, def.filename),
     estTotal: gb(def.fileSizeGb),
   };
+  const mmproj: JobFile | null = def.mmprojFilename
+    ? {
+        dest: resolveMmprojFilePath(input.dataDir, def.id, def.mmprojFilename),
+        estTotal: gb(def.mmprojFileSizeGb ?? 1),
+      }
+    : null;
+  const needGguf = input.mode !== "mmproj-only" && !isModelDownloaded(input.dataDir, def);
+  const needMmproj =
+    mmproj !== null &&
+    (input.mode === "with-mmproj" || input.mode === "mmproj-only") &&
+    !isMmprojDownloaded(input.dataDir, def);
+  if (needGguf && needMmproj && mmproj) {
+    return { label: `${def.name} (gguf + mmproj)`, phase: "gguf", files: [gguf, mmproj] };
+  }
+  if (needMmproj && mmproj) {
+    return { label: `${def.name} (mmproj)`, phase: "mmproj", files: [mmproj] };
+  }
+  return { label: `${def.name} (gguf)`, phase: "gguf", files: [gguf] };
 }
 
 /**
  * Run one job to completion. Never throws for a download failure — the
- * outcome is the return value and the record on disk; the worker
- * process maps it to an exit code. Throws only for a bad job spec (an
- * unknown model id), which the spawner should have rejected already.
+ * outcome is the return value and the record on disk; the worker maps it
+ * to an exit code. Throws only for a bad job spec (an unknown model id),
+ * which the spawner should have rejected already.
  */
 export async function runDownloadWorker(
   input: DownloadWorkerInput,
@@ -201,8 +229,6 @@ export async function runDownloadWorker(
       },
     };
   };
-  const gb = (n: number | undefined): number => Math.round((n ?? 0) * 1024 * 1024 * 1024);
-
   try {
     if (input.kind === "embedding") {
       const def = getEmbeddingModelDef(input.modelId as EmbeddingModelId);
@@ -221,7 +247,12 @@ export async function runDownloadWorker(
       const wantGguf = input.mode !== "mmproj-only";
       const wantMmproj =
         def.supportsVision && (input.mode === "with-mmproj" || input.mode === "mmproj-only");
-      if (wantGguf && !isModelDownloaded(input.dataDir, def)) {
+      const needGguf = wantGguf && !isModelDownloaded(input.dataDir, def);
+      const needMmproj = wantMmproj && !isMmprojDownloaded(input.dataDir, def);
+      if (needGguf && needMmproj) {
+        await downloadGgufAndMmprojTogether(def, input, { persist, log, stamp });
+      }
+      if (needGguf && !needMmproj) {
         await downloadModel(
           input.dataDir,
           def,
@@ -234,7 +265,7 @@ export async function runDownloadWorker(
         );
         log(`[${stamp()}] gguf complete`);
       }
-      if (wantMmproj && !isMmprojDownloaded(input.dataDir, def)) {
+      if (needMmproj && !needGguf) {
         await downloadMmproj(
           input.dataDir,
           def,
@@ -266,3 +297,4 @@ export async function runDownloadWorker(
     return "failed";
   }
 }
+
