@@ -1,5 +1,9 @@
 import { checkPlanMode } from "./plan-mode.js";
-import { checkFusionOrchestrator } from "./fusion-orchestrator-mode.js";
+import {
+  checkFusionOrchestrator,
+  emptyFusionOrchestratorState,
+  type FusionOrchestratorState,
+} from "./fusion-orchestrator-mode.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import {
   compressToolResult,
@@ -135,10 +139,10 @@ export interface BatchExecutionContext {
    * `fusion-orchestrator-mode.ts`.
    */
   isFusionOrchestrator?: () => boolean;
-  /** Whether this turn has already completed a `fusion.delegate` call. */
-  hasDelegated?: () => boolean;
-  /** Called once a `fusion.delegate` call comes back, however it went. */
-  onDelegated?: () => void;
+  /** What this turn has delegated and what came back — see `fusion-orchestrator-mode.ts`. */
+  fusionState?: () => FusionOrchestratorState;
+  /** Called with a `fusion.delegate` result so the turn's ledger can fold it in. */
+  onDelegated?: (result: CompressedToolResult) => void;
   /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
@@ -415,10 +419,12 @@ export async function executeBatch(
       compressed,
       durationMs,
     };
-    // A fan-out that came back — whatever the workers made of it — opens
-    // the orchestrator's own write gate for the rest of the turn, so it
-    // can merge what it got and run the parts workers had to hand up.
-    if (input.call.tool === "fusion.delegate") ctx.onDelegated?.();
+    // A fan-out that came back is folded into the turn's ledger: how
+    // many tasks a worker handed up is what decides whether the
+    // orchestrator may run anything itself. The result is passed whole
+    // rather than a flag, so the ledger reads the same per-task
+    // statuses the model is about to read.
+    if (input.call.tool === "fusion.delegate") ctx.onDelegated?.(compressed);
     // Record the real outcome so the next step's gate sees a completed
     // (args + result) entry. Terminal verbs are not tracked.
     if (ctx.tracker && input.resourceClass !== "terminal") {
@@ -593,9 +599,11 @@ function runFusionOrchestratorGate(
   ctx: BatchExecutionContext,
 ): { proceed: boolean; vetoResult?: CompressedToolResult } {
   if (!ctx.isFusionOrchestrator?.()) return { proceed: true };
-  const verdict = checkFusionOrchestrator(input.call.tool, registry, {
-    delegated: ctx.hasDelegated?.() ?? false,
-  });
+  const verdict = checkFusionOrchestrator(
+    input.call.tool,
+    registry,
+    ctx.fusionState?.() ?? emptyFusionOrchestratorState(),
+  );
   if (verdict.allowed) return { proceed: true };
   return { proceed: false, vetoResult: verdict.refusal! };
 }

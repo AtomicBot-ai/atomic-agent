@@ -27,12 +27,22 @@
  */
 
 /**
- * Tokens a worker slot needs to be useful. Same figure as
- * `MIN_AUTO_CONTEXT`, and for the same reason: below it a worker has
- * room for the prefix and not much else, so it truncates mid-tool-call
- * and reports a failure the orchestrator then has to re-delegate.
+ * Tokens a worker slot needs to be useful.
+ *
+ * Measured, not guessed: a worker's stable prefix in a real session was
+ * 7,388 tokens, and its brief plus the file it is working on is the
+ * rest. 8k is that floor with room to finish a tool call.
+ *
+ * It was 16,384 — `MIN_AUTO_CONTEXT`, borrowed on the assumption that a
+ * worker needs what a chat session needs. It does not, and the
+ * borrowed number did real damage: a 12B model whose auto-context
+ * lands at ~16-24k divided to exactly ONE slot, so every fan-out ran
+ * sequentially. In the session that exposed it, three tasks queued
+ * behind each other and two died on the worker timeout — after which
+ * the orchestrator gave up on the workers and built everything itself.
+ * A conservative number in the wrong place is not conservative.
  */
-export const MIN_SLOT_CONTEXT = 16_384;
+export const MIN_SLOT_CONTEXT = 8_192;
 
 /**
  * Ceiling on the derived count. Past a handful of slots the local server
@@ -46,6 +56,18 @@ export const MAX_AUTO_SLOTS = 8;
 
 /** What a launch with nothing known falls back to — the historical default. */
 export const DEFAULT_SLOTS = 2;
+
+/**
+ * Floor for a GPU launch.
+ *
+ * A fan-out of one is not a fan-out — it is the orchestrator waiting in
+ * a queue it built itself, paying the delegation overhead for none of
+ * the parallelism. Two slots on a context that can only really afford
+ * one is the better failure: each worker gets a smaller share and may
+ * truncate, which comes back as a task to re-delegate, where being
+ * serialised comes back as a timeout and a mode that looks broken.
+ */
+export const MIN_GPU_SLOTS = 2;
 
 export interface WorkerSlotsInput {
   /**
@@ -70,7 +92,7 @@ export function resolveWorkerSlots(input: WorkerSlotsInput): number {
   const ctx = input.contextSize;
   if (ctx === null || !Number.isFinite(ctx) || ctx <= 0) return DEFAULT_SLOTS;
   const fits = Math.floor(ctx / MIN_SLOT_CONTEXT);
-  return Math.max(1, Math.min(fits, MAX_AUTO_SLOTS));
+  return Math.max(MIN_GPU_SLOTS, Math.min(fits, MAX_AUTO_SLOTS));
 }
 
 /**

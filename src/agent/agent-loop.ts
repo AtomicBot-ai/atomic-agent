@@ -1,3 +1,7 @@
+import {
+  emptyFusionOrchestratorState,
+  recordDelegation,
+} from "./fusion-orchestrator-mode.js";
 import type {
   CompletionResult,
   StreamChunk,
@@ -879,7 +883,7 @@ export class AgentLoop {
     // and must never close on the hands it is meant to free.
     const fusionOrchestratorTurn =
       (this.deps.isFusionMode?.() ?? false) && options.ephemeral !== true;
-    let fusionDelegatedThisTurn = false;
+    let fusionState = emptyFusionOrchestratorState();
 
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
@@ -1200,9 +1204,9 @@ export class AgentLoop {
             ...(fusionOrchestratorTurn
               ? {
                   isFusionOrchestrator: () => true,
-                  hasDelegated: () => fusionDelegatedThisTurn,
-                  onDelegated: () => {
-                    fusionDelegatedThisTurn = true;
+                  fusionState: () => fusionState,
+                  onDelegated: (result) => {
+                    fusionState = recordDelegation(fusionState, result);
                   },
                 }
               : {}),

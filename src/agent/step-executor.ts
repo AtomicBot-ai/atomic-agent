@@ -1,3 +1,4 @@
+import { resolveToolName } from "./tool-name-resolution.js";
 import {
   extractReasoning,
   parseToolCalls,
@@ -168,8 +169,8 @@ export interface StepDependencies {
    * gates nothing.
    */
   isFusionOrchestrator?: () => boolean;
-  hasDelegated?: () => boolean;
-  onDelegated?: () => void;
+  fusionState?: () => import("./fusion-orchestrator-mode.js").FusionOrchestratorState;
+  onDelegated?: (result: CompressedToolResult) => void;
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -1020,12 +1021,26 @@ async function executeStepInner(
   // bootstrap-time configuration mismatch, not a transient grammar
   // failure — replaying the prompt would not change the registry.
   for (const call of calls) {
-    if (!deps.registry.has(call.tool)) {
+    if (deps.registry.has(call.tool)) continue;
+    // A near miss on the separator is not a missing tool. Qualified
+    // names travel over the OpenAI wire as `__` and a model writing the
+    // escaped form from memory lands on `fusion_delegate` — every
+    // character right, one underscore short. That ended a whole turn in
+    // a real session, twice in a row. Resolve the obvious forms before
+    // treating the name as unknown; anything that still does not
+    // resolve throws exactly as it did.
+    const resolved = resolveToolName(call.tool, deps.registry);
+    if (resolved === null) {
       throw new ToolExecutionError(
         call.tool,
         `tool not registered in this agent: ${call.tool}`,
       );
     }
+    deps.logger?.debug?.("tool name resolved to its registered form", {
+      emitted: call.tool,
+      resolved,
+    });
+    call.tool = resolved;
   }
 
   // Emit one `tool_call_parsed` per call. Single-call steps preserve the
@@ -1057,7 +1072,7 @@ async function executeStepInner(
     ...(deps.isFusionOrchestrator
       ? {
           isFusionOrchestrator: deps.isFusionOrchestrator,
-          ...(deps.hasDelegated ? { hasDelegated: deps.hasDelegated } : {}),
+          ...(deps.fusionState ? { fusionState: deps.fusionState } : {}),
           ...(deps.onDelegated ? { onDelegated: deps.onDelegated } : {}),
         }
       : {}),

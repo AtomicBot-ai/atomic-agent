@@ -1186,7 +1186,7 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => false,
+        fusionState: () => ({ delegations: 0, handedUp: 0 }),
       },
     );
     expect(run).not.toHaveBeenCalled();
@@ -1203,7 +1203,7 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => true,
+        fusionState: () => ({ delegations: 1, handedUp: 1 }),
       },
     );
     expect(run).toHaveBeenCalledTimes(1);
@@ -1218,16 +1218,17 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => false,
+        fusionState: () => ({ delegations: 0, handedUp: 0 }),
       },
     );
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("marks the turn as delegated when the fan-out comes back", async () => {
-    // However it went: a fan-out whose workers all failed still leaves
-    // the orchestrator holding results it must be able to act on.
-    let delegated = false;
+  it("hands the fan-out's own result to the turn's ledger", async () => {
+    // The result, not a flag: what unlocks a mutation is how many tasks
+    // came back `needs_orchestrator`, and the ledger must read the same
+    // per-task statuses the model is about to read.
+    let seen: unknown = null;
     const registry = buildRegistry(
       { "fusion.delegate": async () => okResult("fusion.delegate") },
       false,
@@ -1238,13 +1239,13 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => delegated,
-        onDelegated: () => {
-          delegated = true;
+        fusionState: () => ({ delegations: 0, handedUp: 0 }),
+        onDelegated: (result) => {
+          seen = result;
         },
       },
     );
-    expect(delegated).toBe(true);
+    expect(seen).toMatchObject({ tool: "fusion.delegate" });
   });
 
   it("gates nothing when the turn is not the orchestrator's", async () => {

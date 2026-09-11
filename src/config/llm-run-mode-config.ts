@@ -77,7 +77,22 @@ export const FUSION_WORKERS_MIN = 1;
 export const FUSION_WORKERS_MAX = 8;
 export const DEFAULT_FUSION_WORKERS = 2;
 export const DEFAULT_FUSION_WORKER_MAX_STEPS = 40;
-export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 600_000;
+/**
+ * How long one worker may take before its leg is cancelled.
+ *
+ * 20 minutes, up from 10. The old figure was a guess and it cut real
+ * work in half: in the session that exposed it, two of three tasks were
+ * `cancelled` at exactly 600s — a 12B model writing six files and their
+ * tests, queued behind another worker on a single slot. The orchestrator
+ * read that as "the workers cannot do this" and built the deliverable
+ * itself, which is the failure this mode exists to prevent.
+ *
+ * The cost of being generous here is bounded: a worker that is stuck
+ * rather than slow still ends, and the orchestrator still gets a task
+ * it can re-delegate in smaller pieces. The cost of being tight is a
+ * fan-out that looks broken.
+ */
+export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 1_200_000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 
