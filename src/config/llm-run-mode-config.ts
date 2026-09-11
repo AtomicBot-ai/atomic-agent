@@ -80,19 +80,19 @@ export const DEFAULT_FUSION_WORKER_MAX_STEPS = 40;
 /**
  * How long one worker may take before its leg is cancelled.
  *
- * 20 minutes, up from 10. The old figure was a guess and it cut real
- * work in half: in the session that exposed it, two of three tasks were
- * `cancelled` at exactly 600s — a 12B model writing six files and their
- * tests, queued behind another worker on a single slot. The orchestrator
- * read that as "the workers cannot do this" and built the deliverable
- * itself, which is the failure this mode exists to prevent.
+ * 45 minutes, and both earlier figures were guesses that cut real work
+ * in half. At 600s two of three tasks died; at 1200s a worker that had
+ * already written four of its six files was cancelled mid-run, and
+ * another was cut after writing one. Neither was stuck — a 12B model
+ * writing a module and its tests takes the time it takes.
  *
- * The cost of being generous here is bounded: a worker that is stuck
- * rather than slow still ends, and the orchestrator still gets a task
- * it can re-delegate in smaller pieces. The cost of being tight is a
- * fan-out that looks broken.
+ * The asymmetry is the argument. A worker that is genuinely stuck still
+ * ends, and the orchestrator gets a task it can split and re-send; a
+ * worker cut while working loses everything it had not yet written and
+ * teaches the orchestrator that the fan-out does not work, which is how
+ * a turn ends with the cloud model doing the job itself.
  */
-export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 1_200_000;
+export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 

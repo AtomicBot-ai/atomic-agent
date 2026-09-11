@@ -23,12 +23,22 @@ import { isAbsolute, relative, resolve } from "node:path";
  * authorise writing anywhere at all. A directory is the honest scope, so
  * a directory is what is stored.
  *
- * Scopes are per session id, in memory, and cleared when the fan-out
- * ends — the same lifetime and the same `finally` as the refuse policy
- * they sit beside.
+ * Two lifetimes live here, because the operator asked for two.
+ *
+ * A **worker** scope is per worker session and dies with the fan-out —
+ * the same `finally` as the refuse policy beside it.
+ *
+ * A **turn** scope is per orchestrator session and survives until the
+ * turn ends. It exists because a turn is one job: an orchestrator that
+ * reviews and re-delegates asks for five fan-outs to build one library,
+ * and answering the same question five times is not consent, it is
+ * attrition. The operator authorises the directory once and every later
+ * fan-out of that turn inherits it — but only if it stays inside what
+ * was approved. A fan-out reaching somewhere new asks again.
  */
 export class FanoutScopeRegistry {
   private readonly dirsBySession = new Map<string, readonly string[]>();
+  private readonly turnScopeBySession = new Map<string, readonly string[]>();
 
   /**
    * Authorise `dirs` (absolute, already resolved) for `sessionId`.
@@ -67,6 +77,43 @@ export class FanoutScopeRegistry {
   /** The granted directories, for a prompt or a diagnostic. */
   scopeFor(sessionId: string): readonly string[] {
     return this.dirsBySession.get(sessionId) ?? [];
+  }
+
+  /**
+   * Remember what this turn's operator already authorised, so the next
+   * fan-out of the same turn does not ask again.
+   */
+  grantForTurn(sessionId: string, dirs: readonly string[]): void {
+    const absolute = dirs.filter((dir) => isAbsolute(dir));
+    if (absolute.length === 0) return;
+    const merged = new Set([
+      ...(this.turnScopeBySession.get(sessionId) ?? []),
+      ...absolute,
+    ]);
+    this.turnScopeBySession.set(sessionId, [...merged]);
+  }
+
+  /**
+   * Whether this turn's standing answer already covers `dirs`.
+   *
+   * Containment, not equality: a later fan-out writing deeper inside an
+   * approved directory is the same permission. One reaching outside it
+   * is a new question, and gets asked.
+   */
+  turnGrantCovers(sessionId: string, dirs: readonly string[]): boolean {
+    const approved = this.turnScopeBySession.get(sessionId);
+    if (approved === undefined || dirs.length === 0) return false;
+    return dirs.every((dir) =>
+      approved.some((root) => isInside(root, resolve(dir))),
+    );
+  }
+
+  /**
+   * Forget a turn's standing answer. Called when a turn starts, so the
+   * authority never outlives the job it was given for.
+   */
+  clearTurnGrant(sessionId: string): void {
+    this.turnScopeBySession.delete(sessionId);
   }
 }
 

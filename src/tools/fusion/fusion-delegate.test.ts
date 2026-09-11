@@ -424,4 +424,89 @@ describe("fusion.delegate", () => {
     );
     expect((await tool.run({ tasks: TASKS }, ctx())).status).toBe("ok");
   });
+  it("asks the operator once per turn, not once per fan-out", async () => {
+    // The operator's complaint, in one test: a turn that reviews and
+    // re-delegates used to raise the same question on every pass.
+    const asked: Array<{ category: string; resources?: readonly string[] }> =
+      [];
+    const scopes = new FanoutScopeRegistry();
+    const d = deps({
+      approvalRequired: true,
+      approvals: {
+        setSessionPolicy: () => {},
+        clearSessionPolicy: () => {},
+        fanoutScopes: scopes,
+        request: async (req: {
+          category: string;
+          affectedResources?: readonly string[];
+        }) => {
+          asked.push({
+            category: req.category,
+            ...(req.affectedResources
+              ? { resources: req.affectedResources }
+              : {}),
+          });
+          return { approved: true };
+        },
+      } as unknown as FusionDelegateDeps["approvals"],
+    });
+    const tool = buildFusionDelegateTool(d);
+    const tasks = [
+      { id: "t1", title: "One", instructions: "Write /repo/src/a.js" },
+    ];
+    const first = await tool.run({ tasks }, ctx());
+    expect(first.status).not.toBe("error");
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.category).toBe("fusion_fanout");
+
+    // The review pass: same turn, same directory, no second question.
+    const second = await tool.run(
+      {
+        tasks: [{ id: "t2", title: "Two", instructions: "Fix /repo/src/a.js" }],
+      },
+      ctx(),
+    );
+    expect(second.status).not.toBe("error");
+    expect(asked).toHaveLength(1);
+  });
+
+  it("asks again when a later fan-out reaches outside what was approved", async () => {
+    const asked: string[] = [];
+    const scopes = new FanoutScopeRegistry();
+    const d = deps({
+      approvalRequired: true,
+      approvals: {
+        setSessionPolicy: () => {},
+        clearSessionPolicy: () => {},
+        fanoutScopes: scopes,
+        request: async (req: { affectedResources?: readonly string[] }) => {
+          asked.push((req.affectedResources ?? []).join(","));
+          return { approved: true };
+        },
+      } as unknown as FusionDelegateDeps["approvals"],
+    });
+    const tool = buildFusionDelegateTool(d);
+    await tool.run(
+      {
+        tasks: [
+          { id: "t1", title: "One", instructions: "x", files: ["/repo/a.js"] },
+        ],
+      },
+      ctx(),
+    );
+    await tool.run(
+      {
+        tasks: [
+          {
+            id: "t2",
+            title: "Two",
+            instructions: "x",
+            files: ["/elsewhere/b.js"],
+          },
+        ],
+      },
+      ctx(),
+    );
+    expect(asked).toHaveLength(2);
+  });
 });

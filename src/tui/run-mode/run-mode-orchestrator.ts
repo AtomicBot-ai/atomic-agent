@@ -189,6 +189,46 @@ export class RunModeOrchestrator {
   }
 
   /**
+   * Trade the two legs: the orchestrator provider becomes the worker
+   * provider and back. One write, through `setMode`, so the pins and
+   * `llm.activeTextProvider` move together — the active provider must
+   * follow the orchestrator or the next read drops out of fusion.
+   *
+   * The informational model pins ride along. They are per-leg labels
+   * (`orchestratorModel` / `workerModel`), so leaving them where they
+   * were would make both halves of the composer name the wrong side.
+   * The TUI never writes them, but a hand-edited config may.
+   */
+  async swapLegs(): Promise<void> {
+    const resolved = resolveLlmConfig(getConfig());
+    const rm = resolveRunMode(resolved);
+    if (rm.stored !== "fusion") {
+      this.refuse("swap needs fusion — pick it first (`/runmode fusion`)");
+      return;
+    }
+    const orchestrator = rm.orchestratorProviderId;
+    const worker = rm.workerProviderId;
+    if (orchestrator === null || worker === null || orchestrator === worker) {
+      this.refuse(
+        describeRunModeDegradation({
+          reason: "no-second-provider",
+          requested: "fusion",
+        }),
+      );
+      return;
+    }
+    const pinned = resolved.runMode?.fusion;
+    await this.setMode("fusion", {
+      fusion: {
+        orchestratorProvider: worker,
+        workerProvider: orchestrator,
+        orchestratorModel: pinned?.workerModel,
+        workerModel: pinned?.orchestratorModel,
+      },
+    });
+  }
+
+  /**
    * The worker count, and with it the llama-server slot count. A daemon
    * that is already up keeps the slot count it was launched with, so the
    * notice says how to apply the new one — a silent write here would

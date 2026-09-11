@@ -475,6 +475,11 @@ export interface TuiAppCallbacks {
     opts?: import("./persist-run-mode.js").RunModeChangeOptions,
   ): void;
   /**
+   * The composer's `⇄` button / `/runmode swap`: trade the two fusion
+   * legs, so whatever is orchestrating starts executing and back.
+   */
+  onFusionLegsSwapRequested?(): void;
+  /**
    * Fusion's `workers` control / `/runmode workers N`: persist the
    * worker count and the matching llama-server slot count in one write,
    * without changing the mode.

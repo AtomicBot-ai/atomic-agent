@@ -10,6 +10,17 @@ import { BackendControl } from "./composer-backend-control.js";
 import type { ComposerBackendMeta } from "./composer-backend-selectors.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
+/**
+ * What `selectPromptLlmMeta` puts between the two fusion legs.
+ *
+ * It lives here, and `prompt-meta-bar.tsx` imports it, because the two
+ * uses have to agree: that file splits the pair to spend the label
+ * budget on both halves, this one splits it to hang the swap button on
+ * the seam. One of them moving alone would leave a pair that truncates
+ * as a pair but no longer comes apart.
+ */
+export const LEG_SEPARATOR = " ⇄ ";
+
 /** What the model slot says when the local route has no weights on disk. */
 export const DOWNLOAD_MODEL_LABEL = "download model";
 
@@ -79,6 +90,7 @@ export function ComposerMetaControls({
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
   if (!backend && !provider && !model && !needsModelDownload) return null;
+  const pair = model && !needsModelDownload ? splitLegs(model) : null;
   return (
     <>
       {backend ? (
@@ -103,6 +115,25 @@ export function ComposerMetaControls({
           lead={Boolean(backend || provider)}
           mouseLayer={mouseLayer}
         />
+      ) : pair ? (
+        <>
+          <Control
+            kind="model"
+            label={pair[0]}
+            lead={Boolean(backend || provider)}
+            shrink={3}
+            fusion={fusion}
+            mouseLayer={mouseLayer}
+          />
+          <SwapLegsControl fusion={fusion} mouseLayer={mouseLayer} />
+          <Control
+            kind="workers"
+            label={pair[1]}
+            shrink={3}
+            fusion={fusion}
+            mouseLayer={mouseLayer}
+          />
+        </>
       ) : model ? (
         <Control
           kind="model"
@@ -163,6 +194,61 @@ function DownloadModelControl({
       </Text>
     </Box>
   );
+}
+
+/**
+ * The glyph between the two fusion legs, as a button: one click trades
+ * the orchestrator for the workers and back.
+ *
+ * It sits where the separator already was, so the row costs nothing it
+ * did not cost before — the pair was always drawn as `A ⇄ B`; the
+ * only change is that the three characters in the middle now answer to
+ * a press. `/runmode swap` is the same move from the keyboard, because
+ * a control only a mouse can reach is not a control in a terminal app.
+ */
+function SwapLegsControl({
+  fusion,
+  mouseLayer,
+}: {
+  fusion: boolean;
+  mouseLayer?: number;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const ref = useMouseTarget(
+    (hit) => {
+      if (!mouse || !isPrimaryPress(hit.event)) return false;
+      mouse.callbacks.onFusionLegsSwapRequested?.();
+      return true;
+    },
+    mouseLayer === undefined ? {} : { layer: mouseLayer },
+  );
+  return (
+    // Rigid: the arrows are the only thing on the row that says which
+    // half is which, so they must not be what the row gives up when it
+    // runs out of columns.
+    <Box ref={ref} flexShrink={0}>
+      <Text
+        color={fusion ? fusionSurfaceInk() : theme.colors.railForeground}
+        wrap="truncate"
+      >
+        {LEG_SEPARATOR}
+      </Text>
+    </Box>
+  );
+}
+
+/**
+ * Split `A ⇄ B` into its two legs. Anything else — a single model
+ * name, a label that happens to contain the glyph without the spaces —
+ * comes back `null` and is drawn as one control, exactly as before.
+ */
+function splitLegs(label: string): readonly [string, string] | null {
+  const at = label.indexOf(LEG_SEPARATOR);
+  if (at < 0) return null;
+  const left = label.slice(0, at);
+  const right = label.slice(at + LEG_SEPARATOR.length);
+  if (left.length === 0 || right.length === 0) return null;
+  return [left, right];
 }
 
 function Control({

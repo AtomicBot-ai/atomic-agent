@@ -99,7 +99,10 @@ export function describeFanoutPreview(
   const lines = tasks.map((task) => `  • ${task.title}`);
   const scope =
     writeScope.length > 0
-      ? [`may write in:`, ...writeScope.map((dir) => `  ${dir}`)]
+      ? [
+          `may write files and run commands in:`,
+          ...writeScope.map((dir) => `  ${dir}`),
+        ]
       : [
           `no writable directory could be derived from the briefs, so the`,
           `workers will still have to hand every write back up.`,
@@ -211,19 +214,35 @@ export function buildFusionDelegateTool(
       // operator is asked here instead, once, with the task list and the
       // directory in front of them.
       const writeScope = resolveFanoutScope(parsed.tasks, ctx.workingDir);
+      // A turn is one job. An orchestrator that reviews and re-delegates
+      // runs five fan-outs to build one library, and asking the same
+      // question five times is attrition, not consent. The operator's
+      // answer stands for the rest of the turn as long as later fan-outs
+      // stay inside the directories it named; one reaching somewhere new
+      // asks again.
+      const alreadyApproved =
+        deps.approvals.fanoutScopes?.turnGrantCovers(
+          ctx.sessionId,
+          writeScope,
+        ) ?? false;
       try {
-        await requireApproval(
-          { approvals: deps.approvals as ApprovalGate, approvalRequired: deps.approvalRequired },
-          {
-            sessionId: ctx.sessionId,
-            tool: FUSION_DELEGATE_TOOL,
-            category: "fusion_fanout",
-            reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}`,
-            preview: describeFanoutPreview(parsed.tasks, writeScope),
-            affectedResources: [...writeScope],
-          },
-          ctx.signal,
-        );
+        if (!alreadyApproved)
+          await requireApproval(
+            {
+              approvals: deps.approvals as ApprovalGate,
+              approvalRequired: deps.approvalRequired,
+            },
+            {
+              sessionId: ctx.sessionId,
+              tool: FUSION_DELEGATE_TOOL,
+              category: "fusion_fanout",
+              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}`,
+              preview: describeFanoutPreview(parsed.tasks, writeScope),
+              affectedResources: [...writeScope],
+            },
+            ctx.signal,
+          );
+        deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
       } catch (err) {
         return error(
           `the fan-out was not approved: ${err instanceof Error ? err.message : String(err)}`,

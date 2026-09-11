@@ -41,10 +41,11 @@ export type ApprovalCategory =
   /**
    * A fusion fan-out: several worker agents about to run at once, and
    * the one question the operator is asked about them. Approving it
-   * authorises every worker in that fan-out to write inside a stated
-   * directory without asking again (see `approval/fanout-scope.ts`), so
-   * it sits at level 4 beside `shell` — a fan-out writes, and no grant
-   * from an unrelated prompt should be able to silence it.
+   * authorises every worker in that fan-out to write files AND run
+   * commands inside a stated directory without asking again (see
+   * `approval/fanout-scope.ts`), so it sits at level 4 beside `shell` —
+   * that is exactly the authority it hands out, and no grant from an
+   * unrelated prompt should be able to silence it.
    */
   | "fusion_fanout"
   | "other";

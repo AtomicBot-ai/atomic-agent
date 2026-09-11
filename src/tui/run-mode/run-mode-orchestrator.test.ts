@@ -115,9 +115,7 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(notice).toBeDefined();
     // Not "needs a cloud provider": either leg may be cloud or local
     // now, so what is missing is a second provider, not a kind.
-    expect((notice as { text: string }).text).toMatch(
-      /needs two providers/,
-    );
+    expect((notice as { text: string }).text).toMatch(/needs two providers/);
   });
 
   it("fusion: refuses when the only provider would have to fill both legs", async () => {
@@ -291,5 +289,66 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(app.actions.filter((a) => a.type === "system_message")).toHaveLength(
       0,
     );
+  });
+  it("swap: trades the two legs, and the active provider follows the orchestrator", async () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    expect(getConfig().llm?.runMode?.fusion?.orchestratorProvider).toBe(
+      "openrouter",
+    );
+
+    await app.orchestrator.swapLegs();
+    const fusion = getConfig().llm?.runMode?.fusion;
+    expect(fusion?.orchestratorProvider).toBe("local-llama");
+    expect(fusion?.workerProvider).toBe("openrouter");
+    // The non-contradiction rule: `resolveRunMode` only honours fusion
+    // while the active provider IS the orchestrator, so a swap that
+    // moved the pins alone would drop the mode on the next read.
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    expect(app.orchestrator.current().effective).toBe("fusion");
+  });
+
+  it("swap: carries the per-leg model pins across with them", async () => {
+    seed({
+      ...BOTH_LEGS,
+      activeTextProvider: "openrouter",
+    });
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        ...BOTH_LEGS,
+        activeTextProvider: "openrouter",
+        runMode: {
+          mode: "fusion",
+          fusion: {
+            orchestratorProvider: "openrouter",
+            workerProvider: "local-llama",
+            orchestratorModel: "cloud-label",
+            workerModel: "local-label",
+          },
+        },
+      },
+    });
+    resetConfigCache();
+    const app = harness();
+    await app.orchestrator.swapLegs();
+    const fusion = getConfig().llm?.runMode?.fusion;
+    // They are per-leg labels. Left where they were, both halves of the
+    // composer would name the side that is no longer there.
+    expect(fusion?.orchestratorModel).toBe("local-label");
+    expect(fusion?.workerModel).toBe("cloud-label");
+  });
+
+  it("swap: refuses in one sentence when the route is not fusion", async () => {
+    seed({ ...BOTH_LEGS, activeTextProvider: "openrouter" });
+    const app = harness();
+    await app.orchestrator.swapLegs();
+    expect(getConfig().llm?.runMode?.fusion).toBeUndefined();
+    expect(
+      app.actions.some(
+        (a) => a.type === "composer_notice" && /swap needs fusion/.test(a.text),
+      ),
+    ).toBe(true);
   });
 });

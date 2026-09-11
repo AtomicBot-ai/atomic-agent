@@ -70,3 +70,47 @@ describe("isInside", () => {
     expect(isInside("/tmp/x", "/tmp")).toBe(false);
   });
 });
+describe("the turn-scoped grant", () => {
+  it("answers for every later fan-out of the same turn", () => {
+    const scopes = new FanoutScopeRegistry();
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel"])).toBe(false);
+    scopes.grantForTurn("s-1", ["/tmp/rel"]);
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel"])).toBe(true);
+    // Deeper inside the same directory is the same permission — this is
+    // the review pass re-delegating into a subfolder it just read.
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel/src"])).toBe(true);
+  });
+
+  it("asks again for a directory nobody approved", () => {
+    const scopes = new FanoutScopeRegistry();
+    scopes.grantForTurn("s-1", ["/tmp/rel"]);
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/other"])).toBe(false);
+    // Boundary, not prefix.
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel-backup"])).toBe(false);
+    // All of them or none: one new directory in the list is a new
+    // question, whatever the others were.
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel", "/tmp/other"])).toBe(
+      false,
+    );
+  });
+
+  it("does not leak between sessions, or outlive the turn", () => {
+    const scopes = new FanoutScopeRegistry();
+    scopes.grantForTurn("s-1", ["/tmp/rel"]);
+    expect(scopes.turnGrantCovers("s-2", ["/tmp/rel"])).toBe(false);
+    scopes.clearTurnGrant("s-1");
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel"])).toBe(false);
+  });
+
+  it("keeps the turn answer apart from a worker's own scope", () => {
+    // Different lifetimes, different maps: clearing the worker grant in
+    // the fan-out's `finally` must not take the turn's answer with it,
+    // or every fan-out would ask again and the fix would be invisible.
+    const scopes = new FanoutScopeRegistry();
+    scopes.grantForTurn("s-1", ["/tmp/rel"]);
+    scopes.grant("s-w-1", ["/tmp/rel"]);
+    scopes.clear("s-w-1");
+    expect(scopes.allows("s-w-1", ["/tmp/rel/a.js"])).toBe(false);
+    expect(scopes.turnGrantCovers("s-1", ["/tmp/rel"])).toBe(true);
+  });
+});

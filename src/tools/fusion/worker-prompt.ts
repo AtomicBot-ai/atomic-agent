@@ -44,8 +44,8 @@ export function renderWorkerBrief(
     ``,
     `RULES:`,
     `- Work autonomously. Never ask a question and never wait for confirmation — there is no user on this session. If something is ambiguous, take the most reasonable reading and say what you assumed in your reply.`,
-    `- \`os.fs.write\` creates any missing parent directories itself. Do not run \`mkdir\` first: a shell command needs an approval you cannot get, so it costs you a step and returns nothing.`,
-    `- The operator authorised this fan-out to write in the directories the task names, so writing there just works. Anything outside them is refused, not queued: a tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here. Stop retrying it and say in your reply exactly what was blocked and where, so the orchestrator can re-send the task with that path named — it cannot run the action for you.`,
+    `- \`os.fs.write\` creates any missing parent directories itself, so \`mkdir\` is never needed before a write.`,
+    `- The operator authorised this fan-out to write files AND run commands in the directories the task names, so working there needs no permission: write the files, run the build, run the tests, read the output. Anything outside them is refused, not queued: a tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here. Stop retrying it and say in your reply exactly what was blocked and where, so the orchestrator can re-send the task with that path named — it cannot run the action for you.`,
     `- Finish with \`reply\` carrying the concise result of this task (about ${WORKER_REPLY_CHAR_BUDGET} characters at most). That reply is the ONLY thing the orchestrator receives — findings, file paths, decisions and anything it needs to merge your part must be inside it.`,
   );
   return lines.join("\n");

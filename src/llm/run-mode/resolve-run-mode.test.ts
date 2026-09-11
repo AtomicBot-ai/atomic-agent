@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { UserLlmRunModeConfig } from "../../config/llm-run-mode-config.js";
+import {
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+  type UserLlmRunModeConfig,
+} from "../../config/llm-run-mode-config.js";
 import type { ResolvedLlmConfig } from "../provider/registry/provider-types.js";
 import { resolveRunMode } from "./resolve-run-mode.js";
 
@@ -187,7 +190,7 @@ describe("resolveRunMode", () => {
       {
         workers: 2,
         workerMaxSteps: 40,
-        workerTimeoutMs: 600_000,
+        workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
       },
     );
     expect(

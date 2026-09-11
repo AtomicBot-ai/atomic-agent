@@ -2310,6 +2310,8 @@ export async function createAgentRuntime(
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
+    clearFanoutTurnGrant: (sessionId: string) =>
+      approvals.fanoutScopes.clearTurnGrant(sessionId),
     slotManager,
     grammar,
     llmComplete,
