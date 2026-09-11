@@ -394,6 +394,18 @@ export function createTraceRecorder(
             reason: event.reason,
           });
           return;
+        case "empty_completion_recovered":
+          push({
+            type: "empty_completion_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+          });
+          return;
         case "provider_waiting":
           push({
             type: "provider_waiting",

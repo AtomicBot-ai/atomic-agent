@@ -433,6 +433,8 @@ atomic-agent serve \
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
+`serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot that has a token — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
+
 </details>
 
 <details>
@@ -473,6 +475,8 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 ```
 
 The TUI can store the token, start the channel, open pairing mode, and show status. Approvals arrive as inline buttons in your DM. Telegram is intentionally single-user.
+
+The channel belongs to the runtime, not to the TUI: `atomic-agent serve` boots it exactly the same way, so the bot keeps answering with no terminal UI open. Only one process may hold a channel — it is guarded by a lockfile in the state dir — and the process that loses the race leaves that channel down with `already running in another atomic-agent (pid N)` (shown as an ordinary state, not an error, in the Integrations pane) and does not retry, so start the bot from `serve` or from the TUI, not from both.
 
 While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
 
@@ -582,6 +586,27 @@ Cloud models are **uncapped by default** — the service applies the model's own
 Reasoning models spend that same budget on thinking, so a low ceiling can be used up before any answer appears.
 
 Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `8192`). Set it to `0` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
+
+</details>
+
+<details>
+<summary><b>Models that need strict tool schemas</b> (<code>strictTools</code>)</summary>
+
+Some models call tools reliably only when the provider constrains decoding to the tool's schema — OpenAI's **strict mode**. Set `strictTools` on the provider entry to send every function as `strict`:
+
+```json
+"llm": { "providers": [{ "id": "mercury", "kind": "openai-compatible", "strictTools": true }] }
+```
+
+Off by default, and only for OpenAI-compatible kinds (`openai-compatible`, `qwen-openai-compatible`, `openrouter`, `aimlapi`, `gemini`). `strict` is a field on each tool, so `extraBody` cannot reach it — `tools` is a reserved key that is re-applied after that merge.
+
+With the flag on, every tool schema is rewritten into the subset strict mode accepts: objects are closed, every property is listed in `required` (an optional one becomes nullable instead of being omitted), and value-range keywords the runtime validators enforce anyway (`minItems`, `minLength`, `pattern`, `format`, `default`, …) are stripped. A handful of tools take a free-form map — `os.http.request`'s headers and body, `mcp.prompt.get`'s arguments — and those cannot be expressed strictly; they are sent unconstrained (`strict: false`) rather than silently losing their arguments.
+
+Because optionals become nullable, a strict model sends `"pinned": null` where it used to omit the key; on these providers a top-level `null` argument is dropped again before the call runs, so tools that check for presence behave as they always did.
+
+The flag also sends `parallel_tool_calls: false`. Strict decoding and parallel calls do not compose — OpenAI's guidance is that a parallel call "may not match supplied schemas" — so a provider asked for strict tools is asked for one call per response. `agent.maxParallelToolCalls` still governs how the runtime executes a batch.
+
+Turn it on only for a service that implements strict mode: one that does not will reject the whole request, not just the field.
 
 </details>
 

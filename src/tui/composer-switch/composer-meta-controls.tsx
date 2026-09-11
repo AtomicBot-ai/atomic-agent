@@ -26,11 +26,6 @@ export interface ComposerMetaControlsProps {
   /** Paint on the Fusion surface: white ink, orange-warmed separators. */
   fusion?: boolean;
   /**
-   * Fusion's fourth control, `2 workers`: the local half of the route.
-   * `null` off the fusion route, where the strip has three controls.
-   */
-  workers?: string | null;
-  /**
    * Mouse layer the click targets register on. The composer floats over
    * the chat log with a `MOUSE_LAYER_PANEL` backstop behind it (see
    * `composer-overlay.tsx`), and a control left on the base layer would
@@ -80,7 +75,6 @@ export function ComposerMetaControls({
   provider,
   model,
   needsModelDownload = false,
-  workers = null,
   fusion = false,
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
@@ -115,16 +109,6 @@ export function ComposerMetaControls({
           label={model}
           lead={Boolean(backend || provider)}
           shrink={3}
-          fusion={fusion}
-          mouseLayer={mouseLayer}
-        />
-      ) : null}
-      {workers ? (
-        <Control
-          kind="workers"
-          label={workers}
-          lead={Boolean(backend || provider || model)}
-          shrink={2}
           fusion={fusion}
           mouseLayer={mouseLayer}
         />

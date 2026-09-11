@@ -274,13 +274,16 @@ describe("fusion.delegate", () => {
     expect(result.summary).not.toContain("localModels.managed.parallel");
   });
 
-  it("falls back to the configured `workers` when the call names none", async () => {
+  it("falls back to what the machine serves when the call names no width", async () => {
+    // Not to `runMode.fusion.workers`: the operator is not the party
+    // that knows how divisible this job is, and the slot pool is already
+    // the honest ceiling. A call that named nothing gets the capacity.
     const tool = buildFusionDelegateTool(
       deps({ slotManager: { poolSize: () => 8 } }),
     );
     const result = await tool.run({ tasks: sixTasks() }, ctx());
-    expect(result.details.maxWorkers).toBe(3);
-    expect(result.details.requestedWorkers).toBe(3);
+    expect(result.details.maxWorkers).toBe(6);
+    expect(result.details.requestedWorkers).toBe(8);
   });
 
   it("never runs more workers than there are tasks", async () => {
@@ -338,10 +341,13 @@ describe("fusion.delegate", () => {
       deps({ slotManager: { poolSize: () => 2 } }),
     );
     const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
-    expect(result.summary).toContain("6 workers were wanted");
+    expect(result.summary).toContain("6 workers' worth of work was sent");
     expect(result.summary).toContain("2 request slots");
     expect(result.summary).toContain("only 2 ran at a time");
+    // The knob is still named, but as where the number comes from
+    // rather than as something to go and raise: it is `"auto"` now.
     expect(result.summary).toContain("localModels.managed.parallel");
+    expect(result.summary).toContain("comes from the machine");
   });
 
   it("says nothing about the pool when it was not what held the fan-out down", async () => {

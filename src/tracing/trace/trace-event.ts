@@ -32,6 +32,7 @@ export type TraceEvent =
   | TraceProviderRecovered
   | TraceCompletionTruncated
   | TraceParseFailureRecovered
+  | TraceEmptyCompletionRecovered
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
@@ -204,6 +205,20 @@ export interface TraceParseFailureRecovered extends TraceEventBase {
   attempt: number;
   budget: number;
   reason: string;
+}
+
+/**
+ * A completion came back with nothing in any channel and the turn spent
+ * another step on it instead of ending. Distinct from
+ * `parse_failure_recovered`: there was no output to reject, so a
+ * post-mortem reading a `reason` here would be reading a fiction.
+ */
+export interface TraceEmptyCompletionRecovered extends TraceEventBase {
+  type: "empty_completion_recovered";
+  turnIndex: number;
+  stepIndex: number;
+  attempt: number;
+  budget: number;
 }
 
 /** The provider answered again and the parked turn resumed. */
@@ -431,13 +446,26 @@ export interface TraceError extends TraceEventBase {
 }
 
 /**
- * Synthetic terminal marker emitted by the NDJSON sink when a trace file
- * hits `maxBytesPerSession`. Subsequent events are dropped silently — the
- * runtime never stops because of trace overflow.
+ * Synthetic marker written by the NDJSON sink at the seam where it
+ * dropped the oldest part of a trace file to stay under
+ * `maxBytesPerSession`. It is NOT terminal: events keep being appended
+ * after it. Its job is to stop a reader — human or agent — from taking
+ * the row that follows it for the start of the session.
+ *
+ * `seq` and `ts` are those of the LAST dropped event, so the file stays
+ * ordered by both and the marker sits exactly where the gap ends.
  */
 export interface TraceTruncated extends TraceEventBase {
   type: "trace_truncated";
   reason: string;
+  /**
+   * Events removed from the head of this file so far, across every
+   * trim it has been through. Optional: traces recorded before the
+   * sink learned to keep the tail carry a marker without it.
+   */
+  droppedEvents?: number;
+  /** Bytes of event data removed so far. Optional, as `droppedEvents`. */
+  droppedBytes?: number;
 }
 
 /** Stable JSON serialization: one event per line, trailing newline. */

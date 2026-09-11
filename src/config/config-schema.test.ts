@@ -905,21 +905,49 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
   });
 
-  it("defaults localModels.managed.parallel to 2 (the pre-v52 hard-coded slot count)", () => {
+  it("defaults localModels.managed.parallel to auto (the machine decides)", () => {
+    // v63: the slot count stopped being an operator setting. `"auto"`
+    // resolves against the context the daemon actually launches with.
     expect(
       parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
         .parallel,
-    ).toBe(2);
-    expect(USER_CONFIG_DEFAULTS.localModels.managed.parallel).toBe(2);
+    ).toBe("auto");
+    expect(USER_CONFIG_DEFAULTS.localModels.managed.parallel).toBe("auto");
   });
 
-  it("migrates a v51 file by filling localModels.managed.parallel=2", () => {
+  it("reads a pre-v63 file's unchosen 2 as auto, and any other number as a pin", () => {
+    // Every pre-v63 file carries a `parallel` the schema wrote, not the
+    // operator. Reading the old default as a deliberate choice would
+    // freeze every existing install at two workers forever — the exact
+    // setting this version exists to stop asking about.
+    expect(
+      parseUserConfigFile({
+        version: 62,
+        localModels: { managed: { parallel: 2 } },
+      }).localModels.managed.parallel,
+    ).toBe("auto");
+    expect(
+      parseUserConfigFile({
+        version: 62,
+        localModels: { managed: { parallel: 6 } },
+      }).localModels.managed.parallel,
+    ).toBe(6);
+    // At v63 the operator's own 2 is theirs, and stays.
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { parallel: 2 } },
+      }).localModels.managed.parallel,
+    ).toBe(2);
+  });
+
+  it("migrates a v51 file by filling localModels.managed.parallel=auto", () => {
     const parsed = parseUserConfigFile({
       version: 51,
       localModels: { managed: { port: 19091 } },
     });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.localModels.managed.parallel).toBe(2);
+    expect(parsed.localModels.managed.parallel).toBe("auto");
   });
 
   it("keeps an explicit localModels.managed.parallel and bounds it to 1..8", () => {

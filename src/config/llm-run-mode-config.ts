@@ -85,7 +85,6 @@ function parseLegProviderId(
   raw: unknown,
   providers: ReadonlyArray<RunModeProviderRef>,
   field: string,
-  leg: "orchestrator" | "worker",
 ): string {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new ConfigValidationError(field, "expected non-empty string");
@@ -97,19 +96,17 @@ function parseLegProviderId(
       `unknown provider id ${JSON.stringify(raw)}`,
     );
   }
-  const isLocal = entry.kind === LOCAL_PROVIDER_KIND;
-  if (leg === "orchestrator" && isLocal) {
-    throw new ConfigValidationError(
-      field,
-      `orchestrator must be a cloud provider, ${JSON.stringify(raw)} is ${LOCAL_PROVIDER_KIND}`,
-    );
-  }
-  if (leg === "worker" && !isLocal) {
-    throw new ConfigValidationError(
-      field,
-      `worker provider must be ${LOCAL_PROVIDER_KIND}, ${JSON.stringify(raw)} is ${entry.kind}`,
-    );
-  }
+  // Neither leg is nailed to a kind. Cloud orchestrator + local workers
+  // is the default pairing and the economics the mode was built for, but
+  // a local model planning for cloud executors is a legitimate setup and
+  // the schema is the wrong place to forbid it — it does not refuse a
+  // file, it refuses to BOOT on one, which is how an operator ends up
+  // hand-editing JSON to start the app again.
+  //
+  // What is still checked is that the id names a configured provider,
+  // above. The one pairing the runtime rejects — both legs on the same
+  // provider — is caught by `resolveRunMode`, which can see both at once
+  // and degrades instead of throwing.
   return raw;
 }
 
@@ -155,7 +152,6 @@ function parseFusion(
       obj.orchestratorProvider,
       providers,
       `${field}.orchestratorProvider`,
-      "orchestrator",
     );
   }
   if (obj.orchestratorModel !== undefined) {
@@ -169,7 +165,6 @@ function parseFusion(
       obj.workerProvider,
       providers,
       `${field}.workerProvider`,
-      "worker",
     );
   }
   if (obj.workerModel !== undefined) {

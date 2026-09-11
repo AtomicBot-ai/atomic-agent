@@ -86,26 +86,25 @@ describe("parseLlmRunModeConfig", () => {
     ).toEqual({ fusion: { orchestratorProvider: "claude-cli" } });
   });
 
-  it("rejects an orchestrator pin that names a llama-server provider", () => {
-    expect(() =>
-      parseLlmRunModeConfig(
-        { fusion: { orchestratorProvider: "local-llama" } },
-        providers,
-        "llm.runMode",
-      ),
-    ).toThrow(
-      /llm\.runMode\.fusion\.orchestratorProvider.*must be a cloud provider/,
+  it("accepts either kind on either leg", () => {
+    // The schema does not refuse a file, it refuses to BOOT on one, so
+    // a pairing it dislikes leaves the operator hand-editing JSON to
+    // start the app. Which model orchestrates and which executes is a
+    // choice; the schema's job is only that both ids exist.
+    const swapped = parseLlmRunModeConfig(
+      {
+        fusion: {
+          orchestratorProvider: "local-llama",
+          workerProvider: "openrouter",
+        },
+      },
+      providers,
+      "llm.runMode",
     );
-  });
-
-  it("rejects a worker pin that names a cloud provider", () => {
-    expect(() =>
-      parseLlmRunModeConfig(
-        { fusion: { workerProvider: "openrouter" } },
-        providers,
-        "llm.runMode",
-      ),
-    ).toThrow(/llm\.runMode\.fusion\.workerProvider.*must be llama-server/);
+    expect(swapped.fusion).toMatchObject({
+      orchestratorProvider: "local-llama",
+      workerProvider: "openrouter",
+    });
   });
 
   it("rejects a pin to a provider that is not configured", () => {

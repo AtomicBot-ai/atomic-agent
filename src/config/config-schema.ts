@@ -496,7 +496,11 @@ export interface AtomicAgentConfig {
       enabled: boolean | null;
       /** Directory for per-session NDJSON trace files. */
       dir: string;
-      /** Hard cap on a single session's trace file before writes stop. */
+      /**
+       * Hard cap on a single session's trace file. Crossing it drops
+       * the OLDEST events, not the newest: the sink trims the head
+       * back to half the cap and keeps recording.
+       */
       maxBytesPerSession: number;
     };
   };
@@ -921,6 +925,15 @@ export interface AtomicAgentConfig {
        * accept `Authorization: Bearer` (Anthropic wants `x-api-key`).
        */
       apiKeyHeader?: string;
+      /**
+       * Env var holding this entry's API key, set by the known-service
+       * presets so each service keeps its own (`GROQ_API_KEY`,
+       * `NOUS_API_KEY`, ...). Authoritative when present — see
+       * `resolveLlmProviderApiKey`. `parseLlmProviders` has always
+       * carried it through `UserLlmProviderEntry`; it was simply
+       * missing from this mirror of that shape.
+       */
+      apiKeyEnvVar?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;
@@ -932,6 +945,14 @@ export interface AtomicAgentConfig {
        * are re-applied after the merge and cannot be overridden.
        */
       extraBody?: Record<string, unknown>;
+      /**
+       * Emit OpenAI strict function tools (`tools[].function.strict`)
+       * for this provider, rewriting each tool schema into the subset
+       * strict mode accepts. Off by default: a service that does not
+       * implement strict mode rejects the whole request. Not reachable
+       * through `extraBody`, because `tools` is a reserved key.
+       */
+      strictTools?: boolean;
       /**
        * Settings for a `subscription-cli` provider: which already
        * signed-in vendor CLI to drive (`claude`, `codex`) and how to
@@ -1267,12 +1288,19 @@ export interface UserManagedLocalLlmConfig {
   tensorSplit: number[];
   /**
    * llama-server request slots (`--parallel`) for the managed chat
-   * daemon, 1..8. Default `2` — the value that was hard-coded before
-   * config v52, so older files launch byte-identically. Fusion workers
-   * run one per slot; raising this is what lets them run concurrently
-   * instead of queueing on the server. Applied on the next daemon start.
+   * daemon: `"auto"` (the default since config v63) or a pinned 1..8.
+   *
+   * Fusion workers run one per slot, so this is the ceiling on how many
+   * of them run at once rather than queueing. `"auto"` derives it from
+   * the context the daemon is launched with — llama.cpp divides that
+   * context between the slots, and a slot smaller than a worker's own
+   * prompt cannot serve one (see `worker-slots.ts`). That makes the
+   * number a property of the machine, which is the party that knows it.
+   *
+   * A pinned number is honoured as written: an external server, an
+   * unusual model, a benchmark. Applied on the next daemon start.
    */
-  parallel: number;
+  parallel: number | "auto";
   /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
@@ -2067,7 +2095,20 @@ export interface UserConfigFile {
 // closed by default — `remoteSync: false` refuses every network git verb
 // so a repository the agent versions stays on this machine; the GitHub
 // token lives in `<stateDir>/.env`, never here.
-export const USER_CONFIG_VERSION = 62;
+// v63: `localModels.managed.parallel` accepts `"auto"` and defaults to
+// it — the slot count is derived from the context the daemon launches
+// with instead of being an operator setting. A pre-v63 file whose value
+// is the old default `2` (which nobody chose — it was the schema's)
+// becomes `"auto"`; any other number is read as a deliberate pin and
+// kept.
+// v64: provider entries accept `strictTools` — emit OpenAI strict
+// function tools (`tools[].function.strict: true`) for this provider,
+// with every tool schema rewritten into the subset strict mode accepts.
+// Additive and off by default: an older file has no flag, and without
+// the flag the request body is byte-identical to v63's. (Written as v63
+// on its own branch; renumbered here because the slot-count change took
+// that number first.)
+export const USER_CONFIG_VERSION = 64;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2218,6 +2259,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   59,
   60,
   61,
+  62,
+  63,
   USER_CONFIG_VERSION,
 ];
 
@@ -2237,7 +2280,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       backendVariant: "auto",
       contextSize: 0,
       tensorSplit: [],
-      parallel: 2,
+      parallel: "auto",
     },
     embeddings: {
       enabled: false,
@@ -2995,6 +3038,44 @@ function parseMemoryV2FeatureEnabled(
     return true;
   }
   return parseBool(raw ?? defaultEnabled, field);
+}
+
+/** The slot count that was the schema's default, never an operator's choice. */
+const UNCHOSEN_PARALLEL = 2;
+
+/** First version where `parallel` means "let the machine decide" by default. */
+const AUTO_PARALLEL_VERSION = 63;
+
+/**
+ * `"auto"` (the machine decides, from the launch context) or a pinned
+ * 1..8.
+ *
+ * The migration is the interesting half. A pre-v63 file carries a
+ * `parallel` written by the schema, not by the operator — every file has
+ * one, and for almost all of them it is the old default `2`. Reading
+ * that as a deliberate pin would freeze every existing install at two
+ * workers forever, which is exactly the setting this version exists to
+ * stop asking about. So the old default becomes `"auto"`, and any other
+ * number is treated as something someone actually chose and kept.
+ */
+function resolveManagedParallel(
+  inputVersion: number,
+  raw: unknown,
+): number | "auto" {
+  if (raw === "auto") return "auto";
+  if (raw === null || raw === undefined) {
+    return USER_CONFIG_DEFAULTS.localModels.managed.parallel;
+  }
+  const pinned = parseBoundedPositiveInt(
+    raw,
+    "localModels.managed.parallel",
+    1,
+    8,
+  );
+  if (inputVersion < AUTO_PARALLEL_VERSION && pinned === UNCHOSEN_PARALLEL) {
+    return "auto";
+  }
+  return pinned;
 }
 
 function resolveManagedAutoUpdate(inputVersion: number, raw: unknown): boolean {
@@ -4058,12 +4139,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.tensorSplit,
       "localModels.managed.tensorSplit",
     ),
-    parallel: parseBoundedPositiveInt(
-      rawManaged.parallel ?? USER_CONFIG_DEFAULTS.localModels.managed.parallel,
-      "localModels.managed.parallel",
-      1,
-      8,
-    ),
+    parallel: resolveManagedParallel(version, rawManaged.parallel),
   };
 
   const rawEmbeddings =

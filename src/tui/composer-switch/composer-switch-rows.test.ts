@@ -124,7 +124,7 @@ describe("the switch rows", () => {
   it("puts the pre-flight blocker in the fusion row's detail column", () => {
     const rows = selectComposerSwitchRows(localState("managed"), "backend");
     expect(rows.find((row) => row.label === "fusion")?.detail).toMatch(
-      /needs a cloud provider with a key/,
+      /needs a second provider/,
     );
   });
 

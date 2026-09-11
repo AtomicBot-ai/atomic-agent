@@ -15,7 +15,10 @@ import type {
 import type { ToolCallAdapter } from "../adapters/tool-call-adapter.js";
 import type { StreamConsumer } from "../adapters/stream-consumer.js";
 import type { ReasoningFormat } from "../llm-provider.js";
-import { openAiToolCallAdapter } from "./openai-tool-call-adapter.js";
+import {
+  openAiToolCallAdapter,
+  withStrictNullArgumentDrop,
+} from "./openai-tool-call-adapter.js";
 import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
 import { buildOpenAiChatBody } from "./openai-build-body.js";
 import {
@@ -70,6 +73,14 @@ export interface OpenAiProviderOptions {
   /** Output ceiling for this provider; absent means the model's maximum. */
   maxOutputTokens?: number;
   /**
+   * Emit OpenAI strict function tools (`tools[].function.strict`).
+   * Opt-in per provider entry: it rewrites every tool schema into the
+   * subset strict mode accepts (`openai-strict-tools.ts`), which a
+   * service that does not implement strict mode will reject outright.
+   * Absent leaves the request body exactly as it was.
+   */
+  strictTools?: boolean;
+  /**
    * Sink for the credit-limit retry warning (`plan-credit-limit-retry.ts`).
    * Wired from the provider factory context so the notice lands wherever
    * the rest of the runtime logs; without it the client falls back to a
@@ -91,11 +102,20 @@ export class OpenAiProvider implements LlmProvider {
   private readonly taggedToolCompatibility: "qwen" | undefined;
   private readonly extraBody: Record<string, unknown> | undefined;
   private readonly maxOutputTokens: number | undefined;
+  private readonly strictTools: boolean;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
     this.name = options.id;
-    this.toolCallAdapter = options.toolCallAdapter ?? openAiToolCallAdapter;
+    const baseToolCallAdapter =
+      options.toolCallAdapter ?? openAiToolCallAdapter;
+    // Strict mode makes the model send `"x": null` where it used to
+    // omit `x` — see `withStrictNullArgumentDrop`. Wrapped here, on the
+    // one provider that opted in, so the parse side stays untouched for
+    // everybody else.
+    this.toolCallAdapter = options.strictTools
+      ? withStrictNullArgumentDrop(baseToolCallAdapter)
+      : baseToolCallAdapter;
     this.streamConsumer =
       options.streamConsumer ??
       createOpenAiStreamConsumer(options.reasoningFormat ?? "delta_reasoning");
@@ -114,6 +134,7 @@ export class OpenAiProvider implements LlmProvider {
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.extraBody = options.extraBody;
     this.maxOutputTokens = options.maxOutputTokens;
+    this.strictTools = options.strictTools ?? false;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -133,6 +154,7 @@ export class OpenAiProvider implements LlmProvider {
       false,
       this.extraBody,
       this.maxOutputTokens,
+      this.strictTools,
     );
     const json = await openAiPostJson(
       this.http,
@@ -156,6 +178,7 @@ export class OpenAiProvider implements LlmProvider {
       true,
       this.extraBody,
       this.maxOutputTokens,
+      this.strictTools,
     );
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";

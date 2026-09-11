@@ -63,6 +63,12 @@ import {
   formatTurnFailedRecord,
   isRecoverableParseFailure,
 } from "./parse-failure-recovery.js";
+import {
+  EMPTY_COMPLETION_RECOVERY_BUDGET,
+  composeEmptyCompletionNotice,
+  isRecoverableEmptyCompletion,
+  repeatedEmptyCompletionError,
+} from "./empty-completion-recovery.js";
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -76,6 +82,13 @@ export interface AgentLoopDependencies {
    * gate uses for `approvalRequired`.
    */
   isPlanMode?: () => boolean;
+  /**
+   * Whether the run mode resolves to fusion right now. Read per turn,
+   * for the reason `isPlanMode` is read per call: the operator can flip
+   * the mode between turns and the next turn should honour it. Absent
+   * (embedders, tests) means "not fusion", which gates nothing.
+   */
+  isFusionMode?: () => boolean;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -127,8 +140,15 @@ export interface AgentLoopDependencies {
    */
   supportsParallelTools?: boolean;
   /**
+   * Whether the active model declares `supportsTools: "strict"`, so the
+   * native-tools request should constrain the decode to the tool
+   * schemas. Defaults to `false`: the level is opt-in per model and
+   * every tool the adapter cannot express strictly ships unchanged.
+   */
+  strictTools?: boolean;
+  /**
    * Resolve the wire slice for a provider a turn is pinned to
-   * (`RunTurnOptions.providerId`). The four global fields above describe
+   * (`RunTurnOptions.providerId`). The global fields above describe
    * the ACTIVE provider; a fusion worker turn runs on a different one
    * (the local leg) inside the same process, so its steps must be built
    * for that link's transport, adapter and slot affinity, not the
@@ -264,8 +284,8 @@ export interface ReflectionSegmentationConfig {
 }
 
 /**
- * The per-link wire shape a pinned turn is built for — the same four
- * facts `AgentLoopDependencies` carries for the active provider, resolved
+ * The per-link wire shape a pinned turn is built for — the same facts
+ * `AgentLoopDependencies` carries for the active provider, resolved
  * for the pinned one instead. See `AgentLoopDependencies.resolveLlmSlice`.
  */
 export interface ResolvedTurnLlmSlice {
@@ -273,6 +293,7 @@ export interface ResolvedTurnLlmSlice {
   toolCallAdapter: ToolCallAdapter | null;
   supportsSlotAffinity: boolean;
   supportsParallelTools: boolean;
+  strictTools: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -572,6 +593,20 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The completion for step `stepIndex` came back with nothing in
+       * any channel, and the turn is spending another step on it rather
+       * than ending: the next prompt carries a `### notice` saying the
+       * reply was empty. Its own type rather than a
+       * `parse_failure_recovered` with an odd reason — there was no
+       * output to reject, and the operator line has to say so.
+       */
+      type: "empty_completion_recovered";
+      stepIndex: number;
+      attempt: number;
+      budget: number;
+    }
+  | {
+      /**
        * A leg of the task finished and the work is continuing. Fired at
        * every `maxSteps` boundary that does not end the task, so a long
        * job reports itself instead of going quiet for an hour.
@@ -838,6 +873,14 @@ export class AgentLoop {
       }
     }
 
+    // Fusion's division of labour is per TURN, not per session: each
+    // turn starts owing a plan and a fan-out before it may write. An
+    // ephemeral turn is a worker's own — the gate is the orchestrator's
+    // and must never close on the hands it is meant to free.
+    const fusionOrchestratorTurn =
+      (this.deps.isFusionMode?.() ?? false) && options.ephemeral !== true;
+    let fusionDelegatedThisTurn = false;
+
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
     let runError: Error | null = null;
@@ -913,6 +956,54 @@ export class AgentLoop {
      * the third try either, and the operator is owed the failure.
      */
     let parseRecoveries = 0;
+    /**
+     * Empty completions spent another step on, counted only while they
+     * are CONSECUTIVE — any completion that carried something resets it
+     * (see the reset next to `stepsTaken += 1` below). Bounded by
+     * `EMPTY_COMPLETION_RECOVERY_BUDGET`, and separate from
+     * `parseRecoveries` because the two shapes are different evidence:
+     * an unparseable body is a model that tried, an empty one is a model
+     * that emitted no tokens at all.
+     */
+    let emptyRecoveries = 0;
+    /**
+     * Is there a step left for a recovery to actually be spent in?
+     *
+     * A recovery that "spends a step" is a promise of another
+     * inference: the operator is told the turn is trying again, and the
+     * failure is dropped on the strength of that. The LEG boundary is
+     * the one ceiling that can make that promise entirely false, and it
+     * is the one this predicate exists for. A recovery taken on the
+     * final step of a leg that has produced nothing usable lands on the
+     * `no_progress` break, which leaves the loop before `executeStep`
+     * runs again: the announced retry never happens, the step is burnt
+     * for nothing, and the model diagnosis is swallowed into "ran out
+     * of steps" — taking the error report with it, since only
+     * `loop_failed` is captured.
+     *
+     * The step and duration ceilings are deliberately NOT solved here.
+     * The finalization guard preempts a recovery on a step that is
+     * already final, but nothing stops one from LANDING on the final
+     * step — and there the retry genuinely runs, so refusing it would
+     * forfeit a real inference (and, on the last step of a long task,
+     * the summary it might still produce). What that case needs is for
+     * its failure to be reported instead of swallowed, which is
+     * `repeatedEmptyAfterAnnouncedRetry` in the catch below. The
+     * `stepCeiling` test that follows is therefore only a floor: it
+     * rejects a retry with no step at all left to run in, which the
+     * finalization guard already makes unreachable.
+     *
+     * Reading `legMadeProgress` here is reading exactly what the
+     * boundary will read: a recovery cannot set it (it produced nothing
+     * usable, by definition), and nothing else runs in between.
+     */
+    const recoveryStepAvailable = (stepIndex: number): boolean => {
+      const next = stepIndex + 1;
+      if (next >= stepCeiling) return false;
+      const boundaryRuns =
+        next > 0 && next % legSteps === 0 && next !== lastBoundaryIndex;
+      return !boundaryRuns || legMadeProgress;
+    };
     // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
     // `executeStep` so the synchronous batch gate can veto looping calls
     // before they are dispatched; the agent loop consumes the resulting
@@ -1106,6 +1197,15 @@ export class AgentLoop {
             ...(this.deps.isPlanMode
               ? { isPlanMode: this.deps.isPlanMode }
               : {}),
+            ...(fusionOrchestratorTurn
+              ? {
+                  isFusionOrchestrator: () => true,
+                  hasDelegated: () => fusionDelegatedThisTurn,
+                  onDelegated: () => {
+                    fusionDelegatedThisTurn = true;
+                  },
+                }
+              : {}),
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
@@ -1126,6 +1226,8 @@ export class AgentLoop {
               pinnedSlice?.supportsParallelTools ??
               this.deps.supportsParallelTools ??
               true,
+            strictTools:
+              pinnedSlice?.strictTools ?? this.deps.strictTools ?? false,
             ...(options.providerId !== undefined
               ? { providerId: options.providerId }
               : {}),
@@ -1167,6 +1269,12 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         stepsTaken += 1;
+        // A completion the step could act on. Whatever run of empty
+        // completions was in progress is over: the link has just proved
+        // it answers, so an empty one later in this turn is a fresh
+        // event and is owed its own retry, and the terminal message can
+        // keep saying "twice in a row" and mean it.
+        emptyRecoveries = 0;
         const tokensUsed =
           (outcome.completion.timing?.promptTokens ??
             outcome.prompt.tokens.total) +
@@ -1449,6 +1557,12 @@ export class AgentLoop {
           if (retry.kind === "fit_window") {
             this.deps.onContextWindowObserved?.(retry.contextWindow);
           }
+          // A cut reply is still tokens on the wire, so — like the
+          // parse failure below — it breaks any run of empty
+          // completions. (A provider outage does not: it produces no
+          // completion at all, so the empties on either side of it are
+          // still consecutive completions.)
+          emptyRecoveries = 0;
           // The notice the cut attempt carried (loop detector, steering,
           // a trimmed batch) is still owed to the retry.
           pendingNotice = composeTruncationNotice(
@@ -1481,7 +1595,32 @@ export class AgentLoop {
           i -= 1;
           continue;
         }
-        if (finalizationStep && !cancelled) {
+        // The retry this turn ANNOUNCED, landing on the finalization
+        // step and coming back empty again.
+        //
+        // The guard below normally swallows a finalization failure: the
+        // turn ends `max_steps`/`stalled` and `runError` is dropped.
+        // That is right for a step nobody was promised, and wrong here.
+        // The operator was told the turn was trying again, and without
+        // this recovery the same scenario ends `failed` carrying the
+        // model's own diagnosis — so swallowing it would trade a
+        // readable failure for "ran out of steps" AND drop the error
+        // report, since only `loop_failed` is captured. Reporting it
+        // executes no further work, which is the one thing the
+        // finalization guard exists to prevent.
+        //
+        // Both ceilings put the retry here: the step ceiling whenever
+        // the empty lands on the second-to-last allowed step (`run
+        // --max-steps 2`; a fusion worker at step 38 of its 40), and
+        // the duration ceiling whenever `agent.task.maxDurationMs` is
+        // crossed between the two attempts.
+        const repeatedEmptyAfterAnnouncedRetry =
+          emptyRecoveries > 0 && isRecoverableEmptyCompletion(err);
+        if (
+          finalizationStep &&
+          !cancelled &&
+          !repeatedEmptyAfterAnnouncedRetry
+        ) {
           // A failed finalization must not execute more work or turn a
           // bounded run into an unbounded retry. Preserve the established
           // explicit max-steps/stalled outcome instead.
@@ -1512,13 +1651,22 @@ export class AgentLoop {
         // The step is counted. It consumed an inference, and leaving
         // `legMadeProgress` false means a leg made entirely of rejected
         // completions still stops at the boundary as `no_progress`.
+        //
+        // `recoveryStepAvailable` is the leg-boundary half of the
+        // finalization guard above: a recovery on the last step of a
+        // barren leg would announce a retry the `no_progress` break
+        // never performs.
         if (
           !cancelled &&
           parseRecoveries < PARSE_RECOVERY_BUDGET &&
+          recoveryStepAvailable(i) &&
           isRecoverableParseFailure(err)
         ) {
           parseRecoveries += 1;
           stepsTaken += 1;
+          // The model emitted tokens, just not readable ones — so this
+          // breaks any run of empty completions.
+          emptyRecoveries = 0;
           // The notice this step was carrying (loop detector, steering,
           // a trimmed batch) is still owed to the next one.
           pendingNotice = composeParseFailureNotice(
@@ -1545,6 +1693,67 @@ export class AgentLoop {
           );
           runError = null;
           continue;
+        }
+        // The completion came back with nothing in it at all — no
+        // content, no reasoning, no tool calls — so there was nothing
+        // for the parser to read and nothing for the in-step repair to
+        // fix. Spend an ordinary step on it for the same reason as the
+        // parse failure above: the inference threw before any tool was
+        // dispatched, so nothing is repeated, and the next prompt
+        // carries a `### notice` telling the model its reply was empty,
+        // which is the only correction available for this shape.
+        //
+        // The step is counted, as the parse recovery is: it consumed an
+        // inference, and a leg made of empty completions must still
+        // reach its boundary as `no_progress`.
+        //
+        // And it is only taken when a step is actually left to spend:
+        // on the last step of a barren leg the retry would be announced
+        // and never performed, and the operator would be handed
+        // "ran out of steps" in place of the model's own diagnosis.
+        //
+        // `!finalizationStep` is redundant today — the guard above only
+        // falls through to here for a repeated empty, which has already
+        // spent the budget — but it is the invariant that keeps it
+        // redundant: a budget above one must never announce a retry on
+        // a step the loop is about to leave.
+        if (
+          !cancelled &&
+          !finalizationStep &&
+          emptyRecoveries < EMPTY_COMPLETION_RECOVERY_BUDGET &&
+          recoveryStepAvailable(i) &&
+          isRecoverableEmptyCompletion(err)
+        ) {
+          emptyRecoveries += 1;
+          stepsTaken += 1;
+          pendingNotice = composeEmptyCompletionNotice(noticeForThisStep);
+          this.deps.onEvent?.({
+            type: "empty_completion_recovered",
+            stepIndex: i,
+            attempt: emptyRecoveries,
+            budget: EMPTY_COMPLETION_RECOVERY_BUDGET,
+          });
+          this.deps.logger?.warn("completion was empty; retrying the turn", {
+            sessionId: state.id,
+            stepIndex: i,
+            attempt: emptyRecoveries,
+            budget: EMPTY_COMPLETION_RECOVERY_BUDGET,
+            category,
+          });
+          runError = null;
+          continue;
+        }
+        // The budget is spent and the model returned nothing again. The
+        // turn is terminal now, but `detectModelFailure`'s message
+        // describes a single empty completion — an operator reading it
+        // would reasonably conclude the runtime never retried. Say the
+        // count instead.
+        // `category` is deliberately not recomputed: the rewrite keeps
+        // the same `reason` on a `ModelError`, whose category is pinned
+        // to `model`, so reclassifying could only ever return what it
+        // already holds.
+        if (repeatedEmptyAfterAnnouncedRetry) {
+          runError = repeatedEmptyCompletionError(err);
         }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a

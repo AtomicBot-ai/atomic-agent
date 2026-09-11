@@ -6,65 +6,51 @@ import {
   localState,
 } from "./composer-switch-fixtures.js";
 import { selectComposerSwitchRows } from "./composer-switch-rows.js";
-import {
-  selectComposerWorkersLabel,
-  selectWorkerRows,
-} from "./composer-switch-worker-rows.js";
+import { selectWorkerRows } from "./composer-switch-worker-rows.js";
 
 describe("the workers switch", () => {
-  it("lists the downloaded local models, then every worker count, then the deep link", () => {
+  it("offers both kinds for the worker slot, and no counts", () => {
+    // The slot takes either kind: the models on disk, and every cloud
+    // provider that is not already holding the orchestrator slot. The
+    // count rows are gone — the machine sizes the pool and the
+    // orchestrator sizes each fan-out.
     const rows = selectWorkerRows(fusionState());
     expect(rows[0]?.label).toBe("qwen-3.5-4b");
-    expect(rows[0]?.detail).toBe("worker model");
-    expect(rows.slice(1, 9).map((row) => row.label)).toEqual([
-      "1 worker",
-      "2 workers",
-      "3 workers",
-      "4 workers",
-      "5 workers",
-      "6 workers",
-      "7 workers",
-      "8 workers",
+    expect(rows[0]?.detail).toBe("workers · on this machine");
+    expect(rows.map((row) => row.label)).toEqual([
+      "qwen-3.5-4b",
+      "aimlapi",
+      "Download more models…",
     ]);
-    expect(rows.at(-1)?.label).toBe("Download more models…");
+    expect(rows.find((row) => row.label === "aimlapi")?.intent).toEqual({
+      kind: "fusionLeg",
+      leg: "worker",
+      providerId: "aimlapi",
+    });
+    expect(rows.some((row) => /worker(s)?$/.test(row.label))).toBe(false);
   });
 
-  it("marks the model in force and the count in force", () => {
+  it("never offers the orchestrator's own provider as its workers", () => {
+    // Fanning out to the model that is doing the orchestrating buys
+    // nothing and doubles the bill.
+    const rows = selectWorkerRows(fusionState());
+    expect(rows.some((row) => row.label === "openrouter")).toBe(false);
+  });
+
+  it("marks the model in force", () => {
     const rows = selectWorkerRows(fusionState({ workers: 4 }));
     expect(rows.filter((row) => row.active).map((row) => row.label)).toEqual([
       "qwen-3.5-4b",
-      "4 workers",
     ]);
   });
 
-  it("carries the intents the activation path branches on", () => {
+  it("carries the one intent the activation path still branches on", () => {
     const rows = selectWorkerRows(fusionState());
     expect(rows.find((row) => row.label === "qwen-3.5-4b")?.intent).toEqual({
       kind: "fusionWorkerModel",
       modelId: "qwen-3.5-4b",
     });
-    expect(rows.find((row) => row.label === "3 workers")?.intent).toEqual({
-      kind: "fusionWorkers",
-      workers: 3,
-    });
-  });
-
-  it("says the slot count is the operator's problem on an external server", () => {
-    const base = fusionState();
-    const external = {
-      ...base,
-      localModelsPanel: {
-        ...base.localModelsPanel,
-        configMode: "external" as const,
-      },
-    };
-    expect(
-      selectWorkerRows(external).find((row) => row.label === "2 workers")
-        ?.detail,
-    ).toBe("external server — set --parallel yourself");
-    expect(
-      selectWorkerRows(base).find((row) => row.label === "2 workers")?.detail,
-    ).toBe("llama-server --parallel 2 · restart to apply");
+    expect(rows.some((row) => row.intent?.kind === "fusionWorkers")).toBe(false);
   });
 
   it("never offers a model that is not on disk", () => {
@@ -94,19 +80,4 @@ describe("the workers switch", () => {
   });
 });
 
-describe("the meta bar's worker label", () => {
-  it("counts the workers on the fusion route", () => {
-    expect(selectComposerWorkersLabel(fusionState())).toBe("2 workers");
-    expect(selectComposerWorkersLabel(fusionState({ workers: 1 }))).toBe(
-      "1 worker",
-    );
-  });
 
-  it("says nothing anywhere else", () => {
-    expect(selectComposerWorkersLabel(cloudState())).toBeNull();
-    expect(selectComposerWorkersLabel(localState())).toBeNull();
-    expect(
-      selectComposerWorkersLabel(fusionState({ effective: "cloud" })),
-    ).toBeNull();
-  });
-});

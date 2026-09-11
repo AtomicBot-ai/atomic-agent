@@ -66,6 +66,7 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      strictTools: entry.strictTools,
       logger: ctx.logger,
     });
   });
@@ -90,6 +91,7 @@ export function registerBuiltInProviderKinds(): void {
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      strictTools: entry.strictTools,
       logger: ctx.logger,
     });
   });
@@ -107,6 +109,7 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      strictTools: entry.strictTools,
       logger: ctx.logger,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
@@ -123,6 +126,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      strictTools: entry.strictTools,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
@@ -140,6 +144,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? GEMINI_DEFAULT_CHAT_MODEL,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
+      strictTools: entry.strictTools,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,

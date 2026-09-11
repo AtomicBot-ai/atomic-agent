@@ -12,10 +12,16 @@ describe("describeFusionBlocker", () => {
     expect(describeFusionBlocker(fusionState())).toBeNull();
   });
 
-  it("names the missing cloud key first", () => {
+  it("names the second leg as missing when only the local one can answer", () => {
+    // `localState()` has the llama-server row and no keyed cloud one:
+    // one usable leg, so fusion is one provider short — and the one it
+    // is short of is the orchestrator, because the local leg is there.
     expect(describeFusionBlocker(localState())).toMatch(
-      /needs a cloud provider with a key/,
+      /needs a second provider to orchestrate/,
     );
+  });
+
+  it("counts a keyless cloud row as unable to answer", () => {
     const keyless = fusionState();
     const state = {
       ...keyless,
@@ -27,10 +33,13 @@ describe("describeFusionBlocker", () => {
         })),
       },
     };
-    expect(describeFusionBlocker(state)).toMatch(/Manage › LLM › Cloud/);
+    expect(describeFusionBlocker(state)).toMatch(/Manage › LLM/);
   });
 
-  it("names the missing local model once the snapshot has landed", () => {
+  it("names the missing second leg when nothing is downloaded", () => {
+    // A keyed cloud provider and a local row with an empty disk: the
+    // cloud leg can answer, the local one cannot, so the pair is short
+    // by one — whichever kind the operator fills it with.
     const base = cloudState();
     const state = {
       ...base,
@@ -40,9 +49,7 @@ describe("describeFusionBlocker", () => {
         lastRefreshedAt: 1,
       },
     };
-    expect(describeFusionBlocker(state)).toMatch(
-      /needs a downloaded local model/,
-    );
+    expect(describeFusionBlocker(state)).toMatch(/needs a second provider/);
   });
 
   it("abstains on the model check before the first snapshot", () => {

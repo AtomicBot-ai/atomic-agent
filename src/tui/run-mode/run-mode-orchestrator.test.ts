@@ -105,7 +105,7 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(app.actions.some((a) => a.type === "composer_notice")).toBe(false);
   });
 
-  it("fusion: refuses with the degradation sentence when there is no cloud provider", async () => {
+  it("fusion: refuses with the degradation sentence when only one provider exists", async () => {
     seed({ ...BOTH_LEGS, providers: [BOTH_LEGS!.providers[0]!] });
     const app = harness();
     await app.orchestrator.setMode("fusion");
@@ -113,12 +113,14 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(app.setActive).not.toHaveBeenCalled();
     const notice = app.actions.find((a) => a.type === "composer_notice");
     expect(notice).toBeDefined();
+    // Not "needs a cloud provider": either leg may be cloud or local
+    // now, so what is missing is a second provider, not a kind.
     expect((notice as { text: string }).text).toMatch(
-      /needs a cloud orchestrator/,
+      /needs two providers/,
     );
   });
 
-  it("fusion: refuses when there is no llama-server provider", async () => {
+  it("fusion: refuses when the only provider would have to fill both legs", async () => {
     seed({
       ...BOTH_LEGS,
       activeTextProvider: "openrouter",
@@ -130,7 +132,7 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(getConfig().llm?.runMode).toBeUndefined();
     expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject(
       {
-        text: expect.stringMatching(/needs local workers/),
+        text: expect.stringMatching(/needs two providers/),
       },
     );
   });
@@ -200,9 +202,16 @@ describe("RunModeOrchestrator.setMode", () => {
     );
   });
 
-  it("setWorkers says nothing about restarting when the count did not move", () => {
+  it("setWorkers says nothing about restarting when the pin did not move", () => {
+    // Against `"auto"` a number always moves the slot count — it pins
+    // what the machine was deciding — so the quiet case is a re-pin to
+    // the number already written.
     seed(BOTH_LEGS);
     const app = harness();
+    // Pin it first: against `"auto"` a number always moves the slot
+    // count, so the quiet case is a re-pin to what is already written.
+    app.orchestrator.setWorkers(2);
+    app.actions.length = 0;
     app.orchestrator.setWorkers(2);
     const line = app.actions.find((a) => a.type === "runtime_info") as {
       line: string;
@@ -214,7 +223,7 @@ describe("RunModeOrchestrator.setMode", () => {
     seed(BOTH_LEGS);
     const app = harness();
     app.orchestrator.setWorkers(99);
-    expect(getConfig().localModels.managed.parallel).toBe(2);
+    expect(getConfig().localModels.managed.parallel).toBe("auto");
     expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject(
       {
         text: expect.stringMatching(/workers must be an integer 1-8/),

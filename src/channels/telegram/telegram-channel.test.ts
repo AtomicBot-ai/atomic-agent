@@ -16,6 +16,7 @@ import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { TaskReport } from "../../tasks/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
+import { TelegramLockfile } from "./telegram-lockfile.js";
 import {
   TASK_REPORT_QUEUE_LIMIT,
   TelegramChannel,
@@ -29,6 +30,8 @@ interface FakeBotState {
   startCalls: number;
   stopCalls: number;
   setMyCommandsCalls: number;
+  /** The command menu of the most recent `setMyCommands` call. */
+  registeredCommands: string[];
   textHandler: ((u: unknown) => void | Promise<void>) | null;
   callbackHandler: ((u: unknown) => void | Promise<void>) | null;
   fileHandler: ((u: unknown) => void | Promise<void>) | null;
@@ -53,6 +56,7 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     startCalls: 0,
     stopCalls: 0,
     setMyCommandsCalls: 0,
+    registeredCommands: [],
     textHandler: null,
     callbackHandler: null,
     fileHandler: null,
@@ -74,11 +78,16 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
           if (opts.getMeError) throw opts.getMeError;
           return { id: 1, username: "test_bot" };
         }),
-        setMyCommands: vi.fn(async () => {
-          state.setMyCommandsCalls += 1;
-          if (opts.setMyCommandsError) throw opts.setMyCommandsError;
-          return undefined;
-        }),
+        setMyCommands: vi.fn(
+          async (
+            cmds: ReadonlyArray<{ command: string; description: string }>,
+          ) => {
+            state.setMyCommandsCalls += 1;
+            state.registeredCommands = cmds.map((c) => c.command);
+            if (opts.setMyCommandsError) throw opts.setMyCommandsError;
+            return undefined;
+          },
+        ),
       },
       setTextHandler(handler) {
         state.textHandler = handler;
@@ -322,6 +331,19 @@ describe("TelegramChannel", () => {
     expect(state.startCalls).toBe(1);
     expect(state.textHandler).not.toBeNull();
     expect(state.setMyCommandsCalls).toBe(1);
+    // The command menu is the only discovery surface on a phone — every
+    // verb the slash dispatch answers has to be in it, `/model`
+    // included.
+    expect(state.registeredCommands).toEqual([
+      "start",
+      "help",
+      "status",
+      "sessions",
+      "switch",
+      "new",
+      "model",
+      "cancel",
+    ]);
   });
 
   it("emits down with the right error when token is null", async () => {
@@ -364,6 +386,36 @@ describe("TelegramChannel", () => {
     await channel.start();
     expect(channel.state()).toBe("down");
     expect(channel.lastError()).toContain("lockfile held");
+  });
+
+  it("leaves the winner's lock file intact when start() loses the race", async () => {
+    // The bug this pins: start() releases from its catch block, and
+    // `release()` used to unlink the file unconditionally. So the
+    // process that LOST the race deleted the winner's lock on its way
+    // down; the winner kept polling from memory while the file was
+    // gone, and the next process acquired "successfully" -- two
+    // pollers on one token, stopped only by Telegram's 409.
+    //
+    // `process.ppid` stands in for the winner: certainly alive, and
+    // never this process, on POSIX and Windows alike.
+    const lockPath = join(dir, "telegram.lock");
+    writeFileSync(lockPath, String(process.ppid), "utf8");
+    const { factory, state } = makeBotFactory();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock: new TelegramLockfile(lockPath),
+    });
+
+    await channel.start();
+
+    expect(channel.state()).toBe("down");
+    expect(channel.lastError()).toContain("already running");
+    expect(state.startCalls).toBe(0);
+    expect(readFileSync(lockPath, "utf8")).toBe(String(process.ppid));
   });
 
   it("emits down with scrubbed error when getMe fails", async () => {

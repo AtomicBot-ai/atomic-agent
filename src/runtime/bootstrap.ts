@@ -87,6 +87,7 @@ import {
   DeferredLocalBackendProbes,
 } from "../llm/local-backend-gate.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
+import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import {
@@ -1528,6 +1529,7 @@ export async function createAgentRuntime(
       adapter: provider.toolCallAdapter ?? null,
       slotAffinity: provider.capabilities.supportsSlotAffinity,
       parallelTools: provider.capabilities.supportsParallelTools,
+      strictTools: modelWantsStrictTools(resolved, provider.id),
     };
   };
 
@@ -1658,6 +1660,7 @@ export async function createAgentRuntime(
     enabled: config.vision.enabled,
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
+    logger,
   });
   // MCP client subsystem. The manager is always constructed so the
   // live-control surface (TUI panel, slash commands — planned) stays
@@ -2303,6 +2306,10 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    // The same live resolution the `fusion.delegate` descriptor gate
+    // reads, so the tool the orchestrator is being pushed towards is
+    // always in the catalog when the push happens.
+    isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
     slotManager,
     grammar,
     llmComplete,
@@ -2325,6 +2332,7 @@ export async function createAgentRuntime(
         toolCallAdapter: slice.adapter,
         supportsSlotAffinity: slice.slotAffinity,
         supportsParallelTools: slice.parallelTools,
+        strictTools: slice.strictTools,
       };
     },
     ...(profileManager ? { profileManager } : {}),
@@ -2408,6 +2416,10 @@ export async function createAgentRuntime(
   Object.defineProperty(loopDeps, "supportsParallelTools", {
     enumerable: true,
     get: () => resolveActiveLlmSlice().parallelTools,
+  });
+  Object.defineProperty(loopDeps, "strictTools", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().strictTools,
   });
   const loop = new AgentLoop(
     loopDeps as typeof loopDeps & {

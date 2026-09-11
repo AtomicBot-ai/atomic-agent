@@ -50,8 +50,6 @@ export interface PromptMetaBarProps {
   provider: string | null;
   /** Turns the model slot into a `download model` call to action. */
   needsModelDownload?: boolean;
-  /** Fusion's fourth control (`2 workers`); `null` off that route. */
-  workers?: string | null;
   /**
    * Re-skin the bar for the Fusion run mode: black ground, white ink,
    * orange accents — see `fusion-tint.ts`. The blue the bar normally
@@ -125,7 +123,6 @@ export function PromptMetaBar({
   model,
   provider,
   needsModelDownload,
-  workers,
   fusion = false,
   rightSlot,
   contextSlot,
@@ -159,7 +156,6 @@ export function PromptMetaBar({
           model={model}
           provider={provider}
           needsModelDownload={needsModelDownload ?? false}
-          workers={workers ?? null}
           fusion={fusion}
           mouseLayer={mouseLayer}
         />
@@ -187,7 +183,6 @@ interface MetaLeftProps {
   model: string | null;
   provider: string | null;
   needsModelDownload: boolean;
-  workers: string | null;
   fusion: boolean;
   mouseLayer?: number;
 }
@@ -218,7 +213,6 @@ function MetaLeft({
   model,
   provider,
   needsModelDownload,
-  workers,
   fusion,
   mouseLayer,
 }: MetaLeftProps): ReactElement {
@@ -269,7 +263,6 @@ function MetaLeft({
         provider={provider}
         model={cleanModel}
         needsModelDownload={needsModelDownload}
-        workers={workers}
         fusion={fusion}
         mouseLayer={mouseLayer}
       />
