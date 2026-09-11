@@ -1186,7 +1186,7 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => false,
+        fusionState: () => ({ delegations: 0 }),
       },
     );
     expect(run).not.toHaveBeenCalled();
@@ -1194,19 +1194,24 @@ describe("the fusion orchestrator gate in the executor", () => {
     expect(out.results[0]?.compressed?.summary).toContain("fusion.delegate");
   });
 
-  it("dispatches the same call once the turn has delegated", async () => {
+  it("keeps refusing after a fan-out — there is no circumstance", async () => {
+    // The gate had two escapes before this: a latch on any completed
+    // fan-out, then an allowance for tasks a worker handed up. At
+    // approval level 1 four of six tasks came back handed up, so the
+    // second escape was the main road. Neither exists now.
     const run = vi.fn(async () => okResult("os.fs.write"));
     const registry = buildRegistry({ "os.fs.write": run }, false);
-    await executeBatch(
+    const out = await executeBatch(
       toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
       registry,
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => true,
+        fusionState: () => ({ delegations: 3 }),
       },
     );
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(out.results[0]?.compressed?.status).toBe("error");
   });
 
   it("leaves reads alone while the turn is still planning", async () => {
@@ -1218,16 +1223,17 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => false,
+        fusionState: () => ({ delegations: 0 }),
       },
     );
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("marks the turn as delegated when the fan-out comes back", async () => {
-    // However it went: a fan-out whose workers all failed still leaves
-    // the orchestrator holding results it must be able to act on.
-    let delegated = false;
+  it("hands the fan-out's own result to the turn's ledger", async () => {
+    // The result, not a flag: what unlocks a mutation is how many tasks
+    // came back `needs_orchestrator`, and the ledger must read the same
+    // per-task statuses the model is about to read.
+    let seen: unknown = null;
     const registry = buildRegistry(
       { "fusion.delegate": async () => okResult("fusion.delegate") },
       false,
@@ -1238,13 +1244,13 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        hasDelegated: () => delegated,
-        onDelegated: () => {
-          delegated = true;
+        fusionState: () => ({ delegations: 0 }),
+        onDelegated: (result) => {
+          seen = result;
         },
       },
     );
-    expect(delegated).toBe(true);
+    expect(seen).toMatchObject({ tool: "fusion.delegate" });
   });
 
   it("gates nothing when the turn is not the orchestrator's", async () => {

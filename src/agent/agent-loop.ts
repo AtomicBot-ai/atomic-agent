@@ -1,3 +1,7 @@
+import {
+  emptyFusionOrchestratorState,
+  recordDelegation,
+} from "./fusion-orchestrator-mode.js";
 import type {
   CompletionResult,
   StreamChunk,
@@ -89,6 +93,11 @@ export interface AgentLoopDependencies {
    * (embedders, tests) means "not fusion", which gates nothing.
    */
   isFusionMode?: () => boolean;
+  /**
+   * Drop the fan-out approval a previous turn on this session earned.
+   * See `approval/fanout-scope.ts`: the answer is scoped to one job.
+   */
+  clearFanoutTurnGrant?: (sessionId: string) => void;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -879,7 +888,13 @@ export class AgentLoop {
     // and must never close on the hands it is meant to free.
     const fusionOrchestratorTurn =
       (this.deps.isFusionMode?.() ?? false) && options.ephemeral !== true;
-    let fusionDelegatedThisTurn = false;
+    let fusionState = emptyFusionOrchestratorState();
+    // A fan-out approval stands for the turn that asked for it and no
+    // longer. Cleared here rather than when the turn ends so an aborted
+    // or crashed turn cannot leave authority behind for the next one.
+    if (fusionOrchestratorTurn) {
+      this.deps.clearFanoutTurnGrant?.(session.id);
+    }
 
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
@@ -1200,9 +1215,9 @@ export class AgentLoop {
             ...(fusionOrchestratorTurn
               ? {
                   isFusionOrchestrator: () => true,
-                  hasDelegated: () => fusionDelegatedThisTurn,
+                  fusionState: () => fusionState,
                   onDelegated: () => {
-                    fusionDelegatedThisTurn = true;
+                    fusionState = recordDelegation(fusionState);
                   },
                 }
               : {}),

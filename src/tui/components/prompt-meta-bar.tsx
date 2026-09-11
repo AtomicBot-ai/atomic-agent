@@ -1,6 +1,9 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { ComposerMetaControls } from "../composer-switch/composer-meta-controls.js";
+import {
+  ComposerMetaControls,
+  LEG_SEPARATOR,
+} from "../composer-switch/composer-meta-controls.js";
 import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
 import { fusionBarGround } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
@@ -110,12 +113,13 @@ const MODEL_LABEL_MAX_LEN = 32;
 export const META_SLOT_SHRINK = 40;
 
 /**
- * Separator `runModeModelSummary` puts between the two fusion legs.
- * Matched here rather than imported as a run-mode concept: this file
- * only needs to know that a label can be a pair, so that it can spend
- * its budget on both halves instead of on the first one.
+ * Separator `selectPromptLlmMeta` puts between the two fusion legs.
+ * The same constant the controls split on — this file spends the label
+ * budget on both halves, `ComposerMetaControls` hangs the swap button
+ * on the seam, and one of them moving without the other would leave a
+ * pair that truncates as a pair but no longer comes apart.
  */
-const PAIR_SEPARATOR = " ⇄ ";
+const PAIR_SEPARATOR = LEG_SEPARATOR;
 
 export function PromptMetaBar({
   leftSlot,

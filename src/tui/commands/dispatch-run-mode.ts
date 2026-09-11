@@ -12,6 +12,8 @@ export interface RunModeCommand {
   readonly mode?: RunModeName;
   /** `/runmode status`. */
   readonly status?: boolean;
+  /** `/runmode swap`: trade the orchestrator leg for the worker leg. */
+  readonly swap?: boolean;
   /** `/runmode workers N`. */
   readonly workers?: number;
   /** Usage line for anything else. */
@@ -19,7 +21,7 @@ export interface RunModeCommand {
 }
 
 export const RUN_MODE_USAGE =
-  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode workers N · /runmode status";
+  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode status";
 
 /**
  * Parse the arguments of `/runmode`. Split out of
@@ -32,6 +34,7 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
   const args = rawArgs.trim().toLowerCase();
   if (args.length === 0) return { openSwitch: true };
   if (args === "status") return { openSwitch: false, status: true };
+  if (args === "swap") return { openSwitch: false, swap: true };
   const workers = /^workers\s+(\d+)$/.exec(args);
   if (workers) {
     const n = Number(workers[1]);

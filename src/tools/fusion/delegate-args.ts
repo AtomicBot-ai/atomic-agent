@@ -85,10 +85,44 @@ function readMaxWorkers(value: unknown): number | null | string {
  * call comes back as `{ ok: false, error }` for the tool to render as a
  * `status: "error"` result the orchestrator can act on.
  */
+/**
+ * The task list, whether it arrived as an array or as JSON in a string.
+ *
+ * Models hand this argument over as a string often enough to matter: in
+ * one observed run, three of seven fan-outs died on
+ * `tasks must be an array`, each costing the turn a step and the
+ * operator a minute. The value was a perfectly good JSON array with
+ * quotes around it — the native-tools layer stringifies a nested
+ * structure, or the model writes it that way itself.
+ *
+ * Rejecting that is pedantry with a cost. Parsing it is two lines, and
+ * anything that does not parse to an array still fails exactly as
+ * before.
+ */
+/**
+ * Accept a `tasks` argument that arrived as JSON *text* rather than as a
+ * JSON array.
+ *
+ * Not a courtesy: a 12B orchestrator on the text-JSON transport writes
+ * `"tasks": "[{...}]"` often enough that a whole run died on
+ * `tasks must be an array` — the plan was right, the quoting was not,
+ * and refusing it taught the model nothing it could act on. Parsing the
+ * string costs one `JSON.parse`; anything that does not parse falls
+ * through unchanged and gets the same error it got before.
+ */
+function readTaskList(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 export function parseDelegateArgs(
   raw: Record<string, unknown>,
 ): ParsedDelegateArgs {
-  const rawTasks = raw.tasks;
+  const rawTasks = readTaskList(raw.tasks);
   if (!Array.isArray(rawTasks)) {
     return fail("tasks must be an array of { id, title, instructions }");
   }

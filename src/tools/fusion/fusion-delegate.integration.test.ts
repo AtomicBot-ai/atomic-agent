@@ -164,20 +164,40 @@ describe("fusion.delegate end to end", () => {
               title: "Read two",
               instructions: "Read notes.txt again",
             },
-            { id: "t3", title: "Write one", instructions: "Write out.txt" },
+            {
+              id: "t3",
+              title: "Write one",
+              instructions: "Write out.txt",
+              files: ["out.txt"],
+            },
           ]),
         );
       }
       return completion(replyCall("merged all three parts"));
     };
 
+    let runtimeRef: Awaited<ReturnType<typeof createAgentRuntime>> | null = null;
     const runtime = await createAgentRuntime({
       workingDir,
       // Level 1 prompts for everything an approval gate covers.
       approvalLevel: 1,
       handlers: {
         onAgentEvent: (event, sessionId) => events.push({ event, sessionId }),
-        onApprovalRequest: (request) => approvals.push(request),
+        onApprovalRequest: (request) => {
+          approvals.push(request);
+          // The fan-out's own question is the one an operator answers;
+          // answering it here is what authorises the workers to write.
+          // Anything else is left pending on purpose, so a stray worker
+          // prompt would show up as a timeout rather than pass quietly.
+          if (request.category === "fusion_fanout") {
+            queueMicrotask(() =>
+              runtimeRef?.approvals.resolve({
+                approvalId: request.approvalId,
+                approved: true,
+              }),
+            );
+          }
+        },
       },
       overrides: {
         browserBackend: backend,
@@ -185,6 +205,7 @@ describe("fusion.delegate end to end", () => {
         llamaComplete,
       },
     });
+    runtimeRef = runtime;
     // A fusion boot is cloud-active, so the local `/props` probe is
     // deferred and the pool starts at one slot. The real runtime widens
     // it inside `warmWorkerBackend`; with the HTTP layer faked away
@@ -261,10 +282,13 @@ describe("fusion.delegate end to end", () => {
         expect(runtime.sessionStore.load(workerId)).toBeNull();
       }
 
-      // The write was refused, not parked: at level 1 an ordinary
-      // session would have raised a prompt, and there is no operator
-      // watching a worker session to answer one.
-      expect(approvals).toHaveLength(0);
+      // Exactly one question for the whole fan-out — the operator is
+      // asked before any worker starts and not again. A worker that had
+      // to ask for itself would show up as a second request here (and,
+      // having nobody to answer it, as a refusal on its task row).
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]?.category).toBe("fusion_fanout");
+      expect(approvals[0]?.sessionId).toBe(parent.id);
       // The per-task rows ride on the tool result's `details`, which the
       // transcript does not keep — read them off the event stream, the
       // same channel a host UI would.
@@ -281,8 +305,13 @@ describe("fusion.delegate end to end", () => {
       expect(rows.map((r) => r.id)).toEqual(["t1", "t2", "t3"]);
       expect(rows[0]!.status).toBe("ok");
       expect(rows[1]!.status).toBe("ok");
-      expect(rows[2]!.status).toBe("needs_orchestrator");
+      // The write lands. Before the fan-out prompt existed this row came
+      // back `needs_orchestrator` at level 1 — a worker cannot ask, so
+      // every write died — and that refusal is what pushed the whole job
+      // back onto the orchestrator. One operator answer now covers it.
+      expect(rows[2]!.status).toBe("ok");
       expect(rows[2]!.tools.byTool["os.fs.write"]).toBe(1);
+      expect(rows[2]!.tools.errors).toBe(0);
     } finally {
       await runtime.shutdown();
     }

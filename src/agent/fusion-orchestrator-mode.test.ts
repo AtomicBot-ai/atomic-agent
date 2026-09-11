@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   checkFusionOrchestrator,
+  emptyFusionOrchestratorState,
+  recordDelegation,
   refusalFor,
 } from "./fusion-orchestrator-mode.js";
 
@@ -19,6 +21,7 @@ function registryWith(
 }
 
 const REGISTRY = registryWith({
+  "mcp.notion.search": { readonly: true },
   "os.fs.read": { readonly: true },
   "os.fs.write": { readonly: false },
   "os.shell.run": { readonly: false },
@@ -27,8 +30,9 @@ const REGISTRY = registryWith({
   finish: { readonly: false },
 });
 
-const BEFORE = { delegated: false };
-const AFTER = { delegated: true };
+const BEFORE = emptyFusionOrchestratorState();
+/** One fan-out done, however it went. */
+const AFTER = { delegations: 1 };
 
 describe("the fusion orchestrator gate", () => {
   it("lets the orchestrator read while it is still planning", () => {
@@ -49,7 +53,7 @@ describe("the fusion orchestrator gate", () => {
       expect(verdict.refusal?.summary).toContain("fusion.delegate");
       expect(verdict.refusal?.details).toMatchObject({
         fusion_orchestrator: true,
-        delegated: false,
+        delegations: 0,
       });
     }
   });
@@ -69,12 +73,38 @@ describe("the fusion orchestrator gate", () => {
     }
   });
 
-  it("opens up once the workers have reported", () => {
-    // Integration is the orchestrator's own job, and so is anything a
-    // worker had to hand up for approval. Both are writes.
+  it("stays shut after a fan-out, whatever came back", () => {
+    // The failure this gate was rewritten for, twice. First a latch that
+    // opened on any completed fan-out; then an escape for tasks returned
+    // `needs_orchestrator`, which at approval level 1 was FOUR of six
+    // tasks — the escape became the main road and thirteen writes went
+    // through it. There is no circumstance now.
     for (const tool of ["os.fs.write", "os.shell.run"]) {
-      expect(checkFusionOrchestrator(tool, REGISTRY, AFTER).allowed).toBe(true);
+      const verdict = checkFusionOrchestrator(tool, REGISTRY, AFTER);
+      expect(verdict.allowed).toBe(false);
+      expect(verdict.refusal?.summary).toContain("Send it out again");
     }
+  });
+
+  it("tells a blocked task to come back with its paths named", () => {
+    // `needs_orchestrator` now means "the operator did not authorise
+    // that directory", and the answer is another fan-out whose brief
+    // names the paths, so the prompt can offer the right scope.
+    const verdict = checkFusionOrchestrator("os.fs.write", REGISTRY, AFTER);
+    expect(verdict.refusal?.summary).toContain("needs_orchestrator");
+    expect(verdict.refusal?.summary).toContain("files");
+  });
+
+  it("does not take an MCP tool's word for being read-only", () => {
+    // `readonly` on an MCP descriptor is the server's own
+    // `readOnlyHint` / `destructiveHint` — third-party wire data. A
+    // server could opt itself out of the rule by shipping one flag.
+    expect(
+      checkFusionOrchestrator("mcp.notion.search", REGISTRY, BEFORE).allowed,
+    ).toBe(false);
+    expect(
+      checkFusionOrchestrator("mcp.notion.search", REGISTRY, AFTER).allowed,
+    ).toBe(false);
   });
 
   it("passes an unknown tool through untouched", () => {
@@ -87,8 +117,22 @@ describe("the fusion orchestrator gate", () => {
   });
 
   it("names the tool it refused", () => {
-    const refusal = refusalFor("os.fs.write");
+    const refusal = refusalFor("os.fs.write", BEFORE);
     expect(refusal.tool).toBe("os.fs.write");
     expect(refusal.summary).toContain("`os.fs.write`");
+  });
+});
+
+describe("recordDelegation", () => {
+  it("counts fan-outs and unlocks nothing", () => {
+    // The result used to be inspected for `needs_orchestrator` tasks.
+    // Nothing in it can open the gate now, so nothing is read out of it.
+    let state = recordDelegation(emptyFusionOrchestratorState());
+    expect(state).toEqual({ delegations: 1 });
+    state = recordDelegation(state);
+    expect(state).toEqual({ delegations: 2 });
+    expect(
+      checkFusionOrchestrator("os.fs.write", REGISTRY, state).allowed,
+    ).toBe(false);
   });
 });

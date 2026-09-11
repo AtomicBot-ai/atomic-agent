@@ -21,7 +21,7 @@ describe("describeFusionIntro", () => {
   it("opens with the mark, then the sentence", () => {
     const text = describeFusionIntro(rm);
     expect(text.startsWith(FUSION_MARK)).toBe(true);
-    expect(text).toContain("Fusion is on.");
+    expect(text).toContain("Fusion splits the work between two models");
   });
 
   it("keeps the mark small and rectangular so a short pane still fits it", () => {
@@ -30,29 +30,51 @@ describe("describeFusionIntro", () => {
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(30);
   });
 
+  it("draws a tree: the one that plans on top, the ones that do below", () => {
+    // The shape is the explanation. The old mark put two nodes side by
+    // side and labelled them `cloud` and `local`, which stopped being
+    // true the day either seat could hold either kind.
+    const lines = FUSION_MARK.split("\n");
+    expect(lines[0]).toContain("orchestrator");
+    expect(lines[0]).toContain("\u25cf");
+    expect(lines[3]).toContain("workers");
+    expect(lines[3]).toContain("\u25cb");
+    expect(FUSION_MARK).not.toContain("cloud");
+    expect(FUSION_MARK).not.toContain("local");
+  });
+
   it("draws the mark from glyphs the rest of the chrome already uses", () => {
     // Anything outside this set risks a double-width cell, which would
     // shear the mark on the terminals the TUI supports.
-    expect(FUSION_MARK).toMatch(/^[\s●○⇄╭╮╰╯─┤├a-z]+$/);
+    expect(FUSION_MARK).toMatch(/^[\s\u25cf\u25cb\u2502\u250c\u2510\u253c\u2500a-z]+$/);
   });
 
   it("names both legs it actually resolved, not the abstraction", () => {
     const text = describeFusionIntro(rm);
     expect(text).toContain("anthropic/claude-sonnet-4.5");
-    expect(text).toContain("3 × qwen-3.5-4b");
+    expect(text).toContain("qwen-3.5-4b");
   });
 
-  it("says how to pick the two models and how to change the worker count", () => {
+  it("states the width as the orchestrator's call, not a setting", () => {
+    // The count left the composer with v63: the machine sizes the pool
+    // and the orchestrator sizes each fan-out inside it. An intro that
+    // told the operator to go and set a number would be describing a
+    // control that is not there.
     const text = describeFusionIntro(rm);
-    expect(text).toContain("ctrl+r");
-    expect(text).toContain("Workers");
-    expect(text).toContain("/runmode workers N");
-    expect(text).toMatch(/restart the local daemon/);
+    expect(text).toMatch(/not a setting/);
+    expect(text).toMatch(/sizes each fan-out/);
+    expect(text).not.toMatch(/\/runmode workers/);
+  });
+
+  it("says either seat takes either kind, and invites the pairing", () => {
+    const text = describeFusionIntro(rm);
+    expect(text).toMatch(/Either seat takes either kind/);
+    expect(text).toMatch(/local model plans while cloud workers execute/);
+    expect(text).toMatch(/Two cloud models/);
   });
 
   it("says what a worker is and what it cannot do", () => {
     const text = describeFusionIntro(rm);
-    expect(text).toMatch(/in parallel/);
     expect(text).toMatch(/cannot reach you or ask for approval/);
   });
 
@@ -70,6 +92,6 @@ describe("describeFusionIntro", () => {
       workerModel: null,
     });
     expect(text).toContain("openrouter");
-    expect(text).toContain("the local model");
+    expect(text).toContain("local-llama");
   });
 });

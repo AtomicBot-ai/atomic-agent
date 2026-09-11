@@ -174,4 +174,26 @@ describe("parseDelegateArgs", () => {
       ).not.toThrow();
     }
   });
+  it("accepts a task list that arrived as JSON text", () => {
+    // What the text-JSON transport produces when the model quotes the
+    // array: the plan is right, the quoting is not.
+    const parsed = parseDelegateArgs({
+      tasks: JSON.stringify([
+        { id: "a", title: "A", instructions: "do a", files: ["/tmp/x/a.js"] },
+      ]),
+    });
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.tasks).toHaveLength(1);
+    expect(parsed.tasks?.[0]?.id).toBe("a");
+    expect(parsed.tasks?.[0]?.files).toEqual(["/tmp/x/a.js"]);
+  });
+
+  it("still refuses a string that is not a task list at all", () => {
+    expect(parseDelegateArgs({ tasks: "build the thing" }).error).toMatch(
+      /tasks must be an array/,
+    );
+    expect(parseDelegateArgs({ tasks: '{"id":"a"}' }).error).toMatch(
+      /tasks must be an array/,
+    );
+  });
 });
