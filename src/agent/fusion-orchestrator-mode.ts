@@ -21,14 +21,22 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
  * every one of them. A latch that opens on "something was attempted"
  * is not a rule about who does the work.
  *
- * **The rule now.** A mutation is allowed only while the turn is
- * holding work a worker physically could not do — a task that came back
- * `needs_orchestrator`, which is what a worker reports when it hit an
- * approval it cannot request (`FUSION_WORKER_APPROVAL_REFUSED`). That
- * is the one thing the orchestrator has that the workers do not: a
- * person at the other end. Everything else — the first draft, the
- * rewrite, the file the worker timed out on — goes back out as another
- * fan-out.
+ * **The rule now: nothing.** The orchestrator does not mutate anything,
+ * in any circumstance, for the whole turn. Read, delegate, reply.
+ *
+ * The version before this one allowed a mutation while the turn held a
+ * task returned `needs_orchestrator` — work a worker could not do
+ * because it had no operator to ask. A session showed why that fails:
+ * FOUR of six tasks came back that way, because at approval level 1 a
+ * worker cannot write at all, and each of their replies said "the
+ * orchestrator must run these steps". The escape hatch became the main
+ * road, and thirteen writes went through it.
+ *
+ * That hole is closed at its source instead — the operator now
+ * authorises a fan-out once and its workers write inside a named
+ * directory (`approval/fanout-scope.ts`), so `needs_orchestrator` means
+ * "this needs a wider scope than you approved", and the answer to it is
+ * another fan-out, not a takeover.
  *
  * **Why a refusal and not a hidden tool.** Descriptor visibility is not
  * capability: the only membership check at execution is against the
@@ -61,20 +69,18 @@ export interface FusionOrchestratorVerdict {
  * batch executor as each fan-out returns.
  */
 export interface FusionOrchestratorState {
-  /** Completed `fusion.delegate` calls this turn, however they went. */
-  delegations: number;
   /**
-   * Tasks that came back `needs_orchestrator` — a worker stopped
-   * because it needed an approval it cannot ask for. This, and only
-   * this, is what unlocks a mutation: the work a worker could not do
-   * because it has no person to ask.
+   * Completed `fusion.delegate` calls this turn, however they went.
+   * Nothing is unlocked by it — it only shapes the refusal, which reads
+   * differently before the first fan-out ("plan and delegate") and after
+   * one ("send the rework back out").
    */
-  handedUp: number;
+  delegations: number;
 }
 
 /** A turn that has not delegated yet. */
 export function emptyFusionOrchestratorState(): FusionOrchestratorState {
-  return { delegations: 0, handedUp: 0 };
+  return { delegations: 0 };
 }
 
 /**
@@ -114,7 +120,6 @@ export function checkFusionOrchestrator(
   }
   if (!registry.has(tool)) return { allowed: true };
   if (!mutates(tool, registry)) return { allowed: true };
-  if (state.handedUp > 0) return { allowed: true };
   return { allowed: false, refusal: refusalFor(tool, state) };
 }
 
@@ -135,21 +140,20 @@ export function refusalFor(
 ): CompressedToolResult {
   const summary =
     state.delegations === 0
-      ? `fusion is on and this turn has not delegated yet, so \`${tool}\` was ` +
-        `not run. You are the orchestrator: the workers do the doing. ` +
-        `Finish reading — every read-only tool still works — decide the ` +
-        `approach, then split the work and call \`fusion.delegate\`: one ` +
-        `task per independent part, each with the exact paths, what counts ` +
-        `as done, and the answer format you want back.`
+      ? `fusion is on, so \`${tool}\` was not run: you plan, the workers ` +
+        `build. Finish reading — every read-only tool still works — ` +
+        `decide the approach, then call \`fusion.delegate\` with one task ` +
+        `per independent part, each naming the exact paths it produces in ` +
+        `\`files\`, what counts as done, and the answer format you want.`
       : `\`${tool}\` was not run. You have delegated ${state.delegations} ` +
-        `time(s) this turn and no worker handed anything up, so there is ` +
-        `nothing here that only you can do — doing the work yourself is ` +
-        `the one thing this mode exists to prevent. If a part came back ` +
-        `\`failed\`, \`cancelled\` or weak, send it out again with ` +
-        `\`fusion.delegate\`: say what was wrong with the last attempt, ` +
-        `what to change, and what "good" looks like. Split a part that ` +
-        `timed out into smaller ones. Only work a worker returned as ` +
-        `\`needs_orchestrator\` is yours to run.`;
+        `time(s) this turn; building the result yourself is the one thing ` +
+        `this mode exists to prevent, however the last fan-out went. Send ` +
+        `it out again with \`fusion.delegate\`: say what was wrong with ` +
+        `the previous attempt, what to change, and what "good" looks ` +
+        `like. Split a part that timed out into smaller ones. A task that ` +
+        `came back \`needs_orchestrator\` was blocked by an approval — ` +
+        `re-send it with the paths in \`files\` so the operator can ` +
+        `authorise that directory when the fan-out asks.`;
   return {
     tool,
     status: "error",
@@ -158,33 +162,20 @@ export function refusalFor(
       fusion_orchestrator: true,
       tool,
       delegations: state.delegations,
-      handed_up: state.handedUp,
     },
     truncated: false,
   };
 }
 
 /**
- * Fold a completed `fusion.delegate` result into the turn's ledger.
+ * Count a completed `fusion.delegate` call.
  *
- * Reads the per-task statuses out of the tool result rather than being
- * told by the caller: the executor sees the `CompressedToolResult` and
- * nothing else, and a count passed alongside could drift from the
- * result the model is reading in the same step.
+ * The result is no longer inspected: nothing in it can unlock a
+ * mutation, so there is nothing to read out of it. The count survives
+ * only to shape the refusal text.
  */
 export function recordDelegation(
   state: FusionOrchestratorState,
-  result: CompressedToolResult,
 ): FusionOrchestratorState {
-  const tasks = (result.details as { tasks?: unknown } | undefined)?.tasks;
-  const handedUp = Array.isArray(tasks)
-    ? tasks.filter(
-        (task) =>
-          (task as { status?: unknown } | null)?.status === "needs_orchestrator",
-      ).length
-    : 0;
-  return {
-    delegations: state.delegations + 1,
-    handedUp: state.handedUp + handedUp,
-  };
+  return { delegations: state.delegations + 1 };
 }

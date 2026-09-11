@@ -1205,8 +1205,8 @@ export class AgentLoop {
               ? {
                   isFusionOrchestrator: () => true,
                   fusionState: () => fusionState,
-                  onDelegated: (result) => {
-                    fusionState = recordDelegation(fusionState, result);
+                  onDelegated: () => {
+                    fusionState = recordDelegation(fusionState);
                   },
                 }
               : {}),

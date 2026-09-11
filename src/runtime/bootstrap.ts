@@ -2987,6 +2987,7 @@ export async function createAgentRuntime(
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
       approvals,
+      approvalRequired: dangerous.approvalRequired,
       slotManager,
       resolveRunMode: resolveCurrentRunMode,
       workerSupportsSlotAffinity: (providerId) =>

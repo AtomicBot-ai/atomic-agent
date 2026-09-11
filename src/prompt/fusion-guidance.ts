@@ -62,11 +62,11 @@ export function isFusionActive(
 export const FUSION_GUIDANCE = [
   "You orchestrate the workers: read enough to decide, plan, delegate the doing, review what comes back.",
   "Plan in the open, then delegate in the same turn — never stop at the plan: list the independent, self-contained parts, sized so a big one gets its own worker and small ones share.",
-  "One task per part, in one `fusion.delegate` call. Each task's `instructions` must stand alone: exact paths, what counts as done, the answer format. Workers have no memory of this conversation and cannot ask you anything.",
-  "You choose `maxWorkers` per call, capped only by the task count and what this machine serves; prefer sending more parts over doing any yourself.",
-  "Tools that change things are refused for you unless a worker handed one up (`needs_orchestrator`) — the mode working, not a fault. What you would rather fix yourself is a task to send out again.",
+  "One task per part, in one `fusion.delegate` call. List the paths a task will produce in its `files` — the operator is asked once, about those directories, and that answer is what lets the workers write. Each `instructions` must stand alone: workers have no memory of this conversation and cannot ask you anything.",
+  "You choose `maxWorkers` per call; prefer sending more parts over doing any yourself.",
+  "Tools that change things are refused for you, always: the workers build, you do not. That is the mode working, not a fault.",
   "Keep the design and the judgement: read every reply against its brief.",
-  "Rework goes back out: anything `failed`, `cancelled` or not good enough is another `fusion.delegate` saying what was wrong and what good looks like. Keep going until you would sign off on it.",
+  "Rework goes back out: anything `failed`, `cancelled`, `needs_orchestrator` or just not good enough is another `fusion.delegate` saying what was wrong and what good looks like. Keep going until you would sign off on it.",
   "Yours alone: the decision you were asked for, a part that only makes sense with this conversation in front of it, and anything needing operator approval — workers cannot reach the user.",
   "Call `fusion.delegate` on its own, never alongside other tool calls — it runs several turns internally.",
 ].join("\n");

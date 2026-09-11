@@ -31,10 +31,8 @@ const REGISTRY = registryWith({
 });
 
 const BEFORE = emptyFusionOrchestratorState();
-/** One fan-out done, nothing handed up — the observed failure case. */
-const AFTER_EMPTY = { delegations: 1, handedUp: 0 };
-/** A worker stopped on an approval it cannot request. */
-const AFTER_HANDED_UP = { delegations: 1, handedUp: 1 };
+/** One fan-out done, however it went. */
+const AFTER = { delegations: 1 };
 
 describe("the fusion orchestrator gate", () => {
   it("lets the orchestrator read while it is still planning", () => {
@@ -75,27 +73,26 @@ describe("the fusion orchestrator gate", () => {
     }
   });
 
-  it("stays shut after a fan-out that handed nothing up", () => {
-    // The failure this gate was rewritten for: a fan-out came back with
-    // one task `needs_orchestrator` and two `cancelled`, and the old
-    // latch let the orchestrator write fifteen files. A delegation that
-    // was merely attempted is not a licence to do the work.
+  it("stays shut after a fan-out, whatever came back", () => {
+    // The failure this gate was rewritten for, twice. First a latch that
+    // opened on any completed fan-out; then an escape for tasks returned
+    // `needs_orchestrator`, which at approval level 1 was FOUR of six
+    // tasks — the escape became the main road and thirteen writes went
+    // through it. There is no circumstance now.
     for (const tool of ["os.fs.write", "os.shell.run"]) {
-      const verdict = checkFusionOrchestrator(tool, REGISTRY, AFTER_EMPTY);
+      const verdict = checkFusionOrchestrator(tool, REGISTRY, AFTER);
       expect(verdict.allowed).toBe(false);
-      expect(verdict.refusal?.summary).toContain("send it out again");
+      expect(verdict.refusal?.summary).toContain("Send it out again");
     }
   });
 
-  it("opens only for work a worker handed up", () => {
-    // The one thing the orchestrator has that the workers do not is a
-    // person to ask. `needs_orchestrator` is a worker saying it hit an
-    // approval it cannot request.
-    for (const tool of ["os.fs.write", "os.shell.run"]) {
-      expect(
-        checkFusionOrchestrator(tool, REGISTRY, AFTER_HANDED_UP).allowed,
-      ).toBe(true);
-    }
+  it("tells a blocked task to come back with its paths named", () => {
+    // `needs_orchestrator` now means "the operator did not authorise
+    // that directory", and the answer is another fan-out whose brief
+    // names the paths, so the prompt can offer the right scope.
+    const verdict = checkFusionOrchestrator("os.fs.write", REGISTRY, AFTER);
+    expect(verdict.refusal?.summary).toContain("needs_orchestrator");
+    expect(verdict.refusal?.summary).toContain("files");
   });
 
   it("does not take an MCP tool's word for being read-only", () => {
@@ -106,9 +103,8 @@ describe("the fusion orchestrator gate", () => {
       checkFusionOrchestrator("mcp.notion.search", REGISTRY, BEFORE).allowed,
     ).toBe(false);
     expect(
-      checkFusionOrchestrator("mcp.notion.search", REGISTRY, AFTER_HANDED_UP)
-        .allowed,
-    ).toBe(true);
+      checkFusionOrchestrator("mcp.notion.search", REGISTRY, AFTER).allowed,
+    ).toBe(false);
   });
 
   it("passes an unknown tool through untouched", () => {
@@ -128,52 +124,15 @@ describe("the fusion orchestrator gate", () => {
 });
 
 describe("recordDelegation", () => {
-  function result(statuses: string[]) {
-    return {
-      tool: "fusion.delegate",
-      status: "ok" as const,
-      summary: "",
-      details: { tasks: statuses.map((status, i) => ({ id: `t${i}`, status })) },
-      truncated: false,
-    };
-  }
-
-  it("counts the tasks a worker handed up, not the fan-outs", () => {
-    // `fusion.delegate` returns ok even when every worker failed —
-    // partial results are the value of a fan-out — so the count that
-    // matters is per task, and only one status means "a worker could
-    // not do this because it has no person to ask".
-    const after = recordDelegation(
-      emptyFusionOrchestratorState(),
-      result(["ok", "cancelled", "needs_orchestrator", "failed"]),
-    );
-    expect(after).toEqual({ delegations: 1, handedUp: 1 });
-  });
-
-  it("reads a fan-out where everything failed as nothing handed up", () => {
-    const after = recordDelegation(
-      emptyFusionOrchestratorState(),
-      result(["cancelled", "cancelled", "failed"]),
-    );
-    expect(after).toEqual({ delegations: 1, handedUp: 0 });
-  });
-
-  it("survives a result with no task list at all", () => {
-    // A refusal, a malformed result, a compressed error: the ledger
-    // still advances its fan-out count and unlocks nothing.
-    const after = recordDelegation(emptyFusionOrchestratorState(), {
-      tool: "fusion.delegate",
-      status: "error",
-      summary: "not fusion",
-      details: {},
-      truncated: false,
-    });
-    expect(after).toEqual({ delegations: 1, handedUp: 0 });
-  });
-
-  it("accumulates across fan-outs", () => {
-    let state = recordDelegation(emptyFusionOrchestratorState(), result(["ok"]));
-    state = recordDelegation(state, result(["needs_orchestrator"]));
-    expect(state).toEqual({ delegations: 2, handedUp: 1 });
+  it("counts fan-outs and unlocks nothing", () => {
+    // The result used to be inspected for `needs_orchestrator` tasks.
+    // Nothing in it can open the gate now, so nothing is read out of it.
+    let state = recordDelegation(emptyFusionOrchestratorState());
+    expect(state).toEqual({ delegations: 1 });
+    state = recordDelegation(state);
+    expect(state).toEqual({ delegations: 2 });
+    expect(
+      checkFusionOrchestrator("os.fs.write", REGISTRY, state).allowed,
+    ).toBe(false);
   });
 });

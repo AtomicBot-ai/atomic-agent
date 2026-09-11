@@ -38,6 +38,15 @@ export type ApprovalCategory =
   | "publish"
   /** Mail leaving the agent's own inbox on the operator's behalf. */
   | "email"
+  /**
+   * A fusion fan-out: several worker agents about to run at once, and
+   * the one question the operator is asked about them. Approving it
+   * authorises every worker in that fan-out to write inside a stated
+   * directory without asking again (see `approval/fanout-scope.ts`), so
+   * it sits at level 4 beside `shell` — a fan-out writes, and no grant
+   * from an unrelated prompt should be able to silence it.
+   */
+  | "fusion_fanout"
   | "other";
 
 /**
@@ -77,6 +86,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   proc_kill: 4,
   publish: 4,
   git_remote: 4,
+  fusion_fanout: 4,
   browser_nonweb: 5,
   trust_config: 5,
   email: 5,
@@ -133,6 +143,11 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // "always allow publishing this session" has said exactly that.
   publish: true,
   git_remote: true,
+  // A fan-out authorises workers to write in a directory it names, so a
+  // session grant would hand every LATER fan-out — with different tasks
+  // and a different directory — the same authority silently. The whole
+  // point of the question is that the operator sees this task list.
+  fusion_fanout: false,
   browser_nonweb: true,
   trust_config: false,
   // A session grant would let the agent mail anyone for the rest of
@@ -162,6 +177,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   proc_kill: "process kill",
   publish: "publish · GitHub",
   git_remote: "git · remote",
+  fusion_fanout: "fusion · fan-out",
   browser_nonweb: "browser · non-web URL",
   trust_config: "agent trust config",
   email: "e-mail send",

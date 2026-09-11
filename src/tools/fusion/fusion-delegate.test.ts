@@ -1,3 +1,4 @@
+import { FanoutScopeRegistry } from "../../approval/fanout-scope.js";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RunTurnResult } from "../../agent/agent-loop.js";
@@ -53,7 +54,13 @@ function deps(over: Partial<FusionDelegateDeps> = {}): FusionDelegateDeps {
         metadata: { fusionWorker: { ...meta } },
       });
     },
-    approvals: { setSessionPolicy: () => {}, clearSessionPolicy: () => {} },
+    approvals: {
+      setSessionPolicy: () => {},
+      clearSessionPolicy: () => {},
+      fanoutScopes: new FanoutScopeRegistry(),
+    },
+    // The documented test seam: exercise the fan-out without a gate.
+    approvalRequired: false,
     emitEvent: () => {},
     workingDir: "/repo",
     slotManager: { poolSize: () => 4 },

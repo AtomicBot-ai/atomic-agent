@@ -1186,7 +1186,7 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        fusionState: () => ({ delegations: 0, handedUp: 0 }),
+        fusionState: () => ({ delegations: 0 }),
       },
     );
     expect(run).not.toHaveBeenCalled();
@@ -1194,19 +1194,24 @@ describe("the fusion orchestrator gate in the executor", () => {
     expect(out.results[0]?.compressed?.summary).toContain("fusion.delegate");
   });
 
-  it("dispatches the same call once the turn has delegated", async () => {
+  it("keeps refusing after a fan-out — there is no circumstance", async () => {
+    // The gate had two escapes before this: a latch on any completed
+    // fan-out, then an allowance for tasks a worker handed up. At
+    // approval level 1 four of six tasks came back handed up, so the
+    // second escape was the main road. Neither exists now.
     const run = vi.fn(async () => okResult("os.fs.write"));
     const registry = buildRegistry({ "os.fs.write": run }, false);
-    await executeBatch(
+    const out = await executeBatch(
       toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
       registry,
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        fusionState: () => ({ delegations: 1, handedUp: 1 }),
+        fusionState: () => ({ delegations: 3 }),
       },
     );
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(out.results[0]?.compressed?.status).toBe("error");
   });
 
   it("leaves reads alone while the turn is still planning", async () => {
@@ -1218,7 +1223,7 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        fusionState: () => ({ delegations: 0, handedUp: 0 }),
+        fusionState: () => ({ delegations: 0 }),
       },
     );
     expect(run).toHaveBeenCalledTimes(1);
@@ -1239,7 +1244,7 @@ describe("the fusion orchestrator gate in the executor", () => {
       {
         ...ctx(ctrl.signal),
         isFusionOrchestrator: () => true,
-        fusionState: () => ({ delegations: 0, handedUp: 0 }),
+        fusionState: () => ({ delegations: 0 }),
         onDelegated: (result) => {
           seen = result;
         },
