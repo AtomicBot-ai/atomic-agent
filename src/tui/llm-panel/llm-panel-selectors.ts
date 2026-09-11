@@ -194,11 +194,21 @@ export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
       state.providersPanel.rows.find(
         (row) => row.id === runMode.orchestratorProviderId,
       ) ?? null;
-    const orchestrator =
-      runMode.orchestratorModel ??
-      orchestratorRow?.chatModel ??
-      runMode.orchestratorProviderId ??
-      "cloud";
+    // Symmetric with the worker half below, because the legs are now one
+    // click apart: a LOCAL orchestrator is named by the model the managed
+    // daemon serves, not by `chatModel` — a llama-server row has none, so
+    // the label fell through to the provider id and the strip read
+    // `local-llama ⇄ anthropic/claude…` after a swap.
+    const orchestratorIsLocal = orchestratorRow?.kind === "llama-server";
+    const orchestrator = orchestratorIsLocal
+      ? (runMode.orchestratorModel ??
+        state.localModelsPanel.activeModelId ??
+        state.llmHealth.model ??
+        "local")
+      : (runMode.orchestratorModel ??
+        orchestratorRow?.chatModel ??
+        runMode.orchestratorProviderId ??
+        "cloud");
     // The worker half is labelled from the worker LEG, not from the
     // local daemon: with the legs swapped the workers run in the cloud,
     // and naming the idle local model there is the same lie the
