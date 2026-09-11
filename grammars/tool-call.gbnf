@@ -5,13 +5,24 @@
 root ::= tool-call-array
 tool-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | fusion-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
-os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
+os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
 discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
 memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.store" | "notes.recall" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
 vision-tool ::= "\"vision.describe\""
+# Fusion's fan-out. Listed here for the same reason `tasks.*` is: the
+# grammar is the local model's whole vocabulary of tool names, and a
+# name missing from it cannot be emitted at all. A LOCAL orchestrator
+# is the case that needs it — it reasoned "I need to call
+# fusion.delegate", the constrained sampler had no such name, and it
+# was pushed into `finish` instead, reporting a fan-out that never
+# happened. Unconditional, like `tasks.*`: availability is the
+# registry's business, not the sampler's, and a fusion worker (which is
+# also grammar-constrained) is refused by `fusion.delegate` itself when
+# it tries to fan out again.
+fusion-tool ::= "\"fusion.delegate\""
 # Native MCP discovery / resource / prompt tools — always available.
 mcp-native-tool ::= "\"mcp." ( "resource.list" | "resource.read" | "prompt.list" | "prompt.get" ) "\""
 # Per-server MCP tool branch. The static fallback (`mcp.<any>.<any>`)
