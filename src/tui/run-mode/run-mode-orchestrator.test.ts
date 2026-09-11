@@ -273,7 +273,9 @@ describe("RunModeOrchestrator.setMode", () => {
     await app.orchestrator.setMode("fusion");
     const intro = app.actions.filter((a) => a.type === "system_message");
     expect(intro).toHaveLength(1);
-    expect((intro[0] as { text: string }).text).toContain("Fusion is on.");
+    expect((intro[0] as { text: string }).text).toContain(
+      "Fusion splits the work between two models",
+    );
     // Re-applying fusion (e.g. re-pinning the orchestrator) says nothing.
     app.actions.length = 0;
     await app.orchestrator.setMode("fusion");
