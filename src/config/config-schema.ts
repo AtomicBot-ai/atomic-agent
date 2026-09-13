@@ -2114,12 +2114,15 @@ export interface UserConfigFile {
 // that number first.)
 // v65: memory sub-call timeouts are sized for hosted reasoning models —
 // `memory.reflection.timeoutMs` (also the vote-runner's budget) goes
-// 10 000 → 60 000 and `memory.links.generatorTimeoutMs` 8 000 → 60 000.
-// The old numbers were tuned against a local llama-server; hosted models
-// answer these calls in roughly 15–40 s, so most of them timed out and
-// wrote nothing. A pre-v65 file whose value is the old default (which
-// the schema wrote, not the operator) takes the new one; any other
-// number is read as a deliberate pin and kept.
+// 10 000 → 60 000, `memory.links.generatorTimeoutMs` 8 000 → 60 000 and
+// `memory.retrieve.rewriter.timeoutMs` 3 000 → 10 000. The old numbers
+// were tuned against a local llama-server; hosted models answer the
+// background calls in roughly 15–40 s and the rewriter in 4–24 s, so
+// most of them timed out and wrote or rewrote nothing. The rewriter's cap
+// stays lower because it blocks the turn (it runs once per turn, so a
+// timeout costs one wait, not one per step). A pre-v65 file whose value
+// is the old default (which the schema wrote, not the operator) takes
+// the new one; any other number is read as a deliberate pin and kept.
 export const USER_CONFIG_VERSION = 65;
 
 /**
@@ -2517,7 +2520,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
         // Uses `slotId=-1` so the main agent and reflection slots stay
         // untouched.
         enabled: true,
-        timeoutMs: 3_000,
+        timeoutMs: 10_000,
         historyTurns: 3,
         gateMode: "heuristic",
         embeddingGate: {
@@ -4820,10 +4823,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.enabled,
             "memory.retrieve.rewriter.enabled",
           ),
-          timeoutMs: parsePositiveInt(
-            memoryRetrieveRewriter.timeoutMs ??
-              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
-            "memory.retrieve.rewriter.timeoutMs",
+          timeoutMs: resolveSubcallTimeoutMs(
+            version,
+            parsePositiveInt(
+              memoryRetrieveRewriter.timeoutMs ??
+                USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
+              "memory.retrieve.rewriter.timeoutMs",
+            ),
+            PRE_V65_SUBCALL_TIMEOUT_DEFAULTS.rewriterTimeoutMs,
+            USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
           ),
           historyTurns: parsePositiveInt(
             memoryRetrieveRewriter.historyTurns ??
