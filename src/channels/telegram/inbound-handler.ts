@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
+import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { SessionState } from "../../session/index.js";
@@ -1096,7 +1097,7 @@ function formatFailure(failure: {
   error: Error;
   category: LlmFailureCategory;
 }): string {
-  return `Turn failed [${failure.category}]: ${failure.error.message}`;
+  return `Turn failed [${failure.category}]: ${failure.error.message}${describeFailedAttempts(failure.error)}`;
 }
 
 async function sendText(

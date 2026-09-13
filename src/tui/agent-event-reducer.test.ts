@@ -1,5 +1,6 @@
 import { withReportHint } from "./format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
+import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -522,6 +523,34 @@ describe("reduceTuiState", () => {
       (m) => m.role === "system" && m.variant === "warn",
     );
     expect(errMsg?.text).toBe(withReportHint("Turn failed [tool]: boom"));
+  });
+
+  it("names the primary's failure in the chat line when the fallback chain fell over first", () => {
+    const error = new TypeError("fetch failed");
+    attachFailedAttempts(error, [
+      {
+        providerId: "openrouter",
+        error: new Error(
+          "openai provider 404: No endpoints found for z-ai/glm-5.3-flash.",
+        ),
+      },
+    ]);
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: { type: "loop_failed", error, category: "transport" },
+      },
+    ]);
+    // The status line and the run history keep the last link's own words.
+    expect(next.lastRunStatus).toBe("failed [transport]: fetch failed");
+    expect(next.runHistory[0]?.reason).toBe("fetch failed");
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text.split("\n")[0]).toBe(
+      'Turn failed [transport]: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
+    );
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {

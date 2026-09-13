@@ -109,8 +109,14 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
           ? ` path=${event.read.path} lines=${event.read.startLine}-${event.read.endLine} fingerprint=${event.read.previousFingerprint}→${event.read.fingerprint}`
           : ""
       }`;
-    case "error":
-      return `${head} message=${event.message}`;
+    case "error": {
+      const after = (event.fallbackFailures ?? []).map(
+        (f) => `"${f.providerId}" failed: ${f.reason}`,
+      );
+      return `${head} message=${event.message}${
+        after.length > 0 ? ` (after ${after.join("; ")})` : ""
+      }`;
+    }
     case "trace_truncated":
       // The counts are the point of the row: they tell the reader how
       // much of the session is missing above this line.

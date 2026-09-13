@@ -12,6 +12,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
   DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES,
@@ -289,6 +290,34 @@ describe("handleDiscordMessage", () => {
     await handleDiscordMessage(msg(), ctx);
     expect(ctx.sent[0]).toContain("Turn failed");
     expect(ctx.sent[0]).toContain("boom");
+    expect(ctx.sent[0]).toBe("⚠️ Turn failed (tool): boom");
+  });
+
+  it("names the primary's failure when the fallback chain fell over first", async () => {
+    const error = new TypeError("fetch failed");
+    attachFailedAttempts(error, [
+      {
+        providerId: "openrouter",
+        error: new Error(
+          "openai provider 404: No endpoints found for z-ai/glm-5.3-flash.",
+        ),
+      },
+    ]);
+    const ctx = makeCtx();
+    ctx.runTurn.mockImplementationOnce(
+      async (
+        _s: unknown,
+        _t: string,
+        opts: { eventHook?: (e: unknown) => void },
+      ) => {
+        opts.eventHook?.({ type: "loop_failed", error, category: "transport" });
+        return {};
+      },
+    );
+    await handleDiscordMessage(msg(), ctx);
+    expect(ctx.sent).toContain(
+      '⚠️ Turn failed (transport): fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
+    );
   });
 
   it("never throws past the boundary on a malformed event", async () => {

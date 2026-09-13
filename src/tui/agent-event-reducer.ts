@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import { describeFailedAttempts } from "../llm/fallback/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -615,6 +616,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           ),
           llamaUrl: state.session.llamaUrl,
         },
+        describeFailedAttempts(event.error),
       );
       // The wait ran out and the turn died with it. Keep the outage on
       // screen: the next message the operator sends will fail the same

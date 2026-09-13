@@ -30,6 +30,40 @@ function render(events: readonly TraceEvent[]): string {
   return formatTraceChronology(events);
 }
 
+describe("formatTraceChronology error", () => {
+  const row = {
+    type: "error" as const,
+    seq: 9,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    message: "fetch failed",
+    category: "transport" as const,
+  };
+
+  it("prints the message alone when no fallback link failed first", () => {
+    expect(render([row])).toMatch(/ message=fetch failed$/);
+  });
+
+  it("names the links that failed before the last one", () => {
+    expect(
+      render([
+        {
+          ...row,
+          fallbackFailures: [
+            {
+              providerId: "openrouter",
+              reason: "openai provider 404: No endpoints found",
+            },
+          ],
+        },
+      ]),
+    ).toMatch(
+      / message=fetch failed \(after "openrouter" failed: openai provider 404: No endpoints found\)$/,
+    );
+  });
+});
+
 describe("formatTraceChronology completion_truncated", () => {
   it("prints the cause, the counts and the retry on one line", () => {
     const out = render([
