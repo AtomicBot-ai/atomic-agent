@@ -262,3 +262,54 @@ describe("OpenAiProvider strictTools wiring", () => {
     });
   });
 });
+
+describe("OpenAiProvider without defaultChatModel", () => {
+  it("throws on complete() when defaultChatModel is not configured", async () => {
+    const p = new OpenAiProvider({
+      id: "test",
+      baseUrl: "https://example.invalid",
+      apiKey: "test-key",
+      fetchImpl: fakeFetch({
+        role: "assistant",
+        content: "ok",
+      }) as unknown as typeof fetch,
+    });
+    await expect(p.complete({ prompt: "hi" })).rejects.toThrow(
+      /has no defaultChatModel configured/,
+    );
+  });
+
+  it("throws on completeStream() when defaultChatModel is not configured", async () => {
+    const p = new OpenAiProvider({
+      id: "test",
+      baseUrl: "https://example.invalid",
+      apiKey: "test-key",
+      fetchImpl: fakeStreamFetch("ok") as unknown as typeof fetch,
+    });
+    const stream = p.completeStream({ prompt: "hi" });
+    await expect(stream.next()).rejects.toThrow(
+      /has no defaultChatModel configured/,
+    );
+  });
+
+  it("throws on describeImage() when defaultChatModel is not configured", async () => {
+    const p = new OpenAiProvider({
+      id: "test",
+      baseUrl: "https://example.invalid",
+      apiKey: "test-key",
+      supportsVision: true,
+      fetchImpl: fakeFetch({
+        role: "assistant",
+        content: "ok",
+      }) as unknown as typeof fetch,
+    });
+    await expect(
+      p.describeImage({
+        prompt: "describe",
+        images: [
+          { id: 0, bytes: new Uint8Array(), mimeType: "image/png" },
+        ],
+      }),
+    ).rejects.toThrow(/has no defaultChatModel configured/);
+  });
+});

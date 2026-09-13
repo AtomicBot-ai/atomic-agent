@@ -87,4 +87,78 @@ describe("ProviderRegistry", () => {
       }),
     ).rejects.toThrow(/unknown llm provider kind/);
   });
+
+  it("allows embedding-only openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-only",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "embed-only",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultEmbeddingModel: "nomic-embed-text",
+            userModels: [
+              {
+                id: "nomic-embed-text",
+                kind: "embedding" as const,
+                dim: 768,
+              },
+            ],
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    });
+    expect(registry.listIds()).toContain("embed-only");
+  });
+
+  it("rejects non-embedding openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-only",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "bad-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            userModels: [{ id: "gpt-4", kind: "chat" as const }],
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    await expect(
+      ProviderRegistry.fromConfig(fakeConfig, {
+        config: fakeConfig,
+        llamaClient: {} as never,
+        getProfile: () => ({}) as never,
+        logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      }),
+    ).rejects.toThrow(/requires defaultChatModel/);
+  });
 });

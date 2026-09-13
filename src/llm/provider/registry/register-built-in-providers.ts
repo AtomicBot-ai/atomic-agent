@@ -49,9 +49,18 @@ export function registerBuiltInProviderKinds(): void {
 
   registerProviderKind("openai-compatible", (ctx) => {
     const entry = ctx.entry;
-    if (!entry.baseUrl || !entry.defaultChatModel) {
+    const isEmbeddingOnly =
+      entry.userModels !== undefined &&
+      entry.userModels.length > 0 &&
+      entry.userModels.every((m) => m.kind === "embedding");
+    if (!entry.baseUrl) {
       throw new Error(
-        `openai-compatible provider "${entry.id}" requires baseUrl and defaultChatModel`,
+        `openai-compatible provider "${entry.id}" requires baseUrl`,
+      );
+    }
+    if (!isEmbeddingOnly && !entry.defaultChatModel) {
+      throw new Error(
+        `openai-compatible provider "${entry.id}" requires defaultChatModel`,
       );
     }
     return new OpenAiProvider({
@@ -73,9 +82,18 @@ export function registerBuiltInProviderKinds(): void {
 
   registerProviderKind("qwen-openai-compatible", (ctx) => {
     const entry = ctx.entry;
-    if (!entry.baseUrl || !entry.defaultChatModel) {
+    const isEmbeddingOnly =
+      entry.userModels !== undefined &&
+      entry.userModels.length > 0 &&
+      entry.userModels.every((m) => m.kind === "embedding");
+    if (!entry.baseUrl) {
       throw new Error(
-        `qwen-openai-compatible provider "${entry.id}" requires baseUrl and defaultChatModel`,
+        `qwen-openai-compatible provider "${entry.id}" requires baseUrl`,
+      );
+    }
+    if (!isEmbeddingOnly && !entry.defaultChatModel) {
+      throw new Error(
+        `qwen-openai-compatible provider "${entry.id}" requires defaultChatModel`,
       );
     }
     return new OpenAiProvider({
