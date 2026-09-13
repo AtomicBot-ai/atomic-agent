@@ -166,7 +166,12 @@ export function createQueryRewriterRunner(
             grammar: QUERY_REWRITER_GRAMMAR,
             responseFormat: QUERY_REWRITER_RESPONSE_FORMAT,
             slotId: REWRITER_SLOT_ID,
-            sessionId: input.sessionId,
+            // Own fallback partition, like `reflection:` / `vote:`. The
+            // chain partitions breaker state by this id; on the bare id a
+            // provider refusing the rewriter's request flipped the TURN's
+            // sticky override, and the next main step went to the next
+            // link (often a local server that is not running).
+            sessionId: `rewriter:${input.sessionId}`,
             signal: ac.signal,
           }),
           timeoutPromise,
