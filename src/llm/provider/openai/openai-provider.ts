@@ -173,6 +173,7 @@ export class OpenAiProvider implements LlmProvider {
           this.extraBody,
           this.maxOutputTokens,
           this.strictTools,
+          this.providerPreferences,
         ),
       (body) =>
         openAiPostJson(
