@@ -12,7 +12,7 @@ import { LINK_KINDS } from "./link-store.js";
  *
  * Shape (`strict: true` is enforced at the adapter level):
  *
- *   { "kind": "none" }
+ *   { "kind": "none", "links": [] }
  *   { "kind": "links",
  *     "links": [
  *       { "from_id": 12, "to_id": 17, "link_kind": "RELATES_TO" },
@@ -22,12 +22,20 @@ import { LINK_KINDS } from "./link-store.js";
  * The discriminated union keeps the abstain path explicit so the
  * parser never has to guess whether an empty array means "no relations"
  * or "format failure".
+ *
+ * `links` is required even on the `none` branch. Strict mode has no
+ * optional keys: OpenAI rejects the whole request — before the model
+ * runs — unless every key in `properties` is listed in `required`, at
+ * every level. With `links` optional, every link-generator call on an
+ * OpenAI model answered 400. The abstain branch therefore carries an
+ * empty array, which the parser reads as "none" either way.
  */
 export const LINK_GENERATOR_RESPONSE_FORMAT: ResponseFormatJsonSchema = {
   name: "link_generator_v1",
   description:
     "Emit zero or more directed memory-link triples between candidate ids. " +
-    "Use the `none` discriminator when no genuine relation exists.",
+    "Use the `none` discriminator with an empty `links` array when no " +
+    "genuine relation exists.",
   strict: true,
   schema: {
     type: "object",
@@ -55,6 +63,6 @@ export const LINK_GENERATOR_RESPONSE_FORMAT: ResponseFormatJsonSchema = {
         },
       },
     },
-    required: ["kind"],
+    required: ["kind", "links"],
   },
 };

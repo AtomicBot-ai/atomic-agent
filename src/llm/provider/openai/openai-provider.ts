@@ -42,6 +42,7 @@ import {
   adaptQwenTaggedToolResponse,
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
+import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -81,6 +82,12 @@ export interface OpenAiProviderOptions {
    */
   strictTools?: boolean;
   /**
+   * OpenRouter provider routing, sent as the body's `provider` object on
+   * every chat completion this client makes — turns, sub-calls, vision.
+   * Only the `openrouter` factory wires it; `extraBody.provider` wins.
+   */
+  providerPreferences?: Record<string, unknown>;
+  /**
    * Sink for the credit-limit retry warning (`plan-credit-limit-retry.ts`).
    * Wired from the provider factory context so the notice lands wherever
    * the rest of the runtime logs; without it the client falls back to a
@@ -103,6 +110,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly extraBody: Record<string, unknown> | undefined;
   private readonly maxOutputTokens: number | undefined;
   private readonly strictTools: boolean;
+  private readonly providerPreferences: Record<string, unknown> | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -135,6 +143,7 @@ export class OpenAiProvider implements LlmProvider {
     this.extraBody = options.extraBody;
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
+    this.providerPreferences = options.providerPreferences;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -148,19 +157,31 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const body = buildOpenAiChatBody(
+    // Unary only: sub-calls carry `response_format`, streamed turns never do.
+    const json = await sendWithStructuredOutputFallback(
+      {
+        providerId: this.id,
+        model: this.defaultChatModel,
+        logger: this.http.logger,
+      },
       request,
-      this.defaultChatModel,
-      false,
-      this.extraBody,
-      this.maxOutputTokens,
-      this.strictTools,
-    );
-    const json = await openAiPostJson(
-      this.http,
-      `${this.apiPathPrefix}/chat/completions`,
-      body,
-      request,
+      (req) =>
+        buildOpenAiChatBody(
+          req,
+          this.defaultChatModel,
+          false,
+          this.extraBody,
+          this.maxOutputTokens,
+          this.strictTools,
+          this.providerPreferences,
+        ),
+      (body) =>
+        openAiPostJson(
+          this.http,
+          `${this.apiPathPrefix}/chat/completions`,
+          body,
+          request,
+        ),
     );
     const adapted =
       this.taggedToolCompatibility === "qwen"
@@ -179,6 +200,7 @@ export class OpenAiProvider implements LlmProvider {
       this.extraBody,
       this.maxOutputTokens,
       this.strictTools,
+      this.providerPreferences,
     );
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
@@ -379,6 +401,7 @@ export class OpenAiProvider implements LlmProvider {
       this.defaultChatModel,
       request,
       this.apiPathPrefix,
+      this.providerPreferences,
     );
   }
 

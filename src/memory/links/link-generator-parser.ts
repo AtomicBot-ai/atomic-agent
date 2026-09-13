@@ -94,8 +94,11 @@ function looksLikeJson(s: string): boolean {
 
 /**
  * Parse the Structured Outputs JSON shape:
- *   { "kind": "none" }
+ *   { "kind": "none", "links": [] }
  *   { "kind": "links", "links": [{ from_id, to_id, link_kind }] }
+ *
+ * Strict mode makes `links` present on both branches. It is ignored
+ * under `none`, and an empty array under `links` is `none` as well.
  *
  * Returns null on any structural / type mismatch so the caller can
  * fall back to the legacy line grammar parser. The same allowlist /

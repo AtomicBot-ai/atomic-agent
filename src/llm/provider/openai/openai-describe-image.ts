@@ -8,6 +8,7 @@ export async function describeImageViaOpenAi(
   defaultChatModel: string,
   request: VisionRequest,
   apiPathPrefix = "/v1",
+  providerPreferences?: Record<string, unknown>,
 ): Promise<VisionResult> {
   const userContent: Array<
     | { type: "image_url"; image_url: { url: string } }
@@ -32,6 +33,10 @@ export async function describeImageViaOpenAi(
     max_tokens: request.maxTokens ?? 4096,
     temperature: request.temperature ?? 0.1,
     stream: false,
+    // The operator's images go wherever the turns go: routing is where
+    // `data_collection` / `only` / `ignore` live, and a describe call is
+    // as much a chat completion as a turn.
+    ...(providerPreferences ? { provider: providerPreferences } : {}),
   };
   const start = Date.now();
   const json = await openAiPostJson(

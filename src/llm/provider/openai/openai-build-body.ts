@@ -1,5 +1,6 @@
 import type { CompletionRequest } from "../completion-types.js";
 import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
+import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 
@@ -18,11 +19,27 @@ export function buildOpenAiChatBody(
   extraBody?: Record<string, unknown>,
   maxOutputTokens?: number,
   strictTools?: boolean,
+  providerPreferences?: Record<string, unknown>,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
+  // Settled before the body exists because it also decides the prompt:
+  // a request that sends `response_format` must mention JSON (see
+  // `ensureJsonMention`). The tools guard is explained where
+  // `response_format` is attached below.
+  const responseFormat =
+    filtered.tools && filtered.tools.length > 0
+      ? undefined
+      : filtered.responseFormat;
   const body: Record<string, unknown> = {
     model: defaultChatModel,
-    messages: [{ role: "user", content: filtered.prompt }],
+    messages: [
+      {
+        role: "user",
+        content: responseFormat
+          ? ensureJsonMention(filtered.prompt)
+          : filtered.prompt,
+      },
+    ],
     temperature: filtered.temperature ?? 0.2,
     stream,
   };
@@ -97,23 +114,24 @@ export function buildOpenAiChatBody(
   // model is calling a tool, the function's `parameters` schema is
   // already the JSON contract. Combining the two confuses some
   // providers (Azure rejects, OpenRouter degrades silently).
-  if (
-    filtered.responseFormat &&
-    !(filtered.tools && filtered.tools.length > 0)
-  ) {
-    const schemaName = filtered.responseFormat.name;
+  if (responseFormat) {
     body.response_format = {
       type: "json_schema",
       json_schema: {
-        name: schemaName,
-        ...(filtered.responseFormat.description
-          ? { description: filtered.responseFormat.description }
+        name: responseFormat.name,
+        ...(responseFormat.description
+          ? { description: responseFormat.description }
           : {}),
-        schema: filtered.responseFormat.schema,
-        strict: filtered.responseFormat.strict ?? true,
+        schema: responseFormat.schema,
+        strict: responseFormat.strict ?? true,
       },
     };
   }
+  // OpenRouter provider routing (`order`, `only`, `allow_fallbacks`, …).
+  // Set before the passthrough on purpose: an explicit
+  // `extraBody.provider` is the older way to say the same thing, and it
+  // keeps winning. Absent, the body is byte-identical to what it was.
+  if (providerPreferences) body.provider = providerPreferences;
   if (!extraBody) return body;
   // Vendor passthrough. Merged last so it can reach fields this builder
   // does not model, then reserved keys are restored on top.

@@ -12,6 +12,7 @@
  */
 
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
+import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { SessionState } from "../../session/index.js";
@@ -679,7 +680,9 @@ function formatFailure(failure: {
   error: Error;
   category: LlmFailureCategory;
 }): string {
-  return `⚠️ Turn failed (${failure.category}): ${scrubDiscordError(failure.error)}`;
+  // Scrubbed as one string: the note quotes a provider's response body.
+  const text = `${failure.error.message}${describeFailedAttempts(failure.error)}`;
+  return `⚠️ Turn failed (${failure.category}): ${scrubDiscordError(text)}`;
 }
 
 /** Send, swallowing transport errors — a failed post must not kill the turn. */

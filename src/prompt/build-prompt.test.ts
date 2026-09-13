@@ -1257,6 +1257,65 @@ describe("buildPrompt profile section", () => {
   });
 });
 
+describe("buildPrompt profile clip (issue #407)", () => {
+  it("keeps a pinned fact over a contextual one, whole lines only, and reports it", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [
+        {
+          key: "a_deploy",
+          value: "x".repeat(100),
+          updatedAt: 1,
+          pinned: false,
+          keywords: ["deploy"],
+        },
+        {
+          key: "z_consent",
+          value: "never share the owner's files without asking",
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+        },
+      ],
+      userMessage: "deploy now",
+      profileMaxTokens: 40,
+    });
+    const start = prompt.tail.indexOf("### profile\n") + "### profile\n".length;
+    const section = prompt.tail.slice(start, prompt.tail.indexOf("\n\n", start));
+    expect(section).toBe(
+      [
+        "- z_consent: never share the owner's files without asking",
+        "… [truncated] 1 more profile fact not shown (memory.profile.maxTokens)",
+      ].join("\n"),
+    );
+    expect(prompt.truncation.profile).toBe(true);
+    expect(prompt.profileClip).toEqual({
+      rendered: 1,
+      dropped: 1,
+      pinnedDropped: 0,
+      maxTokens: 40,
+    });
+    expect(prompt.tokens.profile).toBeLessThanOrEqual(40);
+  });
+
+  it("reports no clip when the profile fits", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [
+        { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+      ],
+    });
+    expect(prompt.profileClip).toBeUndefined();
+    expect(prompt.truncation.profile).toBe(false);
+  });
+});
+
 describe("buildPrompt recalled and memory-index sections", () => {
   it("omits both sections when session has no recalledNotes / memoryIndex", () => {
     const prompt = buildPrompt({

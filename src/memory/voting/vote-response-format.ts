@@ -12,7 +12,7 @@ import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-typ
  *
  * Shape (`strict: true` is enforced at the adapter level):
  *
- *   { "kind": "none" }
+ *   { "kind": "none", "votes": [] }
  *   { "kind": "votes",
  *     "votes": [
  *       { "target_kind": "memory", "target_id": 42, "direction": 1 },
@@ -23,6 +23,13 @@ import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-typ
  * The discriminated `kind` field keeps the abstain path explicit and
  * lets the parser short-circuit without scanning an empty array.
  *
+ * `votes` is required even on the `none` branch. Strict mode has no
+ * optional keys: OpenAI rejects the whole request — before the model
+ * runs — unless every key in `properties` is listed in `required`, at
+ * every level. With `votes` optional, every vote call on an OpenAI
+ * model answered 400. The abstain branch therefore carries an empty
+ * array, which the parser reads as "none" either way.
+ *
  * `maxItems: 16` is a hard ceiling well above the runtime-side
  * `maxVotesPerCall` cap (default 8) — it exists only to keep a
  * runaway completion from streaming megabytes of votes back through
@@ -32,7 +39,8 @@ export const VOTE_RESPONSE_FORMAT: ResponseFormatJsonSchema = {
   name: "vote_runner_v1",
   description:
     "Emit zero or more up/down votes against ids surfaced this turn. " +
-    "Use the `none` discriminator when no surfaced item is worth voting on.",
+    "Use the `none` discriminator with an empty `votes` array when no " +
+    "surfaced item is worth voting on.",
   strict: true,
   schema: {
     type: "object",
@@ -57,6 +65,6 @@ export const VOTE_RESPONSE_FORMAT: ResponseFormatJsonSchema = {
         },
       },
     },
-    required: ["kind"],
+    required: ["kind", "votes"],
   },
 };

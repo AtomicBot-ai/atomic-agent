@@ -27,6 +27,10 @@ import {
 } from "../local-llm/huggingface-endpoint.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
+  PRE_V65_SUBCALL_TIMEOUT_DEFAULTS,
+  resolveSubcallTimeoutMs,
+} from "./subcall-timeout-migration.js";
+import {
   MCP_SERVER_NAME_MAX_LENGTH,
   MCP_SERVER_NAME_RE,
   type McpServerConfig,
@@ -608,6 +612,13 @@ export interface AtomicAgentConfig {
        * that have no user message to key off.
        */
       contextualKeywordGate: boolean;
+      /**
+       * Cap on active **unpinned** profile facts (issue #407). A write
+       * that pushes past it evicts the lowest-utility unpinned facts
+       * (`vote_score`, then age, then id) in the same transaction.
+       * Pinned facts are never counted and never evicted.
+       */
+      maxEntries: number;
     };
     reflection: {
       enabled: boolean;
@@ -938,6 +949,13 @@ export interface AtomicAgentConfig {
       supportsVision?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
+      /**
+       * OpenRouter provider routing (`order`, `only`, `ignore`,
+       * `allow_fallbacks`, `require_parameters`, `sort`,
+       * `data_collection`, …), sent verbatim as the chat body's
+       * `provider` object. Read by the `openrouter` kind only; an
+       * explicit `extraBody.provider` still wins.
+       */
       providerPreferences?: Record<string, unknown>;
       /**
        * Vendor-specific fields merged into the OpenAI-compatible chat
@@ -1478,6 +1496,8 @@ export interface UserConfigFile {
       enabled: boolean;
       maxTokens: number;
       contextualKeywordGate: boolean;
+      /** Cap on active unpinned facts. See the runtime type above. */
+      maxEntries: number;
     };
     reflection: {
       enabled: boolean;
@@ -2108,7 +2128,18 @@ export interface UserConfigFile {
 // the flag the request body is byte-identical to v63's. (Written as v63
 // on its own branch; renumbered here because the slot-count change took
 // that number first.)
-export const USER_CONFIG_VERSION = 64;
+// v65: memory sub-call timeouts are sized for hosted reasoning models —
+// `memory.reflection.timeoutMs` (also the vote-runner's budget) goes
+// 10 000 → 60 000, `memory.links.generatorTimeoutMs` 8 000 → 60 000 and
+// `memory.retrieve.rewriter.timeoutMs` 3 000 → 10 000. The old numbers
+// were tuned against a local llama-server; hosted models answer the
+// background calls in roughly 15–40 s and the rewriter in 4–24 s, so
+// most of them timed out and wrote or rewrote nothing. The rewriter's cap
+// stays lower because it blocks the turn (it runs once per turn, so a
+// timeout costs one wait, not one per step). A pre-v65 file whose value
+// is the old default (which the schema wrote, not the operator) takes
+// the new one; any other number is read as a deliberate pin and kept.
+export const USER_CONFIG_VERSION = 65;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2261,6 +2292,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   61,
   62,
   63,
+  64,
   USER_CONFIG_VERSION,
 ];
 
@@ -2371,10 +2403,16 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: true,
       maxTokens: 512,
       contextualKeywordGate: true,
+      // Same order as `memory.lessons.maxEntries`. It counts unpinned
+      // facts only, and reflection writes at most three facts a turn, so
+      // a fresh install needs hundreds of turns of new keys to get here;
+      // the long-running store in issue #407 had 19 unpinned facts.
+      // Inert until a store is genuinely large.
+      maxEntries: 500,
     },
     reflection: {
       enabled: true,
-      timeoutMs: 10_000,
+      timeoutMs: 60_000,
       maxFactsPerCall: 3,
       autoStoreNotes: true,
       maxNotesPerCall: 2,
@@ -2447,7 +2485,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxExpanded: 12,
       maxLinksPerCall: 4,
       minCandidates: 2,
-      generatorTimeoutMs: 8_000,
+      generatorTimeoutMs: 60_000,
     },
     evolution: {
       // Phase 3 — reflection refines tags on existing memories.
@@ -2504,7 +2542,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
         // Uses `slotId=-1` so the main agent and reflection slots stay
         // untouched.
         enabled: true,
-        timeoutMs: 3_000,
+        timeoutMs: 10_000,
         historyTurns: 3,
         gateMode: "heuristic",
         embeddingGate: {
@@ -4432,6 +4470,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.profile.contextualKeywordGate,
           "memory.profile.contextualKeywordGate",
         ),
+        maxEntries: parsePositiveInt(
+          memoryProfile.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.profile.maxEntries,
+          "memory.profile.maxEntries",
+        ),
       },
       reflection: {
         enabled: parseBool(
@@ -4439,10 +4482,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.reflection.enabled,
           "memory.reflection.enabled",
         ),
-        timeoutMs: parsePositiveInt(
-          memoryReflection.timeoutMs ??
-            USER_CONFIG_DEFAULTS.memory.reflection.timeoutMs,
-          "memory.reflection.timeoutMs",
+        timeoutMs: resolveSubcallTimeoutMs(
+          version,
+          parsePositiveInt(
+            memoryReflection.timeoutMs ??
+              USER_CONFIG_DEFAULTS.memory.reflection.timeoutMs,
+            "memory.reflection.timeoutMs",
+          ),
+          PRE_V65_SUBCALL_TIMEOUT_DEFAULTS.reflectionTimeoutMs,
+          USER_CONFIG_DEFAULTS.memory.reflection.timeoutMs,
         ),
         maxFactsPerCall: parsePositiveInt(
           memoryReflection.maxFactsPerCall ??
@@ -4629,10 +4677,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.links.minCandidates,
           "memory.links.minCandidates",
         ),
-        generatorTimeoutMs: parsePositiveInt(
-          memoryLinks.generatorTimeoutMs ??
-            USER_CONFIG_DEFAULTS.memory.links.generatorTimeoutMs,
-          "memory.links.generatorTimeoutMs",
+        generatorTimeoutMs: resolveSubcallTimeoutMs(
+          version,
+          parsePositiveInt(
+            memoryLinks.generatorTimeoutMs ??
+              USER_CONFIG_DEFAULTS.memory.links.generatorTimeoutMs,
+            "memory.links.generatorTimeoutMs",
+          ),
+          PRE_V65_SUBCALL_TIMEOUT_DEFAULTS.linkGeneratorTimeoutMs,
+          USER_CONFIG_DEFAULTS.memory.links.generatorTimeoutMs,
         ),
       },
       evolution: {
@@ -4797,10 +4850,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.enabled,
             "memory.retrieve.rewriter.enabled",
           ),
-          timeoutMs: parsePositiveInt(
-            memoryRetrieveRewriter.timeoutMs ??
-              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
-            "memory.retrieve.rewriter.timeoutMs",
+          timeoutMs: resolveSubcallTimeoutMs(
+            version,
+            parsePositiveInt(
+              memoryRetrieveRewriter.timeoutMs ??
+                USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
+              "memory.retrieve.rewriter.timeoutMs",
+            ),
+            PRE_V65_SUBCALL_TIMEOUT_DEFAULTS.rewriterTimeoutMs,
+            USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
           ),
           historyTurns: parsePositiveInt(
             memoryRetrieveRewriter.historyTurns ??

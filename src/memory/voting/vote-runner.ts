@@ -59,6 +59,8 @@ export interface VoteRunnerResult {
   outcome: VoteRunnerOutcome;
   applied: number;
   rejected: number;
+  /** The error message behind a `failed` outcome, when there was one. */
+  reason?: string;
 }
 
 export interface VoteRunner {
@@ -161,6 +163,7 @@ export function createVoteRunner(deps: VoteRunnerDeps): VoteRunner {
       outcome,
       applied: context.applied ?? 0,
       rejected: context.rejected ?? 0,
+      ...(context.reason ? { reason: context.reason } : {}),
     };
     deps.metrics?.recordVotingRunner({
       sessionId: context.sessionId,
@@ -308,7 +311,7 @@ export function createVoteRunner(deps: VoteRunnerDeps): VoteRunner {
           tookMs: 0,
           reason,
         });
-        return { outcome: "failed", applied: 0, rejected: 0 };
+        return { outcome: "failed", applied: 0, rejected: 0, reason };
       }
     },
     abortPending(options) {

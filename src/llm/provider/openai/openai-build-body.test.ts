@@ -126,6 +126,35 @@ describe("buildOpenAiChatBody", () => {
     expect(JSON.stringify(withUndefined)).toBe(JSON.stringify(withoutArg));
   });
 
+  it("sends providerPreferences as the provider routing object", () => {
+    const preferences = { order: ["z-ai"], allow_fallbacks: false };
+    const args = [undefined, undefined, undefined, preferences] as const;
+    const unary = buildOpenAiChatBody({ prompt: "hi" }, "m", false, ...args);
+    const streamed = buildOpenAiChatBody({ prompt: "hi" }, "m", true, ...args);
+    expect(unary.provider).toEqual(preferences);
+    expect(streamed.provider).toEqual(preferences);
+    expect("provider" in buildOpenAiChatBody({ prompt: "hi" }, "m", false)).toBe(
+      false,
+    );
+  });
+
+  it("lets an explicit extraBody.provider win over providerPreferences", () => {
+    // `extraBody.provider` was the only way to route before
+    // `providerPreferences` was wired; merged last, it must keep working
+    // exactly as configured.
+    const override = { only: ["anthropic"] };
+    const body = buildOpenAiChatBody(
+      { prompt: "hi" },
+      "m",
+      false,
+      { provider: override },
+      undefined,
+      undefined,
+      { order: ["z-ai"] },
+    );
+    expect(body.provider).toEqual(override);
+  });
+
   it("does not let extraBody override reserved keys", () => {
     const body = buildOpenAiChatBody(
       {

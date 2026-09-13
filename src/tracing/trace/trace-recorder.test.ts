@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
+import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 
 import { createTraceRecorder } from "./trace-recorder.js";
 import type { TraceEvent } from "./trace-event.js";
@@ -31,6 +32,55 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a profile clip against the current turn (issue #407)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-clip", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 2 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "profile_clipped",
+      stepIndex: 1,
+      rendered: 12,
+      dropped: 7,
+      pinnedDropped: 3,
+      maxTokens: 512,
+    });
+    expect(events.at(-1)).toEqual({
+      type: "profile_clipped",
+      seq: 1,
+      sessionId: "s-clip",
+      ts: 1000,
+      turnIndex: 2,
+      stepIndex: 1,
+      rendered: 12,
+      dropped: 7,
+      pinnedDropped: 3,
+      maxTokens: 512,
+    });
+  });
+
+  it("records a profile eviction on the session's own seq counter", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-evict", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.recordProfileFactsEvicted({
+      maxEntries: 500,
+      activeUnpinned: 500,
+      ids: [4, 9],
+      keys: ["old_a", "old_b"],
+    });
+    expect(events[1]).toEqual({
+      type: "profile_facts_evicted",
+      seq: 1,
+      sessionId: "s-evict",
+      ts: 1000,
+      maxEntries: 500,
+      activeUnpinned: 500,
+      evicted: 2,
+      ids: [4, 9],
+      keys: ["old_a", "old_b"],
+    });
+  });
+
   it("records a parse-failure recovery against the current turn and step", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-parse", emit, now });
@@ -51,6 +101,35 @@ describe("createTraceRecorder", () => {
       stepIndex: 2,
       attempt: 1,
       budget: 2,
+    });
+  });
+
+  it("records a memory health warning against the last turn, without the notice text", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-mem", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 5 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "memory_health_warning",
+      kind: "vote",
+      outcome: "failed",
+      consecutive: 3,
+      setting: "memory.voting.enabled",
+      reason: "schema refused",
+      message: "Memory voting failed 3 times in a row (schema refused)…",
+    });
+    // Exact: the row carries the structure and the reason; the prose is
+    // the TUI's business and would only bloat every trace.
+    expect(events.find((e) => e.type === "memory_health_warning")).toEqual({
+      type: "memory_health_warning",
+      seq: 1,
+      sessionId: "s-mem",
+      ts: 1000,
+      turnIndex: 5,
+      kind: "vote",
+      outcome: "failed",
+      consecutive: 3,
+      setting: "memory.voting.enabled",
+      reason: "schema refused",
     });
   });
 
@@ -320,6 +399,31 @@ describe("createTraceRecorder", () => {
       type: "error",
       message: "loop blew up",
       category: "transport",
+    });
+    expect(err).not.toHaveProperty("fallbackFailures");
+  });
+
+  it("keeps the last link's message and lists the links that failed before it", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-fb", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    const error = new TypeError("fetch failed");
+    attachFailedAttempts(error, [
+      {
+        providerId: "openrouter",
+        error: new Error("openai provider 404: No endpoints found"),
+      },
+    ]);
+    rec.onAgentEvent({ type: "loop_failed", error, category: "transport" });
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      message: "fetch failed",
+      category: "transport",
+      fallbackFailures: [
+        {
+          providerId: "openrouter",
+          reason: "openai provider 404: No endpoints found",
+        },
+      ],
     });
   });
 

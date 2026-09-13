@@ -1,5 +1,6 @@
 import type { AgentLoopReason } from "../../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
+import type { MemorySubcallKind } from "../../memory/health/index.js";
 
 /**
  * Append-only trace event emitted by the runtime for postmortem analysis
@@ -38,10 +39,13 @@ export type TraceEvent =
   | TraceVoteRejected
   | TraceProcedureCreated
   | TraceProcedureDeprecated
+  | TraceProfileClipped
+  | TraceProfileFactsEvicted
   | TraceReflection
   | TraceLinkGenerator
   | TraceDistill
   | TraceQueryRewriter
+  | TraceMemoryHealthWarning
   | TraceError
   | TraceTruncated;
 
@@ -364,6 +368,39 @@ export interface TraceProcedureDeprecated extends TraceEventBase {
 }
 
 /**
+ * Issue #407. `### profile` did not fit `memory.profile.maxTokens` and
+ * whole fact lines were left out of the prompt. Counts only, never a
+ * key or a value. Emitted once per session, and again only when the
+ * number of pinned facts left out changes — the clip itself runs on
+ * every step.
+ */
+export interface TraceProfileClipped extends TraceEventBase {
+  type: "profile_clipped";
+  turnIndex: number;
+  stepIndex: number;
+  rendered: number;
+  dropped: number;
+  pinnedDropped: number;
+  maxTokens: number;
+}
+
+/**
+ * Issue #407. A profile write pushed the active unpinned facts over
+ * `memory.profile.maxEntries` and the lowest-utility ones were deleted
+ * in the same transaction. Pinned facts are never evicted. `keys` names
+ * what was lost, so it is content: `/report` strips it.
+ */
+export interface TraceProfileFactsEvicted extends TraceEventBase {
+  type: "profile_facts_evicted";
+  maxEntries: number;
+  /** Active unpinned facts left after the eviction. */
+  activeUnpinned: number;
+  evicted: number;
+  ids: readonly number[];
+  keys: readonly string[];
+}
+
+/**
  * Memory-v2. End-of-turn reflection sub-call outcome (SET/NOTE/EVOLVE
  * extraction). Emitted once per `ReflectionRunner.reflect` call by the
  * reflection slot. Reflection fires fire-and-forget after
@@ -430,6 +467,24 @@ export interface TraceQueryRewriter extends TraceEventBase {
   reason?: string;
 }
 
+/**
+ * The operator was told that a memory sub-call keeps timing out or
+ * failing. At most one row per session and `kind` — the warning is
+ * once-only. `setting` is the config key the notice named; `reason` the
+ * summarised last failure (absent when the streak ended in a timeout).
+ * The per-call `reflection` / `link_generator` / `query_rewriter` rows
+ * before it are the streak itself.
+ */
+export interface TraceMemoryHealthWarning extends TraceEventBase {
+  type: "memory_health_warning";
+  turnIndex: number;
+  kind: MemorySubcallKind;
+  outcome: "timeout" | "failed";
+  consecutive: number;
+  setting: string;
+  reason?: string;
+}
+
 export interface TraceError extends TraceEventBase {
   type: "error";
   turnIndex?: number;
@@ -443,6 +498,12 @@ export interface TraceError extends TraceEventBase {
    * new traces always carry it.
    */
   category?: LlmFailureCategory;
+  /**
+   * Fallback-chain links that failed before the one `message` came from —
+   * present only when the chain fell over, or the turn was already on a
+   * fallback, before failing. `message` stays that last link's verbatim.
+   */
+  fallbackFailures?: { providerId: string; reason: string }[];
 }
 
 /**
