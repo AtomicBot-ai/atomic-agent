@@ -611,6 +611,19 @@ Turn it on only for a service that implements strict mode: one that does not wil
 </details>
 
 <details>
+<summary><b>Choosing OpenRouter's upstream host</b> (<code>providerPreferences</code>)</summary>
+
+OpenRouter serves most models from several hosts and picks one per request. To steer that — pin a host, forbid fallbacks, skip hosts that keep your data — set `providerPreferences` on an `openrouter` entry. It is sent unchanged as the request's `provider` routing object:
+
+```json
+"llm": { "providers": [{ "id": "openrouter", "kind": "openrouter", "providerPreferences": { "order": ["z-ai"], "allow_fallbacks": false } }] }
+```
+
+It applies to every chat completion the entry makes — turns, memory sub-calls and `vision.describe` — and other kinds ignore it. The pre-save key check does not send it: that check asks the cheapest paid model for one token, and a host pinned for your model may not serve that one. If you already set `extraBody.provider`, that keeps winning.
+
+</details>
+
+<details>
 <summary><b>Configuration and secrets</b> (state dir, env vars, .env)</summary>
 
 User-facing configuration lives in `<stateDir>/config.json`.

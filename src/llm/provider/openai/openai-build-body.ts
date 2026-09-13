@@ -18,6 +18,7 @@ export function buildOpenAiChatBody(
   extraBody?: Record<string, unknown>,
   maxOutputTokens?: number,
   strictTools?: boolean,
+  providerPreferences?: Record<string, unknown>,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const body: Record<string, unknown> = {
@@ -114,6 +115,11 @@ export function buildOpenAiChatBody(
       },
     };
   }
+  // OpenRouter provider routing (`order`, `only`, `allow_fallbacks`, …).
+  // Set before the passthrough on purpose: an explicit
+  // `extraBody.provider` is the older way to say the same thing, and it
+  // keeps winning. Absent, the body is byte-identical to what it was.
+  if (providerPreferences) body.provider = providerPreferences;
   if (!extraBody) return body;
   // Vendor passthrough. Merged last so it can reach fields this builder
   // does not model, then reserved keys are restored on top.

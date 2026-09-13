@@ -39,6 +39,11 @@ export type LlmProviderConfigEntry = {
   supportsVision?: boolean;
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
+  /**
+   * OpenRouter provider routing, sent as the chat body's `provider`
+   * object. Only the `openrouter` factory forwards it; an explicit
+   * `extraBody.provider` still wins (see `openai-build-body.ts`).
+   */
   providerPreferences?: Record<string, unknown>;
   /**
    * Vendor-specific fields merged into the OpenAI-compatible chat

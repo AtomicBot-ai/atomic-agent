@@ -938,6 +938,13 @@ export interface AtomicAgentConfig {
       supportsVision?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
+      /**
+       * OpenRouter provider routing (`order`, `only`, `ignore`,
+       * `allow_fallbacks`, `require_parameters`, `sort`,
+       * `data_collection`, …), sent verbatim as the chat body's
+       * `provider` object. Read by the `openrouter` kind only; an
+       * explicit `extraBody.provider` still wins.
+       */
       providerPreferences?: Record<string, unknown>;
       /**
        * Vendor-specific fields merged into the OpenAI-compatible chat

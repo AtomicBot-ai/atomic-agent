@@ -81,6 +81,12 @@ export interface OpenAiProviderOptions {
    */
   strictTools?: boolean;
   /**
+   * OpenRouter provider routing, sent as the body's `provider` object on
+   * every chat completion this client makes — turns, sub-calls, vision.
+   * Only the `openrouter` factory wires it; `extraBody.provider` wins.
+   */
+  providerPreferences?: Record<string, unknown>;
+  /**
    * Sink for the credit-limit retry warning (`plan-credit-limit-retry.ts`).
    * Wired from the provider factory context so the notice lands wherever
    * the rest of the runtime logs; without it the client falls back to a
@@ -103,6 +109,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly extraBody: Record<string, unknown> | undefined;
   private readonly maxOutputTokens: number | undefined;
   private readonly strictTools: boolean;
+  private readonly providerPreferences: Record<string, unknown> | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -135,6 +142,7 @@ export class OpenAiProvider implements LlmProvider {
     this.extraBody = options.extraBody;
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
+    this.providerPreferences = options.providerPreferences;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -155,6 +163,7 @@ export class OpenAiProvider implements LlmProvider {
       this.extraBody,
       this.maxOutputTokens,
       this.strictTools,
+      this.providerPreferences,
     );
     const json = await openAiPostJson(
       this.http,
@@ -179,6 +188,7 @@ export class OpenAiProvider implements LlmProvider {
       this.extraBody,
       this.maxOutputTokens,
       this.strictTools,
+      this.providerPreferences,
     );
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
@@ -379,6 +389,7 @@ export class OpenAiProvider implements LlmProvider {
       this.defaultChatModel,
       request,
       this.apiPathPrefix,
+      this.providerPreferences,
     );
   }
 
