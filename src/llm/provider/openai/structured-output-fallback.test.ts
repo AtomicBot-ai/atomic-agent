@@ -4,6 +4,7 @@ import type {
   CompletionRequest,
   ResponseFormatJsonSchema,
 } from "../completion-types.js";
+import { ensureJsonMention } from "./ensure-json-mention.js";
 import { OpenAiHttpError } from "./openai-http.js";
 import { OpenAiProvider } from "./openai-provider.js";
 import { OPENROUTER_PARAMETER_REFUSAL_BODY } from "./structured-output-refusal.fixture.js";
@@ -86,9 +87,18 @@ describe("OpenAiProvider.complete — structured-output refusal fallback", () =>
     expect(net.bodies).toHaveLength(2);
     expect(net.bodies[0]).toHaveProperty("response_format.type", "json_schema");
     expect(net.bodies[1]).not.toHaveProperty("response_format");
-    // Only the field is dropped: the retry is otherwise the same request.
+    // Only the field is dropped: the retry is otherwise the same request —
+    // except the JSON mention `ensureJsonMention` adds only to a body that
+    // carries `response_format`, so the retry sends the caller's prompt.
     const { response_format: _sent, ...firstWithout } = net.bodies[0]!;
-    expect(net.bodies[1]).toEqual(firstWithout);
+    expect(net.bodies[0]).toHaveProperty(
+      "messages.0.content",
+      ensureJsonMention(subcall.prompt),
+    );
+    expect(net.bodies[1]).toEqual({
+      ...firstWithout,
+      messages: [{ role: "user", content: subcall.prompt }],
+    });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toContain(provider.id);
     expect(warn.mock.calls[0]![0]).toContain("does not support structured outputs");
