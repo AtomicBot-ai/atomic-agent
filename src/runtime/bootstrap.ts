@@ -99,6 +99,7 @@ import {
   createFallbackStreamer,
   type FallbackSeamDeps,
 } from "./llm-fallback-seam.js";
+import { abortableSubcall } from "./abortable-subcall.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -2016,18 +2017,9 @@ export async function createAgentRuntime(
   ) {
     const reservedSlot = slotManager.reserveReflectionSlot();
     const reflectionSlotId = reservedSlot ?? -1;
-    const linkGenLlmComplete: LinkGeneratorLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const linkGenLlmComplete: LinkGeneratorLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<LinkGeneratorLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -2035,9 +2027,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const linkGenerator = createLinkGeneratorRunner({
       llmComplete: linkGenLlmComplete,
       linkStore,
@@ -2086,18 +2077,9 @@ export async function createAgentRuntime(
   if (reflectionRunner && voteStore) {
     const reservedSlot = slotManager.reserveReflectionSlot();
     const voteSlotId = reservedSlot ?? -1;
-    const voteLlmComplete: VoteRunnerLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const voteLlmComplete: VoteRunnerLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<VoteRunnerLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -2105,9 +2087,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const voteRunner = createVoteRunner({
       llmComplete: voteLlmComplete,
       voteStore,
@@ -2223,18 +2204,9 @@ export async function createAgentRuntime(
   // pre-v18 chain.
   let memoryContextProvider = baseMemoryContextProvider;
   if (baseMemoryContextProvider && config.memory.retrieve.rewriter.enabled) {
-    const rewriterLlmComplete: RewriterLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const rewriterLlmComplete: RewriterLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<RewriterLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -2242,9 +2214,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const rewriterCfg = config.memory.retrieve.rewriter;
     let gate: RewriterGate;
     if (rewriterCfg.gateMode === "embedding") {
@@ -3044,18 +3015,9 @@ export async function createAgentRuntime(
     // `reserveReflectionSlot` again here is idempotent — the slot
     // manager returns the same id.
     const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
-    const distillLlmComplete: ReflectionLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const distillLlmComplete: ReflectionLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<ReflectionLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -3063,9 +3025,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const distillRunner = new DistillRunner({
       llmComplete: distillLlmComplete,
       slotId: distillSlot,
@@ -3552,21 +3513,11 @@ function buildReflectionRunner(args: {
       { fallbackSlotId: reflectionSlotId },
     );
   }
-  const reflectionLlmComplete: ReflectionLlmComplete = async (params) => {
-    if (params.signal.aborted) {
-      throw new DOMException("aborted", "AbortError");
-    }
-    const abortPromise = new Promise<never>((_, reject) => {
-      params.signal.addEventListener(
-        "abort",
-        () => reject(new DOMException("aborted", "AbortError")),
-        { once: true },
-      );
-    });
-    const { signal: _signal, ...rest } = params;
-    const completionPromise = args.llmComplete(rest);
-    return Promise.race([completionPromise, abortPromise]);
-  };
+  const reflectionLlmComplete: ReflectionLlmComplete = abortableSubcall(
+    args.llmComplete,
+    ({ signal: _signal, ...rest }: Parameters<ReflectionLlmComplete>[0]) =>
+      rest,
+  );
   const notesWriteEnabled =
     memory.notes.enabled &&
     memory.reflection.autoStoreNotes &&
