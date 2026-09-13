@@ -401,6 +401,7 @@ export function loadConfig(): AtomicAgentConfig {
         enabled: user.memory.profile.enabled,
         maxTokens: user.memory.profile.maxTokens,
         contextualKeywordGate: user.memory.profile.contextualKeywordGate,
+        maxEntries: user.memory.profile.maxEntries,
       },
       reflection: {
         enabled: user.memory.reflection.enabled,

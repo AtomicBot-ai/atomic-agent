@@ -134,6 +134,56 @@ describe("redactTraceNdjson", () => {
     expect(stats).toEqual({ kept: 8, dropped: 0, stripped: 0 });
   });
 
+  it("profile rows: a clip survives every level, an eviction loses its keys below full", () => {
+    const rows = [
+      {
+        seq: 0,
+        type: "profile_clipped",
+        sessionId: "s",
+        ts: 0,
+        turnIndex: 0,
+        stepIndex: 0,
+        rendered: 3,
+        dropped: 2,
+        pinnedDropped: 1,
+        maxTokens: 512,
+      },
+      {
+        seq: 1,
+        type: "profile_facts_evicted",
+        sessionId: "s",
+        ts: 1,
+        maxEntries: 500,
+        activeUnpinned: 500,
+        evicted: 1,
+        ids: [7],
+        keys: ["owner_home_address"],
+      },
+    ];
+    const ndjson = `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`;
+
+    const errors = parse(redactTraceNdjson(ndjson, "errors", CTX).text);
+    expect(errors.map((r) => r.type)).toEqual(["profile_clipped"]);
+    expect(errors[0]).toMatchObject({ dropped: 2, pinnedDropped: 1 });
+
+    const scrubbed = redactTraceNdjson(ndjson, "scrubbed", CTX);
+    const kept = parse(scrubbed.text);
+    expect(kept.map((r) => r.type)).toEqual([
+      "profile_clipped",
+      "profile_facts_evicted",
+    ]);
+    expect(kept[1]).toMatchObject({
+      keys: "<removed>",
+      evicted: 1,
+      ids: [7],
+      maxEntries: 500,
+    });
+    expect(scrubbed.text).not.toContain("owner_home_address");
+
+    const full = parse(redactTraceNdjson(ndjson, "full", CTX).text);
+    expect(full[1]?.keys).toEqual(["owner_home_address"]);
+  });
+
   it("drops rows it cannot parse rather than passing them through", () => {
     const { text, stats } = redactTraceNdjson(
       'not json\n{"type":"error","message":"x"}\n',

@@ -62,7 +62,7 @@ A `ProfileFact` is:
 
 ### 3.2 Prompt placement
 
-Rendered by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts) into the `### profile` section of the variable tail (after optional `### loaded-skills`, before `### memory-index` / `### session-facts` / `### recalled`). The block is bounded by `memory.profile.maxTokens` (default `512`) with a `[truncated]` marker.
+Rendered by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts) into the `### profile` section of the variable tail (after optional `### loaded-skills`, before `### memory-index` / `### session-facts` / `### recalled`). The block is bounded by `memory.profile.maxTokens` (default `512`). Facts are packed one whole line at a time, pinned facts first, and a final `… [truncated] N more profile facts not shown` line counts what was left out; when that happens the loop logs a warning and writes a `profile_clipped` trace row, once per session (issue #407).
 
 The contextual gate is controlled by `memory.profile.contextualKeywordGate` (default `true`). When `false`, **all** facts render regardless of `pinned` — useful for debugging.
 
@@ -237,6 +237,7 @@ All keys live under `memory.*` in `<stateDir>/config.json`. Defaults are in [src
 | `memory.profile.enabled`                     | `true`  | Inject `### profile` and register the three profile tools.    |
 | `memory.profile.maxTokens`                   | `512`   | Hard ceiling for the rendered `### profile` block.            |
 | `memory.profile.contextualKeywordGate`       | `true`  | Hide `pinned=false` facts unless a keyword hits user message. |
+| `memory.profile.maxEntries`                  | `500`   | Cap on active **unpinned** facts; lowest-utility evicted on write. Pinned facts never count. |
 | `memory.reflection.enabled`                  | `true`  | Master switch for the async reflection runner.                |
 | `memory.reflection.timeoutMs`                | `60000` | Hard timeout per reflection call.                             |
 | `memory.reflection.maxFactsPerCall`          | `3`     | Max `SET` lines written per reflection.                       |
@@ -291,7 +292,7 @@ Legacy: `/memory dump` still prints the active profile into the chat transcript.
 
 - **No content dedup in `MemoryStore`.** The same `NOTE` body can be written multiple times if reflection produces it across turns. FTS5 will then return clones in `### recalled`. Mitigation: `maxNotesPerCall=2` keeps the rate low; explicit `memory.notes.forget` removes duplicates.
 - **No usefulness signal in eviction.** FIFO-by-`updated_at` evicts the oldest row even if it has been recalled 100 times. A future revision could weight by recall hits.
-- **Profile keys are LLM-generated.** Reflection can invent new keys (`coding_style`, `favourite_editor`, …). There is no schema check beyond length validation; horizontal growth of the profile is bounded only by `memory.profile.maxTokens` truncation.
+- **Profile keys are LLM-generated.** Reflection can invent new keys (`coding_style`, `favourite_editor`, …). There is no schema check beyond length validation. Unpinned facts are capped by `memory.profile.maxEntries` (default `500`, lowest-utility evicted on write); pinned facts have no storage cap, only the `memory.profile.maxTokens` clip, which warns when it drops one (issue #407).
 - **Reflection quality depends on the model.** A weak model can either skip durable facts or store trivia. The `[pinned=false; keywords=…]` syntax is a request, not a contract.
 - **No embeddings, no semantic recall.** BM25 misses paraphrases. A user asking "what did I tell you about my Python testing setup?" will hit notes containing `python` and `test`, but not notes that only say "I prefer pytest for unit work".
 

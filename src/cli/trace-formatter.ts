@@ -115,6 +115,10 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
           ? ` path=${event.read.path} lines=${event.read.startLine}-${event.read.endLine} fingerprint=${event.read.previousFingerprint}→${event.read.fingerprint}`
           : ""
       }`;
+    case "profile_clipped":
+      return `${head} turn=${event.turnIndex} step=${event.stepIndex} rendered=${event.rendered} dropped=${event.dropped} pinnedDropped=${event.pinnedDropped} maxTokens=${event.maxTokens}`;
+    case "profile_facts_evicted":
+      return `${head} evicted=${event.evicted} maxEntries=${event.maxEntries} activeUnpinned=${event.activeUnpinned} keys=${truncate(event.keys.join(","), 120, raw)}`;
     case "error": {
       const after = (event.fallbackFailures ?? []).map(
         (f) => `"${f.providerId}" failed: ${f.reason}`,

@@ -594,6 +594,45 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/memory.notes.maxEntries/);
   });
 
+  it("defaults memory.profile.maxEntries to 500 and accepts an override", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.memory.profile.maxEntries).toBe(500);
+    const custom = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { profile: { maxEntries: 40 } },
+    });
+    expect(custom.memory.profile).toEqual({
+      ...USER_CONFIG_DEFAULTS.memory.profile,
+      maxEntries: 40,
+    });
+  });
+
+  it("reads a profile block written before memory.profile.maxEntries existed", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        profile: { enabled: true, maxTokens: 900, contextualKeywordGate: false },
+      },
+    });
+    expect(parsed.memory.profile).toEqual({
+      enabled: true,
+      maxTokens: 900,
+      contextualKeywordGate: false,
+      maxEntries: 500,
+    });
+  });
+
+  it("rejects a memory.profile.maxEntries that is not a positive integer", () => {
+    for (const bad of [0, -1, 2.5]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          memory: { profile: { maxEntries: bad } },
+        }),
+      ).toThrow(/memory.profile.maxEntries/);
+    }
+  });
+
   it("rejects invalid log level", () => {
     expect(() =>
       parseUserConfigFile({

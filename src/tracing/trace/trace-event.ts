@@ -39,6 +39,8 @@ export type TraceEvent =
   | TraceVoteRejected
   | TraceProcedureCreated
   | TraceProcedureDeprecated
+  | TraceProfileClipped
+  | TraceProfileFactsEvicted
   | TraceReflection
   | TraceLinkGenerator
   | TraceDistill
@@ -363,6 +365,39 @@ export interface TraceProcedureDeprecated extends TraceEventBase {
   type: "procedure_deprecated";
   procedureId: number;
   reason: string;
+}
+
+/**
+ * Issue #407. `### profile` did not fit `memory.profile.maxTokens` and
+ * whole fact lines were left out of the prompt. Counts only, never a
+ * key or a value. Emitted once per session, and again only when the
+ * number of pinned facts left out changes — the clip itself runs on
+ * every step.
+ */
+export interface TraceProfileClipped extends TraceEventBase {
+  type: "profile_clipped";
+  turnIndex: number;
+  stepIndex: number;
+  rendered: number;
+  dropped: number;
+  pinnedDropped: number;
+  maxTokens: number;
+}
+
+/**
+ * Issue #407. A profile write pushed the active unpinned facts over
+ * `memory.profile.maxEntries` and the lowest-utility ones were deleted
+ * in the same transaction. Pinned facts are never evicted. `keys` names
+ * what was lost, so it is content: `/report` strips it.
+ */
+export interface TraceProfileFactsEvicted extends TraceEventBase {
+  type: "profile_facts_evicted";
+  maxEntries: number;
+  /** Active unpinned facts left after the eviction. */
+  activeUnpinned: number;
+  evicted: number;
+  ids: readonly number[];
+  keys: readonly string[];
 }
 
 /**

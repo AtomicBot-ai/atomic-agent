@@ -34,6 +34,9 @@ const CONTENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   loop_detected: ["read"],
   // A sub-call's failure reason can quote the model's reply.
   memory_health_warning: ["reason"],
+  // The evicted keys say what the operator's profile held; the counts
+  // and ids beside them are structure (issue #407).
+  profile_facts_evicted: ["keys"],
 };
 
 /** Event types that are content through and through (memory fabric). */
@@ -135,4 +138,6 @@ const ERROR_LEVEL_EVENTS: ReadonlySet<string> = new Set([
   "parse_retry",
   "task_continued",
   "memory_health_warning",
+  // Counts only, and the answer to "why did the agent not know that".
+  "profile_clipped",
 ]);

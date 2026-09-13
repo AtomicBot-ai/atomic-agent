@@ -1207,6 +1207,28 @@ describe("parse-failure recovery", () => {
   });
 });
 
+describe("profile clip", () => {
+  it("puts one yellow runtime line in the feed with the counts", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "profile_clipped",
+        stepIndex: 0,
+        rendered: 21,
+        dropped: 67,
+        pinnedDropped: 48,
+        maxTokens: 512,
+      },
+    });
+    const row = next.feed.at(-1);
+    expect(row?.kind).toBe("runtime_info");
+    expect(row?.color).toBe("yellow");
+    expect(row?.line).toBe(
+      "» profile: 67 facts left out of the prompt (48 pinned) — memory.profile.maxTokens 512 is too small",
+    );
+  });
+});
+
 describe("empty-completion recovery", () => {
   const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",
