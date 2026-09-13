@@ -748,7 +748,7 @@ Anti-feedback-loop guard (mirrors phase 7a invariant 18 from MEMORY_FABRIC_V2.md
 - `memory.links.maxExpanded` (default `12`) — hard cap on expanded-id count per recall turn.
 - `memory.links.maxLinksPerCall` (default `4`) — hard cap on persisted edges per link-generator call.
 - `memory.links.minCandidates` (default `2`) — skip the LLM call when the surfaced set has fewer than this many ids.
-- `memory.links.generatorTimeoutMs` (default `8000`) — hard timeout for the link-generator LLM call.
+- `memory.links.generatorTimeoutMs` (default `60000`, config v65; `8000` before) — hard timeout for the link-generator LLM call.
 
 **Metrics.** All env-only, exported from [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
 
@@ -1176,11 +1176,13 @@ The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate fr
 All keys under `memory.*` in the user config and [src/config/config-schema.ts](src/config/config-schema.ts). Full table in [MEMORY.md §8](MEMORY.md). The most relevant for tuning:
 
 - `memory.profile.{enabled, maxTokens, contextualKeywordGate}`
-- `memory.reflection.{enabled, timeoutMs, maxFactsPerCall, autoStoreNotes, maxNotesPerCall}`
+- `memory.reflection.{enabled, timeoutMs, maxFactsPerCall, autoStoreNotes, maxNotesPerCall}` — `timeoutMs` defaults to `60000` (config v65; `10000` before) and is also the vote-runner's budget.
 - `memory.notes.{enabled, maxEntries, maxContentChars, recallDefaultK}`
 - `memory.recallInjection.{enabled, k, previewChars, maxTokens}`
 - `memory.index.{enabled, limit, previewChars, maxTokens}`
 - `paths.memoryDbFile` — resolved to `<stateDir>/memory.sqlite`.
+
+**Sub-call timeouts scale with provider latency.** A default tuned against a local `llama-server` does not carry over to hosted reasoning models. Before config v65 reflection had 10 s and the link-generator 8 s; measured on OpenRouter, reflection takes a median 13.9–16.3 s on glm-5.3-flash / qwen3.6-plus / kimi-k2.6 (37.5 s worst case in a live session) and kimi's link-generator 37.8 s, so 6 of 8 live reflections on glm-5.3-flash timed out and wrote nothing. v65 raises both to 60 s. The v65 migration rewrites a pre-v65 file's old default and keeps any other value as a pin ([subcall-timeout-migration.ts](src/config/subcall-timeout-migration.ts)). Size any new sub-call default against the slowest hosted provider you support, not the local daemon.
 
 ### Invariants
 
