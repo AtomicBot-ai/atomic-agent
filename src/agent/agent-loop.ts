@@ -76,6 +76,11 @@ import {
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
+import {
+  ProfileClipWarnings,
+  reportProfileClip,
+  type ProfileClippedEvent,
+} from "./profile-clip-warning.js";
 
 export interface AgentLoopDependencies {
   registry: ToolRegistry;
@@ -662,6 +667,8 @@ export type AgentLoopEvent =
       /** One line about the outcome; the worker's reply, clipped. */
       summary?: string;
     }
+  /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
+  | ProfileClippedEvent
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";
@@ -745,6 +752,9 @@ export interface RunTurnResult {
 }
 
 export class AgentLoop {
+  /** Once-per-session dedupe for the `### profile` clip warning. */
+  private readonly profileClipWarnings = new ProfileClipWarnings();
+
   constructor(private readonly deps: AgentLoopDependencies) {}
 
   /**
@@ -1258,8 +1268,25 @@ export class AgentLoop {
                     ),
                 }
               : {}),
-            onEvent: (event) =>
-              this.deps.onEvent?.({ type: "llm_event", event }),
+            onEvent: (event) => {
+              this.deps.onEvent?.({ type: "llm_event", event });
+              // Issue #407. Skipped on a fusion worker's throwaway
+              // session: it renders the same store as the orchestrator,
+              // which already warned, and would repeat it per worker.
+              if (
+                event.type === "prompt_built" &&
+                options.ephemeral !== true
+              ) {
+                reportProfileClip({
+                  warnings: this.profileClipWarnings,
+                  sessionId: state.id,
+                  stepIndex: i,
+                  clip: event.prompt.profileClip,
+                  ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+                  emit: (clipped) => this.deps.onEvent?.(clipped),
+                });
+              }
+            },
             ...(this.deps.metrics ? { metrics: this.deps.metrics } : {}),
             ...(this.deps.logger ? { logger: this.deps.logger } : {}),
             tracker: loopTracker,

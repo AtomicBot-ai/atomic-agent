@@ -760,6 +760,19 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         line: `» the model returned an empty reply — trying again (${event.attempt}/${event.budget})`,
         color: "yellow",
       });
+    case "profile_clipped": {
+      // Issue #407: the clip used to show only as a `[truncated]` inside
+      // a prompt nobody reads. The loop fires this once per session, and
+      // again only when the pinned count changes, so it cannot fill the
+      // feed.
+      const noun = event.dropped === 1 ? "fact" : "facts";
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» profile: ${event.dropped} ${noun} left out of the prompt (${event.pinnedDropped} pinned) — memory.profile.maxTokens ${event.maxTokens} is too small`,
+        color: "yellow",
+      });
+    }
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect

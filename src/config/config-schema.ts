@@ -608,6 +608,13 @@ export interface AtomicAgentConfig {
        * that have no user message to key off.
        */
       contextualKeywordGate: boolean;
+      /**
+       * Cap on active **unpinned** profile facts (issue #407). A write
+       * that pushes past it evicts the lowest-utility unpinned facts
+       * (`vote_score`, then age, then id) in the same transaction.
+       * Pinned facts are never counted and never evicted.
+       */
+      maxEntries: number;
     };
     reflection: {
       enabled: boolean;
@@ -1478,6 +1485,8 @@ export interface UserConfigFile {
       enabled: boolean;
       maxTokens: number;
       contextualKeywordGate: boolean;
+      /** Cap on active unpinned facts. See the runtime type above. */
+      maxEntries: number;
     };
     reflection: {
       enabled: boolean;
@@ -2371,6 +2380,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: true,
       maxTokens: 512,
       contextualKeywordGate: true,
+      // Same order as `memory.lessons.maxEntries`. It counts unpinned
+      // facts only, and reflection writes at most three facts a turn, so
+      // a fresh install needs hundreds of turns of new keys to get here;
+      // the long-running store in issue #407 had 19 unpinned facts.
+      // Inert until a store is genuinely large.
+      maxEntries: 500,
     },
     reflection: {
       enabled: true,
@@ -4431,6 +4446,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryProfile.contextualKeywordGate ??
             USER_CONFIG_DEFAULTS.memory.profile.contextualKeywordGate,
           "memory.profile.contextualKeywordGate",
+        ),
+        maxEntries: parsePositiveInt(
+          memoryProfile.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.profile.maxEntries,
+          "memory.profile.maxEntries",
         ),
       },
       reflection: {

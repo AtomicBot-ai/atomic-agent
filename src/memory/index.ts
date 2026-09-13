@@ -37,7 +37,16 @@ export type {
   MemoryRecallOptions,
   MemoryListOptions,
 } from "./memory-store.js";
-export { renderProfileSection } from "./profile-renderer.js";
+export {
+  PROFILE_SECTION_EMPTY,
+  renderProfileLine,
+  renderProfileSection,
+  selectProfileFacts,
+} from "./profile-renderer.js";
+export type {
+  EvictedProfileFact,
+  ProfileEviction,
+} from "./profile-eviction.js";
 export {
   renderRecalledSection,
   renderRecalledLine,

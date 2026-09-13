@@ -32,6 +32,9 @@ const CONTENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   // A repair reason quotes what the model emitted.
   parse_retry: ["reason"],
   loop_detected: ["read"],
+  // The evicted keys say what the operator's profile held; the counts
+  // and ids beside them are structure (issue #407).
+  profile_facts_evicted: ["keys"],
 };
 
 /** Event types that are content through and through (memory fabric). */
@@ -132,4 +135,6 @@ const ERROR_LEVEL_EVENTS: ReadonlySet<string> = new Set([
   "step_finished",
   "parse_retry",
   "task_continued",
+  // Counts only, and the answer to "why did the agent not know that".
+  "profile_clipped",
 ]);

@@ -1,6 +1,6 @@
 import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
-import { renderProfileSection } from "../memory/profile-renderer.js";
+import { clipProfileSection } from "./clip-profile-section.js";
 import {
   renderMemoryIndexSection,
   renderRecalledSection,
@@ -166,17 +166,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
   const contextualKeywordGate =
     input.contextualKeywordGate ?? config.memory.profile.contextualKeywordGate;
-  const profileFull =
+  // Whole fact lines, pinned first; `clip` carries the counts whenever a
+  // fact was left out, so the loop can warn (issue #407).
+  const profileSection =
     input.profileFacts !== undefined
-      ? renderProfileSection(input.profileFacts, {
+      ? clipProfileSection(input.profileFacts, {
           userMessage: input.userMessage ?? null,
           contextualKeywordGate,
+          maxTokens: profileMaxTokens,
         })
       : null;
-  const profile =
-    profileFull !== null
-      ? truncateToTokens(profileFull, profileMaxTokens)
-      : null;
+  const profile = profileSection?.text ?? null;
   const profileTokens = profile !== null ? estimateTokens(profile) : 0;
 
   const recallPreviewChars =
@@ -376,7 +376,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     loadedSkills: sessionParts.truncationLoaded,
     sessionFacts: sessionParts.truncationFacts,
     loadedTools: loadedToolsRendered.truncated,
-    profile: profileFull !== null && profile !== profileFull,
+    profile: profileSection?.clip !== undefined,
     worldSnapshot: worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
     recalled: recalledFull !== null && recalled !== recalledFull,
@@ -417,6 +417,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       truncation.recalled ||
       truncation.memoryIndex,
     truncation,
+    ...(profileSection?.clip !== undefined
+      ? { profileClip: profileSection.clip }
+      : {}),
     contextWindow,
     conversationCapEffective,
     conversationCapAuto,

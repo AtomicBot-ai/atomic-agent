@@ -31,6 +31,55 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a profile clip against the current turn (issue #407)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-clip", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 2 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "profile_clipped",
+      stepIndex: 1,
+      rendered: 12,
+      dropped: 7,
+      pinnedDropped: 3,
+      maxTokens: 512,
+    });
+    expect(events.at(-1)).toEqual({
+      type: "profile_clipped",
+      seq: 1,
+      sessionId: "s-clip",
+      ts: 1000,
+      turnIndex: 2,
+      stepIndex: 1,
+      rendered: 12,
+      dropped: 7,
+      pinnedDropped: 3,
+      maxTokens: 512,
+    });
+  });
+
+  it("records a profile eviction on the session's own seq counter", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-evict", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.recordProfileFactsEvicted({
+      maxEntries: 500,
+      activeUnpinned: 500,
+      ids: [4, 9],
+      keys: ["old_a", "old_b"],
+    });
+    expect(events[1]).toEqual({
+      type: "profile_facts_evicted",
+      seq: 1,
+      sessionId: "s-evict",
+      ts: 1000,
+      maxEntries: 500,
+      activeUnpinned: 500,
+      evicted: 2,
+      ids: [4, 9],
+      keys: ["old_a", "old_b"],
+    });
+  });
+
   it("records a parse-failure recovery against the current turn and step", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-parse", emit, now });

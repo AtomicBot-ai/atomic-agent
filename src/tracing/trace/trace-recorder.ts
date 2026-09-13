@@ -94,6 +94,18 @@ export interface TraceRecorder {
       | "failed";
     reason?: string;
   }): void;
+  /**
+   * Issue #407. Emit a `profile_facts_evicted` row: a profile write
+   * pushed the active unpinned facts over `memory.profile.maxEntries`.
+   * Called from the store's eviction listener, outside the loop's event
+   * stream, so the recorder owns `seq` here as it does for votes.
+   */
+  recordProfileFactsEvicted(payload: {
+    maxEntries: number;
+    activeUnpinned: number;
+    ids: readonly number[];
+    keys: readonly string[];
+  }): void;
 }
 
 /**
@@ -302,6 +314,19 @@ export function createTraceRecorder(
         ...(payload.reason ? { reason: payload.reason } : {}),
       });
     },
+    recordProfileFactsEvicted(payload) {
+      push({
+        type: "profile_facts_evicted",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        maxEntries: payload.maxEntries,
+        activeUnpinned: payload.activeUnpinned,
+        evicted: payload.keys.length,
+        ids: [...payload.ids],
+        keys: [...payload.keys],
+      });
+    },
     beginSession(info) {
       push({
         type: "session_started",
@@ -467,6 +492,20 @@ export function createTraceRecorder(
               ? { detector: event.detector }
               : {}),
             ...(event.read !== undefined ? { read: event.read } : {}),
+          });
+          return;
+        case "profile_clipped":
+          push({
+            type: "profile_clipped",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            rendered: event.rendered,
+            dropped: event.dropped,
+            pinnedDropped: event.pinnedDropped,
+            maxTokens: event.maxTokens,
           });
           return;
         case "loop_failed":

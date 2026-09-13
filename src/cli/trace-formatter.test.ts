@@ -30,6 +30,51 @@ function render(events: readonly TraceEvent[]): string {
   return formatTraceChronology(events);
 }
 
+describe("formatTraceChronology profile rows (issue #407)", () => {
+  const ts = Date.parse("2026-09-01T10:00:00.000Z");
+
+  it("prints a clip's counts on one line", () => {
+    expect(
+      render([
+        {
+          type: "profile_clipped",
+          seq: 4,
+          sessionId: "s-1",
+          ts,
+          turnIndex: 2,
+          stepIndex: 0,
+          rendered: 21,
+          dropped: 67,
+          pinnedDropped: 48,
+          maxTokens: 512,
+        },
+      ]),
+    ).toBe(
+      "[2026-09-01T10:00:00.000Z] #4 profile_clipped turn=2 step=0 rendered=21 dropped=67 pinnedDropped=48 maxTokens=512",
+    );
+  });
+
+  it("prints an eviction with the keys it removed", () => {
+    expect(
+      render([
+        {
+          type: "profile_facts_evicted",
+          seq: 5,
+          sessionId: "s-1",
+          ts,
+          maxEntries: 500,
+          activeUnpinned: 500,
+          evicted: 2,
+          ids: [3, 8],
+          keys: ["deploy_cmd", "ci_url"],
+        },
+      ]),
+    ).toBe(
+      "[2026-09-01T10:00:00.000Z] #5 profile_facts_evicted evicted=2 maxEntries=500 activeUnpinned=500 keys=deploy_cmd,ci_url",
+    );
+  });
+});
+
 describe("formatTraceChronology completion_truncated", () => {
   it("prints the cause, the counts and the retry on one line", () => {
     const out = render([

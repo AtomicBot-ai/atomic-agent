@@ -1213,6 +1213,27 @@ export async function createAgentRuntime(
   const profileStore = new ProfileStore({
     dbFile: config.paths.memoryDbFile,
     metrics,
+    maxEntries: config.memory.profile.maxEntries,
+    // Issue #407. The store knows no session; a write from a tool call
+    // or from reflection runs inside the turn's ALS frame, which names
+    // it. The log carries counts only — keys can be sensitive — while
+    // the local trace keeps the keys (`/report` strips them).
+    onEvicted: (eviction) => {
+      const sessionId = turnContext.getStore()?.sessionId;
+      logger.info("profile facts evicted over memory.profile.maxEntries", {
+        evicted: eviction.evicted.length,
+        maxEntries: eviction.maxEntries,
+        activeUnpinned: eviction.activeUnpinned,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      });
+      if (sessionId === undefined) return;
+      touchRecorder(sessionId)?.recordProfileFactsEvicted({
+        maxEntries: eviction.maxEntries,
+        activeUnpinned: eviction.activeUnpinned,
+        ids: eviction.evicted.map((fact) => fact.id),
+        keys: eviction.evicted.map((fact) => fact.key),
+      });
+    },
   });
   const notesStore = new MemoryStore({
     dbFile: config.paths.memoryDbFile,
