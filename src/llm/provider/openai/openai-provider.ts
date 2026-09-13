@@ -42,6 +42,7 @@ import {
   adaptQwenTaggedToolResponse,
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
+import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -156,20 +157,30 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const body = buildOpenAiChatBody(
+    // Unary only: sub-calls carry `response_format`, streamed turns never do.
+    const json = await sendWithStructuredOutputFallback(
+      {
+        providerId: this.id,
+        model: this.defaultChatModel,
+        logger: this.http.logger,
+      },
       request,
-      this.defaultChatModel,
-      false,
-      this.extraBody,
-      this.maxOutputTokens,
-      this.strictTools,
-      this.providerPreferences,
-    );
-    const json = await openAiPostJson(
-      this.http,
-      `${this.apiPathPrefix}/chat/completions`,
-      body,
-      request,
+      (req) =>
+        buildOpenAiChatBody(
+          req,
+          this.defaultChatModel,
+          false,
+          this.extraBody,
+          this.maxOutputTokens,
+          this.strictTools,
+        ),
+      (body) =>
+        openAiPostJson(
+          this.http,
+          `${this.apiPathPrefix}/chat/completions`,
+          body,
+          request,
+        ),
     );
     const adapted =
       this.taggedToolCompatibility === "qwen"
