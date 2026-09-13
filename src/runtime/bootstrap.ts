@@ -980,11 +980,13 @@ export async function createAgentRuntime(
   // Cross-provider fallover breaker. Owns no timer — every decision is
   // computed lazily from the wall clock when a turn asks for a provider
   // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
-  // one-shot switch into a `provider_switched` AgentLoopEvent.
+  // one-shot switch into a `provider_switched` AgentLoopEvent; the logger
+  // records every advance, with the failed link's status and message.
   const fallbackChain = new ProviderFallbackChain({
     resolve: () => resolveFallbackChain(resolveLlmConfig(getConfig())),
     noticeSink: (notice) =>
       emitAgentLoopEvent({ type: "provider_switched", ...notice }),
+    logger,
   });
 
   // Approval requests flow through `ApprovalRouter`: per-session

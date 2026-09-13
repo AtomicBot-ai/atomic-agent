@@ -2,8 +2,20 @@ import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import type { StepEvent } from "../../agent/step-executor.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 
-import type { TraceEvent } from "./trace-event.js";
+// The module, not the fallback barrel: it has no imports of its own, so
+// tracing does not pull the provider clients in behind it.
+import { summarizeFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+
+import type { TraceError, TraceEvent } from "./trace-event.js";
 import type { TraceSink } from "./trace-bus.js";
+
+/** The `fallbackFailures` field of an `error` row, or nothing. */
+function fallbackFailuresOf(
+  error: unknown,
+): Pick<TraceError, "fallbackFailures"> {
+  const failures = summarizeFailedAttempts(error);
+  return failures.length > 0 ? { fallbackFailures: failures } : {};
+}
 
 export interface TraceRecorderOptions {
   sessionId: string;
@@ -227,6 +239,7 @@ export function createTraceRecorder(
           message: inner.error.message,
           ...(inner.error.stack ? { stack: inner.error.stack } : {}),
           category: inner.category,
+          ...fallbackFailuresOf(inner.error),
         });
         return;
       default:
@@ -482,6 +495,7 @@ export function createTraceRecorder(
             message: event.error.message,
             ...(event.error.stack ? { stack: event.error.stack } : {}),
             category: event.category,
+            ...fallbackFailuresOf(event.error),
           });
           return;
         case "llm_event":

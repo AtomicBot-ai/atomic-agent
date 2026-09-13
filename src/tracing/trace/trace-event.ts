@@ -443,6 +443,12 @@ export interface TraceError extends TraceEventBase {
    * new traces always carry it.
    */
   category?: LlmFailureCategory;
+  /**
+   * Fallback-chain links that failed before the one `message` came from —
+   * present only when the chain fell over, or the turn was already on a
+   * fallback, before failing. `message` stays that last link's verbatim.
+   */
+  fallbackFailures?: { providerId: string; reason: string }[];
 }
 
 /**

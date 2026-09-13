@@ -13,6 +13,12 @@ export {
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
 export { runWithFallback } from "./run-with-fallback.js";
 export {
+  describeFailedAttempts,
+  readFailedAttempts,
+  summarizeFailedAttempts,
+  type FailedAttempt,
+} from "./failed-attempts.js";
+export {
   primeStream,
   replayPrimedStream,
   type PrimedStream,

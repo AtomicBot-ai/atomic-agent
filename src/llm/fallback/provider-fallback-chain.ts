@@ -1,32 +1,17 @@
+import { describeReason } from "./describe-reason.js";
+import type { FailedAttempt } from "./failed-attempts.js";
 import type { ResolvedFallbackChain } from "./fallback-config.js";
+import {
+  logFallbackAdvance,
+  type FallbackLogger,
+} from "./log-fallback-advance.js";
+import {
+  freshBreaker,
+  freshPartition,
+  type BreakerEntry,
+  type PartitionState,
+} from "./partition-state.js";
 import { shouldAdvance } from "./should-advance.js";
-
-/**
- * A single provider's circuit-breaker state. All timestamps are epoch
- * milliseconds read from the injected `now()` clock, never a timer.
- */
-interface BreakerEntry {
-  /** Consecutive advance-worthy failures; drives the threshold + cooldown ladder. */
-  consecutiveFailures: number;
-  /** Provider is in cooldown until this instant (0 = healthy). */
-  cooldownUntil: number;
-  /** Index into the cooldown ladder for the next escalation. */
-  cooldownStep: number;
-  /** When the last advance-worthy failure landed (for the reset window). */
-  lastFailureAt: number;
-  /** When the primary was last probed (probe throttle). */
-  lastProbeAt: number;
-}
-
-function freshBreaker(): BreakerEntry {
-  return {
-    consecutiveFailures: 0,
-    cooldownUntil: 0,
-    cooldownStep: 0,
-    lastFailureAt: 0,
-    lastProbeAt: 0,
-  };
-}
 
 /** Emitted once per state transition; wired to an `AgentLoopEvent` by bootstrap. */
 export interface ProviderSwitchNotice {
@@ -51,25 +36,8 @@ export interface FallbackChainOptions {
   now?: () => number;
   /** One-shot state-change notices (switch away / switch back). */
   noticeSink?: (notice: ProviderSwitchNotice) => void;
-}
-
-/**
- * All mutable breaker state for ONE partition (see the class doc on why
- * the chain partitions by session). A partition owns its own per-provider
- * breakers plus the sticky-override bookkeeping, so one session's health
- * accounting never leaks into another's.
- */
-interface PartitionState {
-  /** Per-provider circuit-breaker entries for this partition. */
-  readonly breakers: Map<string, BreakerEntry>;
-  /** Sticky working provider after a switch-away; null = on primary. */
-  overrideId: string | null;
-  /** Whether the current override was already announced (dedupe). */
-  announcedOverride: boolean;
-}
-
-function freshPartition(): PartitionState {
-  return { breakers: new Map(), overrideId: null, announcedOverride: false };
+  /** Every advance, logged at `warn` — see `logFallbackAdvance`. */
+  logger?: FallbackLogger;
 }
 
 /**
@@ -95,6 +63,7 @@ export class ProviderFallbackChain {
   private readonly resolve: () => ResolvedFallbackChain;
   private readonly now: () => number;
   private readonly noticeSink?: (notice: ProviderSwitchNotice) => void;
+  private readonly logger?: FallbackLogger;
 
   /**
    * Breaker state partitioned by key (session id). One shared chain
@@ -109,6 +78,7 @@ export class ProviderFallbackChain {
     this.resolve = options.resolve;
     this.now = options.now ?? Date.now;
     if (options.noticeSink) this.noticeSink = options.noticeSink;
+    if (options.logger) this.logger = options.logger;
   }
 
   /**
@@ -177,6 +147,12 @@ export class ProviderFallbackChain {
     for (let i = startFrom; i < chain.length; i += 1) {
       const candidate = chain[i]!;
       if (candidate === fromId) continue;
+      logFallbackAdvance(this.logger, {
+        from: fromId,
+        to: candidate,
+        error: err,
+        sessionId: partitionKey,
+      });
       this.switchAwayTo(p, chain[0]!, fromId, candidate, err);
       return candidate;
     }
@@ -221,6 +197,11 @@ export class ProviderFallbackChain {
   /** Test/inspection hook: sticky override on a specific partition. */
   activeOverrideFor(partitionKey: string): string | null {
     return this.partitions.get(partitionKey)?.overrideId ?? null;
+  }
+
+  /** Why `partitionKey` is on an override: the primary's latest failure. */
+  overrideCause(partitionKey = DEFAULT_PARTITION): FailedAttempt | null {
+    return this.partitions.get(partitionKey)?.overrideCause ?? null;
   }
 
   private registerFailure(
@@ -275,6 +256,9 @@ export class ProviderFallbackChain {
       // pointed at the newest working candidate.
       p.overrideId = toId;
     }
+    if (fromId === primary && p.overrideId) {
+      p.overrideCause = { providerId: fromId, error: err };
+    }
     if (!p.announcedOverride) {
       p.announcedOverride = true;
       this.emit({
@@ -289,6 +273,7 @@ export class ProviderFallbackChain {
   private clearOverride(p: PartitionState): void {
     p.overrideId = null;
     p.announcedOverride = false;
+    p.overrideCause = null;
   }
 
   private partition(key: string): PartitionState {
@@ -312,39 +297,4 @@ export class ProviderFallbackChain {
   private emit(notice: ProviderSwitchNotice): void {
     this.noticeSink?.(notice);
   }
-}
-
-/** Longest reason we carry: this lands in a chat notice and a feed line. */
-const MAX_REASON_CHARS = 180;
-
-/**
- * What the operator is told about a fallover.
- *
- * The message, not the class name. This used to answer `OpenAiHttpError`
- * — technically the error's `name`, and useless to the person deciding
- * what to do: it names the transport, never the refusal. The provider's
- * own text is the part that distinguishes "your key is wrong" from "you
- * are out of credit" from "the service is down", and those want three
- * different actions.
- *
- * Collapsed to one line and capped, because it is rendered inside a
- * notice and a feed row; the untruncated original is still on the error
- * the logger records.
- */
-export function describeReason(err: unknown): string {
-  const message =
-    err && typeof err === "object" && "message" in err
-      ? (err as { message?: unknown }).message
-      : undefined;
-  if (typeof message === "string" && message.trim().length > 0) {
-    const line = message.replace(/\s+/g, " ").trim();
-    return line.length > MAX_REASON_CHARS
-      ? `${line.slice(0, MAX_REASON_CHARS - 1)}…`
-      : line;
-  }
-  if (err && typeof err === "object" && "name" in err) {
-    const name = (err as { name?: unknown }).name;
-    if (typeof name === "string" && name.length > 0) return name;
-  }
-  return "provider unavailable";
 }

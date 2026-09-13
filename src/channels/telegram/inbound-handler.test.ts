@@ -10,6 +10,7 @@ import {
   type SessionState,
 } from "../../session/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
+import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 
 import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
@@ -421,6 +422,31 @@ describe("handleInboundText", () => {
     expect(failureMsg).toBeDefined();
     expect(failureMsg!.text).toContain("[transport]");
     expect(failureMsg!.text).toContain("kaboom");
+    expect(failureMsg!.text).toBe("Turn failed [transport]: kaboom");
+  });
+
+  it("names the primary's failure when the fallback chain fell over first", async () => {
+    const error = new TypeError("fetch failed");
+    attachFailedAttempts(error, [
+      {
+        providerId: "openrouter",
+        error: new Error(
+          "openai provider 404: No endpoints found for z-ai/glm-5.3-flash.",
+        ),
+      },
+    ]);
+    const { runtime } = makeFakeRuntime({
+      scripts: [
+        { events: [{ type: "loop_failed", error, category: "transport" }] },
+      ],
+    });
+    const api = makeFakeApi();
+    const ctx = makeContext(runtime, api, pointer, OWNER, join(dir, "inbox"));
+    await handleInboundText(makeUpdate("do it"), ctx);
+    const failureMsg = api.sent.find((m) => m.text.startsWith("Turn failed"));
+    expect(failureMsg?.text).toBe(
+      'Turn failed [transport]: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
+    );
   });
 
   it("creates a fresh session on the first message and persists the pointer", async () => {

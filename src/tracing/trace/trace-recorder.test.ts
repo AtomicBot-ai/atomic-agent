@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
+import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 
 import { createTraceRecorder } from "./trace-recorder.js";
 import type { TraceEvent } from "./trace-event.js";
@@ -320,6 +321,31 @@ describe("createTraceRecorder", () => {
       type: "error",
       message: "loop blew up",
       category: "transport",
+    });
+    expect(err).not.toHaveProperty("fallbackFailures");
+  });
+
+  it("keeps the last link's message and lists the links that failed before it", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-fb", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    const error = new TypeError("fetch failed");
+    attachFailedAttempts(error, [
+      {
+        providerId: "openrouter",
+        error: new Error("openai provider 404: No endpoints found"),
+      },
+    ]);
+    rec.onAgentEvent({ type: "loop_failed", error, category: "transport" });
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      message: "fetch failed",
+      category: "transport",
+      fallbackFailures: [
+        {
+          providerId: "openrouter",
+          reason: "openai provider 404: No endpoints found",
+        },
+      ],
     });
   });
 
