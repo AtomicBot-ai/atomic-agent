@@ -76,9 +76,13 @@ export type UserLlmProviderEntry = {
    */
   promptCache?: "auto" | "off" | "explicit-markers";
   /**
-   * Vendor routing preferences (e.g. OpenRouter's `provider` block).
-   * Same status as `promptCache`: carried through config, not yet read
-   * by any provider.
+   * OpenRouter provider routing — `order`, `only`, `ignore`,
+   * `allow_fallbacks`, `require_parameters`, `sort`, `data_collection`,
+   * … — sent verbatim as the chat body's `provider` object on every
+   * completion an `openrouter` entry makes: turns, sub-calls and vision.
+   * Other kinds ignore it. OpenRouter owns the vocabulary, so nothing
+   * here checks it beyond "an object". An explicit `extraBody.provider`
+   * still wins, since `extraBody` is merged last.
    */
   providerPreferences?: Record<string, unknown>;
   /**

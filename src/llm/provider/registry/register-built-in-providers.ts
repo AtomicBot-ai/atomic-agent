@@ -110,6 +110,10 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      // OpenRouter's own `provider` routing block. Deliberately wired on
+      // this kind alone: it is not part of the OpenAI schema, and no
+      // other kind here documents a field by that name.
+      providerPreferences: entry.providerPreferences,
       logger: ctx.logger,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
