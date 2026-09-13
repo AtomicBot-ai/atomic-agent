@@ -587,6 +587,12 @@ A cloud provider is verified before anything reaches disk. [src/llm/provider/ver
 
 Pinned by [src/llm/provider/verify/classify-verify-response.test.ts](src/llm/provider/verify/classify-verify-response.test.ts), [verify-provider-key.test.ts](src/llm/provider/verify/verify-provider-key.test.ts), [pick-probe-models.test.ts](src/llm/provider/verify/pick-probe-models.test.ts), [src/tui/providers/verify-wizard-before-save.test.ts](src/tui/providers/verify-wizard-before-save.test.ts), [providers-wizard-target.test.ts](src/tui/providers/providers-wizard-target.test.ts), the `completeWizard` cases in [providers-orchestrator.test.ts](src/tui/providers/providers-orchestrator.test.ts), and the cancel-then-resolve cases in [src/tui/components/cloud-provider-onboarding.test.tsx](src/tui/components/cloud-provider-onboarding.test.tsx).
 
+### Structured Outputs for memory sub-calls
+
+On a cloud provider the memory sub-calls (query rewriter, vote, link-generator, distill) cannot send their GBNF grammar, so each ships a `*-response-format.ts` schema that [openai-build-body.ts](src/llm/provider/openai/openai-build-body.ts) sends as `response_format: { type: "json_schema", strict: true }`. The provider rules below are not style: breaking one fails **every** call with a 400 before the model runs.
+
+- **Strict schemas have no optional keys.** OpenAI compiles the schema up front and refuses it unless every object closes itself with `additionalProperties: false` and lists every key of `properties` in `required`, at every depth. A branch with nothing to say carries an empty value instead of omitting the key: the abstain shapes are `{"kind":"none","links":[]}` and `{"kind":"none","votes":[]}`, and both parsers read an empty array as `none` under either `kind`. [cloud-response-format-strict.test.ts](src/runtime/cloud-response-format-strict.test.ts) imports every `*-response-format.ts` under `src/` and runs each exported schema through `findStrictSchemaViolations` ([find-strict-schema-violations.ts](src/llm/provider/openai/find-strict-schema-violations.ts)), so a new sub-call schema is checked without anyone listing it. Bounds (`maxItems`, `minimum`, `maxLength`) are accepted by the provider and are not what this checks.
+
 ### Locked invariants
 
 1. **Local llama-server path unchanged when no cloud provider is active.** Grammar, slots, and GBNF tests remain the reference behaviour.
