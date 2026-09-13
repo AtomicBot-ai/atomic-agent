@@ -66,7 +66,7 @@ export interface OpenAiProviderOptions {
   id: string;
   baseUrl: string;
   apiKey: string;
-  defaultChatModel: string;
+  defaultChatModel?: string;
   headers?: Record<string, string>;
   /**
    * Header that carries the API key when the service does not accept
@@ -160,10 +160,10 @@ export class OpenAiProvider implements LlmProvider {
   readonly toolCallAdapter: ToolCallAdapter;
   readonly streamConsumer: StreamConsumer;
   readonly capabilities: ProviderCapabilities;
-  readonly chatModelId: string;
+  readonly chatModelId: string | undefined;
 
   private readonly http: OpenAiHttpDeps;
-  private readonly defaultChatModel: string;
+  private readonly defaultChatModel: string | undefined;
   private readonly apiPathPrefix: string;
   /**
    * Prefix of the chat route. The same as `apiPathPrefix` everywhere but
@@ -251,6 +251,12 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
     // The body the response actually came from; see `OnOpenAiRequestBody`.
     let sentBody: Record<string, unknown> | undefined;
     const send = (shape: "native" | "flat") =>
@@ -258,7 +264,7 @@ export class OpenAiProvider implements LlmProvider {
       sendWithStructuredOutputFallback(
         {
           providerId: this.id,
-          model: this.defaultChatModel,
+          model: model,
           logger: this.http.logger,
         },
         request,
@@ -291,7 +297,7 @@ export class OpenAiProvider implements LlmProvider {
     return withSentMaxTokens(
       normaliseOpenAiChatResponse(
         adapted,
-        this.defaultChatModel,
+        model,
         this.reasoningFormat,
       ),
       sentBody,
@@ -315,7 +321,7 @@ export class OpenAiProvider implements LlmProvider {
   ): Record<string, unknown> {
     return buildOpenAiChatBody(
       request,
-      this.defaultChatModel,
+      this.defaultChatModel!,
       stream,
       this.extraBody,
       this.maxOutputTokens,
@@ -365,6 +371,12 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
     let shape = this.shapeFor(request);
     let body = this.buildBody(request, true, shape);
     const path = `${this.chatPathPrefix}/chat/completions`;
@@ -568,7 +580,7 @@ export class OpenAiProvider implements LlmProvider {
     }
     const final = completionFromStreamFinal(
       streamFinal,
-      this.defaultChatModel,
+      model,
       accumulated,
       accumulatedReasoning,
     );
@@ -663,10 +675,16 @@ export class OpenAiProvider implements LlmProvider {
     if (!this.capabilities.vision) {
       throw new VisionUnsupportedError(this.name);
     }
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
     try {
       return await describeImageViaOpenAi(
         this.http,
-        this.defaultChatModel,
+        model,
         request,
         this.chatPathPrefix,
         this.providerPreferences,
@@ -680,12 +698,12 @@ export class OpenAiProvider implements LlmProvider {
         error instanceof OpenAiHttpError &&
         isImageRejection(error.status, error.message)
       ) {
-        markModelCannotSee(this.id, this.defaultChatModel);
+        markModelCannotSee(this.id, model);
         this.capabilities.vision = false;
         this.capabilities.visionSource = "rejected-images";
         throw new ModelCannotSeeError(
           this.id,
-          this.defaultChatModel,
+          model,
           error.message,
         );
       }
@@ -717,7 +735,7 @@ function openAiVisionCapabilities(
       visionSource: options.visionSource ?? "config.provider",
     };
   }
-  if (modelCannotSee(options.id, options.defaultChatModel)) {
+  if (options.defaultChatModel && modelCannotSee(options.id, options.defaultChatModel)) {
     return { vision: false, visionSource: "rejected-images" };
   }
   return { vision: true, visionSource: "assumed" };
@@ -737,7 +755,7 @@ function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
       return true;
     default:
       return (
-        isAnthropicModel(options.defaultChatModel) ||
+        (options.defaultChatModel && isAnthropicModel(options.defaultChatModel)) ||
         isAnthropicHost(options.baseUrl)
       );
   }
@@ -755,7 +773,7 @@ function normalizeApiPathPrefix(prefix: string): string {
 
 function completionFromStreamFinal(
   streamFinal: StreamFinalResult | void,
-  defaultChatModel: string,
+  defaultChatModel: string | undefined,
   accumulated: string,
   accumulatedReasoning: string,
 ): CompletionResult {
@@ -778,7 +796,7 @@ function completionFromStreamFinal(
     },
     cacheHitTokens: usage.cachedTokens ?? 0,
     slotId: -1,
-    modelId: streamFinal?.modelId ?? defaultChatModel,
+    modelId: streamFinal?.modelId ?? defaultChatModel ?? null,
     usage,
     toolCalls: streamFinal?.toolCalls,
     finishReason,
