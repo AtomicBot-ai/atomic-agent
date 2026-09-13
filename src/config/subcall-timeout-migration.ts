@@ -8,6 +8,11 @@
  * requests in roughly 15–40 s, so most sub-calls ran into the cap and
  * wrote nothing.
  *
+ * The query rewriter had 3 s. It sits on the hot path, so its cap stays
+ * well below the background ones (10 s): hosted models rewrite in a
+ * median 4–24 s, and the rewriter now runs once per turn, so a timeout
+ * costs a turn one wait rather than one per step.
+ *
  * Every `config.json` already carries these fields, written by the
  * schema rather than by the operator, so a pre-v65 file whose value
  * equals the old default is read as "never chosen" and takes the new
@@ -22,6 +27,7 @@ export const HOSTED_SUBCALL_TIMEOUTS_VERSION = 65;
 export const PRE_V65_SUBCALL_TIMEOUT_DEFAULTS = {
   reflectionTimeoutMs: 10_000,
   linkGeneratorTimeoutMs: 8_000,
+  rewriterTimeoutMs: 3_000,
 } as const;
 
 /**

@@ -1195,7 +1195,7 @@ All keys under `memory.*` in the user config and [src/config/config-schema.ts](s
 - `memory.index.{enabled, limit, previewChars, maxTokens}`
 - `paths.memoryDbFile` — resolved to `<stateDir>/memory.sqlite`.
 
-**Sub-call timeouts scale with provider latency.** A default tuned against a local `llama-server` does not carry over to hosted reasoning models. Before config v65 reflection had 10 s and the link-generator 8 s; measured on OpenRouter, reflection takes a median 13.9–16.3 s on glm-5.3-flash / qwen3.6-plus / kimi-k2.6 (37.5 s worst case in a live session) and kimi's link-generator 37.8 s, so 6 of 8 live reflections on glm-5.3-flash timed out and wrote nothing. v65 raises both to 60 s. The v65 migration rewrites a pre-v65 file's old default and keeps any other value as a pin ([subcall-timeout-migration.ts](src/config/subcall-timeout-migration.ts)). Size any new sub-call default against the slowest hosted provider you support, not the local daemon.
+**Sub-call timeouts scale with provider latency.** A default tuned against a local `llama-server` does not carry over to hosted reasoning models. Before config v65 reflection had 10 s and the link-generator 8 s; measured on OpenRouter, reflection takes a median 13.9–16.3 s on glm-5.3-flash / qwen3.6-plus / kimi-k2.6 (37.5 s worst case in a live session) and kimi's link-generator 37.8 s, so 6 of 8 live reflections on glm-5.3-flash timed out and wrote nothing. v65 raises both to 60 s. The query rewriter went from 3 s to 10 s in the same step: gemini-3.8-flash and glm-5.3-flash rewrite in a median 4.2 s and kimi-k2.6 in 23.5 s, and in live sessions gemini's rewriter timed out 16 of 18 calls at 3 s, kimi's 16 of 16. Its cap stays below the background sub-calls because it blocks the turn. The v65 migration rewrites a pre-v65 file's old default and keeps any other value as a pin ([subcall-timeout-migration.ts](src/config/subcall-timeout-migration.ts)). Size any new sub-call default against the slowest hosted provider you support, not the local daemon.
 
 ### Invariants
 
@@ -1240,9 +1240,11 @@ When the gate returns `false`, the recall layer is byte-identical to v2: no LLM 
 - **Grammar** ([query-rewriter-grammar.ts](src/memory/retrieve/query-rewriter-grammar.ts)) — `root ::= "<rewritten_query>" body "</rewritten_query>"` with `body ::= [^<]{1,400}`, plus a `NONE` alternative for explicit abstain.
 - **Parser** ([query-rewriter-parser.ts](src/memory/retrieve/query-rewriter-parser.ts)) — length-clamps the body, returns `null` on the `NONE` token, fails closed on malformed input (caller falls back to raw query).
 - **Slot.** `slotId: -1` always — see invariant 1 below.
-- **Timeout.** Hard cap `memory.retrieve.rewriter.timeoutMs` (default 3000ms). On timeout/abort/parse-failure, the runner returns the raw user message and the recall layer continues.
+- **Timeout.** Hard cap `memory.retrieve.rewriter.timeoutMs` (default 10000ms, config v65; 3000ms before). On timeout/abort/parse-failure, the runner returns the raw user message and the recall layer continues.
 
 **Decorator** [rewriter-aware-recall-provider.ts](src/memory/retrieve/rewriter-aware-recall-provider.ts) wraps an inner `MemoryContextProvider`. It intercepts `buildMemoryContext({ userMessage, recentTurns, ... })`, fires the rewriter when both (a) the gate matches and (b) `recentTurns.length > 0`, then forwards a (possibly) rewritten `userMessage` to the inner provider. Everything else (`### memory-index`, lesson recall, profile rendering) is untouched.
+
+**Once per turn.** `agent-loop.refreshMemoryContext` runs before the first step and again after every step, each time with the same user message, so the decorator remembers the rewrite per session, keyed by the user message and a SHA-256 digest of the history slice it sent. Only the latest key per session is kept, for at most `REWRITE_MEMO_MAX_SESSIONS` (256) sessions, least recently used dropped first. Every later refresh with the same key reuses the result — a timeout or failure whose outcome was the raw message included — so a slow provider costs one timeout per turn instead of one per step, and the trace carries one rewriter row per turn. An attempt that ended with the caller's signal aborted is not remembered, so a cancelled turn cannot stop the next turn's identical retry. A new user message or a changed history slice asks again.
 
 **`MemoryContextProviderInput.recentTurns`.** The decorator needs trailing user/assistant context, but `MemoryContextProviderInput` did not carry it pre-v2.5. The interface was extended with an optional `recentTurns: readonly { role: "user" | "assistant"; text: string }[]` — populated by `agent-loop.refreshMemoryContext` via the new helper `collectRecentUserAssistantTurns(state, options.userMessage)`. Older providers that never read the field stay byte-stable; the default provider ignores it.
 
@@ -1253,11 +1255,12 @@ When the gate returns `false`, the recall layer is byte-identical to v2: no LLM 
 3. **Disabled by default.** With `memory.retrieve.rewriter.enabled = false`, the bootstrap does not construct a rewriter runner; the inner `MemoryContextProvider` is returned as-is. The recall path is byte-identical to v2.
 4. **Heuristic gate is pure.** No I/O, no state — easy to assert across a matrix of inputs. Pinned by `referential-detector.test.ts`.
 5. **Empty history is a hard skip.** Even when the gate fires, the rewriter is not called if `recentTurns` is empty (nothing to anchor against) — outcome `skipped_no_history`, raw query is used. Pinned by `rewriter-aware-recall-provider.test.ts`.
+6. **One rewrite per turn.** Repeated `buildMemoryContext` calls with the same session, user message and history slice reach the LLM once; a timed-out or failed attempt is reused, not retried; an aborted attempt is not remembered. Pinned by [rewriter-aware-recall-provider-memo.test.ts](src/memory/retrieve/rewriter-aware-recall-provider-memo.test.ts).
 
 **Configuration.** Added in user config v18; gate modes in v20 — older files transparently migrate with the block disabled / `gateMode: heuristic`.
 
 - `memory.retrieve.rewriter.enabled` (default `true`, config v21).
-- `memory.retrieve.rewriter.timeoutMs` (default `3000`).
+- `memory.retrieve.rewriter.timeoutMs` (default `10000`, config v65; `3000` before). Spent at most once per turn — see "Once per turn" above.
 - `memory.retrieve.rewriter.historyTurns` (default `3`).
 - `memory.retrieve.rewriter.gateMode` (default `"heuristic"`). Eval `on` profile in [eval-memory/harness/memory-profiles.ts](eval-memory/harness/memory-profiles.ts) defaults to `"embedding"`.
 - `memory.retrieve.rewriter.embeddingGate.threshold` (default `0.65`).
