@@ -165,7 +165,7 @@ Caps:
 
 - `memory.reflection.maxFactsPerCall` (default `3`) — upper bound on `SET` lines.
 - `memory.reflection.maxNotesPerCall` (default `2`) — upper bound on `NOTE` lines (set to `0` to disable).
-- `memory.reflection.timeoutMs` (default `10000`) — hard timeout; on timeout, nothing is written.
+- `memory.reflection.timeoutMs` (default `60000`) — hard timeout; on timeout, nothing is written. Also the vote-runner's budget. It was `10000` before config v65: enough for a local `llama-server`, not for hosted reasoning models, which take 15–40 s here — sub-call timeouts must scale with provider latency.
 - `memory.reflection.autoStoreNotes` (default `true`) — master switch for the `NOTE` channel.
 
 ### 5.4 Validation and observability
@@ -236,7 +236,7 @@ All keys live under `memory.*` in `<stateDir>/config.json`. Defaults are in [src
 | `memory.profile.maxTokens`                   | `512`   | Hard ceiling for the rendered `### profile` block.            |
 | `memory.profile.contextualKeywordGate`       | `true`  | Hide `pinned=false` facts unless a keyword hits user message. |
 | `memory.reflection.enabled`                  | `true`  | Master switch for the async reflection runner.                |
-| `memory.reflection.timeoutMs`                | `10000` | Hard timeout per reflection call.                             |
+| `memory.reflection.timeoutMs`                | `60000` | Hard timeout per reflection call.                             |
 | `memory.reflection.maxFactsPerCall`          | `3`     | Max `SET` lines written per reflection.                       |
 | `memory.reflection.autoStoreNotes`           | `true`  | Allow reflection to emit `NOTE` lines into `MemoryStore`.     |
 | `memory.reflection.maxNotesPerCall`          | `2`     | Max `NOTE` lines per reflection. `0` disables notes.          |
