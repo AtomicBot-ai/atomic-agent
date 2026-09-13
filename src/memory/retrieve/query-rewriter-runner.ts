@@ -48,6 +48,8 @@ export type RewriterOutcome =
 export interface QueryRewriterTraceEvent {
   sessionId: string;
   outcome: RewriterOutcome;
+  /** Why a `failed` call failed. */
+  reason?: string;
 }
 
 /**
@@ -178,7 +180,12 @@ export function createQueryRewriterRunner(
         ]);
         const rewritten = parseRewriterOutput(completion.content);
         if (rewritten === null) {
-          record("failed", startedAt, input.sessionId);
+          record(
+            "failed",
+            startedAt,
+            input.sessionId,
+            "the model's rewrite could not be parsed",
+          );
           return raw;
         }
         deps.logger?.debug?.("rewriter.ok", {
@@ -197,11 +204,12 @@ export function createQueryRewriterRunner(
           record("aborted", startedAt, input.sessionId);
           return raw;
         }
+        const reason = err instanceof Error ? err.message : String(err);
         deps.logger?.warn?.("rewriter.failed", {
           sessionId: input.sessionId,
-          error: err instanceof Error ? err.message : String(err),
+          error: reason,
         });
-        record("failed", startedAt, input.sessionId);
+        record("failed", startedAt, input.sessionId, reason);
         return raw;
       } finally {
         if (timer) clearTimeout(timer);
@@ -214,6 +222,7 @@ export function createQueryRewriterRunner(
     outcome: RewriterOutcome,
     startedAt: number,
     sessionId: string,
+    reason?: string,
   ): void {
     deps.metrics?.recordRetrieveRewriter?.({
       outcome,
@@ -221,7 +230,7 @@ export function createQueryRewriterRunner(
     });
     if (deps.emitTrace) {
       try {
-        deps.emitTrace({ sessionId, outcome });
+        deps.emitTrace({ sessionId, outcome, ...(reason ? { reason } : {}) });
       } catch {
         // A sink hiccup must never derail recall — swallow.
       }

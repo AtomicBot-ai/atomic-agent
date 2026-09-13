@@ -7,6 +7,7 @@ import {
 import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
+import { reduceMemoryHealthWarning } from "./reduce-memory-health-warning.js";
 import { formatFeedLine } from "./format-event.js";
 import {
   formatFusionWorkerLine,
@@ -562,6 +563,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         },
       );
     }
+    case "memory_health_warning":
+      return reduceMemoryHealthWarning(state, event);
     case "loop_failed": {
       // A user-initiated abort is not a failure and must not dress like
       // one: the operator pressed stop (the chip, Esc, Ctrl+C or

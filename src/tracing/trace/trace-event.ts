@@ -1,5 +1,6 @@
 import type { AgentLoopReason } from "../../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
+import type { MemorySubcallKind } from "../../memory/health/index.js";
 
 /**
  * Append-only trace event emitted by the runtime for postmortem analysis
@@ -42,6 +43,7 @@ export type TraceEvent =
   | TraceLinkGenerator
   | TraceDistill
   | TraceQueryRewriter
+  | TraceMemoryHealthWarning
   | TraceError
   | TraceTruncated;
 
@@ -427,6 +429,24 @@ export interface TraceQueryRewriter extends TraceEventBase {
     | "aborted"
     | "timeout"
     | "failed";
+  reason?: string;
+}
+
+/**
+ * The operator was told that a memory sub-call keeps timing out or
+ * failing. At most one row per session and `kind` — the warning is
+ * once-only. `setting` is the config key the notice named; `reason` the
+ * summarised last failure (absent when the streak ended in a timeout).
+ * The per-call `reflection` / `link_generator` / `query_rewriter` rows
+ * before it are the streak itself.
+ */
+export interface TraceMemoryHealthWarning extends TraceEventBase {
+  type: "memory_health_warning";
+  turnIndex: number;
+  kind: MemorySubcallKind;
+  outcome: "timeout" | "failed";
+  consecutive: number;
+  setting: string;
   reason?: string;
 }
 

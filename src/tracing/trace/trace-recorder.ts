@@ -498,6 +498,20 @@ export function createTraceRecorder(
             ...fallbackFailuresOf(event.error),
           });
           return;
+        case "memory_health_warning":
+          push({
+            type: "memory_health_warning",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            kind: event.kind,
+            outcome: event.outcome,
+            consecutive: event.consecutive,
+            setting: event.setting,
+            ...(event.reason !== undefined ? { reason: event.reason } : {}),
+          });
+          return;
         case "llm_event":
           onStepEvent(event.event);
           return;
