@@ -186,3 +186,39 @@ describe("formatTraceChronology empty_completion_recovered", () => {
     expect(line.trim().split("\n")).toHaveLength(1);
   });
 });
+
+describe("formatTraceChronology memory_health_warning", () => {
+  const event: TraceEvent = {
+    type: "memory_health_warning",
+    seq: 20,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 4,
+    kind: "rewriter",
+    outcome: "timeout",
+    consecutive: 3,
+    setting: "memory.retrieve.rewriter.timeoutMs",
+  };
+
+  it("names the sub-call, the streak and the setting the operator was pointed at", () => {
+    const line = render([event]);
+    expect(line).toContain("#20 memory_health_warning");
+    expect(line).toContain(
+      "turn=4 kind=rewriter outcome=timeout consecutive=3 setting=memory.retrieve.rewriter.timeoutMs",
+    );
+    expect(line).not.toContain("reason=");
+  });
+
+  it("quotes a failure reason, truncated", () => {
+    const line = render([
+      {
+        ...event,
+        outcome: "failed",
+        setting: "memory.retrieve.rewriter.enabled",
+        reason: "y".repeat(400),
+      },
+    ]);
+    expect(line).toContain("reason=yyy");
+    expect(line.length).toBeLessThan(400);
+  });
+});

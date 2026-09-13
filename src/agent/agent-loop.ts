@@ -41,6 +41,7 @@ import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
+import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
 import type { LlmStreamParams, StepEvent } from "./step-executor.js";
 import {
@@ -728,7 +729,16 @@ export type AgentLoopEvent =
       from: string;
       to: string;
       reason: string;
-    };
+    }
+  /**
+   * A memory sub-call (reflection, link generation, voting, query
+   * rewriting) timed out or failed several times in a row for this
+   * session. Emitted by the runtime, not the loop — those sub-calls run
+   * fire-and-forget — and at most once per session and sub-call kind.
+   * `message` is the operator notice; `setting` the config key it names.
+   * See AGENTS.md §"Memory sub-call health warning".
+   */
+  | ({ type: "memory_health_warning" } & MemoryHealthWarning);
 
 export interface RunTurnResult {
   session: SessionState;

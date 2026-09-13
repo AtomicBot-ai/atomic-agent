@@ -149,6 +149,10 @@ import {
   createVoteAwareReflectionRunner,
 } from "../memory/voting/index.js";
 import type { VoteRunnerLlmComplete } from "../memory/voting/index.js";
+import {
+  createMemoryHealthAnnouncer,
+  observeVoteRunnerHealth,
+} from "./announce-memory-health.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -976,6 +980,17 @@ export async function createAgentRuntime(
   const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
     emitAgentLoopEventFor(turnContext.getStore()?.sessionId, event);
   };
+
+  // Memory sub-calls run fire-and-forget and fail without a word. This
+  // counts consecutive timeouts / failures per session and sub-call and
+  // lifts the first streak into one `memory_health_warning` (AGENTS.md
+  // §"Memory sub-call health warning"). The session comes from the
+  // runner's own outcome, not the ALS frame: reflection settles after
+  // `turn_finished`.
+  const memoryHealth = createMemoryHealthAnnouncer({
+    emit: emitAgentLoopEventFor,
+    logger,
+  });
 
   // Cross-provider fallover breaker. Owns no timer — every decision is
   // computed lazily from the wall clock when a turn asks for a provider
@@ -1982,9 +1997,7 @@ export async function createAgentRuntime(
     // `turn_finished`, so a missing recorder is a normal "tracing
     // disabled for this session" outcome, not an error.
     emitTrace: (event: ReflectionTraceEvent) => {
-      const recorder = touchRecorder(event.sessionId);
-      if (!recorder) return;
-      recorder.recordReflection({
+      touchRecorder(event.sessionId)?.recordReflection({
         outcome: event.outcome,
         ...(typeof event.factsWritten === "number"
           ? { factsWritten: event.factsWritten }
@@ -1994,6 +2007,15 @@ export async function createAgentRuntime(
           : {}),
         ...(event.reason ? { reason: event.reason } : {}),
       });
+      // After the row, so a trace shows the outcome before the warning it
+      // completed; outside the recorder check, so an untraced session is
+      // still warned. Same in the link-generator and rewriter hooks.
+      memoryHealth.observe(
+        event.sessionId,
+        "reflection",
+        event.outcome,
+        event.reason,
+      );
     },
   });
 
@@ -2050,15 +2072,19 @@ export async function createAgentRuntime(
       // Per-session trace emission — same resolve-by-sessionId
       // pattern as reflection / vote.
       emitTrace: (event) => {
-        const recorder = touchRecorder(event.sessionId);
-        if (!recorder) return;
-        recorder.recordLinkGenerator({
+        touchRecorder(event.sessionId)?.recordLinkGenerator({
           outcome: event.outcome,
           ...(typeof event.linksWritten === "number"
             ? { linksWritten: event.linksWritten }
             : {}),
           ...(event.reason ? { reason: event.reason } : {}),
         });
+        memoryHealth.observe(
+          event.sessionId,
+          "link_generator",
+          event.outcome,
+          event.reason,
+        );
       },
     });
     reflectionRunner = createLinkAwareReflectionRunner({
@@ -2148,7 +2174,9 @@ export async function createAgentRuntime(
     });
     reflectionRunner = createVoteAwareReflectionRunner({
       reflection: reflectionRunner,
-      voteRunner,
+      // The vote runner reports its outcome only in its result, so the
+      // health check reads it there.
+      voteRunner: observeVoteRunnerHealth(voteRunner, memoryHealth),
       memoryStore: notesStore,
       lessonStore,
       profileStore,
@@ -2279,9 +2307,16 @@ export async function createAgentRuntime(
       // not exist yet on the very first turn; a missing recorder is a
       // normal "tracing disabled" outcome.
       emitTrace: (event) => {
-        const recorder = touchRecorder(event.sessionId);
-        if (!recorder) return;
-        recorder.recordQueryRewriter({ outcome: event.outcome });
+        touchRecorder(event.sessionId)?.recordQueryRewriter({
+          outcome: event.outcome,
+          ...(event.reason ? { reason: event.reason } : {}),
+        });
+        memoryHealth.observe(
+          event.sessionId,
+          "rewriter",
+          event.outcome,
+          event.reason,
+        );
       },
     });
     memoryContextProvider = createRewriterAwareMemoryContextProvider({

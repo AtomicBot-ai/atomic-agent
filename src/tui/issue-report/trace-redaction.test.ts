@@ -147,4 +147,33 @@ describe("redactTraceNdjson", () => {
   it("returns an empty string for an empty trace", () => {
     expect(redactTraceNdjson("", "full", CTX).text).toBe("");
   });
+
+  it("keeps a memory health warning's shape at errors and scrubbed, never its reason", () => {
+    const row = {
+      seq: 9,
+      type: "memory_health_warning",
+      sessionId: "s",
+      ts: 9,
+      turnIndex: 1,
+      kind: "reflection",
+      outcome: "failed",
+      consecutive: 3,
+      setting: "memory.reflection.enabled",
+      reason: 'unparseable line "SET partner=Alice"',
+    };
+    const ndjson = `${JSON.stringify(row)}\n`;
+    for (const level of ["errors", "scrubbed"] as const) {
+      const { text } = redactTraceNdjson(ndjson, level, CTX);
+      const rows = parse(text);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        type: "memory_health_warning",
+        kind: "reflection",
+        consecutive: 3,
+        setting: "memory.reflection.enabled",
+        reason: "<removed>",
+      });
+      expect(text).not.toContain("Alice");
+    }
+  });
 });

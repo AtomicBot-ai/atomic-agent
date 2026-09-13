@@ -174,6 +174,8 @@ Parsed entries flow through the same validators as the explicit tools (`ProfileS
 
 Metrics: `agent.memory.reflection` counter tagged by `outcome` (`ok | none | failed | aborted | timeout`) plus the `agent.memory.reflection.latency_ms` histogram. Logs: `reflection.fired`, `reflection.ok`, `reflection.none`, `reflection.aborted`, `reflection.timeout`, `reflection.failed`.
 
+Three `timeout` / `failed` outcomes in a row (from reflection, link generation, voting or the query rewriter) are also said once per session in the chat, naming the setting to change — see AGENTS.md §"Memory sub-call health warning".
+
 ## 6. Per-turn data flow
 
 ```

@@ -54,6 +54,35 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a memory health warning against the last turn, without the notice text", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-mem", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 5 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "memory_health_warning",
+      kind: "vote",
+      outcome: "failed",
+      consecutive: 3,
+      setting: "memory.voting.enabled",
+      reason: "schema refused",
+      message: "Memory voting failed 3 times in a row (schema refused)…",
+    });
+    // Exact: the row carries the structure and the reason; the prose is
+    // the TUI's business and would only bloat every trace.
+    expect(events.find((e) => e.type === "memory_health_warning")).toEqual({
+      type: "memory_health_warning",
+      seq: 1,
+      sessionId: "s-mem",
+      ts: 1000,
+      turnIndex: 5,
+      kind: "vote",
+      outcome: "failed",
+      consecutive: 3,
+      setting: "memory.voting.enabled",
+      reason: "schema refused",
+    });
+  });
+
   it("records an empty-completion recovery against the current turn and step", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-empty", emit, now });
