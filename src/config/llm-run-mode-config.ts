@@ -53,6 +53,13 @@ export type UserLlmFusionConfig = {
    * slot affinity.
    */
   workers?: number;
+  /**
+   * Ceiling on the fan-out width when the workers run on a cloud leg,
+   * 1..32. Default 4. A local leg is bounded by its request slots; a
+   * cloud leg has no such limit, only a bill, so an over-ambitious
+   * `maxWorkers` is clamped here and the result says so.
+   */
+  cloudWorkers?: number;
   /** Step ceiling per worker turn. Default 40. */
   workerMaxSteps?: number;
   /** Wall-clock ceiling per worker turn, in ms. Default 600 000. */
@@ -76,6 +83,13 @@ export const LOCAL_PROVIDER_KIND = "llama-server";
 export const FUSION_WORKERS_MIN = 1;
 export const FUSION_WORKERS_MAX = 8;
 export const DEFAULT_FUSION_WORKERS = 2;
+export const FUSION_CLOUD_WORKERS_MAX = 32;
+/**
+ * Cloud fan-out cap. Four, not `workers`' two: a seven-task cloud fan-out
+ * took three minutes at full width and would take ten at two, and the
+ * cap exists to stop a runaway forty, not to slow an ordinary fan-out.
+ */
+export const DEFAULT_FUSION_CLOUD_WORKERS = 4;
 export const DEFAULT_FUSION_WORKER_MAX_STEPS = 40;
 /**
  * How long one worker may take before its leg is cancelled.
@@ -194,6 +208,14 @@ function parseFusion(
       `${field}.workers`,
       FUSION_WORKERS_MIN,
       FUSION_WORKERS_MAX,
+    );
+  }
+  if (obj.cloudWorkers !== undefined) {
+    out.cloudWorkers = parseBoundedInt(
+      obj.cloudWorkers,
+      `${field}.cloudWorkers`,
+      FUSION_WORKERS_MIN,
+      FUSION_CLOUD_WORKERS_MAX,
     );
   }
   if (obj.workerMaxSteps !== undefined) {

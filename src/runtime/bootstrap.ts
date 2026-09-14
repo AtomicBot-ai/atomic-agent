@@ -2372,6 +2372,9 @@ export async function createAgentRuntime(
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
+    // The local leg's slot count once `/props` has answered — what the
+    // `### fusion` facts state for an external server.
+    liveWorkerSlots: () => slotManager.observedPoolSize(),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: forgetContextWindowBelow,
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the

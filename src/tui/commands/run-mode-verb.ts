@@ -1,4 +1,6 @@
+import { getConfig } from "../../config/index.js";
 import { describeRunMode } from "../../llm/run-mode/index.js";
+import { resolveFusionMachineFacts } from "../../prompt/fusion-machine-facts.js";
 import {
   activateComposerSwitchRow,
   backendSwitchRow,
@@ -22,10 +24,13 @@ export function runRunModeVerb(
 ): void {
   if (verb === "status") {
     const rm = state.providersPanel.runMode;
+    // What will run, not what the default is: the facts the model is
+    // told, read from the config the way `buildPrompt` reads them. The
+    // live slot count is the runtime's; here only the configured one.
     dispatch({
       type: "system_message",
       text: rm
-        ? describeRunMode(rm)
+        ? describeRunMode(rm, resolveFusionMachineFacts(getConfig()))
         : "run mode: not resolved yet — open Manage › LLM once",
     });
     return;

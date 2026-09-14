@@ -189,10 +189,16 @@ describe("resolveRunMode", () => {
     expect(resolveRunMode(llm("openrouter", { mode: "fusion" }))).toMatchObject(
       {
         workers: 2,
+        cloudWorkers: 4,
         workerMaxSteps: 40,
         workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
       },
     );
+    expect(
+      resolveRunMode(
+        llm("openrouter", { mode: "fusion", fusion: { cloudWorkers: 9 } }),
+      ).cloudWorkers,
+    ).toBe(9);
     expect(
       resolveRunMode(
         llm("openrouter", {

@@ -149,7 +149,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     // values, so they move only when the operator writes the config
     // file — the same event that already flips the fusion descriptor
     // gate and drops the KV cache once.
-    fusion: resolveFusionMachineFacts(config),
+    fusion: resolveFusionMachineFacts(config, {
+      workerSlots: input.liveWorkerSlots ?? null,
+    }),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }
       : {}),

@@ -335,12 +335,36 @@ describe("fusion.delegate", () => {
       deps({
         slotManager: { poolSize: () => 1 },
         workerSupportsSlotAffinity: () => false,
+        resolveRunMode: () => fusionMode({ cloudWorkers: 8 }),
       }),
     );
     const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
     expect(result.details.maxWorkers).toBe(6);
     expect(result.details.slotPoolSize).toBeUndefined();
     expect(result.summary).not.toContain("localModels.managed.parallel");
+    expect(result.summary).not.toContain("cloudWorkers");
+  });
+
+  it("clamps a cloud fan-out to cloudWorkers and says so (F21)", async () => {
+    // A cloud leg has no slot pool, so before this the width was whatever
+    // the model asked for — three workers from a one-worker config, and
+    // no ceiling on forty. Default cap 4; the note names the knob.
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 1 },
+        workerSupportsSlotAffinity: () => false,
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.details.maxWorkers).toBe(4);
+    expect(result.details.requestedWorkers).toBe(6);
+    expect(result.summary).toContain(
+      "maxWorkers 6 was clamped to 4, the cloud worker cap (`llm.runMode.fusion.cloudWorkers`)",
+    );
+    // A call that names nothing keeps `workers` as its default, under the cap.
+    const quiet = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(quiet.details.maxWorkers).toBe(3);
+    expect(quiet.summary).not.toContain("cloudWorkers");
   });
 
   it("names both numbers and the knob when the pool is the binding constraint", async () => {

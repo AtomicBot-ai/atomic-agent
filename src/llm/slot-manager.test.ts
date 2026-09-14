@@ -15,6 +15,15 @@ describe("SlotManager", () => {
     }
   });
 
+  it("reports the pool as observed only after a /props answer sized it (F21)", () => {
+    const mgr = new SlotManager(2);
+    expect(mgr.observedPoolSize()).toBeNull();
+    mgr.resize(2);
+    expect(mgr.observedPoolSize()).toBe(2);
+    mgr.resize(5);
+    expect(mgr.observedPoolSize()).toBe(mgr.poolSize());
+  });
+
   describe("resize", () => {
     it("widens the pool to the discovered slot count", () => {
       const mgr = new SlotManager();

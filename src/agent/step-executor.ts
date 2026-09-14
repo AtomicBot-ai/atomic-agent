@@ -239,6 +239,12 @@ export interface StepDependencies {
    * guessed window is worse than one that admits it has none.
    */
   contextWindow?: number | null;
+  /**
+   * The local worker leg's request-slot count as the server reported
+   * it, `null` until observed — forwarded to `buildPrompt` for the
+   * `### fusion` machine facts. See `AgentLoopDeps.liveWorkerSlots`.
+   */
+  liveWorkerSlots?: () => number | null;
   /** Effective transport for this runtime (grammar vs native OpenAI tools). */
   toolTransport: ToolCallTransport;
   /** Adapter for native_tools; null when grammar-only. */
@@ -524,6 +530,9 @@ async function executeStepInner(
     suppressReasoningPrefill: deps.toolTransport === "native_tools",
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
+      : {}),
+    ...(deps.liveWorkerSlots !== undefined
+      ? { liveWorkerSlots: deps.liveWorkerSlots() }
       : {}),
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
