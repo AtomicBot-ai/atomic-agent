@@ -12,11 +12,15 @@ import {
   REPAIR_MAX_TOKENS,
   detectFabricatedToolTranscript,
   formatFabricatedTranscriptNotice,
+  type LlmStreamParams,
   type StepApprovalPostureSource,
   type StepEvent,
 } from "./step-executor.js";
 import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
-import { buildGrammar } from "../llm/grammar/build-grammar.js";
+import {
+  buildGrammar,
+  grammarToolNames,
+} from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
@@ -4197,5 +4201,188 @@ describe('strictTools wiring (supportsTools: "strict")', () => {
       expect(mixed.function.strict).toBe(true);
       expect(argsSeen["acme.mixed"]).toEqual({ key: "k", value: null });
     });
+  });
+});
+
+describe("executeStep per-request grammar (F17)", () => {
+  /**
+   * The grammar rides with each request and is not part of the KV-cached
+   * prefix, so a step can narrow what a local model may emit while the
+   * prompt — descriptors included — stays byte-identical.
+   */
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    const define = (name: string, readonly: boolean) =>
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.path ?? args.text ?? "")}`,
+          });
+        },
+      });
+    define("os.fs.read", true);
+    define("os.fs.write", false);
+    define("os.fs.edit", false);
+    define("fusion.delegate", false);
+    define("reply", true);
+    define("finish", true);
+    return registry;
+  }
+
+  async function runStep(
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]>,
+    depsExtra: Partial<Parameters<typeof executeStep>[1]>,
+  ) {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({
+      id: "s-grammar",
+      workingDir: "/w",
+    });
+    const seen: LlmStreamParams[] = [];
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          return {
+            content: JSON.stringify([
+              { tool: "reply", args: { text: "done" } },
+            ]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        ...depsExtra,
+      },
+    );
+    return { outcome, params: seen[0]!, baseGrammar: grammar };
+  }
+
+  it("sends the base grammar byte-identical when nothing narrows the step", async () => {
+    const { params, baseGrammar } = await runStep({}, {});
+    expect(params.grammar).toBe(baseGrammar);
+    expect(grammarToolNames(params.grammar)).toBeNull();
+  });
+
+  it("final step: the grammar admits reply and finish only", async () => {
+    const { params, baseGrammar } = await runStep({ terminalOnly: true }, {});
+    expect(grammarToolNames(params.grammar)).toEqual(["finish", "reply"]);
+    expect(params.grammar).not.toBe(baseGrammar);
+  });
+
+  it("orchestrator turn: the gate's refusals leave the grammar, their descriptors stay in the prompt", async () => {
+    const { params } = await runStep(
+      {},
+      { isFusionOrchestrator: () => true },
+    );
+    const names = grammarToolNames(params.grammar);
+    expect(names).not.toBeNull();
+    // Refused: everything the gate would veto — the writes.
+    expect(names).not.toContain("os.fs.write");
+    expect(names).not.toContain("os.fs.edit");
+    // Kept: reads, the fan-out, the terminals.
+    expect(names).toContain("os.fs.read");
+    expect(names).toContain("fusion.delegate");
+    expect(names).toContain("reply");
+    expect(names).toContain("finish");
+    // D2: a refusal, not a hidden descriptor — the prompt still carries
+    // the write tool in full, so the prefix bytes (and the KV cache)
+    // are exactly those of a non-orchestrator step.
+    expect(params.prompt).toContain("- os.fs.write —");
+    const plain = await runStep({}, {});
+    expect(params.prompt).toBe(plain.params.prompt);
+  });
+
+  it("worker turn: a toolFilter narrows the grammar, finish included", async () => {
+    const hidden = new Set(["finish", "fusion.delegate", "tasks.schedule"]);
+    const filter = (name: string) => !hidden.has(name);
+    const { params } = await runStep(
+      {
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS.filter((d) => filter(d.name)),
+        toolFilter: filter,
+      },
+      {},
+    );
+    const names = grammarToolNames(params.grammar);
+    expect(names).not.toBeNull();
+    for (const name of hidden) expect(names).not.toContain(name);
+    expect(names).toContain("os.fs.write");
+    expect(names).toContain("reply");
+  });
+
+  it("the repair retry goes out under the same narrowed grammar", async () => {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-g-repair", workingDir: "/w" });
+    const seen: LlmStreamParams[] = [];
+    let calls = 0;
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        terminalOnly: true,
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          calls += 1;
+          return {
+            content:
+              calls === 1
+                ? "not json at all"
+                : JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    expect(seen).toHaveLength(2);
+    expect(grammarToolNames(seen[1]!.grammar)).toEqual(["finish", "reply"]);
   });
 });

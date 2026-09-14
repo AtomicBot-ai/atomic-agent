@@ -22,6 +22,8 @@ import {
   type BatchApprovalPosture,
 } from "./tool-resource-class.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
+import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
+import { refusedToolNames } from "./fusion-orchestrator-mode.js";
 import type {
   StreamParseEvent,
   StreamParser,
@@ -311,6 +313,14 @@ export interface StepContext {
    */
   terminalOnly?: boolean;
   /**
+   * The turn's `RunTurnOptions.toolFilter`, when one is set. The loop has
+   * already applied it to `toolDescriptors`; the step applies it once
+   * more to the per-request grammar, so a hidden tool is not merely
+   * absent from the catalog but impossible for a local model to emit —
+   * `finish` included, which the static grammar lists unconditionally.
+   */
+  toolFilter?: (name: string) => boolean;
+  /**
    * Reply cap for this step's completions, in place of
    * `localModels.completionMaxTokens`. The agent loop sets it when the
    * previous attempt at this very step came back cut off by the cap
@@ -545,10 +555,17 @@ async function executeStepInner(
   // The cap every completion of this step runs under. Named here so the
   // failure detector can say which wall a cut-off reply hit.
   const replyCap = ctx.maxTokens ?? getConfig().localModels.completionMaxTokens;
+  // The grammar for THIS request. Narrowed below the base grammar only
+  // when the step has fewer tools than the catalog (the final step, an
+  // orchestrator turn, a filtered worker); otherwise the base grammar
+  // goes out byte-identical. The prompt is not touched either way — the
+  // grammar rides with the request, outside the KV-cached prefix.
+  const stepGrammar = resolveStepGrammar(ctx, deps, stepToolDescriptors);
   const llmParams: LlmStreamParams = {
     ...buildLlmStreamParams({
       promptText: prompt.text,
       deps,
+      grammar: stepGrammar,
       slotId: slot.slotId,
       sessionId: ctx.session.id,
       toolDescriptors: stepToolDescriptors,
@@ -1854,17 +1871,70 @@ function replyFallbackBatch(
   };
 }
 
+/** The two terminal verbs — the only names the final step may emit. */
+const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
+
+/**
+ * The tool names this step's grammar admits, or `null` when nothing
+ * narrows it and the base grammar should go out untouched.
+ *
+ * Narrowing, in order of precedence:
+ *  - the final step (`terminalOnly`) admits `reply` and `finish` only;
+ *  - a fusion ORCHESTRATOR turn drops every name the gate would refuse
+ *    (`wouldRefuse`) — the model keeps the descriptors and loses the
+ *    ability to spend a step on a call that ends in a refusal;
+ *  - a turn with a `toolFilter` (a fusion worker) drops what the filter
+ *    hides, `finish` included.
+ * The candidate set is the step's own descriptor list (`reply` and
+ * `finish` are descriptors too), so the grammar can never admit a name
+ * the prompt does not describe. The base grammar stays in charge of any
+ * unrestricted step: its grouped rules are what the static grammar tests
+ * pin, and a step that narrows nothing has no reason to rewrite them.
+ */
+function stepGrammarToolNames(
+  ctx: Pick<StepContext, "terminalOnly" | "toolFilter">,
+  deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator">,
+  descriptors: readonly ToolDescriptor[],
+): readonly string[] | null {
+  if (ctx.terminalOnly) return TERMINAL_TOOL_NAMES;
+  let names = descriptors.map((d) => d.name);
+  let restricted = false;
+  if (deps.isFusionOrchestrator?.()) {
+    const refused = refusedToolNames(names, { registry: deps.registry });
+    if (refused.size > 0) {
+      names = names.filter((name) => !refused.has(name));
+      restricted = true;
+    }
+  }
+  if (ctx.toolFilter) {
+    const filter = ctx.toolFilter;
+    names = names.filter((name) => filter(name));
+    restricted = true;
+  }
+  return restricted ? names : null;
+}
+
+function resolveStepGrammar(
+  ctx: Pick<StepContext, "terminalOnly" | "toolFilter">,
+  deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
+  descriptors: readonly ToolDescriptor[],
+): string {
+  const names = stepGrammarToolNames(ctx, deps, descriptors);
+  return names === null ? deps.grammar : buildGrammarForTools(deps.grammar, names);
+}
+
 function buildLlmStreamParams(args: {
   promptText: string;
   deps: Pick<
     StepDependencies,
-    | "grammar"
     | "toolTransport"
     | "toolCallAdapter"
     | "supportsParallelTools"
     | "strictTools"
     | "providerId"
   >;
+  /** The grammar for this request — see `resolveStepGrammar`. */
+  grammar: string;
   slotId: number;
   sessionId: string;
   toolDescriptors: readonly ToolDescriptor[];
@@ -1872,7 +1942,7 @@ function buildLlmStreamParams(args: {
 }): LlmStreamParams {
   const base: LlmStreamParams = {
     prompt: args.promptText,
-    grammar: args.deps.grammar,
+    grammar: args.grammar,
     slotId: args.slotId,
     sessionId: args.sessionId,
     ...(args.signal ? { signal: args.signal } : {}),

@@ -113,6 +113,99 @@ function buildUntilSentinelRules(
   ].join("\n");
 }
 
+/** The one rule a per-request grammar rewrites. */
+const TOOL_NAME_RULE_RE = /^tool-name ::= .*$/m;
+
+/** Terminal verb every restricted grammar keeps: a step must be able to exit. */
+const GRAMMAR_EXIT_TOOL = "reply";
+
+/**
+ * Bound on cached per-request grammars per base grammar. The name sets a
+ * session cycles through are few (a role, the same role minus the gate's
+ * refusals, the two terminals), so the cache is small in practice; the
+ * bound only stops a pathological caller from growing it without limit.
+ */
+const GRAMMAR_CACHE_PER_BASE = 64;
+/** Bases seen at once: the live profile's grammar, plus a refresh or two. */
+const GRAMMAR_CACHE_BASES = 4;
+
+const perRequestGrammarCache = new Map<string, Map<string, string>>();
+
+/**
+ * The grammar for ONE request: `baseGrammar` (a `buildGrammar` product —
+ * root, reasoning prelude, MCP rule and all) with its `tool-name` rule
+ * replaced by a flat alternation over exactly `names`. Everything else is
+ * byte-identical to the base, so the reasoning prelude and the JSON body
+ * rules the profile invariants pin are untouched.
+ *
+ * This is how a step narrows what a local model can emit without touching
+ * the prompt: the grammar travels with each request and is not part of the
+ * KV-cached prefix, so a tool can vanish from the sampler's vocabulary while
+ * its descriptor stays in `### tools`. Three callers: an orchestrator turn
+ * (everything minus what the fusion gate would refuse — a refusal the model
+ * cannot generate is one it cannot spend 20 minutes writing), the final
+ * step (`reply` / `finish` only) and a worker or role-restricted turn.
+ *
+ * `reply` is always present: a grammar with no exit would trap the step in
+ * the only thing it can still emit. The rewritten rule is sorted and
+ * deduplicated, and the result is cached by the sorted name list, so the
+ * same set costs one string build per base grammar.
+ */
+export function buildGrammarForTools(
+  baseGrammar: string,
+  names: Iterable<string>,
+): string {
+  const sorted = Array.from(new Set([...names, GRAMMAR_EXIT_TOOL])).sort();
+  const key = sorted.join("\n");
+  let perBase = perRequestGrammarCache.get(baseGrammar);
+  if (perBase === undefined) {
+    if (perRequestGrammarCache.size >= GRAMMAR_CACHE_BASES) {
+      const oldest = perRequestGrammarCache.keys().next();
+      if (!oldest.done) perRequestGrammarCache.delete(oldest.value);
+    }
+    perBase = new Map();
+    perRequestGrammarCache.set(baseGrammar, perBase);
+  }
+  const cached = perBase.get(key);
+  if (cached !== undefined) return cached;
+  const rule = `tool-name ::= ${sorted.map(quoteToolNameLiteral).join(" | ")}`;
+  const built = TOOL_NAME_RULE_RE.test(baseGrammar)
+    ? baseGrammar.replace(TOOL_NAME_RULE_RE, rule)
+    : // A base without the rule (an older grammar file): a later
+      // definition wins in GBNF, so appending still restricts.
+      `${baseGrammar.trimEnd()}\n${rule}\n`;
+  if (perBase.size >= GRAMMAR_CACHE_PER_BASE) {
+    const oldest = perBase.keys().next();
+    if (!oldest.done) perBase.delete(oldest.value);
+  }
+  perBase.set(key, built);
+  return built;
+}
+
+/**
+ * The tool names a grammar's `tool-name` rule admits when that rule is a
+ * flat alternation of literals (the shape `buildGrammarForTools` writes).
+ * `null` for the static base grammar, whose rule is composed of sub-rules.
+ * A test helper more than a runtime one.
+ */
+export function grammarToolNames(grammar: string): string[] | null {
+  const match = grammar.match(TOOL_NAME_RULE_RE);
+  if (!match) return null;
+  const body = match[0].slice("tool-name ::= ".length);
+  const names: string[] = [];
+  for (const alt of body.split("|")) {
+    const literal = alt.trim().match(/^"\\"(.*)\\""$/);
+    if (!literal) return null;
+    names.push(literal[1]!);
+  }
+  return names;
+}
+
+/** `os.fs.read` → `"\"os.fs.read\""` — a JSON string literal inside a GBNF one. */
+function quoteToolNameLiteral(name: string): string {
+  return quoteGbnf(`"${name}"`);
+}
+
 /**
  * Drop the `browser-tool` alternative from the `tool-name ::= ...` rule so the
  * constrained sampler can never emit a `browser.*` call. The `browser-tool ::=`

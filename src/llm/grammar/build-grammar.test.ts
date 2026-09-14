@@ -5,7 +5,11 @@ import {
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "../model-profile.js";
-import { buildGrammar } from "./build-grammar.js";
+import {
+  buildGrammar,
+  buildGrammarForTools,
+  grammarToolNames,
+} from "./build-grammar.js";
 
 describe("buildGrammar", () => {
   it("keeps the plain instruct grammar pinned to the array-only root", async () => {
@@ -177,5 +181,93 @@ describe("os-tool names the local-model grammar admits", () => {
     ]) {
       expect(osToolLine, name).toContain(`"${name}"`);
     }
+  });
+});
+
+describe("buildGrammarForTools — the per-request grammar", () => {
+  /**
+   * The grammar travels with each request and is not part of the
+   * KV-cached prefix, so a step can shrink the sampler's vocabulary
+   * without touching the prompt. The rewrite must be surgical: one rule
+   * replaced, every other byte identical, so the reasoning prelude and
+   * the JSON body rules the profile invariants pin are untouched.
+   */
+  it("replaces only the tool-name rule and leaves every other line byte-identical", async () => {
+    for (const profile of [
+      PLAIN_INSTRUCT_PROFILE,
+      QWEN_THINK_PROFILE,
+      GEMMA4_THINK_PROFILE,
+    ]) {
+      const base = await buildGrammar(profile);
+      const narrowed = buildGrammarForTools(base, ["os.fs.read", "reply"]);
+      const baseLines = base.split("\n");
+      const narrowedLines = narrowed.split("\n");
+      expect(narrowedLines.length, profile.id).toBe(baseLines.length);
+      for (let i = 0; i < baseLines.length; i += 1) {
+        if (baseLines[i]!.startsWith("tool-name ::=")) {
+          expect(narrowedLines[i], profile.id).toBe(
+            'tool-name ::= "\\"os.fs.read\\"" | "\\"reply\\""',
+          );
+        } else {
+          expect(narrowedLines[i], profile.id).toBe(baseLines[i]);
+        }
+      }
+      expect(grammarToolNames(narrowed), profile.id).toEqual([
+        "os.fs.read",
+        "reply",
+      ]);
+    }
+  });
+
+  it("sorts and deduplicates, so the same set is the same bytes whatever the order", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const a = buildGrammarForTools(base, ["reply", "os.fs.write", "os.fs.read"]);
+    const b = buildGrammarForTools(base, [
+      "os.fs.read",
+      "os.fs.read",
+      "reply",
+      "os.fs.write",
+    ]);
+    expect(a).toBe(b);
+    expect(grammarToolNames(a)).toEqual(["os.fs.read", "os.fs.write", "reply"]);
+  });
+
+  it("is cached by the sorted name list — the second build is the same string", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const first = buildGrammarForTools(base, ["finish", "reply"]);
+    const second = buildGrammarForTools(base, ["reply", "finish"]);
+    // Reference equality: the cache handed back the same object.
+    expect(second).toBe(first);
+  });
+
+  it("always keeps reply — a grammar with no exit would trap the step", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(grammarToolNames(buildGrammarForTools(base, []))).toEqual(["reply"]);
+    expect(grammarToolNames(buildGrammarForTools(base, ["finish"]))).toEqual([
+      "finish",
+      "reply",
+    ]);
+  });
+
+  it("keeps the profile/grammar invariants: the prelude root survives the rewrite", async () => {
+    const { checkProfileGrammarAligned } = await import(
+      "../profile-invariants.js"
+    );
+    for (const profile of [
+      PLAIN_INSTRUCT_PROFILE,
+      QWEN_THINK_PROFILE,
+      GEMMA4_THINK_PROFILE,
+    ]) {
+      const base = await buildGrammar(profile);
+      const narrowed = buildGrammarForTools(base, ["reply", "finish"]);
+      expect(checkProfileGrammarAligned(profile, narrowed), profile.id).toEqual(
+        [],
+      );
+    }
+  });
+
+  it("reports null for the static base grammar, whose rule is made of sub-rules", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(grammarToolNames(base)).toBeNull();
   });
 });

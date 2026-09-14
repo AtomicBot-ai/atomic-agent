@@ -1250,6 +1250,7 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
+            ...(options.toolFilter ? { toolFilter: options.toolFilter } : {}),
             ...(truncationRetry?.stepIndex === i &&
             truncationRetry.maxTokens !== undefined
               ? { maxTokens: truncationRetry.maxTokens }
