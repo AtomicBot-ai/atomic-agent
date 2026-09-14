@@ -554,10 +554,10 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 82 registered schemas, 77 of them strict. Pinned as a number so
+    // 83 registered schemas, 78 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(82);
-    expect(converted).toBe(77);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(83);
+    expect(converted).toBe(78);
   });
 
   /**
@@ -671,6 +671,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "mcp.prompt.list",
   "mcp.prompt.get",
   "fusion.delegate",
+  "verify.syntax",
   // The nine from `github-tool-args-schemas.ts`, spread into the same
   // registry. Left out of this list, a bound added to one of them would
   // have joined the refusal set silently — the exact surprise the pin

@@ -88,6 +88,14 @@ export const WORKER_READ_TOOL_TARGETS: ReadonlyMap<string, TargetsOf> =
           ...(Array.isArray(args.paths) ? args.paths.map(nonEmpty) : []),
         ].filter((path): path is string => path !== undefined),
     ],
+    [
+      // A syntax check reads every file it is handed.
+      "verify.syntax",
+      (args) =>
+        (Array.isArray(args.files) ? args.files.map(nonEmpty) : []).filter(
+          (path): path is string => path !== undefined,
+        ),
+    ],
   ]);
 
 /** `https://…`, `data:…` — not a filesystem path, not this module's business. */

@@ -226,6 +226,15 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // Frequent tier: the review step of a fan-out reaches for it, and a
+    // reviewer that has to `tool.view` first reviews less. Read-only, so
+    // the fusion orchestrator gate lets it through (decision D1).
+    name: "verify.syntax",
+    summary:
+      "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.",
+    argsSchema: "{ files: string[] }",
+  },
+  {
     // `frequent` tier and a full example: the whole point of the tool is
     // that a cloud orchestrator reaches for it instead of doing the bulk
     // itself, and a one-line manifest is not enough to first-shot a

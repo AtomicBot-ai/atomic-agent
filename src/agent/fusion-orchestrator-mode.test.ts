@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { verifySyntaxTool } from "../tools/verify/index.js";
 import {
   checkFusionOrchestrator,
   emptyFusionOrchestratorState,
@@ -7,6 +8,9 @@ import {
   refusedToolNames,
   wouldRefuse,
 } from "./fusion-orchestrator-mode.js";
+
+/** `verify.run` lands with F6; until then it must be read-only by contract. */
+const verifyRunReadonly = true;
 
 /** The two facts the gate reads off a tool: does it exist, does it mutate. */
 function registryWith(
@@ -65,6 +69,19 @@ describe("the fusion orchestrator gate", () => {
     expect(
       checkFusionOrchestrator("fusion.delegate", REGISTRY, BEFORE).allowed,
     ).toBe(true);
+  });
+
+  it("lets the orchestrator verify — read-only checks are review, not building (D1)", () => {
+    // The real definitions, not a fixture: the gate reads `readonly`
+    // off the registry, so this pins the flag the tools actually ship.
+    const registry = registryWith({
+      "verify.syntax": { readonly: verifySyntaxTool.readonly },
+      "verify.run": { readonly: verifyRunReadonly },
+    });
+    for (const tool of ["verify.syntax", "verify.run"]) {
+      expect(checkFusionOrchestrator(tool, registry, BEFORE).allowed).toBe(true);
+      expect(checkFusionOrchestrator(tool, registry, AFTER).allowed).toBe(true);
+    }
   });
 
   it("never gates the terminal verbs", () => {

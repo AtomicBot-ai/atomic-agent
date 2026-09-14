@@ -178,6 +178,11 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // stack the orchestrator's own fan-out on top of the fan-out.
   "fusion.delegate": "approval_gated",
 
+  // verify.* — read-only checks. `verify.syntax` spawns nothing that
+  // writes (node --check, tsc --noEmit, python compile(), bash -n), so
+  // several may run side by side.
+  "verify.syntax": "pure_read",
+
   // mcp.* discovery / read tools — pure_read regardless of per-server
   // trust because they only inspect the local catalog or fetch
   // declared resources/prompts. Per-server-tool calls go through

@@ -769,6 +769,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["tasks"],
     ),
   ],
+  ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],
 
   // ── terminal verbs ───────────────────────────────────────────────────────
   // The OpenAI adapter overrides these with hand-tuned schemas (see
