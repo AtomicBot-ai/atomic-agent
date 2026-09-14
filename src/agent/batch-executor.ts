@@ -11,6 +11,7 @@ import {
 } from "../compressor/result-compressor.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolRole } from "../tools/tool-roles.js";
+import { describeArgumentError } from "../tools/argument-error-hint.js";
 import { CancelledError } from "../llm/index.js";
 import {
   isParallelWithinGroup,
@@ -436,11 +437,28 @@ export async function executeBatch(
             );
       }
       const cause = err instanceof Error ? err : new Error(String(err));
+      // An argument error names the key the tool wanted; the model also
+      // needs the keys it actually sent (`patternes`, `"path"`) and the
+      // closest accepted one, or it retries the same call blind. Keys
+      // only — never values.
+      const hint = describeArgumentError({
+        tool: input.call.tool,
+        args: input.call.args,
+        message: cause.message,
+      });
       compressed = compressToolResult({
         tool: input.call.tool,
         status: "error",
-        output: cause.message,
-        details: { errorName: cause.name },
+        output: hint?.message ?? cause.message,
+        details: {
+          errorName: cause.name,
+          ...(hint !== null
+            ? {
+                receivedKeys: hint.receivedKeys,
+                expectedKeys: hint.expectedKeys,
+              }
+            : {}),
+        },
       });
     }
     const durationMs = Date.now() - startedAt;

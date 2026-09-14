@@ -28,8 +28,9 @@ export function coerceToolArgs(
   const properties = argsProperties(name);
   if (!properties) return args;
 
+  const normalised = normalizeArgKeys(args, properties);
   let coerced: Record<string, unknown> | null = null;
-  for (const [key, value] of Object.entries(args)) {
+  for (const [key, value] of Object.entries(normalised)) {
     if (typeof value !== "string") continue;
     const schema = asSchema(properties[key]);
     if (!schema) continue;
@@ -37,10 +38,55 @@ export function coerceToolArgs(
     const candidate = tryCoerce(value, schema);
     if (candidate === undefined) continue;
 
-    coerced ??= { ...args };
+    coerced ??= { ...normalised };
     coerced[key] = candidate;
   }
-  return coerced ?? args;
+  return coerced ?? normalised;
+}
+
+/**
+ * Repairs argument *keys* that arrived mangled, the way models mangle
+ * them: a key wrapped in its own quotes (`"\"path\""`), and a key fused
+ * with a fragment of the prompt's markup (`<label>…</label>,limit`) —
+ * both seen from a cloud worker, both rejected as "`path` must be a
+ * non-empty string" while the value sat under the mangled key.
+ *
+ * Do-no-harm again: a key is renamed only when it is not itself in the
+ * schema, its cleaned form is, and the model did not also send the
+ * clean key. Anything else is left for the tool to report.
+ */
+function normalizeArgKeys(
+  args: Record<string, unknown>,
+  properties: Schema,
+): Record<string, unknown> {
+  let fixed: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(args)) {
+    if (Object.hasOwn(properties, key)) continue;
+    const clean = normalizeKey(key);
+    if (clean === null || clean === key) continue;
+    if (!Object.hasOwn(properties, clean) || Object.hasOwn(args, clean)) {
+      continue;
+    }
+    fixed ??= { ...args };
+    delete fixed[key];
+    fixed[clean] = value;
+  }
+  return fixed ?? args;
+}
+
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+/** The identifier a mangled key was meant to be, or null when there is none. */
+export function normalizeKey(key: string): string | null {
+  let clean = key.trim();
+  // A fused fragment ends with the real key after the last comma.
+  const comma = clean.lastIndexOf(",");
+  if (comma !== -1) clean = clean.slice(comma + 1).trim();
+  // Markup that leaked in from the prompt.
+  clean = clean.replace(/<[^<>]*>/g, "").trim();
+  // Quotes of the model's own JSON, one level or several, escaped or not.
+  clean = clean.replace(/^(?:\\?["'`])+|(?:\\?["'`])+$/g, "").trim();
+  return IDENTIFIER.test(clean) ? clean : null;
 }
 
 /**
