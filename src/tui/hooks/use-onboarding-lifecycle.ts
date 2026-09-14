@@ -50,8 +50,11 @@ export function useOnboardingLifecycle(input: {
   // One event per screen the operator actually reaches. This is the
   // whole point of the funnel: `app_installed` and `first_message_sent`
   // alone say that people leave, never at which screen.
+  // A re-run reports nothing: the dedupe set above is per mount, and
+  // the funnel measures first runs, so replaying it would count the same
+  // install as a new one on every `/onboarding`.
   useEffect(() => {
-    if (!onStep) return;
+    if (!onStep || onboarding.rerun) return;
     // `outcome` is set together with the `finished` step, so it is part
     // of the identity of that report rather than a later addition —
     // keying on the pair keeps a null-outcome render from claiming the

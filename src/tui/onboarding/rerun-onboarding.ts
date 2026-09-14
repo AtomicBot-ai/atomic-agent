@@ -2,7 +2,11 @@ import type { OnboardingState } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
 import { persistOnboardingState } from "../persist-onboarding-state.js";
 import type { TuiAction } from "../tui-action.js";
-import { createOnboardingState } from "./onboarding-state.js";
+import { needsOnboarding } from "./needs-onboarding.js";
+import {
+  createOnboardingState,
+  type OnboardingUiState,
+} from "./onboarding-state.js";
 
 /**
  * Every `tui.onboarding` stamp, cleared. A re-run is meant to be the
@@ -32,15 +36,23 @@ export const ONBOARDING_RERUN_RESET: OnboardingState = {
 };
 
 /**
+ * Clear the stamps and build the flow's opening state. `rerun` is read
+ * *before* the reset: an install `decideOnboarding` would have sent to
+ * setup anyway (nothing configured, never finished or skipped) is still
+ * on its first run, and its funnel events should count as one.
+ */
+export function prepareOnboardingRerun(): OnboardingUiState {
+  const rerun = !needsOnboarding();
+  persistOnboardingState(ONBOARDING_RERUN_RESET);
+  return createOnboardingState(getConfig().localModels.url, { rerun });
+}
+
+/**
  * `/onboarding` (and the Setup menu row): clear the stamps, then mount
  * the flow from its splash. The stamps are written before the surface
  * opens so the lifecycle hook, which reads config on every step, sees a
  * fresh install from the first screen on.
  */
 export function reopenOnboarding(dispatch: (action: TuiAction) => void): void {
-  persistOnboardingState(ONBOARDING_RERUN_RESET);
-  dispatch({
-    type: "onboarding_set",
-    onboarding: createOnboardingState(getConfig().localModels.url),
-  });
+  dispatch({ type: "onboarding_set", onboarding: prepareOnboardingRerun() });
 }

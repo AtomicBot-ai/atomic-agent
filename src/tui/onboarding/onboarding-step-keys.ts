@@ -110,9 +110,11 @@ function pickBackend(
     ctx.dispatch({ type: "onboarding_step_set", step: "custom_chat_url" });
     return;
   }
-  // Managed mode is recorded now so a Ctrl+C mid-download does not
-  // lose the choice; the model id follows when the pull completes.
-  persistUserLocalModelsConfig({ mode: "managed" });
+  // Nothing is written yet: this only opens the model list, and Esc
+  // walks straight back out. Managed mode is recorded when a model is
+  // picked — writing it here would flip a working external endpoint to
+  // managed-with-no-model for anyone who merely browsed the screen on a
+  // `/onboarding` re-run.
   ctx.dispatch({ type: "onboarding_step_set", step: "local_pick" });
 }
 
@@ -169,6 +171,10 @@ function handleLocalPickKey(
       ctx.dispatch({ type: "onboarding_step_set", step: "local_hf_ref" });
       return true;
     }
+    // Committed to a model: managed mode is recorded now, before the
+    // pull, so a Ctrl+C mid-download does not lose the choice; the model
+    // id follows when the pull completes.
+    persistUserLocalModelsConfig({ mode: "managed" });
     ctx.dispatch({
       type: "onboarding_local_model_picked",
       modelId: row.pick.id,
@@ -298,7 +304,7 @@ function handleProposeKey(
       return true;
     }
     if (onboarding.offer === "local") {
-      persistUserLocalModelsConfig({ mode: "managed" });
+      // Like the choose step: only the pick below commits managed mode.
       ctx.dispatch({ type: "onboarding_step_set", step: "local_pick" });
       return true;
     }

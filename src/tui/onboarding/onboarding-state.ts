@@ -77,6 +77,13 @@ export interface OnboardingUiState {
    * this flag and not a `proposedSecondBackendAt` stamp.
    */
   skipSecondOffer: boolean;
+  /**
+   * Opened on request (`/onboarding`, `--onboarding`) on an install that
+   * had already been through setup or had a backend. The screens are the
+   * same; only the first-run funnel analytics stay quiet, so a re-run is
+   * not counted as a new install walking through setup.
+   */
+  rerun: boolean;
   /** Row cursor on the `choose` step. */
   cursor: number;
   chatUrl: string;
@@ -153,13 +160,17 @@ export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
   },
 ];
 
-export function createOnboardingState(chatUrl: string): OnboardingUiState {
+export function createOnboardingState(
+  chatUrl: string,
+  options: { rerun?: boolean } = {},
+): OnboardingUiState {
   return {
     step: "intro",
     offer: null,
     resumeAfterCloud: null,
     outcome: null,
     skipSecondOffer: false,
+    rerun: options.rerun ?? false,
     localModelId: null,
     cursor: 0,
     chatUrl,
