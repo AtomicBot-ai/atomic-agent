@@ -23,6 +23,7 @@ import type {
   BuiltPromptTruncationFlags,
 } from "./build-prompt-types.js";
 import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
+import { renderRequestSection, requestInView } from "./request-section.js";
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
@@ -292,20 +293,45 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     completionMaxTokens,
   });
 
-  const packed = packConversation(
+  // One option set for every pack of this build: the `### request`
+  // re-pack below must cut under the same low-water mark and from the
+  // same remembered start, or the two packs could disagree about where
+  // the transcript begins.
+  const packOptions = {
+    maxPairs: conversationMaxPairs,
+    lowWater: conversationLowWater,
+    ...(input.session.macroTurnStarts
+      ? { macroTurnStarts: input.session.macroTurnStarts }
+      : {}),
+    ...(input.session.conversationPackStart
+      ? { packStart: input.session.conversationPackStart }
+      : {}),
+  };
+  let packed = packConversation(
     input.session.turns,
     conversationCapEffective,
-    {
-      maxPairs: conversationMaxPairs,
-      lowWater: conversationLowWater,
-      ...(input.session.macroTurnStarts
-        ? { macroTurnStarts: input.session.macroTurnStarts }
-        : {}),
-      ...(input.session.conversationPackStart
-        ? { packStart: input.session.conversationPackStart }
-        : {}),
-    },
+    packOptions,
   );
+  // The operator's request, pinned only once the packer has dropped the
+  // turn that carried it. It then takes its room out of the conversation
+  // cap — a second pack, and only on that path — so the tail still fits
+  // the window; the carrier stays dropped under the smaller cap, so the
+  // decision cannot flip.
+  const request = input.originalRequest?.trim() ?? "";
+  const requestSection =
+    request.length > 0 && !requestInView(request, packed.visibleTurns)
+      ? renderRequestSection(request)
+      : null;
+  if (requestSection !== null) {
+    const requestTokens = estimateTokens(requestSection);
+    if (requestTokens < conversationCapEffective) {
+      packed = packConversation(
+        input.session.turns,
+        conversationCapEffective - requestTokens,
+        packOptions,
+      );
+    }
+  }
   const conversation = renderPackedConversation(packed);
   const taskPolicy = renderTaskPolicy({
     userMessage: input.userMessage ?? null,
@@ -337,6 +363,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     tailBefore.push("### recalled", recalled, ``);
   }
   tailBefore.push(`### world`, worldSnapshot, ``);
+  // The operator's request, immediately before the conversation, only
+  // while the packer has the turn that carried it out of view.
+  if (requestSection !== null) {
+    tailBefore.push(`### request`, requestSection, ``);
+  }
   const conversationParts = [`### conversation`, conversation, ``];
   const tailAfter: string[] = [];
   if (profile !== null) {

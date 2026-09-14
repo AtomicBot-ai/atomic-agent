@@ -73,6 +73,13 @@ export interface BuildPromptInput {
    * the config cannot know. See `resolveFusionMachineFacts`.
    */
   liveWorkerSlots?: number | null;
+  /**
+   * The operator's request behind the running turn, as the runtime
+   * recorded it (`pickOriginalRequest`). Rendered as `### request`
+   * before `### conversation` only when the packer has dropped the user
+   * turn that carried it — see `request-section.ts`.
+   */
+  originalRequest?: string;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;

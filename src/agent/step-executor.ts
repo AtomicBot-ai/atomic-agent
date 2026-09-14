@@ -109,6 +109,7 @@ import {
 } from "../llm/model-profile.js";
 import type {
   PromptMessages,
+  ReasoningEffort,
   ResponseFormatJsonSchema,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
@@ -158,6 +159,14 @@ export interface LlmStreamParams {
    * failure mode (see `REPAIR_MAX_TOKENS` and the call-site comment).
    */
   maxTokens?: number;
+  /**
+   * The turn's output ceiling (`RunTurnOptions.maxOutputTokens`), below
+   * the per-step `maxTokens` above and above the provider's own. A
+   * fusion worker's `workerMaxOutputTokens` rides here.
+   */
+  maxOutputTokens?: number;
+  /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
+  reasoningEffort?: ReasoningEffort;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
@@ -336,6 +345,16 @@ export interface StepContext {
    * continuation) — contextual facts stay suppressed.
    */
   userMessage?: string | null;
+  /**
+   * The operator's request behind this turn (`RunTurnOptions.originalRequest`),
+   * pinned into the prompt as `### request` once the packer has dropped
+   * the turn that carried it. See `request-section.ts`.
+   */
+  originalRequest?: string;
+  /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
+  reasoningEffort?: ReasoningEffort;
+  /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
+  maxOutputTokens?: number;
   /**
    * Only the terminal `reply`/`finish` tools may run this step (the
    * loop's reserved final step). The prompt's tool catalog is left as it
@@ -541,6 +560,9 @@ async function executeStepInner(
       ? { profileFacts: ctx.profileFacts }
       : {}),
     ...(ctx.userMessage !== undefined ? { userMessage: ctx.userMessage } : {}),
+    ...(ctx.originalRequest !== undefined
+      ? { originalRequest: ctx.originalRequest }
+      : {}),
   };
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -613,7 +635,10 @@ async function executeStepInner(
 
   // The cap every completion of this step runs under. Named here so the
   // failure detector can say which wall a cut-off reply hit.
-  const replyCap = ctx.maxTokens ?? getConfig().localModels.completionMaxTokens;
+  const replyCap =
+    ctx.maxTokens ??
+    ctx.maxOutputTokens ??
+    getConfig().localModels.completionMaxTokens;
   // The grammar for THIS request. Narrowed below the base grammar only
   // when the step has fewer tools than the catalog (the final step, an
   // orchestrator turn, a filtered worker); otherwise the base grammar
@@ -633,6 +658,15 @@ async function executeStepInner(
     }),
     ...(grammarPrompt ? { grammarPrompt } : {}),
     ...(ctx.maxTokens !== undefined ? { maxTokens: ctx.maxTokens } : {}),
+    // The turn's own settings ride on every completion of the step; the
+    // repair retry spreads `llmParams`, so they inherit without a second
+    // wiring point.
+    ...(ctx.maxOutputTokens !== undefined
+      ? { maxOutputTokens: ctx.maxOutputTokens }
+      : {}),
+    ...(ctx.reasoningEffort !== undefined
+      ? { reasoningEffort: ctx.reasoningEffort }
+      : {}),
   };
 
   const firstAttempt = await runInitialCompletion({

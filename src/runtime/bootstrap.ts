@@ -2865,6 +2865,9 @@ export async function createAgentRuntime(
         // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
+          // The same record the workers' briefs quote, pinned into the
+          // orchestrator's own prompt once the packer drops its carrier.
+          ...(turnRequest !== undefined ? { originalRequest: turnRequest } : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
