@@ -3,6 +3,7 @@ import {
   LlamaServerClient,
   LlamaServerError,
   extractLlamaErrorDetail,
+  judgeSlotProgress,
 } from "./llama-server-client.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
@@ -783,12 +784,22 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       errorOnAbort?: boolean;
       /** Defaults to `requestTimeoutMs`, so one number drives both deadlines. */
       firstTokenTimeoutMs?: number;
+      /**
+       * Answers the progress watch's `GET /slots`. Default: 501, the
+       * answer of a server with the endpoint disabled — no verdict, so
+       * the timers alone decide, as before the watch existed.
+       */
+      slots?: (init: RequestInit) => Promise<Response>;
+      slotsPollIntervalMs?: number;
+      slotsPollTimeoutMs?: number;
     } = {},
   ): {
     client: LlamaServerClient;
     opened: () => PushableStream;
+    slotsPolls: () => number;
   } {
     let handle: PushableStream | null = null;
+    let polls = 0;
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
       requestTimeoutMs,
@@ -796,7 +807,19 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       ...(options.streamTotalTimeoutMs === undefined
         ? {}
         : { streamTotalTimeoutMs: options.streamTotalTimeoutMs }),
-      fetchImpl: createMockFetch(async (_url, init) => {
+      ...(options.slotsPollIntervalMs === undefined
+        ? {}
+        : { slotsPollIntervalMs: options.slotsPollIntervalMs }),
+      ...(options.slotsPollTimeoutMs === undefined
+        ? {}
+        : { slotsPollTimeoutMs: options.slotsPollTimeoutMs }),
+      fetchImpl: createMockFetch(async (url, init) => {
+        if (init.method === "GET" || url.endsWith("/slots")) {
+          polls += 1;
+          return options.slots
+            ? options.slots(init)
+            : new Response("slots endpoint disabled", { status: 501 });
+        }
         handle = pushableSse(init.signal, options.errorOnAbort ?? true);
         return handle.response;
       }),
@@ -810,6 +833,7 @@ describe("LlamaServerClient.completeStream deadlines", () => {
         if (!handle) throw new Error("stream not opened yet");
         return handle;
       },
+      slotsPolls: () => polls,
     };
   }
 
@@ -1211,6 +1235,175 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     expect(err).toBeInstanceOf(LlamaServerError);
     expect(err.message).toContain("sent no first token within 1000ms");
     expect(err.message).not.toContain("sent no data for");
+  });
+
+  describe("the /slots progress watch (F14)", () => {
+    const slotsJson = (slots: unknown[]) => async () =>
+      new Response(JSON.stringify(slots), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const idle = (id: number) => ({ id, id_task: -1, is_processing: false, next_token: { n_decoded: 0 } });
+    const busy = (id: number, decoded = 0) => ({ id, id_task: 7, is_processing: true, next_token: { n_decoded: decoded } });
+
+    it("aborts a first-token wait early when /slots keeps answering with nothing going on", async () => {
+      // Idle budget 60 s, first-token budget 30 min. A server that answers
+      // /slots every 15 s with every slot idle and unchanged is not
+      // processing the request; the wait ends after one idle budget, not
+      // thirty minutes.
+      vi.useFakeTimers();
+      const { client, slotsPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: slotsJson([idle(0), idle(1)]),
+      });
+      const stream = client.completeStream({
+        prompt: "p",
+        sessionId: "s",
+        slotId: 0,
+      });
+      const first = stream.next();
+      const failure = first.catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(slotsPolls()).toBe(3);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const err = await failure;
+      expect(err).toBeInstanceOf(LlamaServerError);
+      expect((err as LlamaServerError).timedOut).toBe(true);
+      expect((err as LlamaServerError).message).toContain("sent no first token");
+      expect((err as LlamaServerError).message).toContain("no progress for 60000ms");
+      expect((err as LlamaServerError).message).toContain("reuses this session's slot");
+    });
+
+    it("keeps waiting up to the first-token budget while this session's slot is processing", async () => {
+      vi.useFakeTimers();
+      const { client, opened, slotsPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 10 * 60_000,
+        slots: slotsJson([busy(0), idle(1)]),
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const first = stream.next();
+      // Nine minutes of "processing, nothing decoded yet" — prompt
+      // evaluation looks exactly like this — and nothing aborts.
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(slotsPolls()).toBeGreaterThan(30);
+      opened().push('data: {"content":"hi","stop":false}\n\n');
+      const chunk = await first;
+      expect(chunk.done).toBe(false);
+      expect((chunk.value as { delta: string }).delta).toBe("hi");
+      opened().close();
+    });
+
+    it("reads another slot's work as this request being queued, and a changed idle table as movement", async () => {
+      vi.useFakeTimers();
+      let tick = 0;
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 10 * 60_000,
+        slots: async () => {
+          tick += 1;
+          // Another slot busy for the first 8 polls, then the table
+          // changes (a task finished) — both count as progress.
+          const table = tick <= 8 ? [idle(0), busy(1, tick)] : [idle(0), { ...idle(1), id_task: 100 + tick }];
+          return new Response(JSON.stringify(table), { status: 200 });
+        },
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const first = stream.next();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      opened().push('data: {"content":"x","stop":false}\n\n');
+      expect((await first).done).toBe(false);
+      opened().close();
+    });
+
+    it("falls back to the first-token timer when /slots itself hangs (the busy-server case)", async () => {
+      // Measured: /slots does not answer while a slot evaluates a large
+      // prompt. A poll that times out is no verdict; the first-token
+      // budget is what ends the wait, exactly as before the watch.
+      vi.useFakeTimers();
+      let hung = 0;
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 5 * 60_000,
+        slots: (init) =>
+          new Promise<Response>((_, reject) => {
+            hung += 1;
+            init.signal?.addEventListener("abort", () =>
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+            );
+          }),
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const failure = stream.next().catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      expect(hung).toBeGreaterThan(10);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await failure;
+      expect((err as LlamaServerError).message).toContain("no first token within 300000ms");
+    });
+
+    it("stops polling once the first byte arrives", async () => {
+      vi.useFakeTimers();
+      const { client, opened, slotsPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 10 * 60_000,
+        slots: slotsJson([busy(0)]),
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const first = stream.next();
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(slotsPolls()).toBe(2);
+      opened().push('data: {"content":"a","stop":false}\n\n');
+      await first;
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(slotsPolls()).toBe(2);
+      opened().close();
+    });
+
+    it("is off entirely when progressWatch is false", async () => {
+      vi.useFakeTimers();
+      let polls = 0;
+      const client = new LlamaServerClient({
+        baseUrl: "http://127.0.0.1:9999",
+        requestTimeoutMs: 60_000,
+        firstTokenTimeoutMs: 120_000,
+        progressWatch: false,
+        fetchImpl: createMockFetch(async (_url, init) => {
+          if (init.method === "GET") {
+            polls += 1;
+            return new Response("[]", { status: 200 });
+          }
+          return pushableSse(init.signal).response;
+        }),
+        completionRetries: 1,
+        completionRetryBackoffMs: 0,
+        sleep: async () => {},
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(121_000);
+      expect(polls).toBe(0);
+      expect((await failure) as LlamaServerError).toBeInstanceOf(LlamaServerError);
+    });
+  });
+});
+
+describe("judgeSlotProgress", () => {
+  const idle = (id: number) => ({ id, id_task: -1, is_processing: false, next_token: { n_decoded: 0 } });
+
+  it("is progress while any slot processes, idle only when nothing moves twice", () => {
+    expect(judgeSlotProgress([{ ...idle(0), is_processing: true }], 0, null).kind).toBe("progress");
+    expect(judgeSlotProgress([idle(0), { ...idle(1), is_processing: true }], 0, null).kind).toBe("progress");
+    // An all-idle first answer is a baseline, not work.
+    const first = judgeSlotProgress([idle(0), idle(1)], 0, null);
+    expect(first.kind).toBe("idle");
+    const again = judgeSlotProgress([idle(0), idle(1)], 0, (first as { snapshot: string }).snapshot);
+    expect(again.kind).toBe("idle");
+    const moved = judgeSlotProgress([idle(0), { ...idle(1), id_task: 9 }], 0, (first as { snapshot: string }).snapshot);
+    expect(moved.kind).toBe("progress");
+  });
+
+  it("has no verdict on a body that is not a slot table", () => {
+    expect(judgeSlotProgress({ error: "no" }, 0, null).kind).toBe("unknown");
+    expect(judgeSlotProgress("x", -1, null).kind).toBe("unknown");
   });
 });
 

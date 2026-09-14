@@ -61,9 +61,89 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *    `streamTotalTimeoutMs`. The backstop that keeps a wedged or
  *    hostile server from pinning a slot forever by dribbling one byte
  *    just under the idle budget.
+ *  - `first-token-stall` — while waiting for the first byte, `/slots`
+ *    kept answering and showed no work anywhere — this session's slot
+ *    idle, every other slot idle, nothing changed — for a whole idle
+ *    budget (`requestTimeoutMs`). A busy server is queueing or
+ *    evaluating; a server that is provably doing nothing is not going
+ *    to answer, and waiting the full first-token budget on it is what
+ *    parked a turn for half an hour. See `SLOTS_POLL_INTERVAL_MS`.
  */
 export type LlamaTimeoutKind =
-  "total" | "first-token" | "idle" | "stream-total";
+  | "total"
+  | "first-token"
+  | "idle"
+  | "stream-total"
+  | "first-token-stall";
+
+/**
+ * Progress watch while waiting for the first token: `GET /slots` every
+ * 15 s with a 3 s deadline per poll. `/slots` is known to hang while a
+ * slot processes a large prompt (measured on the fusion benchmark) —
+ * that is read as "busy", never as a stall, and the first-token timer
+ * stays the backstop. A poll that answers extends the wait as long as
+ * anything is moving: this session's slot processing, any other slot
+ * processing (the request is queued behind it), or any slot's state
+ * changing since the last answered poll.
+ */
+export const SLOTS_POLL_INTERVAL_MS = 15_000;
+export const SLOTS_POLL_TIMEOUT_MS = 3_000;
+
+/** What one answered `/slots` poll said about progress. */
+export type SlotProgressVerdict =
+  | { kind: "progress"; snapshot: string }
+  | { kind: "idle"; snapshot: string }
+  /** The poll failed or timed out: no verdict, the server is busy or off. */
+  | { kind: "unknown" };
+
+/**
+ * Compare a `/slots` answer with the previous one. Pure. `slotId` is the
+ * slot this request is pinned to (`-1`: unknown, any slot counts).
+ *
+ * Progress is generous on purpose: a slot marked `is_processing` is
+ * working even when its counters do not move (prompt evaluation shows no
+ * decoded tokens), and another slot working means this request is
+ * queued behind it. Only a server whose every slot is idle and whose
+ * answer is byte-for-byte what it was last time has nothing going on.
+ */
+export function judgeSlotProgress(
+  body: unknown,
+  slotId: number,
+  previousSnapshot: string | null,
+): SlotProgressVerdict {
+  if (!Array.isArray(body)) return { kind: "unknown" };
+  let anyProcessing = false;
+  let ownProcessing = false;
+  const parts: string[] = [];
+  for (const raw of body) {
+    if (!raw || typeof raw !== "object") continue;
+    const slot = raw as Record<string, unknown>;
+    const next = (slot.next_token ?? {}) as Record<string, unknown>;
+    const processing = slot.is_processing === true;
+    anyProcessing ||= processing;
+    if (slotId >= 0 && slot.id === slotId && processing) ownProcessing = true;
+    parts.push(
+      [
+        String(slot.id ?? "?"),
+        String(slot.id_task ?? ""),
+        processing ? "p" : "i",
+        String(next.n_decoded ?? slot.n_decoded ?? ""),
+        String(slot.n_past ?? ""),
+        String(slot.n_prompt_tokens_processed ?? ""),
+        JSON.stringify(slot.prompt_progress ?? null),
+      ].join(":"),
+    );
+  }
+  const snapshot = parts.join("|");
+  if (ownProcessing || anyProcessing) return { kind: "progress", snapshot };
+  // A first answer with nothing processing is a baseline, not evidence
+  // of work: the stall clock keeps running from the send, so a server
+  // that was idle from the start is caught after one idle budget.
+  if (previousSnapshot !== null && previousSnapshot !== snapshot) {
+    return { kind: "progress", snapshot };
+  }
+  return { kind: "idle", snapshot };
+}
 
 export class LlamaServerError extends Error {
   constructor(
@@ -188,6 +268,16 @@ export interface LlamaServerClientOptions {
   firstTokenTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   /**
+   * The `/slots` progress watch while a stream waits for its first byte
+   * (see `SLOTS_POLL_INTERVAL_MS`). `false` disables it — the
+   * first-token timer alone then bounds the wait, as before.
+   */
+  progressWatch?: boolean;
+  /** Overrides `SLOTS_POLL_INTERVAL_MS`. */
+  slotsPollIntervalMs?: number;
+  /** Overrides `SLOTS_POLL_TIMEOUT_MS`. */
+  slotsPollTimeoutMs?: number;
+  /**
    * Overrides the retry budget for `complete()` and the initial fetch
    * of `completeStream()`. When omitted, the client reads
    * `config.localModels.completionRetries` on each request.
@@ -221,6 +311,9 @@ export class LlamaServerClient {
   private readonly firstTokenTimeoutMs: number;
   private readonly streamTotalTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly progressWatch: boolean;
+  private readonly slotsPollIntervalMs: number;
+  private readonly slotsPollTimeoutMs: number;
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -249,6 +342,10 @@ export class LlamaServerClient {
     this.streamTotalTimeoutMs =
       options.streamTotalTimeoutMs ?? config.localModels.streamTotalTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.progressWatch = options.progressWatch ?? true;
+    this.slotsPollIntervalMs =
+      options.slotsPollIntervalMs ?? SLOTS_POLL_INTERVAL_MS;
+    this.slotsPollTimeoutMs = options.slotsPollTimeoutMs ?? SLOTS_POLL_TIMEOUT_MS;
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
     this.sleep = options.sleep ?? defaultSleep;
@@ -374,6 +471,33 @@ export class LlamaServerClient {
     }
   }
 
+  /**
+   * `GET /slots` — every slot's state, for the progress watch. Bounded
+   * by `timeoutMs` (default `SLOTS_POLL_TIMEOUT_MS`): the endpoint is
+   * known to hang while a slot evaluates a large prompt, and a poll
+   * that hangs must not hold anything up. Throws on any failure.
+   */
+  async fetchSlots(timeoutMs = this.slotsPollTimeoutMs): Promise<unknown> {
+    const config = getConfig();
+    const base = this.baseUrlOverride ?? config.localModels.url;
+    const url = llamaEndpointUrl(base, "/slots");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await this.fetchImpl(url, {
+        method: "GET",
+        headers: this.buildHeaders(false),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw await buildHttpError(response, url);
+      }
+      return (await response.json()) as unknown;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const { url, headers, body } = this.prepareRequest(request, false);
     return this.runWithRetry(
@@ -430,7 +554,9 @@ export class LlamaServerClient {
             timedOut,
             keepAlive,
             startStreamDeadline,
-          } = this.createRequestController(request.signal, "first-token");
+          } = this.createRequestController(request.signal, "first-token", {
+            slotId: request.slotId ?? -1,
+          });
           try {
             const response = await this.fetchImpl(url, {
               method: "POST",
@@ -587,10 +713,16 @@ export class LlamaServerClient {
    * second, never-refreshed timer that puts a ceiling back on — see
    * `streamTotalTimeoutMs`. So a live stream holds two pending timers,
    * and `cleanup` clears both.
+   *
+   * A first-token wait also runs the `/slots` progress watch (`watch`):
+   * a third timer that polls every `slotsPollIntervalMs` and fires
+   * `first-token-stall` when the server keeps answering and shows no
+   * work anywhere for a whole idle budget. It stops at the first byte.
    */
   private createRequestController(
     externalSignal?: AbortSignal,
     initialKind: "total" | "first-token" = "total",
+    watch?: { slotId: number },
   ): {
     controller: AbortController;
     cleanup: () => void;
@@ -626,8 +758,64 @@ export class LlamaServerClient {
     let timer = arm();
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
+
+    // The progress watch. `lastProgressAt` is the last moment the
+    // server was seen doing anything (or could not be asked — a poll
+    // that times out is a busy server); a run of answered polls with
+    // nothing moving that lasts an idle budget is the stall.
+    let watchTimer: ReturnType<typeof setTimeout> | null = null;
+    let watchStopped = false;
+    let previousSnapshot: string | null = null;
+    let lastProgressAt = Date.now();
+    const stopWatch = (): void => {
+      watchStopped = true;
+      if (watchTimer !== null) {
+        clearTimeout(watchTimer);
+        watchTimer = null;
+      }
+    };
+    const pollOnce = async (): Promise<void> => {
+      watchTimer = null;
+      if (watchStopped || expired !== null || controller.signal.aborted) return;
+      let verdict: SlotProgressVerdict;
+      try {
+        verdict = judgeSlotProgress(
+          await this.fetchSlots(),
+          watch?.slotId ?? -1,
+          previousSnapshot,
+        );
+      } catch {
+        verdict = { kind: "unknown" };
+      }
+      if (watchStopped || expired !== null || controller.signal.aborted) return;
+      const now = Date.now();
+      if (verdict.kind !== "unknown") previousSnapshot = verdict.snapshot;
+      if (verdict.kind === "idle") {
+        if (now - lastProgressAt >= this.requestTimeoutMs) {
+          expired = "first-token-stall";
+          stopWatch();
+          controller.abort();
+          return;
+        }
+      } else {
+        lastProgressAt = now;
+      }
+      scheduleWatch();
+    };
+    const scheduleWatch = (): void => {
+      if (watchStopped) return;
+      watchTimer = setTimeout(() => {
+        void pollOnce();
+      }, this.slotsPollIntervalMs);
+    };
+    if (initialKind === "first-token" && this.progressWatch && watch) {
+      scheduleWatch();
+    }
+
     const keepAlive = (next: Exclude<LlamaTimeoutKind, "total">): void => {
       if (expired !== null || controller.signal.aborted) return;
+      // A byte arrived: the watch has done its job.
+      stopWatch();
       clearTimeout(timer);
       kind = next;
       timer = arm();
@@ -643,6 +831,7 @@ export class LlamaServerClient {
     const clearTimers = (): void => {
       clearTimeout(timer);
       if (streamTimer !== null) clearTimeout(streamTimer);
+      stopWatch();
     };
     if (!externalSignal) {
       return {
@@ -706,6 +895,19 @@ export class LlamaServerClient {
           `it may still be evaluating the prompt or queued behind other requests; ` +
           `raise ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS (localModels.firstTokenTimeoutMs), ` +
           `run fewer local workers at once, or shorten the prompt/context if it is too large for this machine to evaluate in time`,
+        null,
+        url,
+        true,
+        undefined,
+        { cause: err },
+      );
+    }
+    if (timedOut === "first-token-stall") {
+      return new LlamaServerError(
+        `llama-server sent no first token and showed no progress for ${this.requestTimeoutMs}ms — ` +
+          `/slots kept answering with every slot idle and nothing changing, so this request is not being ` +
+          `processed (a busy server would show a slot working or stop answering /slots); ` +
+          `check the server, then retry — the retry reuses this session's slot`,
         null,
         url,
         true,
