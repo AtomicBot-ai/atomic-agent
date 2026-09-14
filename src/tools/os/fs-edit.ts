@@ -3,13 +3,8 @@ import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
-import {
-  checkFileParses,
-  displayPath,
-  formatParseWarning,
-  isParseCheckedPath,
-  withParseWarning,
-} from "./fs-parse-check.js";
+import { checkChangedFile } from "./fs-content-check.js";
+import { withParseWarning } from "./fs-parse-check.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
@@ -82,15 +77,14 @@ export function buildOsFsEditTool(
       // an edit that turns a parsing file into a broken one — the classic
       // blind `replaceAll` — is told so, with the count, so the model
       // undoes it instead of stacking another edit on top.
-      const parseWarning = isParseCheckedPath(absolute)
-        ? formatParseWarning({
-            path: displayPath(absolute, ctx.workingDir),
-            change: "edit",
-            before: checkFileParses(absolute, original),
-            after: checkFileParses(absolute, updated),
-            replacedOccurrences,
-          })
-        : null;
+      const parseWarning = checkChangedFile({
+        absolute,
+        workingDir: ctx.workingDir,
+        change: "edit",
+        before: original,
+        after: updated,
+        replacedOccurrences,
+      });
 
       return withParseWarning(
         compressToolResult({
