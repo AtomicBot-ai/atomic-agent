@@ -91,6 +91,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const conversationCapAuto = conversationMaxTokens <= CONVERSATION_CAP_AUTO;
   const conversationMaxPairs =
     input.conversationMaxPairs ?? config.agent.conversationMaxPairs;
+  // A model with no partial prefix reuse re-reads the whole prompt at
+  // every cut, so it cuts deeper and less often; an operator who set the
+  // share lower still keeps their own number.
+  const configuredLowWater =
+    input.conversationLowWater ?? config.agent.conversationLowWater;
+  const conversationLowWater =
+    input.profile?.prefixReuse === "none"
+      ? Math.min(configuredLowWater, 0.5)
+      : configuredLowWater;
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
   const completionMaxTokens =
@@ -270,8 +279,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversationCapEffective,
     {
       maxPairs: conversationMaxPairs,
+      lowWater: conversationLowWater,
       ...(input.session.macroTurnStarts
         ? { macroTurnStarts: input.session.macroTurnStarts }
+        : {}),
+      ...(input.session.conversationPackStart
+        ? { packStart: input.session.conversationPackStart }
         : {}),
     },
   );
@@ -428,6 +441,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     droppedPairs: packed.droppedPairs,
     conversationPairsCap: conversationMaxPairs,
     conversationBoundBy: packed.boundBy,
+    conversationPackStart: packed.packStart,
     pairCosts: pairTokenCosts(
       input.session.turns,
       input.session.macroTurnStarts,

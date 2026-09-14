@@ -370,6 +370,7 @@ describe("conversation-turn helpers", () => {
         visiblePairs: 0,
         droppedPairs: 0,
         boundBy: null,
+        packStart: null,
       });
     });
 

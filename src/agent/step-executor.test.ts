@@ -2334,6 +2334,80 @@ describe("executeStep streaming reasoning accumulator", () => {
   });
 });
 
+describe("executeStep remembers the transcript cut", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  it("carries the packer's start on nextSession so the next step holds it", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return compressToolResult({
+          tool: "noop",
+          status: "ok",
+          output: "ok",
+          details: {},
+        });
+      },
+    });
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const base = createEmptySessionState({ id: "s-pack", workingDir: "/w" });
+    const turns: typeof base.turns = [];
+    for (let i = 0; i < 400; i += 1) {
+      turns.push(
+        { kind: "user", text: `ask ${i} ${"y".repeat(400)}`, at: 1 + i * 2 },
+        { kind: "assistant_reply", text: `answer ${i}`, at: 2 + i * 2 },
+      );
+    }
+    turns.push({ kind: "user", text: "now", at: 10_000 });
+    const session = { ...base, turns };
+    const complete = async () => ({
+      content: JSON.stringify({ tool: "noop", args: {} }),
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: "mock",
+    });
+    const deps = {
+      registry,
+      slotManager: new SlotManager(2),
+      llmComplete: complete,
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+    };
+    const ctx = {
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      signal: new AbortController().signal,
+      userMessage: "now",
+    };
+
+    const first = await executeStep(
+      { ...ctx, session, stepIndex: 0 },
+      deps,
+    );
+    expect(first.prompt.droppedTurns).toBeGreaterThan(0);
+    const start = first.prompt.conversationPackStart;
+    expect(start).not.toBeNull();
+    expect(first.nextSession.conversationPackStart).toEqual(start);
+
+    const second = await executeStep(
+      { ...ctx, session: first.nextSession, stepIndex: 1 },
+      deps,
+    );
+    expect(second.prompt.conversationPackStart).toEqual(start);
+    expect(second.nextSession.conversationPackStart).toEqual(start);
+    // Held: the second prompt's transcript is the first's plus this step.
+    expect(second.prompt.droppedTurns).toBe(first.prompt.droppedTurns);
+  });
+});
+
 describe("executeStep skill.view short-circuit", () => {
   const grammarsDir = join(process.cwd(), "grammars");
 

@@ -315,7 +315,44 @@ export interface PackedConversation {
    * instead of inferring it from numbers that look alike.
    */
   boundBy: "pairs" | "tokens" | null;
+  /**
+   * Where this pack cut the transcript, for the next pack to hold —
+   * `null` when nothing was dropped. See {@link ConversationPackStart}.
+   */
+  packStart: ConversationPackStart | null;
 }
+
+/**
+ * The cut a previous pack made, remembered on the session so the next
+ * steps keep it.
+ *
+ * Without it every step past the budget dropped just enough to fit, so
+ * the transcript's first line — and with it the `summary:` line and
+ * everything after — changed on every step. A model whose attention
+ * cannot roll back (Gemma 4's sliding window) then re-read the whole
+ * prompt each step: 40 of one turn's 79 minutes went to prompt
+ * evaluation. Held between cuts, the prompt only ever grows at the end.
+ */
+export interface ConversationPackStart {
+  /** Index into `turns` of the first turn kept. Always `> 0`. */
+  index: number;
+  /**
+   * `at` of that turn. A guard, not an id: the transcript this cut was
+   * made on is append-only, so a mismatch means the turns were rewritten
+   * under the pin (an import, a rebuilt session) and the cut no longer
+   * addresses anything.
+   */
+  at: number;
+  /** The limit that made the cut, reported unchanged while it holds. */
+  boundBy: "pairs" | "tokens";
+}
+
+/**
+ * Default share of the budget kept after a cut. Chosen so the cut is
+ * spent once per third of the window, not per step; `1` restores the
+ * cut-just-enough behaviour.
+ */
+export const DEFAULT_CONVERSATION_LOW_WATER = 0.65;
 
 export interface PackConversationOptions {
   /**
@@ -333,6 +370,19 @@ export interface PackConversationOptions {
    * it into the next task.
    */
   macroTurnStarts?: readonly number[];
+  /**
+   * Share of a limit kept when that limit overflows, in `(0, 1]`. A cut
+   * drops down to `floor(limit × lowWater)` — tokens of the budget,
+   * macro-turns of `maxPairs` — and the start then holds until the tail
+   * overflows again. Defaults to {@link DEFAULT_CONVERSATION_LOW_WATER}.
+   */
+  lowWater?: number;
+  /**
+   * The cut the previous pack made (`SessionState.conversationPackStart`).
+   * Held as the start while the tail from it still fits both limits;
+   * ignored when it no longer addresses this transcript.
+   */
+  packStart?: ConversationPackStart | null;
 }
 
 /**
@@ -427,11 +477,66 @@ function countDroppedPairs(
 const SUMMARY_TOKEN_RESERVE = 40;
 
 /**
+ * The share of a limit a cut keeps: the caller's `lowWater` when it is a
+ * usable fraction, the default otherwise.
+ */
+function lowWaterOf(options: PackConversationOptions): number {
+  const raw = options.lowWater;
+  if (raw === undefined || !Number.isFinite(raw) || raw <= 0 || raw > 1) {
+    return DEFAULT_CONVERSATION_LOW_WATER;
+  }
+  return raw;
+}
+
+/**
+ * The remembered cut, when it still addresses this transcript: the index
+ * is inside `turns` and the turn there is the one the cut was made on.
+ */
+function heldPackStart(
+  packStart: ConversationPackStart | null | undefined,
+  turns: readonly ConversationTurn[],
+): ConversationPackStart | null {
+  if (!packStart) return null;
+  const { index, at } = packStart;
+  if (!Number.isInteger(index) || index <= 0 || index >= turns.length) {
+    return null;
+  }
+  return turns[index]?.at === at ? packStart : null;
+}
+
+/**
+ * First index whose suffix costs at most `budget` tokens, walking from
+ * the newest turn back. `turns.length` when not even the last turn fits.
+ */
+function startIndexForTokens(
+  tokenCosts: readonly number[],
+  budget: number,
+): number {
+  let acc = 0;
+  let startIndex = tokenCosts.length;
+  for (let i = tokenCosts.length - 1; i >= 0; i -= 1) {
+    const cost = tokenCosts[i] ?? 0;
+    if (acc + cost > budget) break;
+    acc += cost;
+    startIndex = i;
+  }
+  return startIndex;
+}
+
+/**
  * Pick the tail of the turn list that fits within `maxTokens` and return
  * a deterministic one-line summary for the dropped prefix. Older turns
  * go first, but the last `user` turn is always visible so the model
  * never loses the current request. Summary format matches:
  * `summary: N older turns dropped (K user, L tool calls, M replies; first at ISO, last at ISO)`.
+ *
+ * Cuts are made in chunks and held. When the tail from the remembered
+ * start (`options.packStart`) still fits both limits, that start is kept
+ * as it is — the prompt then only grows at its end between cuts, and the
+ * summary line does not move. When a limit overflows, the cut drops to
+ * `lowWater` of that limit rather than to the limit itself, so the next
+ * steps have room to append before the next cut. The pins (the last
+ * user turn, the current task's opening turn) apply to every cut.
  */
 export function packConversation(
   turns: readonly ConversationTurn[],
@@ -446,6 +551,7 @@ export function packConversation(
       visiblePairs: 0,
       droppedPairs: 0,
       boundBy: null,
+      packStart: null,
     };
   }
   const boundaries = macroTurnBoundaries(turns, options.macroTurnStarts);
@@ -457,16 +563,9 @@ export function packConversation(
       visiblePairs: 0,
       droppedPairs: boundaries.length,
       boundBy: "tokens",
+      packStart: null,
     };
   }
-
-  // The pairs cut, computed before anything else so it applies even when
-  // the transcript would have fitted on tokens alone — the whole point of
-  // the knob is to hold history down on purpose, not only under pressure.
-  const pairsStart =
-    options.maxPairs === undefined
-      ? 0
-      : startIndexForPairs(boundaries, options.maxPairs);
 
   // Estimate sizes with the same `inCurrentMacroTurn` flag the renderer
   // will apply downstream — otherwise tools that bypass the cap when
@@ -476,29 +575,64 @@ export function packConversation(
   const tokenCosts = turns.map((turn, i) =>
     tokenCostForTurn(turn, i >= currentStart),
   );
-  const total = tokenCosts.reduce((a, b) => a + b, 0);
+  // Once anything is dropped the summary line takes its reserve, so a
+  // held cut is measured against the same budget the cut was made to.
+  const budget = Math.max(1, maxTokens - SUMMARY_TOKEN_RESERVE);
+  const lowWater = lowWaterOf(options);
+
+  const held = heldPackStart(options.packStart, turns);
+  const floor = held?.index ?? 0;
+  let tokensFromFloor = 0;
+  for (let i = floor; i < tokenCosts.length; i += 1) {
+    tokensFromFloor += tokenCosts[i] ?? 0;
+  }
+  const pairsFromFloor =
+    boundaries.length - countDroppedPairs(boundaries, floor, turns.length);
+  const tokensOverflow =
+    floor === 0 ? tokensFromFloor > maxTokens : tokensFromFloor > budget;
+  // The pairs cut applies even when the transcript would have fitted on
+  // tokens alone — the whole point of the knob is to hold history down
+  // on purpose, not only under pressure.
+  const pairsOverflow =
+    options.maxPairs !== undefined && pairsFromFloor > options.maxPairs;
 
   let startIndex: number;
-  let tokenStart = 0;
-  if (total <= maxTokens) {
-    startIndex = pairsStart;
+  let boundBy: "pairs" | "tokens" | null;
+  if (!tokensOverflow && !pairsOverflow) {
+    startIndex = floor;
+    boundBy = held?.boundBy ?? null;
   } else {
-    // Truncation is inevitable — reserve tokens for the summary line so
-    // the final prompt section still fits within `maxTokens`.
-    const budget = Math.max(1, maxTokens - SUMMARY_TOKEN_RESERVE);
-    let acc = 0;
-    startIndex = turns.length;
-    for (let i = turns.length - 1; i >= 0; i -= 1) {
-      const cost = tokenCosts[i] ?? 0;
-      if (acc + cost > budget) break;
-      acc += cost;
-      startIndex = i;
-    }
-    tokenStart = startIndex;
+    // A cut. Each overflowing limit drops to its low-water mark; a limit
+    // that still fits keeps the held start. Neither goes back before the
+    // held start — those turns are already gone from the prompt, and
+    // bringing them back would change everything after them.
+    const tokenStart = tokensOverflow
+      ? Math.max(
+          floor,
+          startIndexForTokens(
+            tokenCosts,
+            Math.max(1, Math.floor(budget * lowWater)),
+          ),
+        )
+      : floor;
+    const pairsStart =
+      pairsOverflow && options.maxPairs !== undefined
+        ? Math.max(
+            floor,
+            startIndexForPairs(
+              boundaries,
+              Math.max(1, Math.floor(options.maxPairs * lowWater)),
+            ),
+          )
+        : floor;
     // `max`, never `min`: the two limits are not alternatives. Tokens are
     // the ceiling the window imposes and pairs is the operator's own,
     // tighter preference, so the later cut wins.
-    startIndex = Math.max(startIndex, pairsStart);
+    startIndex = Math.max(tokenStart, pairsStart);
+    // Ties go to pairs: when both limits land on the same row it is the
+    // operator's own preference that explains the cut, and naming the
+    // window instead would send them to a setting that changes nothing.
+    boundBy = pairsOverflow && pairsStart >= tokenStart ? "pairs" : "tokens";
   }
 
   const lastUserIndex = findLastUserIndex(turns);
@@ -527,6 +661,7 @@ export function packConversation(
       visiblePairs,
       droppedPairs,
       boundBy: null,
+      packStart: null,
     };
   }
 
@@ -536,10 +671,12 @@ export function packConversation(
     droppedCount: droppedSlice.length,
     visiblePairs,
     droppedPairs,
-    // Ties go to pairs: when both limits land on the same row it is the
-    // operator's own preference that explains the cut, and naming the
-    // window instead would send them to a setting that changes nothing.
-    boundBy: pairsStart >= tokenStart ? "pairs" : "tokens",
+    boundBy: boundBy ?? "tokens",
+    packStart: {
+      index: startIndex,
+      at: turns[startIndex]?.at ?? 0,
+      boundBy: boundBy ?? "tokens",
+    },
   };
 }
 

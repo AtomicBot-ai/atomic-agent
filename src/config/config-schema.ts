@@ -360,6 +360,14 @@ export interface AtomicAgentConfig {
      */
     conversationMaxPairs: number;
     /**
+     * Share of a limit the transcript drops to when that limit
+     * overflows, `(0, 1]`. The cut then holds until the next overflow,
+     * so between cuts the prompt only grows at its end and a local
+     * model's KV cache is reused instead of re-read. `1` cuts just
+     * enough every step (the old behaviour).
+     */
+    conversationLowWater: number;
+    /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
      * edge cases where compression misses (huge SVG trees, etc.).
@@ -1476,6 +1484,16 @@ export interface UserConfigFile {
      * limit bites first wins.
      */
     conversationMaxPairs: number;
+    /**
+     * Share of a limit the transcript keeps after a cut, `(0, 1]`.
+     * History is dropped in chunks — down to this share of the token
+     * budget or of `conversationMaxPairs`, whichever overflowed — and
+     * the cut then holds until the next overflow, so the prompt is
+     * append-only in between and a local model reuses its KV cache. A
+     * model with no partial prefix reuse (sliding-window attention) is
+     * held to at most `0.5`. `1` restores cutting just enough per step.
+     */
+    conversationLowWater: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -2365,6 +2383,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     approvalLevel: 1,
     conversationMaxTokens: 32_000,
     conversationMaxPairs: 20,
+    conversationLowWater: 0.65,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -4334,6 +4353,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "agent.conversationMaxPairs",
         1,
         100,
+      ),
+      // `(0, 1]`: `1` is a real setting (cut just enough, every step),
+      // `0` would drop the whole transcript at the first overflow.
+      conversationLowWater: parseHalfOpenUnitInterval(
+        agent.conversationLowWater ??
+          USER_CONFIG_DEFAULTS.agent.conversationLowWater,
+        "agent.conversationLowWater",
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??

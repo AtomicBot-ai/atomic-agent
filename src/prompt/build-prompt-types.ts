@@ -2,6 +2,7 @@ import type { ModelProfile } from "../llm/model-profile.js";
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ProfileClipStats } from "./clip-profile-section.js";
+import type { ConversationPackStart } from "../session/conversation-turn.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
   CapabilitiesSummary,
@@ -35,6 +36,12 @@ export interface BuildPromptInput {
   conversationMaxTokens?: number;
   /** Overrides `agent.conversationMaxPairs` for this build. */
   conversationMaxPairs?: number;
+  /**
+   * Overrides `agent.conversationLowWater` for this build: the share of
+   * a limit the transcript drops to when that limit overflows, so the
+   * cut holds for the steps that follow instead of moving every step.
+   */
+  conversationLowWater?: number;
   /**
    * The model's context window, when something other than the profile
    * probe knows it.
@@ -140,6 +147,12 @@ export interface BuiltPrompt {
   conversationPairsCap: number;
   /** Which limit made the cut, when history was trimmed at all. */
   conversationBoundBy: "pairs" | "tokens" | null;
+  /**
+   * Where the transcript was cut, for the session to remember so the
+   * next build holds the same start (`SessionState.conversationPackStart`).
+   * `null` when nothing was dropped.
+   */
+  conversationPackStart: ConversationPackStart | null;
   /**
    * Token cost of each macro-turn, oldest first.
    *

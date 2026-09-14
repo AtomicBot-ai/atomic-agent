@@ -81,6 +81,7 @@ import {
   recordLoadedTool,
   recordTurn,
   recordWorldSnapshot,
+  rememberConversationPackStart,
 } from "../session/session-state.js";
 import {
   assistantReplyTurn,
@@ -1273,10 +1274,15 @@ async function executeStepInner(
     },
   );
 
-  let workSession: SessionState = {
-    ...ctx.session,
-    stepCount: ctx.session.stepCount + 1,
-  };
+  // The transcript cut this step's prompt was built on travels with the
+  // session so the next step holds it (`packConversation`).
+  let workSession: SessionState = rememberConversationPackStart(
+    {
+      ...ctx.session,
+      stepCount: ctx.session.stepCount + 1,
+    },
+    prompt.conversationPackStart,
+  );
 
   // Per-failed-rare autoload, applied in batch-index order. Successful
   // rare calls feed `recordLoadedTool` via `details.toolLoaded` in

@@ -682,6 +682,27 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.worldSnapshotMaxTokens).toBe(4_000);
   });
 
+  it("defaults conversationLowWater to 0.65 and bounds it to (0, 1]", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).agent
+        .conversationLowWater,
+    ).toBe(0.65);
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { conversationLowWater: 1 },
+      }).agent.conversationLowWater,
+    ).toBe(1);
+    for (const bad of [0, 1.5, -0.2]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { conversationLowWater: bad },
+        }),
+      ).toThrow(/agent.conversationLowWater/);
+    }
+  });
+
   it("accepts conversationMaxTokens: 0 as the auto sentinel", () => {
     // `0` is not a request for a zero-token transcript: it is "let the
     // window decide", the same sentinel `localModels.managed.contextSize`

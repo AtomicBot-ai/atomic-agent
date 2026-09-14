@@ -959,6 +959,111 @@ describe("buildPrompt", () => {
     expect(grownPrompt.stablePrefix).toBe(emptyPrompt.stablePrefix);
   });
 
+  describe("the transcript cut is remembered on the session", () => {
+    /** A finished task with `steps` tool round-trips of about 60 tokens. */
+    function longTask(label: string, steps: number, from: number) {
+      const turns: SessionState["turns"] = [
+        { kind: "user", text: `ask ${label}`, at: from },
+      ];
+      for (let i = 0; i < steps; i += 1) {
+        turns.push(
+          {
+            kind: "assistant_tool_call",
+            tool: "fs.read",
+            args: { path: `/${label}/${i}` },
+            at: from + 1 + i * 2,
+          },
+          {
+            kind: "tool_result",
+            tool: "fs.read",
+            status: "ok",
+            summary: `${label}-${i} ${"x".repeat(240)}`,
+            truncated: false,
+            at: from + 2 + i * 2,
+          },
+        );
+      }
+      turns.push({
+        kind: "assistant_reply",
+        text: `answer ${label}`,
+        at: from + 100,
+      });
+      return turns;
+    }
+    const history = [
+      ...longTask("a", 6, 1_000),
+      ...longTask("b", 6, 2_000),
+      { kind: "user" as const, text: "ask c", at: 3_000 },
+    ];
+    const build = (session: SessionState, extra: Record<string, unknown> = {}) =>
+      buildPrompt({
+        session,
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        conversationMaxTokens: 800,
+        ...extra,
+      });
+
+    it("publishes the cut and holds it on the next build while the tail fits", () => {
+      const first = build(mkSession({ turns: history }));
+      expect(first.droppedTurns).toBeGreaterThan(0);
+      const start = first.conversationPackStart;
+      expect(start).not.toBeNull();
+      expect(start!.index).toBe(first.droppedTurns);
+
+      const grown = mkSession({
+        turns: [
+          ...history,
+          {
+            kind: "assistant_tool_call",
+            tool: "fs.read",
+            args: { path: "/c/0" },
+            at: 3_001,
+          },
+          {
+            kind: "tool_result",
+            tool: "fs.read",
+            status: "ok",
+            summary: `c-0 ${"x".repeat(240)}`,
+            truncated: false,
+            at: 3_002,
+          },
+        ],
+        conversationPackStart: start!,
+      });
+      const held = build(grown);
+      expect(held.conversationPackStart).toEqual(start);
+      expect(held.droppedTurns).toBe(first.droppedTurns);
+      // The section only grew at its end: the first build's rendering is
+      // a prefix of the second's, summary line included.
+      const section = (t: string) => {
+        const from = t.indexOf("### conversation\n");
+        return t.slice(from, t.indexOf("\n\n###", from));
+      };
+      expect(section(held.tail).startsWith(section(first.tail))).toBe(true);
+      // Without the memory the cut would have moved.
+      const forgotten = build({ ...grown, conversationPackStart: undefined });
+      expect(forgotten.droppedTurns).toBeGreaterThan(held.droppedTurns);
+    });
+
+    it("cuts to half the budget for a model with no partial prefix reuse", () => {
+      const partial = build(mkSession({ turns: history }), {
+        profile: PLAIN_INSTRUCT_PROFILE,
+      });
+      const none = build(mkSession({ turns: history }), {
+        profile: { ...PLAIN_INSTRUCT_PROFILE, prefixReuse: "none" },
+      });
+      expect(none.droppedTurns).toBeGreaterThan(partial.droppedTurns);
+      // An operator's own lower share still wins.
+      const lower = build(mkSession({ turns: history }), {
+        profile: { ...PLAIN_INSTRUCT_PROFILE, prefixReuse: "none" },
+        conversationLowWater: 0.3,
+      });
+      expect(lower.droppedTurns).toBeGreaterThan(none.droppedTurns);
+    });
+  });
+
   it("orders tail from stable to hot: loaded-skills, profile, memory-index, session-facts, recalled, world, conversation", () => {
     const session = mkSession({
       knownFacts: [{ text: "pinned context" }],
