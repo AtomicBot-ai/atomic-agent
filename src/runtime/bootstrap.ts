@@ -134,6 +134,8 @@ import {
 import {
   getEmbeddingModelDef,
   isKnownEmbeddingModelId,
+  readRunningPid,
+  readThroughputRecord,
 } from "../local-llm/index.js";
 import {
   createReflectionRunner,
@@ -1525,6 +1527,21 @@ export async function createAgentRuntime(
           });
           slotManager.resize(discovered);
         },
+        // The managed daemon's start-time throughput probe leaves its
+        // reading next to the pid file; the pid check keeps a previous
+        // daemon's figure from describing this one. An external server
+        // was never probed, so nothing is read for it.
+        ...(config.localModels.mode === "managed"
+          ? {
+              readThroughput: () => {
+                const dataDir = config.paths.localModelsDataDir;
+                return (
+                  readThroughputRecord(dataDir, readRunningPid(dataDir))
+                    ?.tokensPerSecond ?? null
+                );
+              },
+            }
+          : {}),
         logger,
       })
     : undefined;

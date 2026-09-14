@@ -53,6 +53,16 @@ export function resolveLogFilePath(dataDir: string): string {
 }
 
 /**
+ * The throughput the chat daemon measured at start (`probeThroughput`
+ * in `daemon-lifecycle.ts`), next to its pid file so the runtime that
+ * connects later — the TUI after `models start`, a resumed session —
+ * can read what this daemon instance generates at.
+ */
+export function resolveThroughputFilePath(dataDir: string): string {
+  return join(dataDir, "llama-server.throughput.json");
+}
+
+/**
  * Memory-v2 phase 1B. Pid file for the secondary `llama-server` instance
  * dedicated to `/embedding` requests. Lives next to the chat daemon's
  * pid file so a single `models stop` invocation can find and kill both.

@@ -198,7 +198,8 @@ export function buildFusionDelegateTool(
         });
       }
 
-      const poolSize = deps.workerSupportsSlotAffinity(workerProviderId)
+      const slotAffine = deps.workerSupportsSlotAffinity(workerProviderId);
+      const poolSize = slotAffine
         ? Math.max(1, deps.slotManager.poolSize())
         : Number.POSITIVE_INFINITY;
       // The ORCHESTRATOR decides the width. It is the party that knows
@@ -210,14 +211,16 @@ export function buildFusionDelegateTool(
       // on a slot-affine leg you cannot run more than the server has
       // request slots (the rest would queue and evict each other's KV
       // cache rather than run).
-      // A call that named no width gets the machine's capacity, not a
-      // number from a config file. The operator is not the party that
-      // knows how divisible this particular job is, and the slot pool is
-      // already the honest ceiling — `runMode.fusion.workers` survives
-      // only as a pin for someone who deliberately wrote one.
+      // A call that named no width on a LOCAL leg runs one worker at a
+      // time unless the operator pinned `runMode.fusion.workers`: the
+      // slots share one GPU, and the benchmark measured two local
+      // workers at 2.6-2.9 tok/s each against 6.4 for one — parallel is
+      // not faster there until a measurement says so, while a fan-out
+      // that overflows the shared context loses every worker at once.
+      // A cloud leg has no such pool and takes the configured default.
       const requested =
         parsed.maxWorkers ??
-        (Number.isFinite(poolSize) ? (poolSize as number) : mode.workers);
+        (slotAffine ? (mode.workersPinned ? mode.workers : 1) : mode.workers);
       const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
       // A cloud leg has no slot pool, so nothing physical bounds the
       // width — only the bill. `cloudWorkers` is that bound: a

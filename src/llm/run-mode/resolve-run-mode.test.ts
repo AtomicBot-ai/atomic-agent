@@ -190,6 +190,7 @@ describe("resolveRunMode", () => {
       {
         workers: 2,
         cloudWorkers: 4,
+        workersPinned: false,
         workerMaxSteps: 40,
         workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
       },
@@ -219,7 +220,12 @@ describe("resolveRunMode", () => {
           fusion: { workers: 5, workerMaxSteps: 10, workerTimeoutMs: 5_000 },
         }),
       ),
-    ).toMatchObject({ workers: 5, workerMaxSteps: 10, workerTimeoutMs: 5_000 });
+    ).toMatchObject({
+      workers: 5,
+      workersPinned: true,
+      workerMaxSteps: 10,
+      workerTimeoutMs: 5_000,
+    });
   });
 });
 

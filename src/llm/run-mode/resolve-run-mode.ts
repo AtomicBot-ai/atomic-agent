@@ -51,6 +51,15 @@ export type ResolvedRunMode = {
   workerReasoning?: FusionWorkerReasoning;
   /** `llm.runMode.fusion.workerMaxOutputTokens`, present only when configured. */
   workerMaxOutputTokens?: number;
+  /**
+   * Whether `workers` was written by the operator (`llm.runMode.fusion
+   * .workers` set) rather than filled from `DEFAULT_FUSION_WORKERS`. On a
+   * slot-affine (local) worker leg an unpinned width defaults to one
+   * worker: the benchmark measured two local workers at 2.6-2.9 tok/s
+   * each against 6.4 for one, so parallel local workers are not faster
+   * until a measurement says so.
+   */
+  workersPinned: boolean;
   workerMaxSteps: number;
   workerTimeoutMs: number;
   /**
@@ -183,6 +192,7 @@ export function resolveRunMode(
     ...(fusion?.workerMaxOutputTokens === undefined
       ? {}
       : { workerMaxOutputTokens: fusion.workerMaxOutputTokens }),
+    workersPinned: fusion?.workers !== undefined,
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs:
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,

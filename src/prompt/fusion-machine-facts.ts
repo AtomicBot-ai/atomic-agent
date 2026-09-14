@@ -61,6 +61,14 @@ export interface FusionMachineFacts {
   workerTokenBudget: number | null;
   /** The model serving workers, or `null` when nothing names it. */
   workerModel: string | null;
+  /**
+   * Single-stream generation speed of the local worker daemon, tokens
+   * per second, measured once by the throughput probe at daemon start
+   * and held on the model profile manager. `null` until measured, and
+   * always for a cloud leg. Measured per daemon instance, so it moves
+   * only when the daemon restarts — which drops the local cache anyway.
+   */
+  tokensPerSecond: number | null;
 }
 
 /** Nothing known — the block renders its behavioural lines only. */
@@ -69,6 +77,7 @@ export const NO_FUSION_MACHINE_FACTS: FusionMachineFacts = {
   workerSlots: null,
   workerTokenBudget: null,
   workerModel: null,
+  tokensPerSecond: null,
 };
 
 function nonEmpty(value: string | null | undefined): string | null {
@@ -78,7 +87,9 @@ function nonEmpty(value: string | null | undefined): string | null {
 }
 
 /**
- * What the runtime has observed, as opposed to what the config says.
+ * What the runtime has observed or measured, as opposed to what the
+ * config says. The agent loop passes both readings; `buildPrompt` merges
+ * them into the config-derived facts.
  *
  * `workerSlots` is the local llama-server's request-slot count as the
  * server itself reported it (`SlotManager.observedPoolSize`), `null`
@@ -87,9 +98,15 @@ function nonEmpty(value: string | null | undefined): string | null {
  * chose out of band — and it is observed, never guessed, so it may be
  * stated. It moves once, when first observed, and the prefix moves with
  * it: the same one-time cost as a config write.
+ *
+ * `tokensPerSecond` is the daemon's single-stream decode speed from the
+ * throughput probe (`ModelProfileManager.getTokensPerSecond`), `null`
+ * until measured. Per daemon instance, so it moves only on a restart —
+ * which drops the local cache anyway.
  */
 export interface FusionLiveFacts {
   workerSlots?: number | null;
+  tokensPerSecond?: number | null;
 }
 
 /**
@@ -185,5 +202,27 @@ export function resolveFusionMachineFacts(
       : ((local.mode === "managed" ? nonEmpty(local.managed.modelId) : null) ??
         nonEmpty(localEntry?.model)));
 
-  return { workerLeg, workerSlots, workerTokenBudget, workerModel };
+  // A measured figure, never a guessed one — and only for the leg it was
+  // measured on. Rounded so the prefix bytes cannot jitter between two
+  // readings of the same daemon.
+  const tokensPerSecond =
+    workersAreLocal &&
+    typeof live.tokensPerSecond === "number" &&
+    Number.isFinite(live.tokensPerSecond) &&
+    live.tokensPerSecond > 0
+      ? roundTokensPerSecond(live.tokensPerSecond)
+      : null;
+
+  return {
+    workerLeg,
+    workerSlots,
+    workerTokenBudget,
+    workerModel,
+    tokensPerSecond,
+  };
+}
+
+/** Whole tokens per second above 10, one decimal below — "~2.6 tok/s". */
+export function roundTokensPerSecond(value: number): number {
+  return value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
 }

@@ -1479,6 +1479,8 @@ export class AgentLoop {
                     this.deps.profileManager?.observeCompletionModelId(
                       completion.modelId,
                     ),
+                  fusionTokensPerSecond: () =>
+                    this.deps.profileManager?.getTokensPerSecond() ?? null,
                 }
               : {}),
             onEvent: (event) => {

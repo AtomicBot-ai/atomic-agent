@@ -46,6 +46,7 @@ export {
   resolveVersionFilePath,
   resolvePidFilePath,
   resolveLogFilePath,
+  resolveThroughputFilePath,
   resolveEmbeddingPidFilePath,
   resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
@@ -190,10 +191,17 @@ export {
   buildEmbeddingServerArgs,
   startChatAndEmbeddingDaemons,
   stopChatAndEmbeddingDaemons,
+  probeThroughput,
+  readThroughputRecord,
+  writeThroughputRecord,
+  THROUGHPUT_PROBE_TOKENS,
   type DaemonStartOptions,
+  type DaemonStartResult,
   type DaemonStatus,
   type EmbeddingDaemonStartOptions,
   type StartBothResult,
+  type ThroughputRecord,
+  type ThroughputSample,
 } from "./daemon-lifecycle.js";
 export { readLogTail, type LogTailResult } from "./log-tail.js";
 

@@ -224,3 +224,70 @@ describe("ModelProfileManager", () => {
     expect(manager.getGrammar()).not.toContain("think-prelude");
   });
 });
+
+describe("ModelProfileManager throughput (F16)", () => {
+  async function manager(readThroughput?: () => number | null) {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    return new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      ...(readThroughput ? { readThroughput } : {}),
+    });
+  }
+
+  it("knows no speed until something measured it", async () => {
+    const mgr = await manager();
+    expect(mgr.getTokensPerSecond()).toBeNull();
+  });
+
+  it("keeps an observed reading and ignores nonsense", async () => {
+    const mgr = await manager();
+    mgr.observeThroughput(6.4);
+    expect(mgr.getTokensPerSecond()).toBe(6.4);
+    for (const bad of [0, -3, Number.NaN, null]) mgr.observeThroughput(bad);
+    expect(mgr.getTokensPerSecond()).toBe(6.4);
+  });
+
+  it("reads the daemon's record lazily when it holds nothing", async () => {
+    // `models start` in another process wrote the record; the runtime
+    // that connects later reads it the first time the prompt asks.
+    let recorded: number | null = null;
+    const mgr = await manager(() => recorded);
+    expect(mgr.getTokensPerSecond()).toBeNull();
+    recorded = 3.2;
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+    // Held from then on, not re-read per step.
+    recorded = null;
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+  });
+
+  it("re-reads the record on a /props refresh so a restarted daemon's speed replaces the old", async () => {
+    let recorded: number | null = 3.2;
+    const mgr = await manager(() => recorded);
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+    recorded = 9.9;
+    await mgr.refresh();
+    expect(mgr.getTokensPerSecond()).toBe(9.9);
+  });
+
+  it("drops a speed that no record backs once the profile changed", async () => {
+    // A different model behind the same URL: the old figure describes a
+    // model that is gone.
+    let recorded: number | null = 3.2;
+    const stub = makeLlamaStub([GEMMA4_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      readThroughput: () => recorded,
+    });
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+    recorded = null;
+    const result = await mgr.refresh();
+    expect(result.profileChanged).toBe(true);
+    expect(mgr.getTokensPerSecond()).toBeNull();
+  });
+});

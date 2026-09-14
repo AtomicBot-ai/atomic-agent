@@ -72,6 +72,7 @@ export {
   renderPullRetry,
 } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
+import { roundTokensPerSecond } from "../prompt/fusion-machine-facts.js";
 import {
   describeProjectorSkipped,
   followDownloadJob,
@@ -595,8 +596,12 @@ export async function runLocalModelsStart(): Promise<number> {
       : m.supportsVision
         ? `, vision disabled (mmproj missing — download via TUI 'Local Models' panel)`
         : "";
+    const speedLine =
+      result.chat.tokensPerSecond === null
+        ? ""
+        : `, ~${roundTokensPerSecond(result.chat.tokensPerSecond)} tok/s single stream`;
     process.stdout.write(
-      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}\n`,
+      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${speedLine}\n`,
     );
     if ("pid" in result.embedding) {
       process.stdout.write(

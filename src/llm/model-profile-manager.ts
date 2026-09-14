@@ -36,6 +36,15 @@ export interface ModelProfileManagerOptions {
    * discovery entirely (tests with a stubbed HTTP layer).
    */
   onTotalSlots?: (totalSlots: number) => void;
+  /**
+   * Where the managed daemon's start-time throughput probe left its
+   * reading (`readThroughputRecord` in `daemon-lifecycle.ts`), consulted
+   * while the manager holds no figure of its own: the daemon may have
+   * been started by another process (`models start`) or after this
+   * runtime booted. Omit when the server is external — nothing measured
+   * it.
+   */
+  readThroughput?: () => number | null;
   logger?: StructuredLogger;
 }
 
@@ -72,10 +81,13 @@ export class ModelProfileManager {
   private grammar: string;
   private modelId: string | null;
   private stale = false;
+  /** Single-stream decode speed of the serving daemon, tokens per second. */
+  private tokensPerSecond: number | null = null;
   private readonly llama: LlamaServerClient;
   private readonly grammarsDir: string | undefined;
   private readonly browserEnabled: boolean;
   private readonly onTotalSlots: ((totalSlots: number) => void) | undefined;
+  private readonly readThroughput: (() => number | null) | undefined;
   private readonly logger: StructuredLogger | undefined;
 
   constructor(options: ModelProfileManagerOptions) {
@@ -86,11 +98,43 @@ export class ModelProfileManager {
     this.grammarsDir = options.grammarsDir;
     this.browserEnabled = options.browserEnabled ?? true;
     this.onTotalSlots = options.onTotalSlots;
+    this.readThroughput = options.readThroughput;
     this.logger = options.logger;
   }
 
   getProfile(): ModelProfile {
     return this.profile;
+  }
+
+  /**
+   * What the serving daemon generates at, single stream — the start-time
+   * probe's reading, or `null` while nothing has measured it. Consults
+   * the daemon's record when nothing is held, so a daemon started by
+   * another process is read the first time anyone asks.
+   */
+  getTokensPerSecond(): number | null {
+    if (this.tokensPerSecond === null && this.readThroughput) {
+      const recorded = this.readThroughput();
+      if (recorded !== null && Number.isFinite(recorded) && recorded > 0) {
+        this.tokensPerSecond = recorded;
+      }
+    }
+    return this.tokensPerSecond;
+  }
+
+  /**
+   * Record a measured decode speed — the start-time probe result handed
+   * over by whoever started the daemon in this process. Non-positive or
+   * non-finite readings are ignored rather than stored as nonsense.
+   */
+  observeThroughput(tokensPerSecond: number | null): void {
+    if (
+      tokensPerSecond !== null &&
+      Number.isFinite(tokensPerSecond) &&
+      tokensPerSecond > 0
+    ) {
+      this.tokensPerSecond = tokensPerSecond;
+    }
   }
 
   getGrammar(): string {
@@ -177,6 +221,17 @@ export class ModelProfileManager {
       }
       if (nextModelId !== null) {
         this.modelId = nextModelId;
+      }
+      // A refresh is where a restarted daemon becomes visible; re-read
+      // its record so the speed follows the instance, not the process.
+      if (this.readThroughput) {
+        const recorded = this.readThroughput();
+        this.tokensPerSecond =
+          recorded !== null && Number.isFinite(recorded) && recorded > 0
+            ? recorded
+            : profileChanged
+              ? null
+              : this.tokensPerSecond;
       }
       this.stale = false;
       return {

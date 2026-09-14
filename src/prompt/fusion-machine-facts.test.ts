@@ -8,7 +8,10 @@ import { resetConfigCache } from "../config/index.js";
 import { workerSlotFootprint } from "../local-llm/worker-slots.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { buildPrompt } from "./build-prompt.js";
-import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
+import {
+  resolveFusionMachineFacts,
+  roundTokensPerSecond,
+} from "./fusion-machine-facts.js";
 import type { CapabilitiesSummary, ToolDescriptor } from "./stable-prefix.js";
 
 type Providers = NonNullable<AtomicAgentConfig["llm"]>["providers"];
@@ -63,6 +66,7 @@ describe("resolveFusionMachineFacts", () => {
       workerSlots: 6,
       workerTokenBudget: workerSlotFootprint(),
       workerModel: "qwen3-4b",
+      tokensPerSecond: null,
     });
   });
 
@@ -150,7 +154,42 @@ describe("resolveFusionMachineFacts", () => {
       workerTokenBudget: null,
       // Never the idle managed daemon's model.
       workerModel: "gpt-x",
+      tokensPerSecond: null,
     });
+  });
+
+  it("states the measured decode speed for a local leg, rounded", () => {
+    // Measured once at daemon start; whole tokens per second above 10,
+    // one decimal below, so two readings of the same daemon cannot
+    // jitter the prefix bytes.
+    expect(
+      resolveFusionMachineFacts(config({}), { tokensPerSecond: 6.43 })
+        .tokensPerSecond,
+    ).toBe(6.4);
+    expect(
+      resolveFusionMachineFacts(config({}), { tokensPerSecond: 24.6 })
+        .tokensPerSecond,
+    ).toBe(25);
+    expect(roundTokensPerSecond(0.66)).toBe(0.7);
+  });
+
+  it("never states a speed nothing measured, nor one for a cloud leg", () => {
+    expect(resolveFusionMachineFacts(config({})).tokensPerSecond).toBeNull();
+    for (const bad of [0, -1, Number.NaN, null, undefined]) {
+      expect(
+        resolveFusionMachineFacts(config({}), { tokensPerSecond: bad })
+          .tokensPerSecond,
+      ).toBeNull();
+    }
+    const providers = [
+      { id: "openrouter", kind: "openai-compatible", defaultChatModel: "gpt-x" },
+    ] as unknown as Providers;
+    expect(
+      resolveFusionMachineFacts(
+        config({ workerProvider: "openrouter", providers }),
+        { tokensPerSecond: 40 },
+      ).tokensPerSecond,
+    ).toBeNull();
   });
 
   it("prefers the explicit worker-model pin over the managed model", () => {
@@ -222,6 +261,18 @@ describe("the facts reaching the prompt", () => {
     expect(prompt.stablePrefix).toContain("`qwen-3.5-4b`");
     expect(prompt.stablePrefix).toContain("~24K tokens");
     expect(prompt.stablePrefix).toContain("`maxWorkers` at most 5");
+    expect(prompt.stablePrefix).not.toContain("tok/s");
+
+    const measured = buildPrompt({
+      session: createEmptySessionState({ id: "s", workingDir: "/work" }),
+      toolDescriptors: [
+        { name: "fusion.delegate", summary: "fan out", argsSchema: "{}" },
+      ] satisfies ToolDescriptor[],
+      capabilities: { platform: "linux" } as unknown as CapabilitiesSummary,
+      skillCatalog: [],
+      fusionTokensPerSecond: 6.43,
+    });
+    expect(measured.stablePrefix).toContain("~6.4 tok/s single stream");
   });
 
   it("threads the observed slot count into the block for an external server (F21)", () => {
