@@ -402,6 +402,30 @@ describe("fusion.delegate", () => {
     expect(result.details).not.toHaveProperty("workerSpendUsd");
   });
 
+  it("sizes a local worker's time limit from the measured speed, a cloud one from the ceiling (F19)", async () => {
+    const limits: Array<number | undefined> = [];
+    const capture = (over: Partial<FusionDelegateDeps>) =>
+      buildFusionDelegateTool(
+        deps({
+          runTurn: async (_s, _m, options) => {
+            limits.push(options.taskMaxDurationMs);
+            return turnResult();
+          },
+          resolveRunMode: () => fusionMode({ workerTimeoutMs: 2_700_000 }),
+          localTokensPerSecond: () => 10,
+          ...over,
+        }),
+      );
+    const task = { id: "t1", title: "One", instructions: "Do one", files: ["a.js", "b.js"] };
+    await capture({}).run({ tasks: [task] }, ctx());
+    expect(limits[0]).toBeGreaterThanOrEqual(600_000);
+    expect(limits[0]).toBeLessThan(2_700_000);
+    await capture({ workerSupportsSlotAffinity: () => false }).run({ tasks: [task] }, ctx());
+    expect(limits[1]).toBe(2_700_000);
+    await capture({ localTokensPerSecond: () => null }).run({ tasks: [task] }, ctx());
+    expect(limits[2]).toBe(2_700_000);
+  });
+
   it("clamps a cloud fan-out to cloudWorkers and says so (F21)", async () => {
     // A cloud leg has no slot pool, so before this the width was whatever
     // the model asked for — three workers from a one-worker config, and

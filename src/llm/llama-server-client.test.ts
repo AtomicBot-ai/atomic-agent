@@ -41,6 +41,85 @@ describe("LlamaServerClient n_predict from the turn's ceiling (F20)", () => {
   });
 });
 
+describe("LlamaServerClient.measuredTokensPerSecond (F19)", () => {
+  function clientWith(replies: Array<Record<string, unknown>>): LlamaServerClient {
+    let i = 0;
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        const reply = replies[Math.min(i, replies.length - 1)]!;
+        i += 1;
+        return new Response(JSON.stringify({ content: "x", stop: true, ...reply }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("is null until a completion reports timings, then a rolling mean", async () => {
+    const client = clientWith([
+      { timings: { predicted_per_second: 30 } },
+      // An older server: no rate, but a count and a duration.
+      { timings: { predicted_n: 100, predicted_ms: 10_000 } },
+      // Nothing usable: ignored, the mean stands.
+      { timings: { predicted_n: 0, predicted_ms: 0 } },
+      {},
+    ]);
+    expect(client.measuredTokensPerSecond()).toBeNull();
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(30);
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(20);
+    await client.complete({ prompt: "p" });
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(20);
+  });
+
+  it("keeps only the last eight completions, so it follows the load", async () => {
+    const client = clientWith([{ timings: { predicted_per_second: 100 } }]);
+    for (let i = 0; i < 3; i += 1) await client.complete({ prompt: "p" });
+    const slow = clientWith([{ timings: { predicted_per_second: 100 } }]);
+    void slow;
+    // Eight slow completions push the fast ones out of the window.
+    let n = 0;
+    const mixed = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        n += 1;
+        return new Response(
+          JSON.stringify({
+            content: "x",
+            stop: true,
+            timings: { predicted_per_second: n <= 2 ? 100 : 10 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    });
+    for (let i = 0; i < 10; i += 1) await mixed.complete({ prompt: "p" });
+    expect(mixed.measuredTokensPerSecond()).toBe(10);
+  });
+
+  it("reads the stream's final event too", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            'data: {"content":"ok","stop":false}\n\n' +
+              'data: {"content":"","stop":true,"timings":{"predicted_per_second":42}}\n\n',
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    let next = await iterator.next();
+    while (!next.done) next = await iterator.next();
+    expect(client.measuredTokensPerSecond()).toBe(42);
+  });
+});
+
 describe("LlamaServerClient.complete", () => {
   it("posts JSON to /completion with grammar and slot_id", async () => {
     let captured: { url: string; body: unknown } | null = null;

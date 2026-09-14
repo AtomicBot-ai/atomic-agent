@@ -210,6 +210,9 @@ export interface LlamaServerProps {
  * `complete()` and a streaming `completeStream()` — both hand a GBNF grammar
  * and a reusable slot_id to llama.cpp for KV-cache reuse.
  */
+/** Completions the rolling throughput mean is taken over. */
+const THROUGHPUT_WINDOW = 8;
+
 export class LlamaServerClient {
   /** When set, this fixed base wins; otherwise each request reads `getConfig().llama.url`. */
   private readonly baseUrlOverride: string | undefined;
@@ -221,6 +224,8 @@ export class LlamaServerClient {
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
+  /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
+  private readonly throughputSamples: number[] = [];
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
@@ -247,6 +252,42 @@ export class LlamaServerClient {
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
     this.sleep = options.sleep ?? defaultSleep;
+  }
+
+  /**
+   * The server's measured generation speed, tokens per second, as a
+   * rolling mean of the last `THROUGHPUT_WINDOW` completions; `null`
+   * before any completion reported its timings. Fusion sizes a local
+   * worker's time limit from it (`estimateWorkerTimeoutMs`): a limit
+   * from a measured speed, not a guess, and one that follows the load
+   * on the machine rather than a constant.
+   */
+  measuredTokensPerSecond(): number | null {
+    if (this.throughputSamples.length === 0) return null;
+    const sum = this.throughputSamples.reduce((a, b) => a + b, 0);
+    return sum / this.throughputSamples.length;
+  }
+
+  /**
+   * Fold one completion's `timings` in. llama.cpp states the speed
+   * directly (`predicted_per_second`); an older server without it
+   * still reports the count and the milliseconds it took.
+   */
+  private recordThroughput(payload: Record<string, unknown>): void {
+    const timings = payload.timings;
+    if (timings === null || typeof timings !== "object") return;
+    const t = timings as Record<string, unknown>;
+    let perSecond = toNumber(t.predicted_per_second, Number.NaN);
+    if (!Number.isFinite(perSecond) || perSecond <= 0) {
+      const n = toNumber(t.predicted_n, 0);
+      const ms = toNumber(t.predicted_ms, 0);
+      perSecond = n > 0 && ms > 0 ? (n / ms) * 1000 : Number.NaN;
+    }
+    if (!Number.isFinite(perSecond) || perSecond <= 0) return;
+    this.throughputSamples.push(perSecond);
+    if (this.throughputSamples.length > THROUGHPUT_WINDOW) {
+      this.throughputSamples.shift();
+    }
   }
 
   async fetchProps(): Promise<LlamaServerProps> {
@@ -302,6 +343,7 @@ export class LlamaServerClient {
             throw await buildHttpError(response, url);
           }
           const json = (await response.json()) as Record<string, unknown>;
+          this.recordThroughput(json);
           return normaliseCompletionResponse(json);
         } catch (err) {
           throw this.wrapTransportError(err, url, timedOut());
@@ -450,6 +492,7 @@ export class LlamaServerClient {
               yield { delta, reasoningDelta, done: false };
             }
             if (parsed.stop) {
+              this.recordThroughput(parsed);
               finalResult = normaliseCompletionResponse(parsed);
               if (finalResult.content.length === 0) {
                 finalResult.content = accumulated;
