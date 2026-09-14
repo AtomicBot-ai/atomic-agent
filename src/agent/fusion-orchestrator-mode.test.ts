@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { verifySyntaxTool } from "../tools/verify/index.js";
+import type { ApprovalGate } from "../approval/approval-gate.js";
+import { buildVerifyRunTool, verifySyntaxTool } from "../tools/verify/index.js";
 import {
   checkFusionOrchestrator,
   emptyFusionOrchestratorState,
@@ -9,8 +10,22 @@ import {
   wouldRefuse,
 } from "./fusion-orchestrator-mode.js";
 
-/** `verify.run` lands with F6; until then it must be read-only by contract. */
-const verifyRunReadonly = true;
+/** The flag as the shipped definition carries it; the gate never runs the tool here. */
+const verifyRunReadonly = buildVerifyRunTool({
+  approvals: {} as ApprovalGate,
+  approvalRequired: false,
+  config: {
+    browser: {
+      enabled: false,
+      channel: "chrome",
+      headless: true,
+      cdpUrl: null,
+      executablePath: null,
+      noSandbox: false,
+      launchTimeoutMs: 1_000,
+    },
+  },
+}).readonly;
 
 /** The two facts the gate reads off a tool: does it exist, does it mutate. */
 function registryWith(

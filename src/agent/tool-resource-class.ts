@@ -182,6 +182,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // writes (node --check, tsc --noEmit, python compile(), bash -n), so
   // several may run side by side.
   "verify.syntax": "pure_read",
+  // `verify.run` executes a command, a server or a page — in a
+  // throwaway copy, so the workspace is untouched, but it still asks
+  // under the shell category below level 4, and it must be solo.
+  "verify.run": "approval_gated",
 
   // mcp.* discovery / read tools — pure_read regardless of per-server
   // trust because they only inspect the local catalog or fetch
@@ -288,6 +292,8 @@ const FS_WRITE_CATEGORIES: readonly ApprovalCategory[] = [
 const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
   {
     "os.shell.run": ["shell"],
+    // Same rung as a shell command: it runs one, in a copy.
+    "verify.run": ["shell"],
     "os.fs.write": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
     "os.fs.patch": FS_WRITE_CATEGORIES,

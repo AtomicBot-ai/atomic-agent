@@ -1450,7 +1450,10 @@ export async function createAgentRuntime(
   // command / service / page run against a throwaway copy of the
   // working directory. Registered next to the OS tools because it is
   // the review half of what they build.
-  registerVerifyTools(toolRegistry);
+  registerVerifyTools(toolRegistry, {
+    ...dangerous,
+    config: { browser: config.browser },
+  });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The
   // descriptors, by contrast, are gated on the token (see

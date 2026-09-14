@@ -532,7 +532,7 @@ describe("toStrictJsonSchema", () => {
    * knowingly — either the schema loses a bound it does not need, or
    * the tool joins this list.
    */
-  it("converts all but five of the sampled built-in tool schemas", () => {
+  it("converts all but six of the sampled built-in tool schemas", () => {
     const refused: string[] = [];
     let converted = 0;
     for (const name of DEFAULT_TOOL_NAMES) {
@@ -550,13 +550,15 @@ describe("toStrictJsonSchema", () => {
       "os.fs.archive.extract",
       // `headers` is a map; `body` may be any object.
       "os.http.request",
+      // `env` is a map of arbitrary variable names.
+      "verify.run",
       // maxItems on `paths`.
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 83 registered schemas, 78 of them strict. Pinned as a number so
+    // 84 registered schemas, 78 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(83);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(84);
     expect(converted).toBe(78);
   });
 
@@ -672,6 +674,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "mcp.prompt.get",
   "fusion.delegate",
   "verify.syntax",
+  "verify.run",
   // The nine from `github-tool-args-schemas.ts`, spread into the same
   // registry. Left out of this list, a bound added to one of them would
   // have joined the refusal set silently — the exact surprise the pin

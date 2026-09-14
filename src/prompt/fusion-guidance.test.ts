@@ -208,7 +208,10 @@ describe("the machine facts in the ### fusion block", () => {
     // the price of sending work that cannot succeed without the
     // conversation the worker will not have.
     expect(FUSION_GUIDANCE).toMatch(/prefer sending more/i);
-    expect(FUSION_GUIDANCE).toContain("independent, self-contained parts");
+    expect(FUSION_GUIDANCE).toContain("independent parts");
+    // And to check a fan-out before accepting it, with the tools that can.
+    expect(FUSION_GUIDANCE).toContain("`verify.syntax` on the declared files");
+    expect(FUSION_GUIDANCE).toContain("`verify.run` on what the request must do");
     expect(FUSION_GUIDANCE).toMatch(/only makes sense with this conversation/i);
     // And the width is stated as the model's own call.
     expect(FUSION_GUIDANCE).toMatch(/You choose `maxWorkers`/);
