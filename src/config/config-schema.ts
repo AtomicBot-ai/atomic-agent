@@ -2171,7 +2171,11 @@ export interface UserConfigFile {
 // timeout costs one wait, not one per step). A pre-v65 file whose value
 // is the old default (which the schema wrote, not the operator) takes
 // the new one; any other number is read as a deliberate pin and kept.
-export const USER_CONFIG_VERSION = 65;
+// v66: `agent.conversationLowWater` — the share of a limit the prompt's
+// transcript keeps after a cut (default 0.65), so the cut holds and the
+// prompt only grows at its end between cuts. Additive: an older file has
+// no field and takes the default.
+export const USER_CONFIG_VERSION = 66;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2325,6 +2329,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   62,
   63,
   64,
+  65,
   USER_CONFIG_VERSION,
 ];
 
