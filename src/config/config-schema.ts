@@ -2196,6 +2196,13 @@ export interface UserConfigFile {
 // transcript keeps after a cut (default 0.65), so the cut holds and the
 // prompt only grows at its end between cuts. Additive: an older file has
 // no field and takes the default.
+// v66: provider entries accept `messageShape` (`native` | `flat`, the
+// layout of a native-tools request), `userModels[].params` (per-model
+// wire parameters merged over `extraBody`) and `userModels[].reasoningFormat`
+// accepts `auto`; a new `llm.openrouter` block carries `preferCacheRoutes`
+// (default `true`). All additive: an older file parses with every field
+// absent, which is the native layout, no extra parameters, `auto`
+// reasoning and the cache-capable routes for Google models.
 export const USER_CONFIG_VERSION = 66;
 
 /**
