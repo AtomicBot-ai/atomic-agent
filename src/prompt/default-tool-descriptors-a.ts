@@ -91,7 +91,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     summary:
       "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.",
     argsSchema:
-      "{ pattern: string, path?: string, glob?: string | string[], type?: string, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
+      "{ pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
   },
   {
     name: "os.fs.edit",

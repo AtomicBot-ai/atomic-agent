@@ -26,6 +26,8 @@ interface GrepArgs {
   type: string | undefined;
   caseInsensitive: boolean;
   multiline: boolean;
+  /** Search for the pattern as a fixed string (`rg -F`), not a regex. */
+  literal: boolean;
   outputMode: GrepOutputMode;
   contextBefore: number;
   contextAfter: number;
@@ -51,6 +53,16 @@ interface RgFileRecord {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEAD_LIMIT = 200;
 
+/**
+ * ripgrep's wording when the pattern is not a valid regex — `.add(`,
+ * `foo[`, `a**`. Models reach for grep with a code fragment more often
+ * than with a regex, so the error names the flag that searches for the
+ * fragment as written.
+ */
+const REGEX_PARSE_ERROR = /regex parse error/i;
+export const LITERAL_HINT =
+  "the pattern was parsed as a regex; to search for it as a fixed string, set `literal: true`";
+
 export function buildOsFsGrepTool(
   deps: Partial<FsGrepDependencies> = {},
 ): ToolDefinition {
@@ -60,7 +72,7 @@ export function buildOsFsGrepTool(
   return {
     name: "os.fs.grep",
     description:
-      "Fast regex search across files using bundled ripgrep. Supports three output modes (`content`, `files_with_matches`, `count`), glob filtering, file-type filtering, multiline mode, context lines, and pagination. Read-only.",
+      "Fast regex search across files using bundled ripgrep (`literal: true` searches for the pattern as a fixed string). Supports three output modes (`content`, `files_with_matches`, `count`), glob filtering, file-type filtering, multiline mode, context lines, and pagination. Read-only.",
     readonly: true,
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, ctx.workingDir);
@@ -110,18 +122,22 @@ export function buildOsFsGrepTool(
         });
       }
       if (result.exitCode !== 0) {
+        const stderr = result.stderr.trim();
         const reason =
-          result.stderr.trim().length > 0
-            ? result.stderr.trim()
+          stderr.length > 0
+            ? stderr
             : `ripgrep exited with code ${result.exitCode}`;
+        const hint =
+          !args.literal && REGEX_PARSE_ERROR.test(stderr) ? LITERAL_HINT : null;
         return compressToolResult({
           tool: "os.fs.grep",
           status: "error",
-          output: reason,
+          output: hint === null ? reason : `${reason}\nhint: ${hint}`,
           details: {
             exitCode: result.exitCode,
             command: [rgPath, ...rgArgs],
             path: args.path,
+            ...(hint === null ? {} : { hint }),
           },
         });
       }
@@ -160,6 +176,7 @@ function parseArgs(
       : undefined;
   const caseInsensitive = rawArgs.caseInsensitive === true;
   const multiline = rawArgs.multiline === true;
+  const literal = rawArgs.literal === true;
   const modeRaw = rawArgs.outputMode;
   const outputMode: GrepOutputMode =
     modeRaw === "files_with_matches" || modeRaw === "count"
@@ -200,6 +217,7 @@ function parseArgs(
     type,
     caseInsensitive,
     multiline,
+    literal,
     outputMode,
     contextBefore,
     contextAfter,
@@ -255,6 +273,7 @@ async function resolveSearchTarget(
 function buildRgArgs(args: GrepArgs, searchTarget: string): string[] {
   const rg: string[] = ["--json"];
   if (args.caseInsensitive) rg.push("-i");
+  if (args.literal) rg.push("-F");
   if (args.multiline) {
     rg.push("-U");
     rg.push("--multiline-dotall");

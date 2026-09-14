@@ -206,6 +206,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
           anyOf: [stringSchema, stringArraySchema],
         },
         type: stringSchema,
+        literal: booleanSchema,
         caseInsensitive: booleanSchema,
         multiline: booleanSchema,
         outputMode: {
