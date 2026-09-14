@@ -1,22 +1,28 @@
-import type { CompletionResult } from "../completion-types.js";
+import type { CompletionResult, CompletionUsage } from "../completion-types.js";
+import type { ReasoningFormat } from "../llm-provider.js";
+import { createReasoningExtractor } from "./reasoning-extractor.js";
 
 export function normaliseOpenAiChatResponse(
   json: Record<string, unknown>,
   defaultChatModel: string,
+  reasoningFormat: ReasoningFormat = "auto",
 ): CompletionResult {
   const choice =
     (json.choices as Array<Record<string, unknown>> | undefined)?.[0] ?? {};
   const message = (choice.message as Record<string, unknown> | undefined) ?? {};
-  const usage = (json.usage as Record<string, unknown> | undefined) ?? {};
   const toolCalls = message.tool_calls as CompletionResult["toolCalls"];
   const content = normaliseMessageContent(message.content);
-  // Reasoning models served over OpenAI-compatible APIs (Qwen3.8 with
-  // preserve_thinking, DeepSeek-R1) return their CoT in a dedicated
-  // `reasoning_content` field alongside `content`.
-  const reasoningContent =
-    typeof message.reasoning_content === "string"
-      ? message.reasoning_content
-      : "";
+  // Reasoning models served over OpenAI-compatible APIs return their CoT
+  // in a dedicated field alongside `content` — `reasoning_content`
+  // (Qwen with preserve_thinking, DeepSeek-R1), `reasoning` (OpenRouter)
+  // or `thinking`. Same extractor as the stream consumer, so the unary
+  // and streamed paths cannot disagree about where reasoning lives.
+  const reasoningContent = createReasoningExtractor(
+    reasoningFormat,
+  ).extractFromMessage(message);
+  const usage = normaliseOpenAiUsage(
+    json.usage as Record<string, unknown> | undefined,
+  );
   return {
     content,
     reasoningContent,
@@ -25,20 +31,28 @@ export function normaliseOpenAiChatResponse(
     timing: {
       promptMs: 0,
       predictedMs: 0,
-      promptTokens: Number(usage.prompt_tokens ?? 0),
-      predictedTokens: Number(usage.completion_tokens ?? 0),
+      promptTokens: usage.promptTokens,
+      predictedTokens: usage.completionTokens,
     },
     cacheHitTokens: 0,
     slotId: -1,
     modelId: typeof json.model === "string" ? json.model : defaultChatModel,
-    usage: {
-      promptTokens: Number(usage.prompt_tokens ?? 0),
-      completionTokens: Number(usage.completion_tokens ?? 0),
-      totalTokens: Number(usage.total_tokens ?? 0),
-    },
+    usage,
     toolCalls,
     finishReason:
       typeof choice.finish_reason === "string" ? choice.finish_reason : null,
+  };
+}
+
+/** One reading of an OpenAI-shaped `usage` block for both paths. */
+export function normaliseOpenAiUsage(
+  raw: Record<string, unknown> | undefined,
+): CompletionUsage {
+  const usage = raw ?? {};
+  return {
+    promptTokens: Number(usage.prompt_tokens ?? 0),
+    completionTokens: Number(usage.completion_tokens ?? 0),
+    totalTokens: Number(usage.total_tokens ?? 0),
   };
 }
 

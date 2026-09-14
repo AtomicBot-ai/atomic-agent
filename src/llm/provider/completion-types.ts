@@ -43,6 +43,14 @@ export interface CompletionRequest {
    * they rely on `grammar` instead.
    */
   responseFormat?: ResponseFormatJsonSchema;
+  /**
+   * How hard a reasoning model should think on this completion. Spelled
+   * per vendor by the body builder (`reasoning: { effort }` on
+   * OpenRouter, `reasoning_effort` on OpenAI-compatible services) and
+   * omitted for kinds that document neither. Ignored by grammar-only
+   * providers. Set by the fusion fan-out for its workers.
+   */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**

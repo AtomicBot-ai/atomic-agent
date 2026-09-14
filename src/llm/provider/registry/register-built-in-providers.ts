@@ -20,9 +20,34 @@ import {
   resolveCliAdapter,
   SubscriptionCliProvider,
 } from "../subscription-cli/index.js";
-import { registerProviderKind } from "./provider-types.js";
+import {
+  registerProviderKind,
+  type LlmProviderConfigEntry,
+} from "./provider-types.js";
 
 let registered = false;
+
+/**
+ * What the entry's `userModels[]` row for the model it serves says about
+ * the wire: a pinned reasoning field (`reasoningFormat`) and per-model
+ * request parameters (`params`). Read here, at construction, because the
+ * provider is rebuilt whenever the entry changes; a row for some other
+ * model on the same entry says nothing about this one. Absent, the
+ * provider keeps its defaults (`auto` reasoning, no extra parameters).
+ */
+function modelWireOptions(
+  entry: LlmProviderConfigEntry,
+  modelId: string,
+): {
+  reasoningFormat?: NonNullable<LlmProviderConfigEntry["userModels"]>[number]["reasoningFormat"];
+  modelParams?: Record<string, unknown>;
+} {
+  const row = entry.userModels?.find((model) => model.id === modelId);
+  return {
+    ...(row?.reasoningFormat ? { reasoningFormat: row.reasoningFormat } : {}),
+    ...(row?.params ? { modelParams: row.params } : {}),
+  };
+}
 
 export function registerBuiltInProviderKinds(): void {
   if (registered) return;
@@ -56,6 +81,7 @@ export function registerBuiltInProviderKinds(): void {
     }
     return new OpenAiProvider({
       id: entry.id,
+      providerKind: "openai-compatible",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel,
@@ -67,6 +93,7 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      ...modelWireOptions(entry, entry.defaultChatModel),
       logger: ctx.logger,
     });
   });
@@ -80,6 +107,7 @@ export function registerBuiltInProviderKinds(): void {
     }
     return new OpenAiProvider({
       id: entry.id,
+      providerKind: "qwen-openai-compatible",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel,
@@ -92,17 +120,20 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      ...modelWireOptions(entry, entry.defaultChatModel),
       logger: ctx.logger,
     });
   });
 
   registerProviderKind("openrouter", (ctx) => {
     const entry = ctx.entry;
+    const model = entry.defaultChatModel ?? "openrouter/auto";
     return new OpenRouterProvider({
       id: entry.id,
+      providerKind: "openrouter",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
-      defaultChatModel: entry.defaultChatModel ?? "openrouter/auto",
+      defaultChatModel: model,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
@@ -110,6 +141,7 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      ...modelWireOptions(entry, model),
       // OpenRouter's own `provider` routing block. Deliberately wired on
       // this kind alone: it is not part of the OpenAI schema, and no
       // other kind here documents a field by that name.
@@ -123,14 +155,17 @@ export function registerBuiltInProviderKinds(): void {
 
   registerProviderKind("aimlapi", (ctx) => {
     const entry = ctx.entry;
+    const model = entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL;
     return new AimlapiProvider({
       id: entry.id,
+      providerKind: "aimlapi",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
-      defaultChatModel: entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
+      defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      ...modelWireOptions(entry, model),
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
@@ -141,14 +176,17 @@ export function registerBuiltInProviderKinds(): void {
 
   registerProviderKind("gemini", (ctx) => {
     const entry = ctx.entry;
+    const model = entry.defaultChatModel ?? GEMINI_DEFAULT_CHAT_MODEL;
     return new GeminiProvider({
       id: entry.id,
+      providerKind: "gemini",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
-      defaultChatModel: entry.defaultChatModel ?? GEMINI_DEFAULT_CHAT_MODEL,
+      defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      ...modelWireOptions(entry, model),
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,

@@ -146,14 +146,32 @@ export type UserModelEntry = {
   supportsVision?: boolean;
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
+  /**
+   * Which response field carries the model's reasoning. `auto` (the
+   * provider default when unset) reads `reasoning`, `reasoning_content`
+   * or `thinking`, whichever is present; a named format pins one.
+   */
   reasoningFormat?:
-    "none" | "delta_reasoning" | "delta_thinking" | "delta_reasoning_content";
+    | "auto"
+    | "none"
+    | "delta_reasoning"
+    | "delta_thinking"
+    | "delta_reasoning_content";
   pricing?: {
     input: number;
     output: number;
     cacheRead?: number;
     cacheWrite?: number;
   };
+  /**
+   * Wire parameters for this model, merged into every OpenAI-compatible
+   * chat body after the provider's `extraBody` (a model-level setting is
+   * the more specific one). The way to hand a model a `temperature`,
+   * `top_p`, `reasoning_effort` or any vendor field the runtime does not
+   * model; reserved keys (`model`, `messages`, `stream`, `tools`) still
+   * cannot be overridden.
+   */
+  params?: Record<string, unknown>;
 };
 
 export type UserLlmFallbackConfig = {
@@ -424,6 +442,7 @@ function parseOptionalPlainObject(
 const PROMPT_CACHE_MODES = new Set(["auto", "off", "explicit-markers"]);
 const TOOLS_SUPPORT_LEVELS = new Set(["none", "basic", "parallel", "strict"]);
 const REASONING_FORMATS = new Set([
+  "auto",
   "none",
   "delta_reasoning",
   "delta_thinking",
@@ -527,6 +546,7 @@ function parseUserModelEntry(raw: unknown, field: string): UserModelEntry {
       NonNullable<UserModelEntry["reasoningFormat"]>
     >(obj.reasoningFormat, `${field}.reasoningFormat`, REASONING_FORMATS),
     pricing: parseUserModelPricing(obj.pricing, `${field}.pricing`),
+    params: parseOptionalPlainObject(obj.params, `${field}.params`),
   };
 }
 

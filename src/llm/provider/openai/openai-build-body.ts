@@ -2,6 +2,7 @@ import type { CompletionRequest } from "../completion-types.js";
 import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
+import { modelParamProfile, reasoningEffortField } from "./model-params.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 
 /**
@@ -12,6 +13,25 @@ import { toStrictOpenAiTools } from "./openai-strict-tools.js";
  */
 const RESERVED_BODY_KEYS = ["model", "messages", "stream", "tools"] as const;
 
+/**
+ * What the builder knows about the provider and model beyond the request
+ * itself. Every field is optional and absent leaves the body exactly as
+ * it was before the field existed.
+ */
+export interface OpenAiBodyOptions {
+  /**
+   * Per-model wire parameters from `userModels[].params`, merged over the
+   * body *and* over `extraBody` — a model-level setting is more specific
+   * than a provider-level one. Reserved keys still win.
+   */
+  modelParams?: Record<string, unknown>;
+  /**
+   * The registered kind sending this body, for fields whose spelling is
+   * the vendor's (`reasoningEffort`). Absent, those fields are omitted.
+   */
+  providerKind?: string;
+}
+
 export function buildOpenAiChatBody(
   request: CompletionRequest,
   defaultChatModel: string,
@@ -20,8 +40,10 @@ export function buildOpenAiChatBody(
   maxOutputTokens?: number,
   strictTools?: boolean,
   providerPreferences?: Record<string, unknown>,
+  options: OpenAiBodyOptions = {},
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
+  const profile = modelParamProfile(defaultChatModel);
   // Settled before the body exists because it also decides the prompt:
   // a request that sends `response_format` must mention JSON (see
   // `ensureJsonMention`). The tools guard is explained where
@@ -40,7 +62,12 @@ export function buildOpenAiChatBody(
           : filtered.prompt,
       },
     ],
-    temperature: filtered.temperature ?? 0.2,
+    // OpenAI's reasoning models reject the field outright (`Unsupported
+    // parameter: 'temperature'`), so for them it is not sent at all —
+    // not even a caller's own value. See `model-params.ts`.
+    ...(profile.temperature
+      ? { temperature: filtered.temperature ?? 0.2 }
+      : {}),
     stream,
   };
   // `max_tokens` only when somebody actually asked for a bound.
@@ -61,9 +88,17 @@ export function buildOpenAiChatBody(
   // through the entry's `extraBody` — `max_tokens` is deliberately not
   // in `RESERVED_BODY_KEYS`, so that passthrough wins.
   // Order: what this call asked for, else the provider's configured
-  // ceiling, else nothing at all.
+  // ceiling, else nothing at all. The field is the model family's own:
+  // OpenAI's reasoning models answer `max_tokens` with "'max_tokens' is
+  // not supported with this model. Use 'max_completion_tokens' instead."
   const cap = filtered.maxTokens ?? maxOutputTokens;
-  if (typeof cap === "number") body.max_tokens = cap;
+  if (typeof cap === "number") body[profile.capField] = cap;
+  if (filtered.reasoningEffort !== undefined) {
+    Object.assign(
+      body,
+      reasoningEffortField(options.providerKind, filtered.reasoningEffort),
+    );
+  }
   if (stream) {
     // Ask for the usage block on the stream's last chunk. Without it
     // most servers send none — OpenAI, llama.cpp and everything built on
@@ -132,10 +167,16 @@ export function buildOpenAiChatBody(
   // `extraBody.provider` is the older way to say the same thing, and it
   // keeps winning. Absent, the body is byte-identical to what it was.
   if (providerPreferences) body.provider = providerPreferences;
-  if (!extraBody) return body;
-  // Vendor passthrough. Merged last so it can reach fields this builder
-  // does not model, then reserved keys are restored on top.
-  const merged: Record<string, unknown> = { ...body, ...extraBody };
+  const modelParams = options.modelParams;
+  if (!extraBody && !modelParams) return body;
+  // Vendor passthrough, then the model's own parameters. Merged last so
+  // they can reach fields this builder does not model, then reserved
+  // keys are restored on top.
+  const merged: Record<string, unknown> = {
+    ...body,
+    ...extraBody,
+    ...modelParams,
+  };
   for (const key of RESERVED_BODY_KEYS) {
     if (key in body) merged[key] = body[key];
     else delete merged[key];

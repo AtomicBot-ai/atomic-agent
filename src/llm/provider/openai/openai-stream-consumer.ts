@@ -127,15 +127,21 @@ export function createOpenAiStreamConsumer(
               toolArgsBuffer = chunk.toolArgsBuffer;
               const replyText =
                 extractPartialReplyTextFromToolArguments(toolArgsBuffer);
-              if (replyText.length > 0) {
+              // Text the event carried beside its tool-call delta is
+              // shown as it is; reply text still streaming inside the
+              // call's arguments is shown as it becomes readable.
+              const textDelta =
+                chunk.delta +
+                (replyText.length > 0
+                  ? replyText.slice(chunk.emittedReplyLength)
+                  : "");
+              if (
+                replyText.length > 0 ||
+                textDelta.length > 0 ||
+                chunk.reasoningDelta.length > 0
+              ) {
                 yield {
-                  delta: replyText.slice(chunk.emittedReplyLength),
-                  reasoningDelta: chunk.reasoningDelta,
-                  done: false,
-                };
-              } else if (chunk.reasoningDelta.length > 0) {
-                yield {
-                  delta: "",
+                  delta: textDelta,
                   reasoningDelta: chunk.reasoningDelta,
                   done: false,
                 };

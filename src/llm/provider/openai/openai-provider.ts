@@ -20,7 +20,10 @@ import {
   withStrictNullArgumentDrop,
 } from "./openai-tool-call-adapter.js";
 import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
-import { buildOpenAiChatBody } from "./openai-build-body.js";
+import {
+  buildOpenAiChatBody,
+  type OpenAiBodyOptions,
+} from "./openai-build-body.js";
 import {
   buildOpenAiHeaders,
   createOpenAiAttemptBudget,
@@ -40,6 +43,7 @@ import { describeImageViaOpenAi } from "./openai-describe-image.js";
 import {
   adaptQwenCompletionResult,
   adaptQwenTaggedToolResponse,
+  type TaggedToolAdaptOptions,
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
@@ -64,7 +68,24 @@ export interface OpenAiProviderOptions {
   toolCallAdapter?: ToolCallAdapter;
   streamConsumer?: StreamConsumer;
   apiPathPrefix?: string;
+  /**
+   * Tagged text tool calls (`<tool_call>…</tool_call>`, Qwen's XML-ish
+   * form or the Hermes JSON form) are decoded for every kind when the
+   * whole reply is such blocks. `"qwen"` additionally reads a call out of
+   * `reasoning_content` when `content` holds none (#105).
+   */
   taggedToolCompatibility?: "qwen";
+  /**
+   * The registered kind this client serves (`openrouter`,
+   * `openai-compatible`, …), for body fields whose spelling is the
+   * vendor's. See `OpenAiBodyOptions.providerKind`.
+   */
+  providerKind?: string;
+  /**
+   * Wire parameters of the default chat model from `userModels[].params`,
+   * merged over every chat body after `extraBody`.
+   */
+  modelParams?: Record<string, unknown>;
   /**
    * Vendor-specific fields merged into every chat completion body.
    * See `RESERVED_BODY_KEYS` in `openai-build-body.ts` for the keys
@@ -111,6 +132,8 @@ export class OpenAiProvider implements LlmProvider {
   private readonly maxOutputTokens: number | undefined;
   private readonly strictTools: boolean;
   private readonly providerPreferences: Record<string, unknown> | undefined;
+  private readonly bodyOptions: OpenAiBodyOptions;
+  private readonly reasoningFormat: ReasoningFormat;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -124,9 +147,12 @@ export class OpenAiProvider implements LlmProvider {
     this.toolCallAdapter = options.strictTools
       ? withStrictNullArgumentDrop(baseToolCallAdapter)
       : baseToolCallAdapter;
+    // `auto` reads whichever reasoning field the service writes; a
+    // configured format (`userModels[].reasoningFormat`) pins one.
+    this.reasoningFormat = options.reasoningFormat ?? "auto";
     this.streamConsumer =
       options.streamConsumer ??
-      createOpenAiStreamConsumer(options.reasoningFormat ?? "delta_reasoning");
+      createOpenAiStreamConsumer(this.reasoningFormat);
     this.capabilities = {
       vision: options.supportsVision ?? true,
       visionSource: options.supportsVision ? "modalities.vision" : "absent",
@@ -135,7 +161,7 @@ export class OpenAiProvider implements LlmProvider {
       supportsParallelTools: options.supportsParallelTools ?? true,
       supportsSlotAffinity: false,
       supportsPromptCache: options.supportsPromptCache ?? true,
-      reasoningFormat: options.reasoningFormat ?? "delta_reasoning",
+      reasoningFormat: this.reasoningFormat,
     };
     this.defaultChatModel = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
@@ -144,6 +170,10 @@ export class OpenAiProvider implements LlmProvider {
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
     this.providerPreferences = options.providerPreferences;
+    this.bodyOptions = {
+      ...(options.providerKind ? { providerKind: options.providerKind } : {}),
+      ...(options.modelParams ? { modelParams: options.modelParams } : {}),
+    };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -176,6 +206,7 @@ export class OpenAiProvider implements LlmProvider {
           this.maxOutputTokens,
           this.strictTools,
           this.providerPreferences,
+          this.bodyOptions,
         ),
       (body) =>
         openAiPostJson(
@@ -188,14 +219,29 @@ export class OpenAiProvider implements LlmProvider {
           },
         ),
     );
-    const adapted =
-      this.taggedToolCompatibility === "qwen"
-        ? adaptQwenTaggedToolResponse(json, request)
-        : json;
+    const adapted = adaptQwenTaggedToolResponse(
+      json,
+      request,
+      this.taggedToolOptions(),
+    );
     return withSentMaxTokens(
-      normaliseOpenAiChatResponse(adapted, this.defaultChatModel),
+      normaliseOpenAiChatResponse(
+        adapted,
+        this.defaultChatModel,
+        this.reasoningFormat,
+      ),
       sentBody,
     );
+  }
+
+  /**
+   * A reply that is nothing but `<tool_call>` blocks is a tool call on
+   * every kind (Hermes fine-tunes and Qwen-derived models write one over
+   * any OpenAI-compatible server); only the Qwen kind also looks inside
+   * the reasoning channel. See `TaggedToolAdaptOptions`.
+   */
+  private taggedToolOptions(): TaggedToolAdaptOptions {
+    return { fromReasoning: this.taggedToolCompatibility === "qwen" };
   }
 
   async *completeStream(
@@ -209,6 +255,7 @@ export class OpenAiProvider implements LlmProvider {
       this.maxOutputTokens,
       this.strictTools,
       this.providerPreferences,
+      this.bodyOptions,
     );
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
@@ -365,10 +412,11 @@ export class OpenAiProvider implements LlmProvider {
     // so native and tagged calls are judged from the same final dispatchable
     // tool-call set. A synthetic `finishReason: "tool_calls"` from the
     // adapter is not evidence that the provider actually terminated cleanly.
-    const adaptedFinal =
-      this.taggedToolCompatibility === "qwen"
-        ? adaptQwenCompletionResult(final, request)
-        : final;
+    const adaptedFinal = adaptQwenCompletionResult(
+      final,
+      request,
+      this.taggedToolOptions(),
+    );
     return withSentMaxTokens(
       applyToolCallTerminationSafety(
         adaptedFinal,

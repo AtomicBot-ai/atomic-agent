@@ -479,3 +479,92 @@ describe("buildOpenAiChatBody — strict function tools", () => {
     expect("tools" in body).toBe(false);
   });
 });
+
+describe("buildOpenAiChatBody — per-model parameters", () => {
+  // OpenAI's reasoning models reject `temperature` and answer
+  // `max_tokens` with "Use 'max_completion_tokens' instead." — the
+  // rejection `request-size-rejection.ts` quotes. Read after any
+  // vendor prefix, so the same model through OpenRouter gets the same
+  // body.
+  it.each(["o3", "o4-mini", "o1-preview", "gpt-5", "gpt-5.2-mini", "openai/o3", "openai/gpt-5-codex"])(
+    "sends no temperature and max_completion_tokens for %s",
+    (model) => {
+      const body = buildOpenAiChatBody(
+        { prompt: "hi", temperature: 0.7, maxTokens: 512 },
+        model,
+        false,
+      );
+      expect(body).not.toHaveProperty("temperature");
+      expect(body).not.toHaveProperty("max_tokens");
+      expect(body.max_completion_tokens).toBe(512);
+    },
+  );
+
+  it.each(["olmo-3", "gpt-4.1", "google/gemini-3.8-flash", "qwen/qwen3.8-27b", "o-mega"])(
+    "keeps the historical body for %s",
+    (model) => {
+      const body = buildOpenAiChatBody({ prompt: "hi", maxTokens: 512 }, model, false);
+      expect(body.temperature).toBe(0.2);
+      expect(body.max_tokens).toBe(512);
+      expect(body).not.toHaveProperty("max_completion_tokens");
+    },
+  );
+
+  it("merges userModels[].params over the body and over extraBody, reserved keys excepted", () => {
+    const body = buildOpenAiChatBody(
+      { prompt: "hi" },
+      "m",
+      false,
+      { top_p: 0.5, chat_template_kwargs: { enable_thinking: false } },
+      undefined,
+      undefined,
+      undefined,
+      {
+        modelParams: {
+          top_p: 0.9,
+          temperature: 1,
+          model: "other",
+          messages: [],
+        },
+      },
+    );
+    expect(body.top_p).toBe(0.9);
+    expect(body.temperature).toBe(1);
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.model).toBe("m");
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }]);
+  });
+
+  it("spells reasoningEffort the way each kind documents it, and omits it elsewhere", () => {
+    const request = { prompt: "hi", reasoningEffort: "low" as const };
+    expect(
+      buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, {
+        providerKind: "openrouter",
+      }).reasoning,
+    ).toEqual({ effort: "low" });
+    expect(
+      buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, {
+        providerKind: "openai-compatible",
+      }).reasoning_effort,
+    ).toBe("low");
+    for (const providerKind of ["gemini", "aimlapi", undefined]) {
+      const body = buildOpenAiChatBody(
+        request,
+        "m",
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { ...(providerKind ? { providerKind } : {}) },
+      );
+      expect(body).not.toHaveProperty("reasoning");
+      expect(body).not.toHaveProperty("reasoning_effort");
+    }
+    // Absent, nothing is sent whatever the kind.
+    const plain = buildOpenAiChatBody({ prompt: "hi" }, "m", false, undefined, undefined, undefined, undefined, {
+      providerKind: "openrouter",
+    });
+    expect(plain).not.toHaveProperty("reasoning");
+  });
+});

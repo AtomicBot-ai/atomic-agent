@@ -635,3 +635,94 @@ describe("adaptQwenTaggedToolResponse with a strict tools payload", () => {
     expect(adaptQwenTaggedToolResponse(response, { tools })).toBe(response);
   });
 });
+
+describe("adaptQwenTaggedToolResponse — the Hermes JSON dialect", () => {
+  const request = { prompt: "x", tools: offeredTools };
+
+  it("converts `<tool_call>{json}</tool_call>` blocks, typed arguments kept as they are", () => {
+    const adapted = adaptQwenTaggedToolResponse(
+      responseWith({
+        role: "assistant",
+        content: [
+          '<tool_call>{"name": "os.fs.read", "arguments": {"count": 2, "enabled": true, "paths": ["a"]}}</tool_call>',
+          '\n<tool_call>{"name": "reply", "arguments": {"text": "done"}}</tool_call>\n',
+        ].join(""),
+      }),
+      request,
+    );
+    const message = firstMessage(adapted);
+    expect(message.content).toBeNull();
+    expect(
+      (message.tool_calls as Array<{ function: { name: string; arguments: string } }>).map(
+        (call) => [call.function.name, JSON.parse(call.function.arguments)],
+      ),
+    ).toEqual([
+      ["os__fs__read", { count: 2, enabled: true, paths: ["a"] }],
+      ["reply", { text: "done" }],
+    ]);
+  });
+
+  it("accepts `parameters` for the arguments object and a call with none", () => {
+    const adapted = adaptQwenTaggedToolResponse(
+      responseWith({
+        role: "assistant",
+        content:
+          '<tool_call>{"name": "os__fs__read", "parameters": {"text": "t"}}</tool_call><tool_call>{"name": "os.fs.read"}</tool_call>',
+      }),
+      request,
+    );
+    expect(
+      (firstMessage(adapted).tool_calls as Array<{ function: { arguments: string } }>).map(
+        (call) => JSON.parse(call.function.arguments),
+      ),
+    ).toEqual([{ text: "t" }, {}]);
+  });
+
+  it("coerces a string standing where the schema wants another type", () => {
+    const adapted = adaptQwenTaggedToolResponse(
+      responseWith({
+        role: "assistant",
+        content:
+          '<tool_call>{"name": "os.fs.read", "arguments": {"count": "3", "ratio": "0.5", "enabled": "false"}}</tool_call>',
+      }),
+      request,
+    );
+    const call = (firstMessage(adapted).tool_calls as Array<{ function: { arguments: string } }>)[0]!;
+    expect(JSON.parse(call.function.arguments)).toEqual({
+      count: 3,
+      ratio: 0.5,
+      enabled: false,
+    });
+  });
+
+  it("rejects an unknown tool, an undeclared or mistyped argument, malformed JSON, and prose around the block", () => {
+    const inputs = [
+      '<tool_call>{"name": "not.offered", "arguments": {}}</tool_call>',
+      '<tool_call>{"name": "os.fs.read", "arguments": {"nope": 1}}</tool_call>',
+      '<tool_call>{"name": "os.fs.read", "arguments": {"count": 1.5}}</tool_call>',
+      '<tool_call>{"name": "reply", "arguments": {}}</tool_call>',
+      '<tool_call>{"name": "reply", "arguments": {"text": "x"}</tool_call>',
+      '<tool_call>{"arguments": {"text": "x"}}</tool_call>',
+      'Call it like this: <tool_call>{"name": "reply", "arguments": {"text": "x"}}</tool_call>',
+    ];
+    for (const content of inputs) {
+      const original = responseWith({ role: "assistant", content });
+      expect(adaptQwenTaggedToolResponse(original, request)).toBe(original);
+    }
+  });
+
+  it("ignores reasoning_content when told to", () => {
+    const original = responseWith({
+      role: "assistant",
+      content: "",
+      reasoning_content:
+        '<tool_call>{"name": "reply", "arguments": {"text": "x"}}</tool_call>',
+    });
+    expect(
+      adaptQwenTaggedToolResponse(original, request, { fromReasoning: false }),
+    ).toBe(original);
+    expect(
+      firstMessage(adaptQwenTaggedToolResponse(original, request)).tool_calls,
+    ).toHaveLength(1);
+  });
+});

@@ -97,20 +97,68 @@ describe("OpenAiProvider qwen tagged-tool compatibility", () => {
     ]);
   });
 
-  it("leaves the existing OpenAI provider path unchanged by default", async () => {
-    const tagged =
-      "<tool_call><function=os.fs.read><parameter=path>/tmp/a</parameter></function></tool_call>";
-    const result = await provider(
+  it("decodes a reply that is only tagged blocks on the default kind too", async () => {
+    // Hermes fine-tunes and Qwen-derived models write `<tool_call>` text
+    // over any OpenAI-compatible server, not only the Qwen kind; a reply
+    // that is nothing but such blocks is a tool call wherever it came
+    // from. Both dialects: Qwen's XML-ish form and the Hermes JSON form.
+    for (const tagged of [
+      "<tool_call><function=os.fs.read><parameter=path>/tmp/a</parameter></function></tool_call>",
+      '<tool_call>{"name": "os.fs.read", "arguments": {"path": "/tmp/a"}}</tool_call>',
+    ]) {
+      const result = await provider(
+        fakeFetch({ role: "assistant", content: tagged }) as unknown as typeof fetch,
+        undefined,
+      ).complete({ prompt: "read", tools });
+      expect(result.content).toBe("");
+      expect(result.finishReason).toBe("tool_calls");
+      expect(result.toolCalls).toMatchObject([
+        {
+          type: "function",
+          function: { name: "os__fs__read", arguments: '{"path":"/tmp/a"}' },
+        },
+      ]);
+    }
+  });
+
+  it("keeps a reply that merely quotes the syntax, and never reads reasoning on the default kind", async () => {
+    const quoted =
+      "Use this shape:\n<tool_call><function=os.fs.read><parameter=path>/tmp/a</parameter></function></tool_call>";
+    const prose = await provider(
+      fakeFetch({ role: "assistant", content: quoted }) as unknown as typeof fetch,
+      undefined,
+    ).complete({ prompt: "read", tools });
+    expect(prose.content).toBe(quoted);
+    expect(prose.toolCalls).toBeUndefined();
+    expect(prose.finishReason).toBe("stop");
+
+    // #105's reasoning-channel fallback is Qwen's: elsewhere the channel
+    // is scratch space, and a call thought about is not a call made.
+    const thought = await provider(
       fakeFetch({
         role: "assistant",
-        content: tagged,
+        content: "",
+        reasoning_content:
+          "<tool_call><function=os.fs.read><parameter=path>/tmp/a</parameter></function></tool_call>",
       }) as unknown as typeof fetch,
       undefined,
     ).complete({ prompt: "read", tools });
+    expect(thought.toolCalls).toBeUndefined();
+    expect(thought.reasoningContent).toContain("<tool_call>");
+  });
 
-    expect(result.content).toBe(tagged);
-    expect(result.toolCalls).toBeUndefined();
-    expect(result.finishReason).toBe("stop");
+  it("reads reasoning from whichever field the service writes, by default", async () => {
+    for (const field of ["reasoning", "reasoning_content", "thinking"]) {
+      const result = await provider(
+        fakeFetch({
+          role: "assistant",
+          content: "ok",
+          [field]: "because",
+        }) as unknown as typeof fetch,
+        undefined,
+      ).complete({ prompt: "hi" });
+      expect(result.reasoningContent).toBe("because");
+    }
   });
 
   it("streams deltas, then adapts the buffered tagged calls (buffer-then-adapt)", async () => {

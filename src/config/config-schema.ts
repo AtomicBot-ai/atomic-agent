@@ -1015,6 +1015,7 @@ export interface AtomicAgentConfig {
         supportsTools?: "none" | "basic" | "parallel" | "strict";
         supportsPromptCache?: boolean;
         reasoningFormat?:
+          | "auto"
           | "none"
           | "delta_reasoning"
           | "delta_thinking"
@@ -1025,6 +1026,11 @@ export interface AtomicAgentConfig {
           cacheRead?: number;
           cacheWrite?: number;
         };
+        /**
+         * Wire parameters for this model, merged into every chat body
+         * after the provider's `extraBody`. Reserved keys still win.
+         */
+        params?: Record<string, unknown>;
       }>;
     }>;
     toolTransport: "auto" | "grammar" | "native_tools";

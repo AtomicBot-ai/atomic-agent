@@ -688,3 +688,51 @@ describe("provider strictTools", () => {
     }
   });
 });
+
+describe("userModels[].params and reasoningFormat auto", () => {
+  const withRow = (row: Record<string, unknown>) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "cloud",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [
+        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        {
+          id: "cloud",
+          kind: "openai-compatible",
+          baseUrl: "https://example.invalid",
+          defaultChatModel: "m",
+          userModels: [{ id: "m", kind: "chat", ...row }],
+        },
+      ],
+    },
+  });
+  const row = (file: ReturnType<typeof parseUserConfigFile>) =>
+    file.llm?.providers[1]?.userModels?.[0];
+
+  it("round-trips params as a plain object", () => {
+    expect(
+      row(parseUserConfigFile(withRow({ params: { top_p: 0.9, reasoning_effort: "low" } })))
+        ?.params,
+    ).toEqual({ top_p: 0.9, reasoning_effort: "low" });
+  });
+
+  it("is absent by default", () => {
+    expect(row(parseUserConfigFile(withRow({})))?.params).toBeUndefined();
+  });
+
+  it("rejects params that are not an object", () => {
+    for (const bad of ["x", 1, ["a"]]) {
+      expect(() => parseUserConfigFile(withRow({ params: bad }))).toThrow(
+        /userModels\[0\]\.params/,
+      );
+    }
+  });
+
+  it("accepts `auto` as a reasoning format", () => {
+    expect(
+      row(parseUserConfigFile(withRow({ reasoningFormat: "auto" })))?.reasoningFormat,
+    ).toBe("auto");
+  });
+});

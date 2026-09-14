@@ -92,6 +92,8 @@ export type UserModelConfigEntry = {
     cacheRead?: number;
     cacheWrite?: number;
   };
+  /** Per-model wire parameters; see `UserModelEntry.params`. */
+  params?: Record<string, unknown>;
 };
 
 export type LlmFallbackConfig = {
