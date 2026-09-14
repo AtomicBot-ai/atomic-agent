@@ -183,6 +183,21 @@ export type UserLlmFallbackConfig = {
   failureWindowMs?: number;
 };
 
+/**
+ * OpenRouter-wide settings, as opposed to a single `openrouter` entry's.
+ */
+export type UserLlmOpenRouterConfig = {
+  /**
+   * Steer models whose caching depends on the route toward the routes
+   * that cache — today `google/…` models to Google AI Studio, which
+   * cached 83 % of input where Vertex cached 1–4 % — unless the entry
+   * configured `providerPreferences` of its own. Default `true`; a
+   * pinned route can raise latency or lose availability while it is
+   * down, so it is a default an operator can turn off.
+   */
+  preferCacheRoutes?: boolean;
+};
+
 export type UserLlmFileConfig = {
   activeTextProvider: string;
   activeEmbeddingProvider: string;
@@ -191,6 +206,8 @@ export type UserLlmFileConfig = {
   fallback?: UserLlmFallbackConfig;
   /** Run mode (local | cloud | fusion) and the fusion legs. See `llm-run-mode-config.ts`. */
   runMode?: UserLlmRunModeConfig;
+  /** Settings for every `openrouter` entry at once. */
+  openrouter?: UserLlmOpenRouterConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -752,6 +769,8 @@ export function parseUserLlmFileConfig(
       ? undefined
       : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
+  const openrouter = parseLlmOpenRouterConfig(obj.openrouter, "llm.openrouter");
+
   return {
     activeTextProvider,
     activeEmbeddingProvider,
@@ -759,5 +778,22 @@ export function parseUserLlmFileConfig(
     providers,
     ...(fallback ? { fallback } : {}),
     ...(runMode ? { runMode } : {}),
+    ...(openrouter ? { openrouter } : {}),
   };
+}
+
+export function parseLlmOpenRouterConfig(
+  raw: unknown,
+  field: string,
+): UserLlmOpenRouterConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const preferCacheRoutes = parseOptionalBoolean(
+    obj.preferCacheRoutes,
+    `${field}.preferCacheRoutes`,
+  );
+  return preferCacheRoutes === undefined ? {} : { preferCacheRoutes };
 }

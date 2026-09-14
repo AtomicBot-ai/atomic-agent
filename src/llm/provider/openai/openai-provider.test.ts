@@ -310,3 +310,66 @@ describe("OpenAiProvider strictTools wiring", () => {
     });
   });
 });
+
+describe("OpenAiProvider — cached prompt tokens", () => {
+  it("reads prompt_tokens_details.cached_tokens on the unary path", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "m",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 1000,
+              completion_tokens: 5,
+              total_tokens: 1005,
+              prompt_tokens_details: { cached_tokens: 900 },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const result = await provider(fetchImpl as unknown as typeof fetch, undefined).complete({
+      prompt: "hi",
+    });
+    expect(result.usage?.cachedTokens).toBe(900);
+    expect(result.cacheHitTokens).toBe(900);
+  });
+
+  it("reads it on the streamed path, and leaves it absent when the service says nothing", async () => {
+    const frame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+    const streamWith = (usage: Record<string, unknown>) =>
+      vi.fn(
+        async () =>
+          new Response(
+            frame({ choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] }) +
+              frame({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage }) +
+              "data: [DONE]\n\n",
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      );
+    const drain = async (fetchImpl: typeof fetch) => {
+      const stream = provider(fetchImpl, undefined).completeStream({ prompt: "hi" });
+      for (;;) {
+        const next = await stream.next();
+        if (next.done) return next.value;
+      }
+    };
+    const cached = await drain(
+      streamWith({
+        prompt_tokens: 1000,
+        completion_tokens: 5,
+        total_tokens: 1005,
+        prompt_tokens_details: { cached_tokens: 640 },
+      }) as unknown as typeof fetch,
+    );
+    expect(cached.usage?.cachedTokens).toBe(640);
+    expect(cached.cacheHitTokens).toBe(640);
+
+    const silent = await drain(
+      streamWith({ prompt_tokens: 1000, completion_tokens: 5, total_tokens: 1005 }) as unknown as typeof fetch,
+    );
+    expect(silent.usage).not.toHaveProperty("cachedTokens");
+    expect(silent.cacheHitTokens).toBe(0);
+  });
+});

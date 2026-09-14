@@ -4,6 +4,7 @@ import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 import { modelParamProfile, reasoningEffortField } from "./model-params.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
+import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -30,6 +31,12 @@ export interface OpenAiBodyOptions {
    * the vendor's (`reasoningEffort`). Absent, those fields are omitted.
    */
   providerKind?: string;
+  /**
+   * Place Anthropic prompt-cache breakpoints on the messages (see
+   * `prompt-cache-control.ts`). Decided by the provider from the model
+   * id, the host and the entry's `promptCache` policy.
+   */
+  anthropicCacheControl?: boolean;
 }
 
 export function buildOpenAiChatBody(
@@ -167,6 +174,11 @@ export function buildOpenAiChatBody(
   // `extraBody.provider` is the older way to say the same thing, and it
   // keeps winning. Absent, the body is byte-identical to what it was.
   if (providerPreferences) body.provider = providerPreferences;
+  if (options.anthropicCacheControl) {
+    body.messages = applyAnthropicCacheControl(
+      body.messages as ReadonlyArray<Record<string, unknown>>,
+    );
+  }
   const modelParams = options.modelParams;
   if (!extraBody && !modelParams) return body;
   // Vendor passthrough, then the model's own parameters. Merged last so

@@ -93,6 +93,7 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      promptCache: entry.promptCache,
       ...modelWireOptions(entry, entry.defaultChatModel),
       logger: ctx.logger,
     });
@@ -120,6 +121,7 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      promptCache: entry.promptCache,
       ...modelWireOptions(entry, entry.defaultChatModel),
       logger: ctx.logger,
     });
@@ -141,11 +143,16 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      promptCache: entry.promptCache,
       ...modelWireOptions(entry, model),
       // OpenRouter's own `provider` routing block. Deliberately wired on
       // this kind alone: it is not part of the OpenAI schema, and no
       // other kind here documents a field by that name.
       providerPreferences: entry.providerPreferences,
+      // `llm.openrouter.preferCacheRoutes`, the llm-wide default that
+      // steers a Google model to its cache-capable routes when the entry
+      // pinned none itself. Absent in the file means on.
+      preferCacheRoutes: ctx.config.llm?.openrouter?.preferCacheRoutes ?? true,
       logger: ctx.logger,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
@@ -165,6 +172,7 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      promptCache: entry.promptCache,
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
@@ -186,6 +194,7 @@ export function registerBuiltInProviderKinds(): void {
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
+      promptCache: entry.promptCache,
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,

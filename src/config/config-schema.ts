@@ -1062,6 +1062,15 @@ export interface AtomicAgentConfig {
      * `src/llm/run-mode/resolve-run-mode.ts`.
      */
     runMode?: UserLlmRunModeConfig;
+    /**
+     * Settings for every `openrouter` entry at once.
+     * `preferCacheRoutes` (default `true`) pins `google/…` models to the
+     * routes that honour prompt caching unless the entry configured
+     * `providerPreferences` itself.
+     */
+    openrouter?: {
+      preferCacheRoutes?: boolean;
+    };
   };
 }
 

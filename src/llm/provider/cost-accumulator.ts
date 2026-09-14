@@ -1,5 +1,6 @@
 import type { CompletionUsage } from "./completion-types.js";
 import type { ResolvedModel } from "./model-resolver.js";
+import { estimateUsageCostUsd } from "./usage-cost.js";
 
 export type CostAccumulatorSnapshot = {
   sessionUsd: number;
@@ -66,10 +67,7 @@ function estimateCost(
   model: ResolvedModel | undefined,
 ): number {
   if (!usage || !model?.pricing) return 0;
-  const { input, output } = model.pricing;
-  const prompt = usage.promptTokens / 1_000_000;
-  const completion = usage.completionTokens / 1_000_000;
-  return prompt * input + completion * output;
+  return estimateUsageCostUsd(usage, model.pricing);
 }
 
 function utcDayKey(now: Date, resetHourUtc: number): string {

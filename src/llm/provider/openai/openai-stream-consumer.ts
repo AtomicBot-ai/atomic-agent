@@ -7,6 +7,7 @@ import type {
 } from "../completion-types.js";
 import type { ReasoningFormat } from "../llm-provider.js";
 import { createFabricatedTranscriptWatcher } from "../../reliability/fabricated-tool-transcript.js";
+import { normaliseOpenAiUsage } from "./openai-normalise-response.js";
 import { createReasoningExtractor } from "./reasoning-extractor.js";
 import {
   parseOpenAiSseEvent,
@@ -362,9 +363,5 @@ function normaliseUsage(
   raw: Record<string, unknown> | null,
 ): CompletionUsage | undefined {
   if (!raw) return undefined;
-  return {
-    promptTokens: Number(raw.prompt_tokens ?? 0),
-    completionTokens: Number(raw.completion_tokens ?? 0),
-    totalTokens: Number(raw.total_tokens ?? 0),
-  };
+  return normaliseOpenAiUsage(raw);
 }

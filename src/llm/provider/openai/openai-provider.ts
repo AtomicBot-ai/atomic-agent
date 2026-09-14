@@ -40,6 +40,7 @@ import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import {
   adaptQwenCompletionResult,
   adaptQwenTaggedToolResponse,
@@ -86,6 +87,13 @@ export interface OpenAiProviderOptions {
    * merged over every chat body after `extraBody`.
    */
   modelParams?: Record<string, unknown>;
+  /**
+   * The entry's prompt-caching policy. `off` sends no cache markers;
+   * `explicit-markers` always sends Anthropic breakpoints; `auto` (and
+   * absent) sends them when the model or the host is Anthropic's. See
+   * `prompt-cache-control.ts`.
+   */
+  promptCache?: "auto" | "off" | "explicit-markers";
   /**
    * Vendor-specific fields merged into every chat completion body.
    * See `RESERVED_BODY_KEYS` in `openai-build-body.ts` for the keys
@@ -173,6 +181,9 @@ export class OpenAiProvider implements LlmProvider {
     this.bodyOptions = {
       ...(options.providerKind ? { providerKind: options.providerKind } : {}),
       ...(options.modelParams ? { modelParams: options.modelParams } : {}),
+      ...(resolveAnthropicCacheControl(options)
+        ? { anthropicCacheControl: true }
+        : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
@@ -483,6 +494,26 @@ export class OpenAiProvider implements LlmProvider {
   }
 }
 
+/**
+ * Whether this client places Anthropic cache breakpoints. The policy
+ * word decides when it is explicit; otherwise the model id or the host
+ * has to be Anthropic's, because every other service ignores the marker
+ * at best and rejects the request at worst.
+ */
+function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
+  switch (options.promptCache) {
+    case "off":
+      return false;
+    case "explicit-markers":
+      return true;
+    default:
+      return (
+        isAnthropicModel(options.defaultChatModel) ||
+        isAnthropicHost(options.baseUrl)
+      );
+  }
+}
+
 function normalizeApiPathPrefix(prefix: string): string {
   const trimmed = prefix.trim().replace(/\/+$/, "");
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
@@ -511,7 +542,7 @@ function completionFromStreamFinal(
       promptTokens: usage.promptTokens,
       predictedTokens: usage.completionTokens,
     },
-    cacheHitTokens: 0,
+    cacheHitTokens: usage.cachedTokens ?? 0,
     slotId: -1,
     modelId: streamFinal?.modelId ?? defaultChatModel,
     usage,

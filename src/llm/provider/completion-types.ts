@@ -10,6 +10,14 @@ export interface CompletionUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * Prompt tokens the service served from its prompt cache
+   * (`prompt_tokens_details.cached_tokens` on OpenAI, OpenRouter and
+   * Gemini's compatibility layer). A subset of `promptTokens`, priced at
+   * the model's `cacheRead` rate when one is known. Absent — not zero —
+   * when the service did not report it.
+   */
+  cachedTokens?: number;
 }
 
 export interface CompletionRequest {

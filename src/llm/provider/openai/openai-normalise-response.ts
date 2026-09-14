@@ -34,7 +34,7 @@ export function normaliseOpenAiChatResponse(
       promptTokens: usage.promptTokens,
       predictedTokens: usage.completionTokens,
     },
-    cacheHitTokens: 0,
+    cacheHitTokens: usage.cachedTokens ?? 0,
     slotId: -1,
     modelId: typeof json.model === "string" ? json.model : defaultChatModel,
     usage,
@@ -44,15 +44,34 @@ export function normaliseOpenAiChatResponse(
   };
 }
 
-/** One reading of an OpenAI-shaped `usage` block for both paths. */
+/**
+ * One reading of an OpenAI-shaped `usage` block for both paths.
+ *
+ * `prompt_tokens_details.cached_tokens` is where OpenAI, OpenRouter and
+ * Gemini's compatibility layer report the prompt tokens served from a
+ * prompt cache (Anthropic through OpenRouter lands there too; a shim
+ * that speaks Anthropic's own `cache_read_input_tokens` is read as a
+ * fallback). It is the only evidence a turn has that its caching
+ * arrangement is working, so it rides on `usage` as `cachedTokens` —
+ * absent, not zero, when the service did not say — and on
+ * `cacheHitTokens`, which the trace already records per completion.
+ */
 export function normaliseOpenAiUsage(
   raw: Record<string, unknown> | undefined,
 ): CompletionUsage {
   const usage = raw ?? {};
+  const details = usage.prompt_tokens_details;
+  const cached =
+    details !== null && typeof details === "object"
+      ? (details as Record<string, unknown>).cached_tokens
+      : usage.cache_read_input_tokens;
   return {
     promptTokens: Number(usage.prompt_tokens ?? 0),
     completionTokens: Number(usage.completion_tokens ?? 0),
     totalTokens: Number(usage.total_tokens ?? 0),
+    ...(typeof cached === "number" && Number.isFinite(cached) && cached >= 0
+      ? { cachedTokens: cached }
+      : {}),
   };
 }
 

@@ -736,3 +736,34 @@ describe("userModels[].params and reasoningFormat auto", () => {
     ).toBe("auto");
   });
 });
+
+describe("llm.openrouter", () => {
+  const withOpenRouter = (openrouter: unknown) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "local-llama",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [{ id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" }],
+      ...(openrouter === undefined ? {} : { openrouter }),
+    },
+  });
+
+  it("round-trips preferCacheRoutes", () => {
+    expect(
+      parseUserConfigFile(withOpenRouter({ preferCacheRoutes: false })).llm?.openrouter,
+    ).toEqual({ preferCacheRoutes: false });
+  });
+
+  it("is absent by default, and an empty block stays empty", () => {
+    expect(parseUserConfigFile(withOpenRouter(undefined)).llm?.openrouter).toBeUndefined();
+    expect(parseUserConfigFile(withOpenRouter({})).llm?.openrouter).toEqual({});
+  });
+
+  it("rejects a non-boolean preferCacheRoutes and a non-object block", () => {
+    expect(() => parseUserConfigFile(withOpenRouter({ preferCacheRoutes: "yes" }))).toThrow(
+      /llm\.openrouter\.preferCacheRoutes/,
+    );
+    expect(() => parseUserConfigFile(withOpenRouter(["x"]))).toThrow(/llm\.openrouter/);
+  });
+});
