@@ -7,6 +7,7 @@ import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
 import {
   applyDeclaredFileReport,
+  applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
 import {
@@ -308,9 +309,10 @@ async function runOneTask(
   }
 
   // Ground truth before the orchestrator reads the reply: a worker that
-  // says it wrote a file it never wrote must not come back `ok`. Only
-  // for statuses that still claim some work; a failed or cancelled task
-  // is expected to have left its files missing.
+  // says it wrote a file it never wrote must not come back `ok`, and one
+  // that wrote nothing at all is `no_changes`. Only for statuses that
+  // still claim some work; a failed or cancelled task is expected to
+  // have left its files missing.
   if (
     task.files !== undefined &&
     task.files.length > 0 &&
@@ -318,10 +320,12 @@ async function runOneTask(
       result.status === "max_steps" ||
       result.status === "needs_orchestrator")
   ) {
-    result = applyDeclaredFileReport(
-      result,
-      await inspectDeclaredFiles(task.files, deps.workingDir, startedAt),
+    const report = await inspectDeclaredFiles(
+      task.files,
+      deps.workingDir,
+      startedAt,
     );
+    result = applyNoChangesRule(applyDeclaredFileReport(result, report), report);
   }
 
   // Keep the feed paired: a turn that died before it ever stepped never
@@ -356,7 +360,9 @@ function summarise(result: WorkerTaskResult): string {
   const text = (result.error ?? result.reply).replace(/\s+/g, " ").trim();
   if (text.length === 0) return result.status;
   const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);
-  return text.length > cap ? `${text.slice(0, cap)}…` : text;
+  const clipped = text.length > cap ? `${text.slice(0, cap)}…` : text;
+  // "I'm done!" over an untouched tree must not read as done in the feed.
+  return result.status === "no_changes" ? `no changes — ${clipped}` : clipped;
 }
 
 function isAbortError(error: unknown): boolean {

@@ -26,7 +26,7 @@ function row(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
     reply: "done",
     stepCount: 1,
     durationMs: 1,
-    tools: { calls: 0, errors: 0, byTool: {} },
+    tools: { calls: 0, errors: 0, writes: 0, byTool: {} },
     ...over,
   };
 }

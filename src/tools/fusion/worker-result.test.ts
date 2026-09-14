@@ -7,6 +7,7 @@ import {
   WORKER_HINT_SATURATED,
   WorkerRunCollector,
   classifyWorkerStatus,
+  delegateOutcome,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
   workerFailureHint,
@@ -92,10 +93,24 @@ describe("WorkerRunCollector", () => {
       tools: {
         calls: 3,
         errors: 1,
+        writes: 0,
         byTool: { "os.fs.read": 2, "os.fs.grep": 1 },
       },
       usage: { promptTokens: 15, completionTokens: 5, totalTokens: 20 },
     });
+  });
+
+  it("counts only the write, edit and patch calls that succeeded", () => {
+    const c = new WorkerRunCollector();
+    c.observe(toolExecuted("os.fs.write", "ok"));
+    c.observe(toolExecuted("os.fs.edit", "ok"));
+    c.observe(toolExecuted("os.fs.patch", "error", "no such file"));
+    // A refused write is not a write.
+    c.observe(toolExecuted("os.fs.write", "error", `denied: ${FUSION_WORKER_APPROVAL_REFUSED}`));
+    // A shell command may write, but the collector cannot know; the disk check does.
+    c.observe(toolExecuted("os.shell.run", "ok"));
+    const result = c.finish({ id: "t", title: "T", reason: "reply", stepCount: 5, durationMs: 1 });
+    expect(result.tools).toMatchObject({ calls: 5, errors: 2, writes: 2 });
   });
 
   it("keeps the last reply when an auto-continued turn emits several", () => {
@@ -138,7 +153,7 @@ describe("WorkerRunCollector", () => {
       stepCount: 0,
       durationMs: 0,
     });
-    expect(result.tools).toEqual({ calls: 0, errors: 0, byTool: {} });
+    expect(result.tools).toEqual({ calls: 0, errors: 0, writes: 0, byTool: {} });
   });
 
   it("reports needs_orchestrator when a tool result carried the refusal", () => {
@@ -206,10 +221,24 @@ function row(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
     reply: "the map",
     stepCount: 2,
     durationMs: 3000,
-    tools: { calls: 1, errors: 0, byTool: { "os.fs.read": 1 } },
+    tools: { calls: 1, errors: 0, writes: 0, byTool: { "os.fs.read": 1 } },
     ...over,
   };
 }
+
+describe("delegateOutcome", () => {
+  it("is all_ok only when every task is ok, all_failed only when every task failed or was cancelled", () => {
+    expect(delegateOutcome([row(), row({ id: "t2" })])).toBe("all_ok");
+    expect(delegateOutcome([row({ status: "failed" }), row({ id: "t2", status: "cancelled" })])).toBe("all_failed");
+    expect(delegateOutcome([row({ status: "failed" }), row({ id: "t2" })])).toBe("partial");
+    // A task that produced nothing usable is still not "failed": the
+    // orchestrator gets its reply and re-delegates from it.
+    for (const status of ["no_changes", "max_steps", "needs_orchestrator"] as const) {
+      expect(delegateOutcome([row({ status })])).toBe("partial");
+      expect(delegateOutcome([row({ status }), row({ id: "t2", status: "failed" })])).toBe("partial");
+    }
+  });
+});
 
 describe("formatDelegateOutput", () => {
   it("renders one headed block per task", () => {
@@ -366,6 +395,26 @@ describe("formatDelegateOutput — the contract", () => {
 
   it("renders no contract line when none was given", () => {
     expect(formatDelegateOutput([row()], 4000).split("\n")[1]).toBe("- [t1] ok — Map");
+  });
+});
+
+describe("formatDelegateOutput — the head line", () => {
+  it("counts every status, in a fixed order, whatever order the tasks finished in", () => {
+    const rows = [
+      row({ id: "t1", status: "failed", error: "boom" }),
+      row({ id: "t2", status: "no_changes", notes: ["js/main.js unchanged by this task"] }),
+      row({ id: "t3" }),
+      row({ id: "t4", status: "cancelled" }),
+      row({ id: "t5" }),
+      row({ id: "t6", status: "max_steps" }),
+      row({ id: "t7", status: "needs_orchestrator" }),
+    ];
+    const out = formatDelegateOutput(rows, 16000);
+    expect(out.split("\n")[0]).toBe(
+      "7 tasks: 2 ok, 1 no_changes, 1 needs_orchestrator, 1 max_steps, 1 failed, 1 cancelled",
+    );
+    expect(out).toContain("- [t2] no_changes — Map — js/main.js unchanged by this task");
+    expect(out).toContain("[t2] no_changes — Map (2 steps, 3s, 1 tool calls, 0 errors)");
   });
 });
 

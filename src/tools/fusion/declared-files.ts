@@ -23,6 +23,8 @@ export interface DeclaredFileReport {
   missing: string[];
   /** Declared paths that exist but were not modified during the task. */
   unchanged: string[];
+  /** Declared paths that exist and were written during the task. */
+  modified: string[];
 }
 
 /** Globs are patterns, not paths: whether they "exist" is meaningless. */
@@ -51,7 +53,7 @@ export async function inspectDeclaredFiles(
   workingDir: string,
   startedAt: number,
 ): Promise<DeclaredFileReport> {
-  const report: DeclaredFileReport = { missing: [], unchanged: [] };
+  const report: DeclaredFileReport = { missing: [], unchanged: [], modified: [] };
   for (const file of files) {
     if (GLOB_CHARS.test(file)) continue;
     let absolute: string;
@@ -64,6 +66,8 @@ export async function inspectDeclaredFiles(
       const info = await stat(absolute);
       if (info.mtimeMs < startedAt - MTIME_SLACK_MS) {
         report.unchanged.push(file);
+      } else {
+        report.modified.push(file);
       }
     } catch (error) {
       if (isNotFound(error)) report.missing.push(file);
@@ -111,5 +115,35 @@ export function applyDeclaredFileReport(
     status,
     ...(error === undefined ? {} : { error }),
     ...(notes.length === 0 ? {} : { notes }),
+  };
+}
+
+/**
+ * An `ok` task that declared `files`, made no successful write, edit
+ * or patch call, and changed none of those files on disk is
+ * `no_changes` — the truthful name for "I'm done!" over an untouched
+ * tree, which used to pass for `ok`.
+ *
+ * Both halves are needed. The call count alone would misread a worker
+ * that wrote through the shell (the disk shows the change); the disk
+ * alone would misread a task whose declared paths are all globs (there
+ * is nothing to stat). A task with no declared `files` — research, a
+ * review — is never `no_changes`; the caller only asks for tasks that
+ * declared some. Statuses other than `ok` already say why the work is
+ * incomplete and are left alone.
+ */
+export function applyNoChangesRule(
+  result: WorkerTaskResult,
+  report: DeclaredFileReport,
+): WorkerTaskResult {
+  if (result.status !== "ok") return result;
+  if (result.tools.writes > 0 || report.modified.length > 0) return result;
+  return {
+    ...result,
+    status: "no_changes",
+    notes: [
+      ...(result.notes ?? []),
+      "no write, edit or patch call succeeded and no declared file changed",
+    ],
   };
 }

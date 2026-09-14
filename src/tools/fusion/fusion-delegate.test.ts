@@ -412,13 +412,37 @@ describe("fusion.delegate", () => {
     );
     const result = await tool.run({ tasks: TASKS }, ctx());
     expect(result.status).toBe("ok");
+    expect(result.details.outcome).toBe("partial");
     const rows = result.details.tasks as WorkerTaskResult[];
     expect(rows.map((r) => r.status)).toEqual(["failed", "ok"]);
+    expect(result.summary.split("\n")[0]).toBe("2 tasks: 1 ok, 1 failed");
     expect(result.summary).toContain("[t1] failed");
     expect(result.summary).toContain("[t2] ok");
   });
 
-  it("survives an aborted orchestrator turn without throwing", async () => {
+  it("reports all_ok when every task delivered", async () => {
+    const result = await buildFusionDelegateTool(deps()).run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.outcome).toBe("all_ok");
+  });
+
+  it("is status:error only when every task failed — the per-task rows still come back", async () => {
+    // A fan-out where every worker died used to return `ok`; an
+    // orchestrator reading the status merged nothing as something.
+    const tool = buildFusionDelegateTool(
+      deps({ runTurn: async () => Promise.reject(new Error("worker died")) }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.details.outcome).toBe("all_failed");
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows.map((r) => r.status)).toEqual(["failed", "failed"]);
+    expect(result.summary).toContain("2 tasks: 2 failed");
+    expect(result.summary).toContain("[t1] failed");
+    expect(result.summary).toContain("[t2] failed");
+  });
+
+  it("survives an aborted orchestrator turn without throwing, and reports it as every task cancelled", async () => {
     const controller = new AbortController();
     controller.abort();
     const tool = buildFusionDelegateTool(
@@ -434,7 +458,10 @@ describe("fusion.delegate", () => {
       { tasks: TASKS },
       ctx({ signal: controller.signal }),
     );
-    expect(result.status).toBe("ok");
+    // Nothing was delivered, so the call itself is an error — but a
+    // readable one, with the rows.
+    expect(result.status).toBe("error");
+    expect(result.details.outcome).toBe("all_failed");
     expect(
       (result.details.tasks as WorkerTaskResult[]).every(
         (r) => r.status === "cancelled",

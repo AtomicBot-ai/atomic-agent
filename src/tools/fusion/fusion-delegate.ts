@@ -20,6 +20,7 @@ import {
 } from "./contract-checks.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
 import {
+  delegateOutcome,
   formatDelegateOutput,
   type WorkerTaskResult,
 } from "./worker-result.js";
@@ -93,11 +94,12 @@ function error(
  *     just walked away from.
  *  3. **Only on valid args.** See `parseDelegateArgs`.
  *
- * Once the call runs it returns `status: "ok"` even when every worker
- * failed. Per-task status lives in the output and in
- * `details.tasks` — an orchestrator that gets a bare error learns
- * nothing about which parts survived, and partial results are the whole
- * value of a fan-out.
+ * Once the call runs, its status summarises its tasks
+ * (`details.outcome`): `ok` while any task delivered anything — partial
+ * results are the whole value of a fan-out, and an orchestrator handed
+ * a bare error learns nothing about which parts survived — and `error`
+ * only when every task failed or was cancelled. Per-task status lives
+ * in the output and in `details.tasks` either way.
  *
  * **Width is the model's call.** `args.maxWorkers` is honoured as asked;
  * `llm.runMode.fusion.workers` only fills in for a call that named
@@ -353,15 +355,20 @@ export function buildFusionDelegateTool(
       const hint = poolIsBinding
         ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — every slot draws on one shared llama-server context pool (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
         : "";
+      // The call's own status is the tasks' summary: a fan-out where
+      // every worker failed used to come back `ok`, and an orchestrator
+      // reading only the status merged nothing as if it were something.
+      const outcome = delegateOutcome(results);
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
-          status: "ok",
+          status: outcome === "all_failed" ? "error" : "ok",
           output: `${formatDelegateOutput(results, deps.outputCharCap, {
             ...(contractLine === undefined ? {} : { contractLine }),
           })}${hint}`,
           details: {
             tasks: results,
+            outcome,
             maxWorkers,
             requestedWorkers: requested,
             ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),

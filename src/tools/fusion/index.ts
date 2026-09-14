@@ -54,14 +54,18 @@ export {
 export {
   WorkerRunCollector,
   classifyWorkerStatus,
+  delegateOutcome,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
   workerFailureHint,
+  FILE_WRITING_TOOLS,
   WORKER_HINT_CONTEXT,
   WORKER_HINT_SATURATED,
   WORKER_HINT_QUOTA,
+  WORKER_STATUS_ORDER,
 } from "./worker-result.js";
 export type {
+  DelegateOutcome,
   TaskCheckSummary,
   WorkerStopCause,
   WorkerTaskResult,
@@ -70,6 +74,7 @@ export type {
 } from "./worker-result.js";
 export {
   applyDeclaredFileReport,
+  applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
 export type { DeclaredFileReport } from "./declared-files.js";
