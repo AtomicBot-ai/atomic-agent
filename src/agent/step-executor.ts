@@ -163,6 +163,14 @@ export interface LlmStreamParams {
   chat?: ChatPromptParts;
   grammar: string;
   slotId: number;
+  /**
+   * `cache_prompt` for a llama-server request. Defaults to "when
+   * `slotId >= 0`". The main loop sets it `true` even on a pending
+   * `slotId: -1` — that pairing asks llama-server to pick the slot by
+   * prefix similarity and keep the prompt there — while a side call on
+   * `-1` (no pin, no reuse wanted) leaves it unset.
+   */
+  cachePrompt?: boolean;
   sessionId: string;
   /**
    * Optional `n_predict` cap for this completion. Falls through to
@@ -617,6 +625,7 @@ async function executeStepInner(
         prefixHash: hashPrefix(prompt.stablePrefix),
         firstSeenAt: Date.now(),
         cacheReused: false,
+        pending: false,
       };
   if (ctx.stepIndex === 0) {
     const promptViolations = checkProfilePromptAligned(
@@ -678,6 +687,10 @@ async function executeStepInner(
       toolDescriptors: roleToolDescriptors,
       signal: ctx.signal,
     }),
+    // On a slot-affine link the prompt is always worth caching — a
+    // pending `-1` with `cache_prompt: true` is what lets llama-server
+    // pick the slot by prefix similarity and keep the prompt there.
+    ...(deps.supportsSlotAffinity ? { cachePrompt: true } : {}),
     ...(grammarPrompt ? { grammarPrompt } : {}),
     ...(serverTemplate.useServerTemplate
       ? {
@@ -710,6 +723,25 @@ async function executeStepInner(
     slot,
     llmParams,
   });
+  // The server named the slot it put a pending session's prompt in: pin
+  // it so every later request of the session — the repair retry below
+  // included — lands on the cache instead of asking again.
+  if (
+    slot.pending &&
+    deps.supportsSlotAffinity &&
+    firstAttempt.completion.slotId >= 0
+  ) {
+    deps.slotManager.pin(
+      ctx.session.id,
+      firstAttempt.completion.slotId,
+      slot.prefixHash,
+    );
+    llmParams.slotId = firstAttempt.completion.slotId;
+    deps.logger?.debug("slot pinned from completion", {
+      sessionId: ctx.session.id,
+      slotId: firstAttempt.completion.slotId,
+    });
+  }
   let completion = firstAttempt.completion;
 
   // Parse-side prefill assumption for a given completion: keyed off the

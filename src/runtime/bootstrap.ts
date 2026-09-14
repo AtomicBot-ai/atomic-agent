@@ -2080,8 +2080,9 @@ export async function createAgentRuntime(
     config.memory.links.enabled &&
     config.memory.links.autoGenerate
   ) {
-    const reservedSlot = slotManager.reserveReflectionSlot();
-    const reflectionSlotId = reservedSlot ?? -1;
+    // Resolved per call: in managed mode the pool is one slot until the
+    // first `/props`, so a reservation taken here would never exist.
+    const reflectionSlotId = () => slotManager.sideCallSlotId();
     const linkGenLlmComplete: LinkGeneratorLlmComplete = abortableSubcall(
       llmComplete,
       (params: Parameters<LinkGeneratorLlmComplete>[0]) => ({
@@ -2144,8 +2145,7 @@ export async function createAgentRuntime(
   // from `memory-context-provider` and `LessonStore.recall` —
   // anti-feedback-loop guardrail (invariant 18).
   if (reflectionRunner && voteStore) {
-    const reservedSlot = slotManager.reserveReflectionSlot();
-    const voteSlotId = reservedSlot ?? -1;
+    const voteSlotId = () => slotManager.sideCallSlotId();
     const voteLlmComplete: VoteRunnerLlmComplete = abortableSubcall(
       llmComplete,
       (params: Parameters<VoteRunnerLlmComplete>[0]) => ({
@@ -2269,8 +2269,9 @@ export async function createAgentRuntime(
 
   // v2.5 heuristic-gated query rewriter (Phase A, config v18).
   // When enabled, wrap the default provider with a decorator that
-  // rewrites referential follow-ups via an LLM call on `slotId=-1`
-  // before delegating recall. Disabled-by-default contract: when the
+  // rewrites referential follow-ups via an LLM call on the reserved
+  // reflection slot (`-1` while the pool has none to spare) before
+  // delegating recall. Disabled-by-default contract: when the
   // flag is off, `memoryContextProvider` is byte-identical to the
   // pre-v18 chain.
   let memoryContextProvider = baseMemoryContextProvider;
@@ -2313,6 +2314,7 @@ export async function createAgentRuntime(
     const rewriterRunner = createQueryRewriterRunner({
       llmComplete: rewriterLlmComplete,
       timeoutMs: rewriterCfg.timeoutMs,
+      slotId: () => slotManager.sideCallSlotId(),
       gate,
       logger,
       metrics,
@@ -3161,11 +3163,10 @@ export async function createAgentRuntime(
     // all event types within a tick. The consolidator does not run
     // through a per-session recorder, so we own the `seq` here.
     let consolidatorSeq = 0;
-    // Reserve (or piggy-back on) the reflection slot for the distill
-    // call. The slot is per-runtime, not per-job, so calling
-    // `reserveReflectionSlot` again here is idempotent — the slot
-    // manager returns the same id.
-    const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
+    // Piggy-back on the reflection slot for the distill call. The slot
+    // is per-runtime, not per-job, and resolved per call — the slot
+    // manager reserves once and returns the same id afterwards.
+    const distillSlot = () => slotManager.sideCallSlotId();
     const distillLlmComplete: ReflectionLlmComplete = abortableSubcall(
       llmComplete,
       (params: Parameters<ReflectionLlmComplete>[0]) => ({
@@ -3656,14 +3657,12 @@ function buildReflectionRunner(args: {
 }): ReflectionRunner | undefined {
   const memory = args.config.memory;
   if (!memory.profile.enabled || !memory.reflection.enabled) return undefined;
-  const reservedSlot = args.slotManager.reserveReflectionSlot();
-  const reflectionSlotId = reservedSlot ?? -1;
-  if (reservedSlot === null) {
-    args.logger.warn(
-      "reflection slot unavailable; reflection will run without slot affinity",
-      { fallbackSlotId: reflectionSlotId },
-    );
-  }
+  // Resolved per call rather than reserved here: a managed daemon's
+  // slot count is not known at boot (the pool is one slot until the
+  // first `/props`), and a reservation taken now would be `-1` forever
+  // — every reflection call would then let llama-server pick any idle
+  // slot, the main loop's included.
+  const reflectionSlotId = () => args.slotManager.sideCallSlotId();
   const reflectionLlmComplete: ReflectionLlmComplete = abortableSubcall(
     args.llmComplete,
     ({ signal: _signal, ...rest }: Parameters<ReflectionLlmComplete>[0]) =>

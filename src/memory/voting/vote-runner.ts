@@ -1,6 +1,7 @@
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 
 import { VOTE_GRAMMAR } from "./vote-grammar.js";
 import { VOTE_RESPONSE_FORMAT } from "./vote-response-format.js";
@@ -113,8 +114,8 @@ export type VoteTraceEvent =
 export interface VoteRunnerDeps {
   llmComplete: VoteRunnerLlmComplete;
   voteStore: VoteStore;
-  /** Same slot as reflection — invariant 7. */
-  reflectionSlotId: number;
+  /** Same slot as reflection — invariant 7. Resolved per call. */
+  reflectionSlotId: SlotIdSource;
   /** Hard timeout per vote call. */
   timeoutMs: number;
   /** Hard ceiling on `|vote_score|`. Mirrors `memory.voting.maxVotePerItem`. */
@@ -237,7 +238,7 @@ export function createVoteRunner(deps: VoteRunnerDeps): VoteRunner {
         prompt,
         grammar: VOTE_GRAMMAR,
         responseFormat: VOTE_RESPONSE_FORMAT,
-        slotId: deps.reflectionSlotId,
+        slotId: resolveSlotId(deps.reflectionSlotId),
         sessionId: `vote:${input.sessionId}`,
         signal: controller.signal,
       });
