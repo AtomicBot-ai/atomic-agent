@@ -198,6 +198,8 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.DEFAULT_SLOT_ID,
       ),
       mode: user.localModels.mode,
+      useServerTemplate: user.localModels.useServerTemplate,
+      thinking: user.localModels.thinking,
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
       download: { ...user.localModels.download },

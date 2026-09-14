@@ -25,6 +25,13 @@ interface BaseModelProfile {
    */
   contextWindow?: number;
   /**
+   * The chat template reads `enable_thinking` (Qwen, Gemma 4, Nemotron
+   * and friends), so `chat_template_kwargs: { enable_thinking }` on a
+   * server-templated request switches reasoning on or off. Absent on
+   * templates that do not mention it. See `server-template-policy.ts`.
+   */
+  supportsThinkingSwitch?: boolean;
+  /**
    * Multimodal (vision) capability snapshot derived from `/props`.
    *
    * `supported = true` iff llama-server reports an mmproj projector
@@ -142,6 +149,7 @@ export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
   reasoningCloseTag: "</think>",
   requiresPromptThinkPrefix: true,
   allowThinkPrelude: true,
+  supportsThinkingSwitch: true,
   vision: VISION_ABSENT,
 };
 
@@ -162,6 +170,7 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
     turnClose: "<turn|>\n",
     assistantOpen: "<|turn>model\n",
   },
+  supportsThinkingSwitch: true,
   vision: VISION_ABSENT,
 };
 
@@ -182,7 +191,13 @@ export function detectModelProfile(
   );
   const contextWindow = readContextWindow(props);
   const vision = detectVisionSupport(props);
-  const enriched = { ...base, vision } as ModelProfile;
+  const enriched = {
+    ...base,
+    ...(templateLower.includes("enable_thinking")
+      ? { supportsThinkingSwitch: true }
+      : {}),
+    vision,
+  } as ModelProfile;
   if (contextWindow === null) return enriched;
   return { ...enriched, contextWindow };
 }

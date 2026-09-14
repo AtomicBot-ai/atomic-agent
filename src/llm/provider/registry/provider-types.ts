@@ -11,6 +11,8 @@ export type ProviderFactoryContext = {
   entry: LlmProviderConfigEntry;
   llamaClient?: LlamaServerClient;
   getProfile?: () => ModelProfile;
+  /** The local model's id, for the llama-server provider's template cache. */
+  getModelId?: () => string | null;
   logger: StructuredLogger;
 };
 

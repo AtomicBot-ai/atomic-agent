@@ -233,6 +233,10 @@ export interface AtomicAgentConfig {
     defaultSlotId: number;
     /** `external` uses `url`; `managed` overrides runtime `url` to localhost + `managed.port`. */
     mode: LocalLlmMode;
+    /** Mirrors `UserConfigFile.localModels.useServerTemplate`. */
+    useServerTemplate: LocalTemplateSetting;
+    /** Mirrors `UserConfigFile.localModels.thinking`. */
+    thinking: LocalTemplateSetting;
     managed: UserManagedLocalLlmConfig;
     /**
      * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
@@ -1284,6 +1288,24 @@ export type HttpApprovalMode = "never" | "writes" | "always";
 
 export type LocalLlmMode = "external" | "managed";
 
+/**
+ * A three-way local-template switch: `auto` lets the runtime decide per
+ * model family, `on` / `off` force it. Used by
+ * `localModels.useServerTemplate` and `localModels.thinking`.
+ */
+export type LocalTemplateSetting = "auto" | "on" | "off";
+
+export function parseLocalTemplateSetting(
+  raw: unknown,
+  field: string,
+): LocalTemplateSetting {
+  if (raw === "auto" || raw === "on" || raw === "off") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected auto|on|off, got ${JSON.stringify(raw)}`,
+  );
+}
+
 export interface UserManagedLocalLlmConfig {
   modelId: string | null;
   port: number;
@@ -1449,6 +1471,23 @@ export interface UserConfigFile {
      * this file value (operator override).
      */
     completionMaxTokens: number;
+    /**
+     * Render local prompts through the model's own chat template
+     * (llama-server `POST /apply-template`) instead of atag's hand-built
+     * framing. `auto` (default) uses the template for every family
+     * without a hand-built profile — everything but Gemma and Qwen —
+     * so Llama, GLM, Mistral and other GGUFs get their turn markers.
+     * `on` forces it for every model, `off` keeps the raw framing.
+     * The GBNF grammar applies either way. Added in config v66.
+     */
+    useServerTemplate: LocalTemplateSetting;
+    /**
+     * The template's thinking switch (`chat_template_kwargs:
+     * {enable_thinking}`) on server-templated prompts, for families
+     * whose template reads it. `auto` (default) leaves the template's
+     * own default; `on` / `off` set it. Added in config v66.
+     */
+    thinking: LocalTemplateSetting;
     managed: UserManagedLocalLlmConfig;
     /**
      * Memory-v2 phase 1B. Optional second managed daemon for
@@ -2374,6 +2413,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     url: "http://127.0.0.1:8080",
     mode: "external",
     completionMaxTokens: 8192,
+    useServerTemplate: "auto",
+    thinking: "auto",
     managed: {
       modelId: null,
       port: 19091,
@@ -4344,6 +4385,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         localModels.completionMaxTokens ??
           USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
         "localModels.completionMaxTokens",
+      ),
+      useServerTemplate: parseLocalTemplateSetting(
+        localModels.useServerTemplate ??
+          USER_CONFIG_DEFAULTS.localModels.useServerTemplate,
+        "localModels.useServerTemplate",
+      ),
+      thinking: parseLocalTemplateSetting(
+        localModels.thinking ?? USER_CONFIG_DEFAULTS.localModels.thinking,
+        "localModels.thinking",
       ),
       managed,
       embeddings: embeddingsDaemon,

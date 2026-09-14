@@ -103,6 +103,11 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import {
+  NO_SERVER_TEMPLATE,
+  resolveServerTemplatePolicy,
+} from "../llm/server-template-policy.js";
+import type { ChatPromptParts } from "../llm/provider/completion-types.js";
+import {
   getReasoningTurnFraming,
   reasoningOpenEmittedByModel,
   type ModelProfile,
@@ -149,6 +154,13 @@ export interface LlmStreamParams {
    * implementations memoize.
    */
   grammarPrompt?: () => string;
+  /**
+   * The prompt as prefix + tail, for a grammar (llama-server) link that
+   * renders through the model's own chat template (F31). Set only when
+   * the primary is a grammar link and the server-template policy is on
+   * for its profile; the seam forwards it as `CompletionRequest.chat`.
+   */
+  chat?: ChatPromptParts;
   grammar: string;
   slotId: number;
   sessionId: string;
@@ -506,10 +518,17 @@ async function executeStepInner(
   ctx: StepContext,
   deps: StepDependencies,
 ): Promise<StepOutcome> {
-  const promptCarriesPrefill = promptCarriesReasoningPrefill(
-    deps.profile,
-    deps.toolTransport,
-  );
+  // Whether this step's local prompt goes through the model's own chat
+  // template. The template supplies the turn markers and the reasoning
+  // prelude, so the prompt is built framing-free, like a chat-transport
+  // prompt (F31).
+  const serverTemplate =
+    deps.toolTransport === "native_tools"
+      ? NO_SERVER_TEMPLATE
+      : resolveServerTemplatePolicy(getConfig().localModels, deps.profile);
+  const promptCarriesPrefill =
+    !serverTemplate.useServerTemplate &&
+    promptCarriesReasoningPrefill(deps.profile, deps.toolTransport);
   // The same catalog on every step, the final one included: `### tools`
   // is stable-prefix bytes, and a catalog narrowed to reply/finish for
   // the last step re-read the whole prompt on a cold slot. The final
@@ -545,8 +564,11 @@ async function executeStepInner(
       : {}),
     // Chat providers apply their own template server-side; a literal
     // reasoning prefill there is at best echoed noise and at worst
-    // corrupted in transit (Ollama Cloud, ollama/ollama#17248).
-    suppressReasoningPrefill: deps.toolTransport === "native_tools",
+    // corrupted in transit (Ollama Cloud, ollama/ollama#17248). The
+    // same holds for a local link rendering through its own template.
+    suppressReasoningPrefill:
+      deps.toolTransport === "native_tools" ||
+      serverTemplate.useServerTemplate,
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
       : {}),
@@ -657,6 +679,18 @@ async function executeStepInner(
       signal: ctx.signal,
     }),
     ...(grammarPrompt ? { grammarPrompt } : {}),
+    ...(serverTemplate.useServerTemplate
+      ? {
+          chat: {
+            system: prompt.stablePrefix,
+            user: prompt.tail,
+            prefixHash: slot.prefixHash,
+            ...(serverTemplate.enableThinking !== undefined
+              ? { enableThinking: serverTemplate.enableThinking }
+              : {}),
+          },
+        }
+      : {}),
     ...(ctx.maxTokens !== undefined ? { maxTokens: ctx.maxTokens } : {}),
     // The turn's own settings ride on every completion of the step; the
     // repair retry spreads `llmParams`, so they inherit without a second

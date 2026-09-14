@@ -74,6 +74,10 @@ function grammarRequestFields(params: LlmStreamParams) {
     ...(params.responseFormat
       ? { responseFormat: params.responseFormat }
       : {}),
+    // The prefix/tail split for a link that renders through the model's
+    // own template (F31). Built by the step executor only when the
+    // primary is a grammar link, so it always matches `params.prompt`.
+    ...(params.chat ? { chat: params.chat } : {}),
   };
 }
 
