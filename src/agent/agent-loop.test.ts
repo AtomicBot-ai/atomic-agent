@@ -9,6 +9,8 @@ import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
+import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -1091,6 +1093,154 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
+  });
+
+  it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
+    // The Codex attempt: a 429 carrying `credit_balance_exhausted` was
+    // parked and retried as rate limiting, 42 times per worker.
+    const registry = buildDefaultToolRegistry();
+    const events: string[] = [];
+    let calls = 0;
+    const body = JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        code: 429,
+        metadata: {
+          raw: '{"error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low"}}',
+        },
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        throw new TransportError(
+          '"openrouter" is rate-limiting this key (429).',
+          429,
+          "https://openrouter.ai/api/v1",
+          {
+            cause: new OpenAiHttpError(
+              `openai provider 429: ${body}`,
+              429,
+              "https://openrouter.ai/api/v1/chat/completions",
+              false,
+              null,
+              "openrouter",
+              undefined,
+              { body: parseProviderErrorBody(body) },
+            ),
+          },
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "provider_waiting" ||
+          event.type === "credit_exhausted" ||
+          event.type === "loop_failed" ||
+          event.type === "loop_completed"
+        ) {
+          events.push(event.type);
+        }
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-credit", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    // One request, no park, no failure: paused where it stood.
+    expect(calls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(events).toEqual(["credit_exhausted", "loop_completed"]);
+    expect(result.reason).toBe("max_steps");
+    expect(result.stopCause).toBe("credit_exhausted");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.lastError).toBe(
+      'task_stopped:credit_exhausted: "openrouter" is out of credit after 0 steps',
+    );
+    const last = result.session.turns.at(-1);
+    expect(last?.kind).toBe("assistant_reply");
+    expect((last as { text: string }).text).toContain(
+      '"openrouter" reports the account is out of credit',
+    );
+    expect((last as { text: string }).text).toContain("say `continue`");
+  });
+
+  it("waits as long as the provider asked, on a 402 the outage wait would otherwise refuse (F29)", async () => {
+    // OpenRouter's `in_flight_budget_exhausted` with a retry hint ended
+    // a cloud-only run at 2m19s as final. The hint is honoured instead.
+    const registry = buildDefaultToolRegistry();
+    const waits: Array<{ nextRetryMs: number }> = [];
+    let calls = 0;
+    const body = JSON.stringify({
+      error: {
+        code: "in_flight_budget_exhausted",
+        message: "Too many requests in flight for your balance; retry in 1 s",
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new TransportError(
+            '"openrouter" refused the request for lack of credit (402).',
+            402,
+            "https://openrouter.ai/api/v1",
+            {
+              cause: new OpenAiHttpError(
+                `openai provider 402: ${body}`,
+                402,
+                "https://openrouter.ai/api/v1/chat/completions",
+                false,
+                null,
+                "openrouter",
+                undefined,
+                { body: parseProviderErrorBody(body) },
+              ),
+            },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "budget freed" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-inflight", workingDir }),
+      {
+        userMessage: "busy balance",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(waits).toHaveLength(1);
+    // The hint (1 s), not the 2 s backoff.
+    expect(waits[0]!.nextRetryMs).toBe(1_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(950);
+    expect(Date.now() - started).toBeLessThan(1_900);
   });
 
   it("gives up after the wait budget and fails the turn once", async () => {

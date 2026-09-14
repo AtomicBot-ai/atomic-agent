@@ -668,6 +668,16 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           })
         : next;
     }
+    case "credit_exhausted":
+      // The turn is about to close `max_steps` with a synthetic reply
+      // that says the same; this is the one-line version for the feed,
+      // and the line that names the provider.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» "${event.provider}" is out of credit (${event.code}) — task paused; top up, then say continue`,
+        color: "yellow",
+      });
     case "provider_recovered":
       return appendFeed(
         { ...state, providerOutage: null },

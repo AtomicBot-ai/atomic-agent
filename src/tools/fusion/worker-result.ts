@@ -178,6 +178,13 @@ export class WorkerRunCollector {
       this.lastWaitReason = undefined;
       return;
     }
+    if (event.type === "credit_exhausted") {
+      // The loop pauses the worker's turn resumable, but a worker is
+      // never resumed: for the orchestrator this is a failed task with
+      // the reason, not a stopped one.
+      this.lastLoopError = `"${event.provider}" is out of credit: ${event.message}`;
+      return;
+    }
     if (event.type !== "llm_event") return;
     const inner = event.event;
     if (inner.type === "assistant_reply") {
@@ -300,6 +307,9 @@ export class WorkerRunCollector {
 }
 
 function stopCauseNote(cause: WorkerStopCause, stepCount: number): string {
+  if (cause === "credit_exhausted") {
+    return "stopped because the provider is out of credit";
+  }
   if (cause === "time_ceiling") {
     return "stopped at its time limit; any reply was written on the forced final step and may describe work that was not done";
   }
@@ -337,6 +347,9 @@ export function classifyWorkerStatus(
 ): WorkerTaskStatus {
   if (reason === null || reason === "failed") return "failed";
   if (reason === "cancelled") return "cancelled";
+  // Out of credit is not a ceiling the worker ran into; nothing it
+  // wrote after that point exists, and re-delegating cannot help.
+  if (stopCause === "credit_exhausted") return "failed";
   if (approvalRefused) return "needs_orchestrator";
   if (reason === "max_steps" || stopCause !== undefined) return "max_steps";
   return "ok";

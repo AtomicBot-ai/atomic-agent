@@ -1162,6 +1162,23 @@ describe("truncated completion", () => {
     expect(line).not.toContain("undefined");
   });
 
+  it("names the provider that ran out of credit (F29)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "credit_exhausted",
+        provider: "openrouter",
+        code: "credit_balance_exhausted",
+        message: "Your credit balance is too low",
+      },
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toBe(
+      '» "openrouter" is out of credit (credit_balance_exhausted) — task paused; top up, then say continue',
+    );
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
   it("explains a window retry in the operator's terms", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",

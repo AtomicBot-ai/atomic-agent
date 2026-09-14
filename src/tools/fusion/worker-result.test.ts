@@ -557,6 +557,27 @@ describe("WorkerRunCollector — why a worker stopped", () => {
     expect(row).not.toHaveProperty("hint");
   });
 
+  it("fails a worker whose provider ran out of credit, with the quota hint", () => {
+    const c = new WorkerRunCollector();
+    c.observe({
+      type: "credit_exhausted",
+      provider: "openrouter",
+      code: "credit_balance_exhausted",
+      message: "Your credit balance is too low",
+    });
+    const result = c.finish({
+      ...base,
+      reason: "max_steps",
+      stopCause: "credit_exhausted",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe(
+      '"openrouter" is out of credit: Your credit balance is too low',
+    );
+    expect(result.hint).toBe(WORKER_HINT_QUOTA);
+    expect(result).not.toHaveProperty("notes");
+  });
+
   it("notes that a reply on the forced final step may describe undone work", () => {
     const c = new WorkerRunCollector();
     c.observe(

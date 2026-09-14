@@ -37,6 +37,9 @@ export function normaliseOpenAiChatResponse(
     cacheHitTokens: usage.cachedTokens ?? 0,
     slotId: -1,
     modelId: typeof json.model === "string" ? json.model : defaultChatModel,
+    ...(typeof json.id === "string" && json.id.length > 0
+      ? { generationId: json.id }
+      : {}),
     usage,
     toolCalls,
     finishReason:

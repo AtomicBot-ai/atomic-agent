@@ -19,7 +19,10 @@ import {
   openAiToolCallAdapter,
   withStrictNullArgumentDrop,
 } from "./openai-tool-call-adapter.js";
-import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
+import {
+  createOpenAiStreamConsumer,
+  OpenAiSseError,
+} from "./openai-stream-consumer.js";
 import {
   buildOpenAiChatBody,
   resolveMessageShape,
@@ -446,6 +449,10 @@ export class OpenAiProvider implements LlmProvider {
           body = this.buildBody(request, true, shape);
           continue;
         }
+        // An error event inside the stream (OpenRouter's `504 Upstream
+        // idle timeout` after output) becomes the typed HTTP error the
+        // loop classifies, carrying the generation id for the trace.
+        if (err instanceof OpenAiSseError) throw this.httpErrorFromSse(err, path);
         if (!canReopenStream(err, committed, budget)) throw err;
         // No `res.body.cancel()` here, on purpose. The only way to reach
         // this line with a response in hand is `isNetworkError(err)` on
@@ -517,6 +524,29 @@ export class OpenAiProvider implements LlmProvider {
           streamFinal?.earlyStop !== undefined,
       ),
       sentBody,
+    );
+  }
+
+  /**
+   * An error the provider reported inside the stream, as the typed HTTP
+   * failure the rest of the runtime knows: a 5xx parks the turn like a
+   * 5xx on the open would, and the generation id stays on it.
+   */
+  private httpErrorFromSse(err: OpenAiSseError, path: string): OpenAiHttpError {
+    return new OpenAiHttpError(
+      `openai provider ${err.status ?? "stream"}: ${err.message}`,
+      err.status,
+      `${this.http.baseUrl}${path}`,
+      false,
+      null,
+      this.http.label,
+      undefined,
+      {
+        cause: err,
+        ...(err.generationId !== null
+          ? { generationId: err.generationId }
+          : {}),
+      },
     );
   }
 
@@ -631,6 +661,9 @@ function completionFromStreamFinal(
     usage,
     toolCalls: streamFinal?.toolCalls,
     finishReason,
+    ...(streamFinal?.generationId !== undefined
+      ? { generationId: streamFinal.generationId }
+      : {}),
     ...(streamFinal?.earlyStop !== undefined
       ? { earlyStop: streamFinal.earlyStop }
       : {}),

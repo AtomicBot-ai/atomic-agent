@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+import { attachGenerationId } from "../../llm/provider/openai/generation-id.js";
 
 import { createTraceRecorder } from "./trace-recorder.js";
 import type { TraceEvent } from "./trace-event.js";
@@ -431,6 +432,20 @@ describe("createTraceRecorder", () => {
       category: "transport",
     });
     expect(err).not.toHaveProperty("fallbackFailures");
+  });
+
+  it("records the generation id of a stream that failed after output", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-gen", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    const error = new Error("openai provider 504: Upstream idle timeout", {
+      cause: attachGenerationId(new Error("terminated"), "gen-504"),
+    });
+    rec.onAgentEvent({ type: "loop_failed", error, category: "transport" });
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      message: "openai provider 504: Upstream idle timeout",
+      generationId: "gen-504",
+    });
   });
 
   it("keeps the last link's message and lists the links that failed before it", () => {

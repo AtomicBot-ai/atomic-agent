@@ -137,6 +137,8 @@ export interface TraceLlmCompletion extends TraceEventBase {
   modelId: string | null;
   stop: boolean;
   truncated: boolean;
+  /** The provider's generation id, when it sent one. */
+  generationId?: string;
 }
 
 export interface TraceToolInvocation extends TraceEventBase {
@@ -521,6 +523,12 @@ export interface TraceError extends TraceEventBase {
   stepIndex?: number;
   message: string;
   stack?: string;
+  /**
+   * The provider's generation id when the failure came from a stream
+   * that had already produced output — the tokens are billed, and the
+   * id is what recovers the cost.
+   */
+  generationId?: string;
   /**
    * Canonical LLM failure taxonomy tag
    * (`transport` / `grammar` / `model` / `tool` / `cancelled`). Missing

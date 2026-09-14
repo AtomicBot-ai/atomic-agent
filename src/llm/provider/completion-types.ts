@@ -201,6 +201,12 @@ export interface CompletionResult {
    * authoritative.
    */
   servedTransport?: ToolCallTransport;
+  /**
+   * The provider's generation id (`id` on the response / SSE chunks),
+   * when it sends one. Recorded in the trace so a billed completion
+   * can be looked up at the provider.
+   */
+  generationId?: string;
 }
 
 export interface OpenAiToolCall {
@@ -236,6 +242,8 @@ export interface StreamFinalResult {
   finishReason?: string | null;
   usage?: CompletionUsage;
   modelId?: string | null;
+  /** See `CompletionResult.generationId`. */
+  generationId?: string;
   /**
    * Whether the underlying transport actually delivered a trustworthy
    * terminal signal — an explicit provider `finish_reason` on any chunk,
