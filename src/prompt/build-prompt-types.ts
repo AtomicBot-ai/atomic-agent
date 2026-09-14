@@ -121,6 +121,12 @@ export interface BuildPromptInput {
   profileMaxTokens?: number;
   userMessage?: string | null;
   contextualKeywordGate?: boolean;
+  /**
+   * Hide profile facts with `voteScore <= -threshold`, pinned or not.
+   * Defaults to `config.memory.voting.profileFilterThreshold`; `0`
+   * disables the filter.
+   */
+  profileFilterThreshold?: number;
   recallPreviewChars?: number;
   recallMaxTokens?: number;
   memoryIndexMaxTokens?: number;
