@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -21,6 +22,7 @@ vi.mock("node:child_process", () => ({
 
 import {
   resolveEmbeddingPidFilePath,
+  resolveLogFilePath,
   resolveModelFilePath,
   resolvePidFilePath,
   resolveServerBinPath,
@@ -32,10 +34,12 @@ import {
   DaemonHealthError,
   ForeignDaemonError,
   probeThroughput,
+  readLaunchRecord,
   readRunningPid,
   readThroughputRecord,
   startDaemon,
   THROUGHPUT_PROBE_TOKENS,
+  writeLaunchRecord,
   writeThroughputRecord,
   stopDaemon,
   stopEmbeddingDaemon,
@@ -43,6 +47,7 @@ import {
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
 import { getLocalModelDef } from "./models-catalog.js";
+import { encodeSyntheticGguf, gemma4Pairs } from "./gguf-metadata.fixtures.js";
 
 const baseOpts: DaemonStartOptions = {
   dataDir: "/tmp/data",
@@ -720,6 +725,159 @@ describe("startDaemon throughput probe (F16)", () => {
       expect(
         fetchMock.mock.calls.every(([url]) => String(url).endsWith("/health")),
       ).toBe(true);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("--swa-full (F12)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+  });
+
+  it("appends --swa-full only when the resolved flag is set", () => {
+    const withFlag = buildLlamaServerArgs(
+      { ...baseOpts, swaFullFlag: true },
+      "/m.gguf",
+      "alias",
+      16_384,
+    );
+    expect(withFlag).toContain("--swa-full");
+    const without = buildLlamaServerArgs(baseOpts, "/m.gguf", "alias", 16_384);
+    expect(without).not.toContain("--swa-full");
+    // A preference alone changes nothing at the arg layer — the decision
+    // is `startDaemon`'s, from the header and the budget.
+    expect(
+      buildLlamaServerArgs({ ...baseOpts, swaFull: "on" }, "/m.gguf", "alias", 16_384),
+    ).not.toContain("--swa-full");
+  });
+
+  function stageGemma(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    const model = getLocalModelDef("gemma-4-31b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, encodeSyntheticGguf(gemma4Pairs()));
+  }
+
+  function healthyFetch(): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).endsWith("/health")
+          ? new Response(JSON.stringify({ status: "ok" }), { status: 200 })
+          : new Response(
+              JSON.stringify({ timings: { predicted_n: 64, predicted_per_second: 5 } }),
+              { status: 200 },
+            ),
+      ),
+    );
+  }
+
+  it("reads the header at start: swaFull 'on' launches --swa-full and makes reuse partial", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-swa-on-`);
+    try {
+      stageGemma(dataDir);
+      spawnMock.mockReturnValue({ pid: 5001, unref: () => {} });
+      healthyFetch();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19096,
+        device: "cpu",
+        swaFull: "on",
+        throughputProbe: false,
+      });
+      const args = spawnMock.mock.calls[0]![1] as string[];
+      expect(args).toContain("--swa-full");
+      expect(result.swaFull.enabled).toBe(true);
+      expect(result.swaFull.slidingLayers).toBe(50);
+      expect(result.prefixReuse).toBe("partial");
+      const launch = readLaunchRecord(dataDir, 5001);
+      expect(launch).toMatchObject({ swaFull: true, prefixReuse: "partial", modelId: "gemma-4-31b" });
+      const log = readFileSync(resolveLogFilePath(dataDir), "utf-8");
+      expect(log).toContain("[atomic-agent] launch: model gemma-4-31b (gemma4, 60 layers, trained context 262144)");
+      expect(log).toContain("[atomic-agent] launch: swa-full: on (configured)");
+      expect(log).toContain("[atomic-agent] launch: prefix reuse partial");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto with no memory budget (CPU) keeps the flag off and reports reuse none", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-swa-auto-`);
+    try {
+      stageGemma(dataDir);
+      spawnMock.mockReturnValue({ pid: 5002, unref: () => {} });
+      healthyFetch();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19095,
+        device: "cpu",
+        throughputProbe: false,
+      });
+      const args = spawnMock.mock.calls[0]![1] as string[];
+      expect(args).not.toContain("--swa-full");
+      expect(result.swaFull.enabled).toBe(false);
+      expect(result.swaFull.reason).toContain("no memory budget");
+      expect(result.prefixReuse).toBe("none");
+      expect(readLaunchRecord(dataDir, 5002)).toMatchObject({ swaFull: false, prefixReuse: "none" });
+      const log = readFileSync(resolveLogFilePath(dataDir), "utf-8");
+      expect(log).toContain("prefix reuse none — 50 of 60 layers use a sliding window of 1024");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("starts on the file-size fallback when the model file is not GGUF", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-nogguf-`);
+    try {
+      const binPath = resolveServerBinPath(dataDir, "llama-server");
+      mkdirSync(dirname(binPath), { recursive: true });
+      writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+      const model = getLocalModelDef("qwen-3.5-4b");
+      const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+      mkdirSync(dirname(modelPath), { recursive: true });
+      writeFileSync(modelPath, "gguf", "utf-8");
+      spawnMock.mockReturnValue({ pid: 5003, unref: () => {} });
+      healthyFetch();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19094,
+        device: "cpu",
+        swaFull: "on",
+        throughputProbe: false,
+      });
+      expect(result.swaFull.enabled).toBe(false);
+      expect(result.swaFull.reason).toContain("header unreadable");
+      expect(result.prefixReuse).toBeNull();
+      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).toContain("(header unreadable)");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("launch records belong to one pid", () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-launch-record-`);
+    try {
+      writeLaunchRecord(dataDir, {
+        pid: 7,
+        modelId: "gemma-4-31b",
+        contextSize: 131_072,
+        swaFull: true,
+        prefixReuse: "partial",
+        launchedAt: 1,
+      });
+      expect(readLaunchRecord(dataDir, 7)?.swaFull).toBe(true);
+      expect(readLaunchRecord(dataDir, 8)).toBeNull();
+      expect(readLaunchRecord(dataDir, null)).toBeNull();
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -534,6 +534,7 @@ export async function runLocalModelsStart(): Promise<number> {
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
         parallel: cfg.localModels.managed.parallel,
+        swaFull: cfg.localModels.managed.swaFull,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),

@@ -63,6 +63,16 @@ export function resolveThroughputFilePath(dataDir: string): string {
 }
 
 /**
+ * What the chat daemon was launched with (`LaunchRecord` in
+ * `daemon-lifecycle.ts`): the context size, whether `--swa-full` is on,
+ * the header's prefix-reuse verdict. Pid-stamped like the throughput
+ * record, for the runtime that connects to a daemon it did not start.
+ */
+export function resolveLaunchFilePath(dataDir: string): string {
+  return join(dataDir, "llama-server.launch.json");
+}
+
+/**
  * Memory-v2 phase 1B. Pid file for the secondary `llama-server` instance
  * dedicated to `/embedding` requests. Lives next to the chat daemon's
  * pid file so a single `models stop` invocation can find and kill both.

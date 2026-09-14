@@ -134,6 +134,7 @@ import {
 import {
   getEmbeddingModelDef,
   isKnownEmbeddingModelId,
+  readLaunchRecord,
   readRunningPid,
   readThroughputRecord,
 } from "../local-llm/index.js";
@@ -1538,6 +1539,15 @@ export async function createAgentRuntime(
                 return (
                   readThroughputRecord(dataDir, readRunningPid(dataDir))
                     ?.tokensPerSecond ?? null
+                );
+              },
+              // Whether the live daemon runs `--swa-full` — what turns a
+              // sliding-window model's `prefixReuse` back to `partial`.
+              swaFullActive: () => {
+                const dataDir = config.paths.localModelsDataDir;
+                return (
+                  readLaunchRecord(dataDir, readRunningPid(dataDir))?.swaFull ===
+                  true
                 );
               },
             }

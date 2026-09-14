@@ -291,3 +291,81 @@ describe("ModelProfileManager throughput (F16)", () => {
     expect(mgr.getTokensPerSecond()).toBeNull();
   });
 });
+
+
+describe("ModelProfileManager prefix reuse (F12)", () => {
+  async function managerWith(opts: {
+    props: Record<string, unknown>;
+    verdict: { prefixReuse: "partial" | "none"; reasons: string[] } | null;
+    swaFullActive?: () => boolean;
+  }) {
+    const stub = makeLlamaStub([opts.props]);
+    const asked: string[] = [];
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      readPrefixReuse: async (path) => {
+        asked.push(path);
+        return opts.verdict;
+      },
+      ...(opts.swaFullActive ? { swaFullActive: opts.swaFullActive } : {}),
+    });
+    return { mgr, asked };
+  }
+
+  it("stamps prefixReuse none from the header of /props.model_path", async () => {
+    const { mgr, asked } = await managerWith({
+      props: { ...GEMMA4_PROPS, model_path: "/models/gemma-4-31b.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["50 of 60 layers use a sliding window of 1024"] },
+    });
+    await mgr.refresh();
+    expect(asked).toEqual(["/models/gemma-4-31b.gguf"]);
+    expect(mgr.getProfile().id).toBe("gemma4-think");
+    expect(mgr.getProfile().prefixReuse).toBe("none");
+  });
+
+  it("leaves the default when /props names no model path or the header is unreadable", async () => {
+    const { mgr, asked } = await managerWith({ props: QWEN3_PROPS, verdict: { prefixReuse: "none", reasons: [] } });
+    await mgr.refresh();
+    expect(asked).toEqual([]);
+    expect(mgr.getProfile().prefixReuse).toBeUndefined();
+    const { mgr: unreadable } = await managerWith({
+      props: { ...QWEN3_PROPS, model_path: "/models/x.gguf" },
+      verdict: null,
+    });
+    await unreadable.refresh();
+    expect(unreadable.getProfile().prefixReuse).toBeUndefined();
+  });
+
+  it("turns a sliding-window model's reuse back to partial when the daemon runs --swa-full, never a hybrid's", async () => {
+    const { mgr } = await managerWith({
+      props: { ...GEMMA4_PROPS, model_path: "/models/gemma.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["50 of 60 layers use a sliding window of 1024"] },
+      swaFullActive: () => true,
+    });
+    await mgr.refresh();
+    expect(mgr.getProfile().prefixReuse).toBe("partial");
+    const { mgr: hybrid } = await managerWith({
+      props: { ...QWEN3_PROPS, model_path: "/models/qwen35.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["hybrid/recurrent architecture (qwen35)"] },
+      swaFullActive: () => true,
+    });
+    await hybrid.refresh();
+    expect(hybrid.getProfile().prefixReuse).toBe("none");
+  });
+
+  it("updates prefixReuse on a refresh that keeps the profile id", async () => {
+    // The initial profile is plain-instruct and /props says plain too:
+    // no grammar rebuild, but the header's verdict must still land.
+    const { mgr } = await managerWith({
+      props: { ...LLAMA3_PROPS, model_path: "/models/hybrid.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["hybrid/recurrent architecture (nemotron_h)"] },
+    });
+    const result = await mgr.refresh();
+    expect(result.profileChanged).toBe(false);
+    expect(mgr.getProfile().id).toBe("plain-instruct");
+    expect(mgr.getProfile().prefixReuse).toBe("none");
+  });
+});

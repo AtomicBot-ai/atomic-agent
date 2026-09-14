@@ -47,6 +47,7 @@ export {
   resolvePidFilePath,
   resolveLogFilePath,
   resolveThroughputFilePath,
+  resolveLaunchFilePath,
   resolveEmbeddingPidFilePath,
   resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
@@ -194,15 +195,42 @@ export {
   probeThroughput,
   readThroughputRecord,
   writeThroughputRecord,
+  readLaunchRecord,
+  writeLaunchRecord,
   THROUGHPUT_PROBE_TOKENS,
   type DaemonStartOptions,
   type DaemonStartResult,
   type DaemonStatus,
   type EmbeddingDaemonStartOptions,
+  type LaunchRecord,
   type StartBothResult,
   type ThroughputRecord,
   type ThroughputSample,
 } from "./daemon-lifecycle.js";
+export {
+  classifyPrefixReuse,
+  countSlidingWindowLayers,
+  GgufFormatError,
+  HYBRID_ARCHITECTURES,
+  isHybridArchitecture,
+  kvLayoutSourceFromMetadata,
+  parseGgufHeader,
+  readGgufMetadata,
+  readGgufMetadataSync,
+  readModelPrefixReuse,
+  resetPrefixReuseCache,
+  type GgufMetadata,
+  type PrefixReuse,
+  type PrefixReuseVerdict,
+} from "./gguf-metadata.js";
+export {
+  isSwaFullPreference,
+  resolveSwaFullDecision,
+  SWA_FULL_MAX_RATIO,
+  SWA_FULL_PREFERENCES,
+  type SwaFullDecision,
+  type SwaFullPreference,
+} from "./swa-full.js";
 export { readLogTail, type LogTailResult } from "./log-tail.js";
 
 export {

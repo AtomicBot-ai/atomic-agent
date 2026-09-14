@@ -18,6 +18,17 @@ interface BaseModelProfile {
   /** Prefix reuse of the serving model; absent reads as `"partial"`. */
   prefixReuse?: PrefixReuse;
   /**
+   * How much of a cached prompt llama-server can reuse when a new one
+   * diverges from it: `"partial"` (the default — the matching prefix is
+   * kept and the rest re-evaluated) or `"none"` (a sliding-window or
+   * hybrid/recurrent model launched without `--swa-full`, whose layers
+   * cannot be rolled back, so a changed prompt is a full re-read). Set
+   * from the model's GGUF header (`gguf-metadata.ts`) by the profile
+   * manager; the conversation packer cuts history less often and deeper
+   * when reuse is `"none"`. Absent means `"partial"`.
+   */
+  prefixReuse?: "partial" | "none";
+  /**
    * Physical context window in tokens, read from `llama-server /props`
    * (`default_generation_settings.n_ctx`, with a root `n_ctx` fallback).
    * Absent when the probe failed or an older llama.cpp build did not

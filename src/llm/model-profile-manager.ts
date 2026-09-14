@@ -1,4 +1,5 @@
 import type { StructuredLogger } from "../tracing/structured-logger.js";
+import { readModelPrefixReuse } from "../local-llm/gguf-metadata.js";
 import { buildGrammar } from "./grammar/build-grammar.js";
 import type { LlamaServerClient } from "./llama-server-client.js";
 import {
@@ -45,6 +46,22 @@ export interface ModelProfileManagerOptions {
    * it.
    */
   readThroughput?: () => number | null;
+  /**
+   * Reads the prefix-reuse verdict for the model file `/props.model_path`
+   * names. Defaults to `readModelPrefixReuse` (a bounded GGUF header
+   * read, memoised per path); tests inject a stub. `null` from it keeps
+   * the profile's default (`"partial"`).
+   */
+  readPrefixReuse?: (modelPath: string) => Promise<{
+    prefixReuse: "partial" | "none";
+    reasons: string[];
+  } | null>;
+  /**
+   * Whether the daemon was launched with `--swa-full`, which makes a
+   * sliding-window model's cache partially reusable again. Read per
+   * refresh; absent means unknown (treated as not set).
+   */
+  swaFullActive?: () => boolean;
   logger?: StructuredLogger;
 }
 
@@ -88,6 +105,10 @@ export class ModelProfileManager {
   private readonly browserEnabled: boolean;
   private readonly onTotalSlots: ((totalSlots: number) => void) | undefined;
   private readonly readThroughput: (() => number | null) | undefined;
+  private readonly readPrefixReuse: NonNullable<
+    ModelProfileManagerOptions["readPrefixReuse"]
+  >;
+  private readonly swaFullActive: (() => boolean) | undefined;
   private readonly logger: StructuredLogger | undefined;
 
   constructor(options: ModelProfileManagerOptions) {
@@ -99,6 +120,8 @@ export class ModelProfileManager {
     this.browserEnabled = options.browserEnabled ?? true;
     this.onTotalSlots = options.onTotalSlots;
     this.readThroughput = options.readThroughput;
+    this.readPrefixReuse = options.readPrefixReuse ?? readModelPrefixReuse;
+    this.swaFullActive = options.swaFullActive;
     this.logger = options.logger;
   }
 
@@ -167,6 +190,38 @@ export class ModelProfileManager {
     }
   }
 
+  /**
+   * Stamp `prefixReuse` on a freshly detected profile from the model
+   * file `/props.model_path` names — the one async step of a refresh.
+   * No path, an unreadable header, or a non-GGUF file keeps the
+   * profile's default.
+   */
+  private async applyPrefixReuse(
+    profile: ModelProfile,
+    modelPath: string | null,
+  ): Promise<ModelProfile> {
+    if (modelPath === null || modelPath.length === 0) return profile;
+    const verdict = await this.readPrefixReuse(modelPath);
+    if (verdict === null) return profile;
+    // `--swa-full` makes a sliding-window model's cache partially
+    // reusable again; a hybrid's recurrent state stays whole-or-nothing.
+    const hybrid = verdict.reasons.some((r) => r.startsWith("hybrid"));
+    const prefixReuse: "partial" | "none" =
+      verdict.prefixReuse === "none" &&
+      this.swaFullActive?.() === true &&
+      !hybrid
+        ? "partial"
+        : verdict.prefixReuse;
+    if (prefixReuse !== (this.profile.prefixReuse ?? "partial")) {
+      this.logger?.info("model prefix reuse resolved from header", {
+        modelPath,
+        prefixReuse,
+        reasons: verdict.reasons,
+      });
+    }
+    return { ...profile, prefixReuse };
+  }
+
   async refreshIfStale(): Promise<ModelProfileRefreshResult> {
     if (!this.stale) {
       return {
@@ -195,7 +250,10 @@ export class ModelProfileManager {
       if (totalSlots !== null) {
         this.onTotalSlots?.(totalSlots);
       }
-      const nextProfile = detectModelProfile(props);
+      const nextProfile = await this.applyPrefixReuse(
+        detectModelProfile(props),
+        typeof props.model_path === "string" ? props.model_path : null,
+      );
       const nextModelId = normaliseId(
         typeof props.model_alias === "string" ? props.model_alias : null,
       );
@@ -218,6 +276,10 @@ export class ModelProfileManager {
           to: nextProfile.id,
           modelId: nextModelId,
         });
+      } else if (nextProfile.prefixReuse !== this.profile.prefixReuse) {
+        // Same profile id, but the header now says something about
+        // reuse — the grammar is untouched, the packer's input is not.
+        this.profile = { ...this.profile, prefixReuse: nextProfile.prefixReuse };
       }
       if (nextModelId !== null) {
         this.modelId = nextModelId;

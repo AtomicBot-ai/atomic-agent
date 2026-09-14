@@ -965,6 +965,28 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
   });
 
+  it("defaults localModels.managed.swaFull to auto and validates the enum", () => {
+    expect(USER_CONFIG_DEFAULTS.localModels.managed.swaFull).toBe("auto");
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
+        .swaFull,
+    ).toBe("auto");
+    for (const value of ["on", "off", "auto"] as const) {
+      expect(
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { managed: { swaFull: value } },
+        }).localModels.managed.swaFull,
+      ).toBe(value);
+    }
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { swaFull: "yes" } },
+      }),
+    ).toThrow(/localModels\.managed\.swaFull/);
+  });
+
   it("defaults localModels.managed.parallel to auto (the machine decides)", () => {
     // v63: the slot count stopped being an operator setting. `"auto"`
     // resolves against the context the daemon actually launches with.

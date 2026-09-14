@@ -1636,6 +1636,7 @@ export class LocalModelsOrchestrator {
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
           parallel: cfg.localModels.managed.parallel,
+          swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),
         },
