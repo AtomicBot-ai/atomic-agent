@@ -11,8 +11,15 @@
  * "No checker" when there is no tsconfig above the file or no `tsc`
  * under a `node_modules/.bin` above the project — a global `tsc` is
  * not consulted, since its version is not the project's.
+ *
+ * Writes nothing into the project: `--noEmit`, and the build info an
+ * incremental project would drop beside its tsconfig is redirected to
+ * the OS temp dir and removed.
  */
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { runChecker } from "./check-script-syntax.js";
@@ -64,11 +71,17 @@ async function checkProject(
   tsc: string,
 ): Promise<ProjectCheck> {
   const projectDir = dirname(tsconfig);
+  // An `incremental` (or `composite`) project writes `tsconfig.tsbuildinfo`
+  // next to itself even under `--noEmit`. Point it at the temp dir
+  // instead: `--incremental` is legal with `--noEmit`, and forcing it on
+  // costs a non-incremental project nothing but a throwaway file.
+  const buildInfo = join(tmpdir(), `atag-verify-${randomBytes(4).toString("hex")}.tsbuildinfo`);
   const run = await runChecker(
     tsc,
-    ["--noEmit", "-p", tsconfig, "--pretty", "false", "--listFiles"],
+    ["--noEmit", "-p", tsconfig, "--pretty", "false", "--listFiles", "--incremental", "--tsBuildInfoFile", buildInfo],
     { cwd: projectDir, timeoutMs: TSC_TIMEOUT_MS },
   );
+  await rm(buildInfo, { force: true });
   if (run.missing) {
     return { ok: false, diagnostics: new Map(), included: new Set(), errorCount: 0, failure: "tsc could not be started" };
   }
