@@ -373,9 +373,57 @@ describe("AgentLoop fusion seams", () => {
     expect(names).toContain("finish");
     // The plain turn gets the base grammar untouched.
     expect(plain!.grammar).toBe(grammar);
-    // Same descriptors, same prompt: the refusal is in the grammar, not
-    // in the prefix.
-    expect(orchestrator!.prompt).toContain("Write a file.");
-    expect(orchestrator!.prompt).toBe(plain!.prompt);
+    // The orchestrator ROLE shapes the prefix (per role, stable within
+    // the turn): the write tool is listed by name, not described in
+    // full, and nothing about the gate's per-call refusals touches it.
+    expect(orchestrator!.prompt).toContain("# also available via `tool.view`:");
+    expect(orchestrator!.prompt).toContain("os.fs.write");
+    expect(orchestrator!.prompt).not.toContain("- os.fs.write —");
+    expect(orchestrator!.prompt).toContain("- fusion.delegate —");
+    // The plain turn is `full`: everything in full, no names line.
+    expect(plain!.prompt).toContain("- os.fs.write —");
+    expect(plain!.prompt).not.toContain("# also available via `tool.view`:");
+  });
+
+  it("a worker's builder role reaches the step and its request", async () => {
+    const seen: LlmStreamParams[] = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const tools: ToolDescriptor[] = [
+      ...TOOLS,
+      {
+        name: "os.fs.write",
+        summary: "Write a file.",
+        argsSchema: '{"path": string, "content": string}',
+      },
+      {
+        name: "tasks.cron",
+        summary: "Cron a task.",
+        argsSchema: '{"cron": string}',
+      },
+    ];
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      llmComplete: async (params) => {
+        seen.push(params);
+        return makeCompletion(
+          JSON.stringify([{ tool: "reply", args: { text: "done" } }]),
+        );
+      },
+      toolDescriptors: tools,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    await loop.runTurn(
+      createEmptySessionState({ id: "s-builder", workingDir }),
+      turnOptions({ toolRole: "builder", ephemeral: true }),
+    );
+    const names = grammarToolNames(seen[0]!.grammar);
+    expect(names).toEqual(["os.fs.read", "os.fs.write", "reply"]);
+    expect(seen[0]!.prompt).toContain("- os.fs.write —");
+    expect(seen[0]!.prompt).not.toContain("- tasks.cron —");
+    expect(seen[0]!.prompt).toContain("# also available via `tool.view`: finish, tasks.cron");
   });
 });

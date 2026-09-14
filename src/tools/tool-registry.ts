@@ -1,5 +1,6 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
+import type { ToolRole } from "./tool-roles.js";
 
 export interface ToolContext {
   /** Working directory for OS tools and relative path resolution. */
@@ -7,6 +8,13 @@ export interface ToolContext {
   sessionId: string;
   stepIndex: number;
   signal: AbortSignal;
+  /**
+   * The turn's tool role (`tool-roles.ts`), when the step knows it.
+   * `tool.view` reads it to tell a tool that is already described in
+   * full for this role (nothing to load) from one outside the role
+   * (load it). Absent ⇒ `full`.
+   */
+  toolRole?: ToolRole;
 }
 
 export interface ToolDefinition {

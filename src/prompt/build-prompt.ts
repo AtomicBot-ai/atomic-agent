@@ -24,6 +24,7 @@ import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
+import { partitionByRole } from "../tools/tool-roles.js";
 import { renderTaskPolicy } from "./render-task-policy.js";
 import {
   checkBudget,
@@ -156,6 +157,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(input.toolTransport !== undefined
       ? { toolTransport: input.toolTransport }
       : {}),
+    ...(input.toolRole !== undefined ? { toolRole: input.toolRole } : {}),
   });
 
   const sessionParts = buildSessionSectionParts(input.session, limits.session);
@@ -167,9 +169,19 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const loadedToolsMaxTokens =
     input.loadedToolsMaxTokens ?? config.agent.loadedToolsMaxTokens;
+  // A loaded tool the prefix already describes in full for this role
+  // (an out-of-role load from an earlier turn under another role, or a
+  // frequent tool loaded by hand) is not rendered twice: the tail copy
+  // would cost tokens and say nothing the prefix does not.
+  const describedInFull = new Set(
+    partitionByRole(input.toolRole, input.toolDescriptors)
+      .inRole.filter((d) => d.tier !== "rare")
+      .map((d) => d.name),
+  );
   const loadedToolsRendered = renderLoadedToolsSection(
     input.session,
     loadedToolsMaxTokens,
+    { skip: describedInFull },
   );
   const loadedToolsTokens = loadedToolsRendered.tokens;
 

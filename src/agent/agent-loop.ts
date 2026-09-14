@@ -2,6 +2,7 @@ import {
   emptyFusionOrchestratorState,
   recordDelegation,
 } from "./fusion-orchestrator-mode.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 import type {
   CompletionResult,
   StreamChunk,
@@ -548,6 +549,15 @@ export interface RunTurnOptions {
    * or writing memory.
    */
   toolFilter?: (name: string) => boolean;
+  /**
+   * The turn's tool role (`src/tools/tool-roles.ts`): which tools the
+   * prompt describes in full, the native wire carries and the local
+   * grammar admits without a `tool.view` first. A fusion worker passes
+   * `builder`. Absent, an orchestrator turn in fusion mode is
+   * `orchestrator` and every other turn is `full` — the whole catalog,
+   * byte-identical to before roles existed.
+   */
+  toolRole?: ToolRole;
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -943,6 +953,12 @@ export class AgentLoop {
     if (fusionOrchestratorTurn) {
       this.deps.clearFanoutTurnGrant?.(session.id);
     }
+    // The tool role is per turn: a worker's `builder`, the orchestrator's
+    // `orchestrator`, everything else `full`. It shapes the stable prefix
+    // (per role, so it is stable within the turn), the native wire and
+    // the per-request grammar — see `tool-roles.ts`.
+    const toolRole: ToolRole =
+      options.toolRole ?? (fusionOrchestratorTurn ? "orchestrator" : "full");
 
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
@@ -1254,6 +1270,7 @@ export class AgentLoop {
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
             ...(options.toolFilter ? { toolFilter: options.toolFilter } : {}),
+            toolRole,
             ...(truncationRetry?.stepIndex === i &&
             truncationRetry.maxTokens !== undefined
               ? { maxTokens: truncationRetry.maxTokens }

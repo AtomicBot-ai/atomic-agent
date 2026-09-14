@@ -15,6 +15,7 @@ import type {
   ToolDescriptor,
 } from "./stable-prefix.js";
 import { estimateTokens, truncateToTokens } from "./token-budget.js";
+import { ALSO_AVAILABLE_VIA_TOOL_VIEW } from "./stable-prefix.js";
 
 function mkSession(overrides: Partial<SessionState> = {}): SessionState {
   const base = createEmptySessionState({
@@ -1681,5 +1682,101 @@ describe("buildPrompt tool transport (issue #285)", () => {
     const grammar = buildPrompt({ ...base(), systemPersona: persona });
     expect(native.stablePrefix).toContain(persona);
     expect(grammar.stablePrefix).toContain(persona);
+  });
+});
+
+describe("buildPrompt tool roles (F18)", () => {
+  const build = (
+    toolRole: "builder" | "orchestrator" | "full" | undefined,
+    session = mkSession(),
+  ) =>
+    buildPrompt({
+      session,
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      ...(toolRole !== undefined ? { toolRole } : {}),
+    });
+
+  it("full and no role are byte-identical — the pre-role prefix, KV cache intact", () => {
+    expect(build("full").stablePrefix).toBe(build(undefined).stablePrefix);
+    expect(build(undefined).stablePrefix).not.toContain(
+      ALSO_AVAILABLE_VIA_TOOL_VIEW,
+    );
+  });
+
+  it("builder: build tools in full, the rest as one line of names", () => {
+    const { stablePrefix } = build("builder");
+    expect(stablePrefix).toContain("- os.fs.write —");
+    expect(stablePrefix).toContain("- os.shell.run —");
+    expect(stablePrefix).toContain("- reply —");
+    expect(stablePrefix).not.toContain("- tasks.schedule —");
+    expect(stablePrefix).not.toContain("- browser.navigate —");
+    const line = stablePrefix
+      .split("\n")
+      .find((l) => l.startsWith(ALSO_AVAILABLE_VIA_TOOL_VIEW));
+    expect(line).toBeDefined();
+    expect(line).toContain("tasks.schedule");
+    expect(line).toContain("browser.navigate");
+    expect(line).toContain("finish");
+    expect(line).not.toContain("os.fs.write");
+    // Exactly one such line, and it sits inside `### tools`.
+    expect(stablePrefix.split(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toHaveLength(2);
+    expect(stablePrefix.indexOf(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toBeGreaterThan(
+      stablePrefix.indexOf("### tools"),
+    );
+    expect(stablePrefix.indexOf(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toBeLessThan(
+      stablePrefix.indexOf("### capabilities"),
+    );
+  });
+
+  it("orchestrator: no build tool in full; the write tools are names only", () => {
+    const { stablePrefix } = build("orchestrator");
+    expect(stablePrefix).toContain("- os.fs.read —");
+    expect(stablePrefix).toContain("- finish —");
+    expect(stablePrefix).not.toContain("- os.fs.write —");
+    expect(stablePrefix).not.toContain("- os.shell.run —");
+    const line = stablePrefix
+      .split("\n")
+      .find((l) => l.startsWith(ALSO_AVAILABLE_VIA_TOOL_VIEW))!;
+    expect(line).toContain("os.fs.write");
+    expect(line).toContain("os.shell.run");
+    // Per role, not per turn: two builds under one role are identical,
+    // and the two roles differ from each other.
+    expect(build("orchestrator").stablePrefix).toBe(stablePrefix);
+    expect(build("builder").stablePrefix).not.toBe(stablePrefix);
+  });
+
+  it("renders a loaded out-of-role tool in the tail, and skips one the prefix already describes in full", () => {
+    const loaded = mkSession({
+      loadedTools: [
+        {
+          name: "os.fs.write",
+          summary: "Write a file (loaded).",
+          argsSchema: "{ path: string, content: string }",
+          loadedAt: 1,
+          source: "explicit",
+        },
+        {
+          name: "os.git.show",
+          summary: "Show a commit.",
+          argsSchema: "{ repo?: string, revision?: string }",
+          loadedAt: 2,
+          source: "explicit",
+        },
+      ],
+    });
+    // Orchestrator: `os.fs.write` is outside the role, so the loaded copy
+    // is what describes it — it must render.
+    const orchestrator = build("orchestrator", loaded);
+    expect(orchestrator.tail).toContain("### loaded-tools");
+    expect(orchestrator.tail).toContain("Write a file (loaded).");
+    expect(orchestrator.tail).toContain("os.git.show");
+    // Full: the prefix already has `os.fs.write` in full; only the rare
+    // tool is worth a tail entry.
+    const full = build("full", loaded);
+    expect(full.tail).toContain("### loaded-tools");
+    expect(full.tail).not.toContain("Write a file (loaded).");
+    expect(full.tail).toContain("os.git.show");
   });
 });

@@ -4386,3 +4386,165 @@ describe("executeStep per-request grammar (F17)", () => {
     expect(grammarToolNames(seen[1]!.grammar)).toEqual(["finish", "reply"]);
   });
 });
+
+describe("executeStep tool roles (F18)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["os.fs.write", false],
+      ["tasks.schedule", false],
+      ["reply", true],
+      ["finish", true],
+    ] as const) {
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.path ?? args.text ?? "")}`,
+          });
+        },
+      });
+    }
+    return registry;
+  }
+
+  async function runStep(
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]>,
+    depsExtra: Partial<Parameters<typeof executeStep>[1]>,
+  ) {
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const seen: LlmStreamParams[] = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-role", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry: makeRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          return {
+            content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        ...depsExtra,
+      },
+    );
+    return { params: seen[0]!, baseGrammar: grammar };
+  }
+
+  const wireNames = (params: LlmStreamParams): string[] =>
+    (params.tools ?? []).map(
+      (t) => (t as { function?: { name?: string } }).function?.name ?? "",
+    );
+
+  it("builder on native tools: only the role's schemas go on the wire, plus what is loaded", async () => {
+    const session = createEmptySessionState({ id: "s-role-w", workingDir: "/w" });
+    session.loadedTools = [
+      {
+        name: "tasks.schedule",
+        summary: "Schedule.",
+        argsSchema: "{}",
+        loadedAt: 1,
+        source: "explicit",
+      },
+    ];
+    const { params } = await runStep(
+      { toolRole: "builder", session },
+      { toolTransport: "native_tools", toolCallAdapter: null, supportsSlotAffinity: false },
+    );
+    const names = wireNames(params);
+    expect(names).toContain("os__fs__write");
+    expect(names).toContain("os__shell__run");
+    expect(names).toContain("reply");
+    // Loaded from outside the role: on the wire and callable.
+    expect(names).toContain("tasks__schedule");
+    // Outside the role and not loaded: name only, in the prompt.
+    expect(names).not.toContain("tasks__cron");
+    expect(names).not.toContain("browser__navigate");
+    expect(params.prompt).toContain("# also available via `tool.view`:");
+    expect(params.prompt).not.toContain("- browser.navigate —");
+    // Described once per transport: the wire has the schema, the prompt
+    // has the full text for the role's tools only.
+    expect(params.prompt).toContain("- os.fs.write —");
+  });
+
+  it("builder on the grammar transport: the grammar admits the role's names plus the loaded ones", async () => {
+    const session = createEmptySessionState({ id: "s-role-g", workingDir: "/w" });
+    session.loadedTools = [
+      {
+        name: "tasks.schedule",
+        summary: "Schedule.",
+        argsSchema: "{}",
+        loadedAt: 1,
+        source: "explicit",
+      },
+    ];
+    const { params, baseGrammar } = await runStep({ toolRole: "builder", session }, {});
+    expect(params.grammar).not.toBe(baseGrammar);
+    const names = grammarToolNames(params.grammar);
+    expect(names).not.toBeNull();
+    expect(names).toContain("os.fs.write");
+    expect(names).toContain("os.shell.run");
+    expect(names).toContain("reply");
+    expect(names).toContain("tasks.schedule");
+    expect(names).not.toContain("tasks.cron");
+    expect(names).not.toContain("finish");
+    expect(names).not.toContain("browser.navigate");
+  });
+
+  it("orchestrator role + gate: a loaded write is on the wire's descriptors but never in the grammar", async () => {
+    const session = createEmptySessionState({ id: "s-role-o", workingDir: "/w" });
+    session.loadedTools = [
+      {
+        name: "os.fs.write",
+        summary: "Write.",
+        argsSchema: "{}",
+        loadedAt: 1,
+        source: "explicit",
+      },
+    ];
+    const { params } = await runStep(
+      { toolRole: "orchestrator", session },
+      { isFusionOrchestrator: () => true },
+    );
+    const names = grammarToolNames(params.grammar);
+    expect(names).toContain("os.fs.read");
+    expect(names).toContain("reply");
+    expect(names).toContain("finish");
+    // Loaded, but the gate would refuse it — so the grammar drops it.
+    expect(names).not.toContain("os.fs.write");
+    expect(params.prompt).toContain("Write.");
+  });
+
+  it("full role is byte-identical to no role, prompt and grammar alike", async () => {
+    const a = await runStep({ toolRole: "full" }, {});
+    const b = await runStep({}, {});
+    expect(a.params.prompt).toBe(b.params.prompt);
+    expect(a.params.grammar).toBe(a.baseGrammar);
+    expect(b.params.grammar).toBe(b.baseGrammar);
+  });
+});

@@ -10,6 +10,7 @@ import {
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 import { CancelledError } from "../llm/index.js";
 import {
   isParallelWithinGroup,
@@ -151,6 +152,8 @@ export interface BatchExecutionContext {
   fusionState?: () => FusionOrchestratorState;
   /** Called with a `fusion.delegate` result so the turn's ledger can fold it in. */
   onDelegated?: (result: CompressedToolResult) => void;
+  /** The turn's tool role, forwarded to every `ToolContext` (see `tool-roles.ts`). */
+  toolRole?: ToolRole;
   /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
@@ -418,6 +421,7 @@ export async function executeBatch(
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,
         signal: ctx.signal,
+        ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {

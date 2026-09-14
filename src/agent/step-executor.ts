@@ -24,6 +24,7 @@ import {
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
 import { refusedToolNames } from "./fusion-orchestrator-mode.js";
+import { descriptorsForRole, type ToolRole } from "../tools/tool-roles.js";
 import type {
   StreamParseEvent,
   StreamParser,
@@ -321,6 +322,14 @@ export interface StepContext {
    */
   toolFilter?: (name: string) => boolean;
   /**
+   * The turn's tool role (`tool-roles.ts`). Decides which of
+   * `toolDescriptors` the prompt describes in full (the rest become one
+   * line of names), which go on the native wire, and which the grammar
+   * admits — the role's own plus whatever the session has loaded through
+   * `tool.view`. Absent ⇒ `full`, byte-identical to before roles existed.
+   */
+  toolRole?: ToolRole;
+  /**
    * Reply cap for this step's completions, in place of
    * `localModels.completionMaxTokens`. The agent loop sets it when the
    * previous attempt at this very step came back cut off by the cap
@@ -452,8 +461,22 @@ async function executeStepInner(
   );
   // The same catalog on every step, the final one included: `### tools`
   // is stable-prefix bytes, and a catalog narrowed to reply/finish for
-  // the last step re-read the whole prompt on a cold slot.
+  // the last step re-read the whole prompt on a cold slot. The final
+  // step is enforced by the batch gate and, locally, by the grammar
+  // (`resolveStepGrammar`), never by the catalog.
   const stepToolDescriptors = ctx.toolDescriptors;
+  // What this step describes in full, puts on the native wire and admits
+  // in the grammar: the role's tools plus the ones the session has loaded
+  // through `tool.view`. Under `full` this IS `stepToolDescriptors`, same
+  // array — the adapter's memo keys on identity.
+  const loadedToolNames = new Set(
+    (ctx.session.loadedTools ?? []).map((t) => t.name),
+  );
+  const roleToolDescriptors = descriptorsForRole(
+    ctx.toolRole,
+    stepToolDescriptors,
+    loadedToolNames,
+  );
   const promptInput: BuildPromptInput = {
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
@@ -461,6 +484,7 @@ async function executeStepInner(
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     // The prefix must match the request shape: a native-tools link gets
     // native function-calling guidance instead of the text-JSON array
     // mandate (issue #285). Configured transport, not `servedTransport`:
@@ -560,7 +584,7 @@ async function executeStepInner(
   // orchestrator turn, a filtered worker); otherwise the base grammar
   // goes out byte-identical. The prompt is not touched either way — the
   // grammar rides with the request, outside the KV-cached prefix.
-  const stepGrammar = resolveStepGrammar(ctx, deps, stepToolDescriptors);
+  const stepGrammar = resolveStepGrammar(ctx, deps, roleToolDescriptors);
   const llmParams: LlmStreamParams = {
     ...buildLlmStreamParams({
       promptText: prompt.text,
@@ -568,7 +592,7 @@ async function executeStepInner(
       grammar: stepGrammar,
       slotId: slot.slotId,
       sessionId: ctx.session.id,
-      toolDescriptors: stepToolDescriptors,
+      toolDescriptors: roleToolDescriptors,
       signal: ctx.signal,
     }),
     ...(grammarPrompt ? { grammarPrompt } : {}),
@@ -889,7 +913,9 @@ async function executeStepInner(
     completion,
     deps.profile,
     parseDepsFor(completion, deps),
-    stepToolDescriptors,
+    // The list the REQUEST was built from — the strict-widened map must
+    // come from the same array the wire payload did.
+    roleToolDescriptors,
   );
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
@@ -1249,6 +1275,7 @@ async function executeStepInner(
           ...(deps.onDelegated ? { onDelegated: deps.onDelegated } : {}),
         }
       : {}),
+    ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     ...(batch.maxWaveSize !== undefined
       ? { maxWaveSize: batch.maxWaveSize }
       : {}),
@@ -1892,13 +1919,17 @@ const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
  * pin, and a step that narrows nothing has no reason to rewrite them.
  */
 function stepGrammarToolNames(
-  ctx: Pick<StepContext, "terminalOnly" | "toolFilter">,
+  ctx: Pick<StepContext, "terminalOnly" | "toolFilter" | "toolRole">,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator">,
   descriptors: readonly ToolDescriptor[],
 ): readonly string[] | null {
   if (ctx.terminalOnly) return TERMINAL_TOOL_NAMES;
   let names = descriptors.map((d) => d.name);
-  let restricted = false;
+  // A role other than `full` has already narrowed `descriptors` to the
+  // role's tools plus the loaded ones (`descriptorsForRole`); the grammar
+  // must follow, or the sampler could still emit what the prompt no
+  // longer describes in full.
+  let restricted = ctx.toolRole !== undefined && ctx.toolRole !== "full";
   if (deps.isFusionOrchestrator?.()) {
     const refused = refusedToolNames(names, { registry: deps.registry });
     if (refused.size > 0) {
@@ -1915,7 +1946,7 @@ function stepGrammarToolNames(
 }
 
 function resolveStepGrammar(
-  ctx: Pick<StepContext, "terminalOnly" | "toolFilter">,
+  ctx: Pick<StepContext, "terminalOnly" | "toolFilter" | "toolRole">,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
 ): string {

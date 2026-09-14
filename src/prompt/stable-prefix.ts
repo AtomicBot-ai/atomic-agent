@@ -4,6 +4,7 @@ import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
+import { partitionByRole, type ToolRole } from "../tools/tool-roles.js";
 
 /**
  * `frequent` — full `args` + optional `examples` in the stable prefix.
@@ -104,7 +105,20 @@ export interface StablePrefixInput {
    * left unsaid rather than guessed.
    */
   fusion?: FusionMachineFacts;
+  /**
+   * The turn's tool role (`tool-roles.ts`). Under `builder` or
+   * `orchestrator` the `### tools` block describes the role's tools as
+   * today (frequent in full, rare as one-liners) and lists every other
+   * descriptor on ONE line of names, "also available via tool.view".
+   * The prefix is therefore per role — stable within a turn, one cold
+   * read on a role change. Omitted or `"full"` keeps the block
+   * byte-identical to before roles existed.
+   */
+  toolRole?: ToolRole;
 }
+
+/** Header of the out-of-role names line — pinned by tests, read by the model. */
+export const ALSO_AVAILABLE_VIA_TOOL_VIEW = "# also available via `tool.view`:";
 
 /**
  * Persona lines shared verbatim between the grammar and native-tools
@@ -217,14 +231,26 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     input.systemPersona ??
     (nativeTools ? NATIVE_TOOLS_SYSTEM_PERSONA : DEFAULT_SYSTEM_PERSONA);
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
+  // A role splits the catalog: its own tools render as they always
+  // have, the rest collapse to one line of names. `full` (or no role)
+  // puts everything on the inside, so the block below is byte-identical
+  // to the pre-role output — `outside` is empty and adds no line.
+  const { inRole, outside } = partitionByRole(
+    input.toolRole,
+    input.toolDescriptors,
+  );
   const frequent: ToolDescriptor[] = [];
   const rare: ToolDescriptor[] = [];
-  for (const d of input.toolDescriptors) {
+  for (const d of inRole) {
     if (d.tier === "rare") rare.push(d);
     else frequent.push(d);
   }
   const commonBlock = frequent.map(formatToolFrequent).join("\n");
   const extrasBlock = rare.map(formatToolRare).join("\n");
+  const outsideLine =
+    outside.length > 0
+      ? `${ALSO_AVAILABLE_VIA_TOOL_VIEW} ${outside.map((d) => d.name).join(", ")}`
+      : null;
   const caps = formatCapabilities(input.capabilities);
   const skills =
     input.skillCatalog.length > 0
@@ -267,6 +293,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ``,
     `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`,
     extrasBlock,
+    ...(outsideLine !== null ? [outsideLine] : []),
     ``,
     `### capabilities`,
     caps,

@@ -108,6 +108,8 @@ describe("runWorkerTasks", () => {
       providerId: "local-llama",
       maxSteps: 7,
       taskMaxDurationMs: 60_000,
+      // The role is the policy module's too: a worker builds.
+      toolRole: "builder",
     });
     // The catalog narrowing is the policy module's, not a local copy.
     expect(calls[0]!.options.toolFilter?.("fusion.delegate")).toBe(false);

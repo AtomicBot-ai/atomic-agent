@@ -10,6 +10,7 @@ import type {
   ToolDescriptor,
 } from "./stable-prefix.js";
 import type { TokenBudgetLimits } from "./token-budget.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
   session: SessionState;
@@ -25,6 +26,14 @@ export interface BuildPromptInput {
    * the legacy output.
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * The turn's tool role (`tool-roles.ts`), forwarded into
+   * `buildStablePrefix` (per-role `### tools` block) and used to keep
+   * `### loaded-tools` free of tools the prefix already describes in
+   * full. Omitted or `"full"` keeps both byte-identical to the
+   * pre-role output.
+   */
+  toolRole?: ToolRole;
   /**
    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
    * `CURRENT DATE:` line in the variable tail just before `### respond`.

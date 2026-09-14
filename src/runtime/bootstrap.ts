@@ -74,6 +74,7 @@ import {
   confineWorkerReads,
   pickOriginalRequest,
 } from "../tools/fusion/index.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import {
@@ -529,6 +530,8 @@ export interface AgentRuntime {
        * `fusion.delegate` narrows a worker's catalog with it.
        */
       toolFilter?: (name: string) => boolean;
+      /** The turn's tool role (see `RunTurnOptions.toolRole`); a worker is a `builder`. */
+      toolRole?: ToolRole;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -553,6 +556,7 @@ export interface AgentRuntime {
       providerId?: string;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -2741,6 +2745,7 @@ export async function createAgentRuntime(
     providerId?: string;
     taskMaxDurationMs?: number;
     toolFilter?: (name: string) => boolean;
+    toolRole?: ToolRole;
   }) => ({
     maxSteps: Math.min(
       config.agent.maxSteps,
@@ -2758,6 +2763,9 @@ export async function createAgentRuntime(
     ...(runOptions.toolFilter === undefined
       ? {}
       : { toolFilter: runOptions.toolFilter }),
+    ...(runOptions.toolRole === undefined
+      ? {}
+      : { toolRole: runOptions.toolRole }),
     signal: runOptions.signal ?? new AbortController().signal,
   });
 
@@ -2785,6 +2793,7 @@ export async function createAgentRuntime(
       providerId?: string;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -2912,6 +2921,7 @@ export async function createAgentRuntime(
       providerId?: string;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after
