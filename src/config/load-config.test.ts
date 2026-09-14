@@ -49,9 +49,15 @@ describe("loadConfig", () => {
     const written = JSON.parse(readFileSync(path, "utf8"));
     expect(written.version).toBe(USER_CONFIG_VERSION);
     expect(config.localModels.url).toBe("http://127.0.0.1:8080");
-    expect(config.localModels.completionMaxTokens).toBe(8192);
+    expect(config.localModels.completionMaxTokens).toBe(16_384);
     expect(config.log.level).toBe("info");
     expect(config.agent.approvalLevel).toBe(1);
+    // The transcript caps a first run is written with: auto (the window
+    // decides) and two hundred pairs.
+    expect(config.agent.conversationMaxTokens).toBe(0);
+    expect(config.agent.conversationMaxPairs).toBe(200);
+    expect(written.agent.conversationMaxTokens).toBe(0);
+    expect(written.agent.conversationMaxPairs).toBe(200);
   });
 
   it("maps ATOMIC_AGENT_LLAMA_MAX_TOKENS to completionMaxTokens with bounds", () => {

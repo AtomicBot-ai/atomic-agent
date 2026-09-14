@@ -1,4 +1,4 @@
-import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
+import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { clipProfileSection } from "./clip-profile-section.js";
 import {
@@ -33,6 +33,7 @@ import {
   checkBudget,
   computeEffectiveConversationCap,
   CONVERSATION_CAP_AUTO,
+  CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
   estimateTokens,
   truncateToTokens,
@@ -124,7 +125,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // window decide" must never quietly mean "assume a tiny window".
   const limits = defaultBudget(budgetTotal, {
     conversation: conversationCapAuto
-      ? USER_CONFIG_DEFAULTS.agent.conversationMaxTokens
+      ? CONVERSATION_CAP_AUTO_FALLBACK
       : conversationMaxTokens,
     worldSnapshot: worldSnapshotMaxTokens,
   });

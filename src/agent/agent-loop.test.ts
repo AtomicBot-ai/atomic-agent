@@ -509,8 +509,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -542,11 +542,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
     expect(result.reason).toBe("reply");
     expect(calls).toBe(2);
-    // The first completion ran under the config cap; the retry under 4×.
+    // The first completion ran under the config cap (16,384); the retry
+    // under 4× of it, clamped to the 32,768 ceiling.
     expect(capsSeen[0]).toBeUndefined();
     expect(capsSeen[1]).toBe(32_768);
     // The model is told why it is being asked again.
-    expect(prompts[1]).toContain("cut off after 8192 tokens");
+    expect(prompts[1]).toContain("cut off after 16384 tokens");
     expect(prompts[1]).toContain("Keep your reasoning brief");
     expect(prompts[0]).not.toContain("cut off after");
     // One event, carrying the cause and the retry; no failure.
@@ -555,9 +556,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         type: "completion_truncated",
         stepIndex: 0,
         cause: "reply_cap",
-        completionTokens: 8_192,
+        completionTokens: 16_384,
         promptTokens: 6_000,
-        requestedMaxTokens: 8_192,
+        requestedMaxTokens: 16_384,
         retry: { kind: "raise_cap", maxTokens: 32_768 },
       }),
     ]);
@@ -676,8 +677,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -736,8 +737,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -782,8 +783,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -816,7 +817,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("reply");
     expect(prompts[0]).toContain("also add the tests");
     expect(prompts[1]).toContain("also add the tests");
-    expect(prompts[1]).toContain("cut off after 8192 tokens");
+    expect(prompts[1]).toContain("cut off after 16384 tokens");
   });
 
   it("reports a completion that exceeded the learned window, so bootstrap can raise it", async () => {
@@ -865,7 +866,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async ({ maxTokens }) => {
         calls += 1;
-        const cap = maxTokens ?? 8_192;
+        // No cap on the first call: the step runs under the config
+        // default (16,384); the retry carries the raised 32,768.
+        const cap = maxTokens ?? 16_384;
         return {
           ...makeCompletion(""),
           stop: false,
@@ -1101,8 +1104,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -1138,7 +1141,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("failed");
     expect(calls).toBe(2);
     expect(failures[0]).toContain(
-      "model: model response truncated at 8192 tokens",
+      "model: model response truncated at 16384 tokens",
     );
     expect(failures[0]).not.toContain("rejected the request");
   });
@@ -3408,8 +3411,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         truncated: true,
         usage: {
           promptTokens: 6_000,
-          completionTokens: 8_192,
-          totalTokens: 14_192,
+          completionTokens: 16_384,
+          totalTokens: 22_384,
         },
       },
       makeNativeCompletion(),

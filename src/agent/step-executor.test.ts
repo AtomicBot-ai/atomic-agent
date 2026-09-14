@@ -3669,8 +3669,8 @@ describe("truncated completions", () => {
             finishReason: "length",
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
             toolCalls: [
               {
@@ -3780,8 +3780,8 @@ describe("truncated completions", () => {
             finishReason: "length",
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
             toolCalls: [
               {
@@ -3807,9 +3807,10 @@ describe("truncated completions", () => {
       stage: "initial",
       truncation: {
         cause: "reply_cap",
-        completionTokens: 8_192,
+        completionTokens: 16_384,
         promptTokens: 6_000,
-        requestedMaxTokens: 8_192,
+        // The config default `localModels.completionMaxTokens`.
+        requestedMaxTokens: 16_384,
       },
     });
   });
@@ -3922,8 +3923,8 @@ describe("truncated completions", () => {
             finishReason: "length",
             usage: {
               promptTokens: 6_100,
-              completionTokens: 8_192,
-              totalTokens: 14_292,
+              completionTokens: 16_384,
+              totalTokens: 22_484,
             },
           });
         },
@@ -3937,13 +3938,14 @@ describe("truncated completions", () => {
       name: "ModelError",
       reason: "truncated",
       stage: "repair",
-      truncation: { cause: "reply_cap", requestedMaxTokens: 8_192 },
+      truncation: { cause: "reply_cap", requestedMaxTokens: 16_384 },
     });
   });
 
   it("native_tools: a cut with no cap on the wire is the provider's own limit, not our cap", async () => {
     // Request cloud-00312: no `max_tokens`, cut by the provider at 33,678
-    // tokens, reported as "it spent the reply cap … of 8192".
+    // tokens, reported as "it spent the reply cap … of 8192" (the config
+    // cap of the day; it is 16384 now, and must stay out of the message).
     const session = createEmptySessionState({
       id: "s-trunc-nocap",
       workingDir: "/w",
@@ -3985,12 +3987,15 @@ describe("truncated completions", () => {
     expect((error as Error).message).toContain(
       "the provider stopped at its own output limit after 33678 tokens (no reply cap was sent)",
     );
+    expect((error as Error).message).not.toContain("16384");
     expect((error as Error).message).not.toContain("8192");
   });
 
   it("native_tools: judges a cut against the cap the provider reports it sent", async () => {
-    // The step asked for nothing (config cap 8192), but the provider entry
-    // carries a 16k ceiling — that is the cap the request ran under.
+    // The step asked for nothing (config cap 16384), but the provider entry
+    // carries a 12k ceiling — that is the cap the request ran under. Below
+    // the config cap on purpose: judged against 16384 instead, a 12,288
+    // reply would read as `context_window`, not `reply_cap`.
     const session = createEmptySessionState({
       id: "s-trunc-sent",
       workingDir: "/w",
@@ -4005,11 +4010,11 @@ describe("truncated completions", () => {
             stop: false,
             truncated: true,
             finishReason: "length",
-            sentMaxTokens: 16_384,
+            sentMaxTokens: 12_288,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 16_384,
-              totalTokens: 22_384,
+              completionTokens: 12_288,
+              totalTokens: 18_288,
             },
           });
         },
@@ -4021,7 +4026,7 @@ describe("truncated completions", () => {
       }),
     ).rejects.toMatchObject({
       name: "ModelError",
-      truncation: { cause: "reply_cap", requestedMaxTokens: 16_384 },
+      truncation: { cause: "reply_cap", requestedMaxTokens: 12_288 },
     });
   });
 });

@@ -110,7 +110,7 @@ export function assistantReplyTurn(
  * `details`. Concrete value: ~1000 tokens, which covers 3-4 PDF pages or
  * a short code file and matches the `maxTailLines` budget most tools use.
  */
-const TOOL_RESULT_RENDER_CAP_CHARS = 4000;
+const TOOL_RESULT_RENDER_CAP_CHARS = 8000;
 const GOG_TOOL_RESULT_RENDER_CAP_CHARS = 16_000;
 
 /**

@@ -278,7 +278,7 @@ export const KV_MIN_BYTES_PER_TOKEN = 48_000;
  * every step. Any model >= ~14 GB on a 16 GB card lands on this floor,
  * so the value has to clear 5.2k + 8192 + margin.
  */
-export const MIN_AUTO_CONTEXT = 16_384;
+export const MIN_AUTO_CONTEXT = 32_768;
 
 /**
  * Upper bound for the auto-sized context: the model's trained context,
