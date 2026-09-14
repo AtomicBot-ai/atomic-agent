@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkPlanMode } from "./plan-mode.js";
+import { checkPlanMode, wouldRefuse } from "./plan-mode.js";
 import { ToolRegistry, type ToolDefinition } from "../tools/tool-registry.js";
 
 function tool(name: string, readonly: boolean): ToolDefinition {
@@ -75,5 +75,30 @@ describe("checkPlanMode", () => {
     expect(refusal?.summary).toContain("os.fs.write");
     expect(refusal?.summary).toContain("reply with the plan");
     expect(refusal?.details).toMatchObject({ plan_mode: true });
+  });
+});
+
+describe("wouldRefuse (the shared predicate)", () => {
+  // The batch trim asks this before it picks a survivor, so the call it
+  // keeps is never one the dispatch gate is about to refuse.
+  const registry = registryWith(
+    tool("os.fs.read", true),
+    tool("os.fs.write", false),
+    tool("reply", false),
+    tool("finish", false),
+  );
+  const ctx = { registry };
+
+  it("answers the same as checkPlanMode for every tool", () => {
+    for (const name of ["os.fs.read", "os.fs.write", "reply", "finish", "os.fs.raed"]) {
+      expect(wouldRefuse(name, ctx)).toBe(!checkPlanMode(name, registry).allowed);
+    }
+  });
+
+  it("refuses only registered mutations", () => {
+    expect(wouldRefuse("os.fs.write", ctx)).toBe(true);
+    expect(wouldRefuse("os.fs.read", ctx)).toBe(false);
+    expect(wouldRefuse("reply", ctx)).toBe(false);
+    expect(wouldRefuse("os.fs.raed", ctx)).toBe(false);
   });
 });

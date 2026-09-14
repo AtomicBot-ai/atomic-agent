@@ -216,3 +216,41 @@ describe("wouldRefuse / refusedToolNames — the gate's verdict ahead of dispatc
     ]);
   });
 });
+
+describe("wouldRefuse (the shared predicate)", () => {
+  // One predicate behind the dispatch gate, the batch trim and the
+  // per-request grammar: if they disagreed, the trim could keep a call
+  // the gate then refuses — which is exactly what happened in run 14.
+  const ctx = { registry: REGISTRY };
+
+  it("answers the same as the dispatch gate for every tool", () => {
+    for (const tool of Object.keys({
+      "mcp.notion.search": 0,
+      "os.fs.read": 0,
+      "os.fs.write": 0,
+      "os.shell.run": 0,
+      "fusion.delegate": 0,
+      reply: 0,
+      finish: 0,
+      "os.fs.wirte": 0,
+    })) {
+      expect(wouldRefuse(tool, ctx)).toBe(
+        !checkFusionOrchestrator(tool, REGISTRY, BEFORE).allowed,
+      );
+    }
+  });
+
+  it("never refuses the fan-out, the terminals, reads or unknown names", () => {
+    expect(wouldRefuse("fusion.delegate", ctx)).toBe(false);
+    expect(wouldRefuse("reply", ctx)).toBe(false);
+    expect(wouldRefuse("finish", ctx)).toBe(false);
+    expect(wouldRefuse("os.fs.read", ctx)).toBe(false);
+    expect(wouldRefuse("os.fs.wirte", ctx)).toBe(false);
+  });
+
+  it("refuses mutations and every MCP tool, whatever it claims", () => {
+    expect(wouldRefuse("os.fs.write", ctx)).toBe(true);
+    expect(wouldRefuse("os.shell.run", ctx)).toBe(true);
+    expect(wouldRefuse("mcp.notion.search", ctx)).toBe(true);
+  });
+});

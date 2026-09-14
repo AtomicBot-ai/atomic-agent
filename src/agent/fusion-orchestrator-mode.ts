@@ -102,6 +102,28 @@ function mutates(tool: string, registry: Pick<ToolRegistry, "get">): boolean {
   return !registry.get(tool).readonly;
 }
 
+/** What the gate needs to answer "would this call be refused". */
+export interface FusionGateContext {
+  registry: Pick<ToolRegistry, "get" | "has">;
+}
+
+/**
+ * The one predicate behind the gate: would an ORCHESTRATOR turn refuse
+ * `toolName`? Shared by `checkFusionOrchestrator` (the refusal at
+ * dispatch), the step executor's batch trim (which must not keep a call
+ * the gate is about to refuse) and the per-request grammar (which must
+ * not let a local orchestrator generate one). One predicate, so the
+ * three can never disagree about which call survives.
+ *
+ * The verdict does not depend on turn state — `delegations` only shapes
+ * the refusal text — so the context is the registry alone.
+ */
+export function wouldRefuse(toolName: string, ctx: FusionGateContext): boolean {
+  if (TERMINAL_TOOLS.has(toolName) || toolName === DELEGATE_TOOL) return false;
+  if (!ctx.registry.has(toolName)) return false;
+  return mutates(toolName, ctx.registry);
+}
+
 /**
  * Decide whether `tool` may run on the orchestrator's own turn.
  *
@@ -115,11 +137,7 @@ export function checkFusionOrchestrator(
   registry: Pick<ToolRegistry, "get" | "has">,
   state: FusionOrchestratorState,
 ): FusionOrchestratorVerdict {
-  if (TERMINAL_TOOLS.has(tool) || tool === DELEGATE_TOOL) {
-    return { allowed: true };
-  }
-  if (!registry.has(tool)) return { allowed: true };
-  if (!mutates(tool, registry)) return { allowed: true };
+  if (!wouldRefuse(tool, { registry })) return { allowed: true };
   return { allowed: false, refusal: refusalFor(tool, state) };
 }
 

@@ -60,11 +60,26 @@ export function checkPlanMode(
   tool: string,
   registry: Pick<ToolRegistry, "get" | "has">,
 ): PlanModeVerdict {
-  if (TERMINAL_TOOLS.has(tool)) return { allowed: true };
-  // `has` before `get`, because `get` throws for an unknown name.
-  if (!registry.has(tool)) return { allowed: true };
-  if (registry.get(tool).readonly) return { allowed: true };
+  if (!wouldRefuse(tool, { registry })) return { allowed: true };
   return { allowed: false, refusal: refusalFor(tool) };
+}
+
+/** What the gate needs to answer "would this call be refused". */
+export interface PlanModeContext {
+  registry: Pick<ToolRegistry, "get" | "has">;
+}
+
+/**
+ * The predicate behind the gate: would plan mode refuse `toolName`?
+ * Shared with the step executor's batch trim so the call it keeps is
+ * never one this gate is about to refuse — same contract as the fusion
+ * gate's `wouldRefuse`.
+ */
+export function wouldRefuse(toolName: string, ctx: PlanModeContext): boolean {
+  if (TERMINAL_TOOLS.has(toolName)) return false;
+  // `has` before `get`, because `get` throws for an unknown name.
+  if (!ctx.registry.has(toolName)) return false;
+  return !ctx.registry.get(toolName).readonly;
 }
 
 /**

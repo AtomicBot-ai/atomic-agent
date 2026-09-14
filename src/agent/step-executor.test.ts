@@ -10,9 +10,13 @@ import {
 } from "../llm/model-profile.js";
 import {
   REPAIR_MAX_TOKENS,
+  TRIM_REFUSED_BY_FUSION_GATE,
+  TRIM_REFUSED_BY_PLAN_MODE,
   detectFabricatedToolTranscript,
   formatFabricatedTranscriptNotice,
   type LlmStreamParams,
+  trimBatchToFirstApprovalGated,
+  turnPolicyForTrim,
   type StepApprovalPostureSource,
   type StepEvent,
 } from "./step-executor.js";
@@ -1819,7 +1823,9 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     expect(outcome.toolCalls).toHaveLength(1);
     expect(log).toEqual(["start os.fs.write a", "end os.fs.write a"]);
     expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(1);
-    expect(outcome.trimmedBatchNotice).toContain("dropped the rest");
+    expect(outcome.trimmedBatchNotice).toContain(
+      "Dropped from the batch — retry",
+    );
   });
 
   it("still trims when no approval posture is wired", async () => {
@@ -4633,5 +4639,428 @@ describe("executeStep — the structured prompt on a native-tools link", () => {
     };
     const [params] = await run("grammar", [grammarAnswer]);
     expect(params).not.toHaveProperty("messages");
+  });
+});
+
+describe("batch trim consults the turn policy (F8)", () => {
+  // Run 14, attempt 0, first step: the orchestrator emitted
+  // `[os.shell.run mkdir, fusion.delegate]`. The trim kept `mkdir` (first
+  // approval-gated call in emit order), the fusion gate then refused it,
+  // and the delegation — nine minutes of generation — was dropped for a
+  // retry. The survivor must be a call that can run.
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    const define = (name: string, readonly: boolean) =>
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ran (${JSON.stringify(args)})`,
+          });
+        },
+      });
+    define("os.fs.read", true);
+    define("os.fs.write", false);
+    define("os.fs.edit", false);
+    define("os.shell.run", false);
+    define("fusion.delegate", false);
+    return registry;
+  }
+
+  async function run(
+    body: string,
+    policy: { isPlanMode?: () => boolean; isFusionOrchestrator?: () => boolean },
+  ) {
+    const events: StepEvent[] = [];
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-f8", workingDir: "/w" });
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        ...policy,
+        ...(policy.isFusionOrchestrator
+          ? { fusionState: () => ({ delegations: 0 }) }
+          : {}),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: body,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (ev) => events.push(ev),
+      },
+    );
+    return { outcome, events };
+  }
+
+  it("keeps fusion.delegate on an orchestrator turn and names the refused call", async () => {
+    const body = JSON.stringify([
+      { tool: "os.shell.run", args: { cmd: "mkdir", args: ["-p", "js"] } },
+      {
+        tool: "fusion.delegate",
+        args: { tasks: [{ id: "a", title: "t", instructions: "i" }] },
+      },
+    ]);
+    const { outcome, events } = await run(body, {
+      isFusionOrchestrator: () => true,
+    });
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["fusion.delegate"]);
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    const trim = events.find((e) => e.type === "batch_trimmed");
+    expect(trim).toMatchObject({
+      kept: "fusion.delegate",
+      dropped: [],
+      refused: ["os.shell.run"],
+    });
+    expect(outcome.trimmedBatchNotice).toContain("`os.shell.run`");
+    expect(outcome.trimmedBatchNotice).toContain("refused by the fusion gate");
+    expect(outcome.trimmedBatchNotice).toContain("do not retry");
+    expect(outcome.trimmedBatchNotice).not.toContain("Dropped from the batch — retry");
+  });
+
+  it("prefers the fan-out over an earlier runnable write on an orchestrator turn", async () => {
+    // Even a call the gate would not refuse (none here — both mutate —
+    // but the preference is what is under test) yields to the fan-out.
+    const trim = trimBatchToFirstApprovalGated(
+      {
+        kind: "batch",
+        calls: [
+          { tool: "os.fs.read", args: { path: "a" } },
+          { tool: "fusion.delegate", args: { tasks: [] } },
+          { tool: "os.fs.write", args: { path: "b", content: "" } },
+        ],
+      },
+      { preferTool: "fusion.delegate" },
+    );
+    expect(trim?.kept.tool).toBe("fusion.delegate");
+    expect(trim?.dropped.map((c) => c.tool)).toEqual(["os.fs.read", "os.fs.write"]);
+    expect(trim?.refused).toEqual([]);
+  });
+
+  it("falls back to the first gated call when every gated call would be refused", async () => {
+    // Plan mode: `[write, edit, read]`. Nothing gated can run; the first
+    // is kept so the gate's own refusal — the instruction — is what the
+    // model reads, the second is named as refused, the read as a retry.
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+      { tool: "os.fs.edit", args: { path: "b", oldString: "x", newString: "y" } },
+      { tool: "os.fs.read", args: { path: "c" } },
+    ]);
+    const { outcome, events } = await run(body, { isPlanMode: () => true });
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
+    expect(outcome.toolResults[0]!.status).toBe("error");
+    expect(outcome.toolResults[0]!.details).toMatchObject({ plan_mode: true });
+    expect(events.find((e) => e.type === "batch_trimmed")).toMatchObject({
+      kept: "os.fs.write",
+      dropped: ["os.fs.read"],
+      refused: ["os.fs.edit"],
+    });
+    expect(outcome.trimmedBatchNotice).toContain("`os.fs.edit` (refused by plan mode)");
+    expect(outcome.trimmedBatchNotice).toContain("Dropped from the batch — retry: `os.fs.read`");
+  });
+
+  it("is byte-identical to the old trim when no policy is active", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+      { tool: "os.fs.edit", args: { path: "b", oldString: "x", newString: "y" } },
+    ]);
+    const { outcome, events } = await run(body, {});
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
+    const trim = events.find((e) => e.type === "batch_trimmed");
+    expect(trim).toMatchObject({ kept: "os.fs.write", dropped: ["os.fs.edit"] });
+    expect(trim).not.toHaveProperty("refused");
+    expect(outcome.trimmedBatchNotice).not.toContain("refused");
+  });
+
+  it("turnPolicyForTrim names the gate that would refuse, plan mode first", () => {
+    const registry = makeRegistry();
+    const both = turnPolicyForTrim({
+      registry,
+      isPlanMode: () => true,
+      isFusionOrchestrator: () => true,
+    });
+    expect(both.preferTool).toBe("fusion.delegate");
+    expect(both.refusedBy?.("os.fs.write")).toBe(TRIM_REFUSED_BY_PLAN_MODE);
+    expect(both.refusedBy?.("os.fs.read")).toBeNull();
+    expect(both.refusedBy?.("fusion.delegate")).toBe(TRIM_REFUSED_BY_PLAN_MODE);
+    const orchestrator = turnPolicyForTrim({
+      registry,
+      isFusionOrchestrator: () => true,
+    });
+    expect(orchestrator.refusedBy?.("os.shell.run")).toBe(TRIM_REFUSED_BY_FUSION_GATE);
+    expect(orchestrator.refusedBy?.("fusion.delegate")).toBeNull();
+    expect(turnPolicyForTrim({ registry })).toEqual({});
+  });
+});
+
+describe("claims need evidence (F9b)", () => {
+  // A reply that says a check ran, with no matching call this turn, is
+  // held back once with a notice; the second time it is delivered and
+  // marked. The forced final step never holds a reply.
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.shell.run",
+      description: "shell",
+      readonly: false,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "ok",
+          output: `$ ${String(args.cmd)}\nexit: 0`,
+        });
+      },
+    });
+    registry.register(replyTool);
+    return registry;
+  }
+
+  async function run(
+    body: string,
+    options: {
+      turns?: Array<{ tool: string; args: Record<string, unknown> }>;
+      noticed?: boolean;
+      terminalOnly?: boolean;
+      claimEvidence?: false;
+    } = {},
+  ) {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-f9", workingDir: "/w" });
+    session.turns.push({ kind: "user", text: "check the files", at: 1 });
+    for (const call of options.turns ?? []) {
+      session.turns.push({ kind: "assistant_tool_call", ...call, at: 2 });
+      session.turns.push({ kind: "tool_result", tool: call.tool, status: "ok", summary: "ok", at: 3 });
+    }
+    let noticed = options.noticed ?? false;
+    let marks = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "check the files",
+        ...(options.terminalOnly ? { terminalOnly: true } : {}),
+      },
+      {
+        registry,
+        ...(options.claimEvidence === false
+          ? {}
+          : {
+              claimEvidence: {
+                noticed: () => noticed,
+                markNoticed: () => {
+                  noticed = true;
+                  marks += 1;
+                },
+              },
+            }),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: body,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    return { outcome, marks: () => marks };
+  }
+
+  const CLAIM = JSON.stringify([
+    { tool: "reply", args: { text: "Ran node --check on all JavaScript files (all passed)." } },
+  ]);
+
+  it("holds a reply that claims a check nothing ran, once, with a notice", async () => {
+    const { outcome, marks } = await run(CLAIM);
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+    expect(outcome.toolResults[0]!.status).toBe("error");
+    expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      notDelivered: true,
+      unverifiedClaims: ["node --check"],
+    });
+    expect(outcome.trimmedBatchNotice).toContain('Your reply claims "node --check"');
+    expect(outcome.trimmedBatchNotice).toContain("no such check ran this turn");
+    expect(marks()).toBe(1);
+    // The transcript reads the held reply as a call that never delivered.
+    const last = outcome.nextSession.turns[outcome.nextSession.turns.length - 1];
+    expect(last?.kind).toBe("tool_result");
+  });
+
+  it("delivers the reply when a shell call this turn ran the claimed check", async () => {
+    const { outcome, marks } = await run(CLAIM, {
+      turns: [{ tool: "os.shell.run", args: { cmd: "node", args: ["--check", "js/a.js"] } }],
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unverifiedClaims");
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+    expect(marks()).toBe(0);
+  });
+
+  it("delivers a second claiming reply and marks it in the result details", async () => {
+    const { outcome, marks } = await run(CLAIM, { noticed: true });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      unverifiedClaims: ["node --check"],
+    });
+    expect(marks()).toBe(0);
+  });
+
+  it("never holds the forced final step's reply, but marks it", async () => {
+    const { outcome, marks } = await run(CLAIM, { terminalOnly: true });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      unverifiedClaims: ["node --check"],
+    });
+    expect(marks()).toBe(0);
+  });
+
+  it("does nothing when the loop passes no claim state", async () => {
+    const { outcome } = await run(CLAIM, { claimEvidence: false });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unverifiedClaims");
+  });
+});
+
+describe("the operator's request reaches the prompt (F22)", () => {
+  it("renders ### request when the step context carries it and the packer dropped its turn", async () => {
+    const grammarsDir = join(process.cwd(), "grammars");
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const spec = `Build it: ${"detail ".repeat(30_000)}`;
+    const session = createEmptySessionState({ id: "s-f22", workingDir: "/w" });
+    session.turns.push({ kind: "user", text: spec, at: 1 });
+    session.turns.push({ kind: "assistant_reply", text: "built", at: 2 });
+    session.turns.push({ kind: "user", text: "fix these bugs", at: 3 });
+    const run = (originalRequest?: string) =>
+      executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "fix these bugs",
+          ...(originalRequest === undefined ? {} : { originalRequest }),
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async () => ({
+            content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          }),
+          grammar,
+          profile: PLAIN_INSTRUCT_PROFILE,
+        },
+      );
+    const pinned = await run(spec);
+    expect(pinned.prompt.droppedTurns).toBeGreaterThan(0);
+    expect(pinned.prompt.tail).toContain("### request");
+    expect(pinned.prompt.tail.indexOf("### request")).toBeLessThan(
+      pinned.prompt.tail.indexOf("### conversation"),
+    );
+    const bare = await run();
+    expect(bare.prompt.tail).not.toContain("### request");
+  });
+});
+
+describe("the turn's reasoning effort and output ceiling reach the request (F20)", () => {
+  it("rides on llmParams from the step context; the per-step cap still wins", async () => {
+    const grammarsDir = join(process.cwd(), "grammars");
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const seen: Array<{ reasoningEffort?: string; maxOutputTokens?: number; maxTokens?: number }> = [];
+    const run = (over: { reasoningEffort?: "low"; maxOutputTokens?: number; maxTokens?: number }) =>
+      executeStep(
+        {
+          session: createEmptySessionState({ id: "s-f20", workingDir: "/w" }),
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "x",
+          ...over,
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async (params) => {
+            seen.push({
+              ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }),
+              ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }),
+              ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }),
+            });
+            return {
+              content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+              reasoningContent: "",
+              stop: true,
+              truncated: false,
+              timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+              cacheHitTokens: 0,
+              slotId: 0,
+              modelId: "mock",
+            };
+          },
+          grammar,
+          profile: PLAIN_INSTRUCT_PROFILE,
+        },
+      );
+    await run({ reasoningEffort: "low", maxOutputTokens: 12_000 });
+    await run({ maxOutputTokens: 12_000, maxTokens: 32_000 });
+    await run({});
+    expect(seen).toEqual([
+      { reasoningEffort: "low", maxOutputTokens: 12_000 },
+      { maxOutputTokens: 12_000, maxTokens: 32_000 },
+      {},
+    ]);
   });
 });

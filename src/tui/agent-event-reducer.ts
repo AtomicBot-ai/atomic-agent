@@ -989,7 +989,9 @@ function reduceStepEvent(
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: event.stepIndex,
-        line: `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason})`,
+        line:
+          `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason}` +
+          `${event.refused && event.refused.length > 0 ? `; ${event.refused.length} refused by the turn policy` : ""})`,
         color: "yellow",
       });
     case "batch_wave_split":

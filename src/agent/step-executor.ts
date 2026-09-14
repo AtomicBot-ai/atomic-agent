@@ -21,6 +21,8 @@ import {
   resourceClassFor,
   type BatchApprovalPosture,
 } from "./tool-resource-class.js";
+import { wouldRefuse as planModeWouldRefuse } from "./plan-mode.js";
+import { wouldRefuse as fusionGateWouldRefuse } from "./fusion-orchestrator-mode.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
 import { refusedToolNames } from "./fusion-orchestrator-mode.js";
@@ -826,7 +828,7 @@ async function executeStepInner(
     if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
       return null;
     }
-    const trim = trimBatchToFirstApprovalGated(batch);
+    const trim = trimBatchToFirstApprovalGated(batch, turnPolicyForTrim(deps));
     if (trim === null) return null;
     trimmedBatchNotice = formatBatchTrimNotice(trim);
     deps.onEvent?.({
@@ -835,20 +837,24 @@ async function executeStepInner(
       originalSize: trim.originalSize,
       kept: trim.kept.tool,
       dropped: trim.dropped.map((call) => call.tool),
+      ...(trim.refused.length > 0
+        ? { refused: trim.refused.map(({ call }) => call.tool) }
+        : {}),
       reason: "approval-gated-batched",
     });
     deps.metrics?.recordBatchTrimmed({
       sessionId: ctx.session.id,
       reason: "approval-gated-batched",
       originalSize: trim.originalSize,
-      droppedCount: trim.dropped.length,
+      droppedCount: trim.dropped.length + trim.refused.length,
     });
-    deps.logger?.info("batch trimmed to first approval-gated call", {
+    deps.logger?.info("batch trimmed to the first approval-gated call that can run", {
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
       originalSize: trim.originalSize,
       kept: trim.kept.tool,
       dropped: trim.dropped.map((call) => call.tool),
+      refused: trim.refused.map(({ call, reason }) => `${call.tool}: ${reason}`),
     });
     return {
       ok: true,
@@ -2211,22 +2217,119 @@ export function isApprovalGatedOnlyFailure(
  */
 export interface BatchTrimResult {
   kept: ToolCallPayload;
+  /** Calls dropped for the model to retry, in batch-index order. */
   dropped: ToolCallPayload[];
+  /**
+   * Calls dropped because the turn's policy (plan mode, the fusion
+   * orchestrator gate) would have refused them anyway, each with the
+   * gate that would have refused it. Not to be retried: re-emitting
+   * them earns the same refusal.
+   */
+  refused: Array<{ call: ToolCallPayload; reason: string }>;
   /** Original batch size before trimming. Always >= 2. */
   originalSize: number;
 }
 
+/**
+ * The turn policy the trim consults before it picks a survivor.
+ *
+ * `refusedBy` runs the same predicates the batch executor's gates run
+ * at dispatch (`wouldRefuse` in `plan-mode.ts` /
+ * `fusion-orchestrator-mode.ts`) and names the gate, so the trim and
+ * the gate cannot disagree about a call. `preferTool` names the call
+ * that wins over emit order when it is present — on an orchestrator
+ * turn, `fusion.delegate`: the fan-out is what the turn exists to do,
+ * and a `mkdir` emitted ahead of it must not be the one that survives
+ * only to be refused (run 14: nine minutes of generation redone).
+ */
+export interface BatchTrimPolicy {
+  /** The gate that would refuse `tool`, or `null` when it may run. */
+  refusedBy?: (tool: string) => string | null;
+  preferTool?: string;
+}
+
+/** The fan-out tool an orchestrator turn prefers to keep. */
+const ORCHESTRATOR_PREFERRED_TOOL = "fusion.delegate";
+
+export const TRIM_REFUSED_BY_PLAN_MODE = "refused by plan mode";
+export const TRIM_REFUSED_BY_FUSION_GATE = "refused by the fusion gate";
+
+/**
+ * Build the trim policy from the step's dependencies — the same
+ * getters the batch context carries (`isPlanMode`, `isFusionOrchestrator`
+ * and the registry), read at trim time so a mode flipped mid-turn is
+ * honoured the way the gates honour it. Plan mode is named first when
+ * both would refuse, in the order the gates run.
+ */
+export function turnPolicyForTrim(
+  deps: Pick<StepDependencies, "registry" | "isPlanMode" | "isFusionOrchestrator">,
+): BatchTrimPolicy {
+  const planMode = deps.isPlanMode?.() ?? false;
+  const orchestrator = deps.isFusionOrchestrator?.() ?? false;
+  if (!planMode && !orchestrator) return {};
+  const ctx = { registry: deps.registry };
+  return {
+    refusedBy: (tool) =>
+      planMode && planModeWouldRefuse(tool, ctx)
+        ? TRIM_REFUSED_BY_PLAN_MODE
+        : orchestrator && fusionGateWouldRefuse(tool, ctx)
+          ? TRIM_REFUSED_BY_FUSION_GATE
+          : null,
+    ...(orchestrator ? { preferTool: ORCHESTRATOR_PREFERRED_TOOL } : {}),
+  };
+}
+
+/**
+ * Pick the survivor. Calls the turn policy would refuse are set aside
+ * first, so the kept call is one that can actually run; among the rest,
+ * `policy.preferTool` wins when present, else the first approval-gated
+ * call in emit order (writes typically precede the edits that depend on
+ * them). When every approval-gated call would be refused, the first one
+ * is kept anyway: it earns the gate's own refusal, which is the text
+ * that tells the model what to do instead.
+ */
 export function trimBatchToFirstApprovalGated(
   batch: ToolCallBatch,
+  policy: BatchTrimPolicy = {},
 ): BatchTrimResult | null {
   const calls = batch.calls;
-  const firstApprovalIdx = calls.findIndex(
-    (call) => resourceClassFor(call.tool) === "approval_gated",
-  );
-  if (firstApprovalIdx === -1) return null;
-  const kept = calls[firstApprovalIdx]!;
-  const dropped = calls.filter((_, idx) => idx !== firstApprovalIdx);
-  return { kept, dropped, originalSize: calls.length };
+  const isGated = (call: ToolCallPayload): boolean =>
+    resourceClassFor(call.tool) === "approval_gated";
+  if (!calls.some(isGated)) return null;
+  const refusedIdx = new Map<number, string>();
+  if (policy.refusedBy) {
+    calls.forEach((call, idx) => {
+      const reason = policy.refusedBy!(call.tool);
+      if (reason !== null) refusedIdx.set(idx, reason);
+    });
+  }
+  const runnable = (idx: number): boolean => !refusedIdx.has(idx);
+  let keptIdx = -1;
+  if (policy.preferTool !== undefined) {
+    keptIdx = calls.findIndex(
+      (call, idx) => call.tool === policy.preferTool && runnable(idx),
+    );
+  }
+  if (keptIdx === -1) {
+    keptIdx = calls.findIndex((call, idx) => isGated(call) && runnable(idx));
+  }
+  if (keptIdx === -1) {
+    // Every gated call is refused: keep the first and let the gate
+    // speak — its refusal is the instruction, and the notice names the
+    // rest as refused so the model does not retry them one by one.
+    keptIdx = calls.findIndex(isGated);
+    refusedIdx.delete(keptIdx);
+  }
+  const kept = calls[keptIdx]!;
+  const dropped: ToolCallPayload[] = [];
+  const refused: BatchTrimResult["refused"] = [];
+  calls.forEach((call, idx) => {
+    if (idx === keptIdx) return;
+    const reason = refusedIdx.get(idx);
+    if (reason === undefined) dropped.push(call);
+    else refused.push({ call, reason });
+  });
+  return { kept, dropped, refused, originalSize: calls.length };
 }
 
 /**
@@ -2240,13 +2343,31 @@ export function trimBatchToFirstApprovalGated(
  * stable prefix).
  */
 export function formatBatchTrimNotice(trim: BatchTrimResult): string {
-  const droppedNames = trim.dropped
-    .map((call) => `\`${call.tool}\``)
-    .join(", ");
-  return [
-    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\` and dropped the rest: ${droppedNames}.`,
-    "Retry the dropped calls now, one per step, each as a length-1 array. Do not re-batch them.",
-  ].join(" ");
+  const names = (calls: readonly ToolCallPayload[]): string =>
+    calls.map((call) => `\`${call.tool}\``).join(", ");
+  const parts = [
+    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\`.`,
+  ];
+  if (trim.dropped.length > 0) {
+    parts.push(
+      `Dropped from the batch — retry: ${names(trim.dropped)}. Retry them now, one per step, each as a length-1 array. Do not re-batch them.`,
+    );
+  }
+  if (trim.refused.length > 0) {
+    // Grouped by gate, so the model reads the same rule the gate's own
+    // refusal states — and does not retry a call that earns it again.
+    const byReason = new Map<string, ToolCallPayload[]>();
+    for (const { call, reason } of trim.refused) {
+      byReason.set(reason, [...(byReason.get(reason) ?? []), call]);
+    }
+    const groups = [...byReason]
+      .map(([reason, calls]) => `${names(calls)} (${reason})`)
+      .join("; ");
+    parts.push(
+      `Dropped because this turn's policy would refuse them — do not retry: ${groups}.`,
+    );
+  }
+  return parts.join(" ");
 }
 
 /**
