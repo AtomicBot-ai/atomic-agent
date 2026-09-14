@@ -52,6 +52,10 @@ import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
+import {
+  FINALIZATION_REQUEST_DEADLINE_MS,
+  createRequestDeadline,
+} from "./request-deadline.js";
 import type {
   LlmStreamParams,
   StepApprovalPostureSource,
@@ -1091,6 +1095,12 @@ export class AgentLoop {
     /** Set with `stopCause = "credit_exhausted"`: who refused, and what they said. */
     let creditStop: { provider: string; detail: string } | null = null;
     /**
+     * The duration ceiling fired inside a completion request (F15). The
+     * next iteration is the finalization step whatever the clock says —
+     * the request was abandoned, so the wall must not be re-argued.
+     */
+    let ceilingFiredMidRequest = false;
+    /**
      * The model's `reply` / `finish` came on the forced finalization
      * step, so a ceiling ended the task even though the model closed it.
      * Surfaced as `RunTurnResult.stopCause`.
@@ -1326,7 +1336,9 @@ export class AgentLoop {
       // One step is always reserved for a summary, whichever ceiling is
       // about to bite — being cut off mid-edit is what made the old
       // stop unreadable.
-      const outOfTime = Date.now() - taskStartedAt >= durationCeilingMs;
+      const elapsedMs = Date.now() - taskStartedAt;
+      const outOfTime =
+        ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
       if (outOfTime) stopCause = "time_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime;
       const effectiveTransport: ToolCallTransport =
@@ -1334,6 +1346,22 @@ export class AgentLoop {
       const finalizationNotice =
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
+      // The ceiling holds while waiting on a provider: the step's
+      // completion request gets the task's remaining time as a deadline
+      // (composed with the user's signal), so a turn parked in a queue
+      // or a long prompt evaluation cannot run past its window. The
+      // summary step gets at least its own five minutes — it is
+      // reserved whichever ceiling bit, and llama-server keeps decoding
+      // the abandoned request until it notices the closed connection.
+      const requestDeadline = createRequestDeadline(
+        options.signal,
+        finalizationStep
+          ? Math.max(
+              durationCeilingMs - elapsedMs,
+              FINALIZATION_REQUEST_DEADLINE_MS,
+            )
+          : durationCeilingMs - elapsedMs,
+      );
       try {
         // `profileFactsProvider` is a raw `profileStore.list()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
@@ -1366,6 +1394,7 @@ export class AgentLoop {
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
             signal: options.signal,
+            requestSignal: requestDeadline.signal,
             ...(finalizationStep || noticeForThisStep !== undefined
               ? {
                   transientNotice: [
@@ -1479,6 +1508,7 @@ export class AgentLoop {
             tracker: loopTracker,
           },
         );
+        requestDeadline.dispose();
         const durationMs = Date.now() - started;
         if (awaitingRecovery) {
           // The step that came back after the wait. Say so once, then
@@ -1764,8 +1794,15 @@ export class AgentLoop {
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
       } catch (err) {
+        requestDeadline.dispose();
         runError = err instanceof Error ? err : new Error(String(err));
         let category = classifyFailure(err);
+        // The task's duration ceiling fired inside the request. It
+        // surfaces as an abort — the same shape as Ctrl+C — but it is
+        // the task's clock, not the user, so it is read first and never
+        // as a cancellation.
+        const ceilingFired =
+          requestDeadline.fired() && !options.signal.aborted;
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -1773,9 +1810,45 @@ export class AgentLoop {
         // (issue #107 — cancellation semantics remain unchanged), not
         // be relabelled `max_steps`.
         const cancelled =
-          err instanceof CancelledError ||
-          (err instanceof LlmFailure && err.category === "cancelled") ||
-          category === "cancelled";
+          !ceilingFired &&
+          (err instanceof CancelledError ||
+            (err instanceof LlmFailure && err.category === "cancelled") ||
+            category === "cancelled");
+        if (ceilingFired) {
+          if (!finalizationStep) {
+            // Abandon the request and take the reserved summary step
+            // now: the next iteration is the finalization step on its
+            // own deadline. Nothing ran, so nothing is replayed.
+            stopCause = "time_ceiling";
+            ceilingFiredMidRequest = true;
+            this.deps.logger?.warn(
+              "task time ceiling reached mid-request; running the summary step",
+              {
+                sessionId: state.id,
+                stepIndex: i,
+                elapsedMs: Date.now() - taskStartedAt,
+                durationCeilingMs,
+              },
+            );
+            runError = null;
+            i -= 1;
+            continue;
+          }
+          // The summary step itself overran its own deadline. A failed
+          // finalization must not execute more work — same outcome the
+          // finalization guard below preserves.
+          this.deps.logger?.warn(
+            "finalization step exceeded its deadline; preserving max-steps outcome",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              deadlineMs: FINALIZATION_REQUEST_DEADLINE_MS,
+            },
+          );
+          stepsTaken += 1;
+          reason = "max_steps";
+          break;
+        }
         // The reply was cut short. Retry the step with a request the wall
         // does not apply to — a larger cap, or a prompt packed to the
         // window the server just revealed. Same replay argument as the

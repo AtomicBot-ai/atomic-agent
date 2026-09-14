@@ -173,6 +173,15 @@ Locked invariants (pinned by [src/agent/agent-loop.test.ts](src/agent/agent-loop
 5. **`autoContinue: false` restores the historical behaviour** exactly: one leg, then stop.
 6. **The closing message names the ceiling, the work done and the way onward** (`formatTaskStoppedReply`),
    and `lastError` carries `task_stopped:<cause>` for post-mortem tooling.
+7. **The duration ceiling holds while waiting on a provider.** Every completion request carries a
+   deadline signal ([src/agent/request-deadline.ts](src/agent/request-deadline.ts)): the user's signal
+   composed with the task's remaining time. One that fires mid-request is read before any
+   cancellation check — it is the task's clock, not Ctrl+C — ends the step as `time_ceiling`, and the
+   reserved summary step runs on its own five-minute deadline (`FINALIZATION_REQUEST_DEADLINE_MS`);
+   a summary that overruns that preserves the `max_steps` outcome. Tools never see the deadline
+   signal (`StepContext.requestSignal` reaches the LLM request only). Pinned by
+   [src/agent/agent-loop-request-deadline.test.ts](src/agent/agent-loop-request-deadline.test.ts) and
+   [src/agent/request-deadline.test.ts](src/agent/request-deadline.test.ts).
 
 ### Waiting out a provider outage
 
