@@ -2249,6 +2249,11 @@ export interface UserConfigFile {
 // `workerMaxOutputTokens` (unset by default: the per-step output cap for
 // worker completions). An older file parses with all three absent and
 // behaves as before, except that a cloud fan-out is now bounded at 4.
+// v66: `localModels.useServerTemplate` and `localModels.thinking`
+// (`auto|on|off`, both default `auto`) — render local prompts through
+// the model's own chat template (llama-server `/apply-template`) for
+// families without a hand-built profile, and set the template's
+// thinking switch. Additive: an older file inherits `auto` for both.
 export const USER_CONFIG_VERSION = 66;
 
 /**
