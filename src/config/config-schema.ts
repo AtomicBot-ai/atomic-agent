@@ -972,6 +972,12 @@ export interface AtomicAgentConfig {
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       /**
+       * Native-tools request layout: `native` (default) sends a system
+       * message plus the history as assistant `tool_calls` / `tool`
+       * results; `flat` sends the one user message of transcript text.
+       */
+      messageShape?: "native" | "flat";
+      /**
        * OpenRouter provider routing (`order`, `only`, `ignore`,
        * `allow_fallbacks`, `require_parameters`, `sort`,
        * `data_collection`, …), sent verbatim as the chat body's

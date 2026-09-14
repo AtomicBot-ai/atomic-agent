@@ -94,6 +94,7 @@ export function registerBuiltInProviderKinds(): void {
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
+      messageShape: entry.messageShape,
       ...modelWireOptions(entry, entry.defaultChatModel),
       logger: ctx.logger,
     });
@@ -122,6 +123,7 @@ export function registerBuiltInProviderKinds(): void {
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
+      messageShape: entry.messageShape,
       ...modelWireOptions(entry, entry.defaultChatModel),
       logger: ctx.logger,
     });
@@ -144,6 +146,7 @@ export function registerBuiltInProviderKinds(): void {
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
+      messageShape: entry.messageShape,
       ...modelWireOptions(entry, model),
       // OpenRouter's own `provider` routing block. Deliberately wired on
       // this kind alone: it is not part of the OpenAI schema, and no
@@ -173,6 +176,7 @@ export function registerBuiltInProviderKinds(): void {
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
+      messageShape: entry.messageShape,
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
@@ -195,6 +199,7 @@ export function registerBuiltInProviderKinds(): void {
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
       promptCache: entry.promptCache,
+      messageShape: entry.messageShape,
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,

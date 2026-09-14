@@ -11,7 +11,9 @@ import {
   packConversation,
   pairTokenCosts,
 } from "../session/conversation-turn.js";
+import type { PromptMessages } from "../llm/provider/completion-types.js";
 import {
+  packedConversationTurns,
   renderPackedConversation,
   renderWorldSnapshotSection,
 } from "./build-prompt-world-conversation.js";
@@ -318,44 +320,43 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // it, so a change lands in the part of the prompt that is re-read
   // anyway rather than ahead of a transcript the model would otherwise
   // have reused from its KV cache.
-  const tailParts: string[] = [];
+  // The tail is assembled in two halves around `### conversation`. The
+  // flat text joins all three; the structured form (`messages`) sends the
+  // conversation as real chat messages and the two halves as one final
+  // user message.
+  const tailBefore: string[] = [];
   if (memoryIndex !== null) {
-    tailParts.push("### memory-index", memoryIndex, ``);
+    tailBefore.push("### memory-index", memoryIndex, ``);
   }
   if (factsForTail !== null) {
-    tailParts.push("### session-facts", factsForTail, ``);
+    tailBefore.push("### session-facts", factsForTail, ``);
   }
   if (recalled !== null) {
-    tailParts.push("### recalled", recalled, ``);
+    tailBefore.push("### recalled", recalled, ``);
   }
-  tailParts.push(
-    `### world`,
-    worldSnapshot,
-    ``,
-    `### conversation`,
-    conversation,
-    ``,
-  );
+  tailBefore.push(`### world`, worldSnapshot, ``);
+  const conversationParts = [`### conversation`, conversation, ``];
+  const tailAfter: string[] = [];
   if (profile !== null) {
-    tailParts.push("### profile", profile, ``);
+    tailAfter.push("### profile", profile, ``);
   }
   if (lessons !== null) {
-    tailParts.push("### lessons", lessons, ``);
+    tailAfter.push("### lessons", lessons, ``);
   }
   if (procedures !== null) {
-    tailParts.push("### procedures", procedures, ``);
+    tailAfter.push("### procedures", procedures, ``);
   }
   if (loadedForTail !== null) {
-    tailParts.push("### loaded-skills", loadedForTail, ``);
+    tailAfter.push("### loaded-skills", loadedForTail, ``);
   }
   if (loadedToolsRendered.body !== null) {
-    tailParts.push("### loaded-tools", loadedToolsRendered.body, ``);
+    tailAfter.push("### loaded-tools", loadedToolsRendered.body, ``);
   }
   if (taskPolicy !== null) {
-    tailParts.push(`### task-policy`, taskPolicy.body, ``);
+    tailAfter.push(`### task-policy`, taskPolicy.body, ``);
   }
   if (input.transientNotice && input.transientNotice.length > 0) {
-    tailParts.push(`### notice`, input.transientNotice, ``);
+    tailAfter.push(`### notice`, input.transientNotice, ``);
   }
   // Current date lives in the variable tail (not the stable prefix) so it
   // sits close to the generation point where the model actually attends to
@@ -363,7 +364,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // the model kept anchoring on its training-era year. Rendered as a bold
   // standalone line so it stands out. Omitted when not provided.
   if (input.currentDate) {
-    tailParts.push(
+    tailAfter.push(
       `CURRENT DATE: ${input.currentDate} — this is today. Use it for any time-relative reasoning; never assume an earlier year.`,
       ``,
     );
@@ -374,7 +375,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // loops (e.g. "I will write the response. I will check the response."
   // observed when the only trailing directive lived ~13k tokens upstream).
   // Byte-stable and short, so it does not meaningfully hurt cache reuse.
-  tailParts.push(`### respond`, `Respond now.`, ``);
+  tailAfter.push(`### respond`, `Respond now.`, ``);
+  // The structured form stops here: the framing and prefill below are
+  // text-completion artifacts a chat transport never sees (they are
+  // suppressed for it anyway — `suppressReasoningPrefill`).
+  const messages: PromptMessages = {
+    system: stablePrefix,
+    droppedSummary: packed.droppedSummary,
+    turns: packedConversationTurns(packed),
+    tail: [...tailBefore, ...tailAfter].join("\n"),
+  };
+  const tailParts: string[] = [...tailBefore, ...conversationParts, ...tailAfter];
   if (turnFraming !== undefined) {
     // Gemma 4 turn-framing: close the system turn and open the model turn.
     // The model emits its own `<|channel>thought` block — we do NOT prefill
@@ -422,6 +433,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     text,
     stablePrefix,
     tail,
+    messages,
     tokens: {
       stablePrefix: budgetResult.perSection.stablePrefix,
       loadedSkills: budgetResult.perSection.loadedSkills,

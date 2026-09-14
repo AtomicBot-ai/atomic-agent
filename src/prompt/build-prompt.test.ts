@@ -1780,3 +1780,80 @@ describe("buildPrompt tool roles (F18)", () => {
     expect(full.tail).toContain("os.git.show");
   });
 });
+
+describe("buildPrompt structured form (`messages`)", () => {
+  it("exposes the stable prefix, the packed turns and the tail without `### conversation`", () => {
+    const base = mkSession();
+    const prompt = buildPrompt({
+      session: {
+        ...base,
+        turns: [
+          ...base.turns,
+          { kind: "assistant_tool_call", tool: "browser.read_aria", args: { x: 1 }, at: 1 },
+          {
+            kind: "tool_result",
+            tool: "browser.read_aria",
+            status: "error",
+            summary: "timed out waiting for page",
+            truncated: true,
+            at: 2,
+          },
+        ],
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      transientNotice: "be brief",
+      currentDate: "2026-09-14",
+      toolTransport: "native_tools",
+      suppressReasoningPrefill: true,
+    });
+    expect(prompt.messages.system).toBe(prompt.stablePrefix);
+    expect(prompt.messages.droppedSummary).toBeNull();
+    expect(prompt.messages.turns).toEqual([
+      { kind: "user", text: "Check inbox" },
+      { kind: "assistant_tool_call", tool: "browser.read_aria", args: { x: 1 } },
+      {
+        kind: "tool_result",
+        tool: "browser.read_aria",
+        status: "error",
+        body: "timed out waiting for page",
+        truncated: true,
+      },
+    ]);
+    const { tail } = prompt.messages;
+    expect(tail).not.toContain("### conversation");
+    expect(tail).not.toContain("assistant_tool_call:");
+    expect(tail).toContain("### world");
+    expect(tail).toContain("### notice\nbe brief");
+    expect(tail).toContain("CURRENT DATE: 2026-09-14");
+    expect(tail.trimEnd().endsWith("### respond\nRespond now.")).toBe(true);
+    // The flat tail is the same halves with the conversation between them.
+    const [before, after] = tail.split("### task-policy").length > 1
+      ? [tail.slice(0, tail.indexOf("### task-policy")), tail.slice(tail.indexOf("### task-policy"))]
+      : [tail.slice(0, tail.indexOf("### notice")), tail.slice(tail.indexOf("### notice"))];
+    expect(prompt.tail.startsWith(before)).toBe(true);
+    expect(prompt.tail.endsWith(after)).toBe(true);
+    expect(prompt.tail).toContain("### conversation");
+  });
+
+  it("carries the dropped-turns recap separately from the turns", () => {
+    const turns = Array.from({ length: 40 }, (_, i) =>
+      i % 2 === 0
+        ? { kind: "user" as const, text: `message ${i} ${"x".repeat(200)}`, at: i }
+        : { kind: "assistant_reply" as const, text: `reply ${i} ${"y".repeat(200)}`, at: i },
+    );
+    const prompt = buildPrompt({
+      session: mkSession({ turns }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      conversationMaxTokens: 400,
+    });
+    expect(prompt.droppedTurns).toBeGreaterThan(0);
+    expect(prompt.messages.droppedSummary).toBe(
+      prompt.tail.slice(prompt.tail.indexOf("### conversation\n") + "### conversation\n".length).split("\n")[0],
+    );
+    expect(prompt.messages.turns.length).toBe(turns.length - prompt.droppedTurns);
+  });
+});

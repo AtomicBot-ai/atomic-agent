@@ -70,11 +70,22 @@ export type UserLlmProviderEntry = {
    */
   maxOutputTokens?: number;
   /**
-   * Prompt-caching policy for this provider. Declared in the config
-   * schema and on `LlmProviderConfigEntry`; no provider reads it yet,
-   * so today it only has to survive the round-trip through config.
+   * Prompt-caching policy for this provider. `off` sends no cache
+   * markers; `explicit-markers` always sends Anthropic breakpoints;
+   * `auto` (the default) sends them when the model or host is
+   * Anthropic's. See `openai/prompt-cache-control.ts`.
    */
   promptCache?: "auto" | "off" | "explicit-markers";
+  /**
+   * How a native-tools request lays the prompt out: `native` (the
+   * default) as a system message plus the history as assistant
+   * `tool_calls` and `tool` results, `flat` as the single user message
+   * of transcript text. Set `flat` for a server that rejects tool-role
+   * messages (older vLLM, llama.cpp shims); the provider also learns it
+   * from a 400 about roles for the rest of a session. Grammar and
+   * subscription-CLI kinds are flat by construction.
+   */
+  messageShape?: "native" | "flat";
   /**
    * OpenRouter provider routing — `order`, `only`, `ignore`,
    * `allow_fallbacks`, `require_parameters`, `sort`, `data_collection`,
@@ -360,6 +371,9 @@ export function parseLlmProviderEntry(
     promptCache: parseOptionalEnum<
       NonNullable<UserLlmProviderEntry["promptCache"]>
     >(obj.promptCache, `${field}.promptCache`, PROMPT_CACHE_MODES),
+    messageShape: parseOptionalEnum<
+      NonNullable<UserLlmProviderEntry["messageShape"]>
+    >(obj.messageShape, `${field}.messageShape`, MESSAGE_SHAPES),
     providerPreferences: parseOptionalPlainObject(
       obj.providerPreferences,
       `${field}.providerPreferences`,
@@ -457,6 +471,7 @@ function parseOptionalPlainObject(
 }
 
 const PROMPT_CACHE_MODES = new Set(["auto", "off", "explicit-markers"]);
+const MESSAGE_SHAPES = new Set(["native", "flat"]);
 const TOOLS_SUPPORT_LEVELS = new Set(["none", "basic", "parallel", "strict"]);
 const REASONING_FORMATS = new Set([
   "auto",

@@ -3,7 +3,9 @@ import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 import { modelParamProfile, reasoningEffortField } from "./model-params.js";
+import { buildNativeMessages } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
+import { nameEscape } from "./openai-tool-call-adapter.js";
 import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
 
 /**
@@ -37,6 +39,26 @@ export interface OpenAiBodyOptions {
    * id, the host and the entry's `promptCache` policy.
    */
   anthropicCacheControl?: boolean;
+  /**
+   * How a request that carries `messages` (the structured prompt) is
+   * laid out: `native` as `system` + history + final `user`
+   * (`openai-native-messages.ts`), `flat` as the one `user` message of
+   * text every request used to be. A request without `messages` is
+   * always flat. Default `native`.
+   */
+  messageShape?: "native" | "flat";
+  /** The adapter's tool-name escape, for the history's `tool_calls`. */
+  nameEscape?: (qualifiedName: string) => string;
+}
+
+/** The wire layout `buildOpenAiChatBody` chose for a request. */
+export function resolveMessageShape(
+  request: Pick<CompletionRequest, "messages" | "tools">,
+  options: Pick<OpenAiBodyOptions, "messageShape">,
+): "native" | "flat" {
+  if (!request.messages) return "flat";
+  if (!request.tools || request.tools.length === 0) return "flat";
+  return options.messageShape ?? "native";
 }
 
 export function buildOpenAiChatBody(
@@ -59,16 +81,27 @@ export function buildOpenAiChatBody(
     filtered.tools && filtered.tools.length > 0
       ? undefined
       : filtered.responseFormat;
+  // The structured prompt rides only on a main turn (it needs `tools`
+  // to answer with), and only when the provider takes the native
+  // layout; a sub-call, or a service that refused the layout, sends the
+  // flat text — which `messages` was built beside, from the same packed
+  // conversation, so both say the same thing.
+  const messages =
+    resolveMessageShape(filtered, options) === "native" && filtered.messages
+      ? buildNativeMessages(filtered.messages, {
+          nameEscape: options.nameEscape ?? nameEscape,
+        })
+      : [
+          {
+            role: "user",
+            content: responseFormat
+              ? ensureJsonMention(filtered.prompt)
+              : filtered.prompt,
+          },
+        ];
   const body: Record<string, unknown> = {
     model: defaultChatModel,
-    messages: [
-      {
-        role: "user",
-        content: responseFormat
-          ? ensureJsonMention(filtered.prompt)
-          : filtered.prompt,
-      },
-    ],
+    messages,
     // OpenAI's reasoning models reject the field outright (`Unsupported
     // parameter: 'temperature'`), so for them it is not sent at all —
     // not even a caller's own value. See `model-params.ts`.

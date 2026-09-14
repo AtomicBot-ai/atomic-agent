@@ -39,6 +39,8 @@ export type LlmProviderConfigEntry = {
   supportsVision?: boolean;
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
+  /** Native-tools request layout; see `UserLlmProviderEntry.messageShape`. */
+  messageShape?: "native" | "flat";
   /**
    * OpenRouter provider routing, sent as the chat body's `provider`
    * object. Only the `openrouter` factory forwards it; an explicit

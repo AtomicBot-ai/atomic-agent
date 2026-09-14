@@ -568,3 +568,77 @@ describe("buildOpenAiChatBody — per-model parameters", () => {
     expect(plain).not.toHaveProperty("reasoning");
   });
 });
+
+describe("buildOpenAiChatBody — the native message layout", () => {
+  const tools = [{ type: "function", function: { name: "os__fs__read" } }];
+  const messages = {
+    system: "### system\nprefix",
+    droppedSummary: null,
+    turns: [
+      { kind: "user" as const, text: "read a" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "a" } },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "A", truncated: false },
+    ],
+    tail: "### respond\nRespond now.\n",
+  };
+
+  it("sends system, history and a final user message when the request is structured", () => {
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true);
+    expect(body.messages).toEqual([
+      { role: "system", content: "### system\nprefix" },
+      { role: "user", content: "read a" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "A" },
+      { role: "user", content: "### respond\nRespond now.\n" },
+    ]);
+    expect(body.tools).toEqual(tools);
+  });
+
+  it("sends the flat prompt when the shape is flat, when there are no tools, or when nothing is structured", () => {
+    const flat = [{ role: "user", content: "flat" }];
+    expect(
+      buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true, undefined, undefined, undefined, undefined, {
+        messageShape: "flat",
+      }).messages,
+    ).toEqual(flat);
+    expect(buildOpenAiChatBody({ prompt: "flat", messages }, "m", true).messages).toEqual(flat);
+    expect(buildOpenAiChatBody({ prompt: "flat", tools }, "m", true).messages).toEqual(flat);
+  });
+
+  it("places the Anthropic breakpoints on the native layout", () => {
+    const body = buildOpenAiChatBody(
+      { prompt: "flat", messages, tools },
+      "anthropic/claude-sonnet-4.5",
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { anthropicCacheControl: true },
+    );
+    const sent = body.messages as Array<Record<string, unknown>>;
+    expect(sent[0]?.content).toEqual([
+      { type: "text", text: "### system\nprefix", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(sent[3]?.content).toEqual([
+      { type: "text", text: "A", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(sent[4]).toEqual({ role: "user", content: "### respond\nRespond now.\n" });
+  });
+
+  it("uses the adapter's own name escape when one is given", () => {
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true, undefined, undefined, undefined, undefined, {
+      nameEscape: (name) => name.toUpperCase(),
+    });
+    const assistant = (body.messages as Array<Record<string, unknown>>)[2] as {
+      tool_calls: Array<{ function: { name: string } }>;
+    };
+    expect(assistant.tool_calls[0]?.function.name).toBe("OS.FS.READ");
+  });
+});

@@ -22,8 +22,10 @@ import {
 import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
 import {
   buildOpenAiChatBody,
+  resolveMessageShape,
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
+import { isNativeShapeRejection } from "./openai-native-messages.js";
 import {
   buildOpenAiHeaders,
   createOpenAiAttemptBudget,
@@ -88,6 +90,14 @@ export interface OpenAiProviderOptions {
    */
   modelParams?: Record<string, unknown>;
   /**
+   * How the structured prompt is laid out on the wire: `native` (the
+   * default) as `system` + history messages + final `user`; `flat` as the
+   * one `user` message of text every request used to be. A 400 about
+   * roles / `tool_call_id` / `messages` flips a session to `flat` and
+   * retries once. See `openai-native-messages.ts`.
+   */
+  messageShape?: "native" | "flat";
+  /**
    * The entry's prompt-caching policy. `off` sends no cache markers;
    * `explicit-markers` always sends Anthropic breakpoints; `auto` (and
    * absent) sends them when the model or the host is Anthropic's. See
@@ -142,6 +152,15 @@ export class OpenAiProvider implements LlmProvider {
   private readonly providerPreferences: Record<string, unknown> | undefined;
   private readonly bodyOptions: OpenAiBodyOptions;
   private readonly reasoningFormat: ReasoningFormat;
+  private readonly messageShape: "native" | "flat";
+  /**
+   * Sessions whose requests go out flat after the service rejected the
+   * native layout (`"*"` for requests without a session id). Per
+   * session rather than per provider so one shim-backed session cannot
+   * downgrade another's caching; per instance because a provider is
+   * rebuilt on every config write, which is the cheapest re-probe.
+   */
+  private readonly flatSessions = new Set<string>();
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -178,7 +197,9 @@ export class OpenAiProvider implements LlmProvider {
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
     this.providerPreferences = options.providerPreferences;
+    this.messageShape = options.messageShape ?? "native";
     this.bodyOptions = {
+      nameEscape: (name) => this.toolCallAdapter.nameEscape(name),
       ...(options.providerKind ? { providerKind: options.providerKind } : {}),
       ...(options.modelParams ? { modelParams: options.modelParams } : {}),
       ...(resolveAnthropicCacheControl(options)
@@ -200,36 +221,36 @@ export class OpenAiProvider implements LlmProvider {
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     // The body the response actually came from; see `OnOpenAiRequestBody`.
     let sentBody: Record<string, unknown> | undefined;
-    // Unary only: sub-calls carry `response_format`, streamed turns never do.
-    const json = await sendWithStructuredOutputFallback(
-      {
-        providerId: this.id,
-        model: this.defaultChatModel,
-        logger: this.http.logger,
-      },
-      request,
-      (req) =>
-        buildOpenAiChatBody(
-          req,
-          this.defaultChatModel,
-          false,
-          this.extraBody,
-          this.maxOutputTokens,
-          this.strictTools,
-          this.providerPreferences,
-          this.bodyOptions,
-        ),
-      (body) =>
-        openAiPostJson(
-          this.http,
-          `${this.apiPathPrefix}/chat/completions`,
-          body,
-          request,
-          (sent) => {
-            sentBody = sent;
-          },
-        ),
-    );
+    const send = (shape: "native" | "flat") =>
+      // Unary only: sub-calls carry `response_format`, streamed turns never do.
+      sendWithStructuredOutputFallback(
+        {
+          providerId: this.id,
+          model: this.defaultChatModel,
+          logger: this.http.logger,
+        },
+        request,
+        (req) => this.buildBody(req, false, shape),
+        (body) =>
+          openAiPostJson(
+            this.http,
+            `${this.apiPathPrefix}/chat/completions`,
+            body,
+            request,
+            (sent) => {
+              sentBody = sent;
+            },
+          ),
+      );
+    const shape = this.shapeFor(request);
+    let json: Record<string, unknown>;
+    try {
+      json = await send(shape);
+    } catch (err) {
+      if (!this.shouldFallBackToFlat(request, shape, err)) throw err;
+      this.markFlat(request, err);
+      json = await send("flat");
+    }
     const adapted = adaptQwenTaggedToolResponse(
       json,
       request,
@@ -255,19 +276,65 @@ export class OpenAiProvider implements LlmProvider {
     return { fromReasoning: this.taggedToolCompatibility === "qwen" };
   }
 
-  async *completeStream(
+  private buildBody(
     request: CompletionRequest,
-  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const body = buildOpenAiChatBody(
+    stream: boolean,
+    shape: "native" | "flat",
+  ): Record<string, unknown> {
+    return buildOpenAiChatBody(
       request,
       this.defaultChatModel,
-      true,
+      stream,
       this.extraBody,
       this.maxOutputTokens,
       this.strictTools,
       this.providerPreferences,
-      this.bodyOptions,
+      { ...this.bodyOptions, messageShape: shape },
     );
+  }
+
+  /** The layout this request goes out in, given what the session learned. */
+  private shapeFor(request: CompletionRequest): "native" | "flat" {
+    if (this.messageShape === "flat") return "flat";
+    return this.flatSessions.has(sessionKey(request)) ? "flat" : "native";
+  }
+
+  /**
+   * Whether a failed send is the service refusing the native layout —
+   * which only a request that actually went out native can be — rather
+   * than anything else, and whether a flat resend is still wanted.
+   */
+  private shouldFallBackToFlat(
+    request: CompletionRequest,
+    shape: "native" | "flat",
+    err: unknown,
+  ): boolean {
+    if (request.signal?.aborted) return false;
+    if (resolveMessageShape(request, { messageShape: shape }) !== "native") {
+      return false;
+    }
+    return isNativeShapeRejection(err);
+  }
+
+  private markFlat(request: CompletionRequest, err: unknown): void {
+    this.flatSessions.add(sessionKey(request));
+    this.http.logger?.warn(
+      `llm: "${this.id}" rejected native chat messages (roles / tool_call_id); sending the flat prompt for the rest of this session`,
+      {
+        provider: this.id,
+        model: this.defaultChatModel,
+        sessionId: request.sessionId ?? null,
+        status: 400,
+        detail: err instanceof Error ? err.message.slice(0, 240) : String(err),
+      },
+    );
+  }
+
+  async *completeStream(
+    request: CompletionRequest,
+  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    let shape = this.shapeFor(request);
+    let body = this.buildBody(request, true, shape);
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -368,6 +435,17 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
+        // The service refused the message layout, before any byte of
+        // output existed (a 400 comes from the open): the same request
+        // goes out once more in the flat form, and the session stays
+        // flat. Only ever one such resend — the second attempt is flat
+        // by construction and cannot match again.
+        if (!committed && this.shouldFallBackToFlat(request, shape, err)) {
+          this.markFlat(request, err);
+          shape = "flat";
+          body = this.buildBody(request, true, shape);
+          continue;
+        }
         if (!canReopenStream(err, committed, budget)) throw err;
         // No `res.body.cancel()` here, on purpose. The only way to reach
         // this line with a response in hand is `isNetworkError(err)` on
@@ -512,6 +590,11 @@ function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
         isAnthropicHost(options.baseUrl)
       );
   }
+}
+
+/** The key a session's learned layout is remembered under. */
+function sessionKey(request: Pick<CompletionRequest, "sessionId">): string {
+  return request.sessionId ?? "*";
 }
 
 function normalizeApiPathPrefix(prefix: string): string {

@@ -184,7 +184,12 @@ export function renderTurnForPrompt(
   }
 }
 
-function renderToolResultBody(
+/**
+ * The body of a tool result as the prompt shows it — the same caps
+ * whether it lands on a `tool_result[…]:` text line or in a native
+ * `tool` message, which is why it is exported rather than inlined.
+ */
+export function renderToolResultBody(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
   options: RenderTurnOptions,
 ): string {
