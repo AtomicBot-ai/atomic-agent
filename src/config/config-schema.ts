@@ -2271,6 +2271,12 @@ export interface UserConfigFile {
 // the model's own chat template (llama-server `/apply-template`) for
 // families without a hand-built profile, and set the template's
 // thinking switch. Additive: an older file inherits `auto` for both.
+// v66: `localModels.managed.swaFull` (`"auto"` | `"on"` | `"off"`, default
+// `"auto"`) — whether a sliding-window model (Gemma 4 and kin) is
+// launched with `--swa-full` so a partially matching prompt reuses its
+// matching prefix (see `swa-full.ts`). Additive: an older file has no
+// field and gets `"auto"`, which is off unless the full-SWA KV estimate
+// fits the launch's memory budget.
 export const USER_CONFIG_VERSION = 66;
 
 /**
