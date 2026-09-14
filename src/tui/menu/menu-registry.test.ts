@@ -227,6 +227,13 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
   },
+  // The way back into first-run setup once it was skipped or finished.
+  {
+    name: "onboarding",
+    description:
+      "run first-time setup again from the start — keeps your providers, keys, sessions and memory",
+    aliases: ["setup"],
+  },
   {
     name: "uninstall",
     description:

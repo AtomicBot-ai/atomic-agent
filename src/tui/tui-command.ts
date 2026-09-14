@@ -50,6 +50,11 @@ import { restoreTerminalNow } from "./terminal-restore.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
+  ONBOARDING_RERUN_RESET,
+  reopenOnboarding,
+} from "./onboarding/rerun-onboarding.js";
+import { persistOnboardingState } from "./persist-onboarding-state.js";
+import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
@@ -136,8 +141,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const skipOnboarding =
     parsed.skipLlamaSetup ||
     process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
+  // `--onboarding` is `/onboarding` from the shell: the same stamp reset,
+  // and the flow opens whatever `decideOnboarding` would have said.
+  if (parsed.onboarding) persistOnboardingState(ONBOARDING_RERUN_RESET);
   const onboarding =
-    !skipOnboarding && needsOnboarding()
+    parsed.onboarding || (!skipOnboarding && needsOnboarding())
       ? createOnboardingState(getConfig().localModels.url)
       : null;
   // TUI owns its own llama-server health UX (footer indicator +
@@ -473,6 +481,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
           void loadUninstallPreview(bus, config.paths.stateDir),
+        onOnboardingRerunRequested: () =>
+          reopenOnboarding((action) => bus.emit(action)),
         onUninstallConfirmed: () => {
           uninstallRequested = true;
           orchestrator.quit();

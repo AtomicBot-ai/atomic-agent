@@ -78,3 +78,19 @@ describe("parseTuiArgs --fake-update", () => {
     expect(TUI_HELP).toContain("--fake-update");
   });
 });
+
+describe("parseTuiArgs --onboarding", () => {
+  it("is off by default", () => {
+    expect(parseTuiArgs([])).toMatchObject({ onboarding: false });
+  });
+
+  it("asks for first-time setup on this launch", () => {
+    expect(parseTuiArgs(["--onboarding"])).toMatchObject({ onboarding: true });
+  });
+
+  it("refuses to be combined with --skip-llama-setup", () => {
+    expect(
+      parseTuiArgs(["--onboarding", "--skip-llama-setup"]),
+    ).toHaveProperty("error");
+  });
+});
