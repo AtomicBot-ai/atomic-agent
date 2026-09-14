@@ -51,6 +51,38 @@ export interface WorkerTaskResult {
    * never touched.
    */
   notes?: string[];
+  /**
+   * The contract's `checks` attributed to this task, once they ran
+   * (`contract-checks.ts`). A failure is also the row's `error`.
+   */
+  checks?: TaskCheckSummary;
+}
+
+export interface TaskCheckSummary {
+  total: number;
+  failed: number;
+  /** The failing checks' verdicts, joined; absent when all passed. */
+  detail?: string;
+}
+
+/**
+ * `checks: 1 of 2 failed — …` / `checks: 2 of 2 passed`. The detail is
+ * left off when the row's error already carries it (a task failed BY
+ * its checks has `checks: …` as its error), so the verdict reads once.
+ */
+export function describeChecks(
+  checks: TaskCheckSummary,
+  cap: number,
+  error?: string,
+): string {
+  if (checks.failed === 0) {
+    return `checks: ${checks.total} of ${checks.total} passed`;
+  }
+  const detail =
+    checks.detail === undefined || error?.startsWith("checks: ")
+      ? ""
+      : ` — ${oneLine(checks.detail, cap)}`;
+  return `checks: ${checks.failed} of ${checks.total} failed${detail}`;
 }
 
 /**
@@ -288,9 +320,10 @@ const ERROR_HEAD_CHARS = 400;
 export function formatDelegateOutput(
   results: readonly WorkerTaskResult[],
   charCap: number,
+  extra: { contractLine?: string } = {},
 ): string {
   if (results.length === 0) return "(no tasks were run)";
-  const table = renderStatusTable(results);
+  const table = renderStatusTable(results, extra.contractLine);
   const room = Math.max(0, charCap - table.length - 4);
   const perTask = Math.max(200, Math.floor(room / results.length));
   const blocks = results.map((r) => renderBlock(r, perTask));
@@ -302,7 +335,16 @@ export function formatDelegateOutput(
 /** How much of an error or a note one status-table line carries. */
 const TABLE_DETAIL_CHARS = 160;
 
-function renderStatusTable(results: readonly WorkerTaskResult[]): string {
+/**
+ * The head line, the contract's verdict when there is one, then one
+ * line per task. The contract line sits second because it is the one
+ * cross-task fact: a missing provide is a hole between parts, not a
+ * property of any single row.
+ */
+function renderStatusTable(
+  results: readonly WorkerTaskResult[],
+  contractLine: string | undefined,
+): string {
   const counts = new Map<string, number>();
   for (const r of results) {
     counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
@@ -314,11 +356,13 @@ function renderStatusTable(results: readonly WorkerTaskResult[]): string {
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
       ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
+      ...(r.checks ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)] : []),
       ...(r.notes ?? []).map((note) => oneLine(note, TABLE_DETAIL_CHARS)),
     ].join(" — "),
   );
   return [
     `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}`,
+    ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
   ].join("\n");
 }
@@ -342,6 +386,9 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
     (result.error ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}` : "");
   const diagnosis = [
     ...(result.hint ? [`hint: ${result.hint}`] : []),
+    ...(result.checks
+      ? [describeChecks(result.checks, ERROR_HEAD_CHARS, result.error)]
+      : []),
     ...(result.notes ?? []).map((note) => `note: ${note}`),
   ];
   const used = [head, ...diagnosis].join("\n").length;

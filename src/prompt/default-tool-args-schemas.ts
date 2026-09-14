@@ -721,6 +721,50 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         // the tool bounds the number by the task count and the server's
         // request slots. See `delegate-args.ts`.
         maxWorkers: { type: "integer", minimum: 1 },
+        // The interface between the parts (`contract.ts`). `checks`
+        // items are `verify.run` specs plus a `task`, so they stay open.
+        contract: obj({
+          owners: {
+            type: "object",
+            additionalProperties: { type: "string" },
+          },
+          provides: {
+            type: "array",
+            maxItems: 64,
+            items: obj(
+              {
+                task: stringSchema,
+                kind: {
+                  type: "string",
+                  enum: [
+                    "symbol",
+                    "file",
+                    "id",
+                    "endpoint",
+                    "env",
+                    "flag",
+                    "other",
+                  ],
+                },
+                name: stringSchema,
+                in: stringSchema,
+              },
+              ["task", "kind", "name"],
+            ),
+          },
+          requires: {
+            type: "array",
+            items: obj({ task: stringSchema, name: stringSchema }, [
+              "task",
+              "name",
+            ]),
+          },
+          checks: {
+            type: "array",
+            maxItems: 16,
+            items: objOpen({ task: stringSchema }),
+          },
+        }),
       },
       ["tasks"],
     ),

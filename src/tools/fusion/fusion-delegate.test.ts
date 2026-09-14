@@ -1,5 +1,8 @@
 import { FanoutScopeRegistry } from "../../approval/fanout-scope.js";
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { RunTurnResult } from "../../agent/agent-loop.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
@@ -493,6 +496,128 @@ describe("fusion.delegate", () => {
     );
     expect(second.status).not.toBe("error");
     expect(asked).toHaveLength(1);
+  });
+
+  describe("with a contract", () => {
+    const CONTRACT = {
+      owners: { "js/ship.js": "t1", "index.html": "t2" },
+      provides: [
+        { task: "t1", kind: "symbol", name: "HD.Ship", in: "js/ship.js" },
+        { task: "t1", kind: "symbol", name: "HD.Ship.reset", in: "js/ship.js" },
+        { task: "t2", kind: "id", name: "btn-launch", in: "index.html" },
+      ],
+      requires: [{ task: "t2", name: "HD.Ship" }],
+      checks: [
+        { task: "t1", kind: "command", cmd: "node", args: ["--check", "js/ship.js"] },
+        { task: "t2", kind: "page", path: "index.html", checks: ["no errors"] },
+        { kind: "command", cmd: "npm", args: ["test"] },
+      ],
+    };
+
+    function fixture(): string {
+      const dir = mkdtempSync(join(tmpdir(), "fusion-delegate-contract-"));
+      mkdirSync(join(dir, "js"));
+      writeFileSync(join(dir, "js", "ship.js"), "HD.Ship = class {};");
+      writeFileSync(join(dir, "index.html"), '<button id="launch-btn"></button>');
+      return dir;
+    }
+
+    it("briefs every worker with it, checks presence on disk and runs the checks through the injected runner", async () => {
+      const dir = fixture();
+      try {
+        const briefs: string[] = [];
+        const runChecks = vi.fn(
+          async (specs: readonly Record<string, unknown>[], runCtx: { workingDir: string }) => ({
+            ok: false,
+            results: specs.map((spec) =>
+              spec.kind === "page"
+                ? { ok: false, summary: "no errors: 1 pageerror — ReferenceError: p is not defined" }
+                : { ok: true, summary: `${runCtx.workingDir}: exit 0` },
+            ),
+          }),
+        );
+        const tool = buildFusionDelegateTool(
+          deps({
+            workingDir: dir,
+            runChecks,
+            runTurn: async (_session, userMessage) => {
+              briefs.push(userMessage);
+              return turnResult();
+            },
+          }),
+        );
+        const result = await tool.run(
+          { tasks: TASKS, contract: CONTRACT },
+          ctx({ workingDir: dir }),
+        );
+        expect(briefs).toHaveLength(2);
+        expect(briefs[0]).toContain("CONTRACT — the interface between the parts");
+        expect(briefs[0]).toContain("You provide: symbol HD.Ship in js/ship.js; symbol HD.Ship.reset in js/ship.js");
+        expect(briefs[1]).toContain("You may rely on: HD.Ship (symbol from t1 in js/ship.js)");
+
+        // The runner sees the specs without their `task` key, and the call's cwd.
+        expect(runChecks).toHaveBeenCalledTimes(1);
+        expect(runChecks.mock.calls[0]![0]).toEqual([
+          { kind: "command", cmd: "node", args: ["--check", "js/ship.js"] },
+          { kind: "page", path: "index.html", checks: ["no errors"] },
+          { kind: "command", cmd: "npm", args: ["test"] },
+        ]);
+        expect(runChecks.mock.calls[0]![1].workingDir).toBe(dir);
+
+        // Presence: `HD.Ship.reset` was never written; the id is spelled the other way.
+        const lines = result.summary.split("\n");
+        expect(lines[0]).toBe("2 tasks: 1 ok, 1 failed");
+        expect(lines[1]).toBe(
+          "contract: 2 missing — [t1] symbol HD.Ship.reset not in js/ship.js; [t2] id btn-launch not in index.html; call-level checks: 1 of 1 passed",
+        );
+        expect(lines[2]).toBe(
+          "- [t1] ok — One — checks: 1 of 1 passed — contract: symbol HD.Ship.reset not in js/ship.js",
+        );
+        // The task whose declared check failed is `failed`, with the verdict as its error.
+        expect(lines[3]).toBe(
+          "- [t2] failed — Two — error: checks: no errors: 1 pageerror — ReferenceError: p is not defined — checks: 1 of 1 failed — contract: id btn-launch not in index.html",
+        );
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["ok", "failed"]);
+        const report = result.details.contract as { findings: unknown[]; checks: unknown[] };
+        expect(report.findings).toHaveLength(3);
+        expect(report.checks).toHaveLength(3);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("reports declared checks as not run when no runner is wired, and never fails a task on them", async () => {
+      const dir = fixture();
+      try {
+        const tool = buildFusionDelegateTool(deps({ workingDir: dir }));
+        const result = await tool.run(
+          { tasks: TASKS, contract: CONTRACT },
+          ctx({ workingDir: dir }),
+        );
+        expect(result.summary.split("\n")[1]).toContain("3 checks not run — no check runner is wired");
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["ok", "ok"]);
+        expect(rows[0]).not.toHaveProperty("checks");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects a contract that does not bind the tasks, before any worker runs", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn }));
+      const result = await tool.run(
+        {
+          tasks: TASKS,
+          contract: { provides: [{ task: "ghost", kind: "file", name: "a" }] },
+        },
+        ctx(),
+      );
+      expect(result.status).toBe("error");
+      expect(result.summary).toContain('contract.provides[0].task names unknown task "ghost"');
+      expect(runTurn).not.toHaveBeenCalled();
+    });
   });
 
   it("asks again when a later fan-out reaches outside what was approved", async () => {

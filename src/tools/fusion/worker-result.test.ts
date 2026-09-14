@@ -320,6 +320,55 @@ describe("formatDelegateOutput", () => {
   });
 });
 
+describe("formatDelegateOutput — the contract", () => {
+  it("puts the contract line right under the head line, and each task's checks on its row and block", () => {
+    const out = formatDelegateOutput(
+      [
+        row({ checks: { total: 2, failed: 0 } }),
+        row({
+          id: "t2",
+          status: "failed",
+          error: "checks: no errors: 1 pageerror",
+          checks: { total: 2, failed: 1, detail: "no errors: 1 pageerror" },
+        }),
+      ],
+      8000,
+      { contractLine: "contract: 1 missing — [t1] symbol HD.Ship not in js/ship.js" },
+    );
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("2 tasks: 1 ok, 1 failed");
+    expect(lines[1]).toBe("contract: 1 missing — [t1] symbol HD.Ship not in js/ship.js");
+    expect(lines[2]).toBe("- [t1] ok — Map — checks: 2 of 2 passed");
+    // The error already carries the verdict, so the count stands alone.
+    expect(lines[3]).toBe(
+      "- [t2] failed — Map — error: checks: no errors: 1 pageerror — checks: 1 of 2 failed",
+    );
+    const block = out.split("\n\n")[2]!.split("\n");
+    expect(block[0]).toContain("[t2] failed — Map (2 steps, 3s, 1 tool calls, 0 errors) — error: checks: no errors: 1 pageerror");
+    expect(block[1]).toBe("checks: 1 of 2 failed");
+  });
+
+  it("keeps the checks detail on a row whose error is something else", () => {
+    const out = formatDelegateOutput(
+      [
+        row({
+          status: "failed",
+          error: "declared file a.js does not exist after the task",
+          checks: { total: 1, failed: 1, detail: "exit code 1" },
+        }),
+      ],
+      4000,
+    );
+    expect(out.split("\n")[1]).toBe(
+      "- [t1] failed — Map — error: declared file a.js does not exist after the task — checks: 1 of 1 failed — exit code 1",
+    );
+  });
+
+  it("renders no contract line when none was given", () => {
+    expect(formatDelegateOutput([row()], 4000).split("\n")[1]).toBe("- [t1] ok — Map");
+  });
+});
+
 describe("classifyWorkerStatus — a ceiling that ended the task", () => {
   it("reports max_steps for a reply written on the forced final step", () => {
     // A worker at 40/40 replied "the step limit was reached before the

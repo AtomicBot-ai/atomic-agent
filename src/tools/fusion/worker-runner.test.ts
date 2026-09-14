@@ -411,6 +411,30 @@ describe("runWorkerTasks", () => {
     expect(calls[1]!.userMessage).toContain("Do part 1");
   });
 
+  it("renders the fan-out's contract into every worker's brief", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 2,
+      contract: {
+        owners: { "a.js": "t0", "b.js": "t1" },
+        provides: [{ task: "t0", kind: "symbol", name: "A", in: "a.js" }],
+        requires: [{ task: "t1", name: "A" }],
+      },
+      signal: new AbortController().signal,
+    });
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.userMessage).toContain("CONTRACT — the interface between the parts");
+      expect(call.userMessage).toContain("- [t0] symbol A in a.js");
+    }
+    expect(calls[0]!.userMessage).toContain("You own: a.js");
+    expect(calls[0]!.userMessage).toContain("You provide: symbol A in a.js");
+    expect(calls[1]!.userMessage).toContain("You own: b.js");
+    expect(calls[1]!.userMessage).toContain("You may rely on: A (symbol from t0 in a.js)");
+  });
+
   it("reports max_steps, not ok, when the worker replied on its forced final step", async () => {
     const { deps } = harness(async ({ options }) => {
       options.eventHook?.({

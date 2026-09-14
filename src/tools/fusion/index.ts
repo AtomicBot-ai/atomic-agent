@@ -12,6 +12,39 @@ export {
 } from "./delegate-args.js";
 export type { DelegateTask, ParsedDelegateArgs } from "./delegate-args.js";
 export {
+  CONTRACT_PROVIDE_KINDS,
+  MAX_CONTRACT_CHECKS,
+  MAX_CONTRACT_PROVIDES,
+  MAX_CONTRACT_RENDERED_CHARS,
+  describeProvide,
+  ownedPaths,
+  renderContractBlock,
+  renderContractForTask,
+} from "./contract.js";
+export type {
+  ContractCheck,
+  ContractProvide,
+  ContractProvideKind,
+  ContractRequire,
+  DelegateContract,
+} from "./contract.js";
+export {
+  applyCheckOutcomes,
+  applyContractFindings,
+  contentProvides,
+  describeMissing,
+  inspectContractProvides,
+  renderContractLine,
+  runContractChecks,
+} from "./contract-checks.js";
+export type {
+  ContractCheckOutcome,
+  ContractCheckResult,
+  ContractCheckRunner,
+  ContractFinding,
+  ContractReport,
+} from "./contract-checks.js";
+export {
   renderWorkerBrief,
   pickOriginalRequest,
   WORKER_REPLY_CHAR_BUDGET,
@@ -29,6 +62,7 @@ export {
   WORKER_HINT_QUOTA,
 } from "./worker-result.js";
 export type {
+  TaskCheckSummary,
   WorkerStopCause,
   WorkerTaskResult,
   WorkerTaskStatus,

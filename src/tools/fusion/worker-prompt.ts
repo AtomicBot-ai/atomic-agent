@@ -1,5 +1,10 @@
 import type { ConversationTurn } from "../../session/conversation-turn.js";
 import type { DelegateTask } from "./delegate-args.js";
+import {
+  renderContractBlock,
+  renderContractForTask,
+  type DelegateContract,
+} from "./contract.js";
 import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
 
 /**
@@ -98,15 +103,36 @@ function quoteOriginalRequest(request: string): string[] {
   return lines;
 }
 
+/**
+ * The contract, when the fan-out has one, sits between the request
+ * (what the whole job is) and the task (what this worker does): the
+ * shared block first, then the three lines that say what it means for
+ * this task. Every worker of the fan-out reads the same shared block,
+ * which is the point — the names they must agree on are written once,
+ * not paraphrased eight times.
+ */
+function quoteContract(contract: DelegateContract, taskId: string): string[] {
+  return [
+    renderContractBlock(contract),
+    `For TASK ${taskId}:`,
+    renderContractForTask(contract, taskId),
+  ];
+}
+
 export function renderWorkerBrief(
   task: DelegateTask,
-  options: { workingDir: string; originalRequest?: string },
+  options: {
+    workingDir: string;
+    originalRequest?: string;
+    contract?: DelegateContract;
+  },
 ): string {
   const request = options.originalRequest?.trim() ?? "";
   const lines: string[] = [
     `You are a worker agent executing one delegated task inside ${options.workingDir}; you have no memory of the parent conversation.`,
     ``,
     ...(request.length > 0 ? [...quoteOriginalRequest(request), ``] : []),
+    ...(options.contract ? [...quoteContract(options.contract, task.id), ``] : []),
     `TASK ${task.id}: ${task.title}`,
     ``,
     task.instructions,
@@ -125,6 +151,11 @@ export function renderWorkerBrief(
     `- The operator authorised this fan-out to write files AND run commands in the directories the task names, so working there needs no permission: write the files, run the build, run the tests, read the output. Anything outside them is refused, not queued: a tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here. Stop retrying it and say in your reply exactly what was blocked and where, so the orchestrator can re-send the task with that path named — it cannot run the action for you.`,
     `- Read files only inside ${options.workingDir} and the directories this task writes in; a read anywhere else is refused. Do not search other projects for context — ${request.length > 0 ? "your task, its FILES and the original request are" : "your task and its FILES are"} the context you have.`,
     `- Finish with \`reply\` carrying the concise result of this task (about ${WORKER_REPLY_CHAR_BUDGET} characters at most). That reply is the ONLY thing the orchestrator receives — findings, file paths, decisions and anything it needs to merge your part must be inside it.`,
+    ...(options.contract
+      ? [
+          `- End the reply with a \`PROVIDED:\` list of what you produced, one line per item, using the CONTRACT's exact names (kind, name, path). Name anything you provide differently from the contract, or could not provide, on its own line.`,
+        ]
+      : []),
   );
   return lines.join("\n");
 }

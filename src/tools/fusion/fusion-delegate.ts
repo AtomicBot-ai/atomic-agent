@@ -9,6 +9,15 @@ import type { StructuredLogger } from "../../tracing/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
+import {
+  applyCheckOutcomes,
+  applyContractFindings,
+  inspectContractProvides,
+  renderContractLine,
+  runContractChecks,
+  type ContractCheckRunner,
+  type ContractReport,
+} from "./contract-checks.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
 import {
   formatDelegateOutput,
@@ -41,6 +50,13 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * only the orchestrator's instructions, as they did before.
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /**
+   * Runs a contract's `checks` (`verify.run` specs) after the fan-out —
+   * the verify tool family's `runChecks`, wired by the runtime. Absent,
+   * declared checks are reported as not run; they are never assumed to
+   * have passed.
+   */
+  runChecks?: ContractCheckRunner;
 }
 
 function error(
@@ -123,7 +139,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers?, contract? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -266,6 +282,7 @@ export function buildFusionDelegateTool(
       try {
         results = await runWorkerTasks(deps, {
           ...(originalRequest === undefined ? {} : { originalRequest }),
+          ...(parsed.contract === undefined ? {} : { contract: parsed.contract }),
           parentSessionId: ctx.sessionId,
           tasks: parsed.tasks,
           maxWorkers,
@@ -284,6 +301,35 @@ export function buildFusionDelegateTool(
           { reason: "fan-out-failed" },
         );
       }
+
+      // The contract's verdict, from the disk and the check runner, folded
+      // into the rows BEFORE the head line counts them: a task whose
+      // declared check failed is `failed` in the table the orchestrator
+      // reads, not `ok` with a footnote.
+      let contract: ContractReport | undefined;
+      if (parsed.contract !== undefined) {
+        const findings = await inspectContractProvides(
+          parsed.contract,
+          parsed.tasks,
+          ctx.workingDir,
+        );
+        results = applyContractFindings(results, findings);
+        const checks = await runContractChecks(
+          parsed.contract.checks ?? [],
+          deps.runChecks,
+          { workingDir: ctx.workingDir, signal: ctx.signal },
+        );
+        results = applyCheckOutcomes(results, checks.outcomes);
+        contract = {
+          findings,
+          checks: checks.outcomes,
+          ...(checks.checksSkipped === undefined
+            ? {}
+            : { checksSkipped: checks.checksSkipped }),
+        };
+      }
+      const contractLine =
+        contract === undefined ? undefined : renderContractLine(contract);
 
       // …and takes the turn back. One line, so the operator can see the
       // spend return to the cloud leg instead of guessing which of the
@@ -311,12 +357,15 @@ export function buildFusionDelegateTool(
         {
           tool: FUSION_DELEGATE_TOOL,
           status: "ok",
-          output: `${formatDelegateOutput(results, deps.outputCharCap)}${hint}`,
+          output: `${formatDelegateOutput(results, deps.outputCharCap, {
+            ...(contractLine === undefined ? {} : { contractLine }),
+          })}${hint}`,
           details: {
             tasks: results,
             maxWorkers,
             requestedWorkers: requested,
             ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),
+            ...(contract === undefined ? {} : { contract }),
           },
         },
         { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },

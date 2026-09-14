@@ -4,6 +4,7 @@ import type { SessionState } from "../../session/session-state.js";
 import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
+import type { DelegateContract } from "./contract.js";
 import {
   applyDeclaredFileReport,
   inspectDeclaredFiles,
@@ -84,6 +85,11 @@ export interface RunWorkerTasksOptions {
    * the parent turn has none to give.
    */
   originalRequest?: string;
+  /**
+   * The fan-out's contract, rendered into every brief above the task
+   * (`renderWorkerBrief`). Checked after the fan-out by the caller.
+   */
+  contract?: DelegateContract;
   signal: AbortSignal;
 }
 
@@ -235,6 +241,7 @@ async function runOneTask(
         ...(options.originalRequest === undefined
           ? {}
           : { originalRequest: options.originalRequest }),
+        ...(options.contract === undefined ? {} : { contract: options.contract }),
       }),
       {
         origin: "fusion",
