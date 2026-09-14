@@ -23,6 +23,13 @@ import {
 } from "./tool-resource-class.js";
 import { wouldRefuse as planModeWouldRefuse } from "./plan-mode.js";
 import { wouldRefuse as fusionGateWouldRefuse } from "./fusion-orchestrator-mode.js";
+import {
+  formatUnverifiedClaimNotice,
+  formatUnverifiedClaimRefusal,
+  turnToolCalls,
+  unverifiedClaims,
+  type CheckClaim,
+} from "./claim-evidence.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
 import { refusedToolNames } from "./fusion-orchestrator-mode.js";
@@ -203,6 +210,12 @@ export interface StepDependencies {
   isFusionOrchestrator?: () => boolean;
   fusionState?: () => import("./fusion-orchestrator-mode.js").FusionOrchestratorState;
   onDelegated?: (result: CompressedToolResult) => void;
+  /**
+   * Claims need evidence (`claim-evidence.ts`). Per-turn state held by
+   * the loop: whether this turn has already been told once that a reply
+   * claimed a check that never ran. Absent ⇒ replies are never held.
+   */
+  claimEvidence?: { noticed: () => boolean; markNoticed: () => void };
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -1235,6 +1248,45 @@ async function executeStepInner(
       streamAborted: completion.earlyStop?.reason === "fabricated_transcript",
     });
   }
+  // A `reply` that claims a check ran — "node --check", "tests pass",
+  // "verified" — with no matching call this turn is held back once, the
+  // same way an invented transcript is: the model gets a notice and one
+  // more step to run the check or drop the claim. The forced final step
+  // is exempt (it exists so a turn is never cut off without a summary),
+  // and the second time the claim is delivered and marked in the trace.
+  let unverified: CheckClaim[] = [];
+  let claimRefusal: string | null = null;
+  const tail = calls[calls.length - 1];
+  if (
+    deps.claimEvidence !== undefined &&
+    suppressedTerminal === null &&
+    tail !== undefined &&
+    tail.tool === "reply" &&
+    typeof tail.args?.text === "string"
+  ) {
+    unverified = unverifiedClaims(tail.args.text, [
+      ...turnToolCalls(ctx.session.turns),
+      ...calls.slice(0, -1).map((call) => ({ tool: call.tool, args: call.args ?? {} })),
+    ]);
+    if (unverified.length > 0 && ctx.terminalOnly !== true) {
+      if (!deps.claimEvidence.noticed()) {
+        deps.claimEvidence.markNoticed();
+        const notice = formatUnverifiedClaimNotice(unverified);
+        trimmedBatchNotice =
+          trimmedBatchNotice === undefined
+            ? notice
+            : `${trimmedBatchNotice}\n\n${notice}`;
+        claimRefusal = formatUnverifiedClaimRefusal(unverified);
+        suppressedTerminal = tail;
+        calls = calls.slice(0, -1);
+        deps.logger?.warn("reply claims a check that did not run; held once", {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          claims: unverified.map((claim) => claim.text),
+        });
+      }
+    }
+  }
   const batchSize = calls.length + (suppressedTerminal !== null ? 1 : 0);
 
   // Registry membership: surfaces as `ToolExecutionError` (category
@@ -1279,7 +1331,20 @@ async function executeStepInner(
   const suppressed =
     suppressedTerminal !== null && fabricated !== null
       ? suppressedTerminalRecord(suppressedTerminal, fabricated)
-      : null;
+      : suppressedTerminal !== null && claimRefusal !== null
+        ? {
+            call: suppressedTerminal,
+            result: compressToolResult({
+              tool: suppressedTerminal.tool,
+              status: "error",
+              output: claimRefusal,
+              details: {
+                notDelivered: true,
+                unverifiedClaims: unverified.map((claim) => claim.text),
+              },
+            }),
+          }
+        : null;
   if (suppressed !== null) {
     deps.onEvent?.({
       type: "tool_call_parsed",
@@ -1356,6 +1421,22 @@ async function executeStepInner(
       });
     },
   );
+  // A reply delivered with claims nothing backs (the turn was already
+  // told once, or this is the forced final step) is marked, so the trace
+  // and the transcript say the check was never seen to run.
+  if (unverified.length > 0 && suppressed === null) {
+    const last = toolResults.length - 1;
+    const reply = toolResults[last];
+    if (reply !== undefined && reply.tool === "reply") {
+      toolResults[last] = {
+        ...reply,
+        details: {
+          ...reply.details,
+          unverifiedClaims: unverified.map((claim) => claim.text),
+        },
+      };
+    }
+  }
 
   // The transcript cut this step's prompt was built on travels with the
   // session so the next step holds it (`packConversation`).

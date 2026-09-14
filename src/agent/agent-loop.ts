@@ -8,7 +8,10 @@ import type {
   StreamChunk,
 } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
-import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type {
+  ReasoningEffort,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
 import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
 import {
   PLAIN_INSTRUCT_PROFILE,
@@ -142,6 +145,15 @@ export interface AgentLoopDependencies {
    * reflected without restarting the loop.
    */
   contextWindow?: () => number | null;
+  /**
+   * The local worker leg's request-slot count as the server reported it
+   * (`SlotManager.observedPoolSize`), `null` until a `/props` answer has
+   * sized the pool. Read per step; it reaches the `### fusion` machine
+   * facts for an external llama-server whose `--parallel` the config
+   * cannot state. Moves once — when the pool is first observed — and the
+   * prefix moves with it, the same cost as a config write.
+   */
+  liveWorkerSlots?: () => number | null;
   /**
    * The model server just revealed its real context window: a reply
    * stopped `context_window`-truncated after this many prompt + reply
@@ -520,6 +532,26 @@ export interface RunTurnOptions {
   signal: AbortSignal;
   /** Optional new user message to append before stepping. */
   userMessage?: string;
+  /**
+   * The operator's request behind this turn, as the runtime records it
+   * for the workers' briefs (`pickOriginalRequest`). Reaches every step's
+   * prompt as `### request` once the packer has dropped the user turn
+   * that carried it, so a repair turn still sees the spec. Absent in
+   * test / legacy wiring, where nothing is pinned.
+   */
+  originalRequest?: string;
+  /**
+   * Reasoning effort for every completion of this turn, mapped per
+   * provider family by the body builder. A fusion worker's
+   * `workerReasoning`; absent, the provider's default.
+   */
+  reasoningEffort?: ReasoningEffort;
+  /**
+   * Output ceiling for every completion of this turn, below the
+   * provider's own. A fusion worker's `workerMaxOutputTokens`; the
+   * truncation retry's per-step cap still wins over it.
+   */
+  maxOutputTokens?: number;
   /**
    * Pin every completion of this turn to one configured provider id.
    * The step is built for that link's transport (via
@@ -959,6 +991,16 @@ export class AgentLoop {
     // the per-request grammar — see `tool-roles.ts`.
     const toolRole: ToolRole =
       options.toolRole ?? (fusionOrchestratorTurn ? "orchestrator" : "full");
+    // Claims need evidence, once per turn: a reply that reports a check
+    // nothing ran is held back and noticed the first time only
+    // (`claim-evidence.ts`); the second is delivered and marked.
+    let claimNoticeGiven = false;
+    const claimEvidence = {
+      noticed: () => claimNoticeGiven,
+      markNoticed: () => {
+        claimNoticeGiven = true;
+      },
+    };
 
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
@@ -1279,6 +1321,15 @@ export class AgentLoop {
             ...(options.userMessage !== undefined
               ? { userMessage: options.userMessage }
               : {}),
+            ...(options.originalRequest !== undefined
+              ? { originalRequest: options.originalRequest }
+              : {}),
+            ...(options.reasoningEffort !== undefined
+              ? { reasoningEffort: options.reasoningEffort }
+              : {}),
+            ...(options.maxOutputTokens !== undefined
+              ? { maxOutputTokens: options.maxOutputTokens }
+              : {}),
           },
           {
             registry: this.deps.registry,
@@ -1297,11 +1348,15 @@ export class AgentLoop {
                   },
                 }
               : {}),
+            claimEvidence,
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
+              : {}),
+            ...(this.deps.liveWorkerSlots
+              ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
             toolTransport:
               pinnedSlice?.toolTransport ??
