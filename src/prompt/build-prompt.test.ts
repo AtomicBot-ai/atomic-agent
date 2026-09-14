@@ -62,7 +62,7 @@ const SKILLS: SkillCatalogEntry[] = [
 ];
 
 describe("buildPrompt", () => {
-  it("renders `### lessons` between `### profile` and `### memory-index` (phase 5)", () => {
+  it("renders `### lessons` after `### conversation`, with `### profile` (phase 5)", () => {
     const session = mkSession({
       profileFacts: [],
       recalledLessons: [
@@ -93,12 +93,15 @@ describe("buildPrompt", () => {
     });
     expect(text).toMatch(/\n### lessons\n/);
     expect(text).toContain("*42 [tool] When asked about pnpm packages");
-    // Section order: lessons tail header must precede the
-    // memory-index tail header, both must follow the stable prefix.
+    // Section order: memory-index is fixed for the turn and sits ahead
+    // of the conversation; lessons can change within a turn and follow
+    // it. Both must follow the stable prefix.
     const lessonsIdx = text.indexOf("\n### lessons\n");
     const indexIdx = text.indexOf("\n### memory-index\n");
-    expect(lessonsIdx).toBeGreaterThan(0);
-    expect(indexIdx).toBeGreaterThan(lessonsIdx);
+    const conversationIdx = text.indexOf("\n### conversation\n");
+    expect(indexIdx).toBeGreaterThan(0);
+    expect(conversationIdx).toBeGreaterThan(indexIdx);
+    expect(lessonsIdx).toBeGreaterThan(conversationIdx);
   });
 
   it("omits the `### lessons` tail block when `recalledLessons` is undefined or empty (phase 5)", () => {
@@ -1064,7 +1067,7 @@ describe("buildPrompt", () => {
     });
   });
 
-  it("orders tail from stable to hot: loaded-skills, profile, memory-index, session-facts, recalled, world, conversation", () => {
+  it("orders the tail by what can change within a turn: memory-index, session-facts, recalled, world, conversation, then profile, lessons, procedures, loaded-skills, loaded-tools", () => {
     const session = mkSession({
       knownFacts: [{ text: "pinned context" }],
       loadedSkills: [
@@ -1086,6 +1089,21 @@ describe("buildPrompt", () => {
         },
       ],
       memoryIndex: [{ id: 2, preview: "p", tags: [], updatedAt: 1 }],
+      recalledLessons: [
+        { id: 3, activation: "when", tags: [], workingDir: null, updatedAt: 1 },
+      ],
+      recalledProcedures: [
+        { id: 4, activation: "how", tags: [], workingDir: null, updatedAt: 1 },
+      ],
+      loadedTools: [
+        {
+          name: "os.git.show",
+          summary: "Show a commit.",
+          argsSchema: "{ repo?: string }",
+          loadedAt: 1,
+          source: "explicit",
+        },
+      ],
     });
     const prompt = buildPrompt({
       session,
@@ -1097,12 +1115,22 @@ describe("buildPrompt", () => {
       ],
     });
     const idx = (h: string) => prompt.tail.indexOf(h);
-    expect(idx("### loaded-skills")).toBeLessThan(idx("### profile"));
-    expect(idx("### profile")).toBeLessThan(idx("### memory-index"));
+    // Fixed for the turn, ahead of the transcript…
+    expect(idx("### memory-index")).toBeGreaterThanOrEqual(0);
     expect(idx("### memory-index")).toBeLessThan(idx("### session-facts"));
     expect(idx("### session-facts")).toBeLessThan(idx("### recalled"));
     expect(idx("### recalled")).toBeLessThan(idx("### world"));
     expect(idx("### world")).toBeLessThan(idx("### conversation"));
+    // …then what a step can change, so a `tool.view`, a `skill.view` or a
+    // profile write lands behind the transcript the model already read
+    // instead of ahead of it (a change there re-reads the whole prompt
+    // on a model with no partial prefix reuse).
+    expect(idx("### conversation")).toBeLessThan(idx("### profile"));
+    expect(idx("### profile")).toBeLessThan(idx("### lessons"));
+    expect(idx("### lessons")).toBeLessThan(idx("### procedures"));
+    expect(idx("### procedures")).toBeLessThan(idx("### loaded-skills"));
+    expect(idx("### loaded-skills")).toBeLessThan(idx("### loaded-tools"));
+    expect(idx("### loaded-tools")).toBeLessThan(idx("### respond"));
   });
 
   it("leaves loaded-skills and profile blocks byte-identical when only knownFacts change", () => {
@@ -1206,7 +1234,7 @@ describe("buildPrompt profile section", () => {
     expect(prompt.tail).toContain("(no profile)");
   });
 
-  it("places ### profile after optional loaded-skills and before ### world", () => {
+  it("places ### profile after ### conversation and before optional loaded-skills", () => {
     const prompt = buildPrompt({
       session: mkSession(),
       toolDescriptors: TOOLS,
@@ -1224,11 +1252,11 @@ describe("buildPrompt profile section", () => {
     });
     const loadedIdx = prompt.tail.indexOf("### loaded-skills");
     const profileIdx = prompt.tail.indexOf("### profile");
-    const worldIdx = prompt.tail.indexOf("### world");
+    const conversationIdx = prompt.tail.indexOf("### conversation");
     if (loadedIdx >= 0) {
-      expect(loadedIdx).toBeLessThan(profileIdx);
+      expect(profileIdx).toBeLessThan(loadedIdx);
     }
-    expect(profileIdx).toBeLessThan(worldIdx);
+    expect(profileIdx).toBeGreaterThan(conversationIdx);
     expect(prompt.tail).toContain("- language: ru");
   });
 

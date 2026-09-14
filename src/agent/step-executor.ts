@@ -301,7 +301,14 @@ export interface StepContext {
    * continuation) — contextual facts stay suppressed.
    */
   userMessage?: string | null;
-  /** Restrict this step to the terminal reply/finish tools. */
+  /**
+   * Only the terminal `reply`/`finish` tools may run this step (the
+   * loop's reserved final step). The prompt's tool catalog is left as it
+   * is — it is stable-prefix bytes, and narrowing it for one step moved
+   * the session to a cold slot — so the restriction is enforced where a
+   * call would run: a non-terminal call gets a refusal as its tool
+   * result (`batch-executor.ts`), a tail terminal still lands.
+   */
   terminalOnly?: boolean;
   /**
    * Reply cap for this step's completions, in place of
@@ -433,11 +440,10 @@ async function executeStepInner(
     deps.profile,
     deps.toolTransport,
   );
-  const stepToolDescriptors = ctx.terminalOnly
-    ? ctx.toolDescriptors.filter(
-        ({ name }) => name === "reply" || name === "finish",
-      )
-    : ctx.toolDescriptors;
+  // The same catalog on every step, the final one included: `### tools`
+  // is stable-prefix bytes, and a catalog narrowed to reply/finish for
+  // the last step re-read the whole prompt on a cold slot.
+  const stepToolDescriptors = ctx.toolDescriptors;
   const promptInput: BuildPromptInput = {
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
@@ -718,6 +724,34 @@ async function executeStepInner(
     error: BatchValidationError,
   ): { ok: true; batch: ToolCallBatch } | null => {
     if (!isApprovalGatedOnlyFailure(error)) return null;
+    // On the final step the tail terminal is the one call that can run:
+    // every non-terminal call is refused at dispatch, so keeping the
+    // first approval-gated call would lose the reply for a refusal.
+    if (ctx.terminalOnly) {
+      const tail = batch.calls[batch.calls.length - 1];
+      if (
+        tail !== undefined &&
+        batch.calls.length > 1 &&
+        resourceClassFor(tail.tool) === "terminal"
+      ) {
+        const dropped = batch.calls.slice(0, -1);
+        deps.onEvent?.({
+          type: "batch_trimmed",
+          stepIndex: ctx.stepIndex,
+          originalSize: batch.calls.length,
+          kept: tail.tool,
+          dropped: dropped.map((call) => call.tool),
+          reason: "approval-gated-batched",
+        });
+        deps.logger?.info("final step: batch trimmed to its tail terminal", {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          kept: tail.tool,
+          dropped: dropped.map((call) => call.tool),
+        });
+        return { ok: true, batch: { ...batch, calls: [tail] } };
+      }
+    }
     if (batchRunsUnattended(batch)) {
       runInOrder = true;
       deps.logger?.info(
@@ -840,22 +874,6 @@ async function executeStepInner(
     parseDepsFor(completion, deps),
     stepToolDescriptors,
   );
-  if (ctx.terminalOnly && parsed.ok) {
-    const nonTerminal = parsed.batch.calls.find(
-      ({ tool }) => tool !== "reply" && tool !== "finish",
-    );
-    if (nonTerminal) {
-      parsed = {
-        ok: false,
-        error: new BatchValidationError(
-          "finalization step only accepts reply or finish",
-          [
-            `non-terminal tool is not allowed at the step budget: ${nonTerminal.tool}`,
-          ],
-        ),
-      };
-    }
-  }
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
@@ -1042,22 +1060,6 @@ async function executeStepInner(
       retryParseDeps,
       stepToolDescriptors,
     );
-    if (ctx.terminalOnly && parsed.ok) {
-      const nonTerminal = parsed.batch.calls.find(
-        ({ tool }) => tool !== "reply" && tool !== "finish",
-      );
-      if (nonTerminal) {
-        parsed = {
-          ok: false,
-          error: new BatchValidationError(
-            "finalization step only accepts reply or finish",
-            [
-              `non-terminal tool is not allowed at the step budget: ${nonTerminal.tool}`,
-            ],
-          ),
-        };
-      }
-    }
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
@@ -1221,6 +1223,7 @@ async function executeStepInner(
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
+    ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
     ...(deps.isFusionOrchestrator
       ? {

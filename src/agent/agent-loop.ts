@@ -1190,9 +1190,14 @@ export class AgentLoop {
       }
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
-      // On the final allowed step the tool catalog collapses to the two
-      // terminal tools, so a long coding session ends with a summary of
-      // what was changed instead of being cut off mid-edit.
+      // On the final allowed step only the two terminal tools may run, so
+      // a long coding session ends with a summary of what was changed
+      // instead of being cut off mid-edit. The catalog in the prompt is
+      // NOT narrowed for it: `### tools` is stable-prefix bytes, and a
+      // narrowed catalog moved the session to a cold slot for its last
+      // step. The restriction travels as `terminalOnly` — the batch
+      // executor answers a non-terminal call with a refusal, and the
+      // local grammar is built from the same flag.
       // One step is always reserved for a summary, whichever ceiling is
       // about to bite — being cut off mid-edit is what made the old
       // stop unreadable.
@@ -1229,11 +1234,7 @@ export class AgentLoop {
         const outcome = await executeStep(
           {
             session: state,
-            toolDescriptors: finalizationStep
-              ? visibleToolDescriptors().filter(
-                  ({ name }) => name === "reply" || name === "finish",
-                )
-              : visibleToolDescriptors(),
+            toolDescriptors: visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
@@ -1425,6 +1426,15 @@ export class AgentLoop {
         if (outcome.terminal === "turn") {
           reason = "reply";
           endedOnFinalizationStep = finalizationStep;
+          break;
+        }
+        // The reserved final step ran and the model still did not close
+        // the turn: its non-terminal calls were refused at dispatch
+        // (`final step: only reply or finish run here`), nothing more
+        // may execute, and the ceiling that made the step final is what
+        // ends the turn — `stopCause` already names it.
+        if (finalizationStep) {
+          reason = "max_steps";
           break;
         }
         // A trimmed-batch step (auto-split: approval-gated solo) seeds
