@@ -15,6 +15,16 @@ import { ConfigValidationError } from "./config-validation-error.js";
  */
 export type RunModeName = "local" | "cloud" | "fusion";
 
+/** `llm.runMode.fusion.workerReasoning` — same levels as `ReasoningEffort`. */
+export type FusionWorkerReasoning = "low" | "medium" | "high";
+export const FUSION_WORKER_REASONING_LEVELS: readonly FusionWorkerReasoning[] = [
+  "low",
+  "medium",
+  "high",
+];
+/** Upper bound on `workerMaxOutputTokens`; anything larger is a typo. */
+export const FUSION_WORKER_MAX_OUTPUT_TOKENS_MAX = 1_000_000;
+
 export type UserLlmFusionConfig = {
   /**
    * The orchestrator leg. Must name a configured provider whose kind is
@@ -60,6 +70,20 @@ export type UserLlmFusionConfig = {
    * `maxWorkers` is clamped here and the result says so.
    */
   cloudWorkers?: number;
+  /**
+   * Reasoning effort sent with every worker completion, mapped per
+   * provider family (OpenRouter `reasoning.effort`, OpenAI-compatible
+   * `reasoning_effort`). Unset by default: the provider's own default.
+   * A run spent 87 % of its worker output on hidden reasoning and 41K
+   * tokens deciding to read a file; this is the knob for that.
+   */
+  workerReasoning?: FusionWorkerReasoning;
+  /**
+   * Per-step output cap for worker completions, in tokens. Unset by
+   * default (the model's maximum). Keep it above the largest single
+   * write a worker makes (~10K tokens) or it re-creates the 8192 wall.
+   */
+  workerMaxOutputTokens?: number;
   /** Step ceiling per worker turn. Default 40. */
   workerMaxSteps?: number;
   /** Wall-clock ceiling per worker turn, in ms. Default 600 000. */
@@ -216,6 +240,27 @@ function parseFusion(
       `${field}.cloudWorkers`,
       FUSION_WORKERS_MIN,
       FUSION_CLOUD_WORKERS_MAX,
+    );
+  }
+  if (obj.workerReasoning !== undefined) {
+    const level = obj.workerReasoning;
+    if (
+      typeof level !== "string" ||
+      !FUSION_WORKER_REASONING_LEVELS.includes(level as FusionWorkerReasoning)
+    ) {
+      throw new ConfigValidationError(
+        `${field}.workerReasoning`,
+        `expected ${FUSION_WORKER_REASONING_LEVELS.join("|")}`,
+      );
+    }
+    out.workerReasoning = level as FusionWorkerReasoning;
+  }
+  if (obj.workerMaxOutputTokens !== undefined) {
+    out.workerMaxOutputTokens = parseBoundedInt(
+      obj.workerMaxOutputTokens,
+      `${field}.workerMaxOutputTokens`,
+      1,
+      FUSION_WORKER_MAX_OUTPUT_TOKENS_MAX,
     );
   }
   if (obj.workerMaxSteps !== undefined) {

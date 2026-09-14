@@ -196,6 +196,40 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(tails[0]!.indexOf("### request")).toBeLessThan(tails[0]!.indexOf("### conversation"));
   });
 
+  it("passes RunTurnOptions.reasoningEffort / maxOutputTokens to every completion (F20)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const seen: Array<{ effort?: string; cap?: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        seen.push({
+          ...(params.reasoningEffort === undefined ? {} : { effort: params.reasoningEffort }),
+          ...(params.maxOutputTokens === undefined ? {} : { cap: params.maxOutputTokens }),
+        });
+        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-effort", workingDir });
+    await loop.runTurn(session, {
+      userMessage: "go",
+      reasoningEffort: "low",
+      maxOutputTokens: 12_000,
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    await loop.runTurn(session, {
+      userMessage: "again",
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    expect(seen).toEqual([{ effort: "low", cap: 12_000 }, {}]);
+  });
+
   it("keeps working past the leg length while the task is progressing", async () => {
     // The point of the change: `maxSteps` is a checkpoint, not the end
     // of the work. A task that is still getting usable results out of

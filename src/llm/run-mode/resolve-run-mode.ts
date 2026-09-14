@@ -1,4 +1,7 @@
-import type { RunModeName } from "../../config/llm-run-mode-config.js";
+import type {
+  FusionWorkerReasoning,
+  RunModeName,
+} from "../../config/llm-run-mode-config.js";
 import {
   DEFAULT_FUSION_CLOUD_WORKERS,
   DEFAULT_FUSION_WORKER_MAX_STEPS,
@@ -44,6 +47,10 @@ export type ResolvedRunMode = {
    * resolver; optional only so hand-built fixtures elsewhere stay valid.
    */
   cloudWorkers?: number;
+  /** `llm.runMode.fusion.workerReasoning`, present only when configured. */
+  workerReasoning?: FusionWorkerReasoning;
+  /** `llm.runMode.fusion.workerMaxOutputTokens`, present only when configured. */
+  workerMaxOutputTokens?: number;
   workerMaxSteps: number;
   workerTimeoutMs: number;
   /**
@@ -170,6 +177,12 @@ export function resolveRunMode(
         : (worker?.defaultChatModel ?? worker?.model ?? null)),
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
     cloudWorkers: fusion?.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
+    ...(fusion?.workerReasoning === undefined
+      ? {}
+      : { workerReasoning: fusion.workerReasoning }),
+    ...(fusion?.workerMaxOutputTokens === undefined
+      ? {}
+      : { workerMaxOutputTokens: fusion.workerMaxOutputTokens }),
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs:
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,

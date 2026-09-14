@@ -61,6 +61,7 @@ export class OpenRouterProvider extends OpenAiProvider {
     const defaultChatModel = options.defaultChatModel ?? "openrouter/auto";
     super({
       ...options,
+      kind: "openrouter",
       id: options.id,
       // OpenAiProvider normalizes the base URL.
       baseUrl: options.baseUrl ?? DEFAULT_OPENROUTER_BASE,

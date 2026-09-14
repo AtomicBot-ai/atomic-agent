@@ -642,3 +642,38 @@ describe("buildOpenAiChatBody — the native message layout", () => {
     expect(assistant.tool_calls[0]?.function.name).toBe("OS.FS.READ");
   });
 });
+
+describe("reasoning effort and the turn's output ceiling (F20)", () => {
+  it("maps reasoningEffort to the field each family reads, and omits it elsewhere", () => {
+    const request = { prompt: "hi", reasoningEffort: "low" as const };
+    const openrouter = buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, { providerKind: "openrouter" });
+    expect(openrouter.reasoning).toEqual({ effort: "low" });
+    expect(openrouter).not.toHaveProperty("reasoning_effort");
+    const compatible = buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, { providerKind: "openai-compatible" });
+    expect(compatible.reasoning_effort).toBe("low");
+    expect(compatible).not.toHaveProperty("reasoning");
+    for (const kind of [undefined, "aimlapi", "gemini"]) {
+      const body = buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, {
+        ...(kind ? { providerKind: kind } : {}),
+      });
+      expect(body).not.toHaveProperty("reasoning");
+      expect(body).not.toHaveProperty("reasoning_effort");
+    }
+    // No effort asked: nothing sent, whatever the family.
+    expect(
+      buildOpenAiChatBody({ prompt: "hi" }, "m", false, undefined, undefined, undefined, undefined, { providerKind: "openrouter" }),
+    ).not.toHaveProperty("reasoning");
+  });
+
+  it("caps max_tokens from the turn's ceiling, under the per-step cap and over the provider's", () => {
+    expect(buildOpenAiChatBody({ prompt: "hi", maxOutputTokens: 12_000 }, "m", false).max_tokens).toBe(12_000);
+    expect(
+      buildOpenAiChatBody({ prompt: "hi", maxOutputTokens: 12_000, maxTokens: 32_000 }, "m", false).max_tokens,
+    ).toBe(32_000);
+    expect(
+      buildOpenAiChatBody({ prompt: "hi", maxOutputTokens: 12_000 }, "m", false, undefined, 4_000).max_tokens,
+    ).toBe(12_000);
+    expect(buildOpenAiChatBody({ prompt: "hi" }, "m", false, undefined, 4_000).max_tokens).toBe(4_000);
+    expect(buildOpenAiChatBody({ prompt: "hi" }, "m", false)).not.toHaveProperty("max_tokens");
+  });
+});

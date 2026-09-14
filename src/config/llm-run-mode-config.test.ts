@@ -227,3 +227,31 @@ describe("cloudWorkers (F21)", () => {
     }
   });
 });
+
+describe("workerReasoning / workerMaxOutputTokens (F20)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("are optional, and validated when present", () => {
+    const parsed = parseLlmRunModeConfig(
+      { fusion: { workerReasoning: "low", workerMaxOutputTokens: 12_000 } },
+      providers,
+      "llm.runMode",
+    );
+    expect(parsed.fusion).toEqual({ workerReasoning: "low", workerMaxOutputTokens: 12_000 });
+    expect(parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion).toEqual({});
+    expect(() =>
+      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode"),
+    ).toThrow(/llm\.runMode\.fusion\.workerReasoning/);
+    for (const bad of [0, -1, 2.5, "8192", 1_000_001]) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { workerMaxOutputTokens: bad } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(/llm\.runMode\.fusion\.workerMaxOutputTokens/);
+    }
+  });
+});

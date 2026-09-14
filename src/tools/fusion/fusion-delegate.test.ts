@@ -345,6 +345,63 @@ describe("fusion.delegate", () => {
     expect(result.summary).not.toContain("cloudWorkers");
   });
 
+  it("hands the worker reasoning and cap to every worker turn, and prices the fan-out (F20)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (_session, _message, options) => {
+          seen.push({ ...options });
+          options.eventHook?.({
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                content: "",
+                reasoningContent: "",
+                stop: true,
+                truncated: false,
+                timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+                cacheHitTokens: 0,
+                slotId: 0,
+                modelId: "small",
+                usage: { promptTokens: 1_000_000, completionTokens: 250_000, totalTokens: 1_250_000 },
+              },
+            },
+          });
+          return turnResult();
+        },
+        resolveRunMode: () =>
+          fusionMode({ workerReasoning: "low", workerMaxOutputTokens: 12_000 }),
+        resolveWorkerPricing: (providerId, modelId) =>
+          providerId === "local-llama" && modelId === "small"
+            ? { input: 1, output: 4 }
+            : undefined,
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ reasoningEffort: "low", maxOutputTokens: 12_000 });
+    expect(result.summary).toContain("cloud spend $4.00 on small (2,000,000 in / 500,000 out)");
+    expect(result.details.workerSpendUsd).toBeCloseTo(4);
+  });
+
+  it("sends no reasoning or cap and no spend line when nothing is configured or priced (F20)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (_session, _message, options) => {
+          seen.push({ ...options });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(seen[0]).not.toHaveProperty("reasoningEffort");
+    expect(seen[0]).not.toHaveProperty("maxOutputTokens");
+    expect(result.summary).not.toContain("cloud spend");
+    expect(result.details).not.toHaveProperty("workerSpendUsd");
+  });
+
   it("clamps a cloud fan-out to cloudWorkers and says so (F21)", async () => {
     // A cloud leg has no slot pool, so before this the width was whatever
     // the model asked for — three workers from a one-worker config, and

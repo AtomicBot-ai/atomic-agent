@@ -6,6 +6,14 @@
 
 export type ToolCallTransport = "grammar" | "native_tools";
 
+/**
+ * How hard a reasoning model may think for one completion. Mapped per
+ * provider family in the body builder (OpenRouter `reasoning.effort`,
+ * OpenAI-compatible `reasoning_effort`); providers without a mapping
+ * ignore it.
+ */
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface CompletionUsage {
   promptTokens: number;
   completionTokens: number;
@@ -74,6 +82,15 @@ export interface CompletionRequest {
   topP?: number;
   topK?: number;
   maxTokens?: number;
+  /**
+   * Output ceiling for the turn this request belongs to (a fusion
+   * worker's `workerMaxOutputTokens`). A per-step `maxTokens` — the
+   * truncation retry's raised cap — wins over it; absent both, the
+   * provider's own ceiling applies.
+   */
+  maxOutputTokens?: number;
+  /** Reasoning effort for the turn; see `ReasoningEffort`. */
+  reasoningEffort?: ReasoningEffort;
   seed?: number;
   repeatPenalty?: number;
   repeatLastN?: number;

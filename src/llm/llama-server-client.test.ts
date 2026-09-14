@@ -14,6 +14,33 @@ function createMockFetch(handler: Handler): typeof fetch {
   }) as typeof fetch;
 }
 
+describe("LlamaServerClient n_predict from the turn's ceiling (F20)", () => {
+  function clientCapturing(bodies: Array<Record<string, unknown>>): LlamaServerClient {
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ content: "x", stop: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("caps n_predict from maxOutputTokens, under the per-step maxTokens", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const client = clientCapturing(bodies);
+    await client.complete({ prompt: "p", maxOutputTokens: 12_000 });
+    await client.complete({ prompt: "p", maxOutputTokens: 12_000, maxTokens: 32_000 });
+    expect(bodies[0]?.n_predict).toBe(12_000);
+    expect(bodies[1]?.n_predict).toBe(32_000);
+    // A reasoning effort means nothing to llama-server and is not sent.
+    await client.complete({ prompt: "p", reasoningEffort: "low" });
+    expect(JSON.stringify(bodies[2])).not.toContain("reasoning");
+  });
+});
+
 describe("LlamaServerClient.complete", () => {
   it("posts JSON to /completion with grammar and slot_id", async () => {
     let captured: { url: string; body: unknown } | null = null;

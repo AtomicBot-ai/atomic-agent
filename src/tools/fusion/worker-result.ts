@@ -154,6 +154,8 @@ export class WorkerRunCollector {
   private usage: CompletionUsage | undefined;
   private lastLoopError: string | undefined;
   private lastWaitReason: string | undefined;
+  /** The last few tool results, one line each — what a hand-back reports. */
+  private readonly recent: string[] = [];
 
   /** Feed one `AgentLoopEvent` from the worker turn's hook. */
   observe(event: AgentLoopEvent): void {
@@ -193,6 +195,10 @@ export class WorkerRunCollector {
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
       }
+      this.recent.push(
+        `${result.tool} ${result.status}: ${oneLine(result.summary, FINDING_CHARS)}`,
+      );
+      if (this.recent.length > FINDINGS_KEPT) this.recent.shift();
       return;
     }
     if (inner.type === "llm_completed" && inner.completion.usage) {
@@ -207,6 +213,25 @@ export class WorkerRunCollector {
               totalTokens: prev.totalTokens + next.totalTokens,
             };
     }
+  }
+
+  /**
+   * What the worker saw before it was handed back: the tool tally and
+   * its last few results. The orchestrator re-briefs from this rather
+   * than from nothing.
+   */
+  findings(): string {
+    const tally = Object.entries(this.byTool)
+      .map(([tool, n]) => `${tool}×${n}`)
+      .join(", ");
+    const parts = [
+      this.calls === 0 ? "no tool calls" : `${this.calls} tool calls (${tally})`,
+      ...(this.recent.length > 0 ? [`last results: ${this.recent.join(" | ")}`] : []),
+      ...(this.replyText.length > 0
+        ? [`partial reply: ${oneLine(this.replyText, FINDING_CHARS)}`]
+        : []),
+    ];
+    return parts.join("; ");
   }
 
   /** The worker loop's own account of why it stopped working, if any. */
@@ -350,6 +375,10 @@ export function workerFailureHint(message: string): string | undefined {
 
 const NO_REPLY = "(the worker produced no reply)";
 
+/** How many tool results a hand-back's findings keep, and how much of each. */
+const FINDINGS_KEPT = 6;
+const FINDING_CHARS = 160;
+
 /** How much of an error the head line carries; the rest is noise. */
 const ERROR_HEAD_CHARS = 400;
 
@@ -373,10 +402,10 @@ const ERROR_HEAD_CHARS = 400;
 export function formatDelegateOutput(
   results: readonly WorkerTaskResult[],
   charCap: number,
-  extra: { contractLine?: string } = {},
+  extra: DelegateOutputExtras = {},
 ): string {
   if (results.length === 0) return "(no tasks were run)";
-  const table = renderStatusTable(results, extra.contractLine);
+  const table = renderStatusTable(results, extra);
   const room = Math.max(0, charCap - table.length - 4);
   const perTask = Math.max(200, Math.floor(room / results.length));
   const blocks = results.map((r) => renderBlock(r, perTask));
@@ -388,16 +417,67 @@ export function formatDelegateOutput(
 /** How much of an error or a note one status-table line carries. */
 const TABLE_DETAIL_CHARS = 160;
 
+/** USD per million tokens, as the model catalogue / `userModels[].pricing` state it. */
+export interface WorkerPricing {
+  input: number;
+  output: number;
+}
+
+/** What a fan-out cost on its worker leg, for the status table header. */
+export interface FanoutSpend {
+  usd: number;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+}
+
 /**
- * The head line, the contract's verdict when there is one, then one
- * line per task. The contract line sits second because it is the one
- * cross-task fact: a missing provide is a hole between parts, not a
- * property of any single row.
+ * Σ over the tasks' usage at `pricing`, the same arithmetic as the
+ * turn cost line (`turn-usage-meter.ts`). Tasks with no usage (a turn
+ * that died before its first completion) contribute nothing.
+ */
+export function fanoutSpend(
+  results: readonly WorkerTaskResult[],
+  pricing: WorkerPricing,
+  model: string,
+): FanoutSpend {
+  let promptTokens = 0;
+  let completionTokens = 0;
+  for (const r of results) {
+    if (r.usage === undefined) continue;
+    promptTokens += r.usage.promptTokens;
+    completionTokens += r.usage.completionTokens;
+  }
+  const usd =
+    (promptTokens / 1_000_000) * pricing.input +
+    (completionTokens / 1_000_000) * pricing.output;
+  return { usd, model, promptTokens, completionTokens };
+}
+
+function formatUsd(usd: number): string {
+  return usd < 0.01 && usd > 0 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
+}
+
+/** What the status table carries beyond the rows themselves. */
+export interface DelegateOutputExtras {
+  /** The contract's verdict (`renderContractLine`), when the fan-out had one. */
+  contractLine?: string;
+  /** The fan-out's priced worker spend, when the worker model is priced. */
+  spend?: FanoutSpend | null;
+}
+
+/**
+ * The head line (with the bill, when there is one), the contract's
+ * verdict when there is one, then one line per task. The contract line
+ * sits second because it is the one cross-task fact: a missing provide
+ * is a hole between parts, not a property of any single row.
  */
 function renderStatusTable(
   results: readonly WorkerTaskResult[],
-  contractLine: string | undefined,
+  extra: DelegateOutputExtras,
 ): string {
+  const { contractLine } = extra;
+  const spend = extra.spend ?? null;
   const counts = new Map<WorkerTaskStatus, number>();
   for (const r of results) {
     counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
@@ -405,6 +485,12 @@ function renderStatusTable(
   const tally = WORKER_STATUS_ORDER.filter((status) => counts.has(status))
     .map((status) => `${counts.get(status)} ${status}`)
     .join(", ");
+  // The bill, on the head line, where a capped read still sees it: a
+  // fan-out whose two workers wrote nothing cost $2.29 and nothing said so.
+  const cost =
+    spend === null
+      ? ""
+      : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in / ${spend.completionTokens.toLocaleString("en-US")} out)`;
   const lines = results.map((r) =>
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
@@ -414,7 +500,7 @@ function renderStatusTable(
     ].join(" — "),
   );
   return [
-    `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}`,
+    `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}${cost}`,
     ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
   ].join("\n");

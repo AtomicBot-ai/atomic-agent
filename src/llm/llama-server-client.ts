@@ -681,8 +681,10 @@ export class LlamaServerClient {
       temperature: request.temperature ?? ENV_TEMPERATURE ?? 0.2,
       top_p: request.topP ?? ENV_TOP_P ?? 0.95,
       top_k: request.topK ?? ENV_TOP_K ?? 40,
+      // The per-step cap first, then the turn's own ceiling (a fusion
+      // worker's `workerMaxOutputTokens`), then the config knob.
       n_predict: resolveNPredict(
-        request.maxTokens,
+        request.maxTokens ?? request.maxOutputTokens,
         config.localModels.completionMaxTokens,
       ),
       repeat_penalty: request.repeatPenalty ?? 1.1,

@@ -8,6 +8,7 @@ import {
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
+  fanoutSpend,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
   workerFailureHint,
@@ -237,6 +238,29 @@ describe("delegateOutcome", () => {
       expect(delegateOutcome([row({ status })])).toBe("partial");
       expect(delegateOutcome([row({ status }), row({ id: "t2", status: "failed" })])).toBe("partial");
     }
+  });
+});
+
+describe("fan-out spend in the status table header (F20)", () => {
+  it("prices the tasks' usage and states it on the head line", () => {
+    const results = [
+      row({ usage: { promptTokens: 400_000, completionTokens: 100_000, totalTokens: 500_000 } }),
+      row({ id: "t2", usage: { promptTokens: 100_000, completionTokens: 50_000, totalTokens: 150_000 } }),
+      row({ id: "t3" }), // died before its first completion: no usage
+    ];
+    const spend = fanoutSpend(results, { input: 1, output: 4 }, "z-ai/glm-5.3-flash");
+    expect(spend).toEqual({
+      usd: 0.5 + 0.6,
+      model: "z-ai/glm-5.3-flash",
+      promptTokens: 500_000,
+      completionTokens: 150_000,
+    });
+    const out = formatDelegateOutput(results, 4000, { spend });
+    expect(out.split("\n")[0]).toBe(
+      "3 tasks: 3 ok — cloud spend $1.10 on z-ai/glm-5.3-flash (500,000 in / 150,000 out)",
+    );
+    // Without pricing the head line is as it was.
+    expect(formatDelegateOutput(results, 4000).split("\n")[0]).toBe("3 tasks: 3 ok");
   });
 });
 

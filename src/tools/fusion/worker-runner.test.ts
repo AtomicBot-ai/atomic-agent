@@ -123,6 +123,31 @@ describe("runWorkerTasks", () => {
     });
   });
 
+  it("passes the worker reasoning and output cap into the turn, only when set (F20)", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      workerReasoning: "low",
+      workerMaxOutputTokens: 12_000,
+      signal: new AbortController().signal,
+    });
+    expect(calls[0]!.options).toMatchObject({
+      reasoningEffort: "low",
+      maxOutputTokens: 12_000,
+    });
+    const plain = harness(async () => turnResult());
+    await runWorkerTasks(plain.deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(plain.calls[0]!.options).not.toHaveProperty("reasoningEffort");
+    expect(plain.calls[0]!.options).not.toHaveProperty("maxOutputTokens");
+  });
+
   it("runs on a fresh session id, never the parent's — that would deadlock", async () => {
     const { deps, calls } = harness(async () => turnResult());
     await runWorkerTasks(deps, {

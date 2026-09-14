@@ -72,6 +72,22 @@ function grammarRequestFields(params: LlmStreamParams) {
 }
 
 /**
+ * The turn's own settings, forwarded on both transports: the output
+ * ceiling caps llama-server's `n_predict` as much as a cloud
+ * `max_tokens`, and the effort is mapped (or dropped) per provider.
+ */
+function turnRequestFields(params: LlmStreamParams) {
+  return {
+    ...(typeof params.maxOutputTokens === "number"
+      ? { maxOutputTokens: params.maxOutputTokens }
+      : {}),
+    ...(params.reasoningEffort !== undefined
+      ? { reasoningEffort: params.reasoningEffort }
+      : {}),
+  };
+}
+
+/**
  * One unary attempt against `providerId`: warm the link, resolve its
  * transport, send the request in that transport's shape. Returns the
  * raw result plus the transport that served it; the caller stamps
@@ -90,6 +106,7 @@ export async function completeOnLink(
     ...(typeof params.maxTokens === "number"
       ? { maxTokens: params.maxTokens }
       : {}),
+    ...turnRequestFields(params),
     ...(params.signal ? { signal: params.signal } : {}),
   };
   const result =
@@ -132,6 +149,7 @@ export async function openStreamOnLink(
     ...(typeof params.maxTokens === "number"
       ? { maxTokens: params.maxTokens }
       : {}),
+    ...turnRequestFields(params),
     ...(params.signal ? { signal: params.signal } : {}),
   };
   const stream =
