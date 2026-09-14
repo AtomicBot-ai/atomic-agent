@@ -819,7 +819,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(prompts[1]).toContain("cut off after 8192 tokens");
   });
 
-  it("forgets a learned window the server just proved too small", async () => {
+  it("reports a completion that exceeded the learned window, so bootstrap can raise it", async () => {
     const registry = buildDefaultToolRegistry();
     const exceeded: number[] = [];
     const loop = new AgentLoop({
@@ -961,6 +961,127 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(observed).toEqual([32_768]);
     expect(prompts[1]).toContain("ran out of context");
     expect(calls).toBe(2);
+  });
+
+  it("learns the window a native-tool provider names in its 400, repacks and retries once (F30)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    const repacks: Array<{ contextWindow: number; source: string }> = [];
+    const prompts: string[] = [];
+    let learned: number | null = null;
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async ({ prompt }) => {
+        calls += 1;
+        prompts.push(prompt);
+        if (calls === 1) {
+          throw new TransportError(
+            '"vendor" rejected the request (400).',
+            400,
+            "https://x/v1",
+            {
+              cause: new OpenAiHttpError(
+                "openai provider 400: This model's maximum context length is 8192 tokens. However, you requested 9134 tokens (7134 in the messages, 2000 in the completion).",
+                400,
+                "u",
+              ),
+            },
+          );
+        }
+        return makeNativeCompletion([
+          { name: "reply", arguments: JSON.stringify({ text: "fits now" }) },
+        ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => learned,
+      onContextWindowObserved: (contextWindow) => {
+        observed.push(contextWindow);
+        learned = contextWindow;
+      },
+      onEvent: (event) => {
+        if (event.type === "prompt_repacked") repacks.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-size-400", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(observed).toEqual([8_192]);
+    expect(repacks).toEqual([
+      expect.objectContaining({ contextWindow: 8_192, source: "provider", stepIndex: 0 }),
+    ]);
+    expect(prompts[1]).toContain("trimmed to fit this model's window");
+    // The same step, not a new one.
+    expect(result.session.stepCount).toBe(1);
+  });
+
+  it("packs to most of the prompt estimate when the 413 names no window, and fails on a second refusal (F30)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    const failures: string[] = [];
+    let promptTokens = 0;
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        calls += 1;
+        throw new TransportError(
+          '"vendor" rejected the request (413).',
+          413,
+          "https://x/v1",
+          {
+            cause: new OpenAiHttpError(
+              "openai provider 413: the request exceeds the available context size",
+              413,
+              "u",
+            ),
+          },
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => null,
+      onContextWindowObserved: (contextWindow) => observed.push(contextWindow),
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "prompt_built") {
+          promptTokens = event.event.prompt.tokens.total;
+        }
+        if (event.type === "loop_failed") failures.push(event.error.message);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-size-413", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(calls).toBe(2);
+    expect(promptTokens).toBeGreaterThan(0);
+    expect(observed).toEqual([Math.floor(promptTokens * 0.8)]);
+    expect(failures[0]).toContain("rejected the request (413)");
   });
 
   it("fails with the truncation, not the 400, when the provider refuses the raised cap", async () => {

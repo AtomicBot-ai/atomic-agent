@@ -434,6 +434,27 @@ describe("createTraceRecorder", () => {
     expect(err).not.toHaveProperty("fallbackFailures");
   });
 
+  it("records a size-rejection repack (F30)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-repack", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 });
+    rec.onAgentEvent({
+      type: "prompt_repacked",
+      stepIndex: 4,
+      contextWindow: 8_192,
+      source: "estimate",
+      promptTokens: 10_240,
+    });
+    expect(events.find((e) => e.type === "prompt_repacked")).toMatchObject({
+      type: "prompt_repacked",
+      turnIndex: 1,
+      stepIndex: 4,
+      contextWindow: 8_192,
+      source: "estimate",
+      promptTokens: 10_240,
+    });
+  });
+
   it("records the generation id of a stream that failed after output", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-gen", emit, now });

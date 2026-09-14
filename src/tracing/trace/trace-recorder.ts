@@ -518,6 +518,19 @@ export function createTraceRecorder(
                 : event.retry.contextWindow,
           });
           return;
+        case "prompt_repacked":
+          push({
+            type: "prompt_repacked",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            contextWindow: event.contextWindow,
+            source: event.source,
+            promptTokens: event.promptTokens,
+          });
+          return;
         case "loop_detected":
           push({
             type: "loop_detected",

@@ -285,10 +285,14 @@ and [src/runtime/llm-fallback-seam.test.ts](src/runtime/llm-fallback-seam.test.t
    cap or the context length *and* says it is too large) keeps `shouldAdvance` from falling the chain
    over to a link that may not be running; on the raised-cap retry the turn fails with the *original*
    truncation, and elsewhere the provider's own sentence about the limit stays in the message.
-6. **A learned window is forgotten the moment the server disproves it.** A successful completion whose
-   prompt + reply exceed the believed window fires `onContextWindowExceeded`, and bootstrap drops the
-   observation (catalogue windows are never touched). Learned windows live for the process; a
-   restart may change the server.
+6. **A learned window only moves towards what the server demonstrated.** A successful completion whose
+   prompt + reply exceed the believed window fires `onContextWindowExceeded`, and bootstrap raises the
+   learned window to that count (`LearnedContextWindows`; catalogue windows are never touched) — it
+   used to forget the observation, which sent the next prompt back to the nominal 128k. A request the
+   provider refuses as too large (`isRequestSizeRejection`, native-tool links) lowers it: the window
+   the body names, else 0.8 × the prompt estimate, is observed, the conversation is packed to it and
+   the step is retried once with a notice (`prompt_repacked`). Learned windows live for the process;
+   a restart may change the server.
 7. **The repair pass on `native_tools` runs under the step's cap, not `REPAIR_MAX_TOKENS`.** The
    1024-token cap is a grammar-link guard: the prefill strip keeps the think block short there. On the
    chat transport a reasoning model thinks server-side and 1024 is a guaranteed truncation, so every

@@ -33,6 +33,7 @@ export type TraceEvent =
   | TraceProviderWaiting
   | TraceProviderRecovered
   | TraceCompletionTruncated
+  | TracePromptRepacked
   | TraceParseFailureRecovered
   | TraceEmptyCompletionRecovered
   | TraceLessonDeprecated
@@ -278,6 +279,19 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   requestedMaxTokens?: number;
   retry: "raise_cap" | "fit_window";
   retryValue: number;
+}
+
+/**
+ * The provider refused the request for its size; the window was learned
+ * and the step is being retried with the conversation packed to it.
+ */
+export interface TracePromptRepacked extends TraceEventBase {
+  type: "prompt_repacked";
+  turnIndex: number;
+  stepIndex: number;
+  contextWindow: number;
+  source: "provider" | "estimate";
+  promptTokens: number;
 }
 
 export interface TraceLoopDetected extends TraceEventBase {

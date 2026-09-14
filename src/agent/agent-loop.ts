@@ -28,6 +28,10 @@ import {
   isRequestSizeRejection,
 } from "../llm/index.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
+import {
+  composeSizeRejectionNotice,
+  planSizeRejectionRepack,
+} from "./size-rejection-recovery.js";
 import type {
   LlmFailureCategory,
   TruncationCause,
@@ -674,6 +678,21 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The provider refused the request for step `stepIndex` as too
+       * large for its context window; the window was learned
+       * (`source: "provider"` from the body's own number, `"estimate"`
+       * from the prompt estimate) and the same step is being retried
+       * with the conversation packed to it. Fired once per step; a
+       * second refusal fails the turn with the provider's sentence.
+       */
+      type: "prompt_repacked";
+      stepIndex: number;
+      contextWindow: number;
+      source: "provider" | "estimate";
+      promptTokens: number;
+    }
+  | {
+      /**
        * The completion for step `stepIndex` came back cut off, and the
        * same step is being retried with a different request: a larger
        * reply cap, or a prompt re-packed to the context window the
@@ -1110,6 +1129,10 @@ export class AgentLoop {
       /** The truncation that started the retry, for the message if the retry is refused. */
       original: Error;
     } | null;
+    /** The step index already retried after a request-size refusal. */
+    let sizeRepackRetry: { stepIndex: number } | null = null;
+    /** The loop's own estimate of the last prompt built, for the repack fallback. */
+    let lastPromptTokens = 0;
     /**
      * The step index whose leg boundary already ran. A retried step
      * (outage or truncation) re-enters the loop at the same index; the
@@ -1306,6 +1329,8 @@ export class AgentLoop {
       const outOfTime = Date.now() - taskStartedAt >= durationCeilingMs;
       if (outOfTime) stopCause = "time_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime;
+      const effectiveTransport: ToolCallTransport =
+        pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
       const finalizationNotice =
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
@@ -1399,10 +1424,7 @@ export class AgentLoop {
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
-            toolTransport:
-              pinnedSlice?.toolTransport ??
-              this.deps.toolTransport ??
-              "grammar",
+            toolTransport: effectiveTransport,
             toolCallAdapter:
               pinnedSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
             supportsSlotAffinity:
@@ -1432,6 +1454,9 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              if (event.type === "prompt_built") {
+                lastPromptTokens = event.prompt.tokens.total;
+              }
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,
               // which already warned, and would repeat it per worker.
@@ -1980,6 +2005,50 @@ export class AgentLoop {
         // already holds.
         if (repeatedEmptyAfterAnnouncedRetry) {
           runError = repeatedEmptyCompletionError(err);
+        }
+        // The provider refused the request for its size. The window it
+        // named (or, failing that, most of the prompt just estimated)
+        // becomes the learned window, the conversation is packed to it,
+        // and the step runs again with a notice. Once per step: a second
+        // refusal ends the turn with the provider's own sentence.
+        const repack = cancelled
+          ? null
+          : planSizeRejectionRepack({
+              error: err,
+              alreadyRetried: sizeRepackRetry?.stepIndex === i,
+              raisedCapRefused:
+                truncationRetry?.stepIndex === i &&
+                truncationRetry.maxTokens !== undefined,
+              transport: effectiveTransport,
+              promptTokens: lastPromptTokens,
+              contextWindow: this.deps.contextWindow?.() ?? null,
+              canFitWindow: this.deps.onContextWindowObserved !== undefined,
+            });
+        if (repack !== null) {
+          sizeRepackRetry = { stepIndex: i };
+          this.deps.onContextWindowObserved?.(repack.contextWindow);
+          pendingNotice = composeSizeRejectionNotice(noticeForThisStep);
+          this.deps.onEvent?.({
+            type: "prompt_repacked",
+            stepIndex: i,
+            contextWindow: repack.contextWindow,
+            source: repack.source,
+            promptTokens: lastPromptTokens,
+          });
+          this.deps.logger?.warn(
+            "provider refused the request as too large; repacking to its window and retrying the step",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              contextWindow: repack.contextWindow,
+              source: repack.source,
+              promptTokens: lastPromptTokens,
+              rejection: runError.message,
+            },
+          );
+          runError = null;
+          i -= 1;
+          continue;
         }
         // What the provider's error body says, as opposed to its
         // status: exhausted credit is neither an outage to wait out nor
