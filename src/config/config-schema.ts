@@ -2203,6 +2203,13 @@ export interface UserConfigFile {
 // (default `true`). All additive: an older file parses with every field
 // absent, which is the native layout, no extra parameters, `auto`
 // reasoning and the cache-capable routes for Google models.
+// v66: three additive `llm.runMode.fusion` fields — `cloudWorkers`
+// (1..32, default 4: the fan-out cap when the worker leg has no slot
+// pool), `workerReasoning` (low|medium|high, unset by default: the
+// reasoning effort sent with every worker completion) and
+// `workerMaxOutputTokens` (unset by default: the per-step output cap for
+// worker completions). An older file parses with all three absent and
+// behaves as before, except that a cloud fan-out is now bounded at 4.
 export const USER_CONFIG_VERSION = 66;
 
 /**
