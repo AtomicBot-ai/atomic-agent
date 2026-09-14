@@ -68,6 +68,12 @@ function grammarRequestFields(params: LlmStreamParams) {
     grammar: params.grammar,
     slotId: params.slotId,
     cachePrompt: params.slotId >= 0,
+    // A grammar link that can honour a Structured Outputs envelope
+    // (the subscription CLIs stage it as `--json-schema`) still gets
+    // it; llama-server ignores it in favour of the grammar.
+    ...(params.responseFormat
+      ? { responseFormat: params.responseFormat }
+      : {}),
   };
 }
 
