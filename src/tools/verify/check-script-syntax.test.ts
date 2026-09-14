@@ -61,7 +61,8 @@ describe("checkJavaScriptFile", () => {
     const out = await checkJavaScriptFile(badPath, bad);
     expect(out).toMatchObject({ ok: false, checker: "node --check" });
     expect(out.error).toMatch(/SyntaxError: .* \(line 2\)/);
-  });
+    // Two node spawns; slow under a full parallel suite.
+  }, 60_000);
 
   it("checks JSON in-process and reports the parse error", async () => {
     const src = '{"a": 1,}';

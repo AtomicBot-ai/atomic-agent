@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { defaultBrowserLauncher, type BrowserLauncher } from "./run-page-kind.js";
 import { runChecks, runVerify, type VerifyRunContext } from "./run-verify.js";
+import { createVerifyWorkspace } from "./verify-workspace-copy.js";
 
 const NODE = process.execPath;
 
@@ -51,6 +53,7 @@ async function freePort(): Promise<number> {
 describe("runVerify — command", () => {
   it("runs in an isolated copy, reports the exit code and output tails, and evaluates checks", async () => {
     await writeFile(join(work, "data.txt"), "hello from the workspace");
+    const copies: string[] = [];
     const out = await runVerify(
       {
         kind: "command",
@@ -58,7 +61,13 @@ describe("runVerify — command", () => {
         args: ["-e", "const fs=require('fs'); process.stdout.write(fs.readFileSync('data.txt','utf8')); fs.writeFileSync('evidence.txt','x'); console.error('warned'); process.exit(3)"],
         checks: ["exit 3", 'stdout contains "workspace"', 'stderr not contains "warned"', "exit 0", "whatever"],
       },
-      ctx(),
+      ctx({
+        workspace: async (dir) => {
+          const ws = await createVerifyWorkspace(dir);
+          copies.push(ws.dir);
+          return ws;
+        },
+      }),
     );
     expect(out.kind).toBe("command");
     expect(out.isolated).toBe(true);
@@ -77,8 +86,9 @@ describe("runVerify — command", () => {
     expect(out.summary.length).toBeLessThanOrEqual(4_000);
     // The copy took the write; the workspace is untouched and the copy is gone.
     expect(await readdir(work)).toEqual(["data.txt"]);
-    // (The copy is `atag-verify-<8 hex>`; test fixtures use longer prefixes.)
-    expect((await readdir(tmpdir())).filter((n) => /^atag-verify-[0-9a-f]{8}$/.test(n))).toEqual([]);
+    expect(copies).toHaveLength(1);
+    expect(copies[0]).not.toBe(work);
+    expect(existsSync(copies[0]!)).toBe(false);
   });
 
   it("is ok on exit 0 with every check passing, and runs a command line through the shell", async () => {

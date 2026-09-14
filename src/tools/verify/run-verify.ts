@@ -9,7 +9,7 @@
  */
 import { resolve, relative, isAbsolute } from "node:path";
 
-import type { AtomicAgentConfig } from "../../config/index.js";
+import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
 import type { ProbeSample } from "./page-probe-script.js";
 import { runCommandKind } from "./run-command-kind.js";
 import { type BrowserLauncher, defaultBrowserLauncher, runPageKind } from "./run-page-kind.js";
@@ -46,7 +46,8 @@ export interface VerifyRunResult {
 
 export interface VerifyRunContext {
   readonly workingDir: string;
-  readonly config: Pick<AtomicAgentConfig, "browser">;
+  /** Browser settings for page runs; `getConfig().browser` when omitted. */
+  readonly config?: Pick<AtomicAgentConfig, "browser">;
   readonly signal?: AbortSignal;
   /** Test seams. */
   readonly launchBrowser?: BrowserLauncher;
@@ -108,7 +109,10 @@ async function runInWorkspace(args: VerifyRunArgs, dir: string, isolated: boolea
       args.checks, runOk, started,
     );
   }
-  const out = await runPageKind(args, { cwd, signal: ctx.signal, launch: ctx.launchBrowser ?? defaultBrowserLauncher(ctx.config) });
+  const launch =
+    ctx.launchBrowser ??
+    defaultBrowserLauncher(ctx.config ?? { browser: getConfig().browser });
+  const out = await runPageKind(args, { cwd, signal: ctx.signal, launch });
   const runOk = out.launched && out.loaded && out.errors.length === 0 && out.consoleErrors.length === 0;
   return finish(
     { ...common, errors: out.errors, consoleErrors: out.consoleErrors, consoleWarnings: out.consoleWarnings, requestFailures: out.requestFailures, missingSelectors: out.missingSelectors, probes: out.probes, ...(out.error === undefined ? {} : { error: out.error }) },

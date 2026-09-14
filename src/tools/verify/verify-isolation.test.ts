@@ -14,7 +14,7 @@
  * tool's to fix, not verification's.
  */
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { runVerify } from "./run-verify.js";
 import { verifySyntax } from "./verify-syntax.js";
+import { createVerifyWorkspace, type VerifyWorkspace } from "./verify-workspace-copy.js";
 
 const NODE = process.execPath;
 const REAL_TSC = realpathSync(resolve(process.cwd(), "node_modules/.bin/tsc"));
@@ -70,8 +71,32 @@ async function snapshotTree(dir: string, root = dir): Promise<Map<string, string
   return out;
 }
 
-async function leftoverCopies(): Promise<string[]> {
-  return (await readdir(tmpdir())).filter((n) => /^atag-verify-[0-9a-f]{8}$/.test(n));
+/**
+ * The copies this test's runs made, so cleanup is asserted on exactly
+ * those directories — the shared temp dir is also where a concurrent
+ * test process keeps its copies.
+ */
+function recordingWorkspaces(): {
+  dirs: string[];
+  workspace: (workingDir: string) => Promise<VerifyWorkspace>;
+} {
+  const dirs: string[] = [];
+  return {
+    dirs,
+    workspace: async (workingDir) => {
+      const ws = await createVerifyWorkspace(workingDir);
+      dirs.push(ws.dir);
+      return ws;
+    },
+  };
+}
+
+function expectCopiesGone(dirs: readonly string[]): void {
+  expect(dirs.length).toBeGreaterThan(0);
+  for (const dir of dirs) {
+    expect(dir).not.toBe(work);
+    expect(existsSync(dir), `${dir} should have been removed`).toBe(false);
+  }
 }
 
 async function freePort(): Promise<number> {
@@ -89,6 +114,7 @@ async function freePort(): Promise<number> {
 describe("F35 — nothing verification does reaches the workspace", () => {
   it("a command that writes, appends, creates and deletes leaves the workspace byte-identical", async () => {
     const before = await snapshotTree(work);
+    const copies = recordingWorkspaces();
     const out = await runVerify(
       {
         kind: "command",
@@ -105,14 +131,14 @@ describe("F35 — nothing verification does reaches the workspace", () => {
         ],
         checks: ["exit 0", 'stdout contains "verify.js"'],
       },
-      { workingDir: work, config: CONFIG },
+      { workingDir: work, config: CONFIG, workspace: copies.workspace },
     );
     // The writes happened — in the copy.
     expect(out.ok).toBe(true);
     expect(out.isolated).toBe(true);
     expect(out.stdoutTail).toContain("verification_report.txt");
     expect(await snapshotTree(work)).toEqual(before);
-    expect(await leftoverCopies()).toEqual([]);
+    expectCopiesGone(copies.dirs);
   });
 
   it("a service that logs to its directory leaves the workspace byte-identical", async () => {
@@ -121,24 +147,26 @@ describe("F35 — nothing verification does reaches the workspace", () => {
     const server =
       "const http=require('http'),fs=require('fs');" +
       "http.createServer((q,s)=>{ fs.appendFileSync('access.log', q.url+'\\n'); s.end('ok') }).listen(" + port + ")";
+    const copies = recordingWorkspaces();
     const out = await runVerify(
       { kind: "service", start: { cmd: NODE, args: ["-e", server] }, ready: { port }, requests: [{ path: "/a" }, { path: "/b" }], checks: ["status 200"] },
-      { workingDir: work, config: CONFIG },
+      { workingDir: work, config: CONFIG, workspace: copies.workspace },
     );
     expect(out.ok).toBe(true);
     expect(await snapshotTree(work)).toEqual(before);
-    expect(await leftoverCopies()).toEqual([]);
+    expectCopiesGone(copies.dirs);
   }, 30_000);
 
   it("the copy is removed even when the run is killed on timeout", async () => {
     const before = await snapshotTree(work);
+    const copies = recordingWorkspaces();
     const out = await runVerify(
       { kind: "command", cmd: NODE, args: ["-e", "require('fs').writeFileSync('busy.txt','x'); setInterval(()=>{},1000)"], timeoutMs: 400 },
-      { workingDir: work, config: CONFIG },
+      { workingDir: work, config: CONFIG, workspace: copies.workspace },
     );
     expect(out.timedOut).toBe(true);
     expect(await snapshotTree(work)).toEqual(before);
-    expect(await leftoverCopies()).toEqual([]);
+    expectCopiesGone(copies.dirs);
   });
 
   it("verify.syntax leaves no bytecode, build info or temp files behind", async () => {
