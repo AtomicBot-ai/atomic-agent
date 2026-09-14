@@ -1937,6 +1937,77 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
   });
 
+  it("warns once the same result has come back three times, whatever the arguments (F25)", async () => {
+    // The outcome-repeat detector end to end: a probe that answers the
+    // same thing to three different questions. No argument-keyed
+    // detector can see it (three distinct signatures), the tool is not a
+    // read (no coverage), and no command is recognised as a test.
+    const registry = buildDefaultToolRegistry();
+    let runCount = 0;
+    registry.register({
+      name: "probe",
+      description: "probe",
+      readonly: true,
+      async run() {
+        runCount += 1;
+        return {
+          tool: "probe",
+          status: "error",
+          summary: "SyntaxError: Unexpected token } (line 128)",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const script = [
+      { tool: "probe", args: { n: 1 } },
+      { tool: "probe", args: { n: 2 } },
+      { tool: "probe", args: { n: 3 } },
+      { tool: "finish", args: { summary: "done" } },
+    ];
+    const prompts: string[] = [];
+    const detected: Extract<AgentLoopEvent, { type: "loop_detected" }>[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt }) => {
+        const step = prompts.length;
+        prompts.push(prompt);
+        return makeCompletion(
+          JSON.stringify(script[Math.min(step, script.length - 1)]),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") detected.push(event);
+      },
+    });
+    const session = createEmptySessionState({ id: "s-outcome-loop", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "check it",
+      maxSteps: 6,
+      signal: new AbortController().signal,
+    });
+    // Warn only: every probe ran and the turn ended on the model's own
+    // `finish`, not on a veto or a breaker.
+    expect(runCount).toBe(3);
+    expect(result.reason).toBe("finish");
+    expect(detected).toHaveLength(1);
+    expect(detected[0]).toMatchObject({
+      detector: "outcome_repeat",
+      level: "warn",
+      count: 3,
+      tool: "probe",
+    });
+    // The notice lands on the prompt AFTER the third identical result.
+    expect(prompts[3]).toContain("Same result three times from `probe`");
+    expect(prompts[3]).toContain("change approach or write");
+    expect(prompts.slice(0, 3).join("\n")).not.toContain("change approach or write");
+  });
+
   it("ends the turn with a graceful reply (not loop_failed) when the breaker trips", async () => {
     const registry = buildDefaultToolRegistry();
     let runCount = 0;

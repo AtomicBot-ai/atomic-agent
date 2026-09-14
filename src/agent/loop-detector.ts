@@ -54,6 +54,42 @@ export const TEST_REPEAT_WARNING_THRESHOLD = 2;
 export const READ_REPEAT_WARNING_THRESHOLD = 2;
 
 /**
+ * Outcome-fingerprint count at which the outcome-repeat detector warns:
+ * the third time a turn gets the same result back — the same failing
+ * `node --check` output, the same directory listing — whatever the
+ * arguments were. The argument-keyed detectors above cannot see it: run
+ * 02 ran one failing check chain five times with one warning, and run 04
+ * spent six steps re-globbing and re-grepping with slightly different
+ * arguments and identical answers. Warn-only, never a veto: polling a
+ * build or re-running a test after each fix is legitimate work, and the
+ * counter resets the moment a write lands (see `isSuccessfulWrite`).
+ */
+export const OUTCOME_REPEAT_WARNING_THRESHOLD = 3;
+
+/** How much of a result's summary the outcome fingerprint reads. */
+const OUTCOME_FINGERPRINT_CHARS = 200;
+
+/**
+ * Cap on distinct outcome fingerprints tracked in one turn; the oldest
+ * is evicted first. A turn that produces hundreds of distinct results is
+ * not looping on any of them, so eviction can only cost a detection.
+ */
+const MAX_TRACKED_OUTCOMES = 200;
+
+/**
+ * Verdict of `ToolLoopTracker.recordOutcome`: has this exact result
+ * (tool, status, normalised summary head) come back before this turn?
+ */
+export interface OutcomeRepeatCheck {
+  /** True once the fingerprint has been seen `OUTCOME_REPEAT_WARNING_THRESHOLD` times. */
+  repeat: boolean;
+  /** Times this fingerprint has been recorded, this one included. */
+  count: number;
+  /** The fingerprint itself — the warn-bucket key. */
+  fingerprint: string;
+}
+
+/**
  * Cap on files tracked for read coverage in one turn. A wide scan (a
  * grep-driven sweep over hundreds of files) must not grow the tracker
  * without bound, and the interesting file is always a recently read one,
@@ -130,7 +166,8 @@ export interface LoopCheckVerdict {
     | "no_progress"
     | "wandering"
     | "test_repeat"
-    | "read_repeat";
+    | "read_repeat"
+    | "outcome_repeat";
   /** Stable key for warn de-duplication and breaker signalling. */
   warningKey: string;
   tool: string;
@@ -230,6 +267,15 @@ export class ToolLoopTracker {
       noProgress: number;
     }
   >();
+  /**
+   * Outcome-repeat detector state: outcome fingerprint → how many times
+   * this turn has received it since the last successful write. Cleared
+   * whole by a successful `os.fs.write` / `edit` / `patch`: a write is the
+   * progress every repeated result was waiting for, so the counts before
+   * it are about a workspace that no longer exists. Insertion order is
+   * the eviction order (see `MAX_TRACKED_OUTCOMES`).
+   */
+  private readonly outcomeCounts = new Map<string, number>();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);
@@ -356,20 +402,27 @@ export class ToolLoopTracker {
    * entry is skipped by the streak walk) and bumps the consecutive-veto
    * counter. A real (non-veto) outcome resets the veto counter when its
    * signature differs from the one currently being vetoed.
+   *
+   * Also folds the outcome into the outcome-repeat detector and returns
+   * its verdict: the same result coming back for the Nth time, whatever
+   * the arguments. A successful write resets that detector instead of
+   * being counted — it is the progress the repeats were missing.
    */
   recordOutcome(
     tool: string,
     args: unknown,
     result: CompressedToolResult,
-  ): void {
+  ): OutcomeRepeatCheck {
     this.noteTestOutcome(tool, args, result);
     if (isLoopVetoResult(result)) {
       this.patchLatestPending(tool, args, { vetoed: true });
       this.noteVeto(tool, args);
-      return;
+      return { repeat: false, count: 0, fingerprint: "" };
     }
     const resultHash = hashToolOutcome(tool, args, result);
-    if (resultHash === undefined) return;
+    if (resultHash === undefined) {
+      return { repeat: false, count: 0, fingerprint: "" };
+    }
     this.patchLatestPending(tool, args, { resultHash });
     if (this.consecutiveVetoSignature !== null) {
       const sig = hashToolCall(tool, args);
@@ -378,6 +431,36 @@ export class ToolLoopTracker {
         this.consecutiveVetoCount = 0;
       }
     }
+    return this.noteOutcomeFingerprint(tool, result);
+  }
+
+  /**
+   * The outcome-repeat half of `recordOutcome`. A successful write clears
+   * every count and is not counted itself; anything else bumps its
+   * fingerprint's count and reports whether the threshold is met.
+   */
+  private noteOutcomeFingerprint(
+    tool: string,
+    result: CompressedToolResult,
+  ): OutcomeRepeatCheck {
+    if (isSuccessfulWrite(tool, result)) {
+      this.outcomeCounts.clear();
+      return { repeat: false, count: 0, fingerprint: "" };
+    }
+    const fingerprint = fingerprintToolOutcome(tool, result);
+    const count = (this.outcomeCounts.get(fingerprint) ?? 0) + 1;
+    // Re-insert so the map's order stays least-recently-seen first.
+    this.outcomeCounts.delete(fingerprint);
+    this.outcomeCounts.set(fingerprint, count);
+    if (this.outcomeCounts.size > MAX_TRACKED_OUTCOMES) {
+      const oldest = this.outcomeCounts.keys().next();
+      if (!oldest.done) this.outcomeCounts.delete(oldest.value);
+    }
+    return {
+      repeat: count >= OUTCOME_REPEAT_WARNING_THRESHOLD,
+      count,
+      fingerprint,
+    };
   }
 
   /**
@@ -663,6 +746,42 @@ export class ToolLoopTracker {
   }
 }
 
+/** The tools whose success means the workspace moved. */
+const WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "os.fs.write",
+  "os.fs.edit",
+  "os.fs.patch",
+]);
+
+/** A write, edit or patch that landed — the reset event for the outcome-repeat detector. */
+export function isSuccessfulWrite(
+  tool: string,
+  result: CompressedToolResult,
+): boolean {
+  return WRITE_TOOLS.has(tool) && result.status === "ok";
+}
+
+/**
+ * Outcome fingerprint: the tool, the status, and the first
+ * `OUTCOME_FINGERPRINT_CHARS` characters of the summary with whitespace
+ * runs collapsed. Deliberately NOT the semantic result hash used for the
+ * no-progress streak — that one keys on the arguments too, which is
+ * exactly what a re-check with "slightly different arguments" evades.
+ * The summary head is where a shell result's command line, exit code and
+ * first error live, and where a listing names its entries; two results
+ * that agree there are the same answer for the model's purposes.
+ */
+export function fingerprintToolOutcome(
+  tool: string,
+  result: CompressedToolResult,
+): string {
+  const head = result.summary
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, OUTCOME_FINGERPRINT_CHARS);
+  return `${tool}|${result.status}|${head}`;
+}
+
 /** True when `result` is a synthetic no-progress loop veto. */
 export function isLoopVetoResult(result: CompressedToolResult): boolean {
   return (
@@ -903,6 +1022,24 @@ export function formatTestRepeatNotice(verdict: {
     "Change the code or the test selection before re-running. If the repeat was intentional (e.g. probing for flakiness), continue — this is a warning, nothing was blocked.",
   );
   return lines.join("\n");
+}
+
+/**
+ * Notice injected when the same result has come back three times this
+ * turn with no write in between (warn-only). The arguments may all have
+ * differed — that is the case the argument-keyed detectors miss — so the
+ * wording is about the RESULT: re-checking will not change it, only a
+ * change to the workspace or the approach will.
+ */
+export function formatOutcomeRepeatNotice(verdict: {
+  count: number;
+  tool: string;
+}): string {
+  const times = verdict.count === 3 ? "three times" : `${verdict.count} times`;
+  return [
+    `Same result ${times} from \`${verdict.tool}\` — change approach or write. Re-checking returns the same answer; nothing has changed since the last time you saw it.`,
+    "Act on what you already know: edit or write the file the result points at, run a different command, or reply with what you found. This is a warning, nothing was blocked.",
+  ].join("\n");
 }
 
 /**

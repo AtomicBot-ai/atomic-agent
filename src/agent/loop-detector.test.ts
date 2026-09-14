@@ -3,9 +3,12 @@ import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import {
   BATCH_LOOP_LABEL,
   LOOP_VETO_DENIED_REASON,
+  OUTCOME_REPEAT_WARNING_THRESHOLD,
   ToolLoopTracker,
   extractLoopTarget,
+  fingerprintToolOutcome,
   formatForcedLoopReply,
+  formatOutcomeRepeatNotice,
   formatRepeatNotice,
   formatTestRepeatNotice,
   formatVetoInstruction,
@@ -724,5 +727,130 @@ describe("formatTestRepeatNotice", () => {
     const text = formatTestRepeatNotice({ count: 2 });
     expect(text).toContain("the same test command");
     expect(text).not.toContain("Previous result:");
+  });
+});
+
+describe("outcome-repeat detector (F25)", () => {
+  /**
+   * The argument-keyed detectors miss a model that re-checks with
+   * slightly different arguments and gets the same answer every time —
+   * run 04 spent six steps that way. This detector keys on the RESULT.
+   */
+  const same = mkResult({
+    tool: "os.shell.run",
+    status: "error",
+    summary: "$ node --check game.js\nexit: 1\nSyntaxError: Unexpected token }",
+  });
+
+  it("warns on the third identical outcome, whatever the arguments were", () => {
+    const tracker = new ToolLoopTracker();
+    const verdicts = [1, 2, 3].map((n) => {
+      const args = { cmd: "node", args: ["--check", `game${n}.js`] };
+      tracker.check("os.shell.run", args);
+      tracker.recordCall("os.shell.run", args);
+      return tracker.recordOutcome("os.shell.run", args, same);
+    });
+    expect(verdicts.map((v) => v.count)).toEqual([1, 2, 3]);
+    expect(verdicts.map((v) => v.repeat)).toEqual([false, false, true]);
+    expect(OUTCOME_REPEAT_WARNING_THRESHOLD).toBe(3);
+    expect(verdicts[2]!.fingerprint).toBe(
+      fingerprintToolOutcome("os.shell.run", same),
+    );
+    // The argument-keyed detectors see three distinct signatures.
+    expect(
+      tracker.check("os.shell.run", { cmd: "node", args: ["--check", "x"] })
+        .level,
+    ).toBe("ok");
+  });
+
+  it("keeps a different status or summary apart", () => {
+    const tracker = new ToolLoopTracker();
+    const args = { path: "a" };
+    cycle(tracker, "t", args, mkResult({ summary: "one" }));
+    cycle(tracker, "t", args, mkResult({ summary: "one" }));
+    expect(
+      tracker.recordOutcome("t", args, mkResult({ summary: "two" })).repeat,
+    ).toBe(false);
+    expect(
+      tracker.recordOutcome("t", args, mkResult({ summary: "one", status: "error" }))
+        .repeat,
+    ).toBe(false);
+    expect(
+      tracker.recordOutcome("t", args, mkResult({ summary: "one" })).repeat,
+    ).toBe(true);
+  });
+
+  it("resets when a write, edit or patch succeeds — and not when one fails", () => {
+    for (const write of ["os.fs.write", "os.fs.edit", "os.fs.patch"]) {
+      const tracker = new ToolLoopTracker();
+      cycle(tracker, "os.fs.list", { path: "." }, mkResult({ summary: "a b" }));
+      cycle(tracker, "os.fs.list", { path: "./" }, mkResult({ summary: "a b" }));
+      // A failed write changes nothing on disk: the count stands.
+      const failed = tracker.recordOutcome(
+        write,
+        { path: "x" },
+        mkResult({ tool: write, status: "error", summary: "EACCES" }),
+      );
+      expect(failed.repeat, write).toBe(false);
+      expect(
+        tracker.recordOutcome("os.fs.list", { path: "." }, mkResult({ summary: "a b" }))
+          .count,
+        write,
+      ).toBe(3);
+      // A successful one is the progress the repeats were waiting for.
+      const landed = tracker.recordOutcome(
+        write,
+        { path: "x" },
+        mkResult({ tool: write, status: "ok", summary: "wrote x" }),
+      );
+      expect(landed.repeat, write).toBe(false);
+      expect(landed.count, write).toBe(0);
+      expect(
+        tracker.recordOutcome("os.fs.list", { path: "." }, mkResult({ summary: "a b" }))
+          .count,
+        write,
+      ).toBe(1);
+    }
+  });
+
+  it("does not count a loop veto as an outcome", () => {
+    const tracker = new ToolLoopTracker();
+    const veto = mkResult({
+      status: "error",
+      summary: "vetoed",
+      details: { deniedReason: LOOP_VETO_DENIED_REASON },
+    });
+    for (let i = 0; i < 4; i += 1) {
+      expect(tracker.recordOutcome("t", { i }, veto)).toEqual({
+        repeat: false,
+        count: 0,
+        fingerprint: "",
+      });
+    }
+  });
+
+  it("fingerprints the tool, the status and a whitespace-collapsed 200-char head", () => {
+    const long = mkResult({
+      status: "ok",
+      summary: `  a\n\n  b\t c ${"x".repeat(400)}`,
+    });
+    const fp = fingerprintToolOutcome("os.fs.grep", long);
+    expect(fp.startsWith("os.fs.grep|ok|a b c x")).toBe(true);
+    expect(fp.length).toBe("os.fs.grep|ok|".length + 200);
+    expect(fingerprintToolOutcome("os.fs.glob", long)).not.toBe(fp);
+    // Whitespace differences alone do not make a new outcome.
+    expect(
+      fingerprintToolOutcome("t", mkResult({ summary: "a  b\nc" })),
+    ).toBe(fingerprintToolOutcome("t", mkResult({ summary: "a b c" })));
+  });
+
+  it("formats a warn-only notice that names the tool and asks for a change or a write", () => {
+    const text = formatOutcomeRepeatNotice({ tool: "os.shell.run", count: 3 });
+    expect(text).toContain("Same result three times from `os.shell.run`");
+    expect(text).toContain("change approach or write");
+    expect(text).toContain("nothing was blocked");
+    expect(formatOutcomeRepeatNotice({ tool: "os.fs.glob", count: 5 })).toContain(
+      "Same result 5 times",
+    );
   });
 });

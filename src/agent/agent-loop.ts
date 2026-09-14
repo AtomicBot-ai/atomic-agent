@@ -50,8 +50,10 @@ import type {
 } from "./step-executor.js";
 import {
   ToolLoopTracker,
+  OUTCOME_REPEAT_WARNING_THRESHOLD,
   READ_REPEAT_WARNING_THRESHOLD,
   TEST_REPEAT_WARNING_THRESHOLD,
+  formatOutcomeRepeatNotice,
   formatReadRepeatNotice,
   formatRepeatNotice,
   formatTestRepeatNotice,
@@ -710,7 +712,8 @@ export type AgentLoopEvent =
         | "no_progress"
         | "wandering"
         | "test_repeat"
-        | "read_repeat";
+        | "read_repeat"
+        | "outcome_repeat";
       /**
        * `read_repeat` only: the resolved file, the range that read
        * returned, and the fingerprint on either side of it (equal ⇒ the
@@ -1561,7 +1564,13 @@ export class AgentLoop {
                     sig.count,
                     READ_REPEAT_WARNING_THRESHOLD,
                   )
-                : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
+                : sig.detector === "outcome_repeat"
+                  ? loopTracker.shouldEmitWarning(
+                      sig.warningKey,
+                      sig.count,
+                      OUTCOME_REPEAT_WARNING_THRESHOLD,
+                    )
+                  : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
           if (!emit) {
             continue;
           }
@@ -1572,7 +1581,9 @@ export class AgentLoop {
                 ? formatTestRepeatNotice(sig)
                 : sig.detector === "read_repeat" && sig.read !== undefined
                   ? formatReadRepeatNotice({ count: sig.count, ...sig.read })
-                  : formatRepeatNotice(sig);
+                  : sig.detector === "outcome_repeat"
+                    ? formatOutcomeRepeatNotice(sig)
+                    : formatRepeatNotice(sig);
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: sig.tool,
