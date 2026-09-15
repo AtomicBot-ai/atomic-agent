@@ -233,14 +233,16 @@ describe("executeBatch", () => {
       description: "click",
       readonly: false,
       run: async (args) => {
-        const idx = (args.idx as number) ?? -1;
+        // Fixtures carry their index under a key the tool's schema knows
+        // (`ref`, `offset`): an unknown key is refused before dispatch (F40).
+        const idx = (args.ref as number) ?? -1;
         return await make(idx)(args);
       },
     });
     const inputs = toBatchInputs([
-      { tool: "browser.click", args: { idx: 0 } },
-      { tool: "browser.click", args: { idx: 1 } },
-      { tool: "browser.click", args: { idx: 2 } },
+      { tool: "browser.click", args: { ref: 0 } },
+      { tool: "browser.click", args: { ref: 1 } },
+      { tool: "browser.click", args: { ref: 2 } },
     ]);
     const ctrl = new AbortController();
     const startedAt = Date.now();
@@ -261,7 +263,7 @@ describe("executeBatch", () => {
       readonly: true,
       run: async (args) => {
         await new Promise((r) => setTimeout(r, 60));
-        reads.push((args.idx as number) ?? -1);
+        reads.push((args.offset as number) ?? -1);
         return okResult("os.fs.read");
       },
     });
@@ -271,15 +273,15 @@ describe("executeBatch", () => {
       readonly: false,
       run: async (args) => {
         await new Promise((r) => setTimeout(r, 60));
-        clicks.push((args.idx as number) ?? -1);
+        clicks.push((args.ref as number) ?? -1);
         return okResult("browser.click");
       },
     });
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { idx: 0 } },
-      { tool: "browser.click", args: { idx: 1 } },
-      { tool: "os.fs.read", args: { idx: 2 } },
-      { tool: "browser.click", args: { idx: 3 } },
+      { tool: "os.fs.read", args: { offset: 0 } },
+      { tool: "browser.click", args: { ref: 1 } },
+      { tool: "os.fs.read", args: { offset: 2 } },
+      { tool: "browser.click", args: { ref: 3 } },
     ]);
     const ctrl = new AbortController();
     const startedAt = Date.now();
@@ -332,8 +334,11 @@ describe("executeBatch", () => {
         throw new Error("os.fs.read: `path` must be a non-empty string");
       },
     });
+    // A misspelt key (`patth`) no longer reaches the tool at all — F40
+    // refuses it before dispatch — so the thrown path is exercised with
+    // a known key the tool rejects.
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { patth: "secret-value.txt" } },
+      { tool: "os.fs.read", args: { path: "" } },
     ]);
     const out = await executeBatch(
       inputs,
@@ -342,11 +347,10 @@ describe("executeBatch", () => {
     );
     const result = out.results[0]!.compressed!;
     expect(result.status).toBe("error");
-    expect(result.summary).toContain(
-      "os.fs.read: `path` must be a non-empty string — received keys: patth; expected: path, maxBytes, offset, limit, lineNumbers; did you mean `path` instead of `patth`?",
+    expect(result.summary).toBe(
+      "os.fs.read: `path` must be a non-empty string — received keys: path; expected: path, maxBytes, offset, limit, lineNumbers",
     );
-    expect(result.summary).not.toContain("secret-value");
-    expect(result.details.receivedKeys).toEqual(["patth"]);
+    expect(result.details.receivedKeys).toEqual(["path"]);
     expect(result.details.expectedKeys).toEqual([
       "path",
       "maxBytes",
@@ -386,15 +390,15 @@ describe("executeBatch", () => {
         // Fast call when idx==2, slow otherwise — verifies that result
         // ordering is by batchIndex regardless of completion order.
         await new Promise((r) =>
-          setTimeout(r, (args.idx as number) === 2 ? 5 : 60),
+          setTimeout(r, (args.offset as number) === 2 ? 5 : 60),
         );
-        return okResult("os.fs.read", `done-${args.idx}`);
+        return okResult("os.fs.read", `done-${args.offset}`);
       },
     });
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { idx: 0 } },
-      { tool: "os.fs.read", args: { idx: 1 } },
-      { tool: "os.fs.read", args: { idx: 2 } },
+      { tool: "os.fs.read", args: { offset: 0 } },
+      { tool: "os.fs.read", args: { offset: 1 } },
+      { tool: "os.fs.read", args: { offset: 2 } },
     ]);
     const out = await executeBatch(
       inputs,
@@ -809,16 +813,16 @@ describe("executeBatch", () => {
       readonly: false,
       run: async (args) => {
         await new Promise((r) => setTimeout(r, 30));
-        if ((args.idx as number) === 0) {
+        if ((args.ref as number) === 0) {
           ctrl.abort();
         }
         return okResult("browser.click");
       },
     });
     const inputs = toBatchInputs([
-      { tool: "browser.click", args: { idx: 0 } },
-      { tool: "browser.click", args: { idx: 1 } },
-      { tool: "browser.click", args: { idx: 2 } },
+      { tool: "browser.click", args: { ref: 0 } },
+      { tool: "browser.click", args: { ref: 1 } },
+      { tool: "browser.click", args: { ref: 2 } },
     ]);
     const out = await executeBatch(inputs, registry, ctx(ctrl.signal));
     expect(out.cancelled).toBe(true);
@@ -1587,5 +1591,183 @@ describe("executeBatch refuses a corrupted call (F37)", () => {
       "error",
       "ok",
     ]);
+  });
+});
+
+describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
+  /** The live Gemma 4 worker call: the script under a flag used as a key. */
+  const LIVE_CALL = {
+    tool: "os.shell.run",
+    args: { cmd: "python3", "-e": "import os\nos.rename('a', 'b')" },
+  };
+
+  it("does not run the call and answers with the error shape", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run", "$ python3\nexit: 0"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([LIVE_CALL]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).not.toHaveBeenCalled();
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("error");
+    expect(result.summary).toBe(
+      'unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs; put the script in args: ["-c", "…"]) — the call was not run; re-emit it with the right keys',
+    );
+    expect(result.summary).not.toContain("rename");
+    expect(result.details).toEqual({
+      unknownKeys: ["-e"],
+      expectedKeys: ["cmd", "args", "cwd", "timeoutMs"],
+    });
+    expect(out.cancelled).toBe(false);
+  });
+
+  it("names the key the model most likely meant", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([
+        {
+          tool: "os.shell.run",
+          args: { cmd: "python3", "-args": ["-c", "print(1)"] },
+        },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed!.summary).toBe(
+      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs; did you mean `args`?) — the call was not run; re-emit it with the right keys",
+    );
+  });
+
+  it("lands details.unknownKeys on the tool_invocation trace row", async () => {
+    const registry = buildRegistry(
+      { "os.shell.run": async () => okResult("os.shell.run") },
+      false,
+    );
+    const events: TraceEvent[] = [];
+    const recorder = createTraceRecorder({
+      sessionId: "s1",
+      emit: (event) => events.push(event),
+      now: () => 0,
+    });
+    recorder.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    recorder.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    recorder.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: LIVE_CALL,
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    await executeBatch(toBatchInputs([LIVE_CALL]), registry, {
+      ...ctx(new AbortController().signal),
+      onCallFinished: ({ result, batchIndex, batchSize }) =>
+        recorder.onAgentEvent({
+          type: "llm_event",
+          event: { type: "tool_call_executed", result, batchIndex, batchSize },
+        }),
+    });
+    const row = events.find((e) => e.type === "tool_invocation");
+    expect(row).toMatchObject({
+      type: "tool_invocation",
+      tool: "os.shell.run",
+      status: "error",
+      details: { unknownKeys: ["-e"] },
+    });
+  });
+
+  it("counts toward the loop detector like any other error", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const tracker = new ToolLoopTracker({ criticalThreshold: 3 });
+    const signals: BatchLoopSignal[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const out = await executeBatch(toBatchInputs([LIVE_CALL]), registry, {
+        ...ctx(new AbortController().signal),
+        tracker,
+      });
+      signals.push(...out.loopSignals);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(signals.some((s) => s.kind === "critical")).toBe(true);
+  });
+
+  it("runs a valid call untouched", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run", "$ ls -la\nexit: 0"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.shell.run", args: { cmd: "ls", args: ["-la"], cwd: "." } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith({ cmd: "ls", args: ["-la"], cwd: "." });
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("runs a tool without a registered schema whatever its keys", async () => {
+    const run = vi.fn(async () => okResult("mcp.srv.search"));
+    const registry = buildRegistry({ "mcp.srv.search": run });
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "mcp.srv.search", args: { query: "x", "-e": "y" } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledWith({ query: "x", "-e": "y" });
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("does not refuse a quoted key that F33 normalises at dispatch", async () => {
+    const run = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": run });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { '"path"': "a.txt" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    // The registry's own normalisation renamed the key before the tool ran.
+    expect(run).toHaveBeenCalledWith({ path: "a.txt" });
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("refuses only the unknown-key call of a batch; its siblings and the tail reply run", async () => {
+    const list = vi.fn(async () => okResult("os.fs.list"));
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply"));
+    const registry = buildRegistry({
+      "os.fs.list": list,
+      "os.fs.read": read,
+      reply,
+    });
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.fs.read", args: { path: "README.md" } },
+        { tool: "os.fs.list", args: { Path: "." } },
+        { tool: "reply", args: { text: "done", extra: "shown, not run" } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(list).not.toHaveBeenCalled();
+    // A terminal is never gated: the turn must be able to close.
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results.map((r) => r.compressed?.status)).toEqual([
+      "ok",
+      "error",
+      "ok",
+    ]);
+    expect(out.results[1]!.compressed!.summary).toContain(
+      "unknown argument `Path` for os.fs.list",
+    );
   });
 });

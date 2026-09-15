@@ -53,9 +53,12 @@ export function coerceToolArgs(
  *
  * Do-no-harm again: a key is renamed only when it is not itself in the
  * schema, its cleaned form is, and the model did not also send the
- * clean key. Anything else is left for the tool to report.
+ * clean key. Anything else is left for the tool to report — or, for a
+ * key that is still unknown after this pass, for the executor to refuse
+ * before dispatch (`unknown-argument-guard.ts`), which is why this runs
+ * first there too.
  */
-function normalizeArgKeys(
+export function normalizeArgKeys(
   args: Record<string, unknown>,
   properties: Schema,
 ): Record<string, unknown> {

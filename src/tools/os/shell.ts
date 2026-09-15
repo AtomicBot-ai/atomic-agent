@@ -341,7 +341,14 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
               : {}),
           });
       const status = result.exitCode === 0 ? "ok" : "error";
-      const header = `$ ${commandLine}\nexit: ${result.exitCode ?? "signal:" + result.signal}${result.timedOut ? " (timed out)" : ""}`;
+      // A bare interpreter — `python3` with nothing after it — exits 0
+      // having done nothing, and nothing in its output says so (F40:
+      // the model had put the script under a key the tool does not
+      // know). Said on the command line, where the model looks first.
+      // The subshell path is excluded: there the arguments live inside
+      // `cmd` itself.
+      const noArguments = !useShell && execArgs.length === 0;
+      const header = `$ ${commandLine}${noArguments ? " (ran with no arguments)" : ""}\nexit: ${result.exitCode ?? "signal:" + result.signal}${result.timedOut ? " (timed out)" : ""}`;
       const body = [result.stdout, result.stderr]
         .filter((s) => s.trim().length > 0)
         .join("\n---\n");
