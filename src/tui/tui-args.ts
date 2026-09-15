@@ -39,7 +39,7 @@ export const TUI_HELP =
     "Options:",
     "  --cwd <dir>          Working directory for OS tools (default: current directory)",
     "  --working-dir <dir>  Alias for --cwd",
-    "  --max-steps <n>      Step budget per turn (default: agent.maxSteps from config)",
+    "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
     "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
     "  --skip-llama-setup   Skip the first-run local-model setup gate",
     "  --mouse              Force terminal mouse support on for this run",

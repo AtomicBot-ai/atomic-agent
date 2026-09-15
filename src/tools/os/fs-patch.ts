@@ -5,6 +5,13 @@ import type { StructuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import {
+  checkFileParses,
+  displayPath,
+  formatParseWarning,
+  isParseCheckedPath,
+  withParseWarning,
+} from "./fs-parse-check.js";
+import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
@@ -87,6 +94,7 @@ export function buildOsFsPatchTool(
         return buildResult(previews, "apply-refused");
       }
 
+      const parseWarnings: string[] = [];
       for (let i = 0; i < parsed.length; i++) {
         const hunkFile = parsed[i];
         const outcome = previews[i];
@@ -102,11 +110,44 @@ export function buildOsFsPatchTool(
           );
         }
         await writeFile(outcome.absolute, patched, "utf8");
+        const warning = parseWarningAfterPatch(
+          outcome,
+          patched,
+          ctx.workingDir,
+        );
+        if (warning !== null) parseWarnings.push(warning);
       }
 
-      return buildResult(previews, "applied");
+      return withParseWarning(
+        buildResult(previews, "applied"),
+        parseWarnings.length > 0 ? parseWarnings.join("\n") : null,
+      );
     },
   };
+}
+
+/**
+ * The parse warning for one applied file (see `fs-parse-check.ts`), or
+ * null. A file the patch emptied is a unified-diff deletion, not a
+ * broken file, and a file the patch created has no "before" to compare.
+ */
+function parseWarningAfterPatch(
+  outcome: PreviewOutcome,
+  patched: string,
+  workingDir: string,
+): string | null {
+  if (patched.length === 0 || !isParseCheckedPath(outcome.absolute)) {
+    return null;
+  }
+  const original = outcome.originalContent ?? "";
+  return formatParseWarning({
+    path: displayPath(outcome.absolute, workingDir),
+    change: "patch",
+    after: checkFileParses(outcome.absolute, patched),
+    ...(original.length > 0
+      ? { before: checkFileParses(outcome.absolute, original) }
+      : {}),
+  });
 }
 
 async function parseArgs(

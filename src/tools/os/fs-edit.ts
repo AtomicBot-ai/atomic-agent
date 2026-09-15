@@ -4,6 +4,13 @@ import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import {
+  checkFileParses,
+  displayPath,
+  formatParseWarning,
+  isParseCheckedPath,
+  withParseWarning,
+} from "./fs-parse-check.js";
+import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
@@ -70,18 +77,36 @@ export function buildOsFsEditTool(
 
       await atomicWrite(absolute, updated);
 
-      return compressToolResult({
-        tool: "os.fs.edit",
-        status: "ok",
-        output: diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
-        details: {
-          path: absolute,
-          replacedOccurrences: args.replaceAll ? occurrences : 1,
-          replaceAll: args.replaceAll,
-          sizeBefore: Buffer.byteLength(original, "utf8"),
-          sizeAfter: Buffer.byteLength(updated, "utf8"),
-        },
-      });
+      const replacedOccurrences = args.replaceAll ? occurrences : 1;
+      // Judged after the write landed, against the file as it was before:
+      // an edit that turns a parsing file into a broken one — the classic
+      // blind `replaceAll` — is told so, with the count, so the model
+      // undoes it instead of stacking another edit on top.
+      const parseWarning = isParseCheckedPath(absolute)
+        ? formatParseWarning({
+            path: displayPath(absolute, ctx.workingDir),
+            change: "edit",
+            before: checkFileParses(absolute, original),
+            after: checkFileParses(absolute, updated),
+            replacedOccurrences,
+          })
+        : null;
+
+      return withParseWarning(
+        compressToolResult({
+          tool: "os.fs.edit",
+          status: "ok",
+          output: diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
+          details: {
+            path: absolute,
+            replacedOccurrences,
+            replaceAll: args.replaceAll,
+            sizeBefore: Buffer.byteLength(original, "utf8"),
+            sizeAfter: Buffer.byteLength(updated, "utf8"),
+          },
+        }),
+        parseWarning,
+      );
     },
   };
 }

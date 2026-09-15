@@ -37,7 +37,11 @@ const trackingCalls = vi.hoisted(() => ({
   disabled: 0,
   resumed: 0,
 }));
-const orchestratorCalls = vi.hoisted(() => ({ quits: 0 }));
+const orchestratorCalls = vi.hoisted(() => ({
+  quits: 0,
+  /** The options object each `new ChatOrchestrator(...)` received. */
+  options: [] as Array<Record<string, unknown>>,
+}));
 
 // `sea` is one of the few builtins Node only publishes under the
 // `node:` prefix, and Vite's builtin check strips that prefix — so the
@@ -85,6 +89,13 @@ vi.mock("../runtime/bootstrap.js", () => ({
 
 vi.mock("./chat-orchestrator.js", () => ({
   ChatOrchestrator: class {
+    constructor(
+      _runtime: unknown,
+      _bus: unknown,
+      options: Record<string, unknown>,
+    ) {
+      orchestratorCalls.options.push(options);
+    }
     exitCode = 0;
     telegram = { forwardStatus: () => {} };
     localModels = {
@@ -492,5 +503,29 @@ describe("tuiCommand mouse wiring", () => {
     stdin.emit("data", sgrPress(5, 3));
     expect(app.seen).toHaveLength(1);
     await app.stop();
+  });
+
+  // Not mouse wiring, but this is the one harness that boots `tuiCommand`
+  // far enough to see what the orchestrator is constructed with.
+  describe("step budget", () => {
+    it("hands the orchestrator no maxSteps without --max-steps", async () => {
+      // An explicit `maxSteps` is a hard ceiling in the runtime; filling
+      // in `agent.maxSteps` (the leg length) capped every turn at 25.
+      writeMouseConfig(false);
+      orchestratorCalls.options.length = 0;
+      const app = await bootTui();
+      expect(orchestratorCalls.options).toHaveLength(1);
+      expect(orchestratorCalls.options[0]).toHaveProperty("llamaUrl");
+      expect(orchestratorCalls.options[0]!.maxSteps).toBeUndefined();
+      await app.stop();
+    });
+
+    it("passes --max-steps through as the operator's ceiling", async () => {
+      writeMouseConfig(false);
+      orchestratorCalls.options.length = 0;
+      const app = await bootTui(["--max-steps", "40"]);
+      expect(orchestratorCalls.options.at(-1)?.maxSteps).toBe(40);
+      await app.stop();
+    });
   });
 });

@@ -444,6 +444,37 @@ describe("ChatOrchestrator pre-turn local gate", () => {
   });
 });
 
+describe("ChatOrchestrator step budget", () => {
+  function turnOptionsFor(maxSteps: number | undefined) {
+    const runTurn = vi.fn((_text: string, _opts: { signal: AbortSignal }) =>
+      Promise.resolve({ session: session(), reason: "reply", stepCount: 1 }),
+    );
+    const orchestrator = new ChatOrchestrator(
+      stubRuntime(runTurn),
+      makeTuiEventBus(),
+      {
+        ...(maxSteps === undefined ? {} : { maxSteps }),
+        llamaUrl: "http://127.0.0.1:8080",
+        readGateFacts: cloudGateFacts,
+      },
+    );
+    orchestrator.sendMessage("hello");
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    return runTurn.mock.calls[0]![1] as Record<string, unknown>;
+  }
+
+  it("passes no maxSteps without --max-steps, so the task ceiling applies", () => {
+    // An explicit `maxSteps` is a hard ceiling in the runtime; passing
+    // `agent.maxSteps` (the leg length) here capped every TUI turn at 25.
+    const opts = turnOptionsFor(undefined);
+    expect("maxSteps" in opts).toBe(false);
+  });
+
+  it("passes an explicit --max-steps through", () => {
+    expect(turnOptionsFor(40).maxSteps).toBe(40);
+  });
+});
+
 /**
  * A turn that never settles on its own and rejects the moment the
  * orchestrator aborts it — what `runtime.runTurn` really does, and the
