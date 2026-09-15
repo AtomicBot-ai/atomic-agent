@@ -306,7 +306,11 @@ export class TaskRunner {
         ? (event: AgentLoopEvent): void => {
             if (event.type !== "llm_event") return;
             if (event.event.type === "assistant_reply") {
-              capturedReply = event.event.text;
+              // A progress note is not the result; the reply that ends
+              // the turn follows it.
+              if (event.event.progressNote !== true) {
+                capturedReply = event.event.text;
+              }
               return;
             }
             if (

@@ -865,7 +865,12 @@ async function dispatchToRuntime(
       : null;
   const eventHook = (event: AgentLoopEvent): void => {
     if (event.type === "llm_event") {
-      if (event.event.type === "assistant_reply") {
+      // A progress note is an interim reply; the one that ends the turn
+      // follows it and is what the chat gets.
+      if (
+        event.event.type === "assistant_reply" &&
+        event.event.progressNote !== true
+      ) {
         reply = event.event.text;
         replyAttachments = event.event.attachments ?? [];
       }

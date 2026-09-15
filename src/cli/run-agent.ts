@@ -269,9 +269,12 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     let reply: string | null = null;
     return {
       onEvent: (event) => {
+        // One stdout line per turn: the reply that ended it, never a
+        // progress note the model batched with work along the way.
         if (
           event.type === "llm_event" &&
-          event.event.type === "assistant_reply"
+          event.event.type === "assistant_reply" &&
+          event.event.progressNote !== true
         ) {
           reply = event.event.text;
         }

@@ -320,9 +320,14 @@ async function handleStream(
  * chat client can reasonably render are forwarded:
  *  - `tool_call_parsed` → `event: tool_progress` (extensions opt-in only)
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
- *    When the stream parser already emitted incremental deltas we skip the
- *    terminal `assistant_reply` to avoid duplicating the body in the
- *    client transcript.
+ *    When the stream parser already emitted incremental deltas for the
+ *    step we skip its `assistant_reply` to avoid duplicating the body in
+ *    the client transcript.
+ *  - an `assistant_reply` flagged `progressNote` — a reply the model
+ *    batched with work, kept while the turn went on — is never content:
+ *    it goes out as `event: progress_note` (extensions opt-in only), so
+ *    the client's message holds the reply that ended the turn and nothing
+ *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
@@ -336,8 +341,17 @@ function buildStreamEventHook(
   env: TurnEnv,
 ): (event: AgentLoopEvent) => void {
   let streamedAssistantDelta = false;
+  let stepIndex = -1;
   return (event) => {
     if (sse.closed) return;
+    if (event.type === "step_started") {
+      // Per step, not per turn: a turn can now carry more than one reply
+      // (a progress note, then the one that ends it), and deltas streamed
+      // for the note must not silence the final reply's chunk.
+      stepIndex = event.stepIndex;
+      streamedAssistantDelta = false;
+      return;
+    }
     if (event.type === "llm_event") {
       const inner = event.event;
       if (inner.type === "tool_call_parsed") {
@@ -378,6 +392,19 @@ function buildStreamEventHook(
           text: inner.text,
         });
       } else if (inner.type === "assistant_reply") {
+        if (inner.progressNote === true) {
+          if (!env.request.extensionsEnabled) return;
+          sse.writeEvent("progress_note", {
+            id: env.completionId,
+            object: "chat.completion.progress_note",
+            created: env.created,
+            model: env.request.model,
+            session_id: env.session.id,
+            step_index: stepIndex,
+            text: inner.text,
+          });
+          return;
+        }
         if (streamedAssistantDelta) return;
         sse.writeEvent(
           null,

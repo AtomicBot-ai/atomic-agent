@@ -203,8 +203,9 @@ export class WorkerRunCollector {
     const inner = event.event;
     if (inner.type === "assistant_reply") {
       // Last writer wins: an auto-continued turn can emit more than one
-      // reply, and the last is the one that ended the work.
-      this.replyText = inner.text;
+      // reply, and the last is the one that ended the work. A progress
+      // note (a reply the worker batched with work) is not a report.
+      if (inner.progressNote !== true) this.replyText = inner.text;
       return;
     }
     if (inner.type === "tool_call_executed") {
