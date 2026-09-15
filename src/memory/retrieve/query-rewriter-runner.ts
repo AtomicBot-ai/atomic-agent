@@ -48,6 +48,8 @@ export type RewriterOutcome =
 export interface QueryRewriterTraceEvent {
   sessionId: string;
   outcome: RewriterOutcome;
+  /** Why a `failed` call failed. */
+  reason?: string;
 }
 
 /**
@@ -166,14 +168,24 @@ export function createQueryRewriterRunner(
             grammar: QUERY_REWRITER_GRAMMAR,
             responseFormat: QUERY_REWRITER_RESPONSE_FORMAT,
             slotId: REWRITER_SLOT_ID,
-            sessionId: input.sessionId,
+            // Own fallback partition, like `reflection:` / `vote:`. The
+            // chain partitions breaker state by this id; on the bare id a
+            // provider refusing the rewriter's request flipped the TURN's
+            // sticky override, and the next main step went to the next
+            // link (often a local server that is not running).
+            sessionId: `rewriter:${input.sessionId}`,
             signal: ac.signal,
           }),
           timeoutPromise,
         ]);
         const rewritten = parseRewriterOutput(completion.content);
         if (rewritten === null) {
-          record("failed", startedAt, input.sessionId);
+          record(
+            "failed",
+            startedAt,
+            input.sessionId,
+            "the model's rewrite could not be parsed",
+          );
           return raw;
         }
         deps.logger?.debug?.("rewriter.ok", {
@@ -192,11 +204,12 @@ export function createQueryRewriterRunner(
           record("aborted", startedAt, input.sessionId);
           return raw;
         }
+        const reason = err instanceof Error ? err.message : String(err);
         deps.logger?.warn?.("rewriter.failed", {
           sessionId: input.sessionId,
-          error: err instanceof Error ? err.message : String(err),
+          error: reason,
         });
-        record("failed", startedAt, input.sessionId);
+        record("failed", startedAt, input.sessionId, reason);
         return raw;
       } finally {
         if (timer) clearTimeout(timer);
@@ -209,6 +222,7 @@ export function createQueryRewriterRunner(
     outcome: RewriterOutcome,
     startedAt: number,
     sessionId: string,
+    reason?: string,
   ): void {
     deps.metrics?.recordRetrieveRewriter?.({
       outcome,
@@ -216,7 +230,7 @@ export function createQueryRewriterRunner(
     });
     if (deps.emitTrace) {
       try {
-        deps.emitTrace({ sessionId, outcome });
+        deps.emitTrace({ sessionId, outcome, ...(reason ? { reason } : {}) });
       } catch {
         // A sink hiccup must never derail recall — swallow.
       }

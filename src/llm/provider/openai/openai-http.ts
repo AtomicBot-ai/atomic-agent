@@ -318,9 +318,54 @@ export async function openAiPostJson(
       if (!res.ok) {
         throw await httpErrorFromResponse(deps, path, res);
       }
-      return (await res.json()) as Record<string, unknown>;
+      return readJsonBody(res, request.signal);
     }),
   );
+}
+
+/**
+ * Read a unary JSON body without going deaf to the caller's abort.
+ *
+ * `openAiFetch` unlinks the caller's signal the moment `fetch` resolves —
+ * it must, because it also opens streams, whose consumer owns the signal
+ * from then on. For a unary request that left the body read unabortable:
+ * a provider that sends headers first and the completion later kept the
+ * socket, the slot and the bill running after the caller had given up
+ * (a memory sub-call's timeout, a cancelled turn). Cancelling the reader
+ * tears the connection down; the caller gets `signal.reason`, which
+ * classifies `cancelled`.
+ *
+ * `res.json()` cannot be used for this: it locks the body, and cancelling
+ * a locked stream from outside is refused. Without a signal nothing can
+ * cancel the read, so that path keeps `res.json()` exactly as before.
+ */
+async function readJsonBody(
+  res: Response,
+  signal: AbortSignal | undefined,
+): Promise<Record<string, unknown>> {
+  if (!signal || !res.body) return (await res.json()) as Record<string, unknown>;
+  const reader = res.body.getReader();
+  const onAbort = (): void => {
+    reader.cancel(signal.reason).catch(() => undefined);
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    if (signal.aborted) {
+      throw signal.reason ?? new DOMException("aborted", "AbortError");
+    }
+    return JSON.parse(
+      new TextDecoder().decode(Buffer.concat(chunks)),
+    ) as Record<string, unknown>;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 /**

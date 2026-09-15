@@ -18,13 +18,14 @@ describe("describeRunModeDegradation", () => {
     ).toMatch(/^Cloud mode needs a cloud provider/);
   });
 
-  it("names the missing local leg", () => {
-    expect(
-      describeRunModeDegradation({
-        reason: "no-local-provider",
-        requested: "fusion",
-      }),
-    ).toMatch(/needs local workers.*Running cloud-only/);
+  it("names the missing second leg without prescribing its kind", () => {
+    // Either leg may be cloud or local; the requirement is two of them.
+    const line = describeRunModeDegradation({
+      reason: "no-second-provider",
+      requested: "fusion",
+    });
+    expect(line).toMatch(/needs two providers/);
+    expect(line).not.toMatch(/llama-server|local workers/);
   });
 
   it("always points at where to fix it", () => {

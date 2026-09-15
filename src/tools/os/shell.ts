@@ -25,6 +25,47 @@ const GOG_COMPRESS_OPTIONS = {
 } as const;
 
 /**
+ * What an ordinary command's output reaches the model (and the host's
+ * tool card) as. It used to be the compressor's 400-character default
+ * with the whole command line echoed in front of it: a `bash -c` script
+ * of a few lines filled the budget on its own, the cut kept the FRONT of
+ * that, and the model saw its command, `exit: 0`, a few bytes and
+ * `… [truncated]`. Measured on two real desktop turns: 25 of 29 shell
+ * results were flagged truncated, 21 of them cut at the 400-character
+ * cap, and steps 13–20 of one turn were near-identical verification
+ * scripts — the model could not read what the previous run printed, so it
+ * printed it again. The output's END is what a command
+ * reports (a `RESULT` line, an exception, a test total), so the overflow
+ * keeps the end; 2 000 characters over 40 lines is still a small fraction
+ * of `agent.conversationMaxTokens`.
+ */
+const SHELL_COMPRESS_OPTIONS = {
+  maxSummaryLength: 2_000,
+  maxTailLines: 40,
+  overflow: "tail",
+} as const;
+
+/** The command as the summary header names it: its first line, clipped. */
+const HEADER_COMMAND_MAX_CHARS = 200;
+
+/**
+ * The full command is already in the transcript — it is the
+ * `assistant_tool_call` arguments right above this result — so the
+ * header only has to identify it. A heredoc script echoed whole was most
+ * of the old summary.
+ */
+export function headerCommandLine(commandLine: string): string {
+  const lines = commandLine.split(/\r?\n/);
+  let first = lines[0] ?? "";
+  let clipped = lines.length > 1;
+  if (first.length > HEADER_COMMAND_MAX_CHARS) {
+    first = first.slice(0, HEADER_COMMAND_MAX_CHARS);
+    clipped = true;
+  }
+  return clipped ? `${first} …` : first;
+}
+
+/**
  * Coerce the model-supplied `args` field into a string array. Returns
  * the parsed list when the input is well-formed, or `null` when the
  * input has the wrong shape so the caller can return a structured
@@ -278,7 +319,16 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         });
       }
 
-      if (guardVerdict.action === "approval_required") {
+      // A fan-out the operator authorised may also run commands, but
+      // only in the directory they saw: `cwd` inside the scope, and the
+      // guard's own hardline blocks still fire above this (a `block`
+      // verdict never reaches here). The command line itself is free
+      // text and cannot be scoped, so the directory is the whole of the
+      // promise — which is why the fan-out prompt says "and run commands
+      // in" rather than something broader.
+      const scopedByFanout =
+        options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ?? false;
+      if (guardVerdict.action === "approval_required" && !scopedByFanout) {
         // Shape grant unit: the normalised binary the guard itself keyed
         // on (basename, lowercased), so `[a]` covers exactly the argv[0]
         // that would run: `git`, not `/usr/bin/GIT` or a path. Withheld
@@ -331,15 +381,19 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
               : {}),
           });
       const status = result.exitCode === 0 ? "ok" : "error";
-      const header = `$ ${commandLine}\nexit: ${result.exitCode ?? "signal:" + result.signal}${result.timedOut ? " (timed out)" : ""}`;
+      const exitLine = `exit: ${result.exitCode ?? "signal:" + result.signal}${result.timedOut ? " (timed out)" : ""}`;
       const body = [result.stdout, result.stderr]
         .filter((s) => s.trim().length > 0)
         .join("\n---\n");
+      const gog = isGogCommand(gogProbe);
       return compressToolResult(
         {
           tool: "os.shell.run",
           status,
-          output: `${header}\n${body}`,
+          // `gog` keeps its whole command line: its 64k budget is about
+          // returning a document verbatim, not about a header.
+          head: `$ ${gog ? commandLine : headerCommandLine(commandLine)}\n${exitLine}`,
+          output: body,
           details: {
             cmd,
             args: execArgs,
@@ -356,7 +410,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
             guardReason: guardVerdict.reason,
           },
         },
-        isGogCommand(gogProbe) ? GOG_COMPRESS_OPTIONS : {},
+        gog ? GOG_COMPRESS_OPTIONS : SHELL_COMPRESS_OPTIONS,
       );
     },
   };

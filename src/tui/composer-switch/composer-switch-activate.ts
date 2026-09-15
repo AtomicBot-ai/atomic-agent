@@ -69,7 +69,28 @@ export function activateComposerSwitchRow(
     return;
   }
   if (row.intent.kind === "fusionWorkerModel") {
+    // Picking a local model for the worker slot also claims the slot for
+    // the local provider: an operator who chose a model to run the
+    // workers on has said which leg runs them, and leaving the pin on a
+    // cloud provider would quietly ignore the pick.
+    if (state.providersPanel.runMode?.workerProviderId !== "local-llama") {
+      callbacks.onRunModeChangeRequested?.("fusion", {
+        fusion: { workerProvider: "local-llama" },
+      });
+    }
     activateWorkerModel(row.intent.modelId, state, callbacks);
+    return;
+  }
+  if (row.intent.kind === "fusionLeg") {
+    // One write moves the pin and, for the orchestrator, the active
+    // provider with it — `setMode` is the only path that keeps those
+    // two from contradicting each other.
+    callbacks.onRunModeChangeRequested?.("fusion", {
+      fusion:
+        row.intent.leg === "orchestrator"
+          ? { orchestratorProvider: row.intent.providerId }
+          : { workerProvider: row.intent.providerId },
+    });
     return;
   }
   if (row.intent.kind === "fusionWorkers") {

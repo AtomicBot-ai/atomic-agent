@@ -30,6 +30,10 @@ export function runRunModeVerb(
     });
     return;
   }
+  if (verb === "swap") {
+    callbacks.onFusionLegsSwapRequested?.();
+    return;
+  }
   activateComposerSwitchRow(
     backendSwitchRow(state, verb),
     state,

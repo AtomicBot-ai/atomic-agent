@@ -201,6 +201,66 @@ describe("os.shell.run", () => {
     expect(approvals).toBe(0);
   });
 
+  /* A multi-line command used to be echoed whole in front of its output
+     and the 400-character cut kept the echo: the model never saw what the
+     command printed. */
+  it("names a long command by its first line and keeps the END of the output", async () => {
+    const gate = new ApprovalGate({ emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }) });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const script = [
+      "i=0",
+      ...Array.from({ length: 30 }, (_, n) => `# a comment line that makes the script long ${n} ${"z".repeat(30)}`),
+      'while [ $i -lt 120 ]; do echo "noise line $i xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; i=$((i+1)); done',
+      "echo RESULT verdict=ok",
+    ].join("\n");
+    const result = await tool.run({ cmd: "sh", args: ["-c", script] }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    const lines = result.summary.split("\n");
+    expect(lines[0]).toBe("$ sh -c i=0 …");
+    expect(lines[1]).toBe("exit: 0");
+    expect(result.summary.endsWith("RESULT verdict=ok")).toBe(true);
+    expect(result.summary.length).toBeLessThanOrEqual(2000);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("runs a command inside an approved fan-out scope without asking", async () => {
+    // A worker's whole reason to exist is to finish a task, and half
+    // the tasks worth delegating end in "run the tests". The operator
+    // approved a directory for this fan-out; a command whose `cwd` is
+    // inside it is the same permission, and the refuse policy on a
+    // worker session means asking would simply kill the call.
+    let approvals = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        approvals += 1;
+        gate.reject(req.approvalId, "should not ask");
+      },
+    });
+    gate.fanoutScopes.grant("test-session", [dir]);
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run(
+      { cmd: "node", args: ["-e", "process.stdout.write('hi')"] },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("hi");
+    expect(approvals).toBe(0);
+  });
+
+  it("still asks for a command outside the approved scope", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "no"),
+    });
+    gate.fanoutScopes.grant("test-session", [join(dir, "inside")]);
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    await expect(
+      tool.run(
+        { cmd: "node", args: ["-e", "process.stdout.write('hi')"] },
+        makeCtx(dir),
+      ),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
   it("executes echo and captures stdout when approved", async () => {
     const gate = new ApprovalGate({
       emit: (req) =>

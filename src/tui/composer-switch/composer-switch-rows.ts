@@ -36,6 +36,17 @@ export type ComposerSwitchIntent =
   | { readonly kind: "localModelsPanel" }
   /** Fusion's `workers` control: the local model the workers run. */
   | { readonly kind: "fusionWorkerModel"; readonly modelId: LocalModelId }
+  /**
+   * Pin one of fusion's two legs to a provider — either leg, either
+   * kind. The default pairing is cloud orchestrator + local workers, but
+   * a local model planning for cloud executors is a legitimate use case
+   * and the composer is where it gets chosen.
+   */
+  | {
+      readonly kind: "fusionLeg";
+      readonly leg: "orchestrator" | "worker";
+      readonly providerId: string;
+    }
   /** Fusion's `workers` control: how many workers run at once. */
   | { readonly kind: "fusionWorkers"; readonly workers: number };
 
@@ -55,7 +66,7 @@ export interface ComposerSwitchRow {
 }
 
 /** Cloud providers the operator has actually added, in config order. */
-function configuredCloudProviders(state: TuiState) {
+export function configuredCloudProviders(state: TuiState) {
   return state.providersPanel.rows.filter((row) => row.kind !== "llama-server");
 }
 
@@ -127,17 +138,46 @@ export function backendSwitchRow(
 }
 
 function providerRows(state: TuiState): readonly ComposerSwitchRow[] {
+  const runMode = state.providersPanel.runMode;
+  const fusion = runMode?.effective === "fusion";
   const rows = configuredCloudProviders(state).map((provider) => ({
     id: `provider:${provider.id}`,
     label: provider.id,
-    detail: provider.hasApiKey
-      ? (provider.chatModel ?? "default model")
-      : "no API key",
-    active: provider.isActiveText,
+    detail: fusion
+      ? provider.hasApiKey
+        ? "orchestrator"
+        : "no API key"
+      : provider.hasApiKey
+        ? (provider.chatModel ?? "default model")
+        : "no API key",
+    active: fusion
+      ? provider.id === runMode?.orchestratorProviderId
+      : provider.isActiveText,
     intent: { kind: "llmRow" as const, row: cloudProviderRow(provider) },
   }));
+  // Under fusion this control is the ORCHESTRATOR slot, and a local
+  // model is allowed to hold it: cheap planning driving capable cloud
+  // executors is a pairing worth having. Off fusion the row would be a
+  // duplicate of the `local` backend route, so it is only drawn here.
+  const localLeg: ComposerSwitchRow[] =
+    fusion && state.localModelsPanel.rows.some((row) => row.downloaded)
+      ? [
+          {
+            id: "provider:local-llama",
+            label: "local-llama",
+            detail: "orchestrator · runs on this machine",
+            active: runMode?.orchestratorProviderId === "local-llama",
+            intent: {
+              kind: "fusionLeg" as const,
+              leg: "orchestrator" as const,
+              providerId: "local-llama",
+            },
+          },
+        ]
+      : [];
   return [
     ...rows,
+    ...localLeg,
     {
       id: "provider:add",
       label: "Add a new provider",

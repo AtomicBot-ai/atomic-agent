@@ -87,6 +87,7 @@ import {
   DeferredLocalBackendProbes,
 } from "../llm/local-backend-gate.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
+import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import {
@@ -98,6 +99,7 @@ import {
   createFallbackStreamer,
   type FallbackSeamDeps,
 } from "./llm-fallback-seam.js";
+import { abortableSubcall } from "./abortable-subcall.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -148,6 +150,10 @@ import {
   createVoteAwareReflectionRunner,
 } from "../memory/voting/index.js";
 import type { VoteRunnerLlmComplete } from "../memory/voting/index.js";
+import {
+  createMemoryHealthAnnouncer,
+  observeVoteRunnerHealth,
+} from "./announce-memory-health.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -1006,14 +1012,27 @@ export async function createAgentRuntime(
     emitAgentLoopEventFor(turnContext.getStore()?.sessionId, event);
   };
 
+  // Memory sub-calls run fire-and-forget and fail without a word. This
+  // counts consecutive timeouts / failures per session and sub-call and
+  // lifts the first streak into one `memory_health_warning` (AGENTS.md
+  // §"Memory sub-call health warning"). The session comes from the
+  // runner's own outcome, not the ALS frame: reflection settles after
+  // `turn_finished`.
+  const memoryHealth = createMemoryHealthAnnouncer({
+    emit: emitAgentLoopEventFor,
+    logger,
+  });
+
   // Cross-provider fallover breaker. Owns no timer — every decision is
   // computed lazily from the wall clock when a turn asks for a provider
   // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
-  // one-shot switch into a `provider_switched` AgentLoopEvent.
+  // one-shot switch into a `provider_switched` AgentLoopEvent; the logger
+  // records every advance, with the failed link's status and message.
   const fallbackChain = new ProviderFallbackChain({
     resolve: () => resolveFallbackChain(resolveLlmConfig(getConfig())),
     noticeSink: (notice) =>
       emitAgentLoopEvent({ type: "provider_switched", ...notice }),
+    logger,
   });
 
   // Approval requests flow through `ApprovalRouter`: per-session
@@ -1242,6 +1261,27 @@ export async function createAgentRuntime(
   const profileStore = new ProfileStore({
     dbFile: config.paths.memoryDbFile,
     metrics,
+    maxEntries: config.memory.profile.maxEntries,
+    // Issue #407. The store knows no session; a write from a tool call
+    // or from reflection runs inside the turn's ALS frame, which names
+    // it. The log carries counts only — keys can be sensitive — while
+    // the local trace keeps the keys (`/report` strips them).
+    onEvicted: (eviction) => {
+      const sessionId = turnContext.getStore()?.sessionId;
+      logger.info("profile facts evicted over memory.profile.maxEntries", {
+        evicted: eviction.evicted.length,
+        maxEntries: eviction.maxEntries,
+        activeUnpinned: eviction.activeUnpinned,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      });
+      if (sessionId === undefined) return;
+      touchRecorder(sessionId)?.recordProfileFactsEvicted({
+        maxEntries: eviction.maxEntries,
+        activeUnpinned: eviction.activeUnpinned,
+        ids: eviction.evicted.map((fact) => fact.id),
+        keys: eviction.evicted.map((fact) => fact.key),
+      });
+    },
   });
   const notesStore = new MemoryStore({
     dbFile: config.paths.memoryDbFile,
@@ -1558,6 +1598,7 @@ export async function createAgentRuntime(
       adapter: provider.toolCallAdapter ?? null,
       slotAffinity: provider.capabilities.supportsSlotAffinity,
       parallelTools: provider.capabilities.supportsParallelTools,
+      strictTools: modelWantsStrictTools(resolved, provider.id),
     };
   };
 
@@ -1688,6 +1729,7 @@ export async function createAgentRuntime(
     enabled: config.vision.enabled,
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
+    logger,
   });
   // MCP client subsystem. The manager is always constructed so the
   // live-control surface (TUI panel, slash commands — planned) stays
@@ -2009,9 +2051,7 @@ export async function createAgentRuntime(
     // `turn_finished`, so a missing recorder is a normal "tracing
     // disabled for this session" outcome, not an error.
     emitTrace: (event: ReflectionTraceEvent) => {
-      const recorder = touchRecorder(event.sessionId);
-      if (!recorder) return;
-      recorder.recordReflection({
+      touchRecorder(event.sessionId)?.recordReflection({
         outcome: event.outcome,
         ...(typeof event.factsWritten === "number"
           ? { factsWritten: event.factsWritten }
@@ -2021,6 +2061,15 @@ export async function createAgentRuntime(
           : {}),
         ...(event.reason ? { reason: event.reason } : {}),
       });
+      // After the row, so a trace shows the outcome before the warning it
+      // completed; outside the recorder check, so an untraced session is
+      // still warned. Same in the link-generator and rewriter hooks.
+      memoryHealth.observe(
+        event.sessionId,
+        "reflection",
+        event.outcome,
+        event.reason,
+      );
     },
   });
 
@@ -2043,18 +2092,9 @@ export async function createAgentRuntime(
   ) {
     const reservedSlot = slotManager.reserveReflectionSlot();
     const reflectionSlotId = reservedSlot ?? -1;
-    const linkGenLlmComplete: LinkGeneratorLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const linkGenLlmComplete: LinkGeneratorLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<LinkGeneratorLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -2062,9 +2102,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const linkGenerator = createLinkGeneratorRunner({
       llmComplete: linkGenLlmComplete,
       linkStore,
@@ -2077,15 +2116,19 @@ export async function createAgentRuntime(
       // Per-session trace emission — same resolve-by-sessionId
       // pattern as reflection / vote.
       emitTrace: (event) => {
-        const recorder = touchRecorder(event.sessionId);
-        if (!recorder) return;
-        recorder.recordLinkGenerator({
+        touchRecorder(event.sessionId)?.recordLinkGenerator({
           outcome: event.outcome,
           ...(typeof event.linksWritten === "number"
             ? { linksWritten: event.linksWritten }
             : {}),
           ...(event.reason ? { reason: event.reason } : {}),
         });
+        memoryHealth.observe(
+          event.sessionId,
+          "link_generator",
+          event.outcome,
+          event.reason,
+        );
       },
     });
     reflectionRunner = createLinkAwareReflectionRunner({
@@ -2113,18 +2156,9 @@ export async function createAgentRuntime(
   if (reflectionRunner && voteStore) {
     const reservedSlot = slotManager.reserveReflectionSlot();
     const voteSlotId = reservedSlot ?? -1;
-    const voteLlmComplete: VoteRunnerLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const voteLlmComplete: VoteRunnerLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<VoteRunnerLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -2132,9 +2166,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const voteRunner = createVoteRunner({
       llmComplete: voteLlmComplete,
       voteStore,
@@ -2175,7 +2208,9 @@ export async function createAgentRuntime(
     });
     reflectionRunner = createVoteAwareReflectionRunner({
       reflection: reflectionRunner,
-      voteRunner,
+      // The vote runner reports its outcome only in its result, so the
+      // health check reads it there.
+      voteRunner: observeVoteRunnerHealth(voteRunner, memoryHealth),
       memoryStore: notesStore,
       lessonStore,
       profileStore,
@@ -2250,18 +2285,9 @@ export async function createAgentRuntime(
   // pre-v18 chain.
   let memoryContextProvider = baseMemoryContextProvider;
   if (baseMemoryContextProvider && config.memory.retrieve.rewriter.enabled) {
-    const rewriterLlmComplete: RewriterLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const rewriterLlmComplete: RewriterLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<RewriterLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -2269,9 +2295,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const rewriterCfg = config.memory.retrieve.rewriter;
     let gate: RewriterGate;
     if (rewriterCfg.gateMode === "embedding") {
@@ -2306,9 +2331,16 @@ export async function createAgentRuntime(
       // not exist yet on the very first turn; a missing recorder is a
       // normal "tracing disabled" outcome.
       emitTrace: (event) => {
-        const recorder = touchRecorder(event.sessionId);
-        if (!recorder) return;
-        recorder.recordQueryRewriter({ outcome: event.outcome });
+        touchRecorder(event.sessionId)?.recordQueryRewriter({
+          outcome: event.outcome,
+          ...(event.reason ? { reason: event.reason } : {}),
+        });
+        memoryHealth.observe(
+          event.sessionId,
+          "rewriter",
+          event.outcome,
+          event.reason,
+        );
       },
     });
     memoryContextProvider = createRewriterAwareMemoryContextProvider({
@@ -2333,6 +2365,12 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    // The same live resolution the `fusion.delegate` descriptor gate
+    // reads, so the tool the orchestrator is being pushed towards is
+    // always in the catalog when the push happens.
+    isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
+    clearFanoutTurnGrant: (sessionId: string) =>
+      approvals.fanoutScopes.clearTurnGrant(sessionId),
     slotManager,
     grammar,
     llmComplete,
@@ -2355,6 +2393,7 @@ export async function createAgentRuntime(
         toolCallAdapter: slice.adapter,
         supportsSlotAffinity: slice.slotAffinity,
         supportsParallelTools: slice.parallelTools,
+        strictTools: slice.strictTools,
       };
     },
     ...(profileManager ? { profileManager } : {}),
@@ -2438,6 +2477,10 @@ export async function createAgentRuntime(
   Object.defineProperty(loopDeps, "supportsParallelTools", {
     enumerable: true,
     get: () => resolveActiveLlmSlice().parallelTools,
+  });
+  Object.defineProperty(loopDeps, "strictTools", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().strictTools,
   });
   const loop = new AgentLoop(
     loopDeps as typeof loopDeps & {
@@ -3058,6 +3101,7 @@ export async function createAgentRuntime(
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
       approvals,
+      approvalRequired: dangerous.approvalRequired,
       slotManager,
       resolveRunMode: resolveCurrentRunMode,
       workerSupportsSlotAffinity: (providerId) =>
@@ -3112,18 +3156,9 @@ export async function createAgentRuntime(
     // `reserveReflectionSlot` again here is idempotent — the slot
     // manager returns the same id.
     const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
-    const distillLlmComplete: ReflectionLlmComplete = async (params) => {
-      if (params.signal.aborted) {
-        throw new DOMException("aborted", "AbortError");
-      }
-      const abortPromise = new Promise<never>((_, reject) => {
-        params.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("aborted", "AbortError")),
-          { once: true },
-        );
-      });
-      const completionPromise = llmComplete({
+    const distillLlmComplete: ReflectionLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<ReflectionLlmComplete>[0]) => ({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -3131,9 +3166,8 @@ export async function createAgentRuntime(
         ...(params.responseFormat
           ? { responseFormat: params.responseFormat }
           : {}),
-      });
-      return Promise.race([completionPromise, abortPromise]);
-    };
+      }),
+    );
     const distillRunner = new DistillRunner({
       llmComplete: distillLlmComplete,
       slotId: distillSlot,
@@ -3621,21 +3655,11 @@ function buildReflectionRunner(args: {
       { fallbackSlotId: reflectionSlotId },
     );
   }
-  const reflectionLlmComplete: ReflectionLlmComplete = async (params) => {
-    if (params.signal.aborted) {
-      throw new DOMException("aborted", "AbortError");
-    }
-    const abortPromise = new Promise<never>((_, reject) => {
-      params.signal.addEventListener(
-        "abort",
-        () => reject(new DOMException("aborted", "AbortError")),
-        { once: true },
-      );
-    });
-    const { signal: _signal, ...rest } = params;
-    const completionPromise = args.llmComplete(rest);
-    return Promise.race([completionPromise, abortPromise]);
-  };
+  const reflectionLlmComplete: ReflectionLlmComplete = abortableSubcall(
+    args.llmComplete,
+    ({ signal: _signal, ...rest }: Parameters<ReflectionLlmComplete>[0]) =>
+      rest,
+  );
   const notesWriteEnabled =
     memory.notes.enabled &&
     memory.reflection.autoStoreNotes &&

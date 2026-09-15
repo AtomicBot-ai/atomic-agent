@@ -135,6 +135,8 @@ describe("setRunModeInConfig", () => {
         RunModePersistError,
       );
     }
-    expect(getConfig().localModels.managed.parallel).toBe(2);
+    // Untouched means untouched: the slot count is still the machine's
+    // to decide, which is what `"auto"` says.
+    expect(getConfig().localModels.managed.parallel).toBe("auto");
   });
 });

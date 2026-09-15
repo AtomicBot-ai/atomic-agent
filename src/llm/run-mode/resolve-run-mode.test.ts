@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { UserLlmRunModeConfig } from "../../config/llm-run-mode-config.js";
+import {
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+  type UserLlmRunModeConfig,
+} from "../../config/llm-run-mode-config.js";
 import type { ResolvedLlmConfig } from "../provider/registry/provider-types.js";
 import { resolveRunMode } from "./resolve-run-mode.js";
 
@@ -101,7 +104,7 @@ describe("resolveRunMode", () => {
     expect(rm.orchestratorProviderId).toBeNull();
   });
 
-  it("degrades fusion with no llama-server provider to cloud-only", () => {
+  it("degrades fusion to cloud-only when there is no second provider", () => {
     const rm = resolveRunMode(
       llm("groq", { mode: "fusion" }, [
         {
@@ -113,7 +116,7 @@ describe("resolveRunMode", () => {
     );
     expect(rm.effective).toBe("cloud");
     expect(rm.degraded).toEqual({
-      reason: "no-local-provider",
+      reason: "no-second-provider",
       requested: "fusion",
     });
     expect(rm.workerProviderId).toBeNull();
@@ -187,7 +190,7 @@ describe("resolveRunMode", () => {
       {
         workers: 2,
         workerMaxSteps: 40,
-        workerTimeoutMs: 600_000,
+        workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
       },
     );
     expect(
@@ -198,5 +201,47 @@ describe("resolveRunMode", () => {
         }),
       ),
     ).toMatchObject({ workers: 5, workerMaxSteps: 10, workerTimeoutMs: 5_000 });
+  });
+});
+
+describe("resolveRunMode with the legs swapped", () => {
+  it("runs the orchestrator locally and the workers in the cloud when pinned that way", () => {
+    // The pairing fusion was built for is cloud thinking + local bulk,
+    // but neither leg is nailed to a kind: an operator who wants cheap
+    // local planning driving capable cloud executors gets it.
+    const rm = resolveRunMode(
+      llm(
+        "local-llama",
+        {
+          mode: "fusion",
+          fusion: {
+            orchestratorProvider: "local-llama",
+            workerProvider: "openrouter",
+          },
+        },
+        [
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          { id: "openrouter", kind: "openai-compatible", defaultChatModel: "sonnet" },
+        ],
+      ),
+    );
+    expect(rm.effective).toBe("fusion");
+    expect(rm.orchestratorProviderId).toBe("local-llama");
+    expect(rm.workerProviderId).toBe("openrouter");
+    expect(rm.degraded).toBeNull();
+  });
+
+  it("never puts the same provider on both legs by default", () => {
+    // One provider doing both halves is not a fan-out; it is the same
+    // model billed twice.
+    const rm = resolveRunMode(
+      llm("openrouter", { mode: "fusion" }, [
+        { id: "openrouter", kind: "openai-compatible", defaultChatModel: "sonnet" },
+        { id: "groq", kind: "openai-compatible", defaultChatModel: "llama-3.3" },
+      ]),
+    );
+    expect(rm.orchestratorProviderId).toBe("openrouter");
+    expect(rm.workerProviderId).toBe("groq");
+    expect(rm.effective).toBe("fusion");
   });
 });

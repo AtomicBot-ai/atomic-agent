@@ -144,11 +144,12 @@ export function buildMemoryConfig(
       // about ~55 turns on a reflection-heavy `full_v2` profile —
       // enough for interactive use but not for LoCoMo / LongMemEval
       // runs that feed 30+ session prefills then ask 100+ questions.
-      // When the cap is hit, `trace_truncated` fires and further
-      // events are silently dropped (see AGENTS.md §"Traceability and
-      // replay"). The harness reads `assistantReply` out of the trace,
-      // so post-truncation turns surface as `""` even when the agent
-      // really did reply on stdout — see `multi-turn-driver.ts`'s
+      // When the cap is hit the sink drops the OLDEST events and
+      // leaves a `trace_truncated` marker at the seam (see AGENTS.md
+      // §"Traceability and replay"). The harness reads
+      // `assistantReply` out of the trace, so the EARLY turns of an
+      // over-cap run surface as `""` even when the agent really did
+      // reply on stdout — see `multi-turn-driver.ts`'s
       // truncation-fallback for the read-side guard. Bumped here to
       // 200 MiB so a full conv-44 (158 QA × 28 sessions ≈ 35 MiB of
       // trace at full fidelity) leaves comfortable head-room.
