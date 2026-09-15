@@ -14,8 +14,10 @@ import type { ModelProfile } from "./model-profile.js";
  * template, `off` for a template that misbehaves.
  *
  * The thinking switch is a template argument (`chat_template_kwargs:
- * {enable_thinking}`), so it only exists on the template path and only
- * for templates that read it (`profile.supportsThinkingSwitch`).
+ * {enable_thinking}`) on the template path, for templates that read it
+ * (`profile.supportsThinkingSwitch`). On the hand-built path `off` is
+ * honoured where the template has a prompt-side disabled marker —
+ * `thinkingDisabledOnBuiltPrompt` below (F49).
  */
 export type ServerTemplateSetting = "auto" | "on" | "off";
 export type ThinkingSetting = "auto" | "on" | "off";
@@ -52,4 +54,28 @@ export function resolveServerTemplatePolicy(
       ? undefined
       : thinking === "on";
   return { useServerTemplate, enableThinking };
+}
+
+/**
+ * Whether `localModels.thinking: "off"` turns reasoning off on the
+ * HAND-BUILT prompt path (F49). Only a profile whose template has a
+ * prompt-side disabled marker (`qwen-think`: `<think>\n\n</think>\n\n`)
+ * can honour it there: the prompt ends with that marker instead of the
+ * open-tag prefill, the request grammar drops the reasoning prelude
+ * (`withoutReasoningPrelude`), and the completion is parsed as starting
+ * outside a think block. Gemma 4's turn framing has no such marker — a
+ * prefilled channel is its disabled marker, and the framing exists to
+ * avoid exactly that — so `off` leaves it as is. `on` / `auto` change
+ * nothing. Callers scope it to the built-prompt path: the template path
+ * has its own switch above.
+ */
+export function thinkingDisabledOnBuiltPrompt(
+  thinking: ThinkingSetting,
+  profile: ModelProfile,
+): boolean {
+  return (
+    thinking === "off" &&
+    profile.reasoningStyle !== "none" &&
+    profile.promptThinkingDisabledMarker !== undefined
+  );
 }

@@ -7,7 +7,12 @@ import {
   reasoningOpenEmittedByModel,
   type ModelProfile,
 } from "../model-profile.js";
+import {
+  DEFAULT_REASONING_BUDGET_TOKENS,
+  reasoningBudgetChars,
+} from "../reasoning-budget.js";
 import { applyMcpToolNameRule } from "../../mcp/mcp-grammar-builder.js";
+import { buildReasoningPreludeRules, quoteGbnf } from "./reasoning-prelude.js";
 
 function resolveDefaultGrammarsDir(): string {
   const nextToBinary = join(dirname(process.execPath), "grammars");
@@ -38,6 +43,15 @@ export interface BuildGrammarOptions {
    * untouched (byte-stable KV cache).
    */
   browserEnabled?: boolean;
+  /**
+   * `localModels.reasoningBudgetTokens`: how far the reasoning prelude
+   * may run before the grammar admits only the close sentinel, in
+   * tokens (`× 4` characters in the rule — see `reasoning-budget.ts`).
+   * `0` leaves the prelude unbounded; omitted means the config default.
+   * A plain profile has no prelude and ignores it. The forced final
+   * step lifts the bound per request (`withUnboundedReasoningPrelude`).
+   */
+  reasoningBudgetTokens?: number;
 }
 
 export async function buildGrammar(
@@ -72,47 +86,18 @@ export async function buildGrammar(
   const openSentinel = reasoningOpenEmittedByModel(profile)
     ? profile.reasoningOpenTag
     : undefined;
-  const preludeRules = buildUntilSentinelRules(
+  // The prelude body is bounded by the reasoning budget (F49): past it
+  // the sampler admits only the close sentinel, so a model that would
+  // think for 22 minutes is made to close the block and emit the call.
+  const preludeRules = buildReasoningPreludeRules(
     ruleStem,
     profile.reasoningCloseTag,
     openSentinel,
+    reasoningBudgetChars(
+      options.reasoningBudgetTokens ?? DEFAULT_REASONING_BUDGET_TOKENS,
+    ),
   );
   return `${withPreludeRoot.trimEnd()}\n${preludeRules}\n`;
-}
-
-function buildUntilSentinelRules(
-  ruleStem: string,
-  sentinel: string,
-  openSentinel?: string,
-): string {
-  const preludeRule = `${ruleStem}-prelude`;
-  const bodyRule = `${ruleStem}-body`;
-  const fragmentRule = `${ruleStem}-fragment`;
-  const fragments = [`[^${escapeCharClass(sentinel[0]!)}]+`];
-  const openLiteral =
-    openSentinel !== undefined ? `${quoteGbnf(openSentinel)} ` : "";
-
-  for (let idx = 0; idx < sentinel.length - 1; idx += 1) {
-    const prefix = sentinel.slice(0, idx + 1);
-    const nextChar = sentinel[idx + 1]!;
-    fragments.push(`${quoteGbnf(prefix)} [^${escapeCharClass(nextChar)}]`);
-  }
-
-  // Bounded trailing whitespace between the reasoning-close sentinel and
-  // the start of `tool-call-array` (`[`). The global `ws` rule is
-  // unbounded (`[ \t\n\r]*`) which is fine inside JSON but on this seam
-  // it lets small reasoning-capable models (e.g. Gemma 4 26B-A4B) slide
-  // into a whitespace-only degenerate loop after a long `<think>` /
-  // `<|channel>thought` block: the sampler keeps emitting newlines until
-  // `max_tokens` instead of converging on the `[`. Eight characters is
-  // enough for any natural " " / "\n" / "  " gap and short enough to
-  // bound the failure mode.
-  return [
-    `${preludeRule} ::= ${openLiteral}${bodyRule} ${quoteGbnf(sentinel)} prelude-trail-ws`,
-    `${bodyRule} ::= ${fragmentRule}*`,
-    `${fragmentRule} ::= ${fragments.join(" | ")}`,
-    `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,
-  ].join("\n");
 }
 
 /** The base grammar's string-body rule, `string ::= "\"" chars "\""`. */
@@ -165,8 +150,12 @@ const GRAMMAR_EXIT_TOOL = "reply";
  * bound only stops a pathological caller from growing it without limit.
  */
 const GRAMMAR_CACHE_PER_BASE = 64;
-/** Bases seen at once: the live profile's grammar, plus a refresh or two. */
-const GRAMMAR_CACHE_BASES = 4;
+/**
+ * Bases seen at once: the live profile's grammar and its two per-request
+ * prelude variants (unbounded for the final step, prelude-less under
+ * `thinking: off` — `reasoning-prelude.ts`), plus a refresh or two.
+ */
+const GRAMMAR_CACHE_BASES = 8;
 
 const perRequestGrammarCache = new Map<string, Map<string, string>>();
 
@@ -260,17 +249,4 @@ function removeBrowserToolRule(grammar: string): string {
       .filter((alt) => alt.length > 0 && alt !== "browser-tool");
     return `${prefix}${alternatives.join(" | ")}`;
   });
-}
-
-function quoteGbnf(text: string): string {
-  return `"${text
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t")
-    .replace(/"/g, '\\"')}"`;
-}
-
-function escapeCharClass(char: string): string {
-  return char.replace(/\\/g, "\\\\").replace(/]/g, "\\]").replace(/-/g, "\\-");
 }

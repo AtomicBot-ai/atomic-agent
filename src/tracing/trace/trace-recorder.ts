@@ -191,6 +191,9 @@ export function createTraceRecorder(
           attempt: inner.attempt,
           content: completion.content,
           ...(reasoning !== undefined ? { reasoningContent: reasoning } : {}),
+          ...(inner.reasoningTokens !== undefined
+            ? { reasoningTokens: inner.reasoningTokens }
+            : {}),
           ...(completion.timing
             ? {
                 timing: {

@@ -1515,6 +1515,7 @@ export async function createAgentRuntime(
 
   let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
     browserEnabled: config.browser.enabled,
+    reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
   });
   const grammarViolations = checkProfileGrammarAligned(profile, grammar);
   if (grammarViolations.length > 0) {
@@ -1536,6 +1537,7 @@ export async function createAgentRuntime(
         initialModelId: modelAlias,
         grammarsDir: config.paths.grammarsDir,
         browserEnabled: config.browser.enabled,
+        reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
         onTotalSlots: (discovered) => {
           if (discovered === slotManager.getSlotCount()) return;
           logger.info("slot pool resized from /props", {

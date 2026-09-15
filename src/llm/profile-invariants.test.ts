@@ -56,6 +56,48 @@ describe("checkProfileGrammarAligned", () => {
   });
 });
 
+describe("checkProfilePromptAligned under thinking: off (F49)", () => {
+  const DISABLED = "### respond\nRespond now.\n\n<think>\n\n</think>\n\n";
+
+  it("wants the template's disabled marker at the end of a qwen prompt, not the open tag", () => {
+    expect(
+      checkProfilePromptAligned(QWEN_THINK_PROFILE, DISABLED, {
+        thinkingDisabled: true,
+      }),
+    ).toEqual([]);
+    expect(
+      checkProfilePromptAligned(QWEN_THINK_PROFILE, "Respond now.\n\n<think>\n", {
+        thinkingDisabled: true,
+      }),
+    ).toEqual([
+      "thinking-off reasoning profile prompt must end with the template's disabled marker",
+    ]);
+  });
+
+  it("still flags the disabled marker when thinking is on — the prompt must end with the open tag", () => {
+    expect(checkProfilePromptAligned(QWEN_THINK_PROFILE, DISABLED)).toEqual([
+      "reasoning profile prompt must end with the configured open tag",
+    ]);
+  });
+
+  it("keeps gemma's turn-framing invariant: the flag has no marker to check", () => {
+    expect(
+      checkProfilePromptAligned(
+        GEMMA4_THINK_PROFILE,
+        "Respond now.\n\n<turn|>\n<|turn>model\n",
+        { thinkingDisabled: true },
+      ),
+    ).toEqual([]);
+    expect(
+      checkProfilePromptAligned(GEMMA4_THINK_PROFILE, DISABLED, {
+        thinkingDisabled: true,
+      }),
+    ).toEqual([
+      "turn-framed reasoning profile prompt must end with the model-turn opener",
+    ]);
+  });
+});
+
 describe("checkProfilePromptAligned", () => {
   it("flags a qwen prompt without a trailing think prelude", () => {
     const prompt = "### response\nEmit one JSON tool call now.\n";

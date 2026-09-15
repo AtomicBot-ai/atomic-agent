@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeStep } from "./step-executor.js";
 import { ToolRegistry } from "../tools/tool-registry.js";
@@ -5355,5 +5357,178 @@ describe("executeStep slot pinning (F13)", () => {
     );
     expect(seen).toEqual([{ slotId: -1, cachePrompt: undefined }]);
     expect(slotManager.pinnedSlot("s-cloud")).toBeNull();
+  });
+});
+
+describe("executeStep reasoning budget and thinking: off (F49)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+  const CALL = JSON.stringify([{ tool: "reply", args: { text: "done" } }]);
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["reply", true],
+      ["finish", true],
+    ] as const) {
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.text ?? "")}`,
+          });
+        },
+      });
+    }
+    return registry;
+  }
+
+  /** Run one step on a qwen grammar; `bodies` are the raw completions in order. */
+  async function runQwen(
+    bodies: string[],
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]> = {},
+    budgetTokens?: number,
+  ) {
+    const grammar = await buildGrammar(
+      QWEN_THINK_PROFILE,
+      grammarsDir,
+      budgetTokens === undefined ? {} : { reasoningBudgetTokens: budgetTokens },
+    );
+    const session = createEmptySessionState({ id: "s-f49", workingDir: "/w" });
+    const seen: LlmStreamParams[] = [];
+    const events: StepEvent[] = [];
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry: makeRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          const content = bodies[calls] ?? bodies[bodies.length - 1]!;
+          calls += 1;
+          return {
+            content,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    return { outcome, seen, events, baseGrammar: grammar };
+  }
+
+  /** Point the config at a temp state dir holding `localModels`; returns the restore. */
+  function withLocalModelsConfig(localModels: Record<string, unknown>): () => void {
+    const previous = process.env.ATOMIC_AGENT_STATE_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "f49-"));
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ localModels }));
+    process.env.ATOMIC_AGENT_STATE_DIR = dir;
+    resetConfigCache();
+    return () => {
+      if (previous === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
+      else process.env.ATOMIC_AGENT_STATE_DIR = previous;
+      resetConfigCache();
+    };
+  }
+
+  it("an ordinary step sends the bounded prelude byte-identical to the base grammar", async () => {
+    const { seen, baseGrammar } = await runQwen([`thinking</think>\n${CALL}`], {}, 2);
+    expect(seen[0]!.grammar).toBe(baseGrammar);
+    expect(seen[0]!.grammar).toContain("think-body ::= think-char{0,8}");
+  });
+
+  it("the forced final step lifts the bound: a reply or finish is never cut mid-thought", async () => {
+    const { seen, baseGrammar } = await runQwen(
+      [`thinking</think>\n${CALL}`],
+      { terminalOnly: true },
+      2,
+    );
+    expect(seen[0]!.grammar).not.toBe(baseGrammar);
+    expect(seen[0]!.grammar).toContain("think-body ::= think-char*");
+    expect(seen[0]!.grammar).not.toContain("think-char{0,8}");
+    expect(grammarToolNames(seen[0]!.grammar)).toEqual(["finish", "reply"]);
+    expect(seen[0]!.grammar).toMatch(/^root ::= think-prelude tool-call-array$/m);
+  });
+
+  it("llm_raw_completion carries the reasoning estimate in budget units, so a cut reads as >= budget", async () => {
+    const reasoning = "x".repeat(8);
+    const { events } = await runQwen([`${reasoning}</think>\n${CALL}`], {}, 2);
+    const raw = events.find((e) => e.type === "llm_raw_completion");
+    expect(raw).toMatchObject({ type: "llm_raw_completion", attempt: 1, reasoningTokens: 2 });
+    const reasoningEvent = events.find((e) => e.type === "reasoning");
+    expect(reasoningEvent).toMatchObject({ type: "reasoning", text: reasoning });
+  });
+
+  it("thinking: off — the prompt ends with the disabled marker, the grammar has the plain root, the call parses with no reasoning", async () => {
+    const restore = withLocalModelsConfig({ thinking: "off" });
+    try {
+      const { outcome, seen, events, baseGrammar } = await runQwen([CALL]);
+      expect(seen[0]!.prompt.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      expect(seen[0]!.grammar).not.toBe(baseGrammar);
+      expect(seen[0]!.grammar).toMatch(/^root ::= tool-call-array$/m);
+      expect(seen[0]!.grammar).not.toMatch(/^root ::= think-prelude/m);
+      expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
+      expect(events.find((e) => e.type === "reasoning")).toBeUndefined();
+      expect(events.find((e) => e.type === "llm_raw_completion")).toMatchObject({
+        reasoningTokens: 0,
+      });
+      expect(events.find((e) => e.type === "parse_retry")).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("thinking: off — the repair prompt strips and re-appends the disabled marker, never an open tag", async () => {
+    const restore = withLocalModelsConfig({ thinking: "off" });
+    try {
+      const { seen, outcome } = await runQwen(["not json at all", CALL]);
+      expect(seen).toHaveLength(2);
+      const repair = seen[1]!.prompt;
+      expect(repair).toContain("### tool-call-repair");
+      expect(repair.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      // One marker at the end; the original one was stripped before the notice.
+      expect(repair.match(/<think>/g)).toHaveLength(1);
+      expect(repair.indexOf("### tool-call-repair")).toBeLessThan(repair.indexOf("<think>"));
+      expect(seen[1]!.grammar).toMatch(/^root ::= tool-call-array$/m);
+      expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("thinking: on keeps the prefill, the prelude and the open-tag parse", async () => {
+    const restore = withLocalModelsConfig({ thinking: "on" });
+    try {
+      const { seen, events, baseGrammar } = await runQwen([`why</think>\n${CALL}`]);
+      expect(seen[0]!.prompt.endsWith("<think>\n")).toBe(true);
+      expect(seen[0]!.grammar).toBe(baseGrammar);
+      expect(events.find((e) => e.type === "reasoning")).toMatchObject({ text: "why" });
+    } finally {
+      restore();
+    }
   });
 });

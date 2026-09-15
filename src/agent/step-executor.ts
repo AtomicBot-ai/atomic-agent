@@ -32,6 +32,11 @@ import {
 } from "./claim-evidence.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
+import {
+  withoutReasoningPrelude,
+  withUnboundedReasoningPrelude,
+} from "../llm/grammar/reasoning-prelude.js";
+import { estimateReasoningTokens } from "../llm/reasoning-budget.js";
 import { refusedToolNames } from "./fusion-orchestrator-mode.js";
 import { descriptorsForRole, type ToolRole } from "../tools/tool-roles.js";
 import type {
@@ -106,6 +111,7 @@ import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import {
   NO_SERVER_TEMPLATE,
   resolveServerTemplatePolicy,
+  thinkingDisabledOnBuiltPrompt,
 } from "../llm/server-template-policy.js";
 import type { ChatPromptParts } from "../llm/provider/completion-types.js";
 import {
@@ -545,13 +551,24 @@ async function executeStepInner(
   // template. The template supplies the turn markers and the reasoning
   // prelude, so the prompt is built framing-free, like a chat-transport
   // prompt (F31).
+  const localModels = getConfig().localModels;
   const serverTemplate =
     deps.toolTransport === "native_tools"
       ? NO_SERVER_TEMPLATE
-      : resolveServerTemplatePolicy(getConfig().localModels, deps.profile);
+      : resolveServerTemplatePolicy(localModels, deps.profile);
   const promptCarriesPrefill =
     !serverTemplate.useServerTemplate &&
     promptCarriesReasoningPrefill(deps.profile, deps.toolTransport);
+  // `localModels.thinking: "off"` on the hand-built prompt path (F49):
+  // the prompt ends with the template's disabled marker, the request
+  // grammar has no prelude, and the completion is parsed as starting
+  // outside a think block. Keyed off the profile and the switch, not the
+  // transport, so a native-tools primary's grammar fallback link gets the
+  // same pairing through `grammarPrompt`. The template path has its own
+  // switch (`chat_template_kwargs`) and is left to it.
+  const thinkingOff =
+    !serverTemplate.useServerTemplate &&
+    thinkingDisabledOnBuiltPrompt(localModels.thinking, deps.profile);
   // The same catalog on every step, the final one included: `### tools`
   // is stable-prefix bytes, and a catalog narrowed to reply/finish for
   // the last step re-read the whole prompt on a cold slot. The final
@@ -593,6 +610,7 @@ async function executeStepInner(
     suppressReasoningPrefill:
       deps.toolTransport === "native_tools" ||
       serverTemplate.useServerTemplate,
+    thinking: localModels.thinking,
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
       : {}),
@@ -649,6 +667,7 @@ async function executeStepInner(
       prompt.text,
       {
         promptCarriesPrefill,
+        thinkingDisabled: thinkingOff,
       },
     );
     if (promptViolations.length > 0) {
@@ -691,7 +710,12 @@ async function executeStepInner(
   // orchestrator turn, a filtered worker); otherwise the base grammar
   // goes out byte-identical. The prompt is not touched either way — the
   // grammar rides with the request, outside the KV-cached prefix.
-  const stepGrammar = resolveStepGrammar(ctx, deps, roleToolDescriptors);
+  const stepGrammar = resolveStepGrammar(
+    ctx,
+    deps,
+    roleToolDescriptors,
+    thinkingOff,
+  );
   const llmParams: LlmStreamParams = {
     ...buildLlmStreamParams({
       promptText: prompt.text,
@@ -741,6 +765,7 @@ async function executeStepInner(
     prompt,
     slot,
     llmParams,
+    thinkingOff,
   });
   // The server named the slot it put a pending session's prompt in: pin
   // it so every later request of the session — the repair retry below
@@ -770,6 +795,7 @@ async function executeStepInner(
     completionAssumesOpenReasoning(
       deps.profile,
       parseDepsFor(c, deps).toolTransport,
+      thinkingOff,
     );
 
   // Prefer the dedicated `reasoning_content` channel when the server
@@ -1075,6 +1101,7 @@ async function executeStepInner(
     // The list the REQUEST was built from — the strict-widened map must
     // come from the same array the wire payload did.
     roleToolDescriptors,
+    thinkingOff,
   );
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
@@ -1133,6 +1160,7 @@ async function executeStepInner(
         deps.profile,
         deps.toolTransport,
         promptCarriesPrefill,
+        thinkingOff,
       ),
       // The structured prompt must be repair-shaped too, or a native
       // link would replay the stale tail without the notice. The notice
@@ -1166,6 +1194,7 @@ async function executeStepInner(
                 deps.profile,
                 "grammar",
                 true,
+                thinkingOff,
               ),
             ),
           }
@@ -1195,6 +1224,11 @@ async function executeStepInner(
       maxTokens: repairReplyCap(deps.toolTransport, replyCap),
     });
     const retryDurationMs = Date.now() - retryStartedAt;
+    const retryReasoning = resolveReasoning(
+      completion,
+      deps.profile,
+      assumesOpenReasoning(completion),
+    );
     deps.onCompletion?.(completion);
     deps.onEvent?.({ type: "llm_completed", completion });
     deps.onEvent?.({
@@ -1202,6 +1236,7 @@ async function executeStepInner(
       stepIndex: ctx.stepIndex,
       attempt: 2,
       completion,
+      reasoningTokens: estimateReasoningTokens(retryReasoning),
     });
     deps.metrics?.recordLlmCall({
       sessionId: ctx.session.id,
@@ -1211,11 +1246,6 @@ async function executeStepInner(
       cacheReused: slot.cacheReused,
     });
 
-    const retryReasoning = resolveReasoning(
-      completion,
-      deps.profile,
-      assumesOpenReasoning(completion),
-    );
     if (retryReasoning.length > 0) {
       deps.onEvent?.({
         type: "reasoning",
@@ -1279,6 +1309,7 @@ async function executeStepInner(
       deps.profile,
       retryParseDeps,
       stepToolDescriptors,
+      thinkingOff,
     );
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
@@ -1697,6 +1728,8 @@ interface InitialCompletionArgs {
   prompt: BuiltPrompt;
   slot: { slotId: number; cacheReused: boolean };
   llmParams: LlmStreamParams;
+  /** `thinking: off` honoured on this step's built prompt (F49). */
+  thinkingOff: boolean;
 }
 
 /**
@@ -1706,7 +1739,7 @@ interface InitialCompletionArgs {
 async function runInitialCompletion(
   args: InitialCompletionArgs,
 ): Promise<{ completion: CompletionResult }> {
-  const { ctx, deps, prompt, slot, llmParams } = args;
+  const { ctx, deps, prompt, slot, llmParams, thinkingOff } = args;
   const startedAt = Date.now();
   const completion = deps.llmCompleteStream
     ? await consumeStream(
@@ -1714,10 +1747,26 @@ async function runInitialCompletion(
         ctx.stepIndex,
         deps.profile,
         deps.toolTransport,
+        thinkingOff,
         deps.onEvent,
       )
     : await deps.llmComplete(llmParams);
   const durationMs = Date.now() - startedAt;
+  // How much of the completion was thinking, in the budget's units, so
+  // a trace shows a step that hit `localModels.reasoningBudgetTokens`
+  // (`reasoningTokens >= budget`). Same extraction the reasoning event
+  // below uses, keyed off the link that served the completion.
+  const reasoningTokens = estimateReasoningTokens(
+    resolveReasoning(
+      completion,
+      deps.profile,
+      completionAssumesOpenReasoning(
+        deps.profile,
+        parseDepsFor(completion, deps).toolTransport,
+        thinkingOff,
+      ),
+    ),
+  );
   deps.onCompletion?.(completion);
   deps.onEvent?.({ type: "llm_completed", completion });
   deps.onEvent?.({
@@ -1725,6 +1774,7 @@ async function runInitialCompletion(
     stepIndex: ctx.stepIndex,
     attempt: 1,
     completion,
+    reasoningTokens,
   });
   deps.metrics?.recordLlmCall({
     sessionId: ctx.session.id,
@@ -1779,12 +1829,18 @@ function promptCarriesReasoningPrefill(
  *    reasoning. That holds even in the unsupported grammar-primary →
  *    native-link ordering, where the outbound prompt still (incorrectly)
  *    carries the literal prefill inside the chat message.
+ *  - **`thinking: off` on the built prompt (F49)** ends the prompt with
+ *    the template's closed, empty think block and sends the plain-root
+ *    grammar, so a grammar-served completion starts on the tool call:
+ *    nothing to re-open.
  */
 function completionAssumesOpenReasoning(
   profile: ModelProfile,
   parseTransport: ToolCallTransport,
+  thinkingOff: boolean,
 ): boolean {
   if (!profile.requiresPromptThinkPrefix) return false;
+  if (thinkingOff) return false;
   return parseTransport !== "native_tools";
 }
 
@@ -1959,10 +2015,12 @@ function tryParseToolCalls(
   // names have to be derived from the same input, or the undo on the
   // way in stops matching the rewrite on the way out.
   toolDescriptors: readonly ToolDescriptor[],
+  thinkingOff: boolean,
 ): ToolCallBatchParseResult {
   const assumeOpenReasoning = completionAssumesOpenReasoning(
     profile,
     deps.toolTransport,
+    thinkingOff,
   );
   try {
     if (deps.toolTransport === "native_tools") {
@@ -2195,13 +2253,29 @@ function stepGrammarToolNames(
   return restricted ? names : null;
 }
 
+/**
+ * The grammar for THIS request. The reasoning prelude first (F49): gone
+ * under `thinking: off` (the prompt ends with the template's disabled
+ * marker, so the completion starts on the call); unbounded on the forced
+ * final step — a `reply` / `finish` is never cut mid-thought; the base
+ * grammar's configured bound (`localModels.reasoningBudgetTokens`)
+ * otherwise. Then the tool names (`stepGrammarToolNames`). An
+ * unrestricted, non-final step under `thinking: on|auto` sends the base
+ * grammar byte-identical.
+ */
 function resolveStepGrammar(
   ctx: Pick<StepContext, "terminalOnly" | "toolFilter" | "toolRole">,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
+  thinkingOff: boolean,
 ): string {
+  const base = thinkingOff
+    ? withoutReasoningPrelude(deps.grammar)
+    : ctx.terminalOnly
+      ? withUnboundedReasoningPrelude(deps.grammar)
+      : deps.grammar;
   const names = stepGrammarToolNames(ctx, deps, descriptors);
-  return names === null ? deps.grammar : buildGrammarForTools(deps.grammar, names);
+  return names === null ? base : buildGrammarForTools(base, names);
 }
 
 function buildLlmStreamParams(args: {
@@ -2829,6 +2903,7 @@ function buildToolCallRepairPrompt(
   profile?: ModelProfile,
   toolTransport?: ToolCallTransport,
   promptCarriedPrefill = true,
+  thinkingOff = false,
 ): string {
   // Strip the trailing reasoning open-tag prefill (e.g. `<think>` for
   // qwen-think, `<|channel>thought\n` for gemma4-think) before
@@ -2853,8 +2928,14 @@ function buildToolCallRepairPrompt(
   // transport, issue #283) there is nothing to strip — and nothing to
   // re-append either: adding `<think>` here would ship the literal tag
   // to the cloud endpoint the main prompt deliberately keeps it out of.
+  //
+  // Under `thinking: off` (F49) the prefill IS the closed, empty think
+  // block, and it is what comes back at the end: the repair runs under
+  // the same plain-root grammar as the failed attempt, which admits no
+  // reasoning, so re-opening a think block here would hand the model a
+  // block it cannot close.
   const baseText = promptCarriedPrefill
-    ? stripTrailingReasoningPrefill(promptText, profile)
+    ? stripTrailingReasoningPrefill(promptText, profile, thinkingOff)
     : promptText;
   const lines = [
     baseText.trimEnd(),
@@ -2898,7 +2979,7 @@ function buildToolCallRepairPrompt(
     );
   }
   const openReasoning = promptCarriedPrefill
-    ? renderOpenReasoningBlock(profile)
+    ? renderOpenReasoningBlock(profile, thinkingOff)
     : "";
   if (openReasoning.length > 0) {
     lines.push(openReasoning);
@@ -2909,9 +2990,18 @@ function buildToolCallRepairPrompt(
 function stripTrailingReasoningPrefill(
   promptText: string,
   profile: ModelProfile | undefined,
+  thinkingOff = false,
 ): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return promptText;
   if (profile.reasoningStyle === "none") return promptText;
+  const disabledMarker = profile.promptThinkingDisabledMarker;
+  if (thinkingOff && disabledMarker !== undefined) {
+    const marker = disabledMarker.trimEnd();
+    const trimmed = promptText.trimEnd();
+    return trimmed.endsWith(marker)
+      ? trimmed.slice(0, trimmed.length - marker.length)
+      : promptText;
+  }
   const framing = getReasoningTurnFraming(profile);
   if (framing) {
     // Gemma 4 turn-framing: strip the trailing `<turn|>\n<|turn>model` so the
@@ -2944,9 +3034,18 @@ function stripTrailingReasoningPrefill(
  * → JSON flow, just bounded by `REPAIR_MAX_TOKENS`. For `none` profiles
  * this is a no-op.
  */
-function renderOpenReasoningBlock(profile: ModelProfile | undefined): string {
+function renderOpenReasoningBlock(
+  profile: ModelProfile | undefined,
+  thinkingOff = false,
+): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return "";
   if (profile.reasoningStyle === "none") return "";
+  const disabledMarker = profile.promptThinkingDisabledMarker;
+  if (thinkingOff && disabledMarker !== undefined) {
+    // The template's own marker, verbatim — trailing newlines included,
+    // as the main prompt ends.
+    return disabledMarker;
+  }
   const framing = getReasoningTurnFraming(profile);
   if (framing) {
     // Re-close the system turn and re-open the model turn so the model emits
@@ -3066,6 +3165,7 @@ async function consumeStream(
   stepIndex: number,
   profile: ModelProfile,
   primaryTransport: ToolCallTransport,
+  thinkingOff: boolean,
   onEvent?: (event: StepEvent) => void,
 ): Promise<CompletionResult> {
   // The parser's pre-opened state depends on which link SERVES the
@@ -3086,6 +3186,7 @@ async function consumeStream(
         completionAssumesOpenReasoning(
           profile,
           servedTransport ?? primaryTransport,
+          thinkingOff,
         ) && !reasoningOpenEmittedByModel(profile),
       ...(profile.reasoningStyle !== "none"
         ? {

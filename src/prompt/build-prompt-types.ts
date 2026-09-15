@@ -3,6 +3,7 @@ import type {
   PromptMessages,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
+import type { ThinkingSetting } from "../llm/server-template-policy.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ProfileClipStats } from "./clip-profile-section.js";
 import type { ConversationPackStart } from "../session/conversation-turn.js";
@@ -107,6 +108,15 @@ export interface BuildPromptInput {
    * transport, where the local template expects the tag pre-typed.
    */
   suppressReasoningPrefill?: boolean;
+  /**
+   * `localModels.thinking` as it applies to the hand-built prompt (F49):
+   * `off` on a profile with a prompt-side disabled marker (`qwen-think`)
+   * ends the prompt with the template's own empty think block instead
+   * of the open-tag prefill; `on` / `auto` change nothing, and so does
+   * any value on a profile without a marker (Gemma 4's turn framing).
+   * Defaults to the config value. Ignored when the prefill is suppressed.
+   */
+  thinking?: ThinkingSetting;
   profileFacts?: readonly ProfileFact[];
   profileMaxTokens?: number;
   userMessage?: string | null;

@@ -64,7 +64,11 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       const timing = event.timing
         ? ` promptMs=${event.timing.promptMs} predictedMs=${event.timing.predictedMs} tokens(p=${event.timing.promptTokens},c=${event.timing.predictedTokens})`
         : "";
-      return `${head} step=${event.stepIndex} attempt=${event.attempt} cacheHit=${event.cacheHitTokens}${timing}${
+      const reasoningTokens =
+        event.reasoningTokens !== undefined
+          ? ` reasoningTokens=${event.reasoningTokens}`
+          : "";
+      return `${head} step=${event.stepIndex} attempt=${event.attempt} cacheHit=${event.cacheHitTokens}${timing}${reasoningTokens}${
         raw
           ? `\n  content: ${event.content}${
               event.reasoningContent

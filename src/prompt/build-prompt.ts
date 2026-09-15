@@ -1,5 +1,6 @@
 import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
+import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
 import { clipProfileSection } from "./clip-profile-section.js";
 import {
   renderMemoryIndexSection,
@@ -439,7 +440,20 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.profile?.requiresPromptThinkPrefix &&
     input.profile.reasoningStyle !== "none"
   ) {
-    tailParts.push(input.profile.reasoningOpenTag.trimEnd(), ``);
+    const disabledMarker = input.profile.promptThinkingDisabledMarker;
+    const thinking = input.thinking ?? config.localModels.thinking;
+    if (
+      disabledMarker !== undefined &&
+      thinkingDisabledOnBuiltPrompt(thinking, input.profile)
+    ) {
+      // `thinking: off` (F49): the template's own disabled rendering —
+      // an empty, closed think block — at the generation point, so the
+      // model starts on the tool call. The request grammar drops its
+      // prelude to match (`withoutReasoningPrelude`).
+      tailParts.push(disabledMarker.trimEnd(), ``, ``);
+    } else {
+      tailParts.push(input.profile.reasoningOpenTag.trimEnd(), ``);
+    }
   }
   const tail = tailParts.join("\n");
 

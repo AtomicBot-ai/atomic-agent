@@ -59,6 +59,14 @@ export type StepEvent =
       stepIndex: number;
       attempt: 1 | 2;
       completion: CompletionResult;
+      /**
+       * How much of the completion was reasoning — the text before the
+       * close sentinel (or the server's `reasoning_content`), in the
+       * budget's units of four characters per token (F49). A step that
+       * hit `localModels.reasoningBudgetTokens` shows `>= budget`.
+       * Set by the step executor; absent from hand-built events.
+       */
+      reasoningTokens?: number;
     }
   /**
    * Non-fatal: reasoning model emitted `<think>...</think>` blocks before

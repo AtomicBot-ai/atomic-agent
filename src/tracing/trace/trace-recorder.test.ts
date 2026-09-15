@@ -346,6 +346,46 @@ describe("createTraceRecorder", () => {
       stop: true,
       truncated: false,
     });
+    // A hand-built event without the estimate records none.
+    expect(completion).not.toHaveProperty("reasoningTokens");
+  });
+
+  it("forwards the step's reasoningTokens estimate onto llm_completion (F49)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-5b", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        reasoningTokens: 1500,
+        completion: {
+          content: "[]",
+          reasoningContent: "x".repeat(6000),
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 5,
+            predictedMs: 12,
+            promptTokens: 80,
+            predictedTokens: 1400,
+          },
+          cacheHitTokens: 80,
+          slotId: 0,
+          modelId: "demo",
+        },
+      },
+    });
+    const completion = events.find((e) => e.type === "llm_completion");
+    expect(completion).toMatchObject({
+      type: "llm_completion",
+      attempt: 1,
+      reasoningTokens: 1500,
+      timing: { predictedTokens: 1400 },
+    });
   });
 
   it("records a batch trim with the calls that never ran", () => {
