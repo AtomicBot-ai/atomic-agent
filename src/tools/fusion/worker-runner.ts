@@ -22,6 +22,7 @@ import {
   isWorkerVisibleTool,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
+import { fingerprintToolOutcome } from "../../agent/loop-detector.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -95,6 +96,74 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
  * scratch, with zero completed steps to show for 22 minutes.
  */
 export const HAND_BACK_MIN_COMPLETED_STEPS = 2;
+
+/**
+ * Tools whose success is not progress on a task that declared files
+ * (F46): a read, a listing, a glob, a grep, a watch, a process list. A
+ * step whose only successful results are these looked at the tree; a
+ * step that ran a shell command, wrote or edited did something to it.
+ */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  "os.fs.read",
+  "os.fs.read_document",
+  "os.fs.list",
+  "os.fs.glob",
+  "os.fs.grep",
+  "os.fs.watch",
+  "os.fs.locate_project",
+  "os.fs.archive.list",
+  "os.fs.archive.read_entry",
+  "os.proc.list",
+  "os.window.list",
+  "tool.view",
+]);
+
+/**
+ * The step half of the hand-back fires only on a STALLED worker (F46):
+ * either its last `HAND_BACK_SAME_RESULT_STEPS` completed steps came
+ * back with the same outcome fingerprint (F25's `fingerprintToolOutcome`
+ * — a worker re-checking for a file that does not exist yet, whatever
+ * the arguments), or its last `HAND_BACK_READ_ONLY_STEPS` steps had no
+ * successful non-read result at all. A worker making distinct,
+ * successful shell calls each step — hashing one file per call — is
+ * busy, and runs to its budget: three of those were handed back at
+ * half their steps in one live fan-out, and the one that was working
+ * never reached its write. The time half is unchanged.
+ */
+export const HAND_BACK_SAME_RESULT_STEPS = 3;
+export const HAND_BACK_READ_ONLY_STEPS = 6;
+
+/** What one completed worker step produced, for the stall check. */
+export interface WorkerStepOutcome {
+  /** The step's tool results' fingerprints, in order; empty for a step with none. */
+  fingerprint: string;
+  /** True when some result was a success from a tool outside `READ_ONLY_TOOLS`. */
+  busy: boolean;
+}
+
+/**
+ * Why the worker's recent steps look stalled, or `undefined` while it is
+ * still doing something: `same result 3×`, `read-only for 6 steps`, or
+ * both joined with ` / `.
+ */
+export function detectStall(
+  steps: readonly WorkerStepOutcome[],
+): string | undefined {
+  const reasons: string[] = [];
+  if (steps.length >= HAND_BACK_SAME_RESULT_STEPS) {
+    const tail = steps.slice(-HAND_BACK_SAME_RESULT_STEPS);
+    if (tail.every((s) => s.fingerprint === tail[0]!.fingerprint)) {
+      reasons.push(`same result ${HAND_BACK_SAME_RESULT_STEPS}×`);
+    }
+  }
+  if (steps.length >= HAND_BACK_READ_ONLY_STEPS) {
+    const tail = steps.slice(-HAND_BACK_READ_ONLY_STEPS);
+    if (tail.every((s) => !s.busy)) {
+      reasons.push(`read-only for ${HAND_BACK_READ_ONLY_STEPS} steps`);
+    }
+  }
+  return reasons.length === 0 ? undefined : reasons.join(" / ");
+}
 
 /** The forced summary a handed-back task replies with. */
 export function formatEarlyHandBack(input: {
@@ -359,11 +428,12 @@ async function runOneTask(
   const hitTimeLimit = (): boolean =>
     timeLimit.aborted && !options.signal.aborted;
 
-  // D4 / F42: a task that declared output files and has written none by
-  // half its step budget or half its time is handed back with what it
-  // found, instead of spending the other half the same way — but only
-  // at a step boundary, and only once `HAND_BACK_MIN_COMPLETED_STEPS`
-  // steps have completed. The check runs when a step finishes, never on
+  // D4 / F42 / F46: a task that declared output files and has written
+  // none by half its step budget (and is stalled — `detectStall`) or by
+  // half its time is handed back with what it found, instead of
+  // spending the other half the same way — but only at a step boundary,
+  // and only once `HAND_BACK_MIN_COMPLETED_STEPS` steps have completed.
+  // The check runs when a step finishes, never on
   // a timer: at that moment the step's completion and its tool calls
   // are done and the next completion has not been requested, so the
   // abort costs nothing that was generated. Only for tasks with declared
@@ -377,11 +447,24 @@ async function runOneTask(
   const halfTimeMs = Math.floor(timeoutMs / 2);
   let stepsFinished = 0;
   let wroteSomething = false;
+  // What each completed step produced (F46): the current step's results
+  // accumulate here and are folded into `steps` when it finishes.
+  const steps: WorkerStepOutcome[] = [];
+  let currentFingerprints: string[] = [];
+  let currentBusy = false;
+  // Why the step half fired, when it did; carried onto the note so the
+  // orchestrator re-briefs against the cause, not just the count.
+  let stall: string | undefined;
   const maybeHandBack = (): void => {
     if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted) return;
     if (stepsFinished < HAND_BACK_MIN_COMPLETED_STEPS) return;
     const pastHalfTime = Date.now() - startedAt >= halfTimeMs;
-    if (stepsFinished < stepThreshold && !pastHalfTime) return;
+    // The step half needs a stalled worker, not merely a busy one at
+    // half its budget; the time half fires as before.
+    const stalled = detectStall(steps);
+    const pastHalfSteps = stepsFinished >= stepThreshold && stalled !== undefined;
+    if (!pastHalfSteps && !pastHalfTime) return;
+    stall = stalled;
     handBack.abort(new Error("handed back early: no file written by half the budget"));
   };
   const handedBack = (): boolean =>
@@ -414,6 +497,12 @@ async function runOneTask(
           // `step_finished`, not `step_started`: a started step is a
           // request in flight, and F19's count of those is how a
           // worker was stopped mid-file.
+          steps.push({
+            fingerprint: currentFingerprints.join("\n"),
+            busy: currentBusy,
+          });
+          currentFingerprints = [];
+          currentBusy = false;
           stepsFinished += 1;
           maybeHandBack();
         }
@@ -429,11 +518,16 @@ async function runOneTask(
         }
         if (
           event.type === "llm_event" &&
-          event.event.type === "tool_call_executed" &&
-          event.event.result.status === "ok" &&
-          WRITE_TOOLS.has(event.event.result.tool)
+          event.event.type === "tool_call_executed"
         ) {
-          wroteSomething = true;
+          const result = event.event.result;
+          if (result.status === "ok" && WRITE_TOOLS.has(result.tool)) {
+            wroteSomething = true;
+          }
+          currentFingerprints.push(fingerprintToolOutcome(result.tool, result));
+          if (result.status === "ok" && !READ_ONLY_TOOLS.has(result.tool)) {
+            currentBusy = true;
+          }
         }
         collector.observe(event);
       },
@@ -507,7 +601,7 @@ async function runOneTask(
       stepCount: completed,
       notes: [
         ...(result.notes ?? []),
-        `handed back early: declared files but wrote none by half the budget (${completed} steps completed, none a successful write) — re-brief with a narrower task or the exact content to write`,
+        `handed back early: declared files but wrote none by half the budget (${completed} steps completed, none a successful write)${stall === undefined ? "" : ` (stalled: ${stall})`} — re-brief with a narrower task or the exact content to write`,
       ],
     };
   }

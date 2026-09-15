@@ -16,6 +16,7 @@ import {
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
+  detectStall,
   estimateWorkerTimeoutMs,
   runWorkerTasks,
   WORKER_TIMEOUT_FLOOR_MS,
@@ -1011,9 +1012,10 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
     expect(result!.stepCount).toBe(8);
   });
 
-  it("hands back after two completed no-write steps, even when half the budget is one (F42)", async () => {
+  it("hands back once three same-result steps completed, even when half the budget is one (F42, F46)", async () => {
     // Half of 3 is 1, but one completed step is a worker that read the
-    // spec: the floor holds the check until a second step has finished.
+    // spec, and two are not yet a stall: the step half waits for the
+    // same result three times (F46), and names it on the note.
     const { deps } = harness(stepping(null));
     const [result] = await runWorkerTasks(deps, {
       ...BASE,
@@ -1023,11 +1025,139 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
       signal: new AbortController().signal,
     });
     expect(result!.status).toBe("needs_orchestrator");
-    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(2 of 3 steps/);
-    expect(result!.stepCount).toBe(2);
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(3 of 3 steps/);
+    expect(result!.stepCount).toBe(3);
     expect(result!.notes).toContainEqual(
-      expect.stringContaining("(2 steps completed, none a successful write)"),
+      expect.stringContaining(
+        "(3 steps completed, none a successful write) (stalled: same result 3×)",
+      ),
     );
+  });
+
+  const shell = (summary: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.shell.run", status: "ok", summary, details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const failedShell = (summary: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.shell.run", status: "error", summary, details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const readOf = (file: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.fs.read", status: "ok", summary: `read ${file}: 12 lines`, details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+
+  /** A worker whose step `i` (1-based) emits `resultAt(i)`; replies after `total` steps. */
+  function steppingWith(resultAt: (step: number) => AgentLoopEvent, total = 8) {
+    return async ({ options }: { options: TurnOptions }) => {
+      for (let step = 1; step <= total; step += 1) {
+        if (options.signal?.aborted) {
+          return turnResult({ reason: "cancelled", stepCount: step - 1 });
+        }
+        options.eventHook?.(stepStarted(step - 1));
+        options.eventHook?.(resultAt(step));
+        options.eventHook?.(stepFinished(step - 1));
+      }
+      options.eventHook?.(replied());
+      return turnResult({ stepCount: total });
+    };
+  }
+
+  it("runs a busy worker to its budget: distinct successful shell calls are not a stall (F46)", async () => {
+    // Live: a worker hashing one file per shell call was handed back at
+    // half its 30 steps and never reached its write. Each step is a
+    // different, successful result — that is work, not a loop.
+    const { deps } = harness(steppingWith((step) => shell(`sha256sum file${step}.txt: exit 0`)));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["js/**/*.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).not.toBe("needs_orchestrator");
+    expect(result!.stepCount).toBe(8);
+    expect(result!.reply).toBe("done");
+    expect(result!.notes ?? []).not.toContainEqual(expect.stringContaining("handed back"));
+  });
+
+  it("hands back when the LAST three steps returned the same result, after busy ones (F46)", async () => {
+    // Two distinct hashes, then the same missing-file error three times
+    // — a worker waiting for a sibling's output that does not exist yet.
+    const { deps } = harness(
+      steppingWith((step) =>
+        step <= 2
+          ? shell(`sha256sum file${step}.txt: exit 0`)
+          : failedShell("cat manifest.json: No such file or directory (exit 1)"),
+      ),
+    );
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("needs_orchestrator");
+    // Half of 8 is 4, but step 4 is only the second repeat; the fifth completes the three.
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(5 of 8 steps/);
+    expect(result!.stepCount).toBe(5);
+    expect(result!.notes).toContainEqual(
+      expect.stringContaining("(5 steps completed, none a successful write) (stalled: same result 3×)"),
+    );
+  });
+
+  it("hands back a worker that only read for six steps, however different the reads (F46)", async () => {
+    const { deps } = harness(steppingWith((step) => readOf(`src/file${step}.js`)));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("needs_orchestrator");
+    // Past half the steps at 4, but distinct reads are not the same
+    // result; the read-only rule needs six of them.
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(6 of 8 steps/);
+    expect(result!.stepCount).toBe(6);
+    expect(result!.notes).toContainEqual(
+      expect.stringContaining("(6 steps completed, none a successful write) (stalled: read-only for 6 steps)"),
+    );
+  });
+
+  it("detectStall names the rule that fired, both when both do (F46)", () => {
+    const same = { fingerprint: "os.shell.run|error|cat x: no such file", busy: false };
+    const busy = (n: number) => ({ fingerprint: `os.shell.run|ok|sha ${n}`, busy: true });
+    const read = (n: number) => ({ fingerprint: `os.fs.read|ok|read ${n}`, busy: false });
+    expect(detectStall([])).toBeUndefined();
+    expect(detectStall([same, same])).toBeUndefined();
+    expect(detectStall([busy(1), same, same, same])).toBe("same result 3×");
+    expect(detectStall([busy(1), busy(2), busy(3), busy(4), busy(5), busy(6), busy(7)])).toBeUndefined();
+    expect(detectStall([busy(1), read(1), read(2), read(3), read(4), read(5), read(6)])).toBe(
+      "read-only for 6 steps",
+    );
+    // A failed shell call is not a success from a non-read tool either.
+    expect(detectStall([read(1), read(2), read(3), same, same, same])).toBe(
+      "same result 3× / read-only for 6 steps",
+    );
+    // Five read-only steps after a busy one: neither rule.
+    expect(detectStall([busy(1), read(1), read(2), read(3), read(4), read(5)])).toBeUndefined();
   });
 
   it("never hands back on one completed step: a worker that reads once and then writes runs on (F42)", async () => {
