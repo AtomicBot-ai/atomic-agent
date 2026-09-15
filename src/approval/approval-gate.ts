@@ -1,4 +1,5 @@
 import { FanoutScopeRegistry } from "./fanout-scope.js";
+import { ReadScopeGrants } from "./read-scope-grants.js";
 import { randomUUID } from "node:crypto";
 import {
   clampApprovalLevel,
@@ -164,6 +165,15 @@ export class ApprovalGate {
    */
   readonly fanoutScopes = new FanoutScopeRegistry();
 
+  /**
+   * Directories a session may read in without asking again — the `y`
+   * of an `fs_read_outside` prompt, remembered per session (see
+   * `read-scope-grants.ts`). A session grant in every sense but its
+   * unit (a path, not a category), so it lives here and is dropped by
+   * `clearSessionGrants` with the rest.
+   */
+  readonly readScopeGrants = new ReadScopeGrants();
+
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
     this.level = options.level ?? MIN_APPROVAL_LEVEL;
@@ -207,6 +217,7 @@ export class ApprovalGate {
    * standing level is untouched: it is a durable posture, grants are not.
    */
   clearSessionGrants(sessionId?: string): void {
+    this.readScopeGrants.clear(sessionId);
     if (sessionId === undefined) {
       this.grantsBySession.clear();
       return;

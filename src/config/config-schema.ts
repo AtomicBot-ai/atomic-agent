@@ -1337,8 +1337,11 @@ export function parseLocalTemplateSetting(
  *
  *  - `working-dir`: the working directory plus every absolute or
  *    `~`-prefixed path the user named in this session's own messages
- *    (see `src/tools/read-scope/`). The default.
- *  - `unrestricted`: the pre-v67 behaviour — reads anywhere on disk.
+ *    read unasked; anything else asks through the approval ladder
+ *    (`fs_read_outside`, silent at level 5) and a yes widens the
+ *    session's roots (see `src/tools/read-scope/`). The default.
+ *  - `unrestricted`: the pre-v67 behaviour — reads anywhere on disk,
+ *    never asked about.
  *
  * Fusion workers are confined regardless (and more narrowly).
  */

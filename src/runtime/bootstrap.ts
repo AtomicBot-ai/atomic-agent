@@ -72,9 +72,9 @@ import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
 import {
   buildFusionDelegateTool,
-  confineWorkerReads,
   pickOriginalRequest,
 } from "../tools/fusion/index.js";
+import { confineReads } from "../tools/read-scope/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
@@ -3177,12 +3177,21 @@ export async function createAgentRuntime(
       logger,
     }),
   );
-  // A fusion worker reads inside its working directory and its fan-out's
-  // write scope, never the rest of the disk (`worker-read-scope.ts`).
-  // Installed here, after every native filesystem tool is registered;
-  // other sessions' reads are untouched.
-  confineWorkerReads(toolRegistry, {
+  // Every session reads inside its working directory and the paths the
+  // user named unasked, by default (`agent.readScope`,
+  // `src/tools/read-scope/`); a read outside that asks through the
+  // ladder as `fs_read_outside` — the same gate and surfaces as every
+  // other gated action — and a `y` widens the session's roots. A fusion
+  // worker is confined more narrowly still — its working directory and
+  // its fan-out's write scope, never the brief's — and refused, since
+  // nobody is at the other end of its prompt. The shell gets the same
+  // scope as a token check. Installed here, after every native
+  // filesystem tool and the shell are registered. The scope is re-read
+  // per call, so `agent.readScope: "unrestricted"` needs no restart.
+  confineReads(toolRegistry, {
     grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
+    readScope: () => getConfig().agent.readScope,
+    approvals: dangerous,
   });
 
   const scheduler =

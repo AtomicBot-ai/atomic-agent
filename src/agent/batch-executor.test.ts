@@ -115,6 +115,34 @@ describe("executeBatch", () => {
     expect(elapsed).toBeLessThan(250);
   });
 
+  it("hands the step's readRoots to every call's tool context, unchanged", async () => {
+    // The read scope (`src/tools/read-scope/`) widens by what the user
+    // named; the step computes that once and the batch must not lose it.
+    const seen: (readonly string[] | undefined)[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (_args, toolCtx) => {
+        seen.push(toolCtx.readRoots);
+        return okResult("os.fs.read");
+      },
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const ctrl = new AbortController();
+    await executeBatch(inputs, registry, {
+      ...ctx(ctrl.signal),
+      readRoots: ["/named/one"],
+    });
+    expect(seen).toEqual([["/named/one"], ["/named/one"]]);
+    await executeBatch(inputs.slice(0, 1), registry, ctx(ctrl.signal));
+    expect(seen[2]).toBeUndefined();
+  });
+
   it("chunks pure_read fan-out into bounded waves when maxWaveSize is set", async () => {
     // 5 reads with a wave size of 2 → waves of [0,1], [2,3], [4]. Track
     // peak concurrency: it must never exceed 2, and all 5 must run.
