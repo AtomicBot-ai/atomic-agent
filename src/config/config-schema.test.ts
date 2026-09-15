@@ -2252,3 +2252,38 @@ describe("localModels.useServerTemplate / thinking (F31)", () => {
     expect(parsed.localModels.thinking).toBe("auto");
   });
 });
+
+describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
+  it("defaults to 1500 tokens", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens).toBe(1500);
+  });
+
+  it("accepts 0 (unbounded) and an integer in [64, 32768], naming the field otherwise", () => {
+    const set = (reasoningBudgetTokens: unknown) =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { reasoningBudgetTokens },
+      }).localModels.reasoningBudgetTokens;
+    expect(set(0)).toBe(0);
+    expect(set(64)).toBe(64);
+    expect(set(6000)).toBe(6000);
+    expect(set(32_768)).toBe(32_768);
+    for (const bad of [-1, 12, 32_769, 2.5, "lots"]) {
+      expect(() => set(bad), String(bad)).toThrow(
+        /localModels\.reasoningBudgetTokens/,
+      );
+    }
+  });
+
+  it("fills a v67 file that predates the field with the default", () => {
+    const parsed = parseUserConfigFile({
+      version: 67,
+      localModels: { thinking: "off" },
+    });
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(parsed.localModels.thinking).toBe("off");
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+  });
+});
