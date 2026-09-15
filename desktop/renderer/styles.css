@@ -300,8 +300,8 @@ svg{display:block;flex:none}
 .btn-g:hover,.b-quiet:hover{background:var(--hover);color:var(--ink)}
 .btn-danger{background:var(--critical-wash);color:var(--critical)}
 .btn-danger:hover{background:color-mix(in srgb, var(--critical) 18%, transparent);color:var(--critical)}
-.btn-df{background:var(--critical);color:var(--on-strong)}
-.btn-df:hover{background:color-mix(in srgb, var(--critical) 86%, var(--ink));color:var(--on-strong)}
+.btn-df{background:var(--critical);color:var(--on-fill)}
+.btn-df:hover{background:color-mix(in srgb, var(--critical) 86%, var(--ink));color:var(--on-fill)}
 .btn-white{background:var(--on-strong);color:var(--indigo)}
 .btn-white:hover{background:var(--on-indigo);color:var(--indigo)}
 .btn-glass{background:var(--glass);color:var(--on-strong)}
