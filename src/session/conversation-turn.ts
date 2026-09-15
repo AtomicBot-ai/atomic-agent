@@ -145,6 +145,13 @@ export interface RenderTurnOptions {
    * — applies the standard render cap).
    */
   inCurrentMacroTurn?: boolean;
+  /**
+   * File line an `os.fs.read` result starts at — its call's `offset`, or 1
+   * when the call had none. Lets a read that is cut at render time name the
+   * exact `offset` of the rest. Left unset when unknown (a negative offset,
+   * or the call is out of view), and the hint then carries no number.
+   */
+  readStartLine?: number;
 }
 
 /**
@@ -188,6 +195,13 @@ function renderToolResultBody(
     if (options.inCurrentMacroTurn === true) return turn.summary;
     return capSummary(turn.summary, TOOL_RESULT_HISTORY_CAP_CHARS);
   }
+  if (turn.tool === "os.fs.read") {
+    return capReadSummary(
+      turn.summary,
+      TOOL_RESULT_RENDER_CAP_CHARS,
+      options.readStartLine,
+    );
+  }
   return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
 }
 
@@ -206,6 +220,41 @@ function capSummary(summary: string, capChars: number): string {
   if (summary.length <= capChars) return summary;
   const keep = Math.max(1, capChars - 40);
   return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
+}
+
+/** Room left under the render cap for `capReadSummary`'s paging hint. */
+const READ_PAGING_HINT_RESERVE_CHARS = 260;
+
+/**
+ * `capSummary` for file reads. A read cut mid-line with only a char count
+ * sends the model back to read the same file again, which renders the same
+ * cut again — a fusion reviewer re-read a 4.5 KB `main.js` five times and
+ * never saw its last 486 chars. Cut on a line boundary instead and name the
+ * range to ask for next. A result with no usable line break keeps the plain
+ * character cut.
+ */
+function capReadSummary(
+  summary: string,
+  capChars: number,
+  startLine: number | undefined,
+): string {
+  if (summary.length <= capChars) return summary;
+  const budget = Math.max(1, capChars - READ_PAGING_HINT_RESERVE_CHARS);
+  const lastBreak = summary.lastIndexOf("\n", budget);
+  if (lastBreak < budget / 2) return capSummary(summary, capChars);
+  const shown = summary.slice(0, lastBreak);
+  const rest = summary.slice(lastBreak + 1).replace(/\r?\n$/, "");
+  const shownLines = shown.split("\n").length;
+  const hiddenLines = rest.split("\n").length;
+  const next =
+    startLine === undefined
+      ? "the line after the last one shown as `offset`"
+      : `offset: ${startLine + shownLines}`;
+  return (
+    `${shown}\n… [prompt shows the first ${shownLines} lines of this read; ` +
+    `${hiddenLines} more lines are not shown, and reading the same range again shows the same cut. ` +
+    `To see them, call os.fs.read with ${next} and limit: ${shownLines}]`
+  );
 }
 
 /**

@@ -143,6 +143,46 @@ describe("conversation-turn helpers", () => {
     expect(rendered).toContain("[rendering-truncated");
   });
 
+  it("cuts an oversized os.fs.read on a line boundary and names the range to read next", () => {
+    const fileLines = Array.from(
+      { length: 300 },
+      (_, i) => `const line${i + 1} = "${"x".repeat(24)}";`,
+    );
+    const summary = fileLines.join("\n");
+    const prefix = "tool_result[os.fs.read ok]: ";
+    const render = (readStartLine?: number) =>
+      renderTurnForPrompt(
+        toolResultTurn({ tool: "os.fs.read", status: "ok", summary, at: 5 }),
+        { readStartLine },
+      );
+
+    const fromTop = render(1);
+    const body = fromTop.slice(prefix.length).split("\n");
+    const hint = body.pop()!;
+    const shown = body.length;
+    expect(fromTop.length).toBeLessThanOrEqual(prefix.length + 4000);
+    expect(body).toEqual(fileLines.slice(0, shown));
+    expect(hint).toContain(`${300 - shown} more lines are not shown`);
+    expect(hint).toContain(`offset: ${shown + 1} and limit: ${shown}`);
+    expect(fromTop).not.toContain("[rendering-truncated");
+
+    expect(render(120)).toContain(`offset: ${120 + shown} and limit: ${shown}`);
+    expect(render()).toContain("the line after the last one shown as `offset`");
+  });
+
+  it("falls back to a character cut for an os.fs.read with no usable line break", () => {
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.fs.read",
+        status: "ok",
+        summary: "x".repeat(10_000),
+        at: 5,
+      }),
+      { readStartLine: 1 },
+    );
+    expect(rendered).toContain("[rendering-truncated");
+  });
+
   it("renders fresh os.http.request results uncapped", () => {
     const big = "x".repeat(10_000);
     const rendered = renderTurnForPrompt(
