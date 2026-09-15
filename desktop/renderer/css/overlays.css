@@ -136,6 +136,9 @@
 .toast-t{font-size:13.5px;line-height:18px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .toast-s{font-size:12.5px;line-height:17px;color:var(--ink-2);overflow-wrap:anywhere;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+/* r2: the dismiss cross, top right, sitting in the card's padding. */
+.toast .toast-x{flex:none;margin:-4px -10px 0 0;color:var(--ink-2)}
+.toast .toast-x:hover{color:var(--ink)}
 
 /* ---- Short windows ---- */
 @media (max-height:700px){

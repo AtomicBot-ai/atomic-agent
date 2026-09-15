@@ -258,9 +258,10 @@ try {
   w = await wizard();
   check('the local model list is up', /Recommended models/.test(w.head || ''), JSON.stringify(w.head));
 
-  step(4, 'the local list must have a MOUSE way back (it advertises `esc back`)');
-  check('the `esc back` hint is a live control', w.hints.some((h) => /esc/.test(h)), JSON.stringify(w.hints));
-  await app.clickText('back', { within: '.ob-hints', tags: 'button', settleMs: 1500 });
+  step(4, 'the local list must have a MOUSE way back');
+  // r2: no keycap hint strip any more — the action bar's Back is the way.
+  check('the action bar carries a Back button', w.buttons.some((b) => /^Back$/.test(b)), JSON.stringify(w.buttons));
+  await app.clickText('Back', { within: '.ob-foot', tags: 'button', settleMs: 1500 });
   w = await wizard();
   check('clicking it lands back on the backend choice', w.rows.length === 3 && w.rows.some((r) => /Cloud models/.test(r)),
     JSON.stringify(w.rows));

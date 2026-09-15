@@ -44,7 +44,6 @@ import {
   configSetWhole,
   explainConfigWriteFailure,
   readWholeConfig,
-  setRunMode,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
@@ -72,11 +71,16 @@ import {
 } from "./huggingface.js";
 import {
   activateProvider,
+  enterFusion,
   selectCloudModel,
+  selectFusionWorkerModel,
   selectLocalModel,
+  setFusionWorkers,
+  swapFusionLegs,
   switchBackend,
   type SwitchResult,
 } from "./backend-switch.js";
+import { fusionSmokeTest } from "./fusion-smoke.js";
 // Lane B — context before the first message (item 3): the no-trace smoke dir.
 import { mkdirSync, rmSync } from "node:fs";
 // Item 7 (settings surface)
@@ -139,6 +143,8 @@ const SMOKE = process.argv.includes("--smoke");
 const FORCE_ONBOARDING = process.argv.includes("--onboarding");
 /** `--models` drives the Models pane end to end and asserts config changed. */
 const MODELS_TEST = process.argv.includes("--models");
+/** `--smoke --smoke-fusion` runs only the run-mode (Fusion) checks — the whole smoke is ~30 minutes. */
+const FUSION_ONLY = process.argv.includes("--smoke-fusion");
 /**
  * r5 item 9, review fix (minor) — `--first-run-probe`.
  *
@@ -1397,12 +1403,28 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("cli:runMode", (_event, payload: unknown) => {
-    const p = (payload || {}) as { mode?: unknown; workers?: unknown };
-    if (p.mode !== "local" && p.mode !== "cloud" && p.mode !== "fusion") {
-      return { ok: false, error: "mode must be local, cloud or fusion" };
+  /* Run mode — Fusion. The TUI's RunModeOrchestrator writes, each through
+     applySwitch like every other route change (serve reads its config once).
+     Local and Cloud are cli:switchBackend, which leaves Fusion in its write. */
+  const providerIdOk = (v: unknown) => v === undefined || (typeof v === "string" && /^[\w.-]{1,48}$/.test(v));
+  ipcMain.handle("cli:enterFusion", async (_event, payload: unknown) => {
+    const p = (payload ?? {}) as { orchestratorProvider?: unknown; workerProvider?: unknown };
+    if (!providerIdOk(p.orchestratorProvider) || !providerIdOk(p.workerProvider)) {
+      return { ok: false, error: "orchestratorProvider and workerProvider must be provider ids" };
     }
-    return setRunMode(p.mode, typeof p.workers === "number" ? { workers: p.workers } : undefined);
+    return applySwitch(await enterFusion({
+      ...(typeof p.orchestratorProvider === "string" ? { orchestratorProvider: p.orchestratorProvider } : {}),
+      ...(typeof p.workerProvider === "string" ? { workerProvider: p.workerProvider } : {}),
+    }));
+  });
+  ipcMain.handle("cli:swapFusionLegs", async () => applySwitch(await swapFusionLegs()));
+  ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
+    if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
+    return applySwitch(await setFusionWorkers(workers));
+  });
+  ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "model id required" };
+    return applySwitch(await selectFusionWorkerModel(id));
   });
 
   ipcMain.handle("app:build", () => ({
@@ -1625,6 +1647,13 @@ async function smokeTest(): Promise<void> {
   }
   check("agent connected", state === "connected", `state=${state}`);
 
+  if (FUSION_ONLY) {
+    if (state === "connected") await fusionSmokeTest(js, check);
+    process.stdout.write(`SMOKE fusion-only failures=${fail.length}\n`);
+    app.exit(fail.length === 0 ? 0 : 1);
+    return;
+  }
+
   if (state === "connected") {
     // Item 6: boot state. Nothing has been opened, so no row may be drawn as
     // the current one — the old code pointed at the newest session without
@@ -1846,9 +1875,9 @@ async function smokeTest(): Promise<void> {
 
     await js<void>("window.__selOpen('backend')");
     const back = await js<{ rows: number; backend: string }>("window.__sel()");
-    // Three rows since the review fix put the TUI's `custom` back (cloud,
-    // local, custom — composer-switch-rows.ts backendRows).
-    check("selector: backend pane", back.rows === 3, `backend=${back.backend}, ${back.rows} rows`);
+    // Four rows: the review fix put the TUI's `custom` back, and round 2 added
+    // Fusion (cloud, local, custom, fusion — composer-switch-rows.ts backendRows).
+    check("selector: backend pane", back.rows === 4, `backend=${back.backend}, ${back.rows} rows`);
 
     await js<void>("window.__selTab('model')");
     await new Promise((r) => setTimeout(r, 9000));
@@ -2566,6 +2595,8 @@ async function smokeTest(): Promise<void> {
     // all asserted. Everything is restored in finally — the whole file,
     // the daemon state, and a fresh agent — so an assertion throw cannot
     // leave the route changed.
+    // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
+    await fusionSmokeTest(js, check);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
@@ -3790,7 +3821,7 @@ async function settingsTest(
     ["Session", "New session", "n"], ["Session", "Switch session…", "u"], ["Session", "Clear transcript", null],
     ["Session", "Context window", null], ["Session", "Show session id", null], ["Session", "New terminal window", null],
     ["Model", "Switch chat model…", "k"],
-    ["Run", "Coding mode…", "M"], ["Run", "Abort turn", "a"], ["Run", "Queued messages", null],
+    ["Run", "Where it runs…", null], ["Run", "Coding mode…", "M"], ["Run", "Abort turn", "a"], ["Run", "Queued messages", null],
     ["Run", "Steer the running turn", null], ["Run", "Expand all tool cards", null], ["Run", "Collapse all tool cards", null],
     ["Setup", "Theme…", "h"], ["Setup", "Mouse…", null], ["Setup", "Hide or show the sidebar", null], ["Setup", "Analytics", null],
     ["Setup", "Enable or disable a skill…", null], ["Setup", "Create, cancel or run a task…", null],
@@ -3861,10 +3892,11 @@ async function settingsTest(
   );
   check(
     "settings: Go, Observe and the debug pane left the tree",
-    /* 33 rows since `help.report` joined Help — the count is here to catch a
-       Go/Observe node creeping back in, so it moves with a deliberate
-       addition rather than pinning the menu's size forever. */
-    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 33,
+    /* 33 rows since `help.report` joined Help, 34 since Run › Where it runs…
+       (round 2, Fusion) — the count is here to catch a Go/Observe node
+       creeping back in, so it moves with a deliberate addition rather than
+       pinning the menu's size forever. */
+    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 34,
     JSON.stringify(gone),
   );
   const viaNode = await js<{ settings: boolean; pane: string | null }>(
@@ -5276,7 +5308,9 @@ async function hfAndDeltaTest(
     waitStrip.shown && /waiting/i.test(waitStrip.ann ?? "")
       && /attempt 5/.test(waitStrip.readout ?? "")
       && /next try \d+s/.test(waitStrip.readout ?? "")
-      && waitStrip.stop,
+      // r2 (DMG feedback): no Stop pill on the strip — the composer's own
+      // button is the one Stop while a turn runs.
+      && !waitStrip.stop,
     JSON.stringify(waitStrip),
   );
   check(
@@ -7074,7 +7108,9 @@ async function isolationAndSwitchTest(
   }
   const inSwx = (at: number) => swxRanges.some(([a, b]) => at > a && at < b);
   const stray = [...rendererSrc.matchAll(/SWXBR\.\w+\(/g)].filter((m) => !inSwx(m.index ?? 0)).map((m) => m[0]);
-  const onceOnly = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel"]
+  const onceOnly = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel",
+    // Run mode — Fusion: the four RunModeOrchestrator writes go through the same funnel.
+    "enterFusion", "swapFusionLegs", "fusionWorkers", "fusionWorkerModel"]
     // The lookbehind matters: `SWXBR.switchBackend(` contains the substring
     // `BR.switchBackend(`, so a naive count would find the funnel plus every
     // call site and this check would never go green.
@@ -7427,7 +7463,7 @@ async function backendSwitchTest(
         const localRow = customRows.rows.find((r) => r.id === "local");
         check(
           "backend: an external route reads as custom, not as the managed local one",
-          managedRows.backend === "local" && managedRows.rows.length === 3
+          managedRows.backend === "local" && managedRows.rows.length === 4 // cloud, local, custom, fusion
             && customRows.backend === "custom" && /custom/.test(customRows.chip) && !customRows.modelChip
             && !!custom && custom.active && custom.detail.includes("http://127.0.0.1:19199") && custom.detail.includes("Settings › LLM › External")
             && !!localRow && !localRow.active,
@@ -8070,12 +8106,16 @@ async function onboardingTest(
        None of that exists any more, and none of it is a regression: the
        visual system rules starfields out, and a card that has to be hurried
        is a card nobody reads. What the card owes the person in front of it is
-       what is asserted now — the mark, the product's name, one rule, WHICH
-       BUILD they are running, and a single input that leaves. */
+       what is asserted now — the mark, the product's name, one rule and a
+       single input that leaves.
+
+       r2 (DMG feedback): the build line and the keycap hint strip are gone
+       from every first-run screen, at the operator's request — so the card
+       has four children, and neither a build nor a strip is drawn. */
     let ob = await js<ObState>("window.__obOpen('intro')");
     await new Promise((r) => setTimeout(r, 300));
     const card = await js<{
-      canvas: boolean; head: boolean; word: string; rule: number; build: string;
+      canvas: boolean; head: boolean; word: string; rule: number; build: number; hints: number;
       dismissLabel: string; extras: number;
     }>(`(() => {
       const root = document.querySelector('#ob-intro');
@@ -8086,17 +8126,18 @@ async function onboardingTest(
         word: t('.ob-word'),
         rule: root && root.querySelector('.ob-rule')
           ? parseFloat(getComputedStyle(root.querySelector('.ob-rule')).borderTopWidth) : 0,
-        build: t('.ob-build'),
+        build: document.querySelectorAll('#onboarding .ob-build, #onboarding .ob-railbuild').length,
+        hints: document.querySelectorAll('#onboarding .ob-hints').length,
         dismissLabel: t('.ob-any'),
         extras: root ? root.querySelectorAll('.ob-introc > *').length : -1,
       };
     })()`);
     check(
-      "wizard: the title card is the mark, the name, one rule and the build — and nothing else",
+      "wizard: the title card is the mark, the name and one rule — no build line, no hint strip",
       ob.step === "intro" && !card.canvas && !card.head
         && card.word === "Atomic Agent" && card.rule === 3
-        && /^\d+\.\d+\.\d+ · /.test(card.build)
-        && card.dismissLabel.length > 0 && card.extras === 5,
+        && card.build === 0 && card.hints === 0
+        && card.dismissLabel.length > 0 && card.extras === 4,
       JSON.stringify(card),
     );
     check(
@@ -8595,11 +8636,13 @@ async function onboardingTest(
     await js<ObState>("window.__obOpen('local_download')");
     /* `cloudReady:true` on purpose (review fix): the TUI hides the
        on-screen `press c` BLOCK once a cloud provider is configured
-       (offerCloudMeanwhile) but keeps the KEY live, and this step's
-       footer names the chord unconditionally. The desktop had gated the
-       key too, so the hint strip advertised a chord that did nothing. */
+       (offerCloudMeanwhile) but keeps the KEY live. The desktop had gated
+       the key too, so a chord it advertised did nothing.
+       r2 (DMG feedback): the desktop no longer hides the card either — the
+       operator asked for the cloud card beside "skip the wait" on this
+       screen, provider or not. */
     await js<ObState>("window.__obSeed({cloudReady:true})");
-    const blockHidden = await js<number>(
+    const blockShown = await js<number>(
       "document.querySelectorAll('#onboarding .ob-offer.cloud').length",
     );
     await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
@@ -8607,11 +8650,11 @@ async function onboardingTest(
     const toCloud = await js<ObState>("window.__obKey('c')");
     const dlOnCloud = await js<Dl>("window.__dl()");
     check(
-      "wizard: `c` opens the cloud wizard mid-download even with the block hidden, and the strip keeps ticking",
-      blockHidden === 0 &&
+      "wizard: the cloud card stays offered with a provider configured, `c` opens the cloud wizard mid-download, and the strip keeps ticking",
+      blockShown === 1 &&
         toCloud.step === "cloud" && toCloud.resumeAfterCloud === "local_download" &&
         dlOnCloud.visible && dlOnCloud.label === "qwen3.5-4b",
-      `block=${blockHidden} step=${toCloud.step} resume=${toCloud.resumeAfterCloud} strip=${dlOnCloud.visible}/${dlOnCloud.label}`,
+      `block=${blockShown} step=${toCloud.step} resume=${toCloud.resumeAfterCloud} strip=${dlOnCloud.visible}/${dlOnCloud.label}`,
     );
     const back = await js<ObState>("window.__obKey('esc')");
     const dlBack = await js<Dl>("window.__dl()");
@@ -8915,9 +8958,12 @@ async function onboardingTest(
        while there is something to clear, and the TUI recomputes its footer
        on every keystroke. The desktop has no ambient render loop while the
        wizard is up, so the review found both missing until some unrelated
-       repaint happened. Asserted on the RENDERED strip — reading
-       obFooter() directly would pass without any repaint at all. */
-    const hintsEmpty = (await js<ObCopy>("window.__obCopy()")).hints;
+       repaint happened. Asserted on the RENDERED control — reading
+       obFooter() directly would pass without any repaint at all.
+       r2 (DMG feedback): the keycap strip is no longer drawn, so the chord
+       half is read from the step's chord table and the control half from
+       the screen. */
+    const hintsEmpty = await js<string>("window.__obFooterFor('local_hf_ref')");
     const clearEmpty = await js<number>(
       "document.querySelectorAll('#onboarding [data-obact=\"hf:clear\"]').length",
     );
@@ -8925,14 +8971,14 @@ async function onboardingTest(
       "(function(){const i=document.getElementById('ob-hf-ref'); i.value='u'; " +
         "i.dispatchEvent(new Event('input',{bubbles:true}));})()",
     );
-    const hintsTyped = (await js<ObCopy>("window.__obCopy()")).hints;
+    const hintsTyped = await js<string>("window.__obFooterFor('local_hf_ref')");
     const clearTyped = await js<number>(
       "document.querySelectorAll('#onboarding [data-obact=\"hf:clear\"]').length",
     );
     check(
       "wizard: the hugging face clear chord and control appear on the first keystroke",
       !hintsEmpty.includes("ctrl+l") && clearEmpty === 0 &&
-        hintsTyped.includes("ctrl+l") && hintsTyped.includes("clear") && clearTyped === 1,
+        hintsTyped.includes("ctrl+l") && clearTyped === 1,
       `empty=${JSON.stringify(hintsEmpty)}/${clearEmpty} typed=${JSON.stringify(hintsTyped)}/${clearTyped}`,
     );
     await js<ObState>("window.__obKey('esc')");
@@ -9751,6 +9797,41 @@ async function planHandoffTest(
       await js<unknown>(`window.__approvalRestore(${liveDeny.at})`);
     } else {
       check("plan bar session-switch check skipped: the agent has no other session", !other, "sessions=0");
+    }
+
+    // ---- turn order: the agent's reply is the last row of its turn ----
+    /* The operator's report on the 2026-09-15 DMG: "end agent results should
+       be the last message within the turn. At this moment approvals are the
+       last ones". The frames of a gated turn go through the real onChatEvent
+       and onApprovalEvent in wire order and are read while the turn is live;
+       the stored rows of the same turn go through openSession's own mapping.
+       Mutation-checked: with onApprovalEvent back on `S.log.push` the first
+       check fails (the approval lands under the reply). */
+    {
+      const live = await js<{ rows: string[]; replyLast: boolean }>("window.__turnOrderLive()");
+      check(
+        "turn order: an approval sits under the call that asked for it, and the reply is the turn's last row",
+        live.replyLast
+          && JSON.stringify(live.rows) === JSON.stringify(["tool:os.fs.write", "approval:os.fs.write", "tool:os.shell.run", "system", "assistant"]),
+        JSON.stringify(live),
+      );
+      const storedTurns = [
+        { kind: "user", text: "write it", at: 1 },
+        { kind: "assistant_tool_call", tool: "os.fs.write", args: { path: "a.txt" }, at: 2 },
+        { kind: "tool_result", tool: "os.fs.write", status: "ok", summary: "wrote", at: 3,
+          approvals: [{ verdict: "approved", category: "fs_write_workspace", at: 3 }] },
+        { kind: "assistant_tool_call", tool: "os.shell.run", args: { cmd: "ls" }, at: 4 },
+        { kind: "tool_result", tool: "os.shell.run", status: "error", summary: "approval denied", at: 5,
+          approvals: [{ verdict: "denied", category: "shell", at: 5 }] },
+        { kind: "assistant_reply", text: "Done.", at: 6 },
+      ];
+      const stored = await js<string[]>(`window.__turnsToLog(${JSON.stringify(storedTurns)})`);
+      check(
+        "turn order: a reopened chat puts each stored approval under its call and ends on the reply",
+        JSON.stringify(stored) === JSON.stringify(["user", "tool:os.fs.write", "approval:os.fs.write:approved:file write · workspace",
+          "tool:os.shell.run", "approval:os.shell.run:denied:shell command", "assistant"]),
+        JSON.stringify(stored),
+      );
     }
 
     // ---- the chords, and the failed-mode-change path they exercise ----

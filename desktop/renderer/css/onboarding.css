@@ -41,6 +41,9 @@
 .prow .nm{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .ep{font:400 12px/1.4 var(--font-mono);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .ann{flex:none}
+/* r2: the picked model's tick, at the right end of its row. */
+.prow-tick{flex:none;display:grid;place-items:center;width:22px;height:22px;color:var(--brand)}
+.prow-tick svg{width:15px;height:15px;stroke-width:2.2}
 .prow-more{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;margin:16px 0 8px 10px}
 
 /* ---------------- the layer ---------------- */
@@ -70,7 +73,6 @@
 .ob-introc .ob-markbig svg{display:block;width:96px;height:96px}
 .ob-introc .ob-word{position:relative;margin:24px 0 0;font:700 64px/1.05 var(--font-ui);letter-spacing:-.055em;color:var(--on-strong)}
 .ob-introc .ob-rule{position:relative;width:0;height:0;margin:0;border:0;border-top:3px solid transparent}
-.ob-introc .ob-build{position:relative;margin-top:17px;font:400 12.5px/1.4 var(--font-mono);letter-spacing:0;color:var(--on-indigo)}
 .ob-introc .ob-any{position:absolute;left:0;right:0;bottom:34px;font:400 13px/1.4 var(--font-ui);
   letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
 
@@ -108,7 +110,6 @@
 #onboarding .ob-stepmark.on .n{background:var(--on-strong);color:var(--indigo);box-shadow:none}
 #onboarding .ob-stepmark.done{color:var(--on-strong)}
 #onboarding .ob-stepmark.done .n{background:var(--glass-20);box-shadow:none}
-#onboarding .ob-railbuild{font:400 11px/1.4 var(--font-mono);letter-spacing:0;color:var(--indigo-muted)}
 
 /* ---------------- the step column ----------------
    Title, then a body that owns the flexible height (its lists scroll
@@ -283,15 +284,28 @@
    onboarding-mouse.mjs still measures it. */
 #onboarding .ob-foot .btn-g{padding:0 18px 0 14px;border:1px solid var(--bd-2)}
 #onboarding .ob-foot .btn-g:hover{background:var(--hover);color:var(--ink)}
-#onboarding .ob-hints{position:static;flex:none;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;
-  gap:2px 12px;min-height:40px;height:auto;padding:10px 0 0;border:0;background:transparent;font-size:12px;color:var(--ink-2)}
-#onboarding .ob-hints .hint{display:inline-flex;align-items:center;gap:6px;height:24px;margin:0;padding:0 6px;border-radius:8px;
-  font-size:12px;letter-spacing:0}
-#onboarding .ob-hints .hint-live{font:inherit;color:inherit;background:transparent;border:0;cursor:pointer;
-  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-#onboarding .ob-hints .hint-live:hover{background:var(--hover);color:var(--ink)}
-#onboarding .ob-hints .kc{margin:0}
-#onboarding .ob-hints .kc + .kc{margin-left:-2px}
+/* r2: the action bar is the last thing in the column now (no hint strip). */
+#onboarding .ob > .ob-foot{padding-bottom:28px}
+
+/* ---------------- the closing screen (r2) ----------------
+   A small comet crosses the middle of the column while setup settles: a
+   brand head and a tail that fades to nothing. Reduced motion holds it
+   still in the centre. */
+#onboarding .ob-body > .ob-comet{position:relative;flex:1 1 auto;min-height:220px;max-width:none;overflow:hidden;container-type:inline-size}
+#onboarding .ob-comet i{position:absolute;left:0;top:50%;width:150px;height:2px;margin-top:-1px;border-radius:var(--r-pill);
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--brand) 45%,transparent) 65%,var(--brand));
+  animation:ob-comet 2.6s cubic-bezier(.45,.05,.4,1) infinite;will-change:transform,opacity}
+#onboarding .ob-comet i::after{content:"";position:absolute;right:-4px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;
+  background:var(--brand);box-shadow:0 0 12px 3px color-mix(in srgb,var(--brand) 40%,transparent)}
+@keyframes ob-comet{
+  0%{transform:translate(-170px,22px) rotate(-5deg);opacity:0}
+  18%{opacity:1}
+  82%{opacity:1}
+  100%{transform:translate(calc(100cqw + 20px),-22px) rotate(-5deg);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  #onboarding .ob-comet i{animation:none;left:50%;transform:translateX(-50%) rotate(-5deg)}
+}
 
 /* ---------------- the download (ON-07, ON-08, ON-18) ----------------
    `.ob-dlprog` is the one box a progress sample repaints (refreshDlProgress);
@@ -332,6 +346,9 @@
 #onboarding .ob-row.ob-check:hover .box:not(.on){box-shadow:inset 0 0 0 1.5px var(--brand)}
 #onboarding .ob-check .d{font:400 12px/1.45 var(--font-mono)}
 #onboarding .ob-models > .ob-explain{padding:10px 12px;font-size:13.5px}
+/* r2: the local list while `atag models list` is out — a spinner, centred. */
+#onboarding .ob-loading{display:grid;place-items:center;min-height:140px}
+#onboarding .ob-loading .tk-spin{width:22px;height:22px}
 #onboarding .ob-explain.ob-help{font-size:12.5px;line-height:1.45;max-width:62ch;padding-left:4px}
 #onboarding .prow > .tk-ico{width:30px;height:30px}
 #onboarding .ob-h.ob-lede{font:400 15.5px/1.5 var(--font-ui);letter-spacing:0;color:var(--ink-2)}

@@ -537,6 +537,21 @@ const OB_TUI_AGENT_ID = 'atomic-tui';
    whether the key facts have landed at all: until they have, the rows say
    "checking keys…" rather than a "no API key" that is not known yet. */
 const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
+/* Run mode — Fusion. `live` is the fan-out's legs while a turn runs, the way
+   src/tui/fusion-live-workers.ts keeps them: ordered by first sight, finished
+   legs kept (done) until the turn ends. Declared here, before the first
+   render(), because composer() reads it. */
+const FZ = { live:[] };
+/* src/tui/run-mode/fusion-intro.ts FUSION_MARK: one model on top deciding,
+   several underneath doing. */
+const FUSION_MARK = [
+  '        ●  orchestrator',
+  '        │',
+  '   ┌────┼────┐',
+  '   ○    ○    ○  workers',
+].join('\n');
+const SWAP_NEEDS_FUSION = 'swap needs fusion — pick it first (`/runmode fusion`)';
+const RUN_MODE_USAGE = 'usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode status';
 
 /* ---- SELECTOR LANE — the custom route's model label ----
    selectPromptLlmMeta's external branch is
@@ -643,6 +658,11 @@ const SWXBR = {
   selectCloudModel: (id, model) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model); },
   selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
   codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
+  // Run mode — Fusion: the TUI's RunModeOrchestrator writes (main/backend-switch.ts).
+  enterFusion: (pins) => { SWX.route = 'enterFusion'; return BR.enterFusion(pins || {}); },
+  swapFusionLegs: () => { SWX.route = 'swapFusionLegs'; return BR.swapFusionLegs(); },
+  fusionWorkers: (n) => { SWX.route = 'fusionWorkers'; return BR.fusionWorkers(n); },
+  fusionWorkerModel: (id) => { SWX.route = 'fusionWorkerModel'; return BR.fusionWorkerModel(id); },
 };
 
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
@@ -689,6 +709,9 @@ const MENU_GROUPS = [
     {id:'model.chat', label:'Switch chat model…', chord:'k'},
   ]],
   ['Run', [
+    // menu-registry.ts run.type — a submenu there (Local 1 · Cloud 2 · Fusion 3);
+    // here it opens the composer's own "Where it runs" switch, as bare /runmode does.
+    {id:'run.type', label:'Where it runs…'},
     {id:'run.mode', label:'Coding mode…', chord:'M'},
     {id:'run.abort', label:'Abort turn', chord:'a'},
     {id:'run.queue', label:'Queued messages', na:true},
@@ -730,7 +753,7 @@ const MENU_ACTS = {
   'session.new':'session:new', 'session.switch':'session:switch', 'session.clear':'clear',
   'session.context':'context', 'session.id':'session:id',
   'model.chat':'selector:model',
-  'run.mode':'modes', 'run.abort':'stop', 'run.expand':'cards:expand', 'run.collapse':'cards:collapse',
+  'run.type':'runmode', 'run.mode':'modes', 'run.abort':'stop', 'run.expand':'cards:expand', 'run.collapse':'cards:collapse',
   'run.steer':'steer',
   'setup.theme':'palette:theme', 'setup.sidebar':'toggle:sidebar', 'setup.analytics':'settings:privacy',
   'setup.skill':'settings:skills', 'setup.task':'settings:tasks',
@@ -1085,6 +1108,7 @@ const P = {
   up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
+  home:'<path d="M2.5 7.25 8 2.75l5.5 4.5"/><path d="M4 6.1V13a.5.5 0 0 0 .5.5H7V10h2v3.5h2.5a.5.5 0 0 0 .5-.5V6.1"/>',
   gear:'<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
   cloud:'<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8.9 2.6 2.6 0 0 1-.4 5.1z"/>',
   cpu:'<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 6.5h3v3h-3zM6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/>',
@@ -1101,6 +1125,9 @@ const P = {
   filter:'<path d="M2.5 3.5h11L9.2 8.5v4l-2.4-1.2V8.5z"/>',
   atom:'<path d="M8 2.6v10.8M2.6 8h10.8"/><circle cx="8" cy="8" r="5.4"/>',
   bolt:'<path d="M9 2 3.5 9H8l-1 5 5.5-7H8z"/>',
+  // Fusion's mark: one node deciding, three doing (fusion-intro.ts draws the same tree).
+  fusion:'<circle cx="8" cy="3.6" r="1.6"/><circle cx="3.2" cy="12.6" r="1.3"/><circle cx="8" cy="12.6" r="1.3"/><circle cx="12.8" cy="12.6" r="1.3"/><path d="M8 5.2v6.1M3.2 11.3V9h9.6v2.3"/>',
+  swap:'<path d="M2.5 5.5h10M10 3l2.5 2.5L10 8M13.5 10.5h-10M6 8l-2.5 2.5L6 13"/>',
   play:'<path d="M5 3.5v9l7-4.5z"/>',
   pause:'<path d="M5.5 3.5v9M10.5 3.5v9"/>',
   trash:'<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>',
@@ -1237,7 +1264,7 @@ const SLASH = [
   ['quit','exit Atomic Agent'],
   ['debug','toggle debug pane (feed / logs / world …)'],
   ['chat','return to single-view chat mode'],
-  ['run','run mode — fusion orchestrates on cloud, executes locally','local|cloud|fusion [0-100]'],
+  ['runmode','where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`','local|cloud|fusion|swap|workers N|status'],
   ['observe','switch to the Observe section'],
   ['manage','switch to the Manage section'],
   ['feed','jump to the Observe → Feed tab'],
@@ -1272,6 +1299,7 @@ const CATS = [
   ['shell','shell command',4],
   ['script','skill script',4],
   ['proc_kill','process kill',4],
+  ['fusion_fanout','fusion · fan-out',4],
   ['browser_nonweb','browser · non-web URL',5],
   ['trust_config','agent trust config',5],
   ['other','uncategorised',5],
@@ -1306,6 +1334,7 @@ const PAL = [
     ['cloud','Switch chat model…','pull | use | status','⇧ ⌘ M','selector:model'],
   ]],
   ['Run', [
+    ['fusion','Where it runs…','/runmode','','runmode'],
     ['stop','Abort turn','','⌘ .','stop'],
     ['chevD','Expand all tool cards','','⌥ ⌘ E','cards:expand'],
     ['chevR','Collapse all tool cards','','⌥ ⌘ K','cards:collapse'],
@@ -1333,7 +1362,6 @@ const S = {
   q:'', cur:0, scope:null,
   slash:false, slashCur:0,
   draft:'',
-  mode:'fusion', share:40, dialShare:40,
   localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelQuery:'',
   level:3, grants:[],
   busy:false, pending:null, queued:[], phase:'', elapsed:0,
@@ -1530,7 +1558,7 @@ function renderSidebar() {
     // is not collapsed by the user (CSS hides it on the responsive rail too).
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
-        + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
+        + '<span class="sb-settings-ic">' + ic('home') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
         + (S.sidebar === 'rail' ? '' : keycaps('⌘,'))
       + '</button></div>'
@@ -2045,7 +2073,10 @@ function composer() {
      drivers and the ticker read is kept — `.statusstrip` (+ gated / waiting /
      appstatus), the waiting strip's `.ann` / `.readout` / `.ob-help`, the busy
      strip's FIRST `.tnum` (the 100 ms ticker writes the elapsed time into it),
-     `data-act="stop"` and `data-act="jump:appr"`. */
+     and `data-act="jump:appr"`.
+     r2 (DMG feedback): no Stop pill on the busy or waiting strip. The one
+     Stop is the composer's own button (sendButton: `.sendbtn.stop` whenever
+     S.busy || S.pending), and ⌘ . still aborts while a steer is drafted. */
   const status = S.pending
     ? '<div class="statusstrip gated">'
       + '<span class="tk-chip tk-chip--sm tk-chip--amber">' + ic('alert') + 'Waiting for your approval</span>'
@@ -2059,15 +2090,13 @@ function composer() {
       + '<span class="ann caution"><span class="ss-dot"></span>Waiting</span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
-      + '<span class="ss-grow"></span>'
-      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
+      + '</div>'
     : S.busy
     ? '<div class="statusstrip busy">'
       + '<span class="tk-chip tk-chip--sm tk-chip--blue ss-phase"><span class="threedot"><i></i><i></i><i></i></span>'
       + '<span class="ss-word">' + S.phase + '</span></span>'
       + '<span class="mono tnum ss-time">' + (S.elapsed / 10).toFixed(1) + 's</span>'
-      + '<span class="ss-grow"></span>'
-      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
+      + '</div>'
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
@@ -2077,20 +2106,16 @@ function composer() {
           ? '<span class="ann caution">' + ic('alert') + 'Caution</span>'
           : '<span class="ann critical">' + ic('alert') + 'Switch failed</span>')
       + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
-    /* F10 — where the app reports on itself. Lowest priority: a running turn,
-       a pending approval or a failed switch all matter more than the last
-       thing that changed. */
-    : APPSTATUS.text
-    ? '<div class="statusstrip appstatus">'
-      + '<span class="ann' + (APPSTATUS.tone === 'caution' ? ' caution' : ' lit') + '">'
-      + (APPSTATUS.tone === 'caution' ? 'Caution' : 'Ready') + '</span>'
-      + '<span class="readout">' + esc(APPSTATUS.text) + '</span></div>'
+    /* r2 (DMG feedback): the F10 "Ready · <last thing that changed>" strip is
+       no longer drawn under the transcript — it read as noise. APPSTATUS is
+       still kept (and logged) for diagnostics; only the strip is gone. The
+       strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
       '<div class="qchip"><span class="qlb">Queued</span><span class="qtx">' + esc(t) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
-  return '<div class="composerwrap">' + status + q
+  return '<div class="composerwrap">' + status + fzLiveHTML() + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
@@ -2121,9 +2146,9 @@ function composer() {
          (::before), so each chip's textContent stays exactly the id the
          drivers compare. Every chip is a direct child of `.cfoot`, so the
          popovers can anchor to `#composer .cfoot [data-sel-open=…]`. */
-      + '<div class="cfoot">'
+      + '<div class="cfoot' + (selHasKind('workers') ? ' is-fusion' : '') + '">'
         + '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend">'
-          + ic(backend === 'cloud' ? 'cloud' : backend === 'custom' ? 'server' : 'laptop')
+          + ic(backend === 'cloud' ? 'cloud' : backend === 'custom' ? 'server' : backend === 'fusion' ? 'fusion' : 'laptop')
           + '<span class="cval" data-cap="Backend">' + esc(backend) + '</span>' + ic('chevD', 'chev') + '</button>'
         // SELECTOR LANE: the visible control set follows composerSwitchKindsFor,
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
@@ -2139,6 +2164,8 @@ function composer() {
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
         + modelChipHtml()
+        // Run mode — Fusion: the ⇄ between the two seats and the fourth control, `workers`.
+        + fzChipsHtml()
         + '<span class="cgrow"></span>'
         + contextChip()
         + codingModeChip()
@@ -2148,7 +2175,7 @@ function composer() {
 
 /** ' is-open' while the popover a composer chip opens is up (presentation only). */
 function cchipOpen(kind) {
-  if (kind === 'backend' || kind === 'provider' || kind === 'model') {
+  if (kind === 'backend' || kind === 'provider' || kind === 'model' || kind === 'workers') {
     return SEL.open && !OB.open && SEL.kind === kind ? ' is-open' : '';
   }
   return S.overlay === kind ? ' is-open' : '';
@@ -2703,33 +2730,25 @@ function paletteHTML() {
     });
   }
   const sc = S.scope ? SCOPES[S.scope] : null;
-  const dial = (sc && sc.dial) ? '<div style="padding:12px 16px;box-shadow:inset 0 1px 0 var(--line-soft)">'
-      + '<div class="hstack" style="margin-bottom:6px"><span class="cap">cloud share</span>'
-      + '<span class="mono tnum" style="margin-left:auto">' + S.dialShare + '</span></div>'
-      + '<input class="slider" type="range" min="0" max="100" step="5" value="' + S.dialShare + '" id="dial">'
-      + '<div class="cap" style="margin-top:4px">' + esc(shareBlurb(S.dialShare)) + '</div></div>' : '';
   return '<div class="scrim palscrim" data-close="1"><div class="pal" role="dialog" aria-label="Command palette">'
     + '<div class="palin">' + ic('search')
       + (sc ? '<span class="palscope tk-chip tk-chip--blue tk-chip--sm">' + esc(sc.label)
         + '<span class="palscope-x" data-popscope="1" role="button" title="Back to all commands" aria-label="Back to all commands">' + ic('x') + '</span></span>' : '')
       + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
       + keycaps('esc') + '</div>'
-    + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>' + dial
+    + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>'
     + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'
       + '<span>' + keycaps('↑') + keycaps('↓') + ' Move</span>'
       + (S.scope ? '<span>' + keycaps('⌫') + ' Back</span>' : '')
       + '<span style="margin-left:auto">' + PAL.reduce((n, g) => n + g[1].length, 0) + ' commands</span></div>'
     + '</div></div>';
 }
-function shareBlurb(v) {
-  if (v === 0) return 'everything local';
-  if (v === 100) return 'everything cloud';
-  return 'cloud handles steps scoring ≥ ' + (100 - v);
-}
 
 /* ---------------- slash completion ---------------- */
 function slashMatches() {
-  const q = S.draft.replace(/^\//, '').toLowerCase();
+  // The command word only: with arguments typed (`/runmode status`) the list
+  // keeps showing that command and its hint instead of "no matching command".
+  const q = S.draft.replace(/^\//, '').toLowerCase().split(/\s+/)[0];
   if (!q) return SLASH;
   return SLASH.filter(([n, d]) => n.startsWith(q)) .concat(SLASH.filter(([n, d]) => !n.startsWith(q) && n.includes(q)));
 }
@@ -3096,7 +3115,7 @@ function shortcutsSheet() {
     ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
-    ['Cycle run mode','⌃ R',''],['Approve / deny / abort','Y N ⎋',''],
+    ['Approve / deny / abort','Y N ⎋',''],
     ['Settings','⌘ ,','Ctrl ,'],['Shortcuts','⌘ /',''],
   ];
   return sheet('Keyboard shortcuts',
@@ -3537,7 +3556,10 @@ function renderToasts() {
     return '<div class="toast' + (bad ? ' bad' : '') + '">'
       + '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
       + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
-      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span></div>';
+      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
+      // r2: every toast can be dismissed before its 6 s are up. Icon only, so
+      // the toast's textContent (what the drivers read) is unchanged.
+      + '<button class="iconbtn sm toast-x" data-act="toastx:' + t.id + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   }).join('');
 }
 function toast(t, s, kind) {
@@ -3584,6 +3606,7 @@ function act(a) {
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   if (a === 'close') { close(); render(); return; }
+  if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -3616,18 +3639,17 @@ function act(a) {
     if (BR && BR.openExternal) BR.openExternal(url);
     return;
   }
+  /* Run mode — every route to it lands here or in fzSlash: the native menu's
+     Run › Where it runs…, the Settings › LLM cards and worker count, the
+     composer's ⇄, and the palette row. One switch path per verb, shared with
+     the composer's Backend control (selChooseBackend / selChooseFusion). */
+  if (a === 'runmode') { close(); S.settings = null; openSelector('backend'); return; }
   if (a.startsWith('runmode:')) {
     const rest = a.slice('runmode:'.length);
-    const workers = rest.startsWith('workers:') ? Number(rest.slice('workers:'.length)) : null;
-    const cur = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.runMode) || {};
-    const mode = workers === null ? rest : (cur.mode || 'fusion');
-    if (!BR || !BR.setRunMode) return;
-    BR.setRunMode(mode, workers === null ? undefined : workers).then(async (res) => {
-      if (!res || !res.ok) { LLMP.msg = {text: (res && res.error) || 'could not set the run mode'}; render(); return; }
-      await refreshLiveConfig();
-      LLMP.msg = {text: 'Run mode: ' + mode + (workers === null ? '' : ' · ' + workers + ' workers'), restart: true};
-      render();
-    });
+    if (rest === 'swap') { fzSwap(); return; }
+    if (rest === 'status') { fzStatus(); return; }
+    if (rest.startsWith('workers:')) { fzSetWorkers(Number(rest.slice('workers:'.length))); return; }
+    if (rest === 'local' || rest === 'cloud' || rest === 'fusion') { fzActivateBackend(rest); return; }
     return;
   }
   /* F6 — both ways out of the model step run the SAME save path: wizNext
@@ -3655,8 +3677,6 @@ function act(a) {
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
   if (a === 'sel:savePreset') { selSavePreset(); return; }
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
-  if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
-  if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
   if (a === 'session:new') { close(); S.log = []; S.history = []; S.agentSession = null; S.busy = false;
                              forgetApprovalCard();   // item 6 review fix: a fresh thread does not answer the open gate — the other chat's dot keeps saying it is waiting
                              clearPlanOffer();   // Item 1: the plan belonged to the thread being left (see openSession)
@@ -3790,7 +3810,6 @@ function act(a) {
                            else document.documentElement.setAttribute('data-theme', v);
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
                            render(); return; }
-  if (k === 'mode')      { S.mode = v; if (S.overlay === 'palette') close(); render(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
@@ -3836,7 +3855,7 @@ function act(a) {
                            PREFS.seen['task:' + v] = Math.max(PREFS.seen['task:' + v] || 0, (t && t.updatedAt) || 0, Date.now());
                            savePrefs();
                            close(); act('settings:tasks'); tkFocusTask(v); return; }
-  if (k === 'scope')     { S.scope = v; S.q = ''; S.cur = 0; S.dialShare = S.share; render(); return; }
+  if (k === 'scope')     { S.scope = v; S.q = ''; S.cur = 0; render(); return; }
   if (k === 'taskfilter'){ S.taskFilter = v; render(); return; }
   if (k === 'skillstab') { S.skillsTab = v; render(); return; }
   if (k === 'memtab')    { S.memTab = v; render(); return; }
@@ -3912,8 +3931,10 @@ async function steerOrQueueRun(text, post) {
     // did take it, and reopening that chat reads it back from the store.
     if (here) {
       STEER.mine.push(text);
+      // Under the steer it explains, inside the turn — appended, it landed
+      // under the reply the turn went on to write (see placeInLiveTurn).
       pushSteerEntry(text);
-      S.log.push({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+      placeInLiveTurn({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
       render();
     }
     return;
@@ -3930,14 +3951,14 @@ async function steerOrQueueRun(text, post) {
       if (e) { e.value = text; autosize(e); }
       ctxDraftChanged();
     }
-    if (here) S.log.push({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
+    if (here) placeInLiveTurn({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
     render(); return;
   }
   S.queued.splice(STEER.ahead, 0, text);
   STEER.ahead += 1;
   // The queue tray is window-global and shows the parked text either way;
   // the sentence explaining it is only true in the chat it was typed in.
-  if (here) S.log.push({id:nid(), k:'system', text: asked
+  if (here) placeInLiveTurn({id:nid(), k:'system', text: asked
     ? 'steering the running turn — it cannot take this one, so it runs as the next turn'
     : 'the running turn has not reported its session yet — it could not be asked, so this runs as the next turn'});
   render();
@@ -4123,11 +4144,7 @@ function runSlash(parts) {
     theme:'palette:theme', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
     session:'session:id', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
     expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar'};
-  if (name === 'run') {
-    if (parts[1]) { S.mode = parts[1]; if (parts[2]) { S.share = Math.max(0, Math.min(100, +parts[2])); S.dialShare = S.share; } render(); toast('Run type ' + S.mode); }
-    else act('runmode');
-    return;
-  }
+  if (name === 'runmode') { fzSlash(parts.slice(1).join(' ')); return; }
   // Item 7: `/privacy [analytics <verb>]` and `/analytics <verb>` as
   // slash-command-handler.ts dispatchPrivacySub / dispatchAnalyticsSub.
   const rest = parts.slice(1).filter(Boolean);
@@ -4270,7 +4287,17 @@ document.addEventListener('click', (e) => {
      when the flow is closed, and the composer's popover is the other place
      this step renders. */
   const wizModel = e.target.closest && e.target.closest('[data-wizmodel]');
-  if (wizModel) { WIZ.modelPick = wizModel.dataset.wizmodel; render(); return; }
+  if (wizModel) {
+    /* The first-run layer has its own click listener for these rows. Both
+       listeners sit on document, so without this the double click fired
+       "Use this model" twice while the flow was open (caught by a driven
+       double click, not by a single one: picking twice is harmless). */
+    if (OB.open) return;
+    WIZ.modelPick = wizModel.dataset.wizmodel;
+    // r2: double click = Use this model (see the first-run handler).
+    if (e.detail >= 2) { act('wiz:model'); return; }
+    render(); return;
+  }
   if (wizKind) {
     /* A key belongs to the provider it was typed for. WIZ.apiKey survived a
      Back and a different pick, so the field came up pre-filled with the
@@ -4351,7 +4378,6 @@ document.addEventListener('input', (e) => {
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
-  if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
 });
 
 
@@ -4852,12 +4878,6 @@ function refreshPalette() {
   const l = $('#pallist'); if (l && !S.q) l.scrollTop = scroll;
   const cur = $('#overlays').querySelector('.palrow.on'); if (cur) cur.scrollIntoView({block:'nearest'});
 }
-function refreshDial() {
-  const wrap = $('#dial') ? $('#dial').parentElement : null;
-  if (!wrap) return;
-  const n = wrap.querySelector('.mono.tnum'); if (n) n.textContent = S.dialShare;
-  const c = wrap.querySelector('.cap'); if (c && S.mode === 'fusion') c.textContent = shareBlurb(S.dialShare);
-}
 
 function flatPalRows() {
   const rows = palRows();
@@ -4961,12 +4981,6 @@ document.addEventListener('keydown', (e) => {
     if (k === 'Enter') { e.preventDefault(); submit(); return; }
   }
   if (mod && e.shiftKey && k.toLowerCase() === 'y') { e.preventDefault(); act('toggle:console'); return; }
-  if (e.ctrlKey && !e.metaKey && k.toLowerCase() === 'r' && !e.shiftKey) {
-    e.preventDefault();
-    const order = ['local','cloud','fusion'];
-    S.mode = order[(order.indexOf(S.mode) + 1) % 3];
-    render(); toast('Run type ' + S.mode); return;
-  }
 
   // palette
   if (S.overlay === 'palette') {
@@ -4997,10 +5011,17 @@ document.addEventListener('keydown', (e) => {
   }
 
   // slash completion owns the arrows while open
-  if (S.slash && e.target.id === 'entry') {
+  /* A line that already carries arguments (`/runmode status`, `/model use x`)
+     is a command to RUN, not a name to complete: Enter used to be swallowed
+     here — accept had no row to accept — so no slash command with arguments
+     could be sent with the keyboard at all. It falls through to submit(), as
+     does a line that matches no command (submit says "unknown command"). */
+  const slashArgs = /^\/\S+\s+\S/.test(S.draft);
+  if (S.slash && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
     const m = slashMatches();
     if (k === 'ArrowDown') { e.preventDefault(); S.slashCur = Math.min(S.slashCur + 1, m.length - 1); refreshSlash(); return; }
     if (k === 'ArrowUp')   { e.preventDefault(); S.slashCur = Math.max(S.slashCur - 1, 0); refreshSlash(); return; }
+    if (k === 'Tab' && slashArgs) { e.preventDefault(); return; }   // completing the name would drop the arguments
     if (k === 'Tab' || (k === 'Enter' && !e.shiftKey)) { e.preventDefault(); if (m[S.slashCur]) acceptSlash(m[S.slashCur][0]); return; }
     if (k === 'Escape') { e.preventDefault(); S.slash = false; render(); return; }
   }
@@ -5117,7 +5138,6 @@ async function loadResources() {
     const provider = (LIVE_CONFIG.llm && (LIVE_CONFIG.llm.providers || [])
       .find((p) => p.id === LIVE_CONFIG.llm.activeTextProvider)) || null;
     if (provider) {
-      S.mode = provider.kind === 'llama-server' ? 'local' : 'cloud';
       if (provider.defaultChatModel) S.cloudModel = provider.defaultChatModel;
     }
     const managed = LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
@@ -5281,6 +5301,7 @@ function startLiveTurn(text) {
   PLAN.startedMode = MODE.known ? currentMode() : null;
   S.history.push({role:'user', content:text});
   S.reasonId = null;
+  FZ.live = [];
   S.busy = true; S.stick = true; S.elapsed = 0; S.phase = 'Thinking';
   const streaming = {id:nid(), k:'assistant', text:''};
   S.streamId = streaming.id;
@@ -5453,6 +5474,26 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  /* Run mode — Fusion. One leg of a fan-out started, ran a tool, ended or was
+     cut short (`event: fusion_worker`, agent ≥ desktop/fusion-stream). The
+     live list under the composer says what is happening; the transcript
+     keeps what happened, one line per event in the TUI's feed words
+     (format-fusion-worker-line.ts), placed before the reply like tool cards. */
+  if (ev.kind === 'fusion_worker') {
+    const p = ev.payload || {};
+    const e = {
+      taskId: String(p.task_id || ''), title: String(p.title || ''), phase: String(p.phase || ''),
+      role: p.role === 'orchestrator' ? 'orchestrator' : 'worker',
+      model: typeof p.model === 'string' ? p.model : undefined,
+      tool: typeof p.tool === 'string' ? p.tool : undefined,
+      stepCount: typeof p.step_count === 'number' ? p.step_count : undefined,
+      summary: typeof p.summary === 'string' ? p.summary : undefined,
+    };
+    FZ.live = fzReduceLive(FZ.live, e);
+    if (item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
+    render();
+    return;
+  }
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
     if (!text || !item) return;   // review fix: no streaming item on screen, nothing to splice against
@@ -5525,6 +5566,7 @@ function onChatEvent(ev) {
     if (ev.kind === 'finish') return;
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
+    FZ.live = [];   // the fan-out readout belongs to the turn that is over
     /* Item 1 (plan hand-off): finishTurn's rule, restated —
        src/tui/reducer-helpers.ts: "if (state.codingMode !== 'plan' || outcome
        !== 'completed') return next; return { ...next, planHandoff: true }".
@@ -5601,6 +5643,51 @@ function onChatEvent(ev) {
   }
 }
 
+/* Turn order — "end agent results should be the last message within the
+   turn" (operator, 2026-09-15 DMG).
+
+   startLiveTurn pushes the streaming assistant item the moment a turn opens,
+   and every delta lands in THAT item. Tool cards, reasoning and steers were
+   already spliced in ahead of it; the approval card and the notices raised
+   while the turn runs were S.log.push()ed after it, so the finished turn read
+   user → tools → reply → approvals: the reply sat above the approvals it came
+   after, and the transcript ended on a receipt instead of the agent's answer.
+
+   A row raised mid-turn therefore goes into the turn, before the streaming
+   item. `afterTool` puts an approval under the newest card of the call that
+   asked for it (after any receipts already hanging off that card), which is
+   also where a reopened chat puts it (sessionTurnsToLog). Anything that is not
+   this window's live turn — no stream on screen, or a request raised by
+   another session — is appended exactly as before. */
+function placeInLiveTurn(entry, opts) {
+  const o = opts || {};
+  const item = S.streamId ? S.log.find((m) => m.id === S.streamId) : null;
+  const ours = !o.sessionId || !S.agentSession || o.sessionId === S.agentSession;
+  if (!item || !S.turnId || !ours) { S.log.push(entry); return; }
+  let at = S.log.indexOf(item);
+  if (o.afterTool) {
+    for (let i = at - 1; i >= 0; i--) {
+      const c = S.log[i];
+      if (c.k === 'user' && !c.steered) break;   // the turn's own question: stop
+      if (c.k === 'tool' && c.name === o.afterTool) {
+        at = i + 1;
+        while (at < S.log.length && S.log[at] !== item && (S.log[at].k === 'approval' || (S.log[at].k === 'system' && S.log[at].apprNote))) at++;
+        break;
+      }
+    }
+  }
+  S.log.splice(at, 0, entry);
+}
+
+/** A notice about an approval card, directly under that card (or appended when the card is gone). */
+function placeAfterRow(row, entry) {
+  const at = row ? S.log.indexOf(row) : -1;
+  if (at < 0) { placeInLiveTurn(entry); return; }
+  let i = at + 1;
+  while (i < S.log.length && S.log[i].k === 'system' && S.log[i].apprNote) i++;
+  S.log.splice(i, 0, entry);
+}
+
 function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
@@ -5626,7 +5713,7 @@ function onApprovalEvent(payload) {
   };
   if (req.sessionId) PENDING_APPROVALS.set(req.sessionId, req.approvalId);
   S.pending = req;
-  S.log.push(req);
+  placeInLiveTurn(req, {afterTool: req.tool, sessionId: req.sessionId});
   S.apprFocused = false;
   S.busy = false;
   render();
@@ -5669,7 +5756,7 @@ const CATEGORY_LABEL = {
   fs_write_workspace:'file write · workspace', fs_write_home:'file write · home',
   fs_trash:'move to Trash', http:'HTTP request', shell:'shell command',
   script:'skill script', proc_kill:'process kill', browser_nonweb:'browser · non-web URL',
-  trust_config:'agent trust config', other:'uncategorised',
+  trust_config:'agent trust config', fusion_fanout:'fusion · fan-out', other:'uncategorised',
 };
 
 function answerLive(req, key) {
@@ -5679,7 +5766,7 @@ function answerLive(req, key) {
   req.state = approve ? 'approved' : 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
   if (key === 's' || key === 'a') {
-    S.log.push({id:nid(), k:'system',
+    placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
       text:'granted once — session-wide grants are not exposed by the agent\u2019s HTTP API yet, so this behaved as “allow once”.'});
   }
   /* r6 (human-scenario round): the window has to go back to LOOKING busy.
@@ -5704,7 +5791,7 @@ function answerLive(req, key) {
     S.phase = approve ? (req.tool || 'Working') : 'Thinking';
   }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
-    if (res && !res.ok) S.log.push({id:nid(), k:'system', text:'could not resolve the approval: ' + esc(res.error || '')});
+    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text:'could not resolve the approval: ' + esc(res.error || '')});
     render();
   });
   if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
@@ -5764,7 +5851,7 @@ async function denyByProse(req, text, post) {
     S.busy = true;
     S.phase = 'Thinking';
   }
-  S.log.push({id:nid(), k:'system', text: landed
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text: landed
     ? 'that call was denied with your message as the reason'
     : 'could not deny that call with your message: ' + esc(why)});
   render();
@@ -5854,6 +5941,9 @@ function activeModel() {
      word for ~10s. Paint nothing instead; the config replaces it the moment
      the switch lands. */
   if (SWX.want && SWX.want.backend && SWX.want.backend !== liveBackend()) return '';
+  /* Run mode — Fusion: the model control addresses the orchestrator leg
+     (composer-switch-rows.ts modelRows; the left half of selectPromptLlmMeta). */
+  if (BR && S.live.state === 'connected' && selBackend() === 'fusion') return fzLegLabel(rmNow(), 'orchestrator');
   if (BR && S.live.state === 'connected') {
     // Lane B — backend switch: the TUI's selectPromptLlmMeta. A cloud
     // provider shows its chatModel (defaultChatModel ?? model) and,
@@ -5881,7 +5971,7 @@ function activeModel() {
     if (managed.modelId) return managed.modelId;
     return '';
   }
-  return S.mode === 'local' ? S.localModel : S.cloudModel;
+  return liveBackend() === 'local' ? S.localModel : S.cloudModel;
 }
 
 /* ============================================================
@@ -6320,29 +6410,9 @@ function obFooter() {
 }
 
 
-/** The hint strip, split back into chords and sentences by OB_KEY_TOKEN. */
-function obHintsHTML() {
-  const footer = obFooter();
-  if (!footer) return '';
-  const hints = footer.split(/\s{3,}/).filter(Boolean).map((chunk) => {
-    const words = chunk.split(' ');
-    let n = 0;
-    while (n < words.length && OB_KEY_TOKEN.test(words[n])) n += 1;
-    const caps = words.slice(0, n).join(' ');
-    const rest = words.slice(n).join(' ');
-    const body = keycaps(caps) + (rest ? '<span>' + esc(rest) + '</span>' : '');
-    /* r6 cloud item 1 — `esc back` is the ONLY way off the local-model
-       list, and the strip drew it as dead text. A mouse-only operator who
-       opened `Local models` to look at the picks could not get back to
-       `Cloud models` at all: no Back control on that screen, no clickable
-       hint, and the choose screen unreachable. The chord is unambiguous
-       on every step that advertises it, so the hint becomes a real
-       button routed through the same key router the keyboard uses. */
-    if (caps === 'esc') return '<button class="hint hint-live" data-obact="key:esc">' + body + '</button>';
-    return '<span class="hint">' + body + '</span>';
-  }).join('');
-  return '<div class="ob-hints">' + hints + '</div>';
-}
+/* r2 (DMG feedback): the hint strip is no longer drawn. obFooter stays as the
+   step → chord table (the smoke reads it through __obFooterFor); every chord
+   it names is also a button on the action bar or a card in the body. */
 
 /** The header lockup (onboarding-header.tsx:42-72), rebuilt as the top of a
  *  checklist card: the product's own name, the two phases with the current one
@@ -6381,14 +6451,12 @@ function obRailHTML() {
     return '<span class="ob-stepmark' + (state ? ' ' + state : '') + '">'
       + '<span class="n">' + (state === 'done' ? ic('check') : p.n) + '</span> ' + esc(p.label) + '</span>';
   }).join('') + '</div>';
-  const build = obBuildLine();
   return '<aside class="ob-rail">'
     + '<span class="ob-orb ob-orb-a" aria-hidden="true"></span><span class="ob-orb ob-orb-b" aria-hidden="true"></span>'
     + '<div class="ob-lock"><span class="ob-mark">' + MARK_COLOR + '</span>'
       + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span></div>'
     + '<p class="ob-statement">' + esc(statement) + '</p>'
     + phases
-    + (build ? '<span class="ob-railbuild">' + esc(build) + '</span>' : '')
     + '</aside>';
 }
 
@@ -6803,25 +6871,19 @@ function obIntroHTML() {
      `.ob-introc` keeps exactly its five children — the glow belongs to the
      card, not the column — and the rule stays as a spacer: the smoke reads
      both, and Soft Tactile draws no 3px rules (see onboarding.css). */
-  const build = obBuildLine();
+  /* r2 (DMG feedback): the build line is gone from the card and the rail —
+     `.ob-introc` now holds four children. The build is still in Settings
+     and on the empty chat's card. */
   return '<div id="ob-intro">'
     + '<span class="ob-glow" aria-hidden="true"></span>'
     + '<div class="ob-introc">'
       + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="96" height="96"') + '</span>'
       + '<h1 class="ob-word">' + esc(OB_COPY.wordmark) + '</h1>'
       + '<hr class="ob-rule">'
-      + (build ? '<span class="ob-build">' + esc(build) + '</span>' : '')
       + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
     + '</div></div>';
 }
 
-/** Which build this is — `0.5.5 · macOS arm64` — for the title card and the rail. */
-function obBuildLine() {
-  const b = BUILD || {};
-  return b.version
-    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
-    : '';
-}
 
 
 /* ============================================================
@@ -7234,7 +7296,11 @@ function obLocalPickHTML() {
           obModelRowLabel(model, best && model.id === best.id),
           obModelRowDetail(model), '', '', modelMark(model.id));
       }).join('')
-    : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : obNothingFitsLine()) + '</div>';
+    /* r2: while `atag models list` is out, a spinner where the list will be
+       rather than a sentence about reading a catalogue. */
+    : OB.busy
+      ? '<div class="ob-loading" role="status" aria-label="Loading models"><span class="tk-spin" aria-hidden="true"></span></div>'
+      : '<div class="ob-explain">' + obNothingFitsLine() + '</div>';
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
     esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
@@ -7387,17 +7453,18 @@ function obUrlHTML(kind) {
 function obDownloadHTML() {
   const failed = dlStatus() === 'failed';
   const label = obModelLabel();
-  // offerCloudMeanwhile: "hidden once a cloud provider is configured —
-  // nothing left to offer" (:110-111).
-  const offerCloud = !OB.cloudReady;
   /* r6 UX: these two ARE this screen's buttons — the only way off it short
      of waiting — so they are cards a mouse can see, not the terminal's `┃`
      rule around a paragraph. The copy and the `c` / `s` chords are the
-     TUI's, unchanged. */
-  const cloud = offerCloud
-    ? obOfferHTML(' cloud', 'key:c', '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
-        failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey)
-    : '';
+     TUI's, unchanged.
+
+     r2 (DMG feedback): the cloud card is ALWAYS offered, like the skip card
+     beside it. The TUI hides the block once a cloud provider exists
+     (offerCloudMeanwhile), but its `c` chord stays live — and on a machine
+     that already had one the screen showed a single way off it. Adding a
+     cloud model from here is a real choice either way. */
+  const cloud = obOfferHTML(' cloud', 'key:c', '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+    failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey);
   const skip = obOfferHTML('', 'key:s', '<span class="tk-ico">' + ic('arrowR') + '</span>',
     failed ? [OB_COPY.skipOfferFailed] : OB_COPY.skipOffer, OB_COPY.skipOfferKey);
   return '<div class="ob-explain">'
@@ -7674,6 +7741,8 @@ function wizModelStepHTML(withFoot) {
           + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
           + '<span class="ep">' + esc(m.id) + '</span></span>'
           + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
+          // r2: the picked row carries a tick on the right; a double click uses it.
+          + (m.id === WIZ.modelPick ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
           + '</button>').join('')
     + '</div></div>'
     + (rows.length > shown.length
@@ -7878,7 +7947,7 @@ function obFootHTML() {
 function obHTML() {
   if (OB.step === 'intro') {
     return '<div id="onboarding" class="ob-intro-layer" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
-      + obIntroHTML() + obHintsHTML() + '</div>';
+      + obIntroHTML() + '</div>';
   }
   let body = '';
   if (OB.step === 'choose') body = obChooseHTML();
@@ -7894,6 +7963,10 @@ function obHTML() {
   else if (OB.step === 'import_pick') body = obImportPickHTML();
   else if (OB.step === 'import_preview') body = obImportReportHTML(false);
   else if (OB.step === 'import_done') body = obImportReportHTML(true);
+  /* r2 (DMG feedback): the closing screen keeps its title and draws a small
+     comet crossing the middle of the column instead of a second, smaller
+     "setting up…" line. */
+  else if (OB.step === 'finished') body = '<div class="ob-comet" role="status" aria-label="Setting up"><i></i></div>';
   else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
@@ -7904,11 +7977,14 @@ function obHTML() {
   /* r6 UX: it IS a modal — the app's chrome is behind it and cannot be
      operated — so it says so, and Tab is trapped inside it to match.
      Soft Tactile: the indigo rail on the left; on the right the title, a
-     body that owns the flexible height, the action bar and the hint strip. */
+     body that owns the flexible height and the action bar.
+     r2 (DMG feedback): no keycap hint strip under the action bar. Every verb
+     it named is a button on the bar or a card in the body (r6), and the
+     chords still work. */
   return '<div id="onboarding" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
     + obRailHTML()
     + '<div class="ob">' + obHeadHTML() + '<div class="ob-body">' + body + err + '</div>'
-    + obFootHTML() + obHintsHTML() + '</div></div>';
+    + obFootHTML() + '</div></div>';
 }
 
 /* ============================================================
@@ -8698,8 +8774,16 @@ async function obReadiness() {
 async function obSettle() {
   if (OB.settling || !BR) return;
   OB.settling = true;
+  /* The flow this settle belongs to. A settle outlives its flow when the
+     flow is closed and opened again while one of the awaits below is out
+     (the menu's `onboarding`, or a driven re-stage), and it then closed the
+     NEW flow or raised a step on it. Found by onboarding-mouse.mjs after the
+     round-2 merges made the readiness reads slower. */
+  const gen = OB.openGen || 0;
+  const stale = () => (OB.openGen || 0) !== gen;
   const outcome = OB.outcome || 'skipped';
   const state = await obReadiness();
+  if (stale()) return;
   if (!OB.open) { OB.settling = false; return; }
   /* r8: `handOver` is the operator saying "put me in the agent now", from
      one of the two rows that promised exactly that. Neither remaining offer
@@ -8733,6 +8817,7 @@ async function obSettle() {
   }
   if (!OB.handOver && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
     const agents = await obDetectAgents();
+    if (stale()) return;
     if (!OB.open) { OB.settling = false; return; }
     if (agents.length > 0) {
       OB.settling = false;
@@ -8757,6 +8842,7 @@ async function obSettle() {
   OB_STAMP_LOG.push({leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
   if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
   const res = await BR.configSet('tui.onboarding.' + closing, stamp);
+  if (stale()) return;
   if (res && res.ok === false) {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
@@ -8780,6 +8866,8 @@ async function openOnboarding() {
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
   });
+  // A new flow: any settle still out for the previous one must not touch it (obSettle).
+  OB.openGen = (OB.openGen || 0) + 1;
   // A re-run (the menu's `onboarding`, or --onboarding) stamps again.
   for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
   // The one place a fresh intro starts from zero — obSkyStart itself
@@ -9252,9 +9340,16 @@ document.addEventListener('click', (e) => {
   const ctl = e.target.closest && e.target.closest('[data-obact]');
   if (ctl) { obControlClick(ctl.dataset.obact); return; }
   /* F6 — a click on a model row selects it; the verb is on the action bar,
-     the way every other step in this flow works. */
+     the way every other step in this flow works.
+     r2 (DMG feedback): a double click is that verb — "Use this model" on the
+     row just picked. `detail` counts the clicks of one gesture, so the second
+     click still counts after the first one's repaint replaced the row. */
   const wm = e.target.closest && e.target.closest('[data-wizmodel]');
-  if (wm) { WIZ.modelPick = wm.dataset.wizmodel; render(); return; }
+  if (wm) {
+    WIZ.modelPick = wm.dataset.wizmodel;
+    if (e.detail >= 2) { act('wiz:model'); return; }
+    render(); return;
+  }
   const wr = e.target.closest && e.target.closest('[data-obwiz]');
   if (wr) { obWizRowClick(+wr.dataset.obwiz); return; }
 });
@@ -9369,7 +9464,6 @@ async function refreshLiveConfig() {
   const provider = LIVE_CONFIG && LIVE_CONFIG.llm
     && (LIVE_CONFIG.llm.providers || []).find((p) => p.id === LIVE_CONFIG.llm.activeTextProvider);
   if (provider) {
-    S.mode = provider.kind === 'llama-server' ? 'local' : 'cloud';
     if (provider.defaultChatModel) S.cloudModel = provider.defaultChatModel;
   }
   const managed = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
@@ -9658,6 +9752,9 @@ async function swxRun(label, want, run, refuse) {
 /** The backend the live config describes, with no optimistic override —
     selBackend() answers what the operator CHOSE, this answers what is. */
 function liveBackend() {
+  // Fusion first, from the resolver (selectComposerBackend): under Fusion the
+  // active provider IS a cloud one, so the rows alone would call it `cloud`.
+  if (rmNow().effective === 'fusion') return 'fusion';
   const p = activeProvider();
   if (!(p && p.kind === 'llama-server')) return 'cloud';
   return ((LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.mode) === 'external') ? 'custom' : 'local';
@@ -9666,6 +9763,7 @@ function liveBackend() {
 function selBackend() {
   // r5 item 10: the operator's choice paints first. See swxRun.
   if (SWX.want && SWX.want.backend) return SWX.want.backend;
+  if (rmNow().effective === 'fusion') return 'fusion';
   const p = activeProvider();
   if (!(p && p.kind === 'llama-server')) return 'cloud';
   // Review fix: composer-switch-rows.ts selectComposerBackend — `local` and
@@ -9686,7 +9784,11 @@ function selLocalRoute() { return selBackend() === 'local'; }
    control on the custom route — and, because the composer's own chip row was
    gated the same way, an operator pointed at their own llama-server saw ONE
    control where the TUI draws three. */
-function selKinds() { return selBackend() === 'local' ? ['backend','model'] : ['backend','provider','model']; }
+function selKinds() {
+  const b = selBackend();
+  // composerSwitchKindsFor: `if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"]`.
+  return b === 'local' ? ['backend','model'] : b === 'fusion' ? ['backend','provider','model','workers'] : ['backend','provider','model'];
+}
 /** True when the route offers `kind` — the chips and the switch read the same rule. */
 function selHasKind(kind) { return selKinds().indexOf(kind) >= 0; }
 /**
@@ -9700,6 +9802,8 @@ function selProviderLabel() {
   const backend = selBackend();
   if (backend === 'local') return null;
   if (backend === 'custom') return 'llama.cpp';
+  // Under Fusion this control is the ORCHESTRATOR seat.
+  if (backend === 'fusion') return (SWX.want && SWX.want.providerId) || rmNow().orchestratorProviderId || 'no provider';
   return selActiveProviderId() || 'no provider';
 }
 function selProviders() {
@@ -9724,6 +9828,12 @@ function openSelector(kind) {
   render();
   if (SEL.kind === 'model') selEnterModelPane();
   if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
+  /* Run mode — Fusion: the fusion row's pre-flight, the local orchestrator row
+     and the workers rows read the key list and the on-disk snapshot. */
+  if (!BSW.localLoaded && (SEL.kind === 'backend' || SEL.kind === 'workers' || (SEL.kind === 'provider' && selBackend() === 'fusion'))) bswSnapshot();
+  // Re-read which providers have a key on every open: a key added since the
+  // last read (a terminal export, the .env) is what unblocks Fusion's row.
+  bswRefreshFacts();
 }
 function closeSelector() { SEL.open = false; SEL.addOpen = false; render(); }
 
@@ -9748,9 +9858,10 @@ async function selLoadModels(providerId) {
 
 function selEnterModelPane() {
   // SELECTOR LANE: custom reads the same list as local (see selRows).
-  if (selBackend() !== 'cloud') { if (!SEL.local.length) selLoadLocal(); return; }
+  // Run mode — Fusion: the model pane is the orchestrator's catalogue (a cloud one's).
+  if (selBackend() !== 'cloud' && selBackend() !== 'fusion') { if (!SEL.local.length) selLoadLocal(); return; }
   const id = selActiveProviderId();
-  if (id && SEL.modelsFor !== id) selLoadModels(id);
+  if (id && SEL.modelsFor !== id && selProviders().some((p) => p.id === id)) selLoadModels(id);
 }
 
 /** Rows for the current pane, as objects the delegate can act on by index. */
@@ -9775,8 +9886,16 @@ function selRows() {
       {type:'backend', id:'custom', label:'custom',
        detail: 'llama.cpp you run' + (customUrl ? ' · ' + customUrl : '') + ' · Settings › LLM › External',
        active: here === 'custom'},
+      // Last on purpose (backendRows): the three above are routes, this one is a
+      // mode built on two of them. The detail is the pre-flight's one line, or
+      // what it would run.
+      {type:'backend', id:'fusion', label:'fusion',
+       detail: !BSW.readyLoaded ? 'checking keys…' : (fzBlocker() || fzDetail(rmNow())),
+       active: here === 'fusion'},
     ];
   }
+  if (SEL.kind === 'provider' && selBackend() === 'fusion') return fzProviderRows();
+  if (SEL.kind === 'workers') return fzWorkerRows();
   if (SEL.kind === 'provider') {
     const activeId = selActiveProviderId();
     // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
@@ -9802,7 +9921,7 @@ function selRows() {
      `not downloaded` spelled out on the ones that are not, and NO deep link.
      Sending the custom route down the cloud branch, as this did, offered an
      operator running their own llama-server the cloud provider's catalogue. */
-  if (selBackend() !== 'cloud') {
+  if (selBackend() !== 'cloud' && selBackend() !== 'fusion') {
     const custom = selBackend() === 'custom';
     const rows = SEL.local
       .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
@@ -9822,6 +9941,8 @@ function selRows() {
     if (!custom) rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
     return rows;
   }
+  // A local orchestrator has no cloud catalogue: the TUI's modelRows lists nothing there.
+  if (selBackend() === 'fusion' && !selProviders().some((p) => p.id === selActiveProviderId())) return [];
   const entry = selProviders().find((p) => p.id === selActiveProviderId());
   const chosen = entry && entry.defaultChatModel;
   const f = SEL.filter.toLowerCase();
@@ -9844,6 +9965,7 @@ async function selActivate(row) {
     // the operator runs needs the URL probed first, which is the External
     // pane's job. Open it instead of writing anything here.
     if (row.id === 'custom') { closeSelector(); act('settings:llm'); llmSetMode('external'); return; }
+    if (row.id === 'fusion') { selChooseFusion(); return; }
     selChooseBackend(row.id); return;
   }
   // The TUI's trailing rows: "Add a new provider" opens the wizard,
@@ -9860,6 +9982,31 @@ async function selActivate(row) {
   // port of the TUI's persist helpers and ends in an agent restart, so
   // none of them may run while a turn is in flight.
   if (S.busy) { toast('Not while a turn is running'); return; }
+  /* Run mode — Fusion (activateComposerSwitchRow). Under Fusion the provider
+     control re-pins the ORCHESTRATOR: the plain activation would move
+     activeTextProvider away from the pin and drop the mode. A provider with
+     no key opens its configure step, as the TUI's triggerLlmPrimary does. */
+  if (row.type === 'provider' && row.fusion) {
+    if (!BSW.readyIds.includes(row.id)) { bswOpenKey(row.id); return; }
+    const before = fzBefore('switching…');
+    fzAfter(await swxRun(BSW.line, {backend:'fusion', providerId: row.id, model: fzProviderModel(row.id)},
+      () => SWXBR.enterFusion({orchestratorProvider: row.id})), before);
+    return;
+  }
+  // Either seat, either kind: a local orchestrator, or a cloud provider for the workers.
+  if (row.type === 'fusionLeg') {
+    const pins = row.leg === 'orchestrator' ? {orchestratorProvider: row.id} : {workerProvider: row.id};
+    const before = fzBefore('switching…');
+    fzAfter(await swxRun(BSW.line, row.leg === 'orchestrator' ? {backend:'fusion', providerId: row.id} : {backend:'fusion'},
+      () => SWXBR.enterFusion(pins)), before);
+    return;
+  }
+  // The model the workers run on: claims the slot for local-llama and moves the managed daemon.
+  if (row.type === 'workerModel') {
+    const before = fzBefore('starting ' + row.id + '…');
+    fzAfter(await swxRun(BSW.line, {backend:'fusion'}, () => SWXBR.fusionWorkerModel(row.id)), before);
+    return;
+  }
   if (row.type === 'provider') {
     SEL.busy = true; SEL.err = null; BSW.line = 'switching…'; render();
     // r5 item 10: the provider chip names row.id from this frame on; the
@@ -9935,11 +10082,12 @@ function selPull(id) {
 function selRowLead(r) {
   if (r.type === 'backend') {
     return '<span class="tk-ico tk-ico--sm' + (r.active ? ' tk-ico--blue' : '') + '">'
-      + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : 'server') + '</span>';
+      + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : r.id === 'fusion' ? 'fusion' : 'server') + '</span>';
   }
-  if (r.type === 'provider') return providerMark(r.id, 'sm');
+  if (r.type === 'provider' || r.type === 'fusionLeg') return providerMark(r.id, 'sm');
+  if (r.type === 'action' && r.id === 'loading') return '<span class="selspin"><span class="tk-spin"></span></span>';
   if (r.type === 'action') return '<span class="tk-ico tk-ico--sm">' + ic(r.id === 'add' ? 'plus' : 'download') + '</span>';
-  if (r.type === 'localModel' && SEL.busy && BSW.line === 'starting ' + r.id + '…') {
+  if ((r.type === 'localModel' || r.type === 'workerModel') && SEL.busy && BSW.line === 'starting ' + r.id + '…') {
     return '<span class="selspin"><span class="tk-spin"></span></span>';
   }
   return modelMark(r.id, 'sm');
@@ -10008,7 +10156,7 @@ function selectorHTML() {
   }
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
-    : SEL.kind === 'provider' ? 'Provider' : 'Model';
+    : SEL.kind === 'provider' ? 'Provider' : SEL.kind === 'workers' ? 'Workers' : 'Model';
 
   // An empty list is not a list — it is one action. The provider and
   // local model panes always end in the TUI's action row ("Add a new
@@ -10031,7 +10179,7 @@ function selectorHTML() {
     + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>reading the catalogue…</div>' : '')
     + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
     + rows.map((r, i) => {
-        const model = r.type === 'cloudModel' || r.type === 'localModel';
+        const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
         const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'download</span>' : '')
           /* F1 — an unlit cell, not a lit one: this is a state we could not
@@ -10040,7 +10188,7 @@ function selectorHTML() {
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
           + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
           + selRowLead(r)
-          + '<span class="col"><span class="nm' + (model || r.type === 'provider' ? ' mono' : '') + '">'
+          + '<span class="col"><span class="nm' + (model || r.type === 'provider' || r.type === 'fusionLeg' ? ' mono' : '') + '">'
           + (model ? selHilite(r.label, SEL.filter) : esc(r.label)) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
           + (right ? '<span class="selr">' + right + '</span>' : '')
           + '</button>';
@@ -10520,9 +10668,9 @@ function modesHTML() {
            of that is actionable by a person. Say which version is needed and
            offer the one thing that helps. */
         ? '<p class="ob-help">' + esc(MODE_NEEDS_NEWER) + '</p>'
-        : '<p class="cap">'
-          + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
-          + '</p>'
+        /* r2 (DMG feedback): the "a stance for this session …" paragraph is
+           gone — the four rows and their captions already say it. */
+        : ''
           // The disclosure that stops a level-5 operator reading a working
           // chip as a broken one: three of the four choices genuinely do
           // not change what the agent does at that base.
@@ -10959,8 +11107,490 @@ async function selChooseBackend(id) {
 }
 
 /* ============================================================
+   Run mode — Local / Cloud / Fusion
+
+   The TUI's composer switch (composer-switch-rows.ts, -worker-rows.ts,
+   -activate.ts), its `/runmode` command (dispatch-run-mode.ts,
+   run-mode-verb.ts) and RunModeOrchestrator's refusals and lines. Writes
+   are main's (backend-switch.ts enterFusion / swapFusionLegs /
+   setFusionWorkers / selectFusionWorkerModel over main/run-mode.ts); this
+   side resolves the config the way the agent does and paints. Local and
+   Cloud stay selChooseBackend, whose write leaves Fusion.
+   main/run-mode.ts carries the same read-side ports; the smoke asserts the
+   two answer the same on seeded configs.
+   ============================================================ */
+
+/** resolveRunMode (src/llm/run-mode/resolve-run-mode.ts). */
+function rmResolve(cfg) {
+  const llm = (cfg && cfg.llm) || null;
+  const runMode = llm && llm.runMode;
+  const fusion = (runMode && runMode.fusion) || {};
+  const stored = (runMode && runMode.mode) ?? null;
+  const providers = llm && Array.isArray(llm.providers) ? llm.providers : [{id:'local-llama', kind:'llama-server'}];
+  const activeId = (llm && llm.activeTextProvider) ?? 'local-llama';
+  const isLocal = (p) => !!p && p.kind === 'llama-server';
+  const byId = (id) => (id === undefined || id === null ? undefined : providers.find((p) => p.id === id));
+  const managedModelId = (cfg && cfg.localModels && cfg.localModels.managed && cfg.localModels.managed.modelId) ?? null;
+  const active = byId(activeId);
+  const derived = active === undefined || isLocal(active) ? 'local' : 'cloud';
+  const orch = byId(fusion.orchestratorProvider)
+    ?? (active !== undefined && !isLocal(active) ? active : undefined)
+    ?? providers.find((p) => !isLocal(p));
+  const worker = byId(fusion.workerProvider)
+    ?? providers.find((p) => isLocal(p) && p.id !== (orch && orch.id))
+    ?? providers.find((p) => p.id !== (orch && orch.id));
+  const orchestratorProviderId = (orch && orch.id) ?? null;
+  const workerProviderId = (worker && worker.id) ?? null;
+  let effective = derived;
+  let degraded = null;
+  if (stored === 'fusion') {
+    if (orchestratorProviderId === null) degraded = {reason:'no-cloud-provider', requested:stored};
+    else if (workerProviderId === null) degraded = {reason:'no-second-provider', requested:stored};
+    else if (activeId === orchestratorProviderId) effective = 'fusion';
+  } else if (stored === 'cloud' && orchestratorProviderId === null) {
+    degraded = {reason:'no-cloud-provider', requested:stored};
+  }
+  const primaryProviderId = (effective === 'local' ? workerProviderId : orchestratorProviderId) ?? activeId;
+  return {
+    stored, effective, orchestratorProviderId,
+    orchestratorModel: fusion.orchestratorModel ?? (orch && orch.defaultChatModel) ?? (orch && orch.model) ?? null,
+    workerProviderId,
+    workerModel: fusion.workerModel
+      ?? (worker !== undefined && isLocal(worker)
+        ? (managedModelId ?? worker.model ?? null)
+        : ((worker && worker.defaultChatModel) ?? (worker && worker.model) ?? null)),
+    workers: fusion.workers ?? 2,
+    workerMaxSteps: fusion.workerMaxSteps ?? 40,
+    workerTimeoutMs: fusion.workerTimeoutMs ?? 2700000,
+    primaryProviderId, degraded,
+  };
+}
+function rmNow() { return rmResolve(LIVE_CONFIG); }
+
+/** run-mode-degradation.ts */
+function rmDegradationLine(d) {
+  if (d.reason === 'no-cloud-provider') {
+    return d.requested === 'fusion'
+      ? 'Fusion needs a cloud orchestrator — no cloud provider is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).'
+      : 'Cloud mode needs a cloud provider — none is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).';
+  }
+  return 'Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).';
+}
+/** run-mode-summary.ts describeRunMode — the body of `/runmode status`. */
+function rmDescribe(rm) {
+  const label = rm.effective === 'fusion' ? 'Fusion' : rm.effective === 'cloud' ? 'Cloud' : 'Local';
+  const parts = [];
+  if (rm.effective === 'fusion') {
+    parts.push('Fusion — orchestrator ' + rm.orchestratorProviderId + (rm.orchestratorModel ? ' (' + rm.orchestratorModel + ')' : '') + ', '
+      + rm.workers + ' worker' + (rm.workers === 1 ? '' : 's') + ' on ' + rm.workerProviderId + (rm.workerModel ? ' (' + rm.workerModel + ')' : ''));
+  } else {
+    parts.push(label + ' — active provider ' + rm.primaryProviderId);
+  }
+  if (rm.degraded) parts.push(rmDegradationLine(rm.degraded));
+  else if (rm.stored !== null && rm.stored !== rm.effective) {
+    parts.push('stored ' + rm.stored + ', effective ' + rm.effective + ' — the ' + (rm.stored === 'fusion' ? 'orchestrator' : rm.stored)
+      + ' provider is not the active one; pick the mode again to re-apply');
+  }
+  return parts.join('. ');
+}
+
+/** fusion-preflight.ts describeFusionBlocker — facts: {readyIds, localLoaded, localDownloaded}. */
+function fzBlockerFor(cfg, facts) {
+  const llm = (cfg && cfg.llm) || null;
+  const providers = llm && Array.isArray(llm.providers) ? llm.providers : [{id:'local-llama', kind:'llama-server'}];
+  const cloudReady = providers.filter((p) => p.kind !== 'llama-server' && facts.readyIds.includes(p.id)).length;
+  const localReady = !facts.localLoaded || facts.localDownloaded ? providers.filter((p) => p.kind === 'llama-server').length : 0;
+  if (cloudReady + localReady >= 2) return null;
+  if (cloudReady + localReady === 1 && localReady === 1) return 'needs a second provider to orchestrate — Manage › LLM › Cloud';
+  if (cloudReady + localReady === 1) return 'needs a second provider for the workers — Manage › LLM';
+  return 'needs two providers, one per leg — Manage › LLM';
+}
+function fzBlocker() {
+  return fzBlockerFor(LIVE_CONFIG, {readyIds: BSW.readyIds, localLoaded: BSW.localLoaded, localDownloaded: SEL.local.some((m) => m.downloaded)});
+}
+/** composer-switch-rows.ts fusionDetail. */
+function fzDetail(rm) { return 'cloud plans · ' + rm.workers + ' local worker' + (rm.workers === 1 ? '' : 's'); }
+
+function fzProviderModel(id) {
+  const p = ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === id);
+  return (p && (p.defaultChatModel || p.model)) || '';
+}
+function fzLegIsLocal(rm, leg) {
+  const id = leg === 'orchestrator' ? rm.orchestratorProviderId : rm.workerProviderId;
+  const row = ((LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((p) => p.id === id) || null;
+  return leg === 'worker' ? (row === null || row.kind === 'llama-server') : (!!row && row.kind === 'llama-server');
+}
+/** selectPromptLlmMeta's two halves: each leg labelled from ITS OWN provider row. */
+function fzLegLabel(rm, leg) {
+  const fz = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.runMode && LIVE_CONFIG.llm.runMode.fusion) || {};
+  const pinned = leg === 'orchestrator' ? fz.orchestratorModel : fz.workerModel;
+  const id = leg === 'orchestrator' ? rm.orchestratorProviderId : rm.workerProviderId;
+  if (fzLegIsLocal(rm, leg)) {
+    return pinned || (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed && LIVE_CONFIG.localModels.managed.modelId) || 'local';
+  }
+  return pinned || fzProviderModel(id) || id || 'cloud';
+}
+/** The orchestrator RunModeOrchestrator.setMode will pick with no pin — painted while the switch lands. */
+function fzPredictLeg() {
+  const providers = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [];
+  const active = providers.find((p) => p.id === (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider));
+  if (active && active.kind !== 'llama-server') return active.id;
+  const cloud = providers.filter((p) => p.kind !== 'llama-server');
+  const keyed = cloud.find((p) => BSW.readyIds.includes(p.id)) || cloud[0];
+  return (keyed && keyed.id) || rmNow().orchestratorProviderId;
+}
+
+/** providerRows under Fusion: this control is the orchestrator seat. */
+function fzProviderRows() {
+  const rm = rmNow();
+  const rows = selProviders().map((p) => ({type:'provider', fusion:true, id:p.id, label:p.id,
+    detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? 'orchestrator' : 'no API key',
+    unverified: UNVERIFIED.indexOf(p.id) >= 0,
+    active: p.id === rm.orchestratorProviderId}));
+  if (SEL.local.some((m) => m.downloaded)) {
+    rows.push({type:'fusionLeg', leg:'orchestrator', id:'local-llama', label:'local-llama',
+      detail:'orchestrator · runs on this machine', active: rm.orchestratorProviderId === 'local-llama'});
+  }
+  rows.push({type:'action', id:'add', label:'Add a new provider', detail:'opens the wizard', active:false});
+  return rows;
+}
+/** composer-switch-worker-rows.ts selectWorkerRows: fusion's second seat. No count rows. */
+function fzWorkerRows() {
+  const rm = rmNow();
+  const localHolds = rm.workerProviderId === 'local-llama';
+  const rows = [];
+  if (!BSW.localLoaded && !SEL.local.length) rows.push({type:'action', id:'loading', label:'loading…', detail:'reading what is on disk', active:false});
+  SEL.local.filter((m) => m.downloaded).forEach((m) => rows.push({type:'workerModel', id:m.id, label:m.id,
+    detail:'workers · on this machine', active: localHolds && !!m.active}));
+  selProviders().filter((p) => p.id !== rm.orchestratorProviderId).forEach((p) => rows.push({type:'fusionLeg', leg:'worker', id:p.id, label:p.id,
+    detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? 'workers · in the cloud' : 'no API key',
+    active: rm.workerProviderId === p.id}));
+  rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
+  return rows;
+}
+
+/** The ⇄ between the seats and the `workers` control, drawn only on the Fusion route. */
+function fzChipsHtml() {
+  if (!selHasKind('workers')) return '';
+  const rm = rmNow();
+  const label = fzLegLabel(rm, 'worker');
+  return '<button class="cchip fzswap" data-act="runmode:swap" title="Swap the seats — the orchestrator runs the workers and back" aria-label="Swap orchestrator and workers">'
+      + ic('swap') + '</button>'
+    + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" title="' + esc(label) + '">' + modelMark(label, 'xs')
+      + '<span class="cval" data-cap="Workers">' + esc(fzSeatId(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+}
+/* Fusion puts five controls where cloud has three, in the same 700px: a seat
+   names its model without the vendor prefix (`grok-4-6`, not `x-ai/grok-4-6`),
+   and the chip's tooltip carries the full id. */
+function fzSeatId(label) {
+  const s = String(label || '');
+  const at = s.lastIndexOf('/');
+  return at >= 0 && at < s.length - 1 ? s.slice(at + 1) : s;
+}
+
+/** fusion-intro.ts describeFusionIntro — one paragraph is the desktop's (see main/run-mode.ts). */
+function fzIntroParagraphs(rm) {
+  const orchestrator = rm.orchestratorModel ?? rm.orchestratorProviderId ?? 'your cloud provider';
+  const worker = rm.workerModel ?? rm.workerProviderId ?? 'the local model';
+  return [
+    'Fusion splits the work between two models: one decides, the other does.',
+    'Right now — ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
+      + ' ' + worker + ' executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.',
+    'How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.',
+    'Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute — your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one; so does a big local model directing a small one.',
+    'Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.',
+    'The Provider and Workers controls pick both seats — each row says whether it runs local or in the cloud. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.',
+  ];
+}
+/** Only on the way IN — re-applying Fusion (another orchestrator) is not a moment to explain it again. */
+function fzIntro(rm) {
+  S.log.push({id:nid(), k:'system', note:true, fusionIntro:true,
+    text: '<span class="fz-intro"><span class="fz-mark">' + esc(FUSION_MARK) + '</span>'
+      + fzIntroParagraphs(rm).map((p) => '<span class="fz-p">' + esc(p) + '</span>').join('') + '</span>'});
+}
+
+/** dispatch-run-mode.ts parseRunModeCommand. */
+function fzParse(rawArgs) {
+  const args = String(rawArgs || '').trim().toLowerCase();
+  if (args.length === 0) return {openSwitch:true};
+  if (args === 'status') return {openSwitch:false, status:true};
+  if (args === 'swap') return {openSwitch:false, swap:true};
+  const w = /^workers\s+(\d+)$/.exec(args);
+  if (w) {
+    const n = Number(w[1]);
+    if (n < 1 || n > 8) return {openSwitch:false, error:'workers must be 1-8 — ' + RUN_MODE_USAGE};
+    return {openSwitch:false, workers:n};
+  }
+  if (['local', 'cloud', 'fusion'].includes(args)) return {openSwitch:false, mode:args};
+  return {openSwitch:false, error:'unknown run mode "' + String(rawArgs || '').trim() + '" — ' + RUN_MODE_USAGE};
+}
+
+/** The key list and the on-disk snapshot, when the pre-flight has to answer before they landed. */
+async function fzLoadFacts() {
+  if (!BR) return;
+  const jobs = [];
+  if (!BSW.readyLoaded) {
+    jobs.push(BR.providersReady().then((r) => {
+      if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; BSW.readyLoaded = true; }
+    }).catch(() => {}));
+  }
+  if (!BSW.localLoaded) jobs.push(bswSnapshot());
+  await Promise.all(jobs);
+}
+/** RunModeOrchestrator.refuse / the pre-flight: composer_notice + runtime_info. */
+function fzNotice(text, runtimeLine) {
+  if (SEL.open && !OB.open) SEL.err = text; else toast(text, '', 'bad');
+  appSay(runtimeLine || text, 'caution');
+  render();
+}
+function fzBefore(label) {
+  SEL.err = null; SEL.busy = SEL.open; BSW.line = label; render();
+  return rmNow().effective;
+}
+function fzAfter(res, before) {
+  SEL.busy = false; BSW.line = '';
+  if (!res || !res.ok) {
+    if (res && res.needsKey) { bswOpenKey(res.providerId); return res; }
+    if (res && res.needsDownload && res.modelId) { SWX.err = null; selPull(res.modelId); return res; }
+    // A refusal wrote nothing and failed nothing: a notice, not the composer's "Switch failed".
+    if (res && res.refusal) { SWX.err = null; fzNotice(res.refusal, 'run mode: ' + res.refusal); return res; }
+    if (res && (res.error === 'a turn is running' || res.error === 'a switch is already running')) { render(); return res; }
+    fzNotice('run mode: ' + ((res && res.error) || 'the change did not complete'));
+    return res;
+  }
+  bswReport(res);
+  if (res.runMode && res.runMode.line) appSay(res.runMode.line);
+  const now = rmNow();
+  const entered = res.runMode ? !!res.runMode.enteredFusion : (now.effective === 'fusion' && before !== 'fusion');
+  if (entered) fzIntro(now);
+  closeSelector();
+  return res;
+}
+
+/** activateFusion: the pre-flight's one line, or RunModeOrchestrator.setMode("fusion"). */
+async function selChooseFusion() {
+  if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
+  if (!BSW.readyLoaded || !BSW.localLoaded) await fzLoadFacts();
+  const blocker = fzBlocker();
+  if (blocker) { fzNotice('fusion: ' + blocker); return {ok:false, error:blocker, blocker:true}; }
+  const leg = fzPredictLeg();
+  const before = fzBefore('switching to fusion…');
+  return fzAfter(await swxRun(BSW.line, {backend:'fusion', providerId: leg || undefined, model: fzProviderModel(leg)},
+    () => SWXBR.enterFusion({})), before);
+}
+/** swapLegs — the composer's ⇄ and `/runmode swap`. */
+async function fzSwap() {
+  const rm = rmNow();
+  if (rm.stored !== 'fusion') { fzNotice(SWAP_NEEDS_FUSION, 'run mode: ' + SWAP_NEEDS_FUSION); return {ok:false, refusal:SWAP_NEEDS_FUSION}; }
+  const before = fzBefore('swapping…');
+  return fzAfter(await swxRun(BSW.line, {backend:'fusion', providerId: rm.workerProviderId || undefined, model: rm.workerModel || ''},
+    () => SWXBR.swapFusionLegs()), before);
+}
+/** setWorkers — Settings › LLM's count and `/runmode workers N`. */
+async function fzSetWorkers(n) {
+  const res = await swxRun('fusion: ' + n + ' worker' + (n === 1 ? '' : 's') + '…', {}, () => SWXBR.fusionWorkers(n));
+  if (!res || !res.ok) {
+    if (res && res.refusal) { SWX.err = null; fzNotice(res.refusal, 'run mode: ' + res.refusal); }
+    return res;
+  }
+  if (res.notice) {
+    appSay(res.notice);
+    if (S.settings && settingsPaneId(S.settingsPane) === 'llm') LLMP.msg = {text: res.notice};
+    else toast(res.notice);
+  }
+  render();
+  return res;
+}
+/** `/runmode status` — a system message, from the resolver. */
+function fzStatus() {
+  S.log.push({id:nid(), k:'system', note:true,
+    text: esc(LIVE_CONFIG ? rmDescribe(rmNow()) : 'run mode: not resolved yet — open Manage › LLM once')});
+  render();
+}
+/** `/runmode <mode>` and the menu's Local / Cloud / Fusion: the backend row's own activation. */
+function fzActivateBackend(id) {
+  if (id === 'fusion') return selChooseFusion();
+  return selChooseBackend(id);
+}
+function fzSlash(args) {
+  const cmd = fzParse(args);
+  if (cmd.error) { S.log.push({id:nid(), k:'system', text: esc(cmd.error)}); render(); return cmd; }
+  if (cmd.openSwitch) { S.settings = null; openSelector('backend'); return cmd; }
+  if (cmd.workers !== undefined) { fzSetWorkers(cmd.workers); return cmd; }
+  if (cmd.swap) { fzSwap(); return cmd; }
+  if (cmd.status) { fzStatus(); return cmd; }
+  fzActivateBackend(cmd.mode);
+  return cmd;
+}
+
+/** fusion-live-workers.ts reduceFusionLiveWorkers. */
+function fzReduceLive(current, e) {
+  if (e.role === 'orchestrator') return current;
+  const at = current.findIndex((w) => w.taskId === e.taskId);
+  const done = e.phase === 'finished' || e.phase === 'failed' || e.phase === 'cancelled';
+  const prev = at >= 0 ? current[at] : null;
+  const next = {taskId: e.taskId, title: e.title, phase: e.phase,
+    model: e.model ?? (prev && prev.model) ?? null,
+    tool: done ? null : (e.tool ?? (prev && prev.tool) ?? null), done};
+  if (at < 0) return current.concat([next]);
+  const copy = current.slice();
+  copy[at] = next;
+  return copy;
+}
+/** formatFusionLiveWorker: `<title> · <model> — <tool|working|done>`. */
+function fzLiveLine(w) {
+  return w.title + ' · ' + (w.model ?? 'local') + ' — ' + (w.done ? 'done' : (w.tool ?? 'working'));
+}
+/** format-fusion-worker-line.ts, without the feed's `» ` glyph. */
+function fzWorkerLine(e) {
+  const model = e.model ? ' · ' + e.model : '';
+  const who = e.role === 'orchestrator' ? 'orchestrator' + model : 'worker ' + e.title + model;
+  if (e.phase === 'started') return who + ': started';
+  if (e.phase === 'tool') {
+    return e.role === 'orchestrator'
+      ? who + ' — ' + (e.tool ?? 'working') + ' (' + e.title + ')'
+      : who + ' — ' + (e.tool ?? 'working');
+  }
+  if (e.phase === 'cancelled') return who + ': cancelled';
+  if (e.phase === 'failed') return who + ': failed — ' + (e.summary ?? 'no detail');
+  if (e.phase === 'finished') {
+    const steps = e.stepCount === undefined ? '' : ' — ' + e.stepCount + ' steps';
+    const detail = e.summary === undefined ? '' : (steps === '' ? ' — ' : ', ') + e.summary;
+    return who + ': done' + steps + detail;
+  }
+  return who;
+}
+/** The fan-out under the busy strip while the turn runs. Read-only: the one Stop is the send button. */
+function fzLiveHTML() {
+  if (!FZ.live.length || !(S.busy || S.pending)) return '';
+  return '<div class="fzlive" aria-live="polite">' + FZ.live.map((w) =>
+    '<div class="fzw' + (w.done ? ' done' : '') + (w.phase === 'failed' ? ' failed' : w.phase === 'cancelled' ? ' cancelled' : '') + '">'
+    + '<span class="fzdot"></span><span class="fzt">' + esc(fzLiveLine(w)) + '</span></div>').join('') + '</div>';
+}
+
+/* Smoke hooks — read-side ports and a probe that draws the switch for a
+   seeded config without writing anything. */
+if (typeof window !== 'undefined') {
+  window.__rmResolve = (cfg) => rmResolve(cfg);
+  window.__rmDescribe = (cfg) => rmDescribe(rmResolve(cfg));
+  window.__fzBlocker = (cfg, facts) => fzBlockerFor(cfg, facts);
+  window.__fzIntro = (cfg) => fzIntroParagraphs(rmResolve(cfg));
+  window.__fzParse = (args) => fzParse(args);
+  window.__fzWorkerLine = (e) => fzWorkerLine(e);
+  window.__slashNames = () => SLASH.map((s) => s[0]);
+  window.__approvalCat = (cat) => ({label: CATEGORY_LABEL[cat] || null, level: (CATS.find((c) => c[0] === cat) || [null, null, null])[2]});
+  window.__fzProbe = (cfg, facts) => {
+    const keep = {cfg: LIVE_CONFIG, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, want: SWX.want, kind: SEL.kind};
+    try {
+      LIVE_CONFIG = cfg;
+      BSW.readyIds = facts.readyIds || []; BSW.readyLoaded = true; BSW.localLoaded = facts.localLoaded !== false;
+      SEL.local = facts.local || []; SWX.want = null;
+      const rows = (kind) => { SEL.kind = kind; return selRows().map((r) => ({type:r.type, id:r.id, label:r.label, detail:r.detail || '', active:!!r.active})); };
+      const tpl = document.createElement('template');
+      tpl.innerHTML = composer();
+      const chips = Array.from(tpl.content.querySelectorAll('.cfoot [data-sel-open]')).map((b) => [b.dataset.selOpen, b.textContent.trim()]);
+      const set = document.createElement('template');
+      set.innerHTML = llmRunModeHTML();
+      const on = set.content.querySelector('.llm-rm.on');
+      return {
+        backend: selBackend(), kinds: selKinds(), chips,
+        swap: !!tpl.content.querySelector('.cfoot [data-act="runmode:swap"]'),
+        rows: {backend: rows('backend'), provider: rows('provider'), workers: selHasKind('workers') ? rows('workers') : null},
+        settings: {active: on ? on.dataset.act : null,
+          status: (set.content.querySelector('.llm-rm-status') || {}).textContent || '',
+          workersOn: (set.content.querySelector('.llm-workerseg .on') || {}).textContent || '',
+          workerButtons: set.content.querySelectorAll('.llm-workerseg button').length},
+      };
+    } finally {
+      LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
+      SEL.local = keep.local; SWX.want = keep.want; SEL.kind = keep.kind;
+      render();
+    }
+  };
+  /* Frames through the real onChatEvent, on a stand-in turn that is removed
+     again: what the live list and the transcript make of them. */
+  window.__fzEventProbe = (payloads) => {
+    const keep = {turnId: S.turnId, streamId: S.streamId, busy: S.busy, live: FZ.live};
+    const item = {id: nid(), k:'assistant', text:''};
+    S.turnId = 'fz-probe'; S.streamId = item.id; S.busy = true; S.log.push(item); FZ.live = [];
+    try {
+      payloads.forEach((payload) => onChatEvent({turnId:'fz-probe', kind:'fusion_worker', payload}));
+      const strip = document.querySelector('.composerwrap .fzlive');
+      return {
+        live: FZ.live.map(fzLiveLine),
+        strip: strip ? Array.from(strip.querySelectorAll('.fzt')).map((n) => n.textContent) : [],
+        stripControls: strip ? strip.querySelectorAll('button, [data-act]').length : -1,
+        lines: S.log.filter((m) => m.fusion).map((m) => m.text),
+        beforeReply: S.log.indexOf(item) > 0 && !!S.log[S.log.indexOf(item) - 1].fusion,
+      };
+    } finally {
+      S.log = S.log.filter((m) => m !== item && !m.fusion);
+      S.turnId = keep.turnId; S.streamId = keep.streamId; S.busy = keep.busy; FZ.live = keep.live;
+      render();
+    }
+  };
+}
+
+/* ============================================================
    Opening a session — the transcript comes from the agent's store
    ============================================================ */
+
+/* GET /api/sessions/{id}.turns → the transcript rows, in stored order.
+
+   Turn order: a `tool_result` row carries `approvals` (agent ≥ desktop/
+   turn-fixes) — every approval the operator answered while that call ran.
+   Each becomes a finished approval receipt directly under the call's card,
+   which is where the live view puts the card (placeInLiveTurn), so a
+   reopened chat and the one watched live read the same: question, tool,
+   approval, …, reply. An older agent writes no `approvals`, and its reopened
+   chats simply show no receipt, as before. */
+function sessionTurnsToLog(turns) {
+  const log = [];
+  (Array.isArray(turns) ? turns : []).forEach((t) => {
+    if (!t || typeof t !== 'object') return;
+    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_tool_call') {
+      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
+      log.push({id:nid(), k:'tool', name:t.tool || 'tool',
+        arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
+        argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
+        where:'local', ok:null, open:false});
+      return;
+    }
+    if (t.kind === 'tool_result') {
+      // Pair it with the call that is still open, so a loaded session
+      // shows what the tool actually returned — which the live stream
+      // does not carry.
+      let card = null;
+      for (let i = log.length - 1; i >= 0; i--) {
+        if (log[i].k === 'tool' && log[i].ok === null) {
+          card = log[i];
+          card.ok = t.status === 'ok';
+          card.out = t.summary || '';
+          card.truncated = !!t.truncated;
+          card.ms = undefined; card.msSource = null;   // item 4: the store carries no duration; the trace does
+          break;
+        }
+      }
+      if (!card) {
+        card = {id:nid(), k:'tool', name:t.tool || 'tool', arg:'', ok:t.status === 'ok', out:t.summary || '', truncated:!!t.truncated, open:false, where:'local'};
+        log.push(card);
+      }
+      const receipts = (Array.isArray(t.approvals) ? t.approvals : [])
+        .filter((a) => a && (a.verdict === 'approved' || a.verdict === 'denied'))
+        .map((a) => ({id:nid(), k:'approval', stored:true, tool:t.tool || 'tool',
+          cat:a.category || 'other', kind:CATEGORY_LABEL[a.category] || a.category || 'action',
+          state:a.verdict, at: Number.isFinite(a.at) ? new Date(a.at).toTimeString().slice(0, 8) : ''}));
+      if (receipts.length) {
+        let at = log.indexOf(card) + 1;
+        while (at < log.length && log[at].k === 'approval') at++;
+        log.splice(at, 0, ...receipts);
+      }
+    }
+  });
+  return log;
+}
 
 async function openSession(id) {
   if (!BR || !id) return;
@@ -11004,33 +11634,7 @@ async function openSession(id) {
   }
   const data = res.data;
   const turns = Array.isArray(data.turns) ? data.turns : [];
-  const log = [];
-  turns.forEach((t) => {
-    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
-    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
-    if (t.kind === 'assistant_tool_call') {
-      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
-      log.push({id:nid(), k:'tool', name:t.tool || 'tool',
-        arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
-        argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
-        where:'local', ok:null, open:false});
-      return;
-    }
-    if (t.kind === 'tool_result') {
-      // Pair it with the call that is still open, so a loaded session
-      // shows what the tool actually returned — which the live stream
-      // does not carry.
-      for (let i = log.length - 1; i >= 0; i--) {
-        if (log[i].k === 'tool' && log[i].ok === null) {
-          log[i].ok = t.status === 'ok';
-          log[i].out = t.summary || '';
-          log[i].ms = undefined; log[i].msSource = null;   // item 4: the store carries no duration; the trace does
-          return;
-        }
-      }
-      log.push({id:nid(), k:'tool', name:t.tool || 'tool', arg:'', ok:t.status === 'ok', out:t.summary || '', open:false, where:'local'});
-    }
-  });
+  const log = sessionTurnsToLog(turns);
   S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
   // Review fix: the streaming item of a turn that is still running elsewhere
   // did not survive this reload, so no frame may position a card against it.
@@ -12204,8 +12808,9 @@ function modelChipHtml() {
   // Soft Tactile: the model family's real mark (CPU badge when there is none),
   // the download icon on the call to action; the id itself in DM Mono.
   return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + cchipOpen('model') + '" data-sel-open="model"'
-    + (cta ? ' data-sel-dl="1"' : '') + '>' + (cta ? ic('download') : modelMark(label, 'xs'))
-    + '<span class="cval">' + esc(shortModel(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+    + (cta ? ' data-sel-dl="1"' : '')
+    + (selHasKind('workers') ? ' title="' + esc(label) + '"' : '') + '>' + (cta ? ic('download') : modelMark(label, 'xs'))
+    + '<span class="cval">' + esc(selHasKind('workers') ? fzSeatId(label) : shortModel(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
 /**
  * What the two facts change on screen, repainted in place. These land
@@ -14996,42 +15601,41 @@ function llmKeyBtn(key, rest, act) {
    (`llm.runMode`), additive to the active provider, so it sits above the
    route card rather than replacing it — the route still says who answers. */
 function llmRunModeHTML() {
-  const cfg = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.runMode) || {};
-  const mode = cfg.mode || 'cloud';
-  const workers = (cfg.fusion && cfg.fusion.workers) || 3;
+  /* The EFFECTIVE mode, resolved as the agent resolves it (rmResolve): a
+     stored `fusion` whose orchestrator is no longer the active provider is not
+     Fusion, and the Active chip must not say it is. The cards and the count run
+     the composer's own switch (act 'runmode:*' → selChooseBackend /
+     selChooseFusion / fzSetWorkers) — one write path for both surfaces. */
+  const rm = rmNow();
+  const mode = rm.effective;
+  const blocker = BSW.readyLoaded ? fzBlocker() : null;
   const MODES = [
     ['local', 'Local', 'everything runs on this Mac', 'laptop'],
     ['cloud', 'Cloud', 'everything runs on the provider', 'cloud'],
-    ['fusion', 'Fusion', 'a cloud model plans, local workers do the work', 'bolt'],
+    ['fusion', 'Fusion', blocker && mode !== 'fusion' ? blocker : 'a cloud model plans, local workers do the work', 'fusion'],
   ];
-  const localReady = !!(LIVE_CONFIG && LIVE_CONFIG.localModels
-    && LIVE_CONFIG.localModels.managed && LIVE_CONFIG.localModels.managed.modelId);
   // ST-20 / ST-22: three selectable cards, the worker count as a segmented choice.
   return '<section class="llm-section llm-runmode"><div class="tk-sh llm-sh"><span class="llm-sh-t">Run mode</span></div>'
     + '<div class="llm-rm-grid">'
     + MODES.map(([id, label, why, icon]) => {
         const on = id === mode;
-        return '<button class="llm-rm' + (on ? ' on' : '') + '" data-act="runmode:' + id + '" aria-pressed="' + on + '">'
+        const blocked = id === 'fusion' && !on && !!blocker;
+        return '<button class="llm-rm' + (on ? ' on' : '') + (blocked ? ' blocked' : '') + '" data-act="runmode:' + id + '" aria-pressed="' + on + '">'
           + '<span class="tk-ico tk-ico--sm' + (on ? ' tk-ico--brand' : '') + '">' + ic(icon) + '</span>'
           + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(why) + '</span></span>'
           + (on ? '<span class="tk-chip tk-chip--sm tk-chip--green">Active</span>' : '')
           + '</button>';
       }).join('')
     + '</div>'
-    + (mode === 'fusion'
-        ? '<div class="llm-workers">'
-          + '<span class="tk-help' + (localReady ? '' : ' tk-help--warn') + '">'
-          + esc('Workers: ' + workers + '. ')
-          + esc(localReady
-              ? 'The orchestrator uses the provider above; the workers use the local model.'
-              : 'Fusion needs a local model as well — choose one under Local, or the workers have nothing to run on.')
-          + '</span>'
-          + '<span class="tk-seg llm-workerseg" role="group" aria-label="Workers">'
-          + [1, 2, 3, 4, 6, 8].map((n) =>
-              '<button class="' + (n === workers ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === workers) + '">'
-              + n + '</button>').join('')
-          + '</span></div>'
-        : '')
+    // /runmode status, where the stored and the effective mode can disagree.
+    + '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>'
+    + '<div class="llm-workers">'
+      + '<span class="tk-help">' + esc('Workers: ' + rm.workers + ' — the default fan-out. The orchestrator can ask for more or fewer per job.') + '</span>'
+      + '<span class="tk-seg llm-workerseg" role="group" aria-label="Workers">'
+      + [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+          '<button class="' + (n === rm.workers ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === rm.workers) + '">'
+          + n + '</button>').join('')
+      + '</span></div>'
     + '</section>';
 }
 
@@ -17469,6 +18073,40 @@ if (typeof window !== 'undefined') {
     render();
     return turnId;
   };
+  /* Turn order (2026-09-15 DMG report): the frames of a gated turn fed
+     through the real onChatEvent / onApprovalEvent, in the order the wire
+     delivers them — two tool calls, an approval for the first, a steer
+     notice, then the reply's deltas. Returns the kinds of the rows the turn
+     produced, read while the turn is still live (the moment the operator saw
+     the approval under the reply), and removes every trace of itself. */
+  window.__turnOrderLive = () => {
+    const at = S.log.length;
+    const sid = S.agentSession || null;
+    const turnId = window.__fakeTurn();
+    onChatEvent({turnId, kind:'tool_progress', payload:{tool:'os.fs.write', label:'{"path":"a.txt"}'}});
+    onChatEvent({turnId, kind:'tool_progress', payload:{tool:'os.shell.run', label:'{"cmd":"ls"}'}});
+    onApprovalEvent({approvalId:'smoke-order-1', tool:'os.fs.write', category:'fs_write_workspace',
+      reason:'smoke fixture', sessionId:sid});
+    const card = S.log.find((m) => m.approvalId === 'smoke-order-1');
+    if (card) { S.pending = null; card.state = 'approved'; card.at = '00:00:00'; }
+    placeInLiveTurn({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+    onChatEvent({turnId, kind:'delta', text:'All done.'});
+    const rows = S.log.slice(at).map((m) => m.k === 'tool' ? 'tool:' + m.name : m.k === 'approval' ? 'approval:' + m.tool : m.k);
+    const lastId = S.log.length ? S.log[S.log.length - 1].id : null;
+    const replyLast = lastId === S.streamId;
+    // leave nothing behind
+    if (sid) PENDING_APPROVALS.delete(sid);
+    RUNNING.delete(turnId);
+    S.pending = null; S.turnId = null; S.busy = false; S.streamId = null; S.reasonId = null;
+    S.log.length = at;
+    clearInterval(ticker);
+    render();
+    return {rows, replyLast};
+  };
+  /* The reopened half: the stored rows of that same turn, as the agent
+     writes them, mapped by the function openSession uses. */
+  window.__turnsToLog = (turns) => sessionTurnsToLog(turns).map((m) => m.k === 'tool' ? 'tool:' + m.name
+    : m.k === 'approval' ? 'approval:' + m.tool + ':' + m.state + ':' + m.kind : m.k);
 }
 
 /* ------------------------------------------------------------------
@@ -17997,6 +18635,7 @@ if (typeof window !== 'undefined') {
    */
   window.__obOpen = (step, opts) => {
     OB.open = true;
+    OB.openGen = (OB.openGen || 0) + 1;
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
