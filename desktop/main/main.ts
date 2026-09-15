@@ -3364,9 +3364,10 @@ async function sidebarTest(
     type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
     const shape = await js<RowShape>("window.__rowShape()");
     const rowTail = shape ? shape.children.slice(2) : [];
+    // Soft Tactile: sidebar rows are 34px pills (tokens: sidebar row 34).
     check(
       "sidebar rows are one line: dot + name (+ hover controls)",
-      !!shape && shape.minHeight === 30 && shape.maxHeight === 30
+      !!shape && shape.minHeight === 34 && shape.maxHeight === 34
         && shape.children[0] === "sdot" && shape.children[1] === "t1"
         && rowTail.length <= 2
         && rowTail.every((c) => c === "pinbtn" || c === "unreadbtn")
@@ -9956,23 +9957,22 @@ async function chromeTest(
     // --- item 8: the bottom-left entry is a plain blue button ----------------
     const setBtn = await js<SetBtn | null>("window.__settingsBtn()");
     check(
-      "item 8: the settings entry is a plain button with no keycap and no icon",
-      /* The ask was for a plain button with no hints on it — the keycaps and
-         the icon were what made it look like something other than a button.
-         It is default rank rather than primary now: in this visual system a
-         red fill is the PRIMARY ACTION OF THE SCREEN, and a permanent nav
-         control in the corner of every screen is not that. */
+      "item 8: the settings entry is a neutral button: gear, the word, one ⌘, keycap",
+      /* Soft Tactile (SH-01) draws the entry as a full-width neutral button
+         with the gear, the word and its ⌘, keycap. It stays default rank,
+         never primary: a permanent nav control in the corner of every screen
+         is not the primary action of the screen. */
       !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:tasks"
-        && setBtn.keycaps === 0 && setBtn.labelVisible && !setBtn.iconVisible
+        && setBtn.keycaps === 1 && setBtn.labelVisible && setBtn.iconVisible
         && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes)
         && !/(^|\s)btn-p(\s|$)/.test(setBtn.classes),
       JSON.stringify(setBtn),
     );
-    // #sidebar is 260px with box-sizing:border-box and a 1px right border, so
-    // the content box is 259 and the button inside 2×12 of padding is 235.
+    // #sidebar is 260px (8px window gutter + the 252px floating panel with 8px
+    // side padding), so the button's full width is 236.
     check(
-      "item 8: it is 32px tall, full width, below the lists",
-      !!setBtn && setBtn.height === 32 && setBtn.width === 235 && setBtn.belowLists,
+      "item 8: it is 36px tall, full width, below the lists",
+      !!setBtn && setBtn.height === 36 && setBtn.width === 236 && setBtn.belowLists,
       setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
     );
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
