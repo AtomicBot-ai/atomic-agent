@@ -115,7 +115,7 @@ const COMMANDS: CommandDescriptor[] = [
   {
     name: "import",
     summary:
-      "Import conversation history + cron jobs from another agent (hermes)",
+      "Import skills, sessions + more from another agent (import --help lists sources)",
     run: importCommand,
   },
   {

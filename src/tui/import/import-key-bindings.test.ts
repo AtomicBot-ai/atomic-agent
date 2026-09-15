@@ -58,12 +58,18 @@ describe("handleImportTabKey — source type row", () => {
     ]);
   });
 
-  it("reaches codex and wraps back to hermes", () => {
+  it("reaches the Pi family after codex and wraps back to hermes", () => {
     const { actions, handle } = drive(
       stateWith({ focus: "sourceType", source: "codex" }),
     );
     handle("", sideKey("right"));
-    expect(actions).toEqual([{ type: "import_source_set", source: "hermes" }]);
+    expect(actions).toEqual([{ type: "import_source_set", source: "pi" }]);
+
+    const wrapped = drive(stateWith({ focus: "sourceType", source: "oh-my-pi" }));
+    wrapped.handle("", sideKey("right"));
+    expect(wrapped.actions).toEqual([
+      { type: "import_source_set", source: "hermes" },
+    ]);
   });
 });
 

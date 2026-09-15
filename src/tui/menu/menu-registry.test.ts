@@ -169,7 +169,8 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "import",
-    description: "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
+    description:
+      "open the Import tab (Hermes, OpenClaw, Claude Code, Codex, Pi or Oh-My-Pi)",
   },
   {
     name: "privacy",

@@ -19,6 +19,8 @@ export const IMPORT_SOURCE_IDS: readonly ImportSourceId[] = [
   "openclaw",
   "claude-code",
   "codex",
+  "pi",
+  "oh-my-pi",
 ];
 
 /** Per-source option toggles, in the row order the form draws them. */
@@ -50,6 +52,12 @@ const SOURCE_TOGGLES: Record<ImportSourceId, readonly ImportToggleMeta[]> = {
     { id: "memory", hint: "AGENTS.md" },
     { id: "sessions" },
     { id: "secrets", hint: "OPENAI_API_KEY" },
+  ],
+  pi: [{ id: "skills" }, { id: "sessions" }],
+  "oh-my-pi": [
+    { id: "skills" },
+    { id: "mcp", hint: "servers from mcp.json" },
+    { id: "sessions" },
   ],
 };
 
@@ -88,6 +96,10 @@ export function importSourcePlaceholder(source: ImportSourceId): string {
       return "~/.claude";
     case "codex":
       return "~/.codex";
+    case "pi":
+      return "~/.pi/agent";
+    case "oh-my-pi":
+      return "~/.omp/agent";
   }
 }
 

@@ -5,6 +5,8 @@ export type {
   ImportItemStatus,
   ImportReport,
 } from "./import-report.js";
+export { importSkillDirs } from "./import-skill-dirs.js";
+export type { ImportSkillDirsInput } from "./import-skill-dirs.js";
 export { reconcileImportedSession } from "./reconcile-session.js";
 export type {
   ReconcileImportedSessionArgs,
@@ -113,6 +115,56 @@ export type {
   CodexRunOptions,
   ResolveCodexOptionsInput,
 } from "./codex/index.js";
+
+// Pi source.
+export {
+  listPiFormatSessions,
+  listSkillDirs,
+  mapPiFormatSession,
+  mapPiSession,
+  PI_IMPORT_OPTIONS,
+  PI_SESSION_ID_PREFIX,
+  PiImporter,
+  PiOptionError,
+  PiSource,
+  PiSourceError,
+  readPiFormatSession,
+  resolvePiOptions,
+} from "./pi/index.js";
+export type {
+  PiBlock,
+  PiImporterDeps,
+  PiMessage,
+  PiOptionId,
+  PiOptionMeta,
+  PiRunOptions,
+  PiSessionData,
+  PiSessionMeta,
+  PiSessionOrigin,
+  PiSkill,
+  ResolvePiOptionsInput,
+} from "./pi/index.js";
+
+// Oh-My-Pi source.
+export {
+  mapOhMyPiMcpServer,
+  mapOhMyPiSession,
+  OH_MY_PI_IMPORT_OPTIONS,
+  OH_MY_PI_SESSION_ID_PREFIX,
+  OhMyPiImporter,
+  OhMyPiOptionError,
+  OhMyPiSource,
+  OhMyPiSourceError,
+  resolveOhMyPiOptions,
+} from "./oh-my-pi/index.js";
+export type {
+  OhMyPiImporterDeps,
+  OhMyPiMcpServer,
+  OhMyPiOptionId,
+  OhMyPiOptionMeta,
+  OhMyPiRunOptions,
+  ResolveOhMyPiOptionsInput,
+} from "./oh-my-pi/index.js";
 
 // Source detection (shared by the first-run flow and anything that
 // wants to name the sources without hard-coding their layouts).

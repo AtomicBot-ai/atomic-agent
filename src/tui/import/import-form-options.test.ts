@@ -34,6 +34,24 @@ describe("resolveImportFormOptions", () => {
     ).toEqual(["skills", "sessions"]);
   });
 
+  it("maps the Pi and Oh-My-Pi forms, which have no secrets row", () => {
+    expect(resolveImportFormOptions(form({ source: "pi" }))).toEqual([
+      "skills",
+      "sessions",
+    ]);
+    expect(
+      resolveImportFormOptions(form({ source: "pi", skills: false })),
+    ).toEqual(["sessions"]);
+    expect(resolveImportFormOptions(form({ source: "oh-my-pi" }))).toEqual([
+      "skills",
+      "mcp",
+      "sessions",
+    ]);
+    expect(
+      resolveImportFormOptions(form({ source: "oh-my-pi", mcp: false })),
+    ).toEqual(["skills", "sessions"]);
+  });
+
   it("keeps the Hermes and OpenClaw behaviour", () => {
     expect(
       resolveImportFormOptions(
