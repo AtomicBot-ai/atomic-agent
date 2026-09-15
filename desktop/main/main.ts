@@ -1551,6 +1551,17 @@ type Sb = {
   total: number;
 };
 
+/** Every stylesheet the window loads, in load order — styles.css (tokens and
+    the shared kit) and then the per-region files under renderer/css. A check
+    that looks for a rule on disk must search all of them, because a rule
+    lives in the file of the region that owns it. */
+function rendererCssText(): string {
+  const dir = join(__dirname, "..", "renderer");
+  const html = readFileSync(join(dir, "index.html"), "utf8");
+  const sheets = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]!);
+  return sheets.map((href) => { try { return readFileSync(join(dir, href), "utf8"); } catch { return ""; } }).join("\n");
+}
+
 async function smokeTest(): Promise<void> {
   if (!win) return;
   const js = <T,>(code: string) => win!.webContents.executeJavaScript(code) as Promise<T>;
@@ -2065,7 +2076,7 @@ async function smokeTest(): Promise<void> {
       // The visible text only: the markup carries `data-act="modes"` and a
       // tooltip, neither of which is what the operator reads.
       const chipText = chipOff.replace(/<[^>]*>/g, "").trim();
-      const dimRule = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+      const dimRule = rendererCssText();
       const dimmed = /\.poprow\.dim\s*\{/.test(dimRule);
       check(
         "coding mode chip says 'mode —' when the agent has no route",
@@ -9799,7 +9810,7 @@ async function chromeTest(
      cross-origin, and in that case the shipped stylesheet is read from disk —
      the same file the window loaded. Its `:focus-within` / `:focus-visible`
      twin is the same declaration and IS drivable; those checks are separate. */
-  const cssText = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+  const cssText = rendererCssText();
   const hoverRuleHolds = async (spaced: string, onDisk: string, want: string): Promise<[boolean, string]> => {
     const live = await js<string | null>(`window.__cssRule(${JSON.stringify(spaced)})`);
     if (live !== null) return [live === want, `live rule ${JSON.stringify(live)} (want ${JSON.stringify(want)})`];
