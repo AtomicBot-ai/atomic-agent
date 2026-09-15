@@ -1686,15 +1686,20 @@ function emptyChat() {
   const id = selActiveProviderId();
   const entry = (selProviders() || []).find((p) => p.id === id);
   const model = activeModel();
+  /* Soft Tactile (CH-01): the plate is a lifted card headed by the app mark,
+     and the provider and model rows wear their brand marks (server / CPU
+     badge when there is none). The marks carry alt="" and sit outside the
+     value span, so the text of each value is exactly what it was. */
   const rows = [
-    ['Workspace', S.live.workingDir || 'not set'],
-    ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured'],
-    ['Model', model || 'none chosen'],
-    ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—'],
+    ['Workspace', S.live.workingDir || 'not set', ''],
+    ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured', id ? providerMark(id, 'xs') : ''],
+    ['Model', model || 'none chosen', model ? modelMark(model, 'xs') : ''],
+    ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—', ''],
   ];
   return '<div class="emptychat">'
-    + '<div class="plate emptyplate"><dl>'
-    + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('')
+    + '<div class="plate emptyplate">'
+    + '<div class="emptyhead">' + MARK_COLOR + '<b>Ready when you are</b></div><dl>'
+    + rows.map(([k, v, mark]) => '<dt>' + esc(k) + '</dt><dd>' + mark + '<span>' + esc(v) + '</span></dd>').join('')
     + '</dl></div>'
     + '<div class="ghost">'
       + ['what can you do?','summarise the files in this folder','check the disk space on this Mac']
@@ -1726,8 +1731,12 @@ function item(m, end) {
      it, above the mark. Nothing above them moves either way, so no
      `#turn-<id>` anchor shifts and the fold/scroll-stability machinery is
      untouched. */
+  /* Soft Tactile: `.tk-asst` names the content column only so chat.css can
+     seat the end mark on the action row; `.prose` stays its direct child
+     (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph` greys the
+     desktop's own "(no reply)" / "(stopped)" backfill. */
   if (m.k === 'assistant') return '<div class="turn"><div></div>'
-    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
     + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '')
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
@@ -1740,15 +1749,15 @@ function item(m, end) {
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
     + '</div></div>';
-  if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text
-    /* F2 — the one action that helps, on the row that reports the problem.
-       A person told their provider is not answering has exactly one useful
-       next move, and hunting for the composer chip is not it. */
-    + (m.act === 'switch-provider'
-        ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
-    + '</span></div>';
+  /* F2 — the one action that helps, on the row that reports the problem.
+     A person told their provider is not answering has exactly one useful
+     next move, and hunting for the composer chip is not it. The row itself
+     (and its `.sysact` Switch provider) is drawn by sysRowHTML, which the
+     folded repeat shares. */
+  if (m.k === 'system') return sysRowHTML(m, 1);
+  // The label keeps its textContent ("Reasoning · N steps"); only the weight moved.
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<b>Reasoning</b> <span>· ' + m.steps + ' steps</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
   if (m.k === 'tool') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
@@ -1815,7 +1824,7 @@ function msgActs(m) {
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
   return '<div class="' + cls + '">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('refresh') + label('Send again') + '</button>'
+    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + label('Send again') + '</button>'
     + copy + '</div>';
 }
 
@@ -1917,11 +1926,17 @@ function argsBlock(args) {
   if (typeof args === 'string') { try { return JSON.stringify(JSON.parse(args), null, 2); } catch { return args; } }
   try { return JSON.stringify(args, null, 2); } catch { return '[unserialisable args]'; }
 }
+/* Soft Tactile status glyph, shared by a card and a folded run: running is the
+   pulsing brand dot, done a green tick on a soft green disc, failed a red alert
+   on a soft red disc. `state` is 'run' | 'ok' | 'err'. */
+function toolGlyph(state) {
+  return state === 'run' ? '<span class="tk-gly tk-gly--run"><span class="dot run"></span></span>'
+    : state === 'err' ? '<span class="tk-gly tk-gly--err">' + ic('alert') + '</span>'
+    : '<span class="tk-gly tk-gly--ok">' + ic('check') + '</span>';
+}
 function toolCard(m) {
   const running = m.ok === null;
-  const glyph = running ? '<span class="dot run"></span>'
-    : m.ok ? '<span style="color:var(--success);display:flex">' + ic('check') + '</span>'
-           : '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>';
+  const glyph = toolGlyph(running ? 'run' : m.ok ? 'ok' : 'err');
   const summary = (m.out || '').trim().replace(/\s+/g, ' ');
   const clipped = summary.length > 160 ? summary.slice(0, 159) + '\u2026' : summary;
   return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
@@ -1936,14 +1951,14 @@ function toolCard(m) {
           : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
           : 'no trace for this call') + '">'
       + (running ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span>'
-      + (m.truncated ? '<span class="cap" style="color:var(--warn)">truncated</span>' : '')
+      + (m.truncated ? '<span class="tk-chip tk-chip--sm tk-chip--amber">truncated</span>' : '')
       + '<span class="ar">' + esc(previewArgs(m.args || m.arg)) + '</span>'
-      + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
+      + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
     + (!m.open && clipped ? '<div class="cardsum' + (m.ok === false ? ' bad' : '') + '">' + esc(clipped) + '</div>' : '')
     + (m.open ? '<div class="cardbody">'
-        + '<div class="micro sec">args</div><pre>' + esc(argsBlock(m.args || m.arg)) + '</pre>'
-        + '<div class="micro sec">result</div><pre>' + esc(running ? '(pending)' : (m.out || '\u2014')) + '</pre></div>' : '')
+        + '<div class="micro">args</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
+        + '<div class="micro">result</div><pre class="tk-out">' + esc(running ? '(pending)' : (m.out || '\u2014')) + '</pre></div>' : '')
     + '</div>';
 }
 
@@ -1959,28 +1974,37 @@ function apprCard(m) {
       : m.state === 'denying' ? 'Denying…'
       : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
       : 'Denied';
+    /* Soft Tactile: the receipt pill. The label still opens the row's text
+       ("Approved · 14:32:09"), which scenario 05 reads back. */
+    const glyph = ok ? toolGlyph('ok')
+      : m.state === 'denying' ? '<span class="tk-gly"><span class="tk-spin"></span></span>'
+      : m.state === 'undelivered' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
+      : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
-      + '<div class="hstack" style="gap:8px"><span class="sec">' + label + ' · ' + m.at + '</span>'
-      + '<span class="badge" style="background:transparent;border-color:var(--line);color:var(--text-secondary)">' + esc(m.kind) + '</span></div></div>';
+      + glyph + '<span class="apprlbl"><b>' + label + '</b> · <span class="mono">' + m.at + '</span></span>'
+      + '<span class="badge tk-chip tk-chip--sm">' + esc(m.kind) + '</span></div>';
   }
   const isTrust = m.cat === 'trust_config';
+  /* Soft Tactile: the indigo decision block (the deep critical block for
+     trust_config). Approve is the white pill, Deny the glass pill that takes
+     the focus, Abort run a ghost on the block. */
   return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard">'
-    + '<div class="apprhead"><span style="color:var(--warn);display:flex">' + ic('warn') + '</span>'
+    + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'alert') + '</span>'
       + '<span class="ttl">Approval required</span>'
-      + '<span class="badge" style="margin-left:auto">' + esc(m.kind) + '</span></div>'
-    + '<dl class="dl">'
+      + '<span class="badge">' + esc(m.kind) + '</span></div>'
+    + '<dl class="dl aplate">'
       + '<dt>tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
       + '<dt>kind</dt><dd>' + esc(m.kind) + ' <span class="cap">— auto-approves from level ' + m.lvl + '</span></dd>'
       + '<dt>reason</dt><dd>' + esc(m.reason) + '</dd>'
       + '<dt>preview</dt><dd><div class="previewblk">' + esc(m.preview) + '</div></dd>'
-      + '<dt>affects</dt><dd><span class="pathchip"><b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
+      + '<dt>affects</dt><dd><span class="pathchip">' + ic('file') + '<b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
     + '</dl>'
     + '<div class="apprbtns"><div class="apprgrp">'
-      + '<button class="btn btn-p" data-appr="y">Approve' + keycaps('Y') + '</button>'
-      + (isTrust || m.approvalId ? '' : '<button class="btn btn-t" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
-      + (isTrust || m.approvalId ? '' : '<button class="btn btn-t" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
-      + '<button class="btn btn-s" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
-      + '<button class="btn btn-g" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
+      + '<button class="btn sm btn-white' + (isTrust ? ' dg' : '') + '" data-appr="y">Approve' + keycaps('Y') + '</button>'
+      + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
+      + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
+      + '<button class="btn sm btn-glass" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
+      + '<button class="btn sm btn-g apprabort" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
     + '</div>'
     /* Item 1 (approval parity). Two repairs, both about not promising what the
        card cannot do or omitting what it now does:
@@ -2000,8 +2024,8 @@ function apprCard(m) {
     + '<div class="apprfoot">' + (isTrust
         ? 'trust-config writes are never granted for the session; y approves this call only'
         : (m.approvalId
-        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 loosen the standing stance with the <button class="btn-g" style="text-decoration:underline" data-act="modes">mode</button> control in the composer.'
-        : 'y approves this call once; s / a grant for this session only (never persisted); loosen the standing stance with the <button class="btn-g" style="text-decoration:underline" data-act="modes">mode</button> control in the composer'))
+        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 loosen the standing stance with the <button class="apprlink" data-act="modes">mode</button> control in the composer.'
+        : 'y approves this call once; s / a grant for this session only (never persisted); loosen the standing stance with the <button class="apprlink" data-act="modes">mode</button> control in the composer'))
       // Only on a card that typing can actually answer: the deny-with-reason
       // path needs a live approvalId AND this chat's own request, so a
       // background thread's question (or a prototype card) does not carry a
@@ -10431,13 +10455,15 @@ function planHandoffHTML() {
   // and quiet, because it is the one control here that does nothing
   // irreversible and putting it first would give the least consequential
   // choice the position the eye lands on.
-  return '<div class="planbar">'
-    + '<button class="btn planrun warn" data-plan="auto"' + off
+  // Soft Tactile: a lifted card holding the three pills; the chord keycaps
+  // (⌃Y ⌃B ⌃D) are drawn by chat.css so each label's text stays verbatim.
+  return '<div class="planbar"><div class="planbtns">'
+    + '<button class="btn sm planrun warn" data-plan="auto"' + off
       + ' title="run the plan with file writes inside this workspace no longer asking">▶ run it · auto</button>'
-    + '<button class="btn planrun bad" data-plan="bypass"' + off
+    + '<button class="btn sm planrun bad" data-plan="bypass"' + off
       + ' title="run the plan with nothing asking, for the rest of this session">▶ run it · bypass permissions</button>'
-    + '<button class="btn btn-s" data-plan="dismiss"' + off
-      + ' title="stays in plan mode — type to propose a different one">✕ dismiss plan</button>'
+    + '<button class="btn sm btn-s" data-plan="dismiss"' + off
+      + ' title="stays in plan mode — type to propose a different one">✕ dismiss plan</button></div>'
     // src/tui/tui-app.tsx:2011, without the ellipsis: here it is prose under
     // the bar rather than a placeholder. It carries the third option, and an
     // operator looking at two "execute" buttons needs telling that typing is
@@ -10836,16 +10862,18 @@ function noteSessionModelStamp(data) {
   if (!known) {
     // The TUI's own sentence for a stamp whose provider has since been
     // deleted (session-model-restore.ts describeModelRestore in 0.5.5).
-    S.log.push({id:nid(), k:'system', note:true, text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
+    // Soft Tactile: `tone` draws the row as a blue notice (sysRowHTML); the text stays verbatim.
+    S.log.push({id:nid(), k:'system', note:true, tone:'blue', text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
   // `note:true` (see endMarkIds): this row is appended to a REPLAYED
   // transcript whose last turn finished long ago, so it must not take that
-  // turn's full stop away.
-  S.log.push({id:nid(), k:'system', note:true, text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
-    + ' <button class="btn btn-s" style="height:22px" data-act="sessmodel:apply">Switch to it</button>'
-    + ' <span class="ter">(a switch restarts the agent, so it is refused while any turn is running)</span>'});
+  // turn's full stop away. Soft Tactile: a blue notice — sentence, caption
+  // under it, Switch to it on the right (chat.css places the three).
+  S.log.push({id:nid(), k:'system', note:true, tone:'blue', icon:'refresh', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
+    + ' <span class="tk-stampcap">(a switch restarts the agent, so it is refused while any turn is running)</span>'
+    + '<button class="btn sm btn-t tk-stampbtn" data-act="sessmodel:apply">Switch to it</button>'});
 }
 /* Full-id comparison, matching 0.5.5's planModelRestore
    (`turn.chatModel === (provider.defaultChatModel ?? provider.model)`).
@@ -11236,10 +11264,21 @@ function renderItems() {
     `m.text` is already-escaped html on this path (the callers escape what
     they interpolate), so it is emitted as the single row would emit it. */
 function systemRun(m, times) {
-  return '<div class="sysrow"><span></span><span>' + m.text
-    + (m.act === 'switch-provider'
-        ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
-    + ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span></span></div>';
+  return sysRowHTML(m, times);
+}
+/* One system row, single or folded (`times` \u2265 2 adds the \u00d7N count). `m.text`
+   is already-escaped html. A row whose item carries `tone` (the session
+   model stamp) is drawn as a Tactile notice inside the same `.sysrow`; the
+   literal "loading session\u2026" row gets the kit spinner. */
+function sysRowHTML(m, times) {
+  const tail = (m.act === 'switch-provider'
+      ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
+    + (times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '');
+  if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
+    + ic(m.icon || 'info') + '<span class="grow">' + m.text + tail + '</span></div></div>';
+  return '<div class="sysrow"><span></span><span>'
+    + (m.text === 'loading session\u2026' ? '<span class="tk-spin"></span>' : '')
+    + m.text + tail + '</span></div>';
 }
 
 function groupCard(run) {
@@ -11256,17 +11295,16 @@ function groupCard(run) {
     : measured.length === run.length ? (observed ? 'sum of the calls; ' + observed + ' observed by this window until the store lands' : 'sum of the calls, measured by the agent (trace)')
     : measured.length ? measured.length + ' of ' + run.length + ' calls measured' + (observed ? ' (' + observed + ' observed by this window until the store lands)' : '') + '; the rest have no trace row'
     : 'no trace for these calls';
-  const glyph = pending ? '<span class="dot run"></span>'
-    : bad ? '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>'
-          : '<span style="color:var(--success);display:flex">' + ic('check') + '</span>';
+  const glyph = toolGlyph(pending ? 'run' : bad ? 'err' : 'ok');
   const previews = run.map((c) => previewArgs(c.args || c.arg)).filter(Boolean);
-  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card">'
+  // Soft Tactile: the same card as a single call; a run with a failure takes the red ring and a `N failed` chip.
+  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '">'
     + '<button class="cardhead" data-group="' + m.id + '">' + glyph
     + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '\u2026' : measured.length ? dur(ms) : '') + '</span>'
-    + (bad ? '<span class="cap" style="color:var(--danger)">' + bad + ' failed</span>' : '')
+    + (bad ? '<span class="tk-chip tk-chip--sm tk-chip--red">' + bad + ' failed</span>' : '')
     + '<span class="ar">' + esc(previews.slice(0, 3).join(' \u00b7 ') + (previews.length > 3 ? ' \u2026' : '')) + '</span>'
-    + '<span class="ter" style="display:flex">' + ic('chevR') + '</span></button>'
+    + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
 

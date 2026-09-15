@@ -1,225 +1,295 @@
 /* ============================================================
    Transcript — empty chat plate, user bubble, prose and markdown, reasoning, tool cards and folded runs, approval block, plan hand-off, system rows, Saved to strip, message actions. Screens CH-01…26, SY-*.
-   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+   Loaded after styles.css (tokens + kit) and css/shell.css. Colours come from tokens only.
+   Soft Tactile: floating lift cards on the well ground, pills, the brand user
+   bubble and the indigo decision block (components.md §13).
    ============================================================ */
 
-/* transcript */
-.turn{display:grid;grid-template-columns:28px minmax(0,1fr);gap:var(--s4);margin-bottom:var(--s6)}
-/* item 4: a grid cell's automatic minimum is its min-content width, so a long
-   nowrap preview or an unbroken token would widen the whole transcript column */
-.turn>*,.sysrow>*{min-width:0}
-/* r4-ui item 3: `.turn .gutter` (the assistant mark) and `.avatar` (the user
-   `›`) are gone — the user asked for neither glyph inside the chat. The
-   assistant row keeps the 28px grid track with an EMPTY first cell so its
-   content column does not move; the user row leaves the grid entirely. */
-.prose{font-size:15px;line-height:24px;white-space:pre-wrap;word-break:break-word}
-.prose.usr{color:var(--text-primary)}
-.sysrow{display:grid;grid-template-columns:28px minmax(0,1fr);gap:var(--s4);margin-bottom:var(--s4);color:var(--text-secondary);font-size:13px}
+/* ---------------- column ----------------
+   The renderer owns the transcript's scroll position (repaintEntry /
+   afterChat(keep) in renderer.js); Chromium's own anchoring would stack on top
+   of the explicit drift correction and is lost anyway whenever #scroller is
+   rebuilt.
 
-.card{border:1px solid var(--line);background:var(--bg-raised);border-radius:0;margin-bottom:var(--s3);overflow:hidden}
-.card.err{border-color:var(--danger);background:var(--danger-wash)}
-.card.running{border-color:var(--accent-line)}
-.cardhead{min-height:32px;display:flex;align-items:flex-start;flex-wrap:wrap;gap:var(--s3);row-gap:2px;padding:6px var(--s4);width:100%;text-align:left}
-.cardhead>*{line-height:20px}
-.cardhead .ter{margin-left:auto}
-.cardhead:hover{background:var(--bg-hover)}
-.cardhead .nm{font-weight:600;white-space:nowrap}
-.cardhead .ar{font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:normal;overflow-wrap:anywhere;word-break:break-word;flex:1 1 200px;min-width:0}
-.cardhead .du{font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary)}
-.cardbody{border-top:1px solid var(--line-soft);padding:var(--s4);display:flex;flex-direction:column;gap:var(--s2)}
-.cardbody pre{margin:0;font-family:var(--font-mono);font-size:12px;line-height:18px;color:var(--text-secondary);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:320px;overflow:auto;max-width:100%}
-.chip-route{height:18px;display:flex;align-items:center;padding:0 5px;border-radius:0;font-size:11px;font-weight:500;flex:none}
-.chip-route.cloud{background:var(--accent);color:var(--on-fill)}
-.chip-route.local{border:1px solid var(--line);color:var(--text-secondary)}
-.disc{display:flex;align-items:center;gap:var(--s2);height:24px;color:var(--text-secondary);font-size:13px;margin-bottom:var(--s3)}
-.disc:hover{color:var(--text-primary)}
-.discbody{border-left:2px solid var(--line);padding:var(--s2) 0 var(--s2) var(--s4);margin:0 0 var(--s4) 3px;color:var(--text-secondary);font-size:13px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere}
+   The column is TOP-anchored on purpose. The reference bottom-anchors a short
+   transcript (justify-content:flex-end), but then folding a card in a chat
+   that does not scroll yet moves everything above it — the card's own head
+   included — and repaintEntry can only correct drift through scrollTop, which
+   a non-scrolling transcript does not have. Keeping the head still wins.
 
-/* approval */
-.appr{border:1px solid var(--warn-border);border-left:3px solid var(--warn);background:var(--warn-wash);border-radius:0;padding:var(--s5);margin-bottom:var(--s5)}
-.appr.danger{border-color:var(--danger);border-left-color:var(--danger);background:var(--danger-wash)}
-.appr.done{border-color:var(--line);border-left-color:var(--text-tertiary);background:var(--bg-raised)}
-.appr.ok{border-left-color:var(--success)}
-.apprhead{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s4)}
-.badge{height:20px;display:flex;align-items:center;padding:0 6px;border-radius:0;background:var(--warn-wash);color:var(--warn);font-size:11px;font-weight:500;border:1px solid var(--warn-border)}
-.dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--s2) var(--s5);margin-bottom:var(--s4)}
-.dl dt{font-size:11px;color:var(--text-secondary);text-align:right;padding-top:2px}
-.dl dd{margin:0;font-size:13px;min-width:0;overflow-wrap:anywhere}
-.previewblk{font-family:var(--font-mono);font-size:12px;line-height:18px;background:var(--bg-raised);border-radius:0;padding:var(--s2) var(--s3);word-break:break-all}
-.pathchip{display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:4px;background:var(--bg-raised);border-radius:0;padding:2px 6px;overflow-wrap:anywhere}
-.pathchip b{font-weight:500}
-.apprbtns{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s3)}
-.apprgrp{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
-.apprfoot{font-size:11px;line-height:16px;color:var(--text-secondary)}
-
-/* r4-ui item 1: renamed from `.empty`. The sidebar dot emits `sdot empty`
-   as its state class, so this container rule used to win on padding and
-   floor the 8px dot at padding+border (~66px at DPR 1, ~67px at DPR 2 —
-   box-sizing:border-box). The dot states are asserted by the harness, so
-   the transcript screen is what got renamed. */
-.emptychat{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s4);text-align:center;padding:var(--s8)}
-.emptychat p{margin:0;max-width:360px;color:var(--text-secondary)}
-.ghost{display:flex;gap:var(--s3);flex-wrap:wrap;justify-content:center}
-.ghostchip{height:28px;display:flex;align-items:center;padding:0 12px;border:1px solid var(--line);border-radius:0;color:var(--text-secondary);font-size:13px}
-.ghostchip:hover{border-color:var(--line-strong);color:var(--text-primary)}
-
-/* tool card summary line (the TUI's └─ line) and grouped runs */
-.cardsum { padding: 4px 12px 7px 36px; font-size: 12px; line-height: 18px; color: var(--text-secondary); white-space: normal; overflow-wrap: anywhere; word-break: break-word; border-top: 1px solid var(--line-soft); }
-.cardsum.bad { color: var(--danger); }
-
-/* files and links inside replies */
-.filechip { display: inline-flex; align-items: center; gap: 5px; vertical-align: -3px; padding: 1px 8px 1px 5px; border: 1px solid var(--line); border-radius:0; background: var(--bg-raised); color: var(--text-primary); font-size: 13px; font-weight: 500; }
-.filechip:hover { border-color: var(--accent-line); background: var(--accent-wash-soft); }
-.filechip svg { color: var(--accent-text); }
-.msglink { color: var(--accent-text); border-bottom: 1px solid var(--accent-line); }
-
-/* scroll-stable cards: the renderer owns the transcript's scroll position
-   (repaintEntry / afterChat(keep) in renderer.js); Chromium's own anchoring
-   would stack on top of the explicit drift correction and is lost anyway
-   whenever #scroller is rebuilt. */
+   The top fade is a mask on the scroller's own box, so it never moves content
+   or changes a measurement; the column's top padding is taller than the fade,
+   so nothing is faded at scrollTop 0. */
 .scroller{overflow-anchor:none}
+#scroller{-webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
+  mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
+#scroller > .col720{max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
+#scroller > .col720 > *{min-width:0}
 
-/* ---------------- Item 5: file attachments — the "Saved to …" strip ---------------- */
-.attach{margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:4px;min-width:0}
-.attach-label{font-size:12px;line-height:16px;color:var(--text-secondary);overflow-wrap:anywhere;word-break:break-word}
-.attach-label .mono{font-family:var(--font-mono);color:var(--text-primary)}
-.attach-more{color:var(--text-tertiary)}
-.attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;min-width:0}
-.attach .filechip{max-width:100%;padding:4px 10px 4px 7px;vertical-align:0;overflow:hidden}
-.attach .filechip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Rows. `.turn` keeps its two-track grid with an EMPTY first cell (r4-ui
+   item 3, asserted by __turnShape) — the track is 0 wide now, so the content
+   column starts at the column edge the way the reference draws it. The second
+   track is what __overflow reads, so it must stay a real track.
+   item 4: a grid cell's automatic minimum is its min-content width, so a long
+   nowrap preview or an unbroken token would widen the whole transcript column. */
+.turn{display:grid;grid-template-columns:0 minmax(0,1fr);gap:0;margin:0}
+.turn>*,.sysrow>*{min-width:0}
+.tk-asst{min-width:0}
 
-/* ---------------- r4-ui item 3: user messages are bubbles ---------------- */
-/* "Messages from user should be sticky to the right side of the dialogue
-   screen, and they should be placed inside chat boxes, like when you are
-   having a chat on WhatsApp" — the user's words. The user row leaves the
-   28px/1fr grid so the bubble can size to its text; every other row keeps the
-   grid (with an empty first cell) and therefore its exact content x. */
+/* ---------------- empty chat (CH-01) ----------------
+   r4-ui item 1: renamed from `.empty`. The sidebar dot emits `sdot empty` as its
+   state class, so a container rule of that name floored the 8px dot at its
+   padding. __emptyChatProbe asserts `display:flex` here. */
+.emptychat{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  gap:18px;padding:24px 28px 30px}
+.emptyplate{width:min(520px,100%);display:grid;gap:14px;padding:18px 20px 20px;
+  background:var(--lift);border-radius:var(--r-card);box-shadow:var(--sh-card)}
+.emptyhead{display:flex;align-items:center;gap:10px;font-size:15px;line-height:1.3;letter-spacing:-.015em;color:var(--ink)}
+.emptyhead b{font-weight:600}
+.emptyhead svg{width:28px;height:28px}
+.emptyplate dl{gap:9px 22px;align-items:center}
+.emptyplate dd{display:flex;align-items:center;gap:8px;min-width:0}
+.emptyplate dd > span:last-child{min-width:0;overflow-wrap:anywhere}
+.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:720px}
+.ghostchip{display:inline-flex;align-items:center;height:34px;padding:0 14px;border-radius:var(--r-pill);
+  background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2);font-size:13px;
+  transition:background var(--t-state) var(--ease)}
+.ghostchip:hover{background:var(--hover);color:var(--ink)}
+
+/* ---------------- user bubble ----------------
+   "Messages from user should be sticky to the right side of the dialogue
+   screen, and they should be placed inside chat boxes" — the user's words. The
+   user row leaves the grid (`display:block`, asserted by __bubbleBox) so the
+   bubble can size to its text: `width:fit-content` + `margin-left:auto` sticks
+   it to the column's right edge. `overflow-wrap:anywhere` on top of the
+   inherited pre-wrap means a single unbroken 400-character token still cannot
+   widen the transcript. The bottom-right corner is the tightened one: the
+   outgoing-tail convention without drawing a tail. */
 .turn.usr{display:block}
-/* `width:fit-content` + `margin-left:auto` is what makes the box the width of
-   the text and sticks it to the right edge of the column. The max-width caps a
-   long message: the percentage resolves against .col720's CONTENT box (720px
-   less 20px of padding each side = 680px, so 76% is ~517px) and only binds
-   below a ~632px column — at full width the 480px term always wins.
-   `overflow-wrap:anywhere` sits on top of the inherited
-   `white-space:pre-wrap;word-break:break-word`, so a single unbroken
-   300-character token still cannot widen the transcript. */
-.prose.usr.bubble{width:fit-content;max-width:min(76%,480px);margin-left:auto;padding:8px 12px;
-  border-radius:0;background:var(--accent-wash);border:1px solid var(--accent-line);
-  overflow-wrap:anywhere}
-/* Only the bottom-right corner is tightened: the outgoing-tail convention,
-   which reads as "mine" without drawing a tail. --accent-wash / --accent-line
-   are defined in all three token blocks (:root, the prefers-light block and
-   :root[data-theme="light"]), so the bubble is right in dark, light-by-
-   preference and light-by-choice without a new token. */
+.prose.usr.bubble{width:fit-content;max-width:74%;margin-left:auto;padding:10px 15px;
+  border-radius:22px 22px 6px 22px;background:var(--brand);color:var(--on-strong);
+  font-size:14.5px;line-height:1.5;overflow-wrap:anywhere}
 
-/* The agent's full stop: one mark at the end of a FINISHED turn, never one per
-   message. It is appended inside the last assistant item, after the attachment
-   strip, so no `#turn-<id>` anchor moves and the fold/scroll-stability
-   machinery is untouched. The svg rule is what shrinks the shared 20px
-   MARK_MONO without duplicating its path data. */
-.endmark{margin-top:10px;color:var(--text-tertiary);display:flex}
-.endmark svg{width:12px;height:12px}
+/* ---------------- assistant prose and markdown (F12) ----------------
+   A model writes markdown and renderMarkdown turns it into tags of its own,
+   joined by newlines — which `pre-wrap` keeps as line breaks. Block pieces are
+   therefore inline-blocks spanning the line: a block box would turn the newline
+   on either side of it into an empty line. Machine text — code spans and
+   fences — is mono; prose is not. */
+.prose{font-size:14.5px;line-height:1.62;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.prose.tk-ph{color:var(--ink-2)}
+.prose .mdh{display:inline-block;width:100%;vertical-align:top;margin:4px 0 2px;font-weight:600;line-height:1.3;letter-spacing:-.015em;color:var(--ink)}
+.prose h1.mdh{font-size:18px;letter-spacing:-.02em}
+.prose h2.mdh{font-size:16px}
+.prose h3.mdh{font-size:15px}
+.prose .mdlist{display:inline-block;width:100%;vertical-align:top;margin:0;padding-left:22px;white-space:normal}
+.prose .mdlist li{margin:2px 0;white-space:pre-wrap}
+.prose .mdlist li::marker{color:var(--ink-2)}
+.prose .mdquote{display:inline-block;width:100%;vertical-align:top;margin:2px 0;padding:0 0 0 14px;
+  border-left:2px solid var(--bd-2);color:var(--ink-2)}
+.prose .mdhr{display:inline-block;width:100%;vertical-align:middle;border:0;height:1px;background:var(--bd);margin:6px 0}
+.prose .mdcode{font-family:var(--font-mono);font-size:.86em;background:var(--panel-2);padding:1px 6px;border-radius:7px}
+.prose .mdpre{display:inline-block;width:100%;vertical-align:top;margin:4px 0;padding:10px 12px;
+  background:var(--panel-2);border-radius:var(--r-well);overflow-x:auto;white-space:pre;font-size:12px;line-height:1.6}
+.prose .mdpre code{font:400 12px/1.6 var(--font-mono);white-space:pre}
+.prose strong{font-weight:600}
+.prose.usr .mdcode{background:var(--glass-18)}
 
-/* ---- Item 1: the plan hand-off bar ----------------------------------------
-   Under the last assistant message of a finished plan turn, inside its content
-   column. `flex-wrap` rather than a width breakpoint, as the TUI's own bar
-   does: the column decides how much room there is, so a narrow window drops
-   the third button onto its own line instead of overflowing.
+/* files and links inside replies — the chip keeps `.filechip` + data-file, so
+   the click (open) and right-click (native file menu) handlers are unchanged */
+.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:24px;padding:0 9px 0 7px;vertical-align:-6px;
+  border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);
+  font:600 12.5px/1 var(--font-ui);color:var(--ink);white-space:nowrap;
+  transition:background var(--t-state) var(--ease)}
+.filechip svg{width:13px;height:13px;color:var(--blue)}
+.filechip span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.filechip:hover{background:var(--brand-wash)}
+.msglink{color:var(--blue);text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px}
+.msglink:hover{color:var(--blue-deep)}
 
-   Tones are the TUI's — warn for auto, error for bypass, the quiet badge face
-   for dismiss — carried as panel fills with the token as the foreground, which
-   is the face `.appr` and `.btn-danger` already use here. A solid amber fill
-   with a white label (the obvious reading of the TUI's `backgroundColor`) does
-   not survive either amber in this system; the TUI avoids that with
-   readableOn(tone) and this avoids it by not fighting the token. */
-.planbar{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s4)}
-.planrun.warn{background:var(--warn-wash);border:1px solid var(--warn-border);color:var(--warn)}
-.planrun.warn:hover{background:var(--warn-wash);border-color:var(--warn)}
-.planrun.bad{background:var(--danger-wash);border:1px solid var(--danger);color:var(--danger)}
-.planrun.bad:hover{background:var(--danger);color:var(--bg-content)}
-.planhint{flex-basis:100%;margin:var(--s2) 0 0}
+/* ---------------- reasoning disclosure ---------------- */
+.disc{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:0 10px 0 4px;border-radius:var(--r-pill);
+  font-size:13px;color:var(--ink-2);transition:background var(--t-state) var(--ease)}
+.disc b{font-weight:600}
+.disc svg{width:14px;height:14px}
+.disc:hover{background:var(--hover);color:var(--ink)}
+.discbody{margin:4px 0 0 10px;padding:2px 0 2px 14px;border-left:2px solid color-mix(in srgb, var(--reasoning) 40%, transparent);
+  color:var(--ink-2);font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* ---------------- tool cards and folded runs ---------------- */
+.turn .card{background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden;min-width:0}
+.turn .card.err{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--critical) 42%, transparent),var(--sh-card)}
+.turn .card.flash{animation:chat-cardflash .6s var(--ease)}
+@keyframes chat-cardflash{30%{box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 45%, transparent),var(--sh-card)}}
+.cardhead{display:flex;align-items:center;gap:10px;width:100%;min-width:0;min-height:42px;padding:0 12px;text-align:left;
+  transition:background var(--t-state) var(--ease)}
+.cardhead:hover{background:var(--hover)}
+.cardhead:focus-visible{outline-offset:-2px}
+.cardhead .nm{flex:0 1 auto;max-width:62%;min-width:0;font:500 12.5px/1.3 var(--font-mono);color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cardhead .du{flex:none;font:400 11.5px/1.3 var(--font-mono);color:var(--ink-2)}
+.cardhead .du:empty{display:none}
+.cardhead .tk-chip{flex:none}
+.cardhead .ar{flex:1 1 0;min-width:0;font:400 11.5px/1.3 var(--font-mono);color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cardhead .chev{flex:none;display:flex;margin-left:auto;color:var(--ink-3)}
+.cardhead .chev svg{width:14px;height:14px}
+/* status glyph: running = pulsing brand dot, done = green tick, failed = red alert */
+.tk-gly{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none}
+.tk-gly svg{width:12px;height:12px;stroke-width:2.4}
+.tk-gly--ok{background:color-mix(in srgb, var(--success) 14%, transparent);color:var(--success)}
+.tk-gly--err{background:color-mix(in srgb, var(--critical) 13%, transparent);color:var(--critical)}
+.tk-gly--warn{background:var(--amber-wash);color:var(--amber-text)}
+/* the TUI's └─ line: the result, first ~160 chars, under the name */
+.cardsum{margin-top:-6px;padding:0 14px 12px 44px;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cardsum.bad{color:var(--critical)}
+.cardbody{padding:0 12px 12px;display:grid;gap:6px;min-width:0}
+.cardbody .micro{padding:4px 2px 0;font-size:11.5px;line-height:16px}
+.cardbody pre{margin:0;max-height:320px;max-width:100%;font-size:11.5px}
+
+/* ---------------- approval: the indigo decision block ----------------
+   Inline, never a modal. `.appr` / `#apprcard` / `.badge` / `[data-appr]` /
+   `#denybtn` are what scenario 05, drive.mjs and harness.mjs read. */
+.appr{display:grid;gap:12px;padding:16px;border-radius:var(--r-block);background:var(--indigo);color:var(--on-indigo);
+  box-shadow:0 22px 44px -22px var(--indigo-shadow);min-width:0}
+.appr.danger{background:var(--critical-block);box-shadow:0 22px 44px -22px var(--critical-shadow)}
+.apprhead{display:flex;align-items:center;gap:10px;min-width:0}
+.apprico{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex:none;
+  background:var(--glass-soft);color:var(--caution-on-indigo)}
+.apprico svg{width:16px;height:16px}
+.appr.danger .apprico{color:var(--on-strong)}
+.appr .ttl{font-size:15.5px;line-height:1.3;letter-spacing:-.015em;color:var(--on-strong)}
+.appr .badge{margin-left:auto;display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:var(--r-pill);
+  background:var(--glass-soft);color:var(--on-strong);font-size:11.5px;font-weight:500;white-space:nowrap}
+.aplate{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 12px;margin:0;font-size:13px;line-height:1.45}
+.aplate dt{margin:0;color:var(--indigo-muted)}
+.aplate dd{margin:0;min-width:0;color:var(--on-strong);overflow-wrap:anywhere}
+.aplate .mono{font-size:12px}
+.appr .cap{font-size:13px;line-height:1.45;color:var(--indigo-muted)}
+.previewblk{max-height:240px;overflow:auto;padding:10px 12px;border-radius:var(--r-well);background:var(--sink-on-indigo);
+  color:var(--on-strong);font:400 12px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.pathchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;max-width:100%;min-height:22px;padding:2px 10px 2px 8px;
+  border-radius:var(--r-pill);background:var(--glass-soft);color:var(--on-strong);font-size:11.5px;line-height:1.4}
+.pathchip svg{width:13px;height:13px}
+.pathchip b{font-weight:600;overflow-wrap:anywhere}
+.appr .pathchip .cap{font-size:11.5px;color:inherit;opacity:.75;overflow-wrap:anywhere}
+.apprbtns{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.apprgrp{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.appr .apprabort{margin-left:auto;color:var(--on-strong)}
+.appr .apprabort:hover{background:var(--glass-12);color:var(--on-strong)}
+.appr .apprabort .kc{color:var(--on-strong);border-color:var(--glass-20)}
+.appr .btn-white.dg,.appr .btn-white.dg:hover{color:var(--critical-block)}
+.appr .btn-white.dg .kc{color:var(--critical-block);border-color:color-mix(in srgb, var(--critical-block) 30%, transparent)}
+.appr .btn:focus-visible{outline-color:var(--on-strong)}
+/* Deny takes the focus on arrival (afterChat → #denybtn.focus()); the ring is
+   drawn for any focus, because that programmatic focus is the cue that y/n/Esc
+   are live and a mouse-driven :focus-visible heuristic would hide it. */
+.appr #denybtn:focus{outline:2px solid var(--on-strong);outline-offset:2px}
+.apprfoot{font-size:12px;line-height:1.5;color:var(--indigo-muted)}
+.apprlink{display:inline;color:var(--on-strong);text-decoration:underline;text-underline-offset:2px}
+.apprlink:hover{color:var(--on-indigo)}
+.appr.danger .aplate dt,.appr.danger .cap,.appr.danger .apprfoot{color:var(--on-critical-muted)}
+
+/* resolved: a one-line receipt pill */
+.appr.done{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-height:36px;padding:0 8px 0 7px;
+  border-radius:var(--r-pill);background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-size:13px}
+.appr.done .apprlbl{min-width:0;color:var(--ink)}
+.appr.done .apprlbl b{font-weight:600}
+.appr.done .apprlbl .mono{color:var(--ink-2)}
+.appr.done .badge{margin-left:0;background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2)}
+
+/* ---------------- the end mark and the message actions ----------------
+   The agent's full stop: one mark at the end of a FINISHED turn, never one per
+   message, appended after the action row (so no `#turn-<id>` anchor moves).
+   It is seated ON the action row: 22px tall with a -22px top margin, so it
+   adds nothing to the column's height and the turn-end growth __streamActs
+   measures stays exactly its (zero) contribution. 16px wide at the left edge,
+   clear of the right-aligned buttons. The svg is 12px (asserted). */
+.endmark{position:relative;width:16px;height:22px;margin-top:-22px;display:grid;place-items:center;color:var(--lift)}
+.endmark::before{content:"";position:absolute;left:0;top:3px;width:16px;height:16px;border-radius:5px;background:var(--ink-3);opacity:.6}
+.endmark svg{position:relative;width:12px;height:12px}
 
 /* --- item 4: hover actions on a message ---
    The row always occupies its 22px box and only its paint changes, so revealing
    it on hover cannot move a pixel of the transcript. The box is reserved for
    the whole turn, not from the moment it ends: msgActs emits an EMPTY .msgacts
    while a reply is streaming, so the 22px + 2px never materialises mid-view.
-   Right-aligned on both
-   kinds — "a copy icon at its end" — which puts it at the user bubble's right
-   edge and at the right edge of the agent's content column, with the red retry
-   immediately to copy's left on a user message.
+   Right-aligned on both kinds — "a copy icon at its end" — which puts it at the
+   user bubble's right edge and at the right edge of the agent's content column,
+   with the red retry immediately to copy's left on a user message.
    Hidden with `opacity`, NOT `visibility:hidden`: a visibility-hidden element
    cannot take focus in Chromium, so `:focus-within` could never fire and the
    buttons would be unreachable by keyboard — which is exactly what the suite
    caught. `pointer-events` is what keeps an invisible row from swallowing a
    click; the moment the turn is hovered both come back. No transition, so what
    the row is at any instant is unambiguous. The hover-less media query pins
-   them open on a touch surface, where there is no hover to reveal them with. */
+   them open on a touch surface, where there is no hover to reveal them with.
+   The smoke reads the reveal rule's own text — keep it exactly as written. */
 .msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:2px;opacity:0;pointer-events:none}
 .turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}
 @media (hover:none){.msgacts{opacity:1;pointer-events:auto}}
-.msgact{width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:0;color:var(--text-tertiary)}
-.msgact:hover{background:var(--bg-hover);color:var(--text-primary)}
-/* --danger and --danger-wash are declared in all three theme blocks. */
-.msgact.danger{color:var(--danger)}
-.msgact.danger:hover{background:var(--danger-wash);color:var(--danger)}
-
-/* --- a repeated warning is one row with a count, not a wall --- */
-.sysrow .sysrep{
-  display:inline-block; margin-left:6px; padding:0 6px; border-radius:0;
-  font-size:11px; font-variant-numeric:tabular-nums;
-  background:var(--bg-hover); color:var(--text-secondary);
-}
-
-/* An action offered inline on a system row (F2). Quiet rank: the row is
-   already the loudest thing in the transcript. */
-.sysrow .sysact{height:22px;padding:0 var(--s2);margin-left:var(--s2);border:1px solid var(--line);
-  border-radius:var(--r);background:var(--paper);color:var(--ink);cursor:pointer;
-  font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);text-transform:uppercase}
-.sysrow .sysact:hover{background:var(--panel)}
-
-/* ---------------- markdown (F12) ----------------
-   A model writes markdown and this window used to print it. Machine text —
-   code spans and fences — is mono; prose is not. */
-.prose .mdh{margin:var(--s4) 0 var(--s2);font-weight:600;letter-spacing:var(--tr-sub);line-height:1.25}
-.prose h1.mdh{font-size:var(--fs-sub)}
-.prose h2.mdh{font-size:var(--fs-body)}
-.prose h3.mdh{font-size:var(--fs-body);color:var(--ink-2)}
-.prose .mdlist{margin:var(--s2) 0;padding-left:var(--s6)}
-.prose .mdlist li{margin:2px 0}
-.prose .mdquote{margin:var(--s2) 0;padding-left:var(--s4);
-  border-left:var(--rule) solid var(--line);color:var(--ink-2)}
-.prose .mdhr{border:0;border-top:1px solid var(--line-hair);margin:var(--s4) 0}
-.prose .mdcode{font-family:var(--font-mono);font-size:.92em;background:var(--panel-2);
-  padding:1px 4px;border-radius:var(--r)}
-.prose .mdpre{margin:var(--s2) 0;padding:var(--s3) var(--s4);background:var(--panel-2);
-  border:1px solid var(--line-hair);border-radius:0;overflow-x:auto}
-.prose .mdpre code{font-family:var(--font-mono);font-size:var(--fs-cap);white-space:pre}
-.prose strong{font-weight:600}
-
-/* F11 — the last message keeps its actions, and they carry their names. The
-   hover-only unlabelled glyph read as a stray mark, which is a fair reading
-   of an icon with no name that only exists while the pointer is over it. */
+.msgact{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill);color:var(--ink-2)}
+.msgact svg{width:14px;height:14px}
+.msgact:hover{background:var(--hover);color:var(--ink)}
+.msgact.danger{color:var(--critical)}
+.msgact.danger:hover{background:var(--critical-wash);color:var(--critical)}
+/* F11 — the last message keeps its actions, and they carry their names. */
 .msgacts.shown{opacity:1;pointer-events:auto}
-.msgacts.shown .msgact{width:auto;height:24px;padding:0 var(--s2);gap:var(--s1);
-  border:1px solid var(--line);border-radius:var(--r);color:var(--ink-2);background:var(--paper)}
-.msgacts.shown .msgact:hover{background:var(--panel);color:var(--ink)}
-.msgacts.shown .msgact.danger{color:var(--critical);border-color:var(--line)}
-.msgacts.shown .msgact.danger:hover{background:var(--panel);color:var(--critical)}
-.msgactlb{font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:var(--tr-label);
-  text-transform:uppercase}
+.msgacts.shown .msgact{width:auto;padding:0 10px 0 8px;gap:5px}
+.msgacts.shown .msgact.danger{background:var(--critical-wash)}
+.msgacts.shown .msgact.danger:hover{background:color-mix(in srgb, var(--critical) 18%, transparent)}
+.msgactlb{font:600 12px/1 var(--font-ui);letter-spacing:0}
 
-/* B.6 — the empty transcript is a data plate: where it will work, who will
-   answer, and which build is running. */
-.emptychat{display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:var(--s6);height:100%;padding:var(--s8)}
-.emptyplate{width:min(560px,100%)}
-.emptyplate dd{font-family:var(--font-mono);overflow-wrap:anywhere}
-.ghostchip{height:28px;padding:0 var(--s4);border:1px solid var(--line);border-radius:var(--r);
-  background:var(--paper);color:var(--ink-2);font-size:var(--fs-cap);cursor:pointer}
-.ghostchip:hover{background:var(--panel);color:var(--ink)}
+/* ---------------- Saved to strip (item 5) ---------------- */
+.attach{margin-top:10px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.attach-label{font-size:12.5px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;word-break:break-word}
+.attach-label .mono{font-size:11.5px;line-height:1.5;color:var(--ink-2)}
+.attach-more{color:var(--ink-2)}
+.attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;min-width:0}
+.attach .filechip{vertical-align:0}
+
+/* ---------------- plan hand-off (item 1) ----------------
+   Under the last assistant message of a finished plan turn, below its end
+   mark. The button text is compared verbatim by the smoke (`▶ run it · auto`),
+   so the chord keycaps are drawn with ::after and stay out of textContent.
+   Tones: amber tint for auto, critical tint for bypass, neutral for dismiss. */
+.planbar{margin-top:12px;display:grid;gap:10px;padding:12px 12px 12px 16px;border-radius:var(--r-card);
+  background:var(--lift);box-shadow:var(--sh-card)}
+.planbtns{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.planrun.warn{background:color-mix(in srgb, var(--amber) 20%, transparent);color:var(--amber-text)}
+.planrun.warn:hover{background:color-mix(in srgb, var(--amber) 30%, transparent);color:var(--amber-text)}
+.planrun.bad{background:var(--critical-wash);color:var(--critical)}
+.planrun.bad:hover{background:color-mix(in srgb, var(--critical) 18%, transparent);color:var(--critical)}
+.planbar [data-plan]::after{min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;
+  margin-left:2px;border-radius:var(--r-kbd);box-shadow:inset 0 0 0 1px color-mix(in srgb, currentColor 30%, transparent);
+  font:400 10.5px/1 var(--font-mono);opacity:.85}
+.planbar [data-plan="auto"]::after{content:"⌃Y"}
+.planbar [data-plan="bypass"]::after{content:"⌃B"}
+.planbar [data-plan="dismiss"]::after{content:"⌃D"}
+.planbar .btn[disabled]::after{opacity:.5}
+.planhint{margin:0}
+
+/* ---------------- system rows and notices ----------------
+   Muted 13px lines in the content column. Failure lines carry the one action
+   that helps inline (F2, `.sysact` — failure-line.drive reads it). */
+.sysrow{display:grid;grid-template-columns:0 minmax(0,1fr);padding:0 4px;font-size:13px;line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere}
+.sysrow .sysact{display:inline;margin-left:6px;color:var(--blue);font-weight:600;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.sysrow .sysact:hover{color:var(--blue-deep)}
+.sysrow code{font:400 12px var(--font-mono);color:var(--ink)}
+.sysrow .tk-spin{display:inline-block;vertical-align:-2px;margin-right:8px;width:13px;height:13px}
+/* a repeated warning is one row with a count, not a wall */
+.sysrow .sysrep{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 7px;border-radius:var(--r-pill);
+  font-size:11px;font-variant-numeric:tabular-nums;background:var(--hover);color:var(--ink-2);vertical-align:1px}
+/* a system row that is a notice (the session model stamp) */
+.tk-sysnotice{padding:0}
+.tk-sysnotice .tk-notice{align-items:flex-start}
+.tk-sysnotice .tk-notice > svg{width:16px;height:16px;margin-top:2px}
+.tk-sysnotice .grow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:center;line-height:1.5}
+.tk-stampcap{grid-column:1;font-size:12px;line-height:1.5;color:var(--ink-2)}
+.tk-stampbtn{grid-column:2;grid-row:1 / span 2;align-self:center}
 
 @media (max-width:820px){
-  .cardhead{flex-wrap:wrap;height:auto;padding:6px 12px;row-gap:2px}
-  .cardhead .ar{flex-basis:100%;order:5}
+  #scroller > .col720{padding:18px 16px 12px}
+  .emptychat{padding:16px}
 }
