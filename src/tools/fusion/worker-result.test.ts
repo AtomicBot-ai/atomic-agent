@@ -273,7 +273,8 @@ describe("formatDelegateOutput", () => {
       ],
       600,
     );
-    const lines = out.split("\n");
+    // The task's block is the second paragraph, after the status table.
+    const lines = out.split("\n\n")[1]!.split("\n");
     expect(lines[0]).toBe(
       "[t1] max_steps — Map (2 steps, 3s, 1 tool calls, 0 errors) — error: boom",
     );
@@ -289,9 +290,33 @@ describe("formatDelegateOutput", () => {
       [row({ status: "failed", error: `line one\n  line two ${"e".repeat(2000)}` })],
       8000,
     );
-    const head = out.split("\n")[0]!;
+    const head = out.split("\n\n")[1]!.split("\n")[0]!;
     expect(head).toContain("error: line one line two e");
     expect(head.length).toBeLessThan(600);
+  });
+
+  it("opens with one status line per task, so a clipped view still shows every outcome", () => {
+    const rows = Array.from({ length: 7 }, (_, i) =>
+      row({ id: `t${i + 1}`, reply: "w".repeat(3000) }),
+    );
+    rows[3] = row({ id: "t4", status: "max_steps", error: "step limit" });
+    rows[6] = row({
+      id: "t7",
+      title: "Main",
+      reply: "I'm done!",
+      notes: ["js/main.js unchanged by this task"],
+    });
+    const out = formatDelegateOutput(rows, 16000);
+    // A prompt that renders only the first part of the result still has
+    // every task, and the note that one of them changed nothing.
+    const view = out.slice(0, 1000);
+    expect(view.startsWith("7 tasks: 6 ok, 1 max_steps")).toBe(true);
+    for (let i = 1; i <= 7; i += 1) expect(view).toContain(`- [t${i}] `);
+    expect(view).toContain("- [t4] max_steps — Map — error: step limit");
+    expect(view).toContain(
+      "- [t7] ok — Main — js/main.js unchanged by this task",
+    );
+    expect(out.length).toBeLessThanOrEqual(16000);
   });
 });
 

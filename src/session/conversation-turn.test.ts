@@ -198,6 +198,24 @@ describe("conversation-turn helpers", () => {
     expect(rendered).not.toContain("[rendering-truncated");
   });
 
+  it("renders a fresh fusion.delegate result whole and gives it the generic cap once aged", () => {
+    const summary = `3 tasks: 3 ok\n${"r".repeat(9_000)}`;
+    const turn = toolResultTurn({
+      tool: "fusion.delegate",
+      status: "ok",
+      summary,
+      at: 7,
+    });
+    expect(renderTurnForPrompt(turn, { inCurrentMacroTurn: true })).toBe(
+      `tool_result[fusion.delegate ok]: ${summary}`,
+    );
+    const aged = renderTurnForPrompt(turn, { inCurrentMacroTurn: false });
+    expect(aged).toContain("[rendering-truncated");
+    expect(aged.startsWith("tool_result[fusion.delegate ok]: 3 tasks: 3 ok")).toBe(true);
+    // The generic cap, not the 400-char history cap of the other fresh tools.
+    expect(aged.length).toBeGreaterThan(3_000);
+  });
+
   it("gives fresh gog shell results a larger render budget", () => {
     const body = "x".repeat(8_000);
     const summary = `$ gog --json --no-input gmail search is:unread\n${body}`;

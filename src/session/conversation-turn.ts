@@ -195,6 +195,14 @@ function renderToolResultBody(
     if (options.inCurrentMacroTurn === true) return turn.summary;
     return capSummary(turn.summary, TOOL_RESULT_HISTORY_CAP_CHARS);
   }
+  // The orchestrator's review input. A fan-out report runs past the generic
+  // cap as soon as a few workers answer at length, and a clipped one hid the
+  // task whose declared file was left unchanged — so it is whole for the
+  // turn that reviews it (bounded by the delegate's own output cap) and
+  // keeps the generic cap in history rather than the short one above.
+  if (turn.tool === "fusion.delegate" && options.inCurrentMacroTurn === true) {
+    return turn.summary;
+  }
   if (turn.tool === "os.fs.read") {
     return capReadSummary(
       turn.summary,
