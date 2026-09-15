@@ -331,7 +331,7 @@ svg{display:block;flex:none}
   border-radius:var(--r-pill);color:var(--ink-2);background:transparent;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .iconbtn:hover{background:var(--hover);color:var(--ink)}
-.iconbtn.on{background:var(--brand-wash);color:var(--blue)}
+.iconbtn.on{background:var(--tint);color:var(--blue)}
 .iconbtn[disabled]{color:var(--ink-3);cursor:default;background:transparent}
 .iconbtn.sm{width:26px;height:26px}
 
