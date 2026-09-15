@@ -1,143 +1,26 @@
 /* ============================================================
-   Settings “Menu › Manage” — window frame and nav, Tasks, Skills, Memory, MCP, LLM, Telegram, Import, Privacy. Screens ST-01…33.
-   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+   Settings "Manage" — the window frame and nav for every tab, and the
+   Tasks, Skills and Privacy tabs. Screens ST-01…11, ST-33.
+   Memory / MCP / Telegram / Import live in css/settings-data.css and LLM in
+   css/settings-llm.css; both load after this file and draw inside the frame
+   defined here. Colours come from tokens only.
+
+   Frame contract a tab can rely on:
+     #settings > .setwin > (nav.setnav > .setmenu) + .setmain
+     .setmain  — the floating body card, position:relative (overlays anchor here)
+       .settb    — crumb "Manage › Tab" + close
+       .setbody  — the scrolling pane, 24px side padding (paneBox() repaints it)
+       .setplate — Build · Agent · State data plate
+     .set-pane    — a tab's root: a column with 14px gaps
+     .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · readout · actions)
+     .set-overlay > .tk-modal.set-modal — a confirm over the whole body card
+     .set-sr — text kept for assistive tech and text checks, not drawn
+     .set-z  — characters kept in the text at zero size (brackets, colons)
    ============================================================ */
 
-/* settings window */
-#settings{position:absolute;inset:0;background:var(--scrim);z-index:28;display:flex;align-items:center;justify-content:center}
-.setwin{width:720px;max-width:calc(100% - 40px);height:560px;max-height:calc(100% - 40px);background:var(--bg-content);border-radius:0;box-shadow:var(--shadow-window);display:flex;flex-direction:column;overflow:hidden}
-.settb{height:44px;flex:none;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);background:var(--bg-window);border-bottom:1px solid var(--line)}
-.settabs{display:flex;gap:2px;margin-left:var(--s5)}
-.settab{height:30px;padding:0 10px;border-radius:0;display:flex;align-items:center;gap:5px;color:var(--text-secondary);font-size:13px}
-.settab:hover{background:var(--bg-hover);color:var(--text-primary)}
-.settab.on{background:var(--accent-wash);color:var(--accent-text);font-weight:500}
-.setbody{flex:1;min-height:0;overflow-y:auto;padding:var(--s6)}
-
-/* ladder */
-.stepper{display:flex;align-items:center;margin:var(--s5) 0 var(--s6)}
-.stopwrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:var(--s2);position:relative}
-.stopwrap::before{content:"";position:absolute;top:9px;left:-50%;width:100%;height:2px;background:var(--line)}
-.stopwrap:first-child::before{display:none}
-.stopwrap.filled::before{background:var(--accent)}
-.stopdot{width:20px;height:20px;border-radius:0;border:2px solid var(--line);background:var(--bg-content);z-index:1;display:flex;align-items:center;justify-content:center}
-.stopwrap.filled .stopdot{border-color:var(--accent);background:var(--accent)}
-.stopwrap.on .stopdot{box-shadow:0 0 0 4px var(--accent-wash)}
-.stoplb{font-size:11px;color:var(--text-secondary);text-align:center}
-.stopwrap.on .stoplb{color:var(--text-primary);font-weight:500}
-.card-h{height:32px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);box-shadow:inset 0 -1px 0 var(--line-soft);font-size:11px;color:var(--text-secondary)}
-
-/* ---------------- Item 7: settings surface (the TUI menu + Manage tabs) ---------------- */
-.setwin{width:900px;height:640px}
-.settb .setttl{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-left:var(--s3)}
-.setcols{flex:1;min-height:0;display:flex}
-.setmenu{width:236px;flex:none;overflow-y:auto;border-right:1px solid var(--line);padding:var(--s2) 0 var(--s4);font-family:var(--font-mono);font-size:12px;background:var(--bg-window)}
-.menuhd{padding:10px 12px 2px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary)}
-.menurow{display:flex;align-items:center;gap:6px;width:100%;height:24px;padding:0 12px;color:var(--text-primary);text-align:left;font-family:inherit;font-size:inherit}
-.menurow.sub{padding-left:26px}
-.menurow.parent{color:var(--text-secondary)}
-button.menurow:hover{background:var(--bg-hover)}
-.menurow.on{background:var(--accent-wash);color:var(--accent-text)}
-.menurow.na{color:var(--text-tertiary);cursor:default}
-.menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.menurow .ch{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
-.menurow .note{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
-.setmain{flex:1;min-width:0;display:flex;flex-direction:column}
-.setmain .settabs{margin:0;padding:8px 10px 0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;align-items:center;gap:0}
-.setmain .settab{flex:none;font-family:var(--font-mono);font-size:12px;padding:0 2px;height:24px;gap:0;white-space:pre}
-.setmain .settab::before{content:"  ";white-space:pre}
-.setmain .settab.on::before{content:"▸ "}
-.tabsep{flex:none;white-space:pre;color:var(--text-tertiary);font-family:var(--font-mono);font-size:12px}
-.setdiag{padding:4px 16px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;border-bottom:1px solid var(--line-soft)}
-.tui{font-family:var(--font-mono);font-size:12.5px;line-height:20px;white-space:pre-wrap;display:flex;flex-direction:column;gap:2px;color:var(--text-primary)}
-.tui b{color:var(--accent-text);font-weight:600}
-.tuibar{white-space:pre}
-.tuihead{color:var(--text-tertiary);white-space:pre;margin-top:6px}
-.tuirow{display:block;height:24px;line-height:24px;width:100%;text-align:left;white-space:pre;overflow:hidden;text-overflow:ellipsis;font-family:inherit;font-size:inherit;padding:0 4px;border-radius:0;color:var(--text-primary)}
-.tuirow:hover{background:var(--bg-hover)}
-.tuirow.on{background:var(--accent-wash);color:var(--accent-text)}
-.tuihint{color:var(--text-tertiary);display:flex;flex-wrap:wrap;gap:0 4px;align-items:center;margin-top:8px;white-space:pre}
-.tuihint button,.tkkind{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 4px;border-radius:0;height:22px}
-.tuihint button:hover,.tkkind:hover{background:var(--bg-hover);color:var(--text-primary)}
-.tuihint button:disabled{color:var(--text-tertiary);background:transparent}
-.tkkind.on{color:var(--accent-text);font-weight:600}
-.tuimodal{border:1px solid var(--accent);border-radius:0;padding:8px 12px;margin:6px 0;display:flex;flex-direction:column;gap:2px}
-.tuimodal.warn{border-color:var(--warn)}
-.tkrow{display:flex;align-items:center;height:26px}
-.tkrow .mk{width:1ch;white-space:pre;color:var(--accent-text)}
-.tkrow .mk::before{content:" "}
-.tkrow:focus-within .mk::before{content:"▸"}
-.tkrow .lb{white-space:pre;color:var(--text-tertiary)}
-.tkrow input{flex:1;min-width:0;background:transparent;border:0;outline:none;font:inherit;color:var(--accent-text);border-bottom:1px solid var(--line-soft)}
-.tkrow input:focus{border-bottom-color:var(--accent)}
-.tkrow input::placeholder{font-style:italic;color:var(--text-tertiary)}
-#tk-search{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:160px}
-.st-running{color:var(--accent-text)} .st-completed{color:var(--success)} .st-failed,.st-blocked{color:var(--danger)} .st-cancelled{color:var(--warn)} .st-pending{color:var(--text-tertiary)}
-.tuimsg{color:var(--accent-text)} .tuierr{color:var(--danger)}
-.sk-on{color:var(--success)} .sk-off{color:var(--warn)}
-.tuiwrap{padding:var(--s5)}
-/* Item 7 (settings surface): the TUI's `↑ N above` / `↓ N below` window lines, clickable here. */
-.tuimore{display:block;color:var(--text-tertiary);font-family:inherit;font-size:inherit;padding:0 4px;height:22px;line-height:22px;text-align:left;border-radius:0;white-space:pre}
-.tuimore:hover{background:var(--bg-hover);color:var(--text-primary)}
-/* ---------------- Item 7 part B: the Skills, Memory and MCP tabs ---------------- */
-.tuirow.dim{color:var(--text-tertiary)}
-.tuirow2{height:auto;line-height:20px;padding:2px 4px;white-space:pre}
-.tuirow2 > span{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis}
-.tuibody{white-space:pre-wrap;word-break:break-word;color:var(--text-primary)}
-.tuibody > div{min-height:20px}
-.skpf,.memch{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 2px;border-radius:0;height:22px;white-space:pre}
-.skpf:hover,.memch:hover{background:var(--bg-hover);color:var(--text-primary)}
-.skpf.on,.memch.on{color:var(--accent-text);font-weight:600}
-.skpaccent{color:var(--accent-text)}
-.skphub{display:block;width:100%;text-align:left;font-family:inherit;font-size:inherit;color:var(--text-primary);cursor:pointer}
-.skphub:hover{background:var(--bg-hover)}
-.tuimodal.danger{border-color:var(--danger)}
-#skp-hubq{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:220px}
-.tuiarea{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--bg-sunken);border:1px solid var(--line);border-radius:0;padding:6px 8px;font:inherit;color:var(--text-primary);resize:vertical;outline:none;white-space:pre}
-.tuiarea:focus{border-color:var(--accent)}
-.tuiarea::placeholder{color:var(--text-tertiary)}
-/* ---------------- Item 7 part C: the LLM, Telegram and Import tabs ---------------- */
-/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open. */
-#window:has(#settings) #overlays{z-index:29}
-.llm-route{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
-.llm-modehead{white-space:pre}
-.llmmode{color:var(--text-tertiary);font-family:inherit;font-size:inherit;font-weight:600;padding:0 2px;border-radius:0;height:22px}
-.llmmode:hover{background:var(--bg-hover);color:var(--text-primary)}
-.llmmode.on{color:var(--accent-text)}
-.llm-section{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
-.llm-empty{font-weight:600;color:var(--text-primary);white-space:pre}
-#llm-filter,#llm-url{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:260px}
-#llm-filter:focus,#llm-url:focus{border-bottom-color:var(--accent)}
-#llm-filter::placeholder{color:var(--text-tertiary);font-style:normal}
-#llm-url{width:360px}
-.llm-start{border-color:var(--success)}
-.tgcard{margin-top:6px}
-#tg-token{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:320px;letter-spacing:2px}
-#tg-token:focus{border-bottom-color:var(--accent)}
-.impform{margin-top:8px}
-.impline{display:flex;align-items:center;min-height:24px;white-space:pre}
-.impinp{flex:0 1 420px;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text)}
-.impinp:focus{border-bottom-color:var(--accent)}
-.impinp::placeholder{font-style:italic;color:var(--text-tertiary)}
-.improw{white-space:pre}
-
-/* ---- Item 7A: the Hugging Face branch in Settings › LLM › Local, and
-   the Ollama signpost under the model lists ---- */
-.llm-hf input{width:100%;max-width:520px;height:26px;padding:0 6px;border:1px solid var(--line);border-radius:0;
-  background:var(--bg-sunken);color:var(--text-primary);font-family:var(--font-mono);font-size:12px}
-.llm-hf input:disabled{color:var(--text-tertiary)}
-.llm-hf .tuierr{white-space:pre-wrap;max-width:72ch;margin-top:4px}
-.llm-ollama{margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);max-width:72ch;line-height:1.5}
-
-/* ---- r4 review fixes (hf-models) ------------------------------------------
-   The Hugging Face pick list is a port of the TUI's screen and carries its
-   leading indentation verbatim: HF_MMPROJ_LINE, the `↓ N more` line, the
-   hidden-files note and the RAM warning all open with three spaces that mark
-   them as annotations of the list rather than list items. `.tuirow` is
-   white-space:pre so the choice rows keep their padEnd/padStart columns, but
-   the four sub-lines beneath them were plain HTML and collapsed to one space.
-   `pre-wrap`, not `pre`: a long error must still wrap inside the pane. */
-.llm-hf .ter,.llm-hf .sk-off,.llm-hf .tuierr{white-space:pre-wrap}
-
+/* ---------------- Window ---------------- */
+#settings{position:absolute;inset:0;z-index:28;display:flex;align-items:center;justify-content:center;
+  background:var(--scrim);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 /* Item 5. The settings backdrop covers the 52px toolbar band, and
    `body.electron #toolbar` is a `-webkit-app-region: drag` region. Chromium
    unions the rects of elements that DECLARE a value and subtracts only those
@@ -145,47 +28,292 @@ button.menurow:hover{background:var(--bg-hover)}
    contributes nothing and does not mask the region beneath it. So a real
    mousedown in the top band of the backdrop started a window drag and never
    produced a click, and the dismiss-on-outside-click branch could not fire
-   there. (The synthetic MouseEvents the suite dispatches bypass drag-region
-   hit testing entirely, which is why the checks stayed green over a dead
-   band.) #onboarding already applies this same pattern deliberately. */
+   there. The smoke looks this rule up by its exact text — keep it verbatim. */
 body.electron #settings{-webkit-app-region:no-drag}
+/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open. */
+#window:has(#settings) #overlays{z-index:29}
 
-/* --- Settings › LLM › Local --- */
-.llm-ram{margin-bottom:6px}
-/* `.tuirow` is a fixed 24px line that hides its overflow — right for a
-   one-line TUI row, fatal for a model row that now carries a description,
-   a fit verdict and sometimes a caution. */
-.tuirow.llm-model{height:auto;line-height:20px;padding:3px 4px;margin-bottom:2px;white-space:pre-wrap}
-/* Indented with padding rather than two leading spaces, so a caution that
-   wraps keeps its hanging indent instead of returning to column 0. */
-.tuirow .llm-sub{display:block;font-size:11.5px;color:var(--text-secondary);
-  font-family:var(--font-mono);line-height:1.5;white-space:pre-wrap;padding-left:2ch}
-.tuirow .llm-fit-comfortable{color:var(--success)}
-.tuirow .llm-fit-tight{color:var(--warn)}
-.tuirow .llm-fit-over{color:var(--text-tertiary)}
-.tuirow .llm-caution{color:var(--warn)}
+.setwin{position:relative;width:min(1060px, calc(100% - 48px));height:min(700px, calc(100% - 48px));
+  display:grid;grid-template-columns:230px minmax(0,1fr);
+  background:var(--well);border-radius:var(--r-comp);box-shadow:var(--sh-pop);overflow:hidden}
 
-/* ---------------- Manage / Settings (B.8) ----------------
-   The tab strip wraps instead of scrolling: a strip that cannot overflow
-   cannot hide its own navigation. The selected tab is marked by a rule under
-   it, the way selection is marked everywhere else in this system. */
-.settabs{display:flex;flex-wrap:wrap;gap:0;margin:0;padding:0 var(--s5);
-  border-bottom:1px solid var(--line)}
-.settab{height:32px;padding:0 var(--s4);border-radius:0;display:flex;align-items:center;gap:var(--s1);
-  color:var(--ink-2);font-size:var(--fs-cap);font-weight:500;border:0;background:transparent;
-  box-shadow:inset 0 -1px 0 transparent}
-.settab:hover{background:var(--panel);color:var(--ink)}
-.settab.on{color:var(--ink);box-shadow:inset 0 calc(var(--rule) * -1) 0 var(--accent)}
-.settab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-/* The scrollbar never sits on top of the text it scrolls. */
-.setbody,.setmenu{scrollbar-gutter:stable;padding-right:var(--s2)}
-/* The diagnostics data plate, at the foot of the window. */
-.setplate{margin:0;border:0;border-top:1px solid var(--line);background:var(--panel);
-  padding:var(--s3) var(--s5)}
-.setplate dl{grid-template-columns:auto 1fr;gap:2px var(--s4)}
+/* ---------------- Nav ---------------- */
+.setnav{min-width:0;min-height:0;display:flex;flex-direction:column;padding:14px 10px 12px}
+.setmenu{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px}
+.setmenu .setnav-title{margin:4px 10px 10px;font:700 15px/20px var(--font-ui);letter-spacing:-.02em;color:var(--ink)}
 
-/* The run mode (Settings › LLM). Three rows, and the worker count only when
-   fusion is the one running — a control for a mode you are not in is noise. */
-.runmoderows{border:1px solid var(--line);margin-bottom:var(--s4)}
-.runmodeworkers{display:flex;gap:var(--s1);margin-top:var(--s2)}
-.runmodeworkers .btn{min-width:32px;justify-content:center}
+.menurow{position:relative;display:flex;align-items:center;gap:9px;width:100%;min-height:34px;padding:0 8px 0 10px;flex:none;
+  border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-2);
+  font:500 13.5px/1.2 var(--font-ui);letter-spacing:-.003em;text-align:left;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.menurow > svg{flex:none;color:var(--ink-3)}
+button.menurow{cursor:pointer}
+button.menurow:hover{background:var(--hover);color:var(--ink)}
+button.menurow:hover > svg{color:var(--ink-2)}
+.menurow.on{background:var(--brand-wash);color:var(--blue)}
+.menurow.on > svg{color:var(--blue)}
+.menurow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.menurow .ch{flex:none;display:inline-flex;align-items:center}
+.menurow.on .ch .kc{color:var(--blue);border-color:color-mix(in srgb, var(--blue) 30%, transparent)}
+/* The tab switcher inside a Manage row: label · count. */
+.settab{flex:1;min-width:0;align-self:stretch;display:flex;align-items:center;gap:8px}
+.setcount{flex:none;font:400 11.5px/1 var(--font-mono);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.menurow.on .setcount{color:var(--blue)}
+/* Parent / sub rows: none in the tree today, kept for the next node pulled across from the TUI registry. */
+.menurow.sub{padding-left:26px}
+.menurow.parent{cursor:default}
+/* Nodes the desktop cannot do keep their label, muted, with the note under it. */
+.menurow.na{align-items:flex-start;min-height:30px;padding:6px 10px;color:var(--ink-3);cursor:default}
+.menurow.na > svg{margin-top:1px}
+.menurow .lbw{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.menurow .note{font-size:11.5px;line-height:1.35;font-weight:400;color:var(--ink-2);white-space:normal}
+
+/* Commands: every other group of the menu tree, scrolling on its own. */
+.setnav-cmds{flex:1;min-height:0;overflow-y:auto;margin:12px -6px 0;padding:0 6px 6px;
+  display:flex;flex-direction:column;gap:1px;scrollbar-width:thin}
+.setnav-h{margin:0 12px 2px;font:700 12px/16px var(--font-ui);color:var(--ink-2)}
+.setnav-cmds .menuhd{margin:10px 12px 2px;font:500 11px/14px var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none}
+.setnav-cmds .menurow{min-height:30px;font-size:13px;gap:8px}
+.setnav-cmds .menurow > svg{width:14px;height:14px}
+.setnav-foot{flex:none;display:flex;flex-direction:column;gap:2px;padding-top:8px}
+.setnav-foot .menurow.na{font-size:12.5px}
+.setnav-hint{display:flex;align-items:center;gap:6px;padding:4px 12px 0;font-size:12px;color:var(--ink-2)}
+
+/* ---------------- Body card ---------------- */
+.setmain{position:relative;min-width:0;min-height:0;margin:8px 8px 8px 0;display:flex;flex-direction:column;
+  background:var(--lift);border-radius:var(--r-card);box-shadow:var(--sh-card);overflow:hidden}
+.settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
+.settb .grow{flex:1}
+.settb .tk-crumb .k{font-size:12.5px;color:var(--ink-2)}
+.settb .setttl{margin:0;font:600 20px/26px var(--font-ui);letter-spacing:-.03em;color:var(--ink)}
+.setbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 24px 22px;scrollbar-gutter:stable}
+
+/* The diagnostics data plate: sentence-case keys, mono values, one line each. */
+.setplate{flex:none;margin:0;padding:9px 20px 10px;background:transparent;box-shadow:inset 0 1px 0 var(--divider)}
+.setplate dl{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 18px;margin:0}
+.set-kv{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:100%}
+.set-kv dt{flex:none;margin:0;font:400 11.5px/1.5 var(--font-ui);color:var(--ink-2)}
+.set-kv dd{margin:0;min-width:0;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text}
+.set-kv--agent{flex:1 1 220px}
+.set-kv--wide{flex:1 1 100%}
+
+/* ---------------- Utilities ---------------- */
+.set-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;
+  clip:rect(0 0 0 0);clip-path:inset(50%);white-space:pre}
+.set-z{font-size:0!important;letter-spacing:0}
+.set-cap{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.set-meta{margin:0;font:400 12px/1.5 var(--font-mono);color:var(--ink-2)}
+.set-desc{margin:0;font-size:14px;line-height:1.5;color:var(--ink-2)}
+.set-state{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.set-state.on{color:var(--ink)}
+
+/* ---------------- A tab's pane ---------------- */
+.set-pane{display:flex;flex-direction:column;gap:14px;min-width:0;padding-top:2px}
+.set-pane > .tk-bar{min-height:34px}
+
+/* Toolbar */
+/* Two classes: `.tuibar` (kept on the toolbar for tkRefreshBar) and the kit's
+   `.tk-bar` both set align-items/flex-wrap at one class, and a centred column
+   would size each row to its content instead of the pane. */
+.tk-bar.set-toolbar{flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:10px;white-space:normal}
+/* A toolbar row never wraps: the search box and the readout give up width
+   first, the buttons keep theirs. */
+.set-tbrow{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;min-width:0}
+.set-tbrow > *{flex:none}
+.set-tbrow .grow{flex:1 1 0;min-width:0}
+.set-seg{max-width:100%;overflow-x:auto;scrollbar-width:none}
+.set-seg::-webkit-scrollbar{display:none}
+.set-tbrow > .set-counts{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-tbrow > .set-readout{flex:0 1 auto}
+/* The Skills readout is one word (auto / manual); the counts give up width instead. */
+.set-skills .set-tbrow > .set-readout{flex:none}
+.set-search{flex:0 1 280px;min-width:120px;height:34px;padding:0 6px 0 12px;cursor:text;color:var(--ink-3);font-size:13px}
+.set-tbrow > .set-search{flex:0 1 280px}
+.set-tbrow > .set-hubsearch{flex:1 1 300px}
+button.set-search{cursor:pointer;text-align:left}
+button.set-search:hover{border-color:var(--bd)}
+.set-search > svg{flex:none;width:15px;height:15px}
+.set-search .ph,.set-search .v{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.set-search .ph{color:var(--ink-3)}
+.set-search .v{color:var(--ink)}
+.set-search input{font-size:13px}
+.set-search .kc{flex:none}
+.set-hubsearch{flex:1 1 300px}
+.set-readout{display:inline-flex;align-items:center;gap:7px;min-width:0;height:30px;padding:0 10px;border-radius:var(--r-pill);
+  font:400 12px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;cursor:pointer;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.set-readout:hover{background:var(--hover);color:var(--ink)}
+.set-readout > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-readout .tk-spin{width:12px;height:12px}
+.set-counts{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+
+/* Notices in a pane */
+.tuimsg.tk-notice,.tuierr.tk-notice{color:var(--ink)}
+.set-note{display:block;margin-top:2px;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.set-softnote{background:var(--well);box-shadow:none;color:var(--ink-2)}
+.set-softnote > svg{color:var(--ink-3)}
+
+/* Keycap hints: every hint is a button. Inline-block (not flex) so the label
+   stays one line of text: the keycap and the word read "e toggle". */
+.tuihint{display:flex;align-items:center;flex-wrap:wrap;gap:2px 10px;margin:0;font-size:12px;color:var(--ink-2)}
+#settings .tk-hint,.tuiwrap .tk-hint{display:inline-block;height:24px;line-height:24px;padding:0 6px;white-space:nowrap}
+#settings .tk-hint .kc,.tuiwrap .tk-hint .kc{vertical-align:middle;margin-top:-2px}
+#settings button.tk-hint[disabled],.tuiwrap button.tk-hint[disabled]{color:var(--ink-3);background:transparent;cursor:default}
+/* Hint buttons still drawn the 0.5.5 way by tabs not yet redrawn. */
+.tuihint > button:not(.tk-hint){height:24px;padding:0 6px;border-radius:8px;color:var(--ink-2);font-size:12px}
+.tuihint > button:not(.tk-hint):hover{background:var(--hover);color:var(--ink)}
+.tuihint > button:not(.tk-hint):disabled{color:var(--ink-3);background:transparent;cursor:default}
+
+/* Empty and loading states */
+.set-empty{padding:40px 20px 28px}
+.set-empty .tk-hints{justify-content:center;margin-top:2px}
+
+/* The `↑ N above` / `↓ N below` window lines, clickable. */
+.tuimore{display:inline-flex;align-items:center;height:28px;padding:0 12px;border:0;border-radius:var(--r-pill);background:transparent;
+  color:var(--ink-2);font:500 12.5px/1 var(--font-ui);white-space:pre;text-align:left;cursor:pointer}
+.tuimore:hover{background:var(--hover);color:var(--ink)}
+.tk-list > .tuimore{align-self:center;margin:2px 0}
+
+/* Confirm over the body card */
+.set-overlay{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:color-mix(in srgb, var(--scrim) 60%, transparent);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.set-modal{width:min(440px, 100%)}
+.set-modal--wide{width:min(500px, 100%)}
+.set-mhead{display:flex;align-items:center;gap:10px}
+.set-modal p.mono{font:400 12px/1.5 var(--font-mono);color:var(--ink-2)}
+.set-modal .acts{flex-wrap:wrap}
+/* Kit override (reported): `.btn-df` sets --on-strong (white) on --critical,
+   and the dark theme's critical is a light red (#FF6A5C) where white reads at
+   ~2.9:1. --on-fill is white on light and near-black on dark. */
+#settings .btn-df,.tuiwrap .btn-df{color:var(--on-fill)}
+#settings .btn-df:hover,.tuiwrap .btn-df:hover{color:var(--on-fill)}
+#settings .btn-df .kc,.tuiwrap .btn-df .kc{color:var(--on-fill);border-color:color-mix(in srgb, var(--on-fill) 35%, transparent)}
+.set-scan{color:var(--critical);max-height:140px}
+
+/* ---------------- Tasks (ST-01…05) ---------------- */
+.set-tblcard{padding:4px;overflow-x:auto}
+.set-tktbl th{height:34px}
+.set-tktbl td{height:40px}
+.set-tktbl th:first-child,.set-tktbl td:first-child{padding-left:12px}
+.set-tktbl td.mono{font:400 12px/1 var(--font-mono);color:var(--ink-2)}
+.set-tktbl .set-sched{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.set-tktbl .set-msg{width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.set-tktbl tbody tr:focus-within td{background:var(--hover)}
+.set-tktbl tbody tr.on td{background:var(--brand-wash)}
+.set-rowbtn{display:inline-flex;align-items:center;padding:0;border:0;border-radius:var(--r-pill);background:transparent;cursor:pointer}
+.set-rowbtn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.set-morerow td{height:34px;text-align:center}
+
+/* Detail */
+.set-wellcard{display:flex;flex-direction:column;gap:12px;min-width:0;padding:18px 20px;border-radius:var(--r-card);background:var(--well)}
+.set-dtitle{margin:0;min-width:0;font:600 19px/1.3 var(--font-ui);letter-spacing:-.02em;color:var(--ink);overflow-wrap:anywhere}
+.set-dtitle.mono{font:500 19px/1.3 var(--font-mono);letter-spacing:0}
+.set-chips{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.set-plate{gap:8px 26px}
+.set-plate dt{font-size:13px}
+.set-plate dd{font-size:12.5px}
+.set-lasterr{align-items:flex-start}
+.set-lasterr > svg{margin-top:2px}
+.set-lasterr .mono{font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+.set-section{display:flex;flex-direction:column;gap:2px}
+.set-section .tk-sh{padding:0;min-height:22px;color:var(--ink)}
+
+/* New task form */
+.set-formgrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:22px;align-items:start}
+.set-formcol{display:flex;flex-direction:column;gap:16px;min-width:0}
+.set-form .tk-inp{width:100%;height:42px}
+.set-form .tk-inp.mono{font-size:13.5px}
+.set-prevcard{display:flex;flex-direction:column;gap:10px;min-width:0;padding:16px 18px;border-radius:var(--r-card);background:var(--well)}
+.set-prevh b{font:600 13.5px/1.3 var(--font-ui);color:var(--ink)}
+.set-firings{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.set-firings li{display:flex;align-items:center;gap:8px;font:400 12.5px/1.3 var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
+.set-firings li > svg{width:14px;height:14px;color:var(--ink-3)}
+.set-atnote{line-height:1.5}
+.set-formfoot{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:4px}
+.set-formfoot .grow{flex:1}
+/* tkPreview writes an inline success colour onto the submit button while the
+   caret is in the form; an ink pill keeps its paper label. */
+.set-submit{color:var(--paper)!important}
+.set-submit[disabled]{color:var(--ink-3)!important}
+
+/* ---------------- Skills (ST-06…11) ---------------- */
+.set-sklist,.set-hublist{padding:6px}
+.set-skcols,.set-skrow{display:grid;grid-template-columns:40px minmax(120px,190px) 96px 72px minmax(0,1fr);align-items:center;column-gap:14px}
+.set-skcols{padding:6px 12px 6px;font:600 12px/1.2 var(--font-ui);color:var(--ink-2)}
+.set-skrow .t{font:500 13px/1.3 var(--font-mono);letter-spacing:0;color:var(--ink)}
+.set-skrow .m{font:400 12px/1 var(--font-mono);color:var(--ink-2)}
+.set-skrow .d{min-width:0;font-size:13px;color:var(--ink-2);white-space:nowrap}
+.set-skrow.dim .t,.set-skrow.dim .m,.set-skrow.dim .d{color:var(--ink-3)}
+.set-skrow.on .t{color:var(--blue)}
+.set-src{min-width:0;display:flex}
+.set-hubcta{padding:4px}
+.set-hubcta .tk-li > svg{color:var(--ink-3)}
+.set-hubrow{min-height:54px}
+.set-hubrow .t{font:500 13px/1.35 var(--font-mono);letter-spacing:0}
+.set-hubrow .d{white-space:nowrap}
+.set-hubrow .m{font-size:12px;color:var(--ink-2)}
+.set-srcchip{min-width:42px;justify-content:center}
+.set-titlerow{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0}
+.set-skmd{margin:0;min-height:120px;padding:14px 16px;font-size:12px;line-height:1.6}
+.set-mdmore{color:var(--ink-2)}
+.set-loading{display:flex;align-items:center;gap:8px;color:var(--ink-2)}
+
+/* ---------------- Privacy (ST-33) ---------------- */
+.set-setlist{padding:6px}
+.set-setlist .tk-setrow{padding:10px 16px}
+.set-setlist .tk-help{margin-top:6px}
+.set-privgrid{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px}
+.set-privcol{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:var(--r-card);background:var(--well)}
+.set-privcol .tk-sh{padding:0;min-height:20px;color:var(--ink)}
+.set-privul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.set-privul li{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+
+/* ---------------- 0.5.5 text-tab fallbacks ----------------
+   Tabs still drawn as TUI text (and the parts of them another slice has not
+   redrawn yet) keep these: a quiet Tactile version of the same markup. */
+.tui{display:flex;flex-direction:column;gap:6px;min-width:0;font:400 13px/1.5 var(--font-ui);color:var(--ink)}
+.tui b{font-weight:600;color:var(--ink)}
+.tui .ter{color:var(--ink-2)}
+.tuibar:not(.set-toolbar){display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:32px;color:var(--ink-2);white-space:pre-wrap}
+.tuihead{padding:6px 10px 2px;font:600 12px/1.4 var(--font-mono);color:var(--ink-2);white-space:pre;overflow:hidden}
+.tuirow{display:block;width:100%;min-height:34px;padding:7px 10px;border:0;border-radius:var(--r-well);background:transparent;
+  color:var(--ink);text-align:left;font:400 12.5px/20px var(--font-mono);white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+.tuirow:hover{background:var(--hover)}
+.tuirow.on{background:var(--brand-wash);color:var(--blue)}
+.tuirow.dim{color:var(--ink-3)}
+.tuirow2 > span{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.tuimodal{display:flex;flex-direction:column;gap:6px;min-width:0;margin:4px 0;padding:14px 16px;border:0;border-radius:var(--r-card);background:var(--well)}
+.tuimodal.warn{box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--amber) 70%, transparent)}
+.tuimodal.danger{box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--critical) 55%, transparent)}
+.tuibody{margin:0;padding:10px 12px;border-radius:var(--r-well);background:var(--well);
+  font:400 12px/1.6 var(--font-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.tuibody > div{min-height:19px}
+.tuimsg{color:var(--blue)}
+.tuierr{color:var(--critical)}
+.tuiarea{display:block;width:100%;margin-top:8px;padding:10px 14px;border:1px solid transparent;border-radius:18px;background:var(--well);
+  font:400 12.5px/1.5 var(--font-mono);color:var(--ink);resize:vertical;outline:none;white-space:pre}
+.tuiarea:focus{background:var(--lift);border-color:var(--brand);box-shadow:var(--focus-ring)}
+.tuiarea::placeholder{color:var(--ink-3)}
+.skpf{display:inline-flex;align-items:center;height:26px;padding:0 10px;border:0;border-radius:var(--r-pill);background:var(--hover);
+  color:var(--ink);font:500 12.5px/1 var(--font-ui);white-space:pre;cursor:pointer}
+.skpf:hover{background:var(--press)}
+.skpf.on{background:var(--brand-wash);color:var(--blue)}
+.skpf[disabled]{background:transparent;color:var(--ink-3);cursor:default}
+.skpaccent{color:var(--blue)}
+.sk-on{color:var(--success)}
+.sk-off{color:var(--amber-text)}
+
+/* The Tasks and Skills rooms (⌘2 / ⌘3 outside the window) wrap the same tab. */
+.tuiwrap{position:relative;max-width:1080px;margin:0 auto;padding:24px 28px}
+
+/* ---------------- Narrow window (≤1000px) ---------------- */
+@media (max-width:1000px){
+  .setwin{grid-template-columns:212px minmax(0,1fr)}
+  .settb{padding-left:18px}
+  .setbody{padding:0 18px 18px}
+  .set-formgrid{gap:16px}
+  .set-skcols,.set-skrow{grid-template-columns:40px minmax(100px,150px) 84px 62px minmax(0,1fr);column-gap:10px}
+}
