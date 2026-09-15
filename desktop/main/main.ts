@@ -1551,6 +1551,17 @@ type Sb = {
   total: number;
 };
 
+/** Every stylesheet the window loads, in load order — styles.css (tokens and
+    the shared kit) and then the per-region files under renderer/css. A check
+    that looks for a rule on disk must search all of them, because a rule
+    lives in the file of the region that owns it. */
+function rendererCssText(): string {
+  const dir = join(__dirname, "..", "renderer");
+  const html = readFileSync(join(dir, "index.html"), "utf8");
+  const sheets = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]!);
+  return sheets.map((href) => { try { return readFileSync(join(dir, href), "utf8"); } catch { return ""; } }).join("\n");
+}
+
 async function smokeTest(): Promise<void> {
   if (!win) return;
   const js = <T,>(code: string) => win!.webContents.executeJavaScript(code) as Promise<T>;
@@ -2065,7 +2076,7 @@ async function smokeTest(): Promise<void> {
       // The visible text only: the markup carries `data-act="modes"` and a
       // tooltip, neither of which is what the operator reads.
       const chipText = chipOff.replace(/<[^>]*>/g, "").trim();
-      const dimRule = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+      const dimRule = rendererCssText();
       const dimmed = /\.poprow\.dim\s*\{/.test(dimRule);
       check(
         "coding mode chip says 'mode —' when the agent has no route",
@@ -3364,9 +3375,10 @@ async function sidebarTest(
     type RowShape = { rows: number; minHeight: number; maxHeight: number; children: string[]; titleHeight: number; titleLineHeight: number; nowrap: boolean } | null;
     const shape = await js<RowShape>("window.__rowShape()");
     const rowTail = shape ? shape.children.slice(2) : [];
+    // Soft Tactile: sidebar rows are 34px pills (tokens: sidebar row 34).
     check(
       "sidebar rows are one line: dot + name (+ hover controls)",
-      !!shape && shape.minHeight === 30 && shape.maxHeight === 30
+      !!shape && shape.minHeight === 34 && shape.maxHeight === 34
         && shape.children[0] === "sdot" && shape.children[1] === "t1"
         && rowTail.length <= 2
         && rowTail.every((c) => c === "pinbtn" || c === "unreadbtn")
@@ -3790,7 +3802,7 @@ async function settingsTest(
     // A.4: the product is Atomic Agent in every user-facing string.
     ["Danger zone", "Uninstall Atomic Agent…", null],
   ];
-  const nodes = await js<Array<{ group: string; label: string; chord: string | null; na: boolean; tab: string | null }>>("window.__menuNodes()");
+  const nodes = await js<Array<{ group: string; id: string; label: string; chord: string | null; na: boolean; tab: string | null }>>("window.__menuNodes()");
   check("settings: every menu node has its TUI label and chord", same(nodes.map((n) => [n.group, n.label, n.chord]), NODES), JSON.stringify(nodes.map((n) => [n.group, n.label, n.chord])));
   const manageTabs = nodes.filter((n) => n.tab).map((n) => n.tab);
   check("settings: Manage children are the eight tabs", same(manageTabs, TABS), JSON.stringify(manageTabs));
@@ -3812,19 +3824,25 @@ async function settingsTest(
   const labels = await js<string[]>("window.__settingsLabels()");
   check("settings: tab labels mirror the TUI", same(labels, LABELS), JSON.stringify(labels));
 
-  // The menu column: chords render as `ctrl+g <key>`, nodes the desktop
-  // cannot do keep their label with the note, and a verb dispatches its act.
-  const menuDom = await js<{ chord: string; naCount: number; naText: string }>(
-    "(() => { const t = document.querySelector('#settings [data-act=\"menu:go.manage.tasks\"] .ch');"
+  // The menu column: every row with a chord shows its key as a keycap, the
+  // nav foot says what the keycap means ("⌃G then a letter"), nodes the
+  // desktop cannot do keep their label with the note, and a verb dispatches
+  // its act.
+  const menuDom = await js<{ chords: Array<[string, string]>; hint: string; naCount: number; naText: string }>(
+    "(() => { const chords = [...document.querySelectorAll('#settings .setmenu .menurow[data-act^=\"menu:\"]')]"
+    + ".filter((r) => r.querySelector('.ch')).map((r) => [r.dataset.act.slice(5), ((r.querySelector('.ch .kc') || {}).textContent || '').trim()]);"
+    + " const foot = document.querySelector('#settings .setnav-hint');"
     + " const na = [...document.querySelectorAll('#settings .menurow.na')];"
     + " const win = na.find((r) => r.textContent.includes('New terminal window'));"
-    + " return {chord: t ? t.textContent : '', naCount: na.length, naText: win ? win.textContent : ''}; })()",
+    + " return {chords, hint: foot && foot.getClientRects().length ? foot.innerText.replace(/\\s+/g, ' ').trim() : '', naCount: na.length, naText: win ? win.textContent : ''}; })()",
   );
   const naExpected = nodes.filter((n) => n.na).length;
+  const chordsExpected = nodes.filter((n) => n.chord && !n.na).map((n) => [n.id, n.chord]);
   check(
     "settings: menu column renders chords and the not-available note",
-    menuDom.chord === "ctrl+g t" && menuDom.naCount === naExpected && menuDom.naText.includes("not available in the desktop"),
-    `chord=${JSON.stringify(menuDom.chord)} na=${menuDom.naCount}/${naExpected}`,
+    chordsExpected.length > 0 && same(menuDom.chords, chordsExpected) && menuDom.hint === "⌃G then a letter"
+      && menuDom.naCount === naExpected && menuDom.naText.includes("not available in the desktop"),
+    `keycaps ${menuDom.chords.length}/${chordsExpected.length}${same(menuDom.chords, chordsExpected) ? "" : " " + JSON.stringify(menuDom.chords)} hint=${JSON.stringify(menuDom.hint)} na=${menuDom.naCount}/${naExpected}`,
   );
   // `go.observe.world` used to prove this; that node is gone. `help.tools` is
   // the surviving verb with the same observable result (the inspector on its
@@ -3936,12 +3954,16 @@ async function settingsTest(
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
   const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
-  const skillsLabel = await js<string>(
-    "(() => { window.__settingsOpen('skills'); const b = document.querySelector('#settings .settab.on'); return b ? b.textContent.trim() : ''; })()",
+  // The nav row a person reads: the label, then the count badge (none at zero).
+  const skillsLabel = await js<{ act: string; label: string; count: string | null }>(
+    "(() => { window.__settingsOpen('skills'); const b = document.querySelector('#settings .settab.on'); if (!b) return {act: '', label: '', count: null};"
+    + " const c = b.querySelector('.setcount');"
+    + " return {act: b.dataset.act || '', label: ((b.querySelector('.lb') || {}).textContent || '').trim(), count: c && c.getClientRects().length ? c.textContent.trim() : null}; })()",
   );
   check(
     "settings: Skills tab count is `atag skill list`",
-    skillsCli.ok && skillCount === (skillsCli.rows ?? []).length && skillsLabel === (skillCount ? `Skills (${skillCount})` : "Skills"),
+    skillsCli.ok && skillCount === (skillsCli.rows ?? []).length
+      && skillsLabel.act === "settings:skills" && skillsLabel.label === "Skills" && skillsLabel.count === (skillCount ? String(skillCount) : null),
     `count=${String(skillCount)} cli=${skillsCli.ok ? (skillsCli.rows ?? []).length : skillsCli.error} label=${JSON.stringify(skillsLabel)}`,
   );
   // (After the count check, so `atag skill list` has answered.) Skills, this step: the installed list as skills-list.tsx draws it — the
@@ -3951,8 +3973,8 @@ async function settingsTest(
   // maxRows) around the cursor, so the painted rows are min(loaded, 14)
   // with the `↓ N below` line; the loaded rows are every CLI row.
   const skl = await js<{ header: boolean; rows: number; loaded: number; cli: number | null; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
-    "(() => { window.__settingsOpen('skills'); const body = window.__settingsBody();"
-    + " return {header: body.includes('state     source   version  name'), rows: document.querySelectorAll('#settings .setbody [data-skill-row]').length, loaded: window.__skillsRows(), cli: window.__skillCount(), win: window.__skillsWindow()}; })()",
+    "(() => { window.__settingsOpen('skills'); const cols = document.querySelector('#settings .setbody .set-skcols');"
+    + " return {header: !!cols && cols.getClientRects().length > 0 && [...cols.children].map((s) => s.textContent.trim()).join('|') === 'Enabled|Name|Source|Version|Description', rows: document.querySelectorAll('#settings .setbody [data-skill-row]').length, loaded: window.__skillsRows(), cli: window.__skillCount(), win: window.__skillsWindow()}; })()",
   );
   const sklHidden = typeof skl.cli === "number" ? Math.max(0, skl.cli - skl.win.max) : 0;
   check(
@@ -3969,12 +3991,14 @@ async function settingsTest(
   // the tab's count is checked against what the store holds up to the TUI's
   // 200-row list limit — not against the same 200-row call the tab makes.
   const storeCount = await agent!.tasksList(500).then((r) => ((r as { tasks?: unknown[] }).tasks ?? []).length).catch(() => -1);
-  const taskState = await js<{ rows: number; body: string; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
-    "(() => ({rows: window.__tasksRows(), body: window.__settingsBody(), win: window.__tasksWindow()}))()",
+  const taskState = await js<{ rows: number; body: string; heads: string[]; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
+    "(() => ({rows: window.__tasksRows(), body: window.__settingsBody(), win: window.__tasksWindow(),"
+    + " heads: [...document.querySelectorAll('#settings .setbody .set-tktbl thead th')].map((th) => th.textContent.trim())}))()",
   );
+  // No rows: the empty state and its three ways out (n / f / r). Rows: the table's column headers.
   const tasksCopy = taskState.rows === 0
-    ? taskState.body.includes("no tasks match the current filter — press `n` to create one")
-    : taskState.body.includes("status   schedule               next-run       session   message");
+    ? ["No tasks yet", "Create one, cycle the filter, or refresh.", "n new task", "f cycle filter", "r refresh"].every((s) => taskState.body.includes(s))
+    : same(taskState.heads, ["Status", "Schedule", "Next run", "Session", "Message"]);
   // The route is called with limit=500 (agent-client tasks(); item 6 needs the
   // whole list so the sidebar's Load more pages over real rows); the TAB then
   // shows the TUI's first 200 of it, which is what this compares.
@@ -3988,7 +4012,7 @@ async function settingsTest(
   // The create form's preview (form path: tkPreview → app:taskPreview) is the agent's own cron-parser port.
   const preview = await js<{ cron: number; every: number; at: number; bad: string; shown: boolean }>(
     "(async () => { const cron = await window.__taskPreviewForm({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
-    + " const shown = window.__settingsBody().includes('next firings:');"
+    + " const shown = window.__settingsBody().includes('Next firings') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
     + " const every = await window.__taskPreviewForm({kind:'interval', intervalSeconds:'300', message:'x'});"
     + " const at = await window.__taskPreviewForm({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
     + " const bad = await window.__taskPreviewForm({kind:'cron', cronExpression:'not a cron', message:'x'});"
@@ -4119,7 +4143,7 @@ async function settingsTest(
   // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it.
   await js<void>("window.__settingsOpen('privacy')");
   const priv = await js<string>("window.__settingsBody()");
-  const privacyCopy = ["Analytics", "anonymous usage", "Product analytics + crash reports, fully anonymous.", "Session grants", "none active"]
+  const privacyCopy = ["Anonymous usage analytics", "Product analytics + crash reports, fully anonymous.", "Session grants", "none active"]
     .every((s) => priv.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
   check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
@@ -4236,8 +4260,13 @@ async function settingsTestPartB(
   const cliRows = cli.rows ?? [];
   check("skills tab: loaded rows equal `atag skill list`", cli.ok && loaded === cliRows.length, `${loaded} vs ${cli.ok ? cliRows.length : cli.error}`);
   const body = await js<string>("window.__settingsBody()");
-  const copy = ["filter: ", "built-in tools: ", "/tools", " shown · ", " enabled · ", " disabled", "j/k move", "Enter detail", "e toggle", "d remove", "r refresh", "a auto", "f filter", "Skills Hub", "browse & install skills from ClawHub"];
-  const missing = copy.filter((s) => !body.includes(s));
+  // The filter is a segmented control (all · enabled · disabled, `all` pressed on entry), not a `filter:` label.
+  const filterSeg = await js<string[]>(
+    "[...document.querySelectorAll('#settings .setbody .set-seg button[data-act^=\"skills:filter:\"]')].map((b) => b.textContent.trim() + (b.classList.contains('on') ? '*' : ''))",
+  );
+  const copy = ["Built-in tools", " shown · ", " enabled · ", " disabled", "j/k move", "Enter detail", "e toggle", "d remove", "r refresh", "a auto", "f filter", "Skills Hub", "Browse and install skills from ClawHub"];
+  const missing: string[] = copy.filter((s) => !body.includes(s));
+  if (!same(filterSeg, ["all*", "enabled", "disabled"])) missing.push(`filter segment ${JSON.stringify(filterSeg)}`);
   check("skills tab: filter bar, hints and the hub CTA carry the TUI copy", missing.length === 0, missing.length ? `missing ${JSON.stringify(missing)}` : "");
 
   // Enter on the first row: GET /api/skills/{name} body, skills-detail.tsx header + hints.
@@ -4310,19 +4339,35 @@ async function settingsTestPartB(
   await js<void>("window.__skillsAct('hub')");
   const hub = await until(skills, (s) => s.mode === "hub" && !s.hubLoading, 120_000);
   const hubBody = await js<string>("window.__settingsBody()");
-  check("skills hub: `atag skill browse` rows", hub.hubRows.length > 0 && hubBody.includes("hub search: (all)") && hubBody.includes("Enter open card"), `${hub.hubRows.length} rows${hub.hubError ? " hubError=" + hub.hubError : ""}`);
+  // No query: the search box shows its placeholder (the TUI's `hub search: (all)`).
+  const hubSearch = await js<{ text: string; placeholder: boolean }>(
+    "(() => { const b = document.querySelector('#settings .setbody .set-hubsearch[data-act=\"skills:hubSearch\"]'); const s = b && b.querySelector('.ph, .v');"
+    + " return {text: s ? s.textContent.trim() : '', placeholder: !!(s && s.classList.contains('ph') && b.getClientRects().length)}; })()",
+  );
+  check(
+    "skills hub: `atag skill browse` rows",
+    hub.hubRows.length > 0 && hubSearch.placeholder && hubSearch.text === "Search ClawHub and GitHub taps" && hubBody.includes("Enter open card"),
+    `${hub.hubRows.length} rows, search ${JSON.stringify(hubSearch)}${hub.hubError ? " hubError=" + hub.hubError : ""}`,
+  );
+  // A hub card's source badge and its install / cancel hints, as drawn.
+  const cardChrome = () => js<{ badge: string; install: string[]; cancel: string[] }>(
+    "(() => { const box = document.querySelector('#settings .setbody'); const chip = box && box.querySelector('.set-titlerow .tk-chip');"
+    + " const hint = (act) => [...(box ? box.querySelectorAll('.tuihint .tk-hint') : [])].filter((b) => b.dataset.act === act).map((b) => b.innerText.replace(/\\s+/g, ' ').trim());"
+    + " return {badge: chip ? chip.textContent.trim() : '', install: hint('skills:install'), cancel: hint('skills:back')}; })()",
+  );
   // A `[gh]` row (skills.taps): the card carries the TUI's no-preview copy, no download count and installs by identifier.
   const ghIdx = hub.hubRows.findIndex((r) => r.source === "github");
   if (ghIdx >= 0) {
     await js<void>(`window.__skillsAct(${JSON.stringify("card:" + ghIdx)})`);
     const ghCard = await until(skills, (s) => !!s.hubCard && !s.hubCardLoading, 10_000);
     const ghBody = await js<string>("window.__settingsBody()");
+    const ghChrome = await cardChrome();
     const gc = ghCard.hubCard;
     check(
       "skills hub: a GitHub-tap card says SKILL.md is pulled at install",
       !!gc && gc.identifier === hub.hubRows[ghIdx]!.identifier && gc.bodyLines === 0 && gc.bodyError === "preview unavailable for GitHub taps (SKILL.md is pulled at install)" && gc.installId === gc.identifier
-        && ghBody.includes("[gh] ") && ghBody.includes("↓—") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && ghBody.includes("[i] install"),
-      gc ? `${gc.identifier}: ${gc.bodyError ?? gc.bodyLines + " lines"}` : "no card",
+        && ghChrome.badge === "gh" && ghBody.includes("↓—") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && same(ghChrome.install, ["i install"]),
+      gc ? `${gc.identifier}: ${gc.bodyError ?? gc.bodyLines + " lines"} · ${JSON.stringify(ghChrome)}` : "no card",
     );
     await js<void>("window.__skillsAct('back')");
   } else {
@@ -4376,9 +4421,10 @@ async function settingsTestPartB(
       await js<void>(`window.__skillsAct(${JSON.stringify("card:" + i)})`);
       const card = await until(skills, (s) => !!s.hubCard && !s.hubCardLoading, 40_000);
       const cardBody = await js<string>("window.__settingsBody()");
+      const chrome = await cardChrome();
       const c = card.hubCard;
       chromeOk = chromeOk && !!c && c.identifier === found.hubRows[i]!.identifier && !!c.installId
-        && cardBody.includes("[claw] ") && cardBody.includes("owner ") && cardBody.includes("[i] install") && cardBody.includes("[n] cancel");
+        && chrome.badge === "claw" && cardBody.includes("owner ") && same(chrome.install, ["i install"]) && same(chrome.cancel, ["n cancel"]);
       outcomes.push(c ? `${c.identifier}: ${c.bodyLines > 0 ? c.bodyLines + " lines" : c.bodyError ?? "no body"}` : "no card");
       if (c && c.bodyLines > 0) resolved = c;
       else if (!c || !clientTexts(c.bodyError)) chromeOk = false;
@@ -4410,16 +4456,30 @@ async function settingsTestPartB(
   const memChannelsOk = await until(memory, (m) => same(m.channels, expectedChannels), 10_000);
   check("memory tab: channels follow memory.*.enabled as resolveAvailableChannels does", same(memChannelsOk.channels, expectedChannels), `${JSON.stringify(memChannelsOk.channels)} vs ${JSON.stringify(expectedChannels)}`);
   const profileSql = await js<{ ok: boolean; rows?: unknown[]; via?: string; error?: string }>("window.__memQuery('profile.list', [])");
-  const memBody = await js<string>("window.__settingsBody()");
+  // What the tab draws: the one pressed channel button, the painted rows (a
+  // 14-row window, memory-panel.tsx maxRows), the profile table's headers, the empty state's title.
+  type MemView = { pressed: string[]; painted: number; heads: string[]; empty: string };
+  const memView = () => js<MemView>(
+    "(() => { const box = document.querySelector('#settings .setbody .sd-mem'); if (!box) return {pressed: [], painted: 0, heads: [], empty: ''};"
+    + " const empty = box.querySelector('.tk-empty h4');"
+    + " return {pressed: [...box.querySelectorAll('.tk-bar button[data-act^=\"memory:ch:\"]')].filter((b) => b.classList.contains('on') && b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent.trim()),"
+    + " painted: box.querySelectorAll('[data-mem-row]').length, heads: [...box.querySelectorAll('.sd-memtbl thead th')].map((th) => th.textContent.trim()), empty: empty ? empty.textContent.trim() : ''}; })()",
+  );
+  const MEM_WINDOW = 14;
+  const profileView = await memView();
+  const profileDrawn = same(profileView.pressed, ["profile"])
+    && (mem.rows === 0 ? profileView.painted === 0 && profileView.empty === "No profile facts" : profileView.painted === Math.min(mem.rows, MEM_WINDOW) && same(profileView.heads, ["Key", "Value", "Kind", "Votes"]));
   check(
     "memory tab: profile rows equal the tab's own SQL over memory.sqlite",
-    mem.channel === "profile" && profileSql.ok && mem.rows === (profileSql.rows ?? []).length && !mem.error && memBody.includes("[1:profile]") && (mem.rows === 0 || memBody.includes("primary                    secondary / meta")),
-    `${mem.rows} rows vs sql ${profileSql.ok ? (profileSql.rows ?? []).length + " (" + profileSql.via + ")" : profileSql.error}${mem.error ? " err=" + mem.error : ""}`,
+    mem.channel === "profile" && profileSql.ok && mem.rows === (profileSql.rows ?? []).length && !mem.error && profileDrawn,
+    `${mem.rows} rows vs sql ${profileSql.ok ? (profileSql.rows ?? []).length + " (" + profileSql.via + ")" : profileSql.error}${mem.error ? " err=" + mem.error : ""} · drawn ${JSON.stringify(profileView)}`,
   );
   const notes = await js<MemState>("window.__memoryOpen('notes')");
   const notesSql = await js<{ ok: boolean; rows?: unknown[]; error?: string }>(`window.__memQuery('notes.listActive', [200])`);
   const notesBody = await js<string>("window.__settingsBody()");
-  check("memory tab: notes rows equal notes.listActive and the bar says notes: active", notes.channel === "notes" && notesSql.ok && notes.rows === (notesSql.rows ?? []).length && notesBody.includes("[2:notes]") && notesBody.includes("notes: active"), `${notes.rows} vs ${notesSql.ok ? (notesSql.rows ?? []).length : notesSql.error}`);
+  const notesView = await memView();
+  const notesDrawn = same(notesView.pressed, ["notes"]) && (notes.rows === 0 ? notesView.painted === 0 && notesView.empty === "No notes" : notesView.painted === Math.min(notes.rows, MEM_WINDOW));
+  check("memory tab: notes rows equal notes.listActive and the bar says notes: active", notes.channel === "notes" && notesSql.ok && notes.rows === (notesSql.rows ?? []).length && notesDrawn && notesBody.includes("notes: active"), `${notes.rows} vs ${notesSql.ok ? (notesSql.rows ?? []).length : notesSql.error} · drawn ${JSON.stringify(notesView)}`);
   if (notes.rows > 0) {
     const d = await js<MemState>("window.__memoryDetail(0)");
     const dBody = await js<string>("window.__settingsBody()");
@@ -4468,12 +4528,16 @@ async function settingsTestPartB(
   await js<void>("window.__settingsOpen('mcp')");
   const m0 = await until(mcp, (m) => m.refreshed !== null, 20_000);
   const mcpBody = await js<string>("window.__settingsBody()");
+  const mcpList = await js<{ rows: string[]; empty: string }>(
+    "(() => { const box = document.querySelector('#settings .setbody .sd-mcp'); const h = box && box.querySelector('.tk-empty h4');"
+    + " return {rows: box ? [...box.querySelectorAll('[data-mcp-row]')].map((r) => r.dataset.mcpRow) : [], empty: h ? h.textContent.trim() : ''}; })()",
+  );
   const mcpEmpty = !Array.isArray(beforeServers) || beforeServers.length === 0;
   check(
     "mcp tab: rows come from mcp.servers, the empty copy is the TUI's",
-    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpBody.includes(`${m0.rows} servers`) && mcpBody.includes("n add") && mcpBody.includes("d remove")
-      && (!mcpEmpty || (mcpBody.includes("no MCP servers configured — add entries under `mcp.servers[]` in config.json") && mcpBody.includes("(no servers)"))),
-    `${m0.rows} rows, config holds ${Array.isArray(beforeServers) ? beforeServers.length : "unset"}`,
+    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpList.rows.length === Math.min(m0.rows, 14) && mcpBody.includes(`${m0.rows} servers`) && mcpBody.includes("n add") && mcpBody.includes("d remove")
+      && (!mcpEmpty || (mcpBody.includes("no MCP servers configured — add entries under `mcp.servers[]` in config.json") && mcpList.empty === "No MCP servers")),
+    `${m0.rows} rows, config holds ${Array.isArray(beforeServers) ? beforeServers.length : "unset"}, drawn ${JSON.stringify(mcpList)}`,
   );
   const parsed = await js<Array<{ ok: boolean; server?: { name: string; transport?: { kind: string; command?: string; url?: string } }; error?: string }>>(
     "[window.__mcpParse('{\"name\":\"a\",\"transport\":{\"kind\":\"sse\",\"url\":\"http://x/mcp\"}}'),"
@@ -4495,24 +4559,43 @@ async function settingsTestPartB(
     );
     const onDisk = ((await configGet()).config as { mcp?: { servers?: Array<{ name: string }> } } | undefined)?.mcp?.servers ?? [];
     const addBody = await js<string>("window.__settingsBody()");
+    // The new server's row as drawn: name, the honest state chip, transport, trust class, tool count, description.
+    const addRow = await js<{ name: string; chips: string[]; tools: string; desc: string } | null>(
+      `(() => { const r = document.querySelector('#settings .setbody [data-mcp-row=${JSON.stringify(fixture)}]'); if (!r) return null;`
+      + " return {name: ((r.querySelector('.t') || {}).textContent || '').trim(), chips: [...r.querySelectorAll('.tk-chip')].map((c) => c.textContent.trim()),"
+      + " tools: ((r.querySelector('.sd-tools') || {}).textContent || '').trim(), desc: ((r.querySelector('.d') || {}).textContent || '').trim()}; })()",
+    );
     check(
       "mcp tab: n add writes mcp.servers through the whole-file config set",
       added.ok && onDisk.some((s) => s.name === fixture) && added.state.rows === m0.rows + 1 && added.state.msg.includes(`added "${fixture}"`) && added.state.addModal === null
-        && addBody.includes(fixture) && addBody.includes("[—]") && addBody.includes("state not exposed — no MCP status route in this agent") && addBody.includes("0 tools · — res · — prompts") && addBody.includes("desktop smoke fixture"),
-      added.ok ? `rows=${added.state.rows} msg=${JSON.stringify(added.state.msg)}` : `error=${added.error ?? "?"}`,
+        && !!addRow && addRow.name === fixture && same(addRow.chips, ["state —", "stdio", "approval_gated"]) && addRow.tools === "0 tools" && addRow.desc === "desktop smoke fixture"
+        && addBody.includes("state not exposed — no MCP status route in this agent"),
+      added.ok ? `rows=${added.state.rows} msg=${JSON.stringify(added.state.msg)} drawn=${JSON.stringify(addRow)}` : `error=${added.error ?? "?"}`,
     );
     const dup = await js<{ ok: boolean; error?: string }>(`window.__mcpAddSubmit(${JSON.stringify(JSON.stringify({ name: fixture, command: "echo" }))})`);
     check("mcp tab: a duplicate name is refused before the write", !dup.ok && /already exists in config.mcp.servers/.test(dup.error ?? ""), dup.error ?? "accepted");
     await js<void>("window.__mcpAct('addCancel')");
+    // The detail as drawn: the tools / resources / prompts segment with its counts and the pressed tab, the trust chip, the empty state.
+    type McpDetailView = { seg: Array<[string, string, boolean]>; trust: string; empty: string };
+    const mcpDetailView = () => js<McpDetailView>(
+      "(() => { const box = document.querySelector('#settings .setbody .sd-mcp'); if (!box) return {seg: [], trust: '', empty: ''};"
+      + " const seg = [...box.querySelectorAll('.tk-seg button[data-act^=\"mcp:dtab:\"]')].map((b) => { const c = b.querySelector('.sd-count');"
+      + " return [(b.firstChild && b.firstChild.nodeType === 3 ? b.firstChild.textContent : '').trim(), c ? c.textContent.trim() : '', b.classList.contains('on')]; });"
+      + " const trust = box.querySelector('.sd-srvhead .tk-chip.sd-mono'); const empty = box.querySelector('.tk-empty h4');"
+      + " return {seg, trust: trust ? trust.textContent.trim() : '', empty: empty ? empty.textContent.trim() : ''}; })()",
+    );
     const det = await js<McpState>(`window.__mcpAct(${JSON.stringify("detail:" + fixture)})`);
     const detBody = await js<string>("window.__settingsBody()");
+    const detView = await mcpDetailView();
     const res = await js<McpState>("window.__mcpAct('dtab:resources')");
     const resBody = await js<string>("window.__settingsBody()");
+    const resView = await mcpDetailView();
     check(
       "mcp tab: the detail shows the transport and says resources/prompts are not exposed",
-      det.mode === "detail" && detBody.includes("stdio: echo hi") && detBody.includes("trust: approval_gated") && detBody.includes("[1:tools(0)]") && detBody.includes("2:resources(—)") && detBody.includes("3:prompts(—)") && detBody.includes("(empty)")
-        && res.detailTab === "resources" && resBody.includes("[2:resources(—)]") && resBody.includes("not exposed by the agent's HTTP API"),
-      `mode=${det.mode} tab=${res.detailTab}`,
+      det.mode === "detail" && detBody.includes("stdio: echo hi") && detView.trust === "approval_gated"
+        && same(detView.seg, [["tools", "0", true], ["resources", "—", false], ["prompts", "—", false]]) && detView.empty === "No tools"
+        && res.detailTab === "resources" && same(resView.seg, [["tools", "0", false], ["resources", "—", true], ["prompts", "—", false]]) && resBody.includes("not exposed by the agent's HTTP API"),
+      `mode=${det.mode} tab=${res.detailTab} detail=${JSON.stringify(detView)} resources=${JSON.stringify(resView.seg)}`,
     );
     const removed = await js<McpState>(`window.__mcpRemove(${JSON.stringify(fixture)})`);
     const afterDisk = ((await configGet()).config as { mcp?: { servers?: Array<{ name: string }> } } | undefined)?.mcp?.servers ?? [];
@@ -4776,15 +4859,17 @@ async function hfAndDeltaTest(
     };
     const warned = await js<Hf>(`window.__llmHfFakeRepo(${JSON.stringify(huge)})`);
     const warnBody = await js<string>("window.__settingsBody()");
-    const wantWarn = `⚠ ${(ram + 8).toFixed(1)} GB model, ${ram} GB of RAM — it will run from disk, slowly.`;
+    // The warning is an amber notice (its alert icon stands where the TUI printed ⚠).
+    const warnNotice = await js<string>("[...document.querySelectorAll('#settings .setbody .llm-hf .tk-notice--amber .grow')].map((n) => n.textContent.trim()).join(' | ')");
+    const wantWarn = `${(ram + 8).toFixed(1)} GB model, ${ram} GB of RAM — it will run from disk, slowly.`;
     const small = { ...huge, choices: [{ ...huge.choices[0]!, fileSizeGb: 0.2, sizeLabel: "200 MB" }] };
     await js<Hf>(`window.__llmHfFakeRepo(${JSON.stringify(small)})`);
     const smallBody = await js<string>("window.__settingsBody()");
     check(
       "hf: the RAM line warns above host memory, says nothing below it, and disables nothing",
-      warnBody.includes(wantWarn) && !smallBody.includes("GB of RAM — it will run from disk")
+      warnNotice === wantWarn && warnBody.includes(wantWarn) && !smallBody.includes("GB of RAM — it will run from disk")
         && warned.step === "pick" && warned.choices === 1,
-      `warn present=${warnBody.includes(wantWarn)} (${JSON.stringify(wantWarn)}); small pane warns=${smallBody.includes("GB of RAM — it will run from disk")}`,
+      `warn notice=${JSON.stringify(warnNotice)} (want ${JSON.stringify(wantWarn)}); small pane warns=${smallBody.includes("GB of RAM — it will run from disk")}`,
     );
 
     // ---- the def is the agent's builder's, and asking for it writes nothing ----
@@ -5595,10 +5680,23 @@ async function settingsTestPartC(
         : `${vendored.length} curated ids, all with a description and both RAM figures`,
     );
   }
-  const localCopy = ["Active chat route", "current: ", "tools ", "provider embeddings: ", "local daemon: ", "Mode: Local | Cloud | External llama.cpp | Fallback", "Press ←/→ to switch mode",
-    "Local text models", "Local embeddings", "j/k move", "Enter selected action", "a add from hugging face", "s start/stop", "r refresh", "[downloaded]", "[remote]", "Enter: download"];
-  const localMissing = localCopy.filter((c) => !localBody.includes(c));
-  check("llm tab: route card, mode strip and the Local pane carry the TUI copy", localMissing.length === 0, localMissing.length ? `missing ${JSON.stringify(localMissing)}` : `status line ${JSON.stringify(local.statusLine)}`);
+  /* What the pane draws for the TUI's lines: the mode strip's four buttons
+     (Local pressed), the route card's label · value rows, and the status
+     chip on every local model row (downloaded / remote). */
+  const localView = await js<{ modes: string[]; on: string[]; kv: Array<[string, string]>; chips: string[] }>(
+    "(() => { const box = document.querySelector('#settings .setbody'); if (!box) return {modes: [], on: [], kv: [], chips: []};"
+    + " const kv = [...box.querySelectorAll('.llm-route .llm-kv')].map((row) => { const k = ((row.querySelector('.llm-k') || {}).innerText || '').trim();"
+    + " const all = (row.innerText || '').replace(/\\s+/g, ' ').trim(); return [k, all.startsWith(k) ? all.slice(k.length).trim() : all]; });"
+    + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
+    + " chips: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"] .t .tk-chip, [data-llm-row^=\"local-embedding:\"] .t .tk-chip')].map((c) => c.textContent.trim())}; })()",
+  );
+  const localCopy = ["Active chat route", "Press ←/→ to switch mode", "Local text models", "Local embeddings", "j/k move", "Enter selected action", "a add from hugging face", "s start/stop", "r refresh", "Enter: download"];
+  const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
+  if (!same(localView.modes, ["Local", "Cloud", "External llama.cpp", "Fallback"]) || !same(localView.on, ["Local"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
+  for (const chip of ["downloaded", "remote"]) if (!localView.chips.includes(chip)) localMissing.push(`${chip} chip`);
+  const chipTally = `${localView.chips.filter((c) => c === "downloaded").length} downloaded · ${localView.chips.filter((c) => c === "remote").length} remote`;
+  check("llm tab: route card, mode strip and the Local pane carry the TUI copy", localMissing.length === 0, localMissing.length ? `missing ${JSON.stringify(localMissing)} (row chips: ${chipTally})` : `status line ${JSON.stringify(local.statusLine)} · row chips: ${chipTally}`);
   const cfgAfter = JSON.stringify((await configGet()).config);
   check("llm tab: opening the tab writes no config", cfgBefore === cfgAfter, cfgBefore === cfgAfter ? "" : "config.json changed");
   // The route card's daemon line and current model follow `atag models status` and the user file.
@@ -5609,9 +5707,10 @@ async function settingsTestPartC(
   const localRoute = !activeEntry || activeEntry.kind === "llama-server";
   const expectedModel = localRoute ? (st.status?.activeModel ?? cfg0.localModels?.managed?.modelId ?? null) : (activeEntry?.defaultChatModel ?? activeEntry?.model ?? null);
   const expectedDaemon = st.ok && st.status ? (st.status.daemonRunning ? (String(st.status.health).toLowerCase() === "ok" ? "running pid " : "pid ") : "stopped") : null;
-  const routeOk = !!expectedDaemon && local.daemonLabel.startsWith(expectedDaemon) && localBody.includes(`local daemon: ${local.daemonLabel} · mode ${cfg0.localModels?.mode ?? "external"}`)
-    && localBody.includes(`current: ${activeText}${expectedModel ? " / " + expectedModel : ""}`) && localBody.includes(localRoute ? "tools grammar · cache local slot/cache_prompt" : "tools native_tools · cache cloud: no slot affinity");
-  check("llm tab: route card follows the user file and atag models status", routeOk, `current ${activeText} / ${expectedModel ?? "—"} · daemon ${JSON.stringify(local.daemonLabel)} vs status ${st.ok ? st.status?.daemon : st.error}`);
+  const kvOf = (label: string): string => (localView.kv.find(([k]) => k === label) ?? [label, ""])[1];
+  const routeOk = !!expectedDaemon && local.daemonLabel.startsWith(expectedDaemon) && kvOf("local daemon").startsWith(`${local.daemonLabel} · mode ${cfg0.localModels?.mode ?? "external"}`)
+    && kvOf("current") === `${activeText}${expectedModel ? " / " + expectedModel : ""}` && kvOf("tools") === (localRoute ? "grammar · cache local slot/cache_prompt" : "native_tools · cache cloud: no slot affinity");
+  check("llm tab: route card follows the user file and atag models status", routeOk, `current ${activeText} / ${expectedModel ?? "—"} · daemon ${JSON.stringify(local.daemonLabel)} vs status ${st.ok ? st.status?.daemon : st.error}${routeOk ? "" : " · card " + JSON.stringify(localView.kv)}`);
 
   // ---- LLM: Cloud pane ----
   const cloud = await js<LlmPane>("window.__llmOpen('cloud')");
@@ -5622,17 +5721,28 @@ async function settingsTestPartC(
     : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
   const dotenv = stateDir ? dotenvKeys(stateDir).keys : [];
   const expectKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
-  const providersOk = cloud.providers.length === cloudProviders.length && cloudProviders.every((p) => {
+  // Each provider row as drawn: the id, the kind (shown only when it differs from the id), the key chip, and what Enter does.
+  const cloudRows = await js<Array<{ row: string; id: string; kind: string | null; auth: string; effect: string }>>(
+    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"cloud-provider:\"]')].map((r) => { const kind = r.querySelector('.t .llm-kind'); const chip = r.querySelector('.t .tk-chip');"
+    + " return {row: r.dataset.llmRow, id: ((r.querySelector('.t .llm-id') || {}).textContent || '').trim(), kind: kind ? kind.textContent.trim() : null,"
+    + " auth: chip ? chip.textContent.trim() : '', effect: ((r.querySelector('.llm-effect') || {}).textContent || '').trim()}; })",
+  );
+  const providersOk = cloud.providers.length === cloudProviders.length && cloudRows.length === cloudProviders.length && cloudProviders.every((p) => {
     const row = cloud.providers.find((r) => r.id === p.id);
     const auth = p.kind === "subscription-cli" ? "cli auth" : expectKey(p) ? "key ok" : "missing key";
-    return !!row && row.hasKey === expectKey(p) && cloudBody.includes(`${p.id} [${p.kind}] ${auth}`) && cloudBody.includes(p.id === activeText ? `Current provider: ${p.id}` : expectKey(p) ? `Enter: switch cloud route to ${p.id}` : `Enter: configure API key for ${p.id}`);
+    const drawn = cloudRows.find((r) => r.row === `cloud-provider:${p.id}`);
+    return !!row && row.hasKey === expectKey(p) && !!drawn && drawn.id === p.id && drawn.kind === (p.kind === p.id ? null : p.kind) && drawn.auth === auth
+      && drawn.effect === (p.id === activeText ? `Current provider: ${p.id}` : expectKey(p) ? `Enter: switch cloud route to ${p.id}` : `Enter: configure API key for ${p.id}`);
   });
-  const cloudCopy = ["Cloud providers", "Cloud text models", "provider: ", "filter: ", "price: all", "p cycles free/paid/all", "Cloud embeddings", "n add provider", "c configure", "f filter"];
-  const cloudMissing = cloudCopy.filter((c) => !cloudBody.includes(c));
+  // The model filter is a search box; the price facet is inert and says why.
+  const filterBox = await js<boolean>("(() => { const i = document.querySelector('#settings .setbody .llm-filter #llm-filter'); return !!i && i.getClientRects().length > 0 && !i.disabled; })()");
+  const cloudCopy = ["Cloud providers", "Cloud text models", "provider: ", "price: all", "pricing is not exposed", "Cloud embeddings", "n add provider", "c configure", "f filter"];
+  const cloudMissing: string[] = cloudCopy.filter((c) => !cloudBody.includes(c));
+  if (!filterBox) cloudMissing.push("the model filter box");
   check(
     "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
     cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers configured. Press n to add one.")),
-    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}`,
+    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
   );
   const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
   const modelsBody = await js<string>("window.__settingsBody()");
@@ -5649,11 +5759,16 @@ async function settingsTestPartC(
   const extBody = await js<string>("window.__settingsBody()");
   const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:8080";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
+  // The row as drawn: the "base URL" label, the URL, and its status chip.
+  const extRow = await js<{ label: string; url: string; status: string } | null>(
+    "(() => { const r = document.querySelector('#settings .setbody [data-llm-row=\"external-url\"]'); if (!r) return null;"
+    + " return {label: ((r.querySelector('.llm-k2') || {}).textContent || '').trim(), url: ((r.querySelector('.llm-id') || {}).textContent || '').trim(), status: ((r.querySelector('.t .tk-chip') || {}).textContent || '').trim()}; })()",
+  );
   check(
     "llm tab: External pane is the one base-URL row with the two hint lines",
-    ext.rows === 1 && extBody.includes(`base URL ${extUrl} [`) && (extActive || extBody.includes("[not active]")) && extBody.includes("managed daemon: ") && extBody.includes("s start/stop")
+    ext.rows === 1 && !!extRow && extRow.label === "base URL" && extRow.url === extUrl && (extActive || extRow.status === "not active") && extBody.includes("managed daemon: ") && extBody.includes("s start/stop")
       && extBody.includes("← Local pane: pick a managed model to switch back") && extBody.includes(extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
-    `${ext.rows} row(s), active=${extActive}`,
+    `${ext.rows} row(s), active=${extActive}, drawn ${JSON.stringify(extRow)}`,
   );
   const cfgBeforeProbe = JSON.stringify((await configGet()).config);
   const probed = await js<LlmPane>("window.__llmExternalSave('127.0.0.1:1')");
@@ -5709,11 +5824,16 @@ async function settingsTestPartC(
   if (appendLocal && localId && !chain.includes(localId)) chain.push(localId);
   const expectedChain = chain.filter((id, i) => configured.has(id) && chain.indexOf(id) === i);
   const fbLinks = fb.fallback.links.map((l) => l.providerId);
+  // The chain as drawn: one row per link in order, its position badge and its provider id (with the model after a slash when it has one).
+  const fbRows = await js<Array<{ idx: string; id: string }>>(
+    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"fb:\"]')].map((r) => ({idx: ((r.querySelector('.llm-idx') || {}).textContent || '').trim(), id: ((r.querySelector('.llm-id') || {}).textContent || '').trim()}))",
+  );
+  const fbDrawn = fbRows.length === expectedChain.length && fbRows.every((r, i) => r.idx === String(i + 1) && (r.id === expectedChain[i] || r.id.startsWith(`${expectedChain[i]}/`)));
   check(
     "llm tab: Fallback pane shows the resolver's effective chain and the honest status line",
     same(fbLinks, expectedChain) && fb.fallback.links[0]?.isActive === true && fbBody.includes("status: fallover events are not exposed by the agent's HTTP API") && fbBody.includes("Fallback chain")
-      && fbBody.includes(`1. ${expectedChain[0]}`) && fbBody.includes("active (primary)") && fbBody.includes(`append local as last resort: ${appendLocal ? "on" : "off"}`) && fbBody.includes("l to toggle") && fbBody.includes("< > reorder"),
-    `${JSON.stringify(fbLinks)} vs ${JSON.stringify(expectedChain)} appendLocal=${appendLocal}`,
+      && fbDrawn && fbBody.includes("active (primary)") && fbBody.includes(`append local as last resort: ${appendLocal ? "on" : "off"}`) && fbBody.includes("l to toggle") && fbBody.includes("< > reorder"),
+    `${JSON.stringify(fbLinks)} vs ${JSON.stringify(expectedChain)} appendLocal=${appendLocal}${fbDrawn ? "" : " drawn " + JSON.stringify(fbRows)}`,
   );
   const llmBefore = cfg0.llm;
   if (llmBefore) {
@@ -5739,21 +5859,36 @@ async function settingsTestPartC(
   type TgState = { hasToken: boolean | null; enabled: boolean | null; owner: unknown; mode: string; message: string; restart: boolean; lastError: string | null; keysKnown: boolean; dotenvKeys: string[] };
   const tg = await until(() => js<TgState>("window.__telegram()"), (t) => t.keysKnown, 10_000);
   const tgBody = await js<string>("window.__settingsBody()");
-  const tgLabel = await js<string>("(() => { const b = document.querySelector('#settings .settab.on'); return b ? b.textContent.trim() : ''; })()");
+  // The nav row: Telegram is the pressed tab, and it carries no count badge.
+  const tgLabel = await js<{ act: string; label: string; count: boolean }>(
+    "(() => { const b = document.querySelector('#settings .settab.on'); if (!b) return {act: '', label: '', count: false};"
+    + " return {act: b.dataset.act || '', label: ((b.querySelector('.lb') || {}).textContent || '').trim(), count: !!b.querySelector('.setcount')}; })()",
+  );
+  const tgPlain = tgLabel.act === "settings:telegram" && tgLabel.label === "Telegram" && !tgLabel.count;
   const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
   const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
   if (!envHas && !dotenvHas) {
+    // The card's one action: the "Paste a bot token" button with the Enter keycap (the TUI's "Press Enter to paste a bot token").
+    const tgCta = await js<{ label: string; key: string } | null>(
+      "(() => { const b = document.querySelector('#settings .setbody .sd-tgcard [data-act=\"telegram:token\"]'); if (!b || !b.getClientRects().length) return null;"
+      + " const k = b.querySelector('.kc'); return {label: [...b.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim(), key: k ? k.textContent.trim() : ''}; })()",
+    );
     check(
       "telegram tab: no token anywhere → the Connect Telegram card, plain tab label",
       tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
-        && tgBody.includes("Press Enter to paste a bot token") && tgBody.includes("a — advanced") && tgLabel === "Telegram",
-      `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)}`,
+        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "↩" && tgBody.includes("a — advanced") && tgPlain,
+      `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );
   } else {
+    // The advanced rows as drawn: each fact's title and its chip.
+    const tgFacts = await js<Record<string, string>>(
+      "(() => { const out = {}; document.querySelectorAll('#settings .setbody .sd-rows .tk-setrow').forEach((r) => { const t = r.querySelector('.body .t'); const c = r.querySelector(':scope > .tk-chip');"
+      + " if (t) out[t.textContent.trim()] = c ? c.textContent.trim() : ''; }); return out; })()",
+    );
     check(
       "telegram tab: a token is present → the facts, channel state honestly unknown, plain tab label",
-      tg.hasToken === true && tgBody.includes("token set") && tgBody.includes("state unknown") && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgLabel === "Telegram",
-      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} label=${JSON.stringify(tgLabel)}`,
+      tg.hasToken === true && tgFacts.Token === "set" && tgFacts.State === "unknown" && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
+      `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} label=${JSON.stringify(tgLabel)} facts=${JSON.stringify(tgFacts)}`,
     );
   }
   // Token round trip through the dotenv-writer port — only when no token exists anywhere, so a real one is never touched.
@@ -5812,31 +5947,60 @@ async function settingsTestPartC(
     report: { items: number; summary: { migrated: number; skipped: number; conflict: number; error: number }; first: { kind: string; status: string; reason: string | null } | null } | null; painted: number };
   const imp = await until(() => js<ImpState>("window.__import()"), (i) => !!i.form.sourceDir, 5_000);
   const impBody = await js<string>("window.__settingsBody()");
-  const labels = ["source-of", "source", "sessions", "cron", "secrets", "overwrite", "limit"];
-  const labelsOk = labels.every((l) => impBody.includes(`${l.padEnd(10)}: `));
+  /* The form as drawn: the title, its field labels in order, the pressed
+     source, the folder and limit inputs' values, and each switch's state —
+     compared with the form state, so a switch that shows the wrong position fails. */
+  const impView = await js<{ title: string; labels: string[]; source: string[]; dir: string | null; limit: string | null; switches: Record<string, boolean> }>(
+    "(() => { const box = document.querySelector('#settings .setbody .sd-imp'); const form = box && box.querySelector('.sd-form');"
+    + " if (!form) return {title: '', labels: [], source: [], dir: null, limit: null, switches: {}};"
+    + " const sw = {}; form.querySelectorAll('.tk-switch[data-act^=\"import:toggle:\"]').forEach((s) => { sw[s.dataset.act.slice('import:toggle:'.length)] = s.getAttribute('aria-checked') === 'true'; });"
+    + " const src = form.querySelector('#imp-source'), lim = form.querySelector('#imp-limit');"
+    + " return {title: ((box.querySelector('.sd-imphead .sd-title') || {}).textContent || '').trim(),"
+    + " labels: [...form.querySelectorAll('.tk-lbl, .sd-rows .tk-setrow .t')].map((n) => n.textContent.trim()),"
+    + " source: [...form.querySelectorAll('.tk-seg button.on[data-act^=\"import:source:\"]')].map((b) => b.textContent.trim()),"
+    + " dir: src ? src.value : null, limit: lim ? lim.value : null, switches: sw}; })()",
+  );
+  const impDrawn = impView.title === "Hermes → Atomic Agent"
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite", "Limit"])
+    && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
+    && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
     "import tab: the TUI form with its defaults, and no CLI run until Run preview",
-    imp.runs === 0 && impBody.includes("Import · Hermes → Atomic Agent") && labelsOk && impBody.includes("Run preview") && impBody.includes("↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview")
+    imp.runs === 0 && impDrawn && impBody.includes("Run preview") && impBody.includes("↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview")
       && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
-    `runs=${imp.runs} dir=${imp.form.sourceDir}`,
+    `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
   const dir = "/nonexistent-desktop-smoke-dir";
   await js<void>(`window.__importAct(${JSON.stringify("field:sourceDir:" + dir)})`);
   const prev = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(false)");
   const prevBody = await js<string>("window.__settingsBody()");
+  // The report as drawn: the title, the dry-run chip, the table's headers and one row per item (outcome chip · kind chip · reason).
+  type ReportView = { title: string; chip: string; heads: string[]; rows: Array<{ outcome: string; kind: string; reason: string }> };
+  const reportView = () => js<ReportView>(
+    "(() => { const box = document.querySelector('#settings .setbody .sd-imp'); if (!box) return {title: '', chip: '', heads: [], rows: []};"
+    + " const bar = box.querySelector(':scope > .tk-bar'); const chip = bar && bar.querySelector(':scope > .tk-chip');"
+    + " return {title: ((bar && bar.querySelector('.sd-title')) || {textContent: ''}).textContent.trim(), chip: chip ? chip.textContent.trim() : '',"
+    + " heads: [...box.querySelectorAll('.sd-imptbl thead th')].map((th) => th.textContent.trim()),"
+    + " rows: [...box.querySelectorAll('[data-import-row]')].map((tr) => { const c = tr.querySelectorAll('td');"
+    + " return {outcome: c[0] ? c[0].textContent.trim() : '', kind: c[1] ? c[1].textContent.trim() : '', reason: ((tr.querySelector('.sd-reason') || {}).textContent || '').trim()}; })}; })()",
+  );
+  const pv = await reportView();
+  const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "dry run" && same(pv.heads, ["Outcome", "Kind", "Item"])
+    && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "sessions" && r.reason === `(no state.db at ${dir}/state.db)`);
   check(
     "import tab: Run preview runs atag import --dry-run and parses the report into the TUI rows",
     prev.ok && prev.state === "preview" && prev.state2.mode === "preview" && prev.state2.runs === 1 && prev.state2.report?.items === 2 && prev.state2.report.summary.skipped === 2 && prev.state2.painted === 2
-      && prevBody.includes("preview (dry-run) · 2 items") && prevBody.includes("skipped  [sessions]") && prevBody.includes(`(no state.db at ${dir}/state.db)`) && prevBody.includes("migrated=0 · skipped=2 · conflict=0 · error=0")
+      && previewDrawn && prevBody.includes("migrated=0 · skipped=2 · conflict=0 · error=0")
       && prevBody.includes("y / Enter apply") && prevBody.includes("e edit") && prevBody.includes("Esc cancel"),
-    prev.ok ? `state=${prev.state} items=${prev.state2.report?.items} runs=${prev.state2.runs}` : `error=${prev.error ?? "?"}`,
+    prev.ok ? `state=${prev.state} items=${prev.state2.report?.items} runs=${prev.state2.runs}${previewDrawn ? "" : " drawn " + JSON.stringify(pv)}` : `error=${prev.error ?? "?"}`,
   );
   const applied = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(true)");
   const appliedBody = await js<string>("window.__settingsBody()");
+  const av = await reportView();
   check(
     "import tab: apply passes --yes and reports the CLI's own Nothing to import",
-    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && appliedBody.includes("result · 2 items") && appliedBody.includes("Nothing to import.") && appliedBody.includes("Enter / Esc back to form"),
-    applied.ok ? `state=${applied.state} mode=${applied.state2.mode}` : `error=${applied.error ?? "?"}`,
+    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Enter / Esc back to form"),
+    applied.ok ? `state=${applied.state} mode=${applied.state2.mode} title=${JSON.stringify(av.title)}` : `error=${applied.error ?? "?"}`,
   );
   await js<void>("window.__importAct('reset'); window.__settingsClose()");
 }
@@ -9799,7 +9963,7 @@ async function chromeTest(
      cross-origin, and in that case the shipped stylesheet is read from disk —
      the same file the window loaded. Its `:focus-within` / `:focus-visible`
      twin is the same declaration and IS drivable; those checks are separate. */
-  const cssText = readFileSync(join(__dirname, "..", "renderer", "styles.css"), "utf8");
+  const cssText = rendererCssText();
   const hoverRuleHolds = async (spaced: string, onDisk: string, want: string): Promise<[boolean, string]> => {
     const live = await js<string | null>(`window.__cssRule(${JSON.stringify(spaced)})`);
     if (live !== null) return [live === want, `live rule ${JSON.stringify(live)} (want ${JSON.stringify(want)})`];
@@ -9956,23 +10120,22 @@ async function chromeTest(
     // --- item 8: the bottom-left entry is a plain blue button ----------------
     const setBtn = await js<SetBtn | null>("window.__settingsBtn()");
     check(
-      "item 8: the settings entry is a plain button with no keycap and no icon",
-      /* The ask was for a plain button with no hints on it — the keycaps and
-         the icon were what made it look like something other than a button.
-         It is default rank rather than primary now: in this visual system a
-         red fill is the PRIMARY ACTION OF THE SCREEN, and a permanent nav
-         control in the corner of every screen is not that. */
+      "item 8: the settings entry is a neutral button: gear, the word, one ⌘, keycap",
+      /* Soft Tactile (SH-01) draws the entry as a full-width neutral button
+         with the gear, the word and its ⌘, keycap. It stays default rank,
+         never primary: a permanent nav control in the corner of every screen
+         is not the primary action of the screen. */
       !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:tasks"
-        && setBtn.keycaps === 0 && setBtn.labelVisible && !setBtn.iconVisible
+        && setBtn.keycaps === 1 && setBtn.labelVisible && setBtn.iconVisible
         && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes)
         && !/(^|\s)btn-p(\s|$)/.test(setBtn.classes),
       JSON.stringify(setBtn),
     );
-    // #sidebar is 260px with box-sizing:border-box and a 1px right border, so
-    // the content box is 259 and the button inside 2×12 of padding is 235.
+    // #sidebar is 260px (8px window gutter + the 252px floating panel with 8px
+    // side padding), so the button's full width is 236.
     check(
-      "item 8: it is 32px tall, full width, below the lists",
-      !!setBtn && setBtn.height === 32 && setBtn.width === 235 && setBtn.belowLists,
+      "item 8: it is 36px tall, full width, below the lists",
+      !!setBtn && setBtn.height === 36 && setBtn.width === 236 && setBtn.belowLists,
       setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
     );
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");

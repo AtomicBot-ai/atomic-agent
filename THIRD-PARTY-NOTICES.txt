@@ -8,6 +8,18 @@ The Node.js runtime is embedded in the agent executable and is used under
 the Node.js licence (MIT); see https://github.com/nodejs/node/blob/main/LICENSE.
 ripgrep is redistributed in vendor/rg under the MIT licence.
 
+The desktop app bundles three typefaces and a set of brand marks:
+- Figtree — Copyright 2022 The Figtree Project Authors. SIL Open Font
+  License 1.1; licence text in desktop/renderer/fonts/Figtree-OFL.txt.
+- Inter — Copyright 2016 The Inter Project Authors. SIL Open Font
+  License 1.1; licence text in desktop/renderer/fonts/Inter-OFL.txt.
+- DM Mono — Copyright 2020 The DM Mono Project Authors. SIL Open Font
+  License 1.1; licence text in desktop/renderer/fonts/DMMono-OFL.txt.
+- Model and provider marks in desktop/renderer/logos/ come from LobeHub
+  Icons (@lobehub/icons-static-svg 1.95.0, MIT); the AI/ML API mark is
+  aimlapi.com's own icon. The marks remain the trademarks of their owners
+  and identify the model or provider they stand for.
+
 ========================================================================
 @modelcontextprotocol/sdk 1.29.0 — MIT
 https://modelcontextprotocol.io

@@ -1,0 +1,231 @@
+/* ============================================================
+   Settings tab — LLM: run mode, local models, cloud providers, external
+   endpoint, fallback chain, llama-server log. Screens ST-20…27.
+   Loaded after css/settings.css (frame, nav, Tasks, Skills, Privacy).
+
+   Two contracts shape this file:
+   1. model-picks.drive.mjs reads a local model row's first line off innerText
+      ("gemma-4-e4b remote ★ best fit for this machine"). Every child of a flex
+      or grid box starts a new innerText line, so the id and its chips are laid
+      out inline or inline-block (.llm-ib); the route card's label and value
+      (.llm-kv) and the mode segment (.llm-seg) keep the same inline layout.
+   2. Rules here outrank the 0.5.5 LLM rules that css/settings.css may still
+      carry (.tuirow 24px lines, #llm-filter underline, .llmmode) — every
+      selector is scoped under .llm-pane, and the two ids keep their id.
+   ============================================================ */
+
+.llm-pane{display:flex;flex-direction:column;gap:14px;min-width:0;position:relative;
+  font:400 13.5px/1.45 var(--font-ui);letter-spacing:-.003em;color:var(--ink);white-space:normal;padding-bottom:4px;
+  container:llmpane / inline-size}
+
+/* ---- Toolbar: pane segment · status · refresh · log ---- */
+.llm-pane .llm-bar{gap:10px;min-height:34px}
+.llm-pane .llm-modehead{min-width:0}
+.llm-pane .llm-seg{display:inline-block;white-space:nowrap;font-size:0;line-height:0;vertical-align:middle}
+.llm-pane .llm-seg .llmmode{display:inline-flex;align-items:center;vertical-align:top;height:28px;padding:0 13px;border-radius:var(--r-pill);
+  background:transparent;color:var(--ink-2);font:600 12.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;box-shadow:none;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.llm-pane .llm-seg .llmmode + .llmmode{margin-left:2px}
+.llm-pane .llm-seg .llmmode:hover{background:transparent;color:var(--ink)}
+.llm-pane .llm-seg .llmmode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-soft)}
+.llm-pane .llm-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-status .tk-spin{width:12px;height:12px}
+
+/* ---- Notices the pane raises ---- */
+.llm-pane .tk-notice{align-items:flex-start;overflow-wrap:anywhere}
+.llm-pane .tk-notice > svg,.llm-pane .tk-notice > .tk-spin{margin-top:2px}
+.llm-pane .tk-notice > .logo{margin-top:-2px}
+.llm-pane .llm-msg{background:var(--well);box-shadow:none}
+.llm-pane .llm-msg > svg{color:var(--ink-2)}
+.llm-pane .llm-note{font-size:12.5px;line-height:1.45;color:var(--ink-2);margin:0}
+.llm-pane .llm-start .grow,.llm-pane .llm-dl-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.llm-pane .llm-start b,.llm-pane .llm-dl-body b{font-size:13.5px;font-weight:600}
+.llm-pane .llm-dl .tk-ico{margin-top:-2px}
+.llm-pane .llm-dl .btn{margin:-4px -2px 0 0}
+.llm-pane .llm-dl-line{display:block;margin-top:6px;padding:7px 11px;border-radius:var(--r-well);background:var(--lift);
+  font:400 12px/1.5 var(--font-mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* ---- Route card: what answers now ---- */
+.llm-pane .llm-route{display:flex;flex-direction:column;gap:3px;min-width:0;padding:13px 18px 14px;border-radius:var(--r-block);background:var(--well)}
+.llm-pane .llm-route-head{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:4px}
+.llm-pane .llm-route-head b{font-size:13.5px;font-weight:600}
+.llm-pane .llm-route-head .tk-chip .tk-dot{width:7px;height:7px}
+.llm-pane .llm-kv{display:block;min-width:0;padding-left:136px;text-indent:-136px;font-size:12.5px;line-height:24px;color:var(--ink);overflow-wrap:anywhere}
+.llm-pane .llm-k{display:inline-block;width:136px;text-indent:0;color:var(--ink-2);vertical-align:top}
+.llm-pane .llm-kv .mono{font-size:12px;line-height:24px}
+.llm-pane .llm-kv b.mono{font-weight:500}
+.llm-pane .llm-kv .logo,.llm-pane .llm-kv .tk-ico{vertical-align:middle;margin:-3px 6px 0 0;text-indent:0}
+.llm-pane .llm-slash{color:var(--ink-3);padding:0 2px}
+
+/* ---- Sections and lists ---- */
+.llm-pane .llm-section{display:flex;flex-direction:column;gap:8px;min-width:0;margin:0}
+.llm-pane .llm-sh{min-height:30px;padding:0 2px;gap:10px;color:var(--ink);font-size:13.5px}
+.llm-pane .llm-sh-t{font-weight:600;color:var(--ink);white-space:nowrap}
+.llm-pane .llm-sh .btn .logo{margin-left:-4px}
+.llm-pane .llm-ram{margin:-6px 2px 2px;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.llm-pane .llm-list{padding:4px}
+.llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:13px;font-weight:400;white-space:normal}
+.llm-pane .llm-empty.is-strong{color:var(--ink);font-weight:500}
+.llm-pane .llm-counter{margin:0;padding:0 6px;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2)}
+.llm-pane .llm-loading{display:flex;align-items:center;gap:8px;padding:6px 6px;font-size:12.5px;color:var(--ink-2)}
+
+/* ---- Rows ---- */
+.llm-pane .tuirow.llm-row{display:flex;align-items:center;gap:12px;width:100%;height:auto;min-height:46px;margin:0;padding:8px 12px;
+  border-radius:var(--r-row);background:transparent;color:var(--ink);text-align:left;
+  font:400 13.5px/1.35 var(--font-ui);letter-spacing:-.003em;white-space:normal;overflow:visible;text-overflow:clip}
+.llm-pane .tuirow.llm-row:hover{background:var(--hover)}
+.llm-pane .tuirow.llm-row.on{background:var(--brand-wash);color:var(--ink)}
+.llm-pane .tuirow.llm-model{align-items:flex-start;padding:10px 12px}
+.llm-pane .llm-model .tk-radio{margin-top:6px}
+.llm-pane .llm-model > .logo,.llm-pane .llm-model > .tk-ico{margin-top:1px}
+.llm-pane .llm-row .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.llm-pane .llm-row .t{display:block;white-space:normal;overflow:visible;font-size:13.5px;font-weight:500;line-height:24px;color:var(--ink)}
+.llm-pane .llm-row.on .t{color:var(--ink)}
+.llm-pane .llm-id{font-size:13px;line-height:20px;font-weight:500;color:var(--ink)}
+.llm-pane .llm-size{font:400 12px/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
+.llm-pane .llm-kind{font:400 11.5px/1 var(--font-mono);color:var(--ink-2)}
+.llm-pane .llm-k2{font-size:12px;color:var(--ink-2)}
+.llm-pane .llm-ib{display:inline-block;line-height:22px;vertical-align:1px;white-space:nowrap}
+.llm-pane .llm-row .t .tk-chip{margin-left:2px}
+.llm-pane .llm-row .d{display:block;font-size:12.5px;line-height:1.45;color:var(--ink-2);white-space:normal;overflow:visible;text-overflow:clip}
+/* The blurb, fit and caution lines are prose now, not a mono TUI line with a 2ch indent. */
+.llm-pane .llm-row .llm-sub{font-family:var(--font-ui);padding-left:0}
+/* The fit verdict (MOD-04): runs comfortably green, a tight fit amber, out of
+   reach in the quiet ink that still reads at this size. */
+.llm-pane .llm-row .llm-fit-comfortable{color:var(--success)}
+.llm-pane .llm-row .llm-fit-tight{color:var(--amber-text)}
+.llm-pane .llm-row .llm-fit-over{color:var(--ink-2)}
+.llm-pane .llm-row .llm-caution{color:var(--amber-text)}
+.llm-pane .llm-effect{flex:0 1 auto;display:inline-flex;align-items:center;gap:6px;max-width:42%;margin-left:auto;
+  font:400 11.5px/1.4 var(--font-mono);color:var(--ink-2);text-align:right;white-space:normal;overflow-wrap:anywhere}
+.llm-pane .llm-model .llm-effect{margin-top:3px}
+.llm-pane .llm-effect--current{color:var(--success)}
+.llm-pane .llm-effect .tk-spin{width:12px;height:12px}
+.llm-pane .llm-row .llm-effect-d{font-family:var(--font-mono);font-size:11.5px}
+
+/* ---- Run mode (ST-20, ST-22) ---- */
+.llm-pane .llm-rm-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.llm-pane .llm-rm{display:flex;align-items:center;gap:10px;min-width:0;min-height:62px;padding:10px 12px 10px 14px;border-radius:18px;
+  background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);text-align:left;
+  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+.llm-pane .llm-rm:hover{background:var(--hover)}
+.llm-pane .llm-rm.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand)}
+.llm-pane .llm-rm-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.llm-pane .llm-rm-t{font-size:14px;font-weight:600;line-height:1.3}
+.llm-pane .llm-rm-d{font-size:12px;line-height:1.35;color:var(--ink-2)}
+.llm-pane .llm-workers{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:0 2px}
+.llm-pane .llm-workers .tk-help{flex:1;min-width:220px}
+.llm-pane .llm-workerseg button{min-width:34px;padding:0 10px}
+
+/* ---- Cloud: provider, filter, price facet ---- */
+.llm-pane .llm-prov{min-width:0;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-prov .logo,.llm-pane .llm-prov .tk-ico{vertical-align:middle;margin:-2px 5px 0 2px}
+.llm-pane .llm-prov b{font-weight:500;color:var(--ink)}
+.llm-pane .llm-modelbar{gap:10px 12px}
+.llm-pane .llm-filter{flex:1;min-width:200px}
+.llm-pane .llm-filterbox{display:inline-flex;width:100%;height:36px;vertical-align:middle}
+.llm-pane .llm-filterbox > svg{width:15px;height:15px;color:var(--ink-3)}
+.llm-pane #llm-filter{flex:1;width:auto;min-width:0;height:100%;padding:0;border:0;border-radius:0;background:transparent;outline:none;
+  color:var(--ink);font:400 13.5px/1 var(--font-ui)}
+.llm-pane #llm-filter::placeholder{color:var(--ink-3)}
+.llm-pane .llm-price{display:flex;align-items:center;gap:8px;flex:none}
+.llm-pane .btn.llm-ib{display:inline-block;line-height:26px;text-align:center}
+.llm-pane .llm-price-note{font-size:12px;color:var(--ink-2)}
+
+/* ---- External ---- */
+.llm-pane .llm-extra{display:flex;flex-direction:column;gap:8px}
+.llm-pane .llm-line{display:flex;align-items:center;gap:10px;min-height:44px;padding:5px 8px 5px 10px;border-radius:var(--r-row);background:var(--well)}
+.llm-pane .llm-line-t{font-size:13px;color:var(--ink-2)}
+.llm-pane .llm-line-t .mono{color:var(--ink)}
+.llm-pane .llm-back{margin:0;padding:0 4px;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-link{display:inline-block;color:var(--blue);font-weight:600;font-size:inherit;text-decoration:underline;text-underline-offset:2px}
+.llm-pane .llm-link:hover{color:var(--blue-deep)}
+.llm-pane .tk-hint.llm-kb{display:inline-block;height:28px;line-height:28px;padding:0 10px;border-radius:var(--r-pill);
+  background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);font-size:12.5px;font-weight:500;white-space:nowrap}
+.llm-pane .tk-hint.llm-kb:hover{background:var(--hover)}
+.llm-pane .llm-kb .kc{vertical-align:1px;margin-right:1px}
+
+/* ---- Fallback (ST-25) ---- */
+.llm-pane .llm-honest{display:flex;align-items:center;gap:8px;margin:0;padding:0 2px;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-honest > svg{width:15px;height:15px;color:var(--ink-2)}
+.llm-pane .llm-idx{display:inline-block;width:24px;height:24px;margin-right:10px;border-radius:50%;background:var(--hover);
+  font:500 11.5px/24px var(--font-mono);color:var(--ink-2);text-align:center;vertical-align:middle}
+.llm-pane .llm-fb-row .t .logo,.llm-pane .llm-fb-row .t .tk-ico{vertical-align:middle;margin:-2px 8px 0 0}
+/* A mark inside a line of text (the route card's "aimlapi / gpt-5.5",
+   "provider: aimlapi", a fallback link): an atomic inline that holds a
+   block-level image — a grid item, or the kit's svg{display:block} — breaks
+   the line around it. Inline-block box, inline image, centred by margin,
+   keeps the line whole. */
+.llm-pane .llm-kv :is(.logo,.tk-ico),.llm-pane .llm-prov :is(.logo,.tk-ico),.llm-pane .llm-fb-row .t :is(.logo,.tk-ico){display:inline-block;line-height:0;text-align:center}
+.llm-pane .llm-kv .logo img,.llm-pane .llm-prov .logo img,.llm-pane .llm-fb-row .t .logo img{display:inline;vertical-align:top;margin-top:19%}
+.llm-pane .llm-kv .tk-ico svg,.llm-pane .llm-prov .tk-ico svg,.llm-pane .llm-fb-row .t .tk-ico svg{display:inline;vertical-align:top;margin-top:calc(50% - 6.5px)}
+.llm-pane .llm-fb-row .d{padding-left:66px}
+.llm-pane .llm-mvs{display:flex;align-items:center;justify-content:flex-end;gap:2px;flex:none;width:56px}
+.llm-pane .llm-mv.is-off{color:var(--ink-3);cursor:default;background:transparent}
+.llm-pane .llm-lock{display:grid;place-items:center;width:26px;height:26px;color:var(--ink-3)}
+.llm-pane .llm-fbl{display:flex;align-items:center;gap:10px;min-height:44px;padding:2px 4px}
+.llm-pane .llm-fbl-t{font-size:13.5px;color:var(--ink)}
+.llm-pane .llm-fbl-t b{font-weight:600}
+
+/* ---- Ollama signpost and the key strip ---- */
+.llm-pane .llm-ollama{display:flex;align-items:flex-start;gap:10px;margin:0;padding:12px 14px;border:0;border-radius:18px;max-width:none;
+  background:var(--well);font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.llm-pane .llm-foot{display:flex;flex-direction:column;gap:4px;padding-top:2px}
+.llm-pane .llm-hintline{padding:0 6px;font-size:12px;color:var(--ink-2)}
+.llm-pane .tuihint{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin:0;white-space:normal;font-family:var(--font-ui);color:var(--ink-2)}
+.llm-pane .tuihint .tk-hint{height:24px;padding:0 6px;border-radius:8px;font:400 12px/24px var(--font-ui);color:var(--ink-2);white-space:nowrap;background:transparent}
+.llm-pane .tuihint button.tk-hint:hover{background:var(--hover);color:var(--ink)}
+.llm-pane .tuihint .tk-hint[disabled]{color:var(--ink-3);background:transparent;cursor:default}
+
+/* ---- Confirms and prompts float over the inert pane (ST-24, ST-27) ---- */
+.llm-pane .llm-modal-layer{position:sticky;top:0;z-index:5;height:0;display:flex;align-items:flex-start;justify-content:center;overflow:visible}
+.llm-pane .llm-modal-layer > .llm-modal{flex:none;width:min(480px, calc(100% - 32px));margin-top:clamp(36px, 12vh, 132px)}
+.llm-pane .llm-behind{display:flex;flex-direction:column;gap:14px;min-width:0;opacity:.42;filter:blur(2px) saturate(.7);pointer-events:none;user-select:none}
+.llm-pane .llm-modal{gap:12px;padding:20px 20px 16px;border-radius:var(--r-sheet)}
+.llm-pane .llm-modal-h{display:flex;align-items:center;gap:10px}
+.llm-pane .llm-modal-h h4{font-size:16.5px;line-height:1.3;overflow-wrap:anywhere}
+.llm-pane .llm-modal p .mono{font-size:12.5px}
+.llm-pane .llm-modal .tk-help{margin:0}
+.llm-pane .llm-modal .acts .kc{margin-left:4px}
+.llm-pane .llm-working{display:flex;align-items:center;gap:8px;margin:0;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-modal #llm-url{width:100%;height:40px;padding:0 15px;border:1px solid transparent;border-radius:var(--r-pill);outline:none;
+  background:var(--well);color:var(--ink);font:400 13px/1 var(--font-mono)}
+.llm-pane .llm-modal #llm-url:focus{background:var(--lift);border-color:var(--brand);box-shadow:var(--focus-ring)}
+.llm-pane .llm-modal #llm-url.is-error{background:var(--lift);border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
+
+/* ---- Hugging Face branch ---- */
+.llm-pane .llm-hf{display:flex;flex-direction:column;gap:12px;min-width:0}
+.llm-pane .llm-hf-card{display:flex;flex-direction:column;gap:14px;padding:18px 18px 16px;border-radius:var(--r-block);background:var(--well)}
+.llm-pane .llm-hf-head{display:flex;align-items:flex-start;gap:14px}
+.llm-pane .llm-hf-title{min-width:0}
+.llm-pane .llm-h{margin:2px 0 0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.02em;color:var(--ink)}
+.llm-pane .llm-h-tail{font-size:13.5px;font-weight:400;letter-spacing:-.003em;color:var(--ink-2)}
+.llm-pane .llm-hf-ex{margin:4px 0 0;font:400 12px/1.5 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
+.llm-pane .llm-hf-row{display:flex;align-items:center;gap:8px}
+.llm-pane .llm-hf-inp{flex:1;height:44px;background:var(--lift)}
+.llm-pane .llm-hf-inp > svg{width:15px;height:15px;color:var(--ink-3)}
+.llm-pane .llm-hf-inp input{width:auto;max-width:none;height:100%;padding:0;border:0;border-radius:0;background:transparent;color:var(--ink);font:400 13.5px/1 var(--font-mono)}
+.llm-pane .llm-hf-inp input:disabled{color:var(--ink-3)}
+.llm-pane .llm-hf-err .grow{white-space:pre-wrap}
+.llm-pane .llm-hf-acts{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.llm-pane .llm-hf-repo{gap:8px}
+.llm-pane .llm-hf-file .llm-id{font-size:12.5px}
+.llm-pane .llm-mmproj{display:flex;align-items:center;gap:8px}
+.llm-pane .llm-mmproj > svg{width:15px;height:15px;color:var(--ink-2)}
+
+/* ---- llama-server log (ST-26) ---- */
+.llm-pane .llm-logbar{flex-wrap:nowrap}
+.llm-pane .llm-logpath{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px/1.4 var(--font-mono);color:var(--ink-2)}
+.llm-pane .llm-log{margin:0;min-height:300px;padding:12px 16px;border-radius:var(--r-block);font-size:12px;line-height:1.75;white-space:pre-wrap}
+.llm-pane .llm-log--empty{display:grid;place-items:center;background:var(--well);color:var(--ink-2);font-size:13px;text-align:center}
+.llm-pane .llm-log-err{color:var(--critical)}
+.llm-pane .llm-log-warn{color:var(--amber-text)}
+.llm-pane .llm-log-ok{color:var(--blue)}
+
+/* ---- Narrow window: the run modes stack, the row action drops under the text ---- */
+@container llmpane (max-width: 600px){
+  .llm-pane .llm-rm-grid{grid-template-columns:minmax(0,1fr)}
+  .llm-pane .llm-rm{min-height:50px}
+  .llm-pane .llm-effect{max-width:36%}
+  .llm-pane .llm-price-note{flex-basis:100%}
+}

@@ -1,0 +1,397 @@
+/* ============================================================
+   First-run wizard in Soft Tactile — screens ON-01…23.
+   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+
+   The title card is one indigo block. Every later step is two columns:
+   an indigo rail (lockup, the phase statement, the two phase steps, the
+   build) and the step itself on the window ground — title, lede, body,
+   the action bar and the keycap hint strip.
+   ============================================================ */
+
+/* ---------------- shared wizard parts ----------------
+   These are drawn OUTSIDE the first-run layer too: the composer's route
+   popover renders wizModelStepHTML(false) and its own key screen with
+   `.ob-help` / `.ob-err`, and `.ob-help` carries the composer's wait reason
+   and the modes popover's version note. Their base look stays unscoped;
+   the first-run layout below is scoped to #onboarding. */
+.ob-wiz{display:flex;flex-direction:column;gap:10px;width:100%;min-width:0}
+.ob-kicker{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none}
+.ob-wiz .ob-h{display:flex;align-items:center;gap:10px;min-width:0;font-size:15px;font-weight:600;letter-spacing:-.015em;color:var(--ink)}
+.ob-help{font-size:12.5px;line-height:1.45;color:var(--ink-2);max-width:62ch}
+.ob-err{color:var(--critical);white-space:pre-wrap;max-width:62ch;font-size:12.5px;line-height:1.45}
+.ob-inp{width:100%;min-width:0;height:38px;padding:0 15px;border-radius:var(--r-pill);border:1px solid transparent;
+  background:var(--well);color:var(--ink);font:400 14px/1 var(--font-ui);outline:none;
+  transition:background var(--t-state) var(--ease),border-color var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+.ob-inp::placeholder{color:var(--ink-3)}
+.ob-inp:hover:not(:disabled){border-color:var(--bd)}
+.ob-inp:focus{background:var(--lift);border-color:var(--brand);box-shadow:var(--focus-ring)}
+.ob-inp:disabled{color:var(--ink-3);cursor:not-allowed}
+.ob-wizlist{display:flex;flex-direction:column;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.prows{display:flex;flex-direction:column;min-width:0}
+.prow{display:flex;align-items:center;gap:12px;width:100%;min-width:0;min-height:46px;padding:7px 12px;border:0;
+  border-radius:var(--r-row);background:transparent;color:var(--ink);text-align:left;cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+.prow + .prow{box-shadow:0 -1px 0 var(--divider)}
+.prow:hover{background:var(--hover)}
+.prow:active{background:var(--press)}
+.prow.on{background:var(--brand-wash);box-shadow:none}
+.prow.on + .prow{box-shadow:none}
+.prow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.prow .col{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.prow .nm{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ep{font:400 12px/1.4 var(--font-mono);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ann{flex:none}
+.prow-more{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;margin:16px 0 8px 10px}
+
+/* ---------------- the layer ---------------- */
+#onboarding{
+  position:absolute;inset:0;z-index:40;
+  display:grid;grid-template-columns:400px minmax(0,1fr);
+  background:var(--well);color:var(--ink);
+  -webkit-app-region:drag;
+}
+#onboarding > *{-webkit-app-region:no-drag}
+
+/* ---------------- the title card (ON-01) ----------------
+   `.ob-introc` keeps exactly its five children (mark, name, rule, build,
+   dismiss line) — the smoke counts them — so the glow is a sibling and the
+   dismiss line is placed against the card, not the column. The rule is
+   kept as a 3px transparent spacer: Soft Tactile draws no 3px rules, and
+   the smoke still reads its border width. Nothing here animates. */
+#onboarding.ob-intro-layer{display:block;background:var(--indigo)}
+#ob-intro{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden;
+  padding:var(--s8);background:var(--indigo);color:var(--on-strong)}
+#ob-intro .ob-glow{position:absolute;left:50%;top:50%;width:760px;height:760px;margin:-380px 0 0 -380px;
+  border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,color-mix(in srgb,var(--brand) 90%,transparent) 0%,transparent 62%)}
+.ob-introc{position:static;display:flex;flex-direction:column;align-items:center;gap:0;width:min(720px,100%);text-align:center}
+.ob-introc .ob-markbig{position:relative;display:block;width:96px;height:96px;border-radius:22px;
+  box-shadow:0 30px 60px -20px var(--shade-50)}
+.ob-introc .ob-markbig svg{display:block;width:96px;height:96px}
+.ob-introc .ob-word{position:relative;margin:24px 0 0;font:700 64px/1.05 var(--font-ui);letter-spacing:-.055em;color:var(--on-strong)}
+.ob-introc .ob-rule{position:relative;width:0;height:0;margin:0;border:0;border-top:3px solid transparent}
+.ob-introc .ob-build{position:relative;margin-top:17px;font:400 12.5px/1.4 var(--font-mono);letter-spacing:0;color:var(--on-indigo)}
+.ob-introc .ob-any{position:absolute;left:0;right:0;bottom:34px;font:400 13px/1.4 var(--font-ui);
+  letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
+
+/* ---------------- the rail ----------------
+   Room at the top for the real macOS traffic lights (hiddenInset at 20,20);
+   the rail carries no controls, so it is also the window's drag handle. */
+#onboarding .ob-rail{
+  position:relative;overflow:hidden;min-height:0;
+  margin:10px 0 10px 10px;padding:60px 28px 26px;border-radius:var(--r-pop);
+  display:flex;flex-direction:column;gap:22px;
+  background:var(--indigo);color:var(--on-indigo);
+  -webkit-app-region:drag;user-select:none;
+}
+#onboarding .ob-rail > *{position:relative}
+/* The orbs are radial gradients that already fade to nothing, so they carry
+   no blur filter: it drew nothing visible and only added a paint surface on
+   a 440px layer inside the rail. Drawn soft by the gradient alone. */
+#onboarding .ob-rail > .ob-orb{position:absolute;border-radius:50%;pointer-events:none}
+#onboarding .ob-orb-a{width:440px;height:440px;right:-180px;bottom:-160px;
+  background:radial-gradient(circle,color-mix(in srgb,var(--brand) 75%,transparent) 0%,transparent 68%)}
+#onboarding .ob-orb-b{width:240px;height:240px;left:-90px;top:230px;
+  background:radial-gradient(circle,color-mix(in srgb,var(--indigo-muted) 25%,transparent) 0%,transparent 70%)}
+#onboarding .ob-lock{display:flex;align-items:center;gap:12px;min-width:0}
+#onboarding .ob-lock .ob-mark{display:flex;flex:none}
+#onboarding .ob-lock .ob-mark svg{width:30px;height:30px}
+#onboarding .ob-lock .ob-wm{font:600 17px/1.2 var(--font-ui);letter-spacing:-.02em;color:var(--on-strong);white-space:nowrap}
+#onboarding .ob-statement{margin:auto 0 0;max-width:13ch;font:600 30px/1.13 var(--font-ui);letter-spacing:-.04em;color:var(--on-strong)}
+#onboarding .ob-stepmarks{display:grid;gap:4px}
+#onboarding .ob-stepmark{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:var(--r-pill);
+  font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
+#onboarding .ob-stepmark .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;
+  font:500 11.5px/1 var(--font-mono);box-shadow:inset 0 0 0 1.5px var(--glass)}
+#onboarding .ob-stepmark .n svg{width:13px;height:13px;stroke-width:2.2}
+#onboarding .ob-stepmark.on{background:var(--glass-12);color:var(--on-strong)}
+#onboarding .ob-stepmark.on .n{background:var(--on-strong);color:var(--indigo);box-shadow:none}
+#onboarding .ob-stepmark.done{color:var(--on-strong)}
+#onboarding .ob-stepmark.done .n{background:var(--glass-20);box-shadow:none}
+#onboarding .ob-railbuild{font:400 11px/1.4 var(--font-mono);letter-spacing:0;color:var(--indigo-muted)}
+
+/* ---------------- the step column ----------------
+   Title, then a body that owns the flexible height (its lists scroll
+   inside it), then the action bar and the hint strip, always in the same
+   place. The body's side padding is room for card shadows and the 2px
+   selection ring, which a scrolling box would otherwise clip. */
+#onboarding .ob{position:relative;display:flex;flex-direction:column;gap:0;width:auto;max-height:none;
+  min-width:0;min-height:0;overflow:hidden;padding:48px 64px 12px}
+#onboarding .ob-head{flex:none;display:block}
+#onboarding .ob-title{margin:0;max-width:760px;font:600 34px/1.15 var(--font-ui);letter-spacing:-.04em;color:var(--ink)}
+#onboarding .ob-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:14px;
+  margin:10px -16px 0;padding:4px 16px 14px;overflow-y:auto;overscroll-behavior:contain}
+#onboarding .ob-body > *{max-width:720px;flex-shrink:0}
+#onboarding .ob-body > .ob-scroll,#onboarding .ob-body > .ob-wiz{flex-shrink:1}
+/* The wizard carries its own action bar, which spans the column like every
+   other step's; its content is held to 720px below. */
+#onboarding .ob-body > .ob-wiz{max-width:none}
+#onboarding .ob-explain{font-size:15.5px;line-height:1.5;color:var(--ink-2);max-width:60ch;white-space:pre-line}
+#onboarding .ob-body > .ob-explain:first-child{margin:-4px 0 8px}
+#onboarding .ob-h{font:600 15px/1.35 var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
+#onboarding .ob-h.ob-sec{font-size:12.5px;letter-spacing:0;color:var(--ink-2);margin:2px 0 -6px 2px}
+#onboarding .ob-h.ob-ready{display:flex;align-items:center;gap:10px;font-size:17px;letter-spacing:-.015em}
+#onboarding .ob-ok{color:var(--success)}
+#onboarding .ob-mono{font-family:var(--font-mono);letter-spacing:0}
+
+/* ---------------- rows ----------------
+   A list is a lifted card of ≥46px rows with inset dividers and a brand
+   tint for the row under the cursor. The TUI's `›` marker stays in the
+   markup and is not drawn — the tint is the cursor. */
+#onboarding .ob-list{display:flex;flex-direction:column;min-width:0}
+/* Rows in a scrolling column must not shrink: an explicit min-height
+   replaces `min-height:auto`, and the rows then squeezed to 46px and drew
+   over each other instead of scrolling. */
+#onboarding .ob-list > *,#onboarding .ob-wizlist > *,#onboarding .prows > *{flex-shrink:0}
+#onboarding .ob-list:not(.ob-routes){padding:6px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-row{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-width:0;min-height:46px;
+  padding:8px 12px;border:0;border-radius:var(--r-row);background:transparent;color:var(--ink);text-align:left;cursor:pointer;
+  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+#onboarding .ob-row .mk{display:none}
+#onboarding .ob-list:not(.ob-routes) .ob-row + .ob-row{box-shadow:0 -1px 0 var(--divider)}
+#onboarding .ob-row:hover{background:var(--hover)}
+#onboarding .ob-row:active{background:var(--press)}
+#onboarding .ob-row.on,#onboarding .ob-list:not(.ob-routes) .ob-row.on{background:var(--brand-wash);box-shadow:none}
+#onboarding .ob-list:not(.ob-routes) .ob-row.on + .ob-row{box-shadow:none}
+#onboarding .ob-row:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+#onboarding .ob-rbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#onboarding .ob-row .t{display:block;font-size:14px;font-weight:600;line-height:1.35;color:var(--ink)}
+#onboarding .ob-row .d{display:block;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+#onboarding .ob-row > .kc{margin-left:auto}
+#onboarding .ob-row > .tk-ico,#onboarding .ob-row > .logo{flex:none}
+/* A model with no brand mark wears the CPU badge at the logo's size, so
+   every row's text starts on the same line. */
+#onboarding .ob-row > .tk-ico--sm{width:30px;height:30px}
+
+/* Route cards (ON-02): three lifted cards, the one under the cursor ringed. */
+#onboarding .ob-routes{gap:12px;max-width:660px}
+#onboarding .ob-routes .ob-row{gap:16px;padding:14px 18px;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-routes .ob-row:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
+#onboarding .ob-routes .ob-row:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
+#onboarding .ob-routes .ob-row.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand),var(--sh-card)}
+#onboarding .ob-routes .ob-row:focus-visible{outline-offset:3px}
+#onboarding .ob-routes .ob-row .t{font-size:16px;letter-spacing:-.02em}
+#onboarding .ob-routes .ob-row .d{font-size:13px}
+
+/* ---------------- the local model list (ON-03, ON-04) ---------------- */
+#onboarding .ob-models{flex:0 1 auto;min-height:140px;max-height:none;overflow-y:auto;overscroll-behavior:contain}
+#onboarding .ob-scroll{min-height:120px;overflow-y:auto;overscroll-behavior:contain}
+#onboarding .ob-models .ob-row{align-items:flex-start}
+#onboarding .ob-models .ob-row > .logo,#onboarding .ob-models .ob-row > .tk-ico{margin-top:2px}
+#onboarding .ob-row .t .ob-mono{font-size:13.5px;font-weight:500}
+#onboarding .ob-badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;margin-left:8px;vertical-align:1px;
+  border-radius:var(--r-pill);font:500 11.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
+  background:var(--brand-wash);color:var(--blue)}
+#onboarding .ob-badge-best{background:var(--indigo);color:var(--on-indigo)}
+#onboarding .ob-badge-warn{background:var(--amber-wash);color:var(--amber-text)}
+#onboarding .ob-row .d > span{display:block}
+#onboarding .ob-row .d > .ob-desc{display:inline}
+#onboarding .ob-row .d > .ob-desc + span{display:inline}
+#onboarding .ob-row .d > .ob-desc::after{content:" · "}
+#onboarding .ob-row .d .ob-fit{margin-top:1px}
+#onboarding .ob-fit-comfortable{color:var(--success)}
+#onboarding .ob-fit-tight{color:var(--amber-text)}
+#onboarding .ob-fit-over{color:var(--ink-2)}
+#onboarding .ob-row .d .ob-caution{margin-top:2px;color:var(--ink-2)}
+#onboarding .ob-hfrow{min-height:40px;padding:6px 12px}
+#onboarding .ob-hfrow .ob-rbody{flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:2px 8px}
+#onboarding .ob-hfrow .t{font-size:13.5px}
+/* Out of reach: shown, explained, not a control — a quiet well inside the
+   list card, after the rows it could not be one of. */
+#onboarding .ob-out-h{margin:12px 8px 6px;font-size:13.5px;font-weight:600;color:var(--ink)}
+#onboarding .ob-out-list{display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:var(--r-row);background:var(--well)}
+#onboarding .ob-out{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;
+  padding:6px 8px;border:0;color:var(--ink-2);cursor:default}
+#onboarding .ob-out > .logo,#onboarding .ob-out > .tk-ico{grid-row:1 / span 3;align-self:start;margin-top:1px}
+#onboarding .ob-out .t{font:500 13px/1.35 var(--font-mono);color:var(--ink-2)}
+#onboarding .ob-out .ob-desc,#onboarding .ob-out .ob-fit{display:block;font-size:12.5px;line-height:1.4;color:var(--ink-2)}
+
+/* ---------------- fields ---------------- */
+#onboarding .ob-lbl{display:block;margin:4px 0 -6px 2px;font:600 13px/1.4 var(--font-ui);color:var(--ink)}
+#onboarding .ob-lbl .ob-explain{display:inline;font-size:inherit;line-height:inherit;font-weight:500;color:var(--ink-2);white-space:normal}
+#onboarding .ob-inp{height:52px;max-width:640px;padding:0 18px;border:0;background:var(--lift);
+  box-shadow:inset 0 0 0 1px var(--bd-2);font-size:14.5px}
+#onboarding .ob-inp:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--ink-3)}
+#onboarding .ob-inp:focus{background:var(--lift);box-shadow:inset 0 0 0 1.5px var(--brand),var(--focus-ring)}
+#onboarding .ob-field{display:flex;align-items:center;gap:10px;width:100%;max-width:640px;height:52px;padding:0 8px 0 18px;
+  border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-3);
+  transition:box-shadow var(--t-state) var(--ease)}
+#onboarding .ob-field:hover{box-shadow:inset 0 0 0 1px var(--ink-3)}
+#onboarding .ob-field:focus-within{box-shadow:inset 0 0 0 1.5px var(--brand),var(--focus-ring)}
+#onboarding .ob-field.is-error{box-shadow:inset 0 0 0 1.5px var(--critical),0 0 0 4px var(--critical-wash)}
+#onboarding .ob-field.is-warn{box-shadow:inset 0 0 0 1.5px var(--amber)}
+#onboarding .ob-field > svg{width:16px;height:16px;flex:none}
+#onboarding .ob-field > .logo{margin-left:-6px}
+#onboarding .ob-field > .tk-spin{margin-right:10px}
+#onboarding .ob-field > .tk-ico{margin-right:4px}
+#onboarding .ob-field > .kc{margin-right:10px}
+#onboarding .ob-field .ob-inp,#onboarding .ob-field .ob-inp:hover:not(:disabled),#onboarding .ob-field .ob-inp:focus{
+  flex:1;height:100%;max-width:none;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+#onboarding .ob-field .ob-inp{font:400 14.5px/1 var(--font-mono);color:var(--ink)}
+#onboarding .ob-field.ob-search .ob-inp{font-family:var(--font-ui)}
+#onboarding .ob-field .ob-inp:focus-visible{outline:none}
+#onboarding .ob-offer.ob-offer-inline{display:inline-flex;align-items:center;flex:none;width:auto;height:32px;margin:0;padding:0 14px;
+  border:0;border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font:600 12.5px/1 var(--font-ui);cursor:pointer;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+#onboarding .ob-offer.ob-offer-inline:hover{background:var(--press);color:var(--ink)}
+#onboarding .ob-help{padding-left:4px}
+#onboarding .ob-explain.ob-examples{font-size:13px;line-height:1.5}
+
+/* Errors: a red notice under the control that caused it; a surface error
+   sits above the action bar in the same shape. */
+#onboarding .ob-err{display:flex;align-items:flex-start;gap:10px;max-width:640px;padding:10px 14px;border-radius:18px;
+  background:color-mix(in srgb,var(--critical) 8%,var(--lift));color:var(--ink);font-size:13px;line-height:1.5;white-space:pre-wrap}
+#onboarding .ob-err > svg{width:16px;height:16px;flex:none;margin-top:2px;color:var(--critical)}
+#onboarding .ob-err > span{min-width:0}
+#onboarding .ob-note{display:flex;align-items:center;gap:10px;max-width:720px;padding:10px 14px;border-radius:18px;
+  font-size:13px;line-height:1.45;color:var(--ink);white-space:normal}
+#onboarding .ob-note > svg{width:16px;height:16px;flex:none}
+#onboarding .ob-note.is-blue{background:color-mix(in srgb,var(--brand) 9%,var(--lift))}
+#onboarding .ob-note.is-blue > svg{color:var(--blue)}
+#onboarding .ob-note.is-amber{background:color-mix(in srgb,var(--amber) 13%,var(--lift))}
+#onboarding .ob-note.is-amber > svg{color:var(--amber-text)}
+
+/* ---------------- the cloud wizard (ON-09…15) ---------------- */
+#onboarding .ob-wiz{flex:1 1 auto;min-height:0;gap:12px}
+#onboarding .ob-wiz > *{max-width:720px;flex-shrink:0}
+#onboarding .ob-wiz > .ob-wizlist{flex:0 1 auto;min-height:120px;margin:0 -16px;padding:4px 16px 14px;max-width:752px}
+#onboarding .ob-wiz > .ob-foot{max-width:none;margin-top:auto}
+#onboarding .ob-wizlist .prows{padding:6px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .prow .nm{font-size:14.5px}
+#onboarding .prow .ann.lit{height:22px}
+#onboarding [data-wizmodel] .ann.lit{background:var(--brand-wash);color:var(--blue)}
+#onboarding .prow-more{margin:14px 0 8px 10px}
+#onboarding .ob-wiz .ob-kicker{margin-bottom:-10px}
+#onboarding .ob-wiz .ob-h{gap:14px;font:600 34px/1.15 var(--font-ui);letter-spacing:-.04em;color:var(--ink)}
+#onboarding .ob-wiz .ob-h .logo,#onboarding .ob-wiz .ob-h .tk-ico{width:44px;height:44px}
+#onboarding .ob-wiz .ob-h .tk-ico svg{width:20px;height:20px}
+#onboarding .ob-wiz .ob-flabel{margin:6px 0 -4px 2px;font:600 13px/1.4 var(--font-ui);color:var(--ink);letter-spacing:0;text-transform:none}
+#onboarding .ob-wiz .ob-field{margin-top:10px}
+#onboarding .ob-wiz .ob-err{padding:0 0 0 4px;background:transparent;color:var(--critical);font-size:12.5px}
+#onboarding .ob-wiz .ob-err > svg{width:14px;height:14px;margin-top:2px}
+#onboarding .ob-wiz .ob-err.is-warn,#onboarding .ob-wiz .ob-err.is-warn > svg{color:var(--amber-text)}
+
+/* ---------------- the action bar and the hint strip ---------------- */
+#onboarding .ob-foot{flex:none;display:flex;align-items:center;gap:10px;padding-top:16px;border:0}
+#onboarding .ob-foot .grow{flex:1}
+#onboarding .ob-foot .btn{height:44px;padding:0 22px;font-size:14.5px}
+#onboarding .ob-foot .btn svg{width:16px;height:16px}
+#onboarding .ob-foot .btn-p{min-width:112px}
+#onboarding .ob-foot .btn .tk-spin{width:14px;height:14px}
+/* The quiet action keeps a hairline edge at rest: a Back that reads as a
+   label until the pointer is on it was a tester finding, and
+   onboarding-mouse.mjs still measures it. */
+#onboarding .ob-foot .btn-g{padding:0 18px 0 14px;border:1px solid var(--bd-2)}
+#onboarding .ob-foot .btn-g:hover{background:var(--hover);color:var(--ink)}
+#onboarding .ob-hints{position:static;flex:none;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;
+  gap:2px 12px;min-height:40px;height:auto;padding:10px 0 0;border:0;background:transparent;font-size:12px;color:var(--ink-2)}
+#onboarding .ob-hints .hint{display:inline-flex;align-items:center;gap:6px;height:24px;margin:0;padding:0 6px;border-radius:8px;
+  font-size:12px;letter-spacing:0}
+#onboarding .ob-hints .hint-live{font:inherit;color:inherit;background:transparent;border:0;cursor:pointer;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+#onboarding .ob-hints .hint-live:hover{background:var(--hover);color:var(--ink)}
+#onboarding .ob-hints .kc{margin:0}
+#onboarding .ob-hints .kc + .kc{margin-left:-2px}
+
+/* ---------------- the download (ON-07, ON-08, ON-18) ----------------
+   `.ob-dlprog` is the one box a progress sample repaints (refreshDlProgress);
+   its rows are fixed-width and never wrap, so a sample cannot move the
+   offer card a pointer rests on. */
+#onboarding .ob-dlprog{display:grid;gap:14px;max-width:640px;padding:18px 20px 16px;border-radius:var(--r-card);
+  background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-phase{display:grid;grid-template-columns:24px max-content minmax(48px,1fr) 23ch;align-items:center;gap:12px;white-space:nowrap}
+#onboarding .ob-phase .tk-ico{width:24px;height:24px}
+#onboarding .ob-phase .tk-ico svg{width:13px;height:13px}
+#onboarding .ob-phase .pl{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:14px;font-weight:600;color:var(--ink)}
+#onboarding .ob-phase .pb{height:8px;min-width:0}
+#onboarding .ob-phase .pb i{font-style:normal;color:var(--brand);background:currentColor}
+#onboarding .ob-phase.waiting .pb i{color:var(--ink-3)}
+#onboarding .ob-phase.done .pb{visibility:hidden}
+#onboarding .ob-phase .pt{min-width:0;text-align:right;white-space:pre;font:400 12px/1 var(--font-mono);
+  font-variant-numeric:tabular-nums;color:var(--ink-2)}
+#onboarding .ob-rate{margin:0;font:400 12px/1.4 var(--font-mono);color:var(--ink-2)}
+#onboarding .ob-dlprog > .ob-err{padding:0;background:transparent;color:var(--critical)}
+#onboarding .ob-offer:not(.ob-offer-inline){display:flex;align-items:center;gap:14px;width:100%;max-width:640px;min-height:64px;margin:0;
+  padding:12px 16px;border:0;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card);
+  color:var(--ink);text-align:left;cursor:pointer;
+  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+#onboarding .ob-offer:not(.ob-offer-inline):hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
+#onboarding .ob-offer:not(.ob-offer-inline):active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
+#onboarding .ob-offer:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+#onboarding .ob-offer .ob-rbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#onboarding .ob-offer .t{font-size:14.5px;font-weight:600;color:var(--ink)}
+#onboarding .ob-offer .d{font-size:13px;line-height:1.45;color:var(--ink-2)}
+#onboarding .ob-offer > .kc{margin-left:auto}
+
+/* ---------------- the import (ON-20…23) ---------------- */
+#onboarding .ob-row .box{width:18px;height:18px;margin:0;border:0;border-radius:6px;display:inline-grid;place-items:center;flex:none;
+  background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-3);color:var(--on-strong);
+  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+#onboarding .ob-row .box svg{width:12px;height:12px;stroke-width:2.6}
+#onboarding .ob-row .box.on{background:var(--brand);box-shadow:none}
+#onboarding .ob-row.ob-check:hover .box:not(.on){box-shadow:inset 0 0 0 1.5px var(--brand)}
+#onboarding .ob-check .d{font:400 12px/1.45 var(--font-mono)}
+#onboarding .ob-models > .ob-explain{padding:10px 12px;font-size:13.5px}
+#onboarding .ob-explain.ob-help{font-size:12.5px;line-height:1.45;max-width:62ch;padding-left:4px}
+#onboarding .prow > .tk-ico{width:30px;height:30px}
+#onboarding .ob-h.ob-lede{font:400 15.5px/1.5 var(--font-ui);letter-spacing:0;color:var(--ink-2)}
+#onboarding .ob-out > :not(.logo):not(.tk-ico){grid-column:2}
+#onboarding .ob-applogo svg{width:100%;height:100%}
+#onboarding .ob-list.is-busy{opacity:.7}
+#onboarding .ob-scanstrip{display:flex;align-items:center;gap:10px;max-width:680px;padding:10px 14px;border-radius:18px;
+  background:color-mix(in srgb,var(--amber) 13%,var(--lift));font-size:13px;color:var(--ink)}
+#onboarding .ob-scanstrip .tk-spin{border-color:var(--amber-wash);border-top-color:var(--amber)}
+#onboarding .ob-scanstrip .ob-scan-k{font-weight:700}
+#onboarding .ob-scanstrip .readout{font:400 12px/1 var(--font-mono);color:var(--ink);min-width:0}
+#onboarding .ob-scanstrip .ob-help{padding:0;font-size:13px;color:var(--ink-2)}
+#onboarding .ob-summary{display:grid;gap:8px;max-width:700px;padding:16px 18px;border-radius:var(--r-card);
+  background:var(--lift);box-shadow:var(--sh-card);white-space:normal;font-size:14px;color:var(--ink-2)}
+#onboarding .ob-sumrow{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px}
+#onboarding .ob-sumrow .k{font-weight:600;color:var(--ink)}
+#onboarding .ob-sumrow .v.is-warn{color:var(--amber-text)}
+#onboarding .ob-failures{display:flex;flex-wrap:wrap;gap:8px}
+#onboarding .ob-failtbl{max-width:700px;padding:4px 6px 8px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-failtbl td:first-child{font:500 12px/1 var(--font-mono)}
+
+/* Hugging Face file pick (ON-06). */
+#onboarding .ob-repo{display:flex;align-items:center;gap:10px;font:500 14px/1.3 var(--font-mono);letter-spacing:0;color:var(--ink)}
+#onboarding .ob-file .t{font:500 13px/1.35 var(--font-mono)}
+#onboarding .ob-file .ob-size{margin-left:auto;font:400 12px/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
+
+/* A list that scrolls must say so. macOS hides its overlay scrollbar until
+   something moves, so the long lists ended in a row sliced in half with no
+   hint of more. Deliberately the -webkit- pseudo-elements and NOT
+   `scrollbar-width` / `scrollbar-color`: either standard property makes
+   Chromium fall back to the invisible overlay bar. */
+#onboarding .ob-scroll::-webkit-scrollbar,#onboarding .ob-wizlist::-webkit-scrollbar{width:10px}
+#onboarding .ob-scroll::-webkit-scrollbar-thumb,#onboarding .ob-wizlist::-webkit-scrollbar-thumb{
+  background:var(--bd-2);border:3px solid transparent;background-clip:content-box;border-radius:var(--r-pill)}
+#onboarding .ob-scroll::-webkit-scrollbar-thumb:hover,#onboarding .ob-wizlist::-webkit-scrollbar-thumb:hover{
+  background:var(--ink-3);background-clip:content-box}
+
+/* ---------------- smaller windows ----------------
+   The rail narrows, then gives up its statement on a short window; every
+   control stays on screen down to the 940×620 minimum. */
+@media (max-width:1240px){
+  #onboarding{grid-template-columns:340px minmax(0,1fr)}
+  #onboarding .ob{padding:44px 44px 12px}
+  #onboarding .ob-statement{font-size:27px}
+}
+@media (max-width:1060px){
+  #onboarding{grid-template-columns:272px minmax(0,1fr)}
+  #onboarding .ob-rail{padding:56px 20px 20px;gap:18px}
+  #onboarding .ob-statement{font-size:24px}
+  #onboarding .ob{padding:36px 32px 10px}
+  #onboarding .ob-title,#onboarding .ob-wiz .ob-h{font-size:28px}
+  #onboarding .ob-phase{gap:10px}
+}
+@media (max-height:720px){
+  #onboarding .ob-statement{display:none}
+  #onboarding .ob-stepmarks{margin-top:auto}
+  #onboarding .ob{padding-top:30px}
+  #onboarding .ob-title,#onboarding .ob-wiz .ob-h{font-size:28px}
+  #onboarding .ob-explain{font-size:14.5px}
+  #onboarding .ob-body{gap:12px}
+  #onboarding .ob-routes .ob-row{padding:11px 16px}
+  .ob-introc .ob-word{font-size:52px}
+}

@@ -1,0 +1,331 @@
+/* ============================================================
+   Window shell — Soft Tactile.
+   Toolbar, floating sidebar (workspace chip, Tasks, Chats, Settings), content
+   column, floating inspector, console drawer, download strip, the rail and the
+   narrow layouts. Screens SH-01…09, SH-17, SH-23, CH-23.
+   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+
+   Geometry the smoke measures and this file keeps:
+   - #sidebar is 260px wide open and 52px as a rail. The floating panel is
+     painted by #sidebar::before inside that box (8px gutter on the window
+     side), so the box widths stay what the checks read.
+   - Sidebar rows are one line; the row's dot is a 6px ring with a 1px border.
+   - `.sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn` carries exactly
+     `visibility:visible` — the smoke compares that rule's text.
+   ============================================================ */
+
+/* ---------------- desktop + window ---------------- */
+#desktop{height:100vh;display:flex;flex-direction:column;min-height:0}
+
+/* The prototype's page-level menu bar (browser preview only; Electron hides it). */
+#menubar{
+  height:26px;flex:none;display:flex;align-items:center;gap:2px;padding:0 10px;
+  background:var(--well);position:relative;z-index:30;
+}
+.mb-item{padding:0 8px;height:20px;display:flex;align-items:center;border-radius:var(--r-kbd);font-size:13px;color:var(--ink)}
+.mb-item.brand{font-weight:600}
+.mb-item:hover{background:var(--hover)}
+.mb-item.open{background:var(--brand);color:var(--on-strong)}
+#mb-clock{margin-left:auto;color:var(--ink-2);font-size:11px}
+
+#stage{flex:1;min-height:0;display:flex;align-items:stretch;justify-content:center;padding:14px 16px 18px}
+#window{
+  width:min(1280px,100%);max-height:100%;flex:1;
+  background:var(--well);border-radius:var(--r-pop);box-shadow:var(--sh-pop);
+  display:flex;flex-direction:column;overflow:hidden;position:relative;min-width:0;
+}
+
+/* ---------------- toolbar (52px) ---------------- */
+#toolbar{
+  height:52px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px 0 20px;
+  background:var(--well);min-width:0;
+}
+/* macOS draws the real close/minimise/zoom buttons over this corner
+   (titleBarStyle hiddenInset, trafficLightPosition 20,20). The page only owes
+   them their room; body.electron hides this spacer and pads the toolbar. */
+.lights{width:98px;flex:none}
+#toolbar .sidebtn{width:32px}
+#toolbar .iconbtn svg{width:16px;height:16px}
+#toolbar .iconbtn[disabled]{color:var(--ink-3);cursor:default}
+#toolbar .iconbtn[disabled]:hover{background:transparent;color:var(--ink-3)}
+
+/* Title block: "Chat" and the session line on one baseline. */
+.tb-title{display:flex;align-items:baseline;gap:10px;min-width:0;margin-left:4px;flex:0 1 auto}
+.tb-title b{font-size:15px;line-height:20px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;color:var(--ink)}
+.tb-title span{font-size:12.5px;line-height:16px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
+
+/* Search pill: a lifted pill with the ⌘K keycap. */
+.searchbtn{
+  display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 6px 0 12px;margin-right:4px;
+  border-radius:var(--r-pill);background:var(--lift);box-shadow:var(--sh-card);
+  font-size:13px;line-height:1;color:var(--ink-2);flex:none;
+  transition:color var(--t-state) var(--ease),background var(--t-state) var(--ease);
+}
+.searchbtn svg{width:14px;height:14px;color:var(--ink-3)}
+.searchbtn .sec{color:inherit}
+.searchbtn:hover{color:var(--ink)}
+.searchbtn:hover svg{color:var(--ink-2)}
+.searchbtn:active{transform:scale(.97)}
+.searchbtn .kc{margin-left:2px}
+
+#main{flex:1;min-height:0;min-width:0;display:flex}
+
+/* ---------------- sidebar: a floating panel ---------------- */
+/* The box is 260px with an 8px gutter on the window side; ::before paints the
+   lifted panel (252px, radius 16) inside it. Padding = gutter + panel inset. */
+#sidebar{
+  width:260px;flex:none;display:flex;flex-direction:column;min-height:0;min-width:0;
+  position:relative;isolation:isolate;padding:10px 8px 18px 16px;
+}
+#sidebar::before{
+  content:"";position:absolute;z-index:-1;top:0;right:0;bottom:8px;left:8px;
+  background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);pointer-events:none;
+}
+
+/* Workspace chip: app mark · path in mono · chevron, on the well. The mark is
+   the head row's own glyph laid over the chip, so the whole pill is the
+   button and the head row carries no second control. */
+.sb-head{flex:none;position:relative;display:flex;align-items:center;min-width:0;height:40px}
+.sb-head > svg{position:absolute;left:9px;top:9px;width:22px;height:22px;z-index:1;pointer-events:none}
+.wschip{
+  flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px 0 40px;
+  border-radius:var(--r-row);background:var(--well);color:var(--ink);
+  transition:background var(--t-state) var(--ease);
+}
+.wschip:hover{background:var(--panel-2)}
+.wschip span{flex:1;min-width:0;font:400 12px/16px var(--font-mono);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wschip svg{width:14px;height:14px;color:var(--ink-2)}
+
+.sb-lists{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:6px}
+.sb-list{display:flex;flex-direction:column;gap:1px}
+/* Group header: sentence case, bold, with the running count and the plus. */
+.sb-list-head{
+  height:30px;flex:none;display:flex;align-items:center;gap:6px;margin-top:10px;padding:0 4px 0 10px;
+  font:700 12.5px/16px var(--font-ui);letter-spacing:0;color:var(--ink-2);text-transform:none;
+}
+.sb-list-head > span:first-child{flex:1;min-width:0}
+.sb-list-head .ct{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.sb-list-head .sb-add{width:26px;height:26px;color:var(--ink-2)}
+.sb-list-head .sb-add svg{width:14px;height:14px}
+.sb-empty{padding:4px 10px 6px;font-size:12.5px;line-height:18px;color:var(--ink-2)}
+
+/* Rows: 34px pills — dot · title · right meta (tasks) or the hover controls
+   (chats). The meta rides a data attribute so the row's children stay dot,
+   title and the two controls the row-shape check allows. */
+.sesrow{
+  position:relative;display:flex;align-items:center;gap:9px;width:100%;height:34px;flex:none;
+  padding:0 5px 0 12px;border-radius:var(--r-pill);min-width:0;text-align:left;
+  color:var(--ink-2);font-size:13.5px;font-weight:500;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease);
+}
+.sesrow:hover{background:var(--hover);color:var(--ink)}
+.sesrow.on{background:var(--brand-wash);color:var(--blue)}
+.sesrow.on:hover{background:var(--brand-wash-2);color:var(--blue)}
+.sesrow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.sesrow .t1{flex:1;min-width:0;font-size:13.5px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sesrow[data-m]::after{
+  content:attr(data-m);flex:none;max-width:88px;padding-right:5px;
+  font:400 11px/16px var(--font-mono);letter-spacing:0;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sesrow.on[data-m]::after{color:var(--blue)}
+
+/* The dot. Empty ring = read, filled brand = finished and not read, pulsing
+   brand = running; tone classes carry waiting-for-you (amber) and failed
+   (red). The nudge is `top`, never `transform`: sdot-pulse owns the paint and
+   a transform nudge would be lost for the whole animation. It seats the 6px
+   dot on the label's optical centre (cap and x midpoints). */
+.sdot{width:6px;height:6px;border-radius:50%;flex:none;box-sizing:border-box;border:1px solid var(--ink-3);background:transparent;position:relative}
+.sesrow .sdot{top:1px}
+.sdot.filled{background:var(--brand);border-color:var(--brand)}
+.sdot.filled.tone-amber{background:var(--amber);border-color:var(--amber)}
+.sdot.filled.tone-red{background:var(--critical);border-color:var(--critical)}
+/* The halo is not decoration: reduced motion kills the pulse, so a running dot
+   has to differ from a filled one without it (heavier ring below). */
+.sdot.running{background:var(--brand);border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-wash-2);animation:sdot-pulse 1.6s var(--ease) infinite}
+@keyframes sdot-pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@media (prefers-reduced-motion:reduce){.sdot.running{box-shadow:0 0 0 2.5px color-mix(in srgb, var(--brand) 42%, transparent)}}
+
+/* Hover controls: always in the flow, revealed on hover or keyboard focus, so
+   nothing shifts. Spans with role="button" — the row itself is the button. */
+.pinbtn,.unreadbtn{
+  width:24px;height:24px;flex:none;visibility:hidden;display:flex;align-items:center;justify-content:center;
+  border-radius:50%;color:var(--ink-3);background:transparent;
+}
+.pinbtn svg,.unreadbtn svg{width:14px;height:14px}
+.sesrow:hover .pinbtn,.sesrow.pinned .pinbtn{visibility:visible}
+.sesrow:focus-within .pinbtn{visibility:visible}
+.sesrow:hover .unreadbtn,.sesrow:focus-within .unreadbtn{visibility:visible}
+.pinbtn:hover,.unreadbtn:hover{background:var(--press);color:var(--ink)}
+.sesrow.pinned .pinbtn{color:var(--ink-2)}
+.sesrow.on .pinbtn,.sesrow.on .unreadbtn{color:var(--blue)}
+
+.loadmore{
+  align-self:flex-start;height:28px;margin-top:2px;padding:0 10px;border-radius:var(--r-pill);
+  font:600 12px/1 var(--font-ui);color:var(--blue);text-align:left;
+}
+.loadmore:hover{background:var(--brand-wash)}
+
+/* Footer: full-width neutral Settings button with its ⌘, keycap. */
+.sb-footwrap{flex:none;padding-top:8px}
+.sb-settings{width:100%;height:36px;justify-content:flex-start;gap:9px;padding:0 8px 0 14px;background:var(--hover);color:var(--ink)}
+.sb-settings:hover{background:var(--press)}
+.sb-settings-ic{display:flex;align-items:center;justify-content:center}
+.sb-settings-ic svg{width:16px;height:16px}
+.sb-settings-lb{flex:1;min-width:0;text-align:left}
+.sb-settings .kc{margin-left:auto}
+
+/* ---------------- the rail (52px) ---------------- */
+/* Dots, the two pluses and the gear; names stay in the rows' titles. The
+   panel is inset 4px each side so everything centres on the 52px box. The
+   same rules apply without the class below 1000px. */
+#sidebar.rail{width:52px;padding:10px 10px 18px}
+#sidebar.rail::before{left:4px;right:4px}
+#sidebar.rail .wschip,#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,#sidebar.rail .unreadbtn,
+#sidebar.rail .loadmore,#sidebar.rail .sb-empty,#sidebar.rail .sb-settings-lb,#sidebar.rail .sb-settings .kc{display:none}
+#sidebar.rail .sb-head{justify-content:center;height:36px}
+#sidebar.rail .sb-head > svg{position:static}
+#sidebar.rail .sb-list-head{justify-content:center;padding:0;margin-top:6px}
+#sidebar.rail .sb-list-head > span{display:none}
+#sidebar.rail .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
+#sidebar.rail .sesrow{justify-content:center;padding:0;height:28px}
+#sidebar.rail .sesrow::after{display:none}
+#sidebar.rail .sb-lists{scrollbar-width:none}
+#sidebar.rail .sb-footwrap{display:flex;justify-content:center}
+#sidebar.rail .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
+@media (max-width:1000px){
+  #sidebar{width:52px;padding:10px 10px 18px}
+  #sidebar::before{left:4px;right:4px}
+  #sidebar .wschip,#sidebar .sesrow .t1,#sidebar .pinbtn,#sidebar .unreadbtn,
+  #sidebar .loadmore,#sidebar .sb-empty,#sidebar .sb-settings-lb,#sidebar .sb-settings .kc{display:none}
+  #sidebar .sb-head{justify-content:center;height:36px}
+  #sidebar .sb-head > svg{position:static}
+  #sidebar .sb-list-head{justify-content:center;padding:0;margin-top:6px}
+  #sidebar .sb-list-head > span{display:none}
+  #sidebar .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
+  #sidebar .sesrow{justify-content:center;padding:0;height:28px}
+  #sidebar .sesrow::after{display:none}
+  #sidebar .sb-lists{scrollbar-width:none}
+  #sidebar .sb-footwrap{display:flex;justify-content:center}
+  #sidebar .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
+}
+
+/* ---------------- content ---------------- */
+#content{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--well)}
+.chead{height:44px;flex:none;display:flex;align-items:center;gap:12px;padding:0 24px}
+.chead .grow{flex:1}
+.scroller{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+.pad{padding:24px}
+.col720{max-width:720px;margin:0 auto;padding:24px 24px 8px}
+
+/* ---------------- inspector: a floating panel ---------------- */
+#inspector{
+  width:292px;flex:none;display:flex;flex-direction:column;min-height:0;margin:0 8px 8px 0;
+  background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden;
+}
+.insphead{flex:none;padding:10px 10px 6px}
+.insphead .seg{display:flex;width:100%}
+.insphead .seg button{flex:1}
+.inspbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 6px 10px}
+.inspbody > .cap{margin:0;padding:8px 10px;font-size:12.5px;line-height:18px;color:var(--ink-2)}
+.inspfoot{flex:none;display:flex;align-items:center;gap:8px;padding:10px 16px 12px;font-size:11.5px;line-height:16px;color:var(--ink-2)}
+.inspfoot .mono{font-size:11px;line-height:16px;color:var(--ink-2)}
+
+/* Steps: 38px rows — index · tool name · duration, all mono. */
+.step{
+  display:flex;align-items:center;gap:10px;width:100%;min-height:38px;padding:0 10px;border-radius:var(--r-well);
+  color:var(--ink);text-align:left;min-width:0;transition:background var(--t-state) var(--ease);
+}
+.step + .step{margin-top:1px}
+.step:hover{background:var(--hover)}
+.step:active{background:var(--brand-wash)}
+.step:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.step .ix{width:18px;flex:none;font:400 11px/1 var(--font-mono);color:var(--ink-3)}
+.step .nm{flex:1;min-width:0;font:400 12px/16px var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.step .hstack{flex:none;gap:0}
+.step .hstack .mono{display:flex;align-items:center;font-size:11px;line-height:16px;color:var(--ink-2)}
+.step .tk-spin{display:block;width:11px;height:11px;border-width:1.5px}
+
+/* Reasoning: labelled steps over mono wells. */
+.insp-rs{display:grid;gap:5px;padding:4px 10px}
+.insp-rs + .insp-rs{margin-top:8px}
+.insp-lbl{font:700 12px/16px var(--font-ui);color:var(--ink-2)}
+.insp-rs .tk-out{font-size:11.5px;line-height:1.6}
+
+/* World: a data plate, label over value, so long paths read in 292px. */
+.inspbody .insp-world{display:grid;grid-template-columns:minmax(0,1fr);gap:2px;padding:6px 10px}
+.inspbody .insp-world dt{font:700 12px/16px var(--font-ui);color:var(--ink-2)}
+.inspbody .insp-world dt:not(:first-child){margin-top:10px}
+.inspbody .insp-world dd{font:400 11.5px/1.6 var(--font-mono);color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------------- console drawer ---------------- */
+#console{
+  height:210px;flex:none;display:flex;flex-direction:column;min-height:0;margin:0 8px 8px;
+  background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden;
+}
+.conhead{flex:none;display:flex;align-items:center;gap:8px;padding:8px 8px 6px 10px;min-width:0}
+.conhead .grow{flex:1;min-width:0}
+.conhead .btn svg{width:14px;height:14px}
+.conbody{flex:1;min-height:0;overflow:auto;padding:2px 0 8px}
+.logrow{
+  display:grid;grid-template-columns:62px 42px minmax(0,1fr);gap:10px;align-items:center;padding:0 16px;
+  font:400 11.5px/20px var(--font-mono);letter-spacing:0;white-space:nowrap;
+}
+.logrow > span{min-width:0}
+.logrow > span:last-child{overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.logrow .ter{color:var(--ink-3)}
+.logrow .lvl{font:inherit;text-transform:none;letter-spacing:0;color:var(--ink-2)}
+.logrow .lvl.warn{color:var(--amber-text)}
+.logrow .lvl.error{color:var(--critical)}
+.conbody > .tk-empty{height:100%;padding:12px 20px;gap:6px}
+.conbody > .tk-empty h4{font-size:13.5px}
+.conbody > .tk-empty p{font-size:12.5px}
+
+/* ---------------- download strip (CH-23) ---------------- */
+/* A flex child of #window between #toolbar and #main, so it is chrome and not
+   an overlay: the wizard layer starts below it (renderDlbar measures the
+   strip's bottom into --dlbar-h). */
+#dlbar{
+  flex:none;display:flex;align-items:center;gap:10px;height:38px;margin:0 8px 8px;padding:0 6px 0 14px;
+  border-radius:var(--r-pill);background:var(--lift);box-shadow:var(--sh-card);
+  font-size:12.5px;line-height:16px;color:var(--ink-2);min-width:0;-webkit-app-region:no-drag;
+}
+#dlbar[hidden]{display:none}
+#dlbar .dl-g{display:flex;flex:none;color:var(--ink-2)}
+#dlbar .dl-g svg{width:14px;height:14px}
+#dlbar .dl-l{font:500 12px/16px var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32ch;min-width:0}
+#dlbar .dl-bar{flex:0 1 140px;min-width:48px}
+#dlbar .dl-pct{flex:none;min-width:4ch;font:400 12px/16px var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
+#dlbar .dl-eta,#dlbar .dl-q{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#dlbar .dl-q{flex:none}
+#dlbar .dl-x{margin-left:auto}
+
+/* ---------------- responsive ---------------- */
+@media (max-width:1180px){#inspector{display:none!important}}
+@media (max-width:1000px){#stage{padding:8px}}
+@media (max-width:820px){
+  #menubar .mb-item:not(.brand){display:none}
+  #console{display:none!important}
+  .lights{margin-right:12px}
+  .col720{padding:16px}
+  #toolbar{padding:0 8px 0 12px;gap:6px}
+  #stage{padding:6px}
+}
+
+/* ============================================================
+   Running inside Electron: no page menu bar, no painted lights, no
+   floating window — the OS draws those. The toolbar is the drag region.
+   ============================================================ */
+body.electron #menubar{display:none}
+body.electron .lights{display:none}
+body.electron #stage{padding:0}
+body.electron #window{width:100%;max-height:none;border-radius:0;box-shadow:none}
+/* The traffic lights sit at x=20 and end at x≈70; 96px leaves a clear gap
+   before our first control. */
+body.electron #toolbar{padding-left:96px;-webkit-app-region:drag}
+body.electron #toolbar button,
+body.electron #toolbar input,
+body.electron #toolbar .searchbtn{-webkit-app-region:no-drag}
+/* The sidebar sits under the toolbar and must not swallow drags. */
+body.electron .sb-head{-webkit-app-region:no-drag}

@@ -437,11 +437,14 @@ const OB_HALO_TIERS    = [['bright',0.14],['mid',0.28],['dim',0.34],['faint',0.2
 /* Last resort if a token ever resolves empty — ink, never a literal
    colour, so the fallback still belongs to the system. */
 const FALLBACK_TIER_INK = 'currentColor';
+/* Soft Tactile: the title card is indigo in both themes, so a star is always
+   a light ink on it. (The card draws no #ob-sky canvas today — the smoke
+   asserts there is none — so this only matters if the sky ever returns.) */
 const OB_TIER_LOOK = {
-  faint:  {r:0.6, a:0.35, token:'--text-tertiary', drift:0.35},
-  dim:    {r:0.9, a:0.55, token:'--accent-text',   drift:0.55},
-  mid:    {r:1.3, a:0.80, token:'--accent-text',   drift:0.80},
-  bright: {r:1.8, a:1.00, token:'--text-primary',  drift:1.00},
+  faint:  {r:0.6, a:0.35, token:'--indigo-muted', drift:0.35},
+  dim:    {r:0.9, a:0.55, token:'--on-indigo',    drift:0.55},
+  mid:    {r:1.3, a:0.80, token:'--on-indigo',    drift:0.80},
+  bright: {r:1.8, a:1.00, token:'--on-strong',    drift:1.00},
 };
 /** Live canvas state for the intro sky. Never read outside obSky*. */
 const OBSKY = {
@@ -1054,56 +1057,166 @@ const MAX_QUEUED = 20; // chat-orchestrator.ts:66 MAX_QUEUED_MESSAGES
    is a page mockup; in Tauri the OS draws them.
    ============================================================ */
 
-/* ---------------- icons: 16px optical, 1.5px stroke ---------------- */
+/* ---------------- icons: 16px optical, 1.75px stroke, round caps ----------------
+   Soft Tactile's set (the reference's ICONS map). The 0.5.5 names stay as
+   keys so every call site keeps working; the Tactile names that 0.5.5 lacked
+   are added in camelCase. */
 const P = {
-  chat:'<rect x="2.25" y="3.25" width="11.5" height="8.5"/><path d="M5.5 11.75v2.1l2.8-2.1"/>',
-  tasks:'<rect x="2.5" y="3.5" width="11" height="10"/><path d="M2.5 6.5h11M5.5 2.25v2.5M10.5 2.25v2.5M5.5 9.5h5"/>',
-  skills:'<path d="M8 2.2 9.55 5.6l3.7.42-2.75 2.5.75 3.63L8 10.35 4.75 12.15l.75-3.63L2.75 6.02l3.7-.42z"/>',
-  memory:'<path d="M8 2.6C6.2 2.6 4.8 3.7 4.8 5.1c0 .5.2 1 .5 1.4-.6.5-1 1.2-1 2 0 1.6 1.6 2.9 3.7 2.9s3.7-1.3 3.7-2.9c0-.8-.4-1.5-1-2 .3-.4.5-.9.5-1.4 0-1.4-1.4-2.5-3.2-2.5Z"/><path d="M8 2.6v9"/>',
-  search:'<circle cx="7.2" cy="7.2" r="4"/><path d="M10.2 10.2 13.5 13.5"/>',
-  sidebar:'<rect x="2" y="3" width="12" height="10"/><path d="M6.2 3v10"/>',
-  inspector:'<rect x="2" y="3" width="12" height="10"/><path d="M10 3v10"/>',
-  console:'<rect x="2" y="3" width="12" height="10"/><path d="M2 9.6h12"/>',
-  plus:'<path d="M8 3.5v9M3.5 8h9"/>',
-  chevD:'<path d="M4 6.2 8 10l4-3.8"/>',
-  chevR:'<path d="M6.2 4 10 8l-3.8 4"/>',
-  check:'<path d="M3.5 8.4 6.4 11.3 12.5 5.2"/>',
-  x:'<path d="M4 4l8 8M12 4l-8 8"/>',
-  warn:'<path d="M8 2.8 14 12.6H2z"/><path d="M8 6.6v3M8 11.1h.01"/>',
-  stop:'<rect x="4.5" y="4.5" width="7" height="7"/>',
-  up:'<path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8"/>',
-  copy:'<rect x="5.5" y="5.5" width="8" height="8"/><path d="M10.5 5.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/>',
-  gear:'<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"/>',
-  cloud:'<path d="M4.6 12.2h6.6a2.9 2.9 0 0 0 .3-5.78A4 4 0 0 0 4.3 6.9a2.65 2.65 0 0 0 .3 5.3Z"/>',
-  cpu:'<rect x="5" y="5" width="6" height="6"/><path d="M6.5 2.5v2.5M9.5 2.5v2.5M6.5 11v2.5M9.5 11v2.5M2.5 6.5h2.5M2.5 9.5h2.5M11 6.5h2.5M11 9.5h2.5"/>',
-  key:'<circle cx="5.5" cy="8" r="2.6"/><path d="M8.1 8h5.4M11.6 8v2.2M13.5 8v1.6"/>',
+  chat:'<path d="M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v6a1.5 1.5 0 0 1-1.5 1.5H7l-3 2.5v-2.5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+  tasks:'<path d="M2.5 4.5l1.3 1.3L6 3.5M2.5 10.5l1.3 1.3L6 9.5M8.5 5h5M8.5 11h5"/>',
+  skills:'<path d="M2.5 3.5h4a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1.5 1.5 0 0 1 1.5-1.5h4z"/>',
+  memory:'<path d="M8 2.5l5.5 3L8 8.5l-5.5-3zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3"/>',
+  search:'<circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13.5 13.5"/>',
+  sidebar:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>',
+  inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
+  console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
+  plus:'<path d="M8 3v10M3 8h10"/>',
+  minus:'<path d="M3 8h10"/>',
+  chevD:'<path d="M4.5 6.5 8 10l3.5-3.5"/>',
+  chevR:'<path d="M6.5 4.5 10 8l-3.5 3.5"/>',
+  chevL:'<path d="M9.5 4.5 6 8l3.5 3.5"/>',
+  chevU:'<path d="M4.5 9.5 8 6l3.5 3.5"/>',
+  check:'<path d="M3.5 8.5l3 3 6-7"/>',
+  x:'<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+  warn:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
+  alert:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
+  info:'<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.5M8 5.2v.2"/>',
+  stop:'<rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="currentColor" stroke="none"/>',
+  up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
+  arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
+  copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
+  gear:'<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
+  cloud:'<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8.9 2.6 2.6 0 0 1-.4 5.1z"/>',
+  cpu:'<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 6.5h3v3h-3zM6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/>',
+  laptop:'<rect x="3.5" y="3.5" width="9" height="6.5" rx="1.2"/><path d="M2 12.5h12"/>',
+  server:'<rect x="2.5" y="3" width="11" height="4" rx="1.5"/><rect x="2.5" y="9" width="11" height="4" rx="1.5"/><path d="M5 5h.01M5 11h.01"/>',
+  key:'<circle cx="5.5" cy="10.5" r="3"/><path d="M7.6 8.4 13 3M11 5l1.5 1.5M9.5 6.5 11 8"/>',
   link:'<path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 1 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 1 0 3.7 3.7l.9-.9"/>',
-  folder:'<path d="M2.5 4.6a1.6 1.6 0 0 1 1.6-1.6h2.1l1.4 1.7h4.3a1.6 1.6 0 0 1 1.6 1.6v5.1a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6z"/>',
-  refresh:'<path d="M13 8a5 5 0 1 1-1.5-3.55"/><path d="M13.2 2.6v3h-3"/>',
-  filter:'<path d="M2.6 3.7h10.8L9.4 8.4v4l-2.8-1.4V8.4z"/>',
+  folder:'<path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
+  file:'<path d="M4 2.5h5L12 5.5v8H4zM9 2.5v3h3"/>',
+  doc:'<path d="M4 2.5h5L12 5.5v8H4zM9 2.5v3h3"/>',
+  image:'<rect x="2.5" y="3" width="11" height="10" rx="2"/><circle cx="6" cy="6.5" r="1.2"/><path d="m3 12 3.5-3.5 2.5 2.5 1.5-1.5 3 2.5"/>',
+  refresh:'<path d="M13 5.5A5.5 5.5 0 0 0 3 6M3 10.5A5.5 5.5 0 0 0 13 10M13 2.5v3h-3M3 13.5v-3h3"/>',
+  retry:'<path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5V5h-2.5"/>',
+  filter:'<path d="M2.5 3.5h11L9.2 8.5v4l-2.4-1.2V8.5z"/>',
   atom:'<path d="M8 2.6v10.8M2.6 8h10.8"/><circle cx="8" cy="8" r="5.4"/>',
-  bolt:'<path d="M8.8 2.4 4.2 9.1h3.2l-.6 4.5 4.8-6.9H8.3z"/>',
-  doc:'<path d="M4 2.6h5l3 3v7.8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1Z"/><path d="M9 2.6v3h3"/>',
-  play:'<path d="M5.5 3.6 12 8l-6.5 4.4z"/>',
-  trash:'<path d="M3 4.6h10M6.4 4.6V3.4a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9v1.2M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/>',
-  // item 6: pin / unpin a chat row
-  pin:'<path d="M9.6 2.4 13.6 6.4l-2.1.7-2 2 .3 2.4-4.8-4.8 2.4.3 2-2z"/><path d="M5 11 2.6 13.4"/>',
+  bolt:'<path d="M9 2 3.5 9H8l-1 5 5.5-7H8z"/>',
+  play:'<path d="M5 3.5v9l7-4.5z"/>',
+  pause:'<path d="M5.5 3.5v9M10.5 3.5v9"/>',
+  trash:'<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>',
+  pin:'<path d="M6 2.5h4l-.5 4 2 2v1h-7v-1l2-2zM8 9.5v4"/>',
   /* r5 item 3: the filled dot the row is about to show. The inline fill/stroke
      override ic()'s `fill="none" stroke="currentColor"` wrapper, so the glyph
-     reads as `.sdot.filled` rather than as an outline. */
+     reads as a filled dot rather than as an outline. */
   unread:'<circle cx="8" cy="8" r="3.4" fill="currentColor" stroke="none"/>',
-  // item 2: voice input — capsule + stand, on the same 1.5-stroke grid
-  mic:'<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.6a4.2 4.2 0 0 0 8.4 0"/><path d="M8 11.8v2M5.8 13.8h4.4"/>',
+  mic:'<path d="M6.25 3.5a1.75 1.75 0 0 1 3.5 0v4a1.75 1.75 0 0 1-3.5 0zM4 7.5a4 4 0 0 0 8 0M8 11.5v2.5"/>',
+  micOff:'<path d="M6.25 5.2V3.5a1.75 1.75 0 0 1 3.3-.8M9.75 7v.5A1.75 1.75 0 0 1 7 9M4 7.5a4 4 0 0 0 6.6 3M12 7.5c0 .6-.1 1.1-.3 1.6M8 11.5v2.5M2.5 2.5l11 11"/>',
+  download:'<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
+  upload:'<path d="M8 10.5v-8M4.5 6 8 2.5 11.5 6M3 13.5h10"/>',
+  import:'<path d="M8 2.5v7M5 6.5l3 3 3-3M3 10.5v3h10v-3"/>',
+  term:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
+  globe:'<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.9 1.7 1.9 9.3 0 11M8 2.5c-1.9 1.7-1.9 9.3 0 11"/>',
+  plug:'<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2a3.5 3.5 0 0 1-7 0zM8 11v2.5"/>',
+  branch:'<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 2-7 4.5"/>',
+  dots:'<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" stroke-width="2.6"/>',
+  clock:'<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
+  calendar:'<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>',
+  bell:'<path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3zM6.5 14h3"/>',
+  keyboard:'<rect x="2" y="4" width="12" height="8" rx="2"/><path d="M4.5 6.5h.01M7 6.5h.01M9.5 6.5h.01M12 6.5h.01M5 9.5h6"/>',
+  sliders:'<path d="M3 4.5h6M12 4.5h1M3 11.5h1M7 11.5h6"/><circle cx="10.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/>',
+  lock:'<rect x="3.5" y="7" width="9" height="6.5" rx="2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  shield:'<path d="M8 2 13 4v4c0 3-2.2 5.2-5 6-2.8-.8-5-3-5-6V4z"/>',
+  eye:'<path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/>',
+  eyeOff:'<path d="M6.6 4a6.6 6.6 0 0 1 1.4-.2c4 0 6.2 4.2 6.2 4.2a11 11 0 0 1-1.6 2.1M4.2 5.1C2.7 6.2 1.8 8 1.8 8S4 12.2 8 12.2c1 0 1.9-.2 2.7-.6M2.5 2.5l11 11"/>',
+  open:'<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4"/>',
+  sun:'<circle cx="8" cy="8" r="2.6"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/>',
+  moon:'<path d="M12.8 9.8A5.5 5.5 0 0 1 6.2 3.2a5.5 5.5 0 1 0 6.6 6.6z"/>',
+  send:'<path d="M13.5 2.5 2.5 7l4.5 2 2 4.5z M7 9l2.5-2.5"/>',
+  mail:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="m3 5 5 3.5L13 5"/>',
+  hash:'<path d="M6 2.5 5 13.5M11 2.5l-1 11M3 6h10.5M2.5 10H13"/>',
+  user:'<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5a5 5 0 0 1 10 0"/>',
+  expand:'<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>',
+  list:'<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/>',
+  flag:'<path d="M3.5 14V2.5M3.5 3h8l-1.5 3 1.5 3h-8"/>',
+  gauge:'<path d="M2.5 11a5.5 5.5 0 1 1 11 0M8 11l2.5-3"/>',
+  log:'<path d="M3 3.5h10M3 6.5h7M3 9.5h10M3 12.5h5"/>',
+  bulb:'<path d="M6 12h4M6.5 14h3M5.2 9.6A4 4 0 1 1 10.8 9.6c-.6.5-.8 1-.8 1.9H6c0-.9-.2-1.4-.8-1.9z"/>',
+  edit:'<path d="M10.5 3.5l2 2L6 12H4v-2z"/>',
+  undo:'<path d="M5 4 2.5 6.5 5 9M2.5 6.5H10a3.5 3.5 0 0 1 0 7H7"/>',
+  wand:'<path d="M3 13l7-7M9 3.5V2M12.5 7H14M11.5 4.5l1-1M10 6l1 1"/>',
+  slash:'<path d="M10.5 2.5 5.5 13.5"/>',
+  star:'<path d="M8 2.2 9.7 5.8l3.9.5-2.9 2.7.8 3.9L8 11l-3.5 1.9.8-3.9-2.9-2.7 3.9-.5z" fill="currentColor" stroke="none"/>',
 };
 function ic(n, cls) {
-  return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
-    /* Square caps and joins. The icon set is on a 16px grid at 1.5px, which
-       was right; the round caps were the last soft edge left in a system that
-       has no radius above 2px anywhere else. */
-    + 'stroke-linecap="square" stroke-linejoin="miter"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
+  return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" '
+    + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
-const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" fill="var(--accent)"/><path fill="var(--on-fill)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="var(--brand)"/><path fill="var(--on-brand)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+
+/* ---------------- brand logos ----------------
+   Real marks for models and providers (LobeHub icons, MIT; the AI/ML API mark
+   from aimlapi.com), shipped as local files under renderer/logos/ — the CSP
+   allows img-src 'self' only. Always drawn on a white round badge (.logo) so a
+   black mark stays visible in the dark theme; never recoloured. Anything with
+   no mark (llama.cpp, a custom OpenAI-compatible endpoint, local-llama) gets
+   the server icon for a provider and the CPU icon for a model instead — never
+   a monogram. */
+const LOGO_FILES = {
+  qwen:'qwen-color.svg', gemma:'gemma.svg', openai:'openai.svg', claude:'claude-color.svg', anthropic:'anthropic.svg',
+  openrouter:'openrouter.svg', aimlapi:'aimlapi.png', gemini:'gemini-color.svg', groq:'groq.svg', deepseek:'deepseek-color.svg',
+  mistral:'mistral-color.svg', cerebras:'cerebras-color.svg', together:'together-color.svg', fireworks:'fireworks-color.svg',
+  xai:'xai.svg', moonshot:'moonshot.svg', perplexity:'perplexity-color.svg', nous:'nousresearch.svg', novita:'novita-color.svg',
+  ollama:'ollama.svg', lmstudio:'lmstudio.svg', huggingface:'huggingface-color.svg', nvidia:'nvidia-color.svg', zhipu:'zhipu-color.svg',
+  codex:'codex-color.svg', claudecode:'claudecode-color.svg', hermes:'hermesagent.svg', openclaw:'openclaw-color.svg', github:'github.svg',
+};
+/** Model id → the family whose mark it wears ('' when there is none). */
+function modelLogoKey(id) {
+  const s = String(id || '').toLowerCase();
+  if (!s) return '';
+  if (s.includes('claude')) return 'claude';
+  if (s.includes('gpt') || s.startsWith('openai/') || /(^|\/)o[134](-|$)/.test(s)) return 'openai';
+  if (s.includes('qwen') || s.includes('qwq')) return 'qwen';
+  if (s.includes('gemma')) return 'gemma';
+  if (s.includes('gemini')) return 'gemini';
+  if (s.includes('deepseek')) return 'deepseek';
+  if (s.includes('nemotron')) return 'nvidia';
+  if (s.includes('glm')) return 'zhipu';
+  if (s.includes('mistral') || s.includes('devstral') || s.includes('magistral') || s.includes('codestral')) return 'mistral';
+  if (s.includes('grok')) return 'xai';
+  if (s.includes('kimi')) return 'moonshot';
+  if (s.includes('sonar')) return 'perplexity';
+  if (s.includes('hermes')) return 'nous';
+  if (s.startsWith('openrouter/')) return 'openrouter';
+  return '';
+}
+const PROVIDER_LOGO_KEYS = {
+  aimlapi:'aimlapi', 'ai/ml api':'aimlapi', openrouter:'openrouter', gemini:'gemini', 'gemini (google ai)':'gemini',
+  anthropic:'anthropic', 'anthropic (claude)':'anthropic', groq:'groq', deepseek:'deepseek', mistral:'mistral', cerebras:'cerebras',
+  together:'together', 'together ai':'together', fireworks:'fireworks', 'fireworks ai':'fireworks', xai:'xai', 'xai (grok)':'xai',
+  moonshot:'moonshot', 'moonshot ai':'moonshot', 'moonshot ai (kimi)':'moonshot', perplexity:'perplexity', nous:'nous',
+  'nous research':'nous', novita:'novita', 'novita ai':'novita', ollama:'ollama', 'ollama (local)':'ollama', lmstudio:'lmstudio',
+  'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
+  github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
+};
+/** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
+function providerLogoKey(p) {
+  const s = String(p || '').toLowerCase().trim();
+  return PROVIDER_LOGO_KEYS[s] || PROVIDER_LOGO_KEYS[s.split(' (')[0]] || PROVIDER_LOGO_KEYS[s.split(/[\s(]/)[0]] || '';
+}
+/** The badge for a mark key; size is '', 'sm', 'xs' or 'lg'. '' when the key has no file. */
+function logoHTML(key, size) {
+  const f = LOGO_FILES[key];
+  return f ? '<span class="logo' + (size ? ' logo--' + size : '') + '"><img src="logos/' + f + '" alt=""></span>' : '';
+}
+/** A model's mark, or the CPU icon on a neutral badge. */
+function modelMark(id, size) {
+  return logoHTML(modelLogoKey(id), size) || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('cpu') + '</span>';
+}
+/** A provider's mark, or the server icon on a neutral badge. */
+function providerMark(idOrLabel, size) {
+  return logoHTML(providerLogoKey(idOrLabel), size) || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('server') + '</span>';
+}
 
 const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -1306,7 +1419,8 @@ function renderToolbar() {
     + sidebarToggleHTML()
     + '<div class="tb-title"><b>' + esc(t) + '</b><span>' + esc(sub) + '</span></div>'
     + '<div class="tb-right">'
-      + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘ K') + '</button>'
+      // Soft Tactile: a lifted Search pill with one ⌘K keycap (SH-01).
+      + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘K') + '</button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector" title="Inspector">' + ic('inspector') + '</button>'
       // r5 item 2: converted with the sidebar's tooltip beside it — a toolbar
       // where one chord reads "⌘ 0" and its neighbour "Ctrl+Shift+Y" is worse
@@ -1410,10 +1524,15 @@ function renderSidebar() {
     // lost the chord, and a screen-reader user on the rail would hear less than
     // the sighted user hovering the same pixel. The spec's copy section asks
     // for "Settings (⌘ ,)" on both the tooltip and the label.
+    // Soft Tactile (SH-01): the reference draws the entry as a full-width
+    // neutral button — gear, the word, and the ⌘, keycap on the right. The
+    // rail keeps the gear alone; the keycap is only emitted while the sidebar
+    // is not collapsed by the user (CSS hides it on the responsive rail too).
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
-        + '<span class="sb-settings-lb">Settings</span>'
         + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
+        + '<span class="sb-settings-lb">Settings</span>'
+        + (S.sidebar === 'rail' ? '' : keycaps('⌘,'))
       + '</button></div>'
     ;
   if (keepScroll) {
@@ -1452,10 +1571,12 @@ function chatDot(s) {
   const seen = PREFS.seen[s.id];
   const unread = !(seen >= 0) || (s.updatedAt || 0) > seen;
   for (const sid of RUNNING.values()) if (sid === s.id) return ['running', 'the agent is running here — wait'];
-  if (PENDING_APPROVALS.has(s.id)) return ['filled', 'waiting for your approval'];
-  if (unread && ATTN.has(s.id)) return ['filled', 'the last turn failed'];
+  // The third element is presentation only: the Soft Tactile status grammar
+  // draws waiting-for-you amber and failed red (sidebar dot tone classes).
+  if (PENDING_APPROVALS.has(s.id)) return ['filled', 'waiting for your approval', 'tone-amber'];
+  if (unread && ATTN.has(s.id)) return ['filled', 'the last turn failed', 'tone-red'];
   if (unread && s.status === 'stalled') return ['filled', 'stopped: max steps reached without a reply'];
-  if (unread && s.status === 'failed') return ['filled', 'the last turn failed'];
+  if (unread && s.status === 'failed') return ['filled', 'the last turn failed', 'tone-red'];
   if (unread) return ['filled', 'finished — not read yet'];
   return ['empty', 'read'];
 }
@@ -1470,27 +1591,48 @@ function taskDot(t) {
   const seen = PREFS.seen['task:' + t.id];
   const unread = !(seen >= 0) || (t.updatedAt || 0) > seen;
   if (!unread) return ['empty', 'read'];
-  if (t.status === 'failed') return ['filled', 'failed: ' + (t.lastError || 'no error recorded')];
-  if (t.status === 'blocked') return ['filled', 'blocked: ' + (t.lastError || 'no error recorded')];
+  if (t.status === 'failed') return ['filled', 'failed: ' + (t.lastError || 'no error recorded'), 'tone-red'];
+  if (t.status === 'blocked') return ['filled', 'blocked: ' + (t.lastError || 'no error recorded'), 'tone-amber'];
   return ['filled', 'finished — not read yet'];
+}
+
+/* Soft Tactile (SH-01): a task row's right-hand meta, in mono — the schedule
+   or the status word, both already on the task. Presentation only. It rides
+   the row as `data-m` and is painted by CSS, so the row's children stay the
+   dot and the title (the row-shape check counts them). */
+function taskMeta(t) {
+  if (t.status === 'failed' || t.status === 'blocked' || t.status === 'cancelled') return t.status;
+  const when = String(t.when || '');
+  if (when.indexOf('every ') === 0) return when;
+  if (when.indexOf('cron:') === 0) return 'cron';
+  if (when.indexOf('at ') === 0) {
+    const m = /^at (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})$/.exec(when);
+    if (!m) return when.slice(3);
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    return m[1] === today ? m[2] : m[1].slice(5);
+  }
+  return t.status === 'pending' ? 'queued' : '';
 }
 
 /* The name and the dot's meaning ride on the row, not on the dot: in the
    collapsed rail the dot is the only part of the row still on screen, and it
    has to say which chat or task it stands for. */
 function taskRow(t) {
-  const [state, tip] = taskDot(t);
-  return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '">'
-    + '<span class="sdot ' + state + '"></span>'
+  const [state, tip, tone] = taskDot(t);
+  const meta = taskMeta(t);
+  return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '"'
+    + (meta ? ' data-m="' + esc(meta) + '"' : '') + '>'
+    + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(t.t) + '</span></button>';
 }
 
 function chatRow(s) {
-  const [state, tip] = chatDot(s);
+  const [state, tip, tone] = chatDot(s);
   const pinned = PREFS.pinned.includes(s.id);
   return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
     + ' title="' + esc(s.t + ' · ' + tip + (pinned ? ' · pinned' : '')) + '">'
-    + '<span class="sdot ' + state + '"></span>'
+    + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
     /* r5 item 3: "a button to mark a session as unread." A span with
        role="button", not a <button> — `.sesrow` is itself a button and the pin
@@ -1547,15 +1689,20 @@ function emptyChat() {
   const id = selActiveProviderId();
   const entry = (selProviders() || []).find((p) => p.id === id);
   const model = activeModel();
+  /* Soft Tactile (CH-01): the plate is a lifted card headed by the app mark,
+     and the provider and model rows wear their brand marks (server / CPU
+     badge when there is none). The marks carry alt="" and sit outside the
+     value span, so the text of each value is exactly what it was. */
   const rows = [
-    ['Workspace', S.live.workingDir || 'not set'],
-    ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured'],
-    ['Model', model || 'none chosen'],
-    ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—'],
+    ['Workspace', S.live.workingDir || 'not set', ''],
+    ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured', id ? providerMark(id, 'xs') : ''],
+    ['Model', model || 'none chosen', model ? modelMark(model, 'xs') : ''],
+    ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—', ''],
   ];
   return '<div class="emptychat">'
-    + '<div class="plate emptyplate"><dl>'
-    + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('')
+    + '<div class="plate emptyplate">'
+    + '<div class="emptyhead">' + MARK_COLOR + '<b>Ready when you are</b></div><dl>'
+    + rows.map(([k, v, mark]) => '<dt>' + esc(k) + '</dt><dd>' + mark + '<span>' + esc(v) + '</span></dd>').join('')
     + '</dl></div>'
     + '<div class="ghost">'
       + ['what can you do?','summarise the files in this folder','check the disk space on this Mac']
@@ -1587,8 +1734,12 @@ function item(m, end) {
      it, above the mark. Nothing above them moves either way, so no
      `#turn-<id>` anchor shifts and the fold/scroll-stability machinery is
      untouched. */
+  /* Soft Tactile: `.tk-asst` names the content column only so chat.css can
+     seat the end mark on the action row; `.prose` stays its direct child
+     (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph` greys the
+     desktop's own "(no reply)" / "(stopped)" backfill. */
   if (m.k === 'assistant') return '<div class="turn"><div></div>'
-    + '<div><div class="prose">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
     + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '')
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
@@ -1601,15 +1752,15 @@ function item(m, end) {
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
     + '</div></div>';
-  if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text
-    /* F2 — the one action that helps, on the row that reports the problem.
-       A person told their provider is not answering has exactly one useful
-       next move, and hunting for the composer chip is not it. */
-    + (m.act === 'switch-provider'
-        ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
-    + '</span></div>';
+  /* F2 — the one action that helps, on the row that reports the problem.
+     A person told their provider is not answering has exactly one useful
+     next move, and hunting for the composer chip is not it. The row itself
+     (and its `.sysact` Switch provider) is drawn by sysRowHTML, which the
+     folded repeat shares. */
+  if (m.k === 'system') return sysRowHTML(m, 1);
+  // The label keeps its textContent ("Reasoning · N steps"); only the weight moved.
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<b>Reasoning</b> <span>· ' + m.steps + ' steps</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
   if (m.k === 'tool') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
@@ -1676,7 +1827,7 @@ function msgActs(m) {
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
   return '<div class="' + cls + '">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('refresh') + label('Send again') + '</button>'
+    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + label('Send again') + '</button>'
     + copy + '</div>';
 }
 
@@ -1778,11 +1929,17 @@ function argsBlock(args) {
   if (typeof args === 'string') { try { return JSON.stringify(JSON.parse(args), null, 2); } catch { return args; } }
   try { return JSON.stringify(args, null, 2); } catch { return '[unserialisable args]'; }
 }
+/* Soft Tactile status glyph, shared by a card and a folded run: running is the
+   pulsing brand dot, done a green tick on a soft green disc, failed a red alert
+   on a soft red disc. `state` is 'run' | 'ok' | 'err'. */
+function toolGlyph(state) {
+  return state === 'run' ? '<span class="tk-gly tk-gly--run"><span class="dot run"></span></span>'
+    : state === 'err' ? '<span class="tk-gly tk-gly--err">' + ic('alert') + '</span>'
+    : '<span class="tk-gly tk-gly--ok">' + ic('check') + '</span>';
+}
 function toolCard(m) {
   const running = m.ok === null;
-  const glyph = running ? '<span class="dot run"></span>'
-    : m.ok ? '<span style="color:var(--success);display:flex">' + ic('check') + '</span>'
-           : '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>';
+  const glyph = toolGlyph(running ? 'run' : m.ok ? 'ok' : 'err');
   const summary = (m.out || '').trim().replace(/\s+/g, ' ');
   const clipped = summary.length > 160 ? summary.slice(0, 159) + '\u2026' : summary;
   return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
@@ -1797,14 +1954,14 @@ function toolCard(m) {
           : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
           : 'no trace for this call') + '">'
       + (running ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span>'
-      + (m.truncated ? '<span class="cap" style="color:var(--warn)">truncated</span>' : '')
+      + (m.truncated ? '<span class="tk-chip tk-chip--sm tk-chip--amber">truncated</span>' : '')
       + '<span class="ar">' + esc(previewArgs(m.args || m.arg)) + '</span>'
-      + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
+      + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
     + (!m.open && clipped ? '<div class="cardsum' + (m.ok === false ? ' bad' : '') + '">' + esc(clipped) + '</div>' : '')
     + (m.open ? '<div class="cardbody">'
-        + '<div class="micro sec">args</div><pre>' + esc(argsBlock(m.args || m.arg)) + '</pre>'
-        + '<div class="micro sec">result</div><pre>' + esc(running ? '(pending)' : (m.out || '\u2014')) + '</pre></div>' : '')
+        + '<div class="micro">args</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
+        + '<div class="micro">result</div><pre class="tk-out">' + esc(running ? '(pending)' : (m.out || '\u2014')) + '</pre></div>' : '')
     + '</div>';
 }
 
@@ -1820,28 +1977,37 @@ function apprCard(m) {
       : m.state === 'denying' ? 'Denying…'
       : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
       : 'Denied';
+    /* Soft Tactile: the receipt pill. The label still opens the row's text
+       ("Approved · 14:32:09"), which scenario 05 reads back. */
+    const glyph = ok ? toolGlyph('ok')
+      : m.state === 'denying' ? '<span class="tk-gly"><span class="tk-spin"></span></span>'
+      : m.state === 'undelivered' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
+      : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
-      + '<div class="hstack" style="gap:8px"><span class="sec">' + label + ' · ' + m.at + '</span>'
-      + '<span class="badge" style="background:transparent;border-color:var(--line);color:var(--text-secondary)">' + esc(m.kind) + '</span></div></div>';
+      + glyph + '<span class="apprlbl"><b>' + label + '</b> · <span class="mono">' + m.at + '</span></span>'
+      + '<span class="badge tk-chip tk-chip--sm">' + esc(m.kind) + '</span></div>';
   }
   const isTrust = m.cat === 'trust_config';
+  /* Soft Tactile: the indigo decision block (the deep critical block for
+     trust_config). Approve is the white pill, Deny the glass pill that takes
+     the focus, Abort run a ghost on the block. */
   return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard">'
-    + '<div class="apprhead"><span style="color:var(--warn);display:flex">' + ic('warn') + '</span>'
+    + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'alert') + '</span>'
       + '<span class="ttl">Approval required</span>'
-      + '<span class="badge" style="margin-left:auto">' + esc(m.kind) + '</span></div>'
-    + '<dl class="dl">'
+      + '<span class="badge">' + esc(m.kind) + '</span></div>'
+    + '<dl class="dl aplate">'
       + '<dt>tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
       + '<dt>kind</dt><dd>' + esc(m.kind) + ' <span class="cap">— auto-approves from level ' + m.lvl + '</span></dd>'
       + '<dt>reason</dt><dd>' + esc(m.reason) + '</dd>'
       + '<dt>preview</dt><dd><div class="previewblk">' + esc(m.preview) + '</div></dd>'
-      + '<dt>affects</dt><dd><span class="pathchip"><b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
+      + '<dt>affects</dt><dd><span class="pathchip">' + ic('file') + '<b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
     + '</dl>'
     + '<div class="apprbtns"><div class="apprgrp">'
-      + '<button class="btn btn-p" data-appr="y">Approve' + keycaps('Y') + '</button>'
-      + (isTrust || m.approvalId ? '' : '<button class="btn btn-t" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
-      + (isTrust || m.approvalId ? '' : '<button class="btn btn-t" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
-      + '<button class="btn btn-s" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
-      + '<button class="btn btn-g" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
+      + '<button class="btn sm btn-white' + (isTrust ? ' dg' : '') + '" data-appr="y">Approve' + keycaps('Y') + '</button>'
+      + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
+      + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
+      + '<button class="btn sm btn-glass" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
+      + '<button class="btn sm btn-g apprabort" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
     + '</div>'
     /* Item 1 (approval parity). Two repairs, both about not promising what the
        card cannot do or omitting what it now does:
@@ -1861,8 +2027,8 @@ function apprCard(m) {
     + '<div class="apprfoot">' + (isTrust
         ? 'trust-config writes are never granted for the session; y approves this call only'
         : (m.approvalId
-        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 loosen the standing stance with the <button class="btn-g" style="text-decoration:underline" data-act="modes">mode</button> control in the composer.'
-        : 'y approves this call once; s / a grant for this session only (never persisted); loosen the standing stance with the <button class="btn-g" style="text-decoration:underline" data-act="modes">mode</button> control in the composer'))
+        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 loosen the standing stance with the <button class="apprlink" data-act="modes">mode</button> control in the composer.'
+        : 'y approves this call once; s / a grant for this session only (never persisted); loosen the standing stance with the <button class="apprlink" data-act="modes">mode</button> control in the composer'))
       // Only on a card that typing can actually answer: the deny-with-reason
       // path needs a live approvalId AND this chat's own request, so a
       // background thread's question (or a prototype card) does not carry a
@@ -1875,26 +2041,42 @@ function apprCard(m) {
 
 function composer() {
   const running = S.busy || !!S.pending;
+  /* Soft Tactile: every status line is a chip, then machine text. What the
+     drivers and the ticker read is kept — `.statusstrip` (+ gated / waiting /
+     appstatus), the waiting strip's `.ann` / `.readout` / `.ob-help`, the busy
+     strip's FIRST `.tnum` (the 100 ms ticker writes the elapsed time into it),
+     `data-act="stop"` and `data-act="jump:appr"`. */
   const status = S.pending
-    ? '<div class="statusstrip gated">' + ic('warn') + 'Waiting for your approval'
-      + '<button class="btn-g" style="text-decoration:underline" data-act="jump:appr">Jump to request</button></div>'
+    ? '<div class="statusstrip gated">'
+      + '<span class="tk-chip tk-chip--sm tk-chip--amber">' + ic('alert') + 'Waiting for your approval</span>'
+      + '<span class="ss-grow"></span>'
+      + '<button class="btn btn-g xs ss-jump" data-act="jump:appr">Jump to request' + ic('up') + '</button></div>'
     /* F3 — a parked turn says so, and says when it tries again. The brief's
        shape: WAITING · <provider> · ATTEMPT n · NEXT TRY 30s, with a Stop.
        Caution, not critical: nothing has failed yet. */
     : WAIT
     ? '<div class="statusstrip waiting">'
-      + '<span class="ann caution">Waiting</span>'
+      + '<span class="ann caution"><span class="ss-dot"></span>Waiting</span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
-      + (WAIT.reason ? '<span class="ob-help">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
-      + '<button class="btn-g" data-act="stop" style="margin-left:auto">Stop</button></div>'
+      + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
+      + '<span class="ss-grow"></span>'
+      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
     : S.busy
-    ? '<div class="statusstrip"><span class="threedot"><i></i><i></i><i></i></span><span>' + S.phase + '</span>'
-      + '<span class="mono ter tnum" style="margin-left:auto">' + (S.elapsed / 10).toFixed(1) + 's</span>'
-      + '<button class="btn-g" data-act="stop">Stop</button></div>'
+    ? '<div class="statusstrip busy">'
+      + '<span class="tk-chip tk-chip--sm tk-chip--blue ss-phase"><span class="threedot"><i></i><i></i><i></i></span>'
+      + '<span class="ss-word">' + S.phase + '</span></span>'
+      + '<span class="mono tnum ss-time">' + (S.elapsed / 10).toFixed(1) + 's</span>'
+      + '<span class="ss-grow"></span>'
+      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
-    // the operator needs this next to the button that was disabled.
+    // the operator needs this next to the button that was disabled. The
+    // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
     : SWX.err
-    ? '<div class="statusstrip gated">' + ic('warn') + esc(SWX.err) + '</div>'
+    ? '<div class="statusstrip gated">'
+      + (/has not finished/.test(SWX.err)
+          ? '<span class="ann caution">' + ic('alert') + 'Caution</span>'
+          : '<span class="ann critical">' + ic('alert') + 'Switch failed</span>')
+      + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
     /* F10 — where the app reports on itself. Lowest priority: a running turn,
        a pending approval or a failed switch all matter more than the last
        thing that changed. */
@@ -1905,8 +2087,9 @@ function composer() {
       + '<span class="readout">' + esc(APPSTATUS.text) + '</span></div>'
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
-      '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
-      + '<button class="iconbtn" style="width:20px;height:20px" data-unqueue="' + i + '">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+      '<div class="qchip"><span class="qlb">Queued</span><span class="qtx">' + esc(t) + '</span>'
+      + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+  const backend = selBackend();
   return '<div class="composerwrap">' + status + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
@@ -1932,34 +2115,43 @@ function composer() {
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask for an outcome, or / for a command') + '"></textarea>'
       + micButton() + sendButton() + '</div>'
-      /* B.7 — the control row is a legend plate: each control is named above
-         it in the 11px label style, and its value is machine text. It used to
-         read as five unlabelled dropdowns, and on the cloud route three of
-         them are the route itself — backend, then provider, then model — with
-         no way to tell which was which without opening one. */
+      /* B.7, Soft Tactile — Valerii's ruling: Backend · Provider · Model, a
+         spacer, then Context · Mode. The controls are still named, but the
+         name is a caption INSIDE the pill, drawn by CSS from `data-cap`
+         (::before), so each chip's textContent stays exactly the id the
+         drivers compare. Every chip is a direct child of `.cfoot`, so the
+         popovers can anchor to `#composer .cfoot [data-sel-open=…]`. */
       + '<div class="cfoot">'
-        + '<span class="cgrp"><span class="clabel">Backend</span>'
-        + '<button class="cchip modechip" data-sel-open="backend">'
-          + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button></span>'
+        + '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend">'
+          + ic(backend === 'cloud' ? 'cloud' : backend === 'custom' ? 'server' : 'laptop')
+          + '<span class="cval" data-cap="Backend">' + esc(backend) + '</span>' + ic('chevD', 'chev') + '</button>'
         // SELECTOR LANE: the visible control set follows composerSwitchKindsFor,
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
         + (selHasKind('provider')
-            ? '<span class="cgrp"><span class="clabel">Provider</span>'
-              + '<button class="cchip providerchip" data-sel-open="provider">' + esc(selProviderLabel()) + ic('chevD') + '</button></span>'
+            ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider">'
+              + providerMark(selProviderLabel(), 'xs')
+              + '<span class="cval" data-cap="Provider">' + esc(selProviderLabel()) + '</span>' + ic('chevD', 'chev') + '</button>'
             : '')
         // Lane B — backend switch: the TUI's ComposerMetaControls renders
         // no model control when there is no model (cloud provider without
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
-        + (modelChipHtml()
-            ? '<span class="cgrp"><span class="clabel">Model</span>' + modelChipHtml() + '</span>' : '')
-        + '<span style="flex:1"></span>'
-        + '<span class="cgrp"><span class="clabel">Context</span>' + contextChip() + '</span>'
-        + '<span class="cgrp"><span class="clabel">Mode</span>' + codingModeChip() + '</span>'
+        + modelChipHtml()
+        + '<span class="cgrow"></span>'
+        + contextChip()
+        + codingModeChip()
       + '</div>'
     + '</div></div>';
+}
+
+/** ' is-open' while the popover a composer chip opens is up (presentation only). */
+function cchipOpen(kind) {
+  if (kind === 'backend' || kind === 'provider' || kind === 'model') {
+    return SEL.open && !OB.open && SEL.kind === kind ? ' is-open' : '';
+  }
+  return S.overlay === kind ? ' is-open' : '';
 }
 
 /**
@@ -2015,7 +2207,7 @@ function sendButton() {
     // Item 7C: this sends a steer into the running turn. It is parked as
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
-    if (S.draft.trim()) return '<button class="sendbtn" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
+    if (S.draft.trim()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
     return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
@@ -2073,9 +2265,14 @@ function voiceStripHTML() {
   if (!rec && !VOICE.menu && VOICE.state !== 'error') return '<div class="voicestrip" hidden></div>';
   let h = '<div class="voicestrip">';
   if (rec) {
+    /* Soft Tactile: nine level bars share one `--lv` (0…1) — refreshVoice
+       patches that single property in place on every audio chunk. While the
+       helper finalizes there is no audio, so a spinner stands in for them. */
     h += '<div class="vsrow">'
       + '<span class="vsdot' + (VOICE.state === 'recording' ? ' live' : '') + '"></span>'
-      + '<span class="vslevel"><i style="width:' + voiceLevelPct() + '%"></i></span>'
+      + (VOICE.state === 'finishing'
+          ? '<span class="tk-spin vsspin"></span>'
+          : '<span class="vslevel" style="--lv:' + (voiceLevelPct() / 100) + '">' + '<i></i>'.repeat(9) + '</span>')
       + '<span class="vstext">' + voiceTextInner() + '</span>'
       + voiceChipHTML()
       + '</div>';
@@ -2086,13 +2283,14 @@ function voiceStripHTML() {
        again, so a sentence naming the Settings pane leaves the operator to
        find it themselves. Give them the switch instead — the button opens
        Privacy & Security › Microphone directly. */
-    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>'
-      + (VOICE.canOpenSettings ? '<button class="btn btn-g vsopen" data-act="voice:settings">Open Settings</button>' : '')
-      + (VOICE.canResetPermission ? '<button class="btn btn-g vsopen" data-act="voice:reset">Reset and ask again</button>' : '')
+    h += '<div class="vsrow"><span class="tk-ico tk-ico--sm tk-ico--red vsico">' + ic('micOff') + '</span>'
+      + '<span class="vserr">' + esc(VOICE.err) + '</span>'
+      + (VOICE.canOpenSettings ? '<button class="btn btn-t xs vsopen" data-act="voice:settings">Open Settings</button>' : '')
+      + (VOICE.canResetPermission ? '<button class="btn btn-t xs vsopen" data-act="voice:reset">Reset and ask again</button>' : '')
       + voiceChipHTML()
-      + '<button class="vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
+      + '<button class="iconbtn sm vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   } else {
-    h += '<div class="vsrow"><span class="vstext ter">Dictation language</span>' + voiceChipHTML() + '</div>';
+    h += '<div class="vsrow"><span class="vstext vslabel">Dictation language</span>' + voiceChipHTML() + '</div>';
   }
   // The sentence has to be true in the state it is painted in: while the
   // helper is finalizing, Enter no longer stops anything — submit() holds it
@@ -2138,20 +2336,24 @@ function voiceChipHTML() {
     ? voiceLangName(VOICE.winner) + ' matched'
     : voiceLangName(primary) + (second ? ' + ' + voiceLangName(second) : '');
   return '<button class="vschip' + (won ? ' won' : '') + '" data-act="voice:lang" title="Choose the dictation language">'
-    + esc(label) + ic('chevD') + '</button>';
+    + esc(label) + ic('chevD', 'chev') + '</button>';
 }
 
 function voiceMenuHTML() {
   if (!VOICE.supported.length) {
-    return '<div class="vsmenu"><div class="vsmempty">' + esc(VOICE.reason || 'No on-device languages were reported') + '</div></div>';
+    return '<div class="vsmenu tk-vmenu"><div class="vsmempty">' + esc(VOICE.reason || 'No on-device languages were reported') + '</div></div>';
   }
   const installed = VOICE.supported.filter((id) => VOICE.installed.indexOf(id) >= 0);
   const rest = VOICE.supported.filter((id) => VOICE.installed.indexOf(id) < 0);
+  /* Soft Tactile (CM-08): a radio for the first language, the name with its
+     mono tag and `first` badge over the note, a bar while a model downloads,
+     and the + / ✓ that adds a second language on the right. */
   const row = (id) => {
     const on = VOICE.locales.indexOf(id) >= 0;
     const primary = VOICE.locales[0] === id;
     const here = VOICE.installed.indexOf(id) >= 0;
     const eng = voiceEngineOf(id);
+    const pct = VOICE.installing === id ? Math.round(VOICE.installFraction * 100) : -1;
     const note = here
       ? (eng === 'dictation' ? 'on this Mac · plain text, no punctuation' : 'on this Mac')
       : (VOICE.installing === id
@@ -2159,20 +2361,26 @@ function voiceMenuHTML() {
           : (eng === 'dictation' ? 'downloads a model · plain text, no punctuation' : 'downloads a model'));
     return '<div class="vsmrow' + (on ? ' on' : '') + '">'
       + '<button class="vsmpick" data-act="voice:pick:' + esc(id) + '">'
+      + '<span class="radio' + (primary ? ' on' : '') + '"></span>'
+      + '<span class="vsmbody"><span class="vsmline">'
       + '<span class="vsmname">' + esc(voiceLangName(id)) + '</span>'
       + '<span class="vsmtag mono ter">' + esc(id) + '</span>'
-      + '<span class="vsmnote ter">' + esc(note) + '</span>'
       + (primary ? '<span class="vsmbadge">first</span>' : '')
+      + '</span><span class="vsmnote ter">' + esc(note) + '</span></span>'
       + '</button>'
+      + (pct >= 0 ? '<span class="tk-prog vsmprog"><i style="width:' + pct + '%"></i></span>' : '')
       + (here && !primary
           ? '<button class="vsmadd' + (on ? ' on' : '') + '" data-act="voice:add:' + esc(id) + '" title="Also listen for this language">'
             + (on ? ic('check') : ic('plus')) + '</button>'
           : '')
       + '</div>';
   };
-  return '<div class="vsmenu">'
+  return '<div class="vsmenu tk-vmenu">'
+    + '<div class="vsmtitle">Dictation language</div>'
+    + '<div class="vsmscroll">'
     + '<div class="vsmhead">On this Mac</div>' + installed.map(row).join('')
     + (rest.length ? '<div class="vsmhead">Downloads a model the first time</div>' + rest.map(row).join('') : '')
+    + '</div>'
     + (VOICE.installErr ? '<div class="vsmerr">' + esc(VOICE.installErr) + '</div>' : '')
     + '<div class="vsmfoot">Transcribed on this Mac. One language is active at a time unless you add a second with +: '
     + 'then both models hear the same audio and the higher-scoring one wins the whole dictation. '
@@ -2343,19 +2551,22 @@ function renderInspector() {
             : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
             : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
             : 'no trace for this call') + '">'
-        + (m.ok === null ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
+        // Soft Tactile (SH-05): a running step shows the spinner where the card shows '\u2026'.
+        + (m.ok === null ? '<span class="tk-spin" aria-label="running"></span>' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
       : '<p class="cap">No steps yet.</p>';
   } else if (S.inspTab === 'reasoning') {
     const r = S.log.filter((m) => m.k === 'reason');
-    body = r.length ? r.map((m) => '<div style="margin-bottom:12px"><div class="micro sec">step ' + m.steps + '</div>'
-        + '<div class="mono sec" style="white-space:pre-wrap">' + esc(m.text) + '</div></div>').join('')
+    // Soft Tactile (SH-06): a sentence-case label over a mono well per step.
+    body = r.length ? r.map((m) => '<div class="insp-rs"><div class="insp-lbl">Step ' + m.steps + '</div>'
+        + '<pre class="tk-out">' + esc(m.text) + '</pre></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
   } else if (S.inspTab === 'world') {
     const caps = LIVE_CAPS || {};
     const tools = Array.isArray(caps.tools) ? caps.tools.map((t) => t.name).join(' · ') : '';
+    // Soft Tactile (SH-05): a data plate — label over the machine value.
     body = caps.paths
-      ? '<dl class="kvgrid"><dt>cwd</dt><dd class="mono">' + esc(S.live.workingDir || '') + '</dd>'
-        + '<dt>state dir</dt><dd class="mono">' + esc(caps.paths.stateDir || '') + '</dd>'
+      ? '<dl class="tk-plate insp-world"><dt>cwd</dt><dd>' + esc(S.live.workingDir || '') + '</dd>'
+        + '<dt>state dir</dt><dd>' + esc(caps.paths.stateDir || '') + '</dd>'
         + '<dt>skills</dt><dd>' + (SKILLS.length ? SKILLS.map((k) => esc(k.t)).join('<br>') : 'none installed') + '</dd>'
         + '<dt>tools</dt><dd>' + esc(tools) + '</dd></dl>'
       : '<p class="cap">Connect an agent to see what it can reach.</p>';
@@ -2391,19 +2602,25 @@ function renderConsole() {
   el.classList.toggle('hide', !S.consoleOpen);
   if (!S.consoleOpen) return;
   const rows = (S.consoleTab === 'agent' ? LOGS : LLMLOGS);
+  /* Soft Tactile (SH-08/09): a floating drawer — segmented tabs, a neutral
+     Write Debug Bundle button with its keycap, close. An empty tab says what
+     is true: nothing in this build writes to the LLM log. */
+  const empty = S.consoleTab === 'agent'
+    ? '<div class="tk-empty"><h4>Nothing logged yet</h4><p>Agent output and the app’s status lines appear here as they happen.</p></div>'
+    : '<div class="tk-empty"><h4>Nothing in the LLM log</h4><p>This build does not record model requests here. The Agent log shows what the agent printed.</p></div>';
   el.innerHTML = '<div class="conhead">'
     + segControl([['agent','Agent log'],['llm','LLM log']], S.consoleTab, 'console:')
-    + '<span style="flex:1"></span>'
-    + '<button class="btn btn-s" data-act="dump">Write Debug Bundle' + keycaps('⌥ ⌘ D') + '</button>'
-    + '<button class="iconbtn" data-act="toggle:console">' + ic('x') + '</button></div>'
-    + '<div class="conbody">' + rows.map(([t, l, m]) =>
+    + '<span class="grow"></span>'
+    + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Write Debug Bundle' + keycaps('⌥⌘D') + '</button>'
+    + '<button class="iconbtn" data-act="toggle:console" title="Close console" aria-label="Close console">' + ic('x') + '</button></div>'
+    + '<div class="conbody">' + (rows.length ? rows.map(([t, l, m]) =>
         '<div class="logrow"><span class="ter">' + t + '</span><span class="lvl ' + l + '">' + l + '</span>'
-        + '<span class="sec">' + esc(m) + '</span></div>').join('') + '</div>';
+        + '<span class="sec">' + esc(m) + '</span></div>').join('') : empty) + '</div>';
 }
 
 /* ---------------- palette ---------------- */
 const SCOPES = {
-  theme: {label:'Theme', ph:'Choose a theme…', rows:[['gear','System','follow macOS','','theme:system'],['gear','Light','','','theme:light'],['gear','Dark','','','theme:dark']]},
+  theme: {label:'Theme', ph:'Choose a theme…', rows:[['laptop','System','follow macOS','','theme:system'],['sun','Light','','','theme:light'],['moon','Dark','','','theme:dark']]},
   // Item 7: the prototype's Task scope is gone — nothing targeted scope:task, and the Tasks tab is the one surface.
 };
 
@@ -2425,9 +2642,9 @@ function palRows() {
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
   // cross-entity
   SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session'}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task'}));
+    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:'room:skills', badge:'skill'}));
   return hits;
@@ -2440,11 +2657,18 @@ function bold(t, q) {
   return esc(t.slice(0, i)) + '<b>' + esc(t.slice(i, i + q.length)) + '</b>' + esc(t.slice(i + q.length));
 }
 
+/* Soft Tactile: the right slot carries, in order, the current theme's check (Theme
+   scope only), a mono slash alias, the status dot of a matching chat or task (only
+   when it needs you or is running — a read chat carries none), or keycaps. Chats,
+   tasks, skills and scope rows are two-line rows with the context under the title. */
 function palRowHTML(r, i, q) {
-  const shortcut = r.sc && r.sc.startsWith('/')
-    ? '<span class="mono ter">' + esc(r.sc) + '</span>'
+  const current = S.scope === 'theme' && r.act === 'theme:' + S.theme;
+  const shortcut = current ? '<span class="palcheck" title="Current theme">' + ic('check') + '</span>'
+    : r.sc && r.sc.startsWith('/') ? '<span class="mono palslash">' + esc(r.sc) + '</span>'
+    : r.dot && r.dot[0] !== 'empty' ? '<span class="' + ovDotCls(r.dot[0], r.dot[1]) + '" title="' + esc(r.dot[1]) + '"></span>'
     : keycaps(r.sc);
-  return '<button class="palrow' + (i === S.cur ? ' on' : '') + '" data-palrow="' + i + '">'
+  const two = !!(r.badge || S.scope);
+  return '<button class="palrow' + (two ? ' two' : '') + (i === S.cur ? ' on' : '') + '" data-palrow="' + i + '">'
     + '<span class="ic">' + ic(r.ic) + '</span>'
     + '<span class="ti">' + bold(r.t, q) + '</span>'
     + '<span class="cx">' + esc(r.cx || '') + '</span>'
@@ -2457,18 +2681,26 @@ function paletteHTML() {
   let list = '', idx = 0;
   if (flat === null) {
     PAL.forEach(([g, rows]) => {
-      list += '<div class="palgroup micro">' + esc(g) + '</div>';
+      list += '<div class="palgroup">' + esc(g) + '</div>';
       rows.forEach((r) => {
         list += palRowHTML({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}, idx++, '');
       });
     });
   } else if (flat.length === 0) {
-    list = '<div class="palempty"><div style="font-weight:500">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
+    list = '<div class="palempty"><div class="palempty-t">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
       + '<div class="cap">Nothing in the command registry matches.</div>'
-      + '<button class="palrow" data-ask="1"><span class="ic">' + ic('chat') + '</span>'
-      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
+      + '<button class="palrow" data-ask="1"><span class="ic">' + ic('arrowR') + '</span>'
+      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
   } else {
-    list = flat.map((r, i) => palRowHTML(r, i, q)).join('');
+    // Ranked commands first, then a header before the chats, tasks and skills that
+    // match. Headers sit between rows only; data-palrow indexes stay the flat order.
+    const heads = {session:'Chats', task:'Tasks', skill:'Skills'};
+    let last = '';
+    flat.forEach((r, i) => {
+      if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';
+      last = r.badge || '';
+      list += palRowHTML(r, i, q);
+    });
   }
   const sc = S.scope ? SCOPES[S.scope] : null;
   const dial = (sc && sc.dial) ? '<div style="padding:12px 16px;box-shadow:inset 0 1px 0 var(--line-soft)">'
@@ -2476,12 +2708,13 @@ function paletteHTML() {
       + '<span class="mono tnum" style="margin-left:auto">' + S.dialShare + '</span></div>'
       + '<input class="slider" type="range" min="0" max="100" step="5" value="' + S.dialShare + '" id="dial">'
       + '<div class="cap" style="margin-top:4px">' + esc(shareBlurb(S.dialShare)) + '</div></div>' : '';
-  return '<div class="scrim" data-close="1"><div class="pal" role="dialog" aria-label="Command palette">'
+  return '<div class="scrim palscrim" data-close="1"><div class="pal" role="dialog" aria-label="Command palette">'
     + '<div class="palin">' + ic('search')
-      + (sc ? '<span class="palscope">' + esc(sc.label) + ' <span data-popscope="1">×</span></span>' : '')
-      + '<input id="palq" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
+      + (sc ? '<span class="palscope tk-chip tk-chip--blue tk-chip--sm">' + esc(sc.label)
+        + '<span class="palscope-x" data-popscope="1" role="button" title="Back to all commands" aria-label="Back to all commands">' + ic('x') + '</span></span>' : '')
+      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
       + keycaps('esc') + '</div>'
-    + '<div class="pallist" id="pallist">' + list + '</div>' + dial
+    + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>' + dial
     + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'
       + '<span>' + keycaps('↑') + keycaps('↓') + ' Move</span>'
       + (S.scope ? '<span>' + keycaps('⌫') + ' Back</span>' : '')
@@ -2503,11 +2736,15 @@ function slashMatches() {
 function slashPopover() {
   const m = slashMatches();
   const q = S.draft.replace(/^\//, '');
-  if (!m.length) return '<div class="slash"><div class="slashrow"><span class="cmd" style="color:var(--warn)">no matching command</span><span></span><span></span></div></div>';
+  // Soft Tactile: one amber row, no inline colour.
+  if (!m.length) return '<div class="slash"><div class="slashlist"><div class="slashrow nomatch"><span class="cmd">no matching command</span></div></div></div>';
+  // Rows scroll inside .slashlist; the footer (count + keys) stays put.
   return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a], i) =>
     '<button class="slashrow' + (i === S.slashCur ? ' on' : '') + '" data-slash="' + esc(n) + '">'
     + '<span class="cmd">/' + bold(n, q) + '</span><span class="ds">' + esc(d) + '</span>'
-    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div></div>';
+    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div>'
+    + '<div class="slashfoot"><span>' + m.length + (m.length === 1 ? ' command' : ' commands') + '</span>'
+    + '<span class="grow"></span>' + keycaps('↑↓ tab esc') + '</div></div>';
 }
 
 /* ---------------- overlays ---------------- */
@@ -2588,7 +2825,8 @@ function renderOverlays() {
   if (keep) {
     const again = o.querySelector('#' + CSS.escape(keep.id));
     if (again) {
-      if (keep.value && !again.value) again.value = keep.value;
+      // Not #palq: its value is always drawn from S.q, and entering a scope clears S.q on purpose.
+      if (keep.value && !again.value && keep.id !== 'palq') again.value = keep.value;
       again.focus();
       // A password input still supports a selection range; a caret past the
       // end of a value the repaint shortened is clamped by the DOM.
@@ -2628,6 +2866,8 @@ function renderOverlays() {
     const first = o.querySelector('#wiz-url') || o.querySelector('#wiz-key');
     if (first) { first.focus(); first.setSelectionRange(first.value.length, first.value.length); }
   }
+  // SH-03: the delete alert arrives with Cancel focused (innerHTML ignores `autofocus`).
+  if (!(document.activeElement && o.contains(document.activeElement))) { const af = o.querySelector('.alertbox [autofocus]'); if (af) af.focus(); }
   // r5 item 7: the intro's canvas is destroyed by the rebuild above.
   obIntroMounted();
 }
@@ -2691,15 +2931,36 @@ function refreshDlProgress() {
 
 
 
-/** Pin a popover to the control that opened it, clamped inside the window. */
+/** Pin a popover to the control that opened it, clamped inside the window.
+ *
+ *  Soft Tactile: every popover belongs to its own chip. `sel` is a selector or
+ *  the element itself. The popover opens 8px above the composer card that chip
+ *  sits in (above the chip itself anywhere else), lines up with the chip's left
+ *  edge — or its right edge for a chip on the right half of the row — and is
+ *  clamped inside the content column, so a wide one never runs under the
+ *  inspector. Its width (narrowed when the column is narrower) and the height
+ *  the column leaves above the card are part of the returned style, so a
+ *  caller's own `width:` in front of it is only the default. */
 function anchorStyle(sel, width) {
-  const el = document.querySelector(sel);
-  const win = $('#window').getBoundingClientRect();
-  if (!el) return 'right:24px;bottom:96px';
+  const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+  const winEl = $('#window');
+  if (!el || !winEl) return 'right:24px;bottom:96px';
+  const win = winEl.getBoundingClientRect();
+  const colEl = document.querySelector('#content');
+  const colR = colEl ? colEl.getBoundingClientRect() : null;
+  const col = colR && colR.width > 0 ? colR : win;
+  const lo = Math.max(win.left, col.left) + 8;
+  const hi = Math.min(win.right, col.right, window.innerWidth) - 8;
+  const w = Math.round(Math.max(Math.min(width, hi - lo), Math.min(width, 280)));
   const r = el.getBoundingClientRect();
-  const left = Math.max(win.left + 8, Math.min(r.left, win.right - width - 8));
+  const card = el.closest('#composer');
+  const top = card ? card.getBoundingClientRect().top : r.top;
+  const onRight = r.left + r.width / 2 > (lo + hi) / 2;
+  const left = Math.max(lo, Math.min(onRight ? r.right + 6 - w : r.left - 6, hi - w));
+  const room = Math.round(top - 8 - Math.max(win.top, col.top) - 8);
   return 'position:fixed;left:' + Math.round(left) + 'px;bottom:'
-    + Math.round(window.innerHeight - r.top + 8) + 'px;top:auto;right:auto';
+    + Math.round(window.innerHeight - top + 8) + 'px;top:auto;right:auto;width:' + w + 'px'
+    + (room > 160 ? ';max-height:' + room + 'px' : '');
 }
 
 /**
@@ -2725,7 +2986,7 @@ function ctxBoundLine() {
     text = 'older turns are being dropped — the window is the limit, not a configured cap';
   }
   if (u.droppedPairs > 0) text += ' · ' + u.droppedPairs + ' dropped so far';
-  return '<p class="cap ctxbound" style="margin:8px 0 0">' + esc(text) + '</p>';
+  return '<p class="cap ctxbound">' + ic('alert') + '<span>' + esc(text) + '</span></p>';
 }
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
@@ -2765,23 +3026,47 @@ function contextHTML() {
     }
   }
   const rows = CTX.tokens
-    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">' + body + '</dl>'
-    : '<p class="cap" style="margin:0">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
+    ? '<dl class="kvgrid">' + body + '</dl>'
+    : '<p class="cap">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
+  /* Soft Tactile (CM-15…17): the breakdown bar under the title — the prompt in
+     brand (amber above 70%, red above 85%, striped while projected) and the
+     reply reserve beside it — then the rows, trimming and basis lines, the
+     tasks-per-turn dial and the footer. */
+  const used = win ? Math.min(100, CTX.tokens / win * 100) : 0;
+  const held = win ? Math.min(100 - used, reserved / win * 100) : 0;
+  const meter = CTX.tokens && win
+    ? '<div class="tk-prog ctxmeter' + (used >= 85 ? ' tk-prog--red' : used >= 70 ? ' tk-prog--amber' : '') + (proj ? ' proj' : '') + '">'
+      + '<i style="width:' + used.toFixed(1) + '%"></i>'
+      + (held > 0 ? '<b style="width:' + held.toFixed(1) + '%"></b>' : '') + '</div>'
+    : '';
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
-    + '<div style="padding:12px 16px 8px"><div class="hd" style="margin-bottom:8px">' + esc(title) + '</div>' + rows
+    + '<div class="popover ctxpop tk-pop" style="width:380px;' + anchorStyle('.ctxbtn', 380) + '">'
+    + '<div class="ctxin"><div class="hd ctxttl">' + esc(title) + '</div>' + meter + rows
     + ctxBoundLine()
-    + (CTX.tokens ? '<p class="cap ctxbasis" style="margin:8px 0 0">' + esc(ctxBasisLine()) + '</p>' : '')
+    + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
-    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span>tasks per turn</span>'
+    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span class="ctxdt">tasks per turn</span>'
       + '<span class="cap">sent each turn (1-100)</span></span>'
-      + '<span class="hstack">'
-      + '<button class="btn btn-s" data-ctx-step="agent.conversationMaxPairs:-1"' + (pairs <= 1 ? ' disabled' : '') + '>\u2212</button>'
-      + '<span class="mono tnum" style="min-width:40px;text-align:center">' + pairs + '</span>'
-      + '<button class="btn btn-s" data-ctx-step="agent.conversationMaxPairs:1"' + (pairs >= 100 ? ' disabled' : '') + '>+</button>'
+      + '<span class="hstack ctxstep">'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:-1" aria-label="fewer tasks per turn"' + (pairs <= 1 ? ' disabled' : '') + '>' + ic('minus') + '</button>'
+      + '<span class="mono tnum ctxval">' + pairs + '</span>'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= 100 ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
-    + '<div class="popfoot"><button class="btn btn-g" data-act="clear">Clear transcript</button>'
-    + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
+    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
+}
+
+/* The kit dot for a chatDot()/taskDot() pair, in the Tactile status grammar:
+   running pulses brand, waiting for an approval is amber, a failed or stopped
+   turn is red, finished-not-read is filled brand, read is a hollow ring. The
+   state stays whatever chatDot said; only the tip picks the tone. */
+function ovDotCls(state, tip) {
+  if (state === 'running') return 'tk-dot tk-dot--brand tk-dot--pulse';
+  if (state !== 'filled') return 'tk-dot tk-dot--hollow';
+  // Anchored on chatDot/taskDot's own wording, so an error message quoted after "failed: " cannot pick the tone.
+  if (/^(the last turn failed|stopped:|failed:|blocked:)/.test(tip || '')) return 'tk-dot tk-dot--red';
+  if (tip === 'waiting for your approval') return 'tk-dot tk-dot--amber';
+  return 'tk-dot tk-dot--brand';
 }
 
 function sessionSheet() {
@@ -2789,46 +3074,53 @@ function sessionSheet() {
   // item 6: the "N turns" subtitle is gone everywhere, so this sheet carries
   // the same dot and the same one-word state the sidebar row carries.
   SESSIONS.forEach((s) => {
-    const [state] = chatDot(s);
-    rows += '<button class="row" style="padding:0;height:40px" data-ses="' + esc(s.id) + '">'
-      + '<span class="sdot ' + state + '"></span>'
-      + '<span class="main"><span class="t" style="font-weight:400">' + esc(s.t) + '</span></span>'
+    const [state, tip] = chatDot(s);
+    rows += '<button class="row' + (s.id === S.sessionId ? ' on' : '') + '" data-ses="' + esc(s.id) + '" title="' + esc(s.t + ' · ' + tip) + '">'
+      + '<span class="' + ovDotCls(state, tip) + '"></span>'
+      + '<span class="main"><span class="t">' + esc(s.t) + '</span></span>'
       + '<span class="meta">' + esc(chatStatusWord(s)) + '</span></button>';
   });
-  return sheet('Switch session', '<input class="btn btn-s" style="width:100%;height:32px" placeholder="Filter sessions…">' + rows,
-    '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Open</button>');
+  return sheet('Switch session',
+    '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input placeholder="Filter sessions…" spellcheck="false"></label>'
+    + '<div class="rows sesrows">' + (rows || '<div class="sesempty">No chats in this workspace yet.</div>') + '</div>',
+    '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="close">Open</button>');
 }
 
 function shortcutsSheet() {
+  /* The third column is the web prototype's Ctrl chord. The sheet no longer
+     draws it ("proto Ctrl K" described a different app). The approval row lost
+     "grant" and its S key: approvals are allow-once or deny, S does nothing. */
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
     ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
-    ['Cycle run mode','⌃ R',''],['Approve / grant / deny / abort','Y S N ⎋',''],
+    ['Cycle run mode','⌃ R',''],['Approve / deny / abort','Y N ⎋',''],
     ['Settings','⌘ ,','Ctrl ,'],['Shortcuts','⌘ /',''],
   ];
   return sheet('Keyboard shortcuts',
-    '<div class="rows">' + rows.map(([t, k, p]) => '<div class="row" style="padding:0;height:32px">'
-      + '<span class="main"><span class="t" style="font-weight:400">' + esc(t) + '</span></span>'
-      + '<span class="hstack">' + keycaps(k) + (p ? '<span class="cap">proto ' + esc(p) + '</span>' : '') + '</span></div>').join('') + '</div>',
-    '<button class="btn btn-p" data-act="close">Done</button>');
+    '<div class="kbgrid">' + rows.map(([t, k]) => '<div class="row kbrow">'
+      + '<span class="main"><span class="t">' + esc(t) + '</span></span>'
+      + '<span class="kbkeys">' + keycaps(k) + '</span></div>').join('') + '</div>',
+    '<button class="btn btn-p sm" data-act="close">Done</button>', 'sheet-kb');
 }
 
 function alertHTML() {
   const a = S.alert;
-  return '<div class="sheetwrap" style="align-items:center;padding:0" data-close="1"><div class="alertbox">'
-    + '<div style="display:flex;justify-content:center">' + MARK_COLOR.replace('width="16" height="16"', 'width="40" height="40"') + '</div>'
-    + '<div class="ttl" style="text-align:center">' + esc(a.title) + '</div>'
-    + '<p class="cap" style="text-align:center;margin:0">' + esc(a.msg) + '</p>'
-    + '<div class="hstack" style="justify-content:center;margin-top:4px">'
+  return '<div class="sheetwrap alertwrap" data-close="1"><div class="alertbox" role="alertdialog" aria-label="' + esc(a.title) + '">'
+    + '<span class="alertmark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<div class="ttl">' + esc(a.title) + '</div>'
+    + '<p class="alertmsg">' + esc(a.msg) + '</p>'
+    + '<div class="alertacts">'
       + '<button class="btn btn-s" data-act="close" autofocus>Cancel</button>'
-      + '<button class="btn btn-danger" data-act="' + a.act + '">' + esc(a.ok) + '</button></div></div></div>';
+      + '<button class="btn btn-df" data-act="' + a.act + '">' + esc(a.ok) + '</button></div></div></div>';
 }
 
-function sheet(title, body, foot) {
-  return '<div class="sheetwrap" data-close="1"><div class="sheet"><div class="sheethead"><div class="ttl">' + esc(title) + '</div></div>'
+function sheet(title, body, foot, cls) {
+  return '<div class="sheetwrap" data-close="1"><div class="sheet' + (cls ? ' ' + cls : '') + '" role="dialog" aria-label="' + esc(title) + '">'
+    + '<div class="sheethead"><div class="ttl">' + esc(title) + '</div>'
+    + '<button class="iconbtn sheetx" data-act="close" title="Close" aria-label="Close">' + ic('x') + '</button></div>'
     + '<div class="sheetbody">' + body + '</div><div class="sheetfoot">' + foot + '</div></div></div>';
 }
 
@@ -2861,6 +3153,9 @@ function renderSettings() {
      clicked. Kept per pane, so switching tabs still starts at the top. */
   const keepScroll = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
     ? ((old.querySelector('.setbody') || {}).scrollTop || 0) : 0;
+  // Soft Tactile: the nav's command list scrolls on its own, and the same
+  // rebuild would throw it back to the top on every poll.
+  const keepNavScroll = old ? ((old.querySelector('.setnav-cmds') || {}).scrollTop || 0) : 0;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -2873,43 +3168,40 @@ function renderSettings() {
      is what the click handler's new branch tests. Deliberately NOT `data-close`:
      that branch runs act('close'), which does not clear S.settings. */
   el.dataset.setclose = '1';
-  /* B.8 — the strip scrolls, and it used to say so nowhere: "изначально
-     ваще непонятно что эту полосу можно перекрутить". The pipe separators
-     are gone (they were doing a rule's job badly) and the strip is wrapped in
-     a rail that fades at whichever end still has tabs behind it. */
-  const strip = SETTINGS_TABS.map(([id, label]) =>
-      '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">'
-      + esc(label + tabSuffix(id)) + '</button>').join('');
-  el.innerHTML = '<div class="setwin"><div class="settb">'
-    /* B.8 — one close control with a name on it, not three imitation macOS
-       lights of which one happened to be live. Every icon-only control in
-       this window carries a label or a tooltip: with the sidebar collapsed
-       the tester could not tell what any of the crosses did. */
-    + '<span class="setttl">Menu › Manage</span>'
-    + '<span style="flex:1"></span>'
-    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
-    + '</div><div class="setcols">'
-    + '<div class="setmenu">' + menuTreeHTML() + '</div>'
+  /* Soft Tactile (ST-01…33): a two-column window on the well. The nav on the
+     left IS the tab switcher — the eight Manage rows carry `.settab` (+`.on`,
+     `data-act="settings:<id>"`, text "Label (N)") inside the menu rows the
+     TUI tree draws — and the body is a floating card: crumb + close, the
+     pane, and the diagnostics data plate at the foot. Each tab draws its own
+     toolbar at the top of `.setbody`; the frame never repeats the tab title. */
+  const tabLabel = (SETTINGS_TABS.find((t) => t[0] === cur) || [cur, cur])[1];
+  const buildText = BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—';
+  const agentText = S.live.binary || 'not started';
+  const diag = diagLine();
+  el.innerHTML = '<div class="setwin" role="dialog" aria-label="Manage">'
+    + '<nav class="setnav" aria-label="Manage"><div class="setmenu">' + menuTreeHTML() + '</div></nav>'
     + '<div class="setmain">'
-    /* The strip WRAPS rather than scrolling. The brief allows either, and a
-       strip that cannot overflow cannot hide its own navigation — there is no
-       affordance to miss and no gesture to discover. */
-    + '<div class="settabs">' + strip + '</div>'
-    + '<div class="setbody">' + settingsPane() + '</div>'
-    /* B.8 — the diagnostics line becomes a data plate at the BOTTOM, in mono,
-       carrying the agent binary and the build. It used to sit above the pane
-       as a grey sentence competing with the content. */
+    + '<div class="settb"><div class="tk-crumb"><span class="k">Manage ›</span><h3 class="setttl">' + esc(tabLabel) + '</h3></div>'
+    + '<span class="grow"></span>'
+    /* B.8 — one close control with a name on it. Every icon-only control in
+       this window carries a label or a tooltip. */
+    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
+    + '</div>'
+    + '<div class="setbody" data-pane="' + esc(cur) + '">' + settingsPane() + '</div>'
+    /* B.8 — the diagnostics line is a data plate at the foot, in mono,
+       carrying the build and the agent binary. Sentence-case keys. */
     + '<div class="setplate plate"><dl>'
-      + '<dt>Build</dt><dd>' + esc(BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—') + '</dd>'
-      + '<dt>Agent</dt><dd>' + esc(S.live.binary || 'not started') + '</dd>'
-      + '<dt>State</dt><dd>' + esc(diagLine()) + '</dd>'
+      + '<div class="set-kv"><dt>Build</dt><dd>' + esc(buildText) + '</dd></div>'
+      + '<div class="set-kv set-kv--agent"><dt>Agent</dt><dd title="' + esc(agentText) + '">' + esc(agentText) + '</dd></div>'
+      + '<div class="set-kv set-kv--wide"><dt>State</dt><dd title="' + esc(diag) + '">' + esc(diag) + '</dd></div>'
     + '</dl></div>'
     + '</div>'
-    + '</div></div>';
+    + '</div>';
   $('#window').appendChild(el);
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
+  if (keepNavScroll) { const cmds = el.querySelector('.setnav-cmds'); if (cmds) cmds.scrollTop = keepNavScroll; }
   if (MENUFOCUS.want) { const first = el.querySelector('.setmenu button.menurow'); if (first) first.focus(); }
 }
 
@@ -2931,27 +3223,75 @@ function tabSuffix(id) {
   else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
   return n === 0 ? '' : ' (' + n + ')';
 }
+/* What a Manage tab shows in the nav: its label, then the count as a badge
+   (nothing at zero). The space between them takes no room in the flex row;
+   it keeps the row's accessible name "Skills 18" rather than "Skills18".
+   The Memory and MCP refreshes repaint it in place. */
+function settabInner(label, id) {
+  const suffix = tabSuffix(id);
+  return '<span class="lb">' + esc(label) + '</span>' + (suffix ? ' <span class="setcount">' + esc(suffix.slice(2, -1)) + '</span>' : '');
+}
 
 function menuTreeHTML() {
   const cur = settingsPaneId(S.settingsPane);
+  // Soft Tactile nav icons, one per node (function-local: no top-level state).
+  const ICON = {
+    'go.manage.tasks':'tasks', 'go.manage.skills':'skills', 'go.manage.memory':'memory', 'go.manage.mcp':'plug',
+    'go.manage.llm':'cpu', 'go.manage.telegram':'send', 'go.manage.import':'import', 'go.manage.privacy':'lock',
+    'session.new':'plus', 'session.switch':'chat', 'session.clear':'trash', 'session.context':'gauge', 'session.id':'hash',
+    'session.window':'term', 'model.chat':'cpu', 'run.mode':'shield', 'run.abort':'stop', 'run.queue':'list',
+    'run.steer':'arrowR', 'run.expand':'expand', 'run.collapse':'minus', 'setup.theme':'sun', 'setup.mouse':'dots',
+    'setup.sidebar':'sidebar', 'setup.analytics':'lock', 'setup.skill':'skills', 'setup.task':'tasks',
+    'help.commands':'search', 'help.tools':'bolt', 'help.dump':'download', 'help.report':'flag', 'help.quit':'x',
+    'danger.uninstall':'trash',
+  };
+  // The chord is live in the desktop too: ctrl+g then the key (the keydown
+  // handler's CHORD layer). The keycap shows the letter and the nav foot says
+  // "⌃G then a letter"; the row carries the whole chord as aria-keyshortcuts.
+  const chordCap = (n) => n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '"><span class="kc">' + esc(n.chord) + '</span></span>' : '';
+  const shortcut = (n) => n.chord ? ' aria-keyshortcuts="Control+G ' + esc(n.chord) + '"' : '';
   const row = (n, sub) => {
     const on = n.tab && n.tab === cur;
-    // The chord is live in the desktop too: ctrl+g then the key (the keydown handler's CHORD layer).
-    const chord = n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '">ctrl+g ' + esc(n.chord) + '</span>' : '';
-    if (n.na) return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></div>';
-    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"><span class="lb">' + esc(n.label) + '</span>' + chord + '</button>';
+    const icon = ic(ICON[n.id] || 'dots');
+    if (n.na) {
+      return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop">' + icon
+        + '<span class="lbw"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></span></div>';
+    }
+    if (n.tab) {
+      /* A Manage node is also the tab switcher: `.settab` carries the tab's
+         act, its label (`.lb`) and the count badge (`.setcount`, absent at
+         zero). A click on the label lands on `settings:<id>`, anywhere else
+         on the row on `menu:go.manage.<id>` — the same destination. */
+      return '<button class="menurow setrow' + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + (on ? ' aria-current="page"' : '') + shortcut(n) + '>' + icon
+        + '<span class="settab' + (on ? ' on' : '') + '" data-act="settings:' + esc(n.tab) + '">' + settabInner(n.label, n.tab) + '</span>'
+        + chordCap(n) + '</button>';
+    }
+    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + shortcut(n) + '>' + icon
+      + '<span class="lb">' + esc(n.label) + '</span>' + chordCap(n) + '</button>';
   };
   // r4-ui item 5: no node carries `sub` any more — `Observe` and `Manage` were
   // the only two, and both left. The branch (and `.menurow.sub` / `.parent` in
-  // styles.css) is kept on purpose: MENU_GROUPS is a copy of the TUI registry
+  // the stylesheet) is kept on purpose: MENU_GROUPS is a copy of the TUI registry
   // and the next node pulled across may well be a parent, and it is what
   // __menuSubRows() asserts zero of — delete the branch and that check stops
   // meaning anything.
-  return MENU_GROUPS.map(([label, nodes]) =>
-    '<div class="menuhd">' + esc(label) + '</div>'
-    + nodes.map((n) => n.sub
-        ? '<div class="menurow parent"><span class="lb">' + esc(n.label) + ' →</span></div>' + n.sub.map((c) => row(c, true)).join('')
-        : row(n, false)).join('')).join('');
+  const group = (nodes) => nodes.map((n) => n.sub
+    ? '<div class="menurow parent">' + ic(ICON[n.id] || 'dots') + '<span class="lb">' + esc(n.label) + ' →</span></div>' + n.sub.map((c) => row(c, true)).join('')
+    : row(n, false)).join('');
+  /* Layout: "Manage" and its eight tabs on top; every other group of the
+     real tree under "Commands" in a list that scrolls on its own; the Danger
+     zone (not available) and the chord hint pinned at the foot. */
+  const manage = MENU_GROUPS.filter(([label]) => label === 'Manage');
+  const danger = MENU_GROUPS.filter(([label]) => label === 'Danger zone');
+  const commands = MENU_GROUPS.filter(([label]) => label !== 'Manage' && label !== 'Danger zone');
+  return manage.map(([label, nodes]) => '<div class="menuhd setnav-title">' + esc(label) + '</div>' + group(nodes)).join('')
+    + '<div class="setnav-cmds"><div class="setnav-h">Commands</div>'
+      + commands.map(([label, nodes]) => '<div class="menuhd">' + esc(label) + '</div>' + group(nodes)).join('')
+    + '</div>'
+    + '<div class="setnav-foot">'
+      + danger.map(([, nodes]) => group(nodes)).join('')
+      + '<div class="setnav-hint"><span class="kc">⌃G</span> then a letter</div>'
+    + '</div>';
 }
 
 /* debug-diagnostics-line.tsx: `cwd | llama | llm — · step — | kv — |
@@ -3080,7 +3420,7 @@ function settingsPane() {
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
 function comingNote(label) {
-  return '<div class="tui"><b>' + esc(label) + '</b><div class="ter">coming in the next step of this branch</div></div>';
+  return '<div class="set-pane"><div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('clock') + '</span><h4>' + esc(label) + '</h4><p>coming in the next step of this branch</p></div></div>';
 }
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
    + session grants, no ladder. The desktop's approval path only offers
@@ -3092,21 +3432,40 @@ function privacyPane() {
   const eff = privacyEffective();
   const known = typeof eff === 'boolean';
   const on = known && eff;
-  return '<div class="tui">'
-    + '<b>Analytics</b>'
-    + '<div>   <span class="ter">anonymous usage </span>' + (known ? '<span class="' + (on ? 'tuimsg' : 'ter') + '">' + (on ? 'on' : 'off') + '</span>'
-        : PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError) ? '<span class="ter">…</span>'
-        : '<span class="ter">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</span>')
-      + (PRIV.busy ? '<span class="ter">  …</span>' : '') + '</div>'
-    + '<div class="ter">   Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
-    + '<b style="margin-top:8px">Session grants</b>'
-    + '<div class="ter">   none active — grants you make with [s] / [a] at a prompt appear here for this session</div>'
-    + (PRIV.message ? '<div class="tuimsg" style="margin-top:8px">   ' + esc(PRIV.message)
-        + ' <span class="ter">(the running agent picks it up after Restart Agent Runtime)</span> '
-        + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '')
-    + (PRIV.lastError ? '<div class="tuierr" style="margin-top:8px">   ' + esc(PRIV.lastError) + '</div>' : '')
-    + '<div class="tuihint"><button data-act="privacy:analytics"' + (!known || PRIV.busy ? ' disabled' : '') + '>a: analytics ' + (on ? 'off' : 'on') + '</button>'
-      + '<span>·</span><button data-act="privacy:refresh">r: refresh</button></div>'
+  const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
+  // ST-33: the state word beside the switch (the switch itself carries aria-checked).
+  const stateWord = known ? (on ? 'on' : 'off') : pending ? '…' : '—';
+  const unknownNote = !known && !pending
+    ? '<div class="tk-help tk-help--warn">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</div>' : '';
+  // What is and is not sent — both lists are the TUI sentence below, split into its parts.
+  const sentList = (title, items, icon, tone) => '<div class="set-privcol"><div class="tk-sh">' + esc(title) + '</div><ul class="set-privul">'
+    + items.map((t) => '<li><span class="tk-ico tk-ico--xs ' + tone + '">' + ic(icon) + '</span>' + esc(t) + '</li>').join('') + '</ul></div>';
+  return '<div class="set-pane set-privacy">'
+    // The TUI's own restart sentence for this toggle, in the shared restart-line look.
+    + (PRIV.message ? '<div class="tuimsg tk-notice tk-notice--blue">' + ic('refresh')
+        + '<span class="grow">' + esc(PRIV.message) + ' <span class="sec">(the running agent picks it up after Restart Agent Runtime)</span></span>'
+        + '<button class="btn btn-t sm" data-act="agent:restart">Restart Agent Runtime</button></div>' : '')
+    + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '')
+    + '<div class="tk-list set-setlist">'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
+          + '<div class="d">Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
+          + unknownNote + '</div>'
+        + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : stateWord)) + '</span>'
+        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
+          + (!known || PRIV.busy ? ' disabled' : '') + ' title="a: analytics ' + (on ? 'off' : 'on') + '"></button>'
+      + '</div>'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Session grants</div>'
+          + '<div class="d">The desktop answers each approval once, allow or deny, so a session holds no standing grants.</div></div>'
+        + '<span class="tk-chip tk-chip--sm tk-chip--line">none active</span>'
+      + '</div>'
+    + '</div>'
+    + '<div class="set-privgrid">'
+      + sentList('What is sent', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
+      + sentList('What never leaves this machine', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
+    + '</div>'
+    + tuiHints([['a: analytics ' + (on ? 'off' : 'on'), 'privacy:analytics', {disabled: !known || PRIV.busy}], ['r: refresh', 'privacy:refresh']])
     + '</div>';
 }
 /* The value the TUI shows: the user file's key when set, else the
@@ -3174,10 +3533,11 @@ async function privacySet(enabled) {
 function renderToasts() {
   $('#toasts').innerHTML = S.toasts.map((t) => {
     const bad = t.kind === 'bad';
+    // No whitespace between the text spans: drivers read the toast's textContent.
     return '<div class="toast' + (bad ? ' bad' : '') + '">'
-      + '<span style="color:var(--' + (bad ? 'danger' : 'success') + ');display:flex">' + ic(bad ? 'warn' : 'check') + '</span>'
-      + '<span><span style="font-weight:500">' + esc(t.t) + '</span>'
-      + (t.s ? '<span class="cap" style="display:block">' + esc(t.s) + '</span>' : '') + '</span></div>';
+      + '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
+      + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
+      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span></div>';
   }).join('');
 }
 function toast(t, s, kind) {
@@ -3428,6 +3788,7 @@ function act(a) {
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
+                           try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
                            render(); return; }
   if (k === 'mode')      { S.mode = v; if (S.overlay === 'palette') close(); render(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
@@ -4016,8 +4377,9 @@ function refreshVoice() {
     // this branch leaves the dot where it is.
     const t = strip.querySelector('.vstext');
     if (t) t.innerHTML = voiceTextInner();
-    const l = strip.querySelector('.vslevel i');
-    if (l) l.style.width = voiceLevelPct() + '%';
+    // The nine bars read one custom property, so the level is one write.
+    const l = strip.querySelector('.vslevel');
+    if (l) l.style.setProperty('--lv', String(voiceLevelPct() / 100));
   } else {
     VOICE_STRIP_KEY = key;
     if (strip) strip.outerHTML = voiceStripHTML();
@@ -4689,6 +5051,8 @@ document.addEventListener('keydown', (e) => {
   if (!inText && k.length === 1 && !mod && S.room === 'chat') { const en = $('#entry'); if (en) en.focus(); }
 });
 
+// The theme picked in the palette or View › Appearance (act 'theme') survives a relaunch.
+try { const t = localStorage.getItem('atag.theme'); if (t === 'light' || t === 'dark') { S.theme = t; document.documentElement.setAttribute('data-theme', t); } } catch (e) { /* no storage: follow macOS */ }
 render();
 setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
 /* r5 item 2: below 1000px the sidebar collapses to the same 52px rail with no
@@ -5987,28 +6351,45 @@ function obHintsHTML() {
  *  product's name was wrong and the step indicator was the smallest thing on
  *  a 1470px screen. */
 function obHeadHTML() {
-  const here = OB_PHASE_OF[OB.step] || null;
-  /* `ob-stepmark`, not `ob-phase`: the download progress ROW is `.ob-phase`
-     and has been since before this header existed. Reusing the name meant my
-     rule — uppercase, letter-spaced, Inter — landed on that row instead, made
-     it wide enough to wrap, and so changed its height every time the ETA text
-     changed length. Everything below it moved, and a pointer parked on the
-     offer card kept losing :hover. That is the exact flicker the operator
-     reported, reintroduced by a name. */
-  const phases = here === null ? '' : '<div class="ob-stepmarks">' + OB_PHASES.map((p) =>
-    '<span class="ob-stepmark' + (p.n === here ? ' on' : '') + '">'
-    + '<span class="n">' + p.n + '</span> ' + esc(p.label) + '</span>').join('') + '</div>';
+  /* Soft Tactile moved the lockup and the phase row onto the rail
+     (obRailHTML); the step column's head is the screen's own title. The
+     cloud step's key and model screens title themselves with the provider
+     (the wizard's `.ob-h`), so the step title is left off there rather than
+     saying "Connect a cloud provider" over a screen that is no longer that. */
   const title = OB_TITLES[OB.step] || OB_SUBTITLES[OB.step] || '';
+  const wizTitled = OB.step === 'cloud' && WIZ.phase !== 'pick_kind' && !!WIZ.row;
   return '<div class="ob-head">'
-    + '<div class="ob-lock">'
-      + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="20" height="20"') + '</span>'
-      + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span>'
-      + '<span class="ob-headspacer"></span>'
-      + phases
-    + '</div>'
-    + '<hr class="ob-headrule">'
-    + (title ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
+    + (title && !wizTitled ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
     + '</div>';
+}
+
+/**
+ * The indigo rail beside every step after the title card: the lockup, one
+ * statement for the phase, the two phases with the current one lit and a
+ * finished one ticked, and the build. It carries no controls.
+ *
+ * `.ob-stepmark`, not `.ob-phase`: the download progress ROW is `.ob-phase`,
+ * and reusing that name once put this row's type on the progress rows and
+ * brought back the hover flicker. The smoke reads the phases by this class.
+ */
+function obRailHTML() {
+  const here = OB_PHASE_OF[OB.step] || null;
+  const importing = OB.step === 'import_pick' || OB.step === 'import_preview' || OB.step === 'import_done';
+  const statement = importing ? 'Bring what you already taught other agents.' : 'Choose how it runs. Change it any time.';
+  const phases = here === null ? '' : '<div class="ob-stepmarks">' + OB_PHASES.map((p) => {
+    const state = p.n === here ? 'on' : p.n < here ? 'done' : '';
+    return '<span class="ob-stepmark' + (state ? ' ' + state : '') + '">'
+      + '<span class="n">' + (state === 'done' ? ic('check') : p.n) + '</span> ' + esc(p.label) + '</span>';
+  }).join('') + '</div>';
+  const build = obBuildLine();
+  return '<aside class="ob-rail">'
+    + '<span class="ob-orb ob-orb-a" aria-hidden="true"></span><span class="ob-orb ob-orb-b" aria-hidden="true"></span>'
+    + '<div class="ob-lock"><span class="ob-mark">' + MARK_COLOR + '</span>'
+      + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span></div>'
+    + '<p class="ob-statement">' + esc(statement) + '</p>'
+    + phases
+    + (build ? '<span class="ob-railbuild">' + esc(build) + '</span>' : '')
+    + '</aside>';
 }
 
 /* ============================================================
@@ -6415,27 +6796,31 @@ function obStartTyping() {
 
 /** The intro screen. No header — onboarding-step-body.tsx:62-64. */
 function obIntroHTML() {
-  /* A 1975 title card, not a screensaver. The starfield that used to run
-     behind this — 220 drifting particles on a canvas — is the one thing the
-     visual system names as out of bounds, and it was also the only part of
-     the app doing continuous work before the user had done anything.
+  /* The title card: the mark, the product's name at display size and which
+     build this is, on one indigo block with a soft brand glow behind the
+     mark. Nothing animates, and it sizes to the window.
 
-     What is left is what a title card is for: the mark, the product's name at
-     display size, one 3px rule, and a line saying which build you are looking
-     at. It sizes to the window rather than to a fixed block, so it is a title
-     card at 1470x923 and still one at the minimum window size. */
-  const b = BUILD || {};
-  const build = b.version
-    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
-    : '';
+     `.ob-introc` keeps exactly its five children — the glow belongs to the
+     card, not the column — and the rule stays as a spacer: the smoke reads
+     both, and Soft Tactile draws no 3px rules (see onboarding.css). */
+  const build = obBuildLine();
   return '<div id="ob-intro">'
+    + '<span class="ob-glow" aria-hidden="true"></span>'
     + '<div class="ob-introc">'
-      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="64" height="64"') + '</span>'
+      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="96" height="96"') + '</span>'
       + '<h1 class="ob-word">' + esc(OB_COPY.wordmark) + '</h1>'
       + '<hr class="ob-rule">'
       + (build ? '<span class="ob-build">' + esc(build) + '</span>' : '')
       + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
     + '</div></div>';
+}
+
+/** Which build this is — `0.5.5 · macOS arm64` — for the title card and the rail. */
+function obBuildLine() {
+  const b = BUILD || {};
+  return b.version
+    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
+    : '';
 }
 
 
@@ -6691,9 +7076,10 @@ function renderDlbar() {
   const shape = [job.kind, job.id, dlJobLabel(job), measured ? 'bar' : 'starting', DL.queue.length].join(' ');
   if (el.__dlShape === shape) {
     if (measured) {
-      const bar = el.querySelector('.dl-bar');
-      const bars = dlBarHTML(percent, 10);
-      if (bar && bar.innerHTML !== bars) bar.innerHTML = bars;
+      // Soft Tactile (CH-23): the strip's bar is a `.tk-prog` fill, so only
+      // its width moves between samples. dlBarHTML stays the wizard's.
+      const fill = el.querySelector('.dl-bar > i');
+      if (fill && fill.style.width !== percent + '%') fill.style.width = percent + '%';
       const pct = el.querySelector('.dl-pct');
       if (pct) pct.textContent = percent + '%';
       const left = el.querySelector('.dl-eta');
@@ -6702,15 +7088,17 @@ function renderDlbar() {
     return;
   }
   el.__dlShape = shape;
-  el.innerHTML = '<span class="dl-g">⇣</span>'
+  // Soft Tactile (CH-23): a lifted pill — download icon · mono id · progress
+  // fill · % · ETA · queue · ghost Cancel. Same cells, same classes, same text.
+  el.innerHTML = '<span class="dl-g">' + ic('download') + '</span>'
     + '<span class="dl-l">' + esc(dlJobLabel(job)) + '</span>'
     + (measured
-        ? '<span class="dl-bar">' + dlBarHTML(percent, 10) + '</span>'
+        ? '<span class="dl-bar tk-prog" aria-hidden="true"><i style="width:' + percent + '%"></i></span>'
           + '<span class="dl-pct">' + percent + '%</span>'
           + '<span class="dl-eta">' + esc(dlEta(eta)) + '</span>'
         : '<span class="dl-eta">' + esc(OB_COPY.starting) + '</span>')
     + (DL.queue.length ? '<span class="dl-q">· ' + DL.queue.length + ' more queued</span>' : '')
-    + '<button class="dl-x" data-act="dl:cancel">Cancel</button>';
+    + '<button class="btn btn-g xs dl-x" data-act="dl:cancel">Cancel</button>';
   el.hidden = false;
   /* The overlay layer's top inset, so the wizard starts BELOW the strip.
      Measured rather than assumed: it is the strip's bottom edge inside
@@ -6723,16 +7111,24 @@ function renderDlbar() {
 /** OnboardingDownloadProgress (onboarding-download-progress.tsx:63-99). */
 function obProgressHTML() {
   if (DL.job === null && DL.error !== null) {
-    return '<div class="ob-err">✗  ' + esc(DL.error) + '</div>';
+    return '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.error) + '</span></div>';
   }
+  /* Soft Tactile: each phase is an icon, its name, a real progress bar and
+     a fixed-width trailing figure. The bar is `.tk-prog` here rather than the
+     strip's glyph bar (dlBarHTML, which #dlbar keeps). `.pb i` keeps its
+     colour contract: a waiting phase's fill is dimmer than a live one's, and
+     the smoke compares the two. */
   const row = (label, phase) => {
     const percent = phase.state === 'done' ? 100 : (phase.percent || 0);
     const trailing = phase.state === 'done' ? 'done'
       : phase.state === 'active' && phase.totalBytes > 0
         ? Math.round(percent) + '%   ' + dlBytes(phase.transferredBytes) + ' / ' + dlBytes(phase.totalBytes)
         : phase.state === 'active' ? Math.round(percent) + '%' : 'waiting';
-    return '<div class="ob-phase ' + phase.state + '"><span class="pl">' + esc(label) + '</span>'
-      + '<span class="pb">' + dlBarHTML(percent, 36) + '</span>'
+    const icon = phase.state === 'done' ? '<span class="tk-ico tk-ico--sm tk-ico--green">' + ic('check') + '</span>'
+      : phase.state === 'active' ? '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>'
+      : '<span class="tk-ico tk-ico--sm">' + ic('clock') + '</span>';
+    return '<div class="ob-phase ' + phase.state + '">' + icon + '<span class="pl">' + esc(label) + '</span>'
+      + '<span class="pb tk-prog"><i style="width:' + Math.round(Math.min(100, Math.max(0, percent))) + '%"></i></span>'
       + '<span class="pt">' + esc(trailing) + '</span></div>';
   };
   const rate = DL.job && DL.job.sawProgress
@@ -6741,7 +7137,7 @@ function obProgressHTML() {
   // The runtime step's own failure, said once and not folded into the
   // weights bar: the model download below it is still running.
   const runtimeErr = DL.runtimeError
-    ? '<div class="ob-err">✗  ' + esc(DL.runtimeError) + '</div>' : '';
+    ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.runtimeError) + '</span></div>' : '';
   return row(OB_COPY.phaseRuntime, DL.runtime) + runtimeErr + row(OB_COPY.phaseWeights, DL.weights)
     + '<div class="ob-rate">' + esc(rate) + '</div>';
 }
@@ -6749,18 +7145,23 @@ function obProgressHTML() {
 /* ---------------- rows and screens ---------------- */
 
 /** rowPrefix (onboarding-rows.ts): `›  ` selected, three spaces otherwise. */
-function obRow(index, selected, label, detail, extraClass, attrs) {
+function obRow(index, selected, label, detail, extraClass, attrs, lead, trail) {
   /* r6 UX: roving tabindex, the desktop list convention. Only the row
      under the cursor is in the Tab order, so Tab enters the list at the
      current row and one more Tab leaves it; the arrows move within.
      `attrs` is for a row that is something more specific than a row —
-     the import step's tick boxes, which are checkboxes and say so. */
+     the import step's tick boxes, which are checkboxes and say so.
+     Soft Tactile: `lead` is the row's icon, logo or tick box and `trail`
+     its keycap, both outside `.t`, whose text the drivers compare. The `›`
+     marker stays in the markup and is not drawn; the tint is the cursor. */
   return '<button class="ob-row' + (selected ? ' on' : '') + (extraClass ? ' ' + extraClass : '')
     + '" data-obrow="' + index + '" tabindex="' + (selected ? '0' : '-1')
     + '" aria-selected="' + (selected ? 'true' : 'false') + '"' + (attrs || '') + '>'
     + '<span class="mk">' + (selected ? '›' : '') + '</span>'
-    + '<span><span class="t">' + label + '</span>'
-    + (detail ? '<span class="d">' + detail + '</span>' : '') + '</span></button>';
+    + (lead || '')
+    + '<span class="ob-rbody"><span class="t">' + label + '</span>'
+    + (detail ? '<span class="d">' + detail + '</span>' : '') + '</span>'
+    + (trail || '') + '</button>';
 }
 
 /** describeDownloadingModel (local-model-picks.ts:139-145). */
@@ -6804,10 +7205,18 @@ function obOutOfReach() {
 }
 
 function obChooseHTML() {
-  const rows = OB_CHOICES.map((choice, i) =>
-    obRow(i, OB.cursor === i, esc(choice.label), esc(choice.detail[0]) + '<br>' + esc(choice.detail[1]))).join('');
-  return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join('\n')) + '</div>'
-    + '<div class="ob-list">' + rows + '</div>';
+  /* Route cards: where it runs, the route, one line, and the digit that
+     jumps to it. */
+  const look = {local:['laptop', ' tk-ico--indigo'], cloud:['cloud', ' tk-ico--blue'], custom:['server', '']};
+  const rows = OB_CHOICES.map((choice, i) => {
+    const l = look[choice.id] || ['server', ''];
+    return obRow(i, OB.cursor === i, esc(choice.label),
+      esc(choice.detail[0]) + (choice.detail[1] ? '<br>' + esc(choice.detail[1]) : ''), '', '',
+      '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
+      '<span class="kc">' + (i + 1) + '</span>');
+  }).join('');
+  return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
+    + '<div class="ob-list ob-routes">' + rows + '</div>';
 }
 
 function obLocalPickHTML() {
@@ -6815,35 +7224,29 @@ function obLocalPickHTML() {
   const models = rows.filter((r) => r.kind === 'model');
   const onHf = OB.cursor >= models.length;
   /* r6 UX: windowLocalPicks paints six rows and says `↓ 7 more`, because
-     a terminal cannot scroll a region. This one can — and while the
-     window was a mouse DEAD END (there is no gesture that reaches the
-     seventh model; only an arrow key moves the window), a scroller is
-     the desktop's own list. Every row is drawn, the box scrolls, and the
-     cursor is kept in view for the keyboard — which behaves exactly as
-     it did, six rows at a time or not. */
+     a terminal cannot scroll a region. This one can: every row is drawn,
+     the box scrolls, and the cursor is kept in view for the keyboard. */
   const best = bestModelFor(OB.models, OB.ram);
   const body = models.length
     ? models.map((row, at) => {
         const model = row.model;
         return obRow(at, !onHf && at === OB.cursor,
           obModelRowLabel(model, best && model.id === best.id),
-          obModelRowDetail(model));
+          obModelRowDetail(model), '', '', modelMark(model.id));
       }).join('')
     : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : obNothingFitsLine()) + '</div>';
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
-    esc('paste an owner/repo id or a huggingface.co URL'));
+    esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
       + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM, '
         + 'and the list below is ordered for it — the best fit first.') + '</div>'
-    + '<div class="ob-h">' + esc(OB_COPY.localHeading) + '</div>'
+    + '<div class="ob-h ob-sec">' + esc(OB_COPY.localHeading) + '</div>'
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
-       Beside it, it collapsed the list to nothing: `.ob-models` carries
-       `overflow-y:auto`, which sets its `min-height` to 0, so as a flex
-       item next to a sibling that cannot shrink it absorbed every pixel of
-       shrinkage and rendered 0px tall — three model rows present in the
-       DOM, readable by script, and INVISIBLE on screen. Caught in a
-       screenshot of the 8 GB pass; the 68 GB pass has no such sibling and
-       looked perfect. `min-height` below is the second belt. */
+       Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
+       item next to a sibling that cannot shrink absorbs every pixel of
+       shrinkage and renders 0px tall — rows present in the DOM, readable by
+       script, and invisible on screen. `min-height` on `.ob-models` is the
+       second belt. */
     + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf;
 }
 
@@ -6901,7 +7304,7 @@ function obOutOfReachHTML() {
   if (!out.length) return '';
   return '<div class="ob-h ob-out-h">' + esc('Needs a bigger machine than this one') + '</div>'
     + '<div class="ob-out-list">' + out.map((model) =>
-      '<div class="ob-out">'
+      '<div class="ob-out">' + modelMark(model.id, 'xs')
       + '<span class="t"><span class="ob-mono">' + esc(model.id) + '</span></span>'
       + (model.description ? '<span class="ob-desc">' + esc(model.description) + '</span>' : '')
       + '<span class="ob-fit ob-fit-over">' + esc(fitFor(model, OB.ram).label) + '</span></div>').join('')
@@ -6914,24 +7317,26 @@ function obErrorIsInline() {
 }
 /** The step error, rendered where the step wants it. */
 function obInlineErrHTML() {
-  return OB.error ? '<div class="ob-err ob-err-field">' + esc(OB.error) + '</div>' : '';
+  return OB.error ? '<div class="ob-err ob-err-field">' + ic('alert') + '<span>' + esc(OB.error) + '</span></div>' : '';
 }
 
 /** hf-reference-editor.tsx, as its own step rather than a jump into Settings. */
 function obHfRefHTML() {
   /* r6 UX: a `<label for>` rather than a paragraph that happens to sit
-     above a box — so clicking the words puts the caret in the field. */
-  return '<label for="ob-hf-ref">' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></label>'
-    + '<div class="ob-explain">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
-    + '<div><input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
-      + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+     above a box — so clicking the words puts the caret in the field.
+     Soft Tactile: the field is a 52px pill wearing the Hugging Face mark,
+     and Clear rides at its end. `[ clear ]` lost its brackets in r6; the
+     control, the chord behind it and the footer hint are unchanged. */
+  const clear = !OB.busy && OB.hfReference.length > 0
+    ? '<button class="ob-offer ob-offer-inline" data-obact="hf:clear">Clear</button>' : '';
+  return '<label class="ob-lbl" for="ob-hf-ref">' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></label>'
+    + '<div class="ob-field' + (OB.error ? ' is-error' : '') + '">' + logoHTML('huggingface', 'sm')
+      + '<input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
+      + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '>'
+      + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + clear + '</div>'
     + obInlineErrHTML()
-    + (!OB.busy && OB.hfReference.length > 0
-        /* r6 UX: `[ clear ]` is a terminal writing a button with the
-           punctuation it has. The control, the chord behind it and the
-           footer hint are unchanged; only the brackets are gone. */
-        ? '<div><button class="ob-offer ob-offer-inline" data-obact="hf:clear">Clear</button></div>' : '')
-    + (OB.busy ? '<div class="ob-explain">asking huggingface.co…</div>' : '');
+    + (OB.busy ? '<div class="ob-explain ob-help">asking huggingface.co…</div>' : '')
+    + '<div class="ob-explain ob-examples">' + esc(HF_REF_EXAMPLES_LINE) + '</div>';
 }
 
 /** hf-pick-list.tsx, ported column for column. */
@@ -6941,35 +7346,41 @@ function obHfPickHTML() {
   const cursor = Math.min(OB.cursor, Math.max(0, choices.length - 1));
   const selected = choices[cursor];
   const warning = selected ? llmHfRamWarning(selected.fileSizeGb, OB.ram) : null;
-  /* r6 UX: a scroller for the same reason the model list has one — a
-     repo with nine quants offered six of them to the mouse and no way at
-     all to reach the rest. */
-  return '<div class="ob-h">' + esc(repo ? repo.repoId : '') + '</div>'
+  /* r6 UX: a scroller for the same reason the model list has one — a repo
+     with nine quants offered six of them to the mouse and no way at all to
+     reach the rest. Soft Tactile: each quantisation is a radio row, the
+     filename in mono and its size at the end; the projector line and the
+     RAM warning are notices. */
+  return '<div class="ob-h ob-repo">' + logoHTML('huggingface', 'sm') + esc(repo ? repo.repoId : '') + '</div>'
     + '<div class="ob-list ob-scroll">'
     + choices.map((choice, at) => {
-        const line = (at === cursor ? '›  ' : '   ') + String(choice.filename).padEnd(44) + String(choice.sizeLabel).padStart(9);
-        return '<button class="ob-row' + (at === cursor ? ' on' : '') + '" data-obrow="' + at
-          + '" tabindex="' + (at === cursor ? '0' : '-1')
-          + '" aria-selected="' + (at === cursor ? 'true' : 'false') + '">'
-          + '<span class="mk"></span><span class="ob-mono">' + esc(line) + '</span></button>';
+        const on = at === cursor;
+        return '<button class="ob-row ob-file' + (on ? ' on' : '') + '" data-obrow="' + at
+          + '" tabindex="' + (on ? '0' : '-1')
+          + '" aria-selected="' + (on ? 'true' : 'false') + '">'
+          + '<span class="mk"></span><span class="tk-radio' + (on ? ' on' : '') + '" aria-hidden="true"></span>'
+          + '<span class="ob-rbody"><span class="t">' + esc(choice.filename) + '</span></span>'
+          + '<span class="ob-size">' + esc(choice.sizeLabel) + '</span></button>';
       }).join('')
     + '</div>'
-    + (repo && repo.hidden ? '<div class="ob-explain">' + esc('   ' + repo.hidden) + '</div>' : '')
-    + (repo && repo.mmproj ? '<div class="ob-explain">' + esc(HF_MMPROJ_LINE) + '</div>' : '')
-    + (warning ? '<div class="ob-warn ob-mono">' + esc('   ⚠ ' + warning) + '</div>' : '');
+    + (repo && repo.hidden ? '<div class="ob-help">' + esc(String(repo.hidden).trim()) + '</div>' : '')
+    + (repo && repo.mmproj ? '<div class="ob-note is-blue">' + ic('info') + '<span>' + esc(HF_MMPROJ_LINE.trim()) + '</span></div>' : '')
+    + (warning ? '<div class="ob-warn ob-note is-amber">' + ic('alert') + '<span>' + esc(warning) + '</span></div>' : '');
 }
 
 /** onboarding-url-step.tsx:8-19, both halves. */
 function obUrlHTML(kind) {
   const chat = kind === 'chat';
-  return '<label for="ob-url">' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
+  return '<label class="ob-lbl" for="ob-url">' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
       + '<span class="ob-explain">' + esc(OB_COPY.urlHealthNote) + '</span></label>'
-    + (chat ? '' : '<div class="ob-explain">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
-    + '<div><input id="ob-url" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="'
+    + '<div class="ob-field' + (OB.error ? ' is-error' : '') + '">'
+      + '<input id="ob-url" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="'
       + esc(chat ? OB_COPY.urlChatPlaceholder : OB_COPY.urlEmbeddingPlaceholder) + '" value="'
-      + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+      + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '>'
+      + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + '</div>'
     + obInlineErrHTML()
-    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.urlProbing) + '</div>' : '');
+    + (chat ? '' : '<div class="ob-explain ob-help">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
+    + (OB.busy ? '<div class="ob-explain ob-help">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
 
 /** onboarding-download-step.tsx:18-38 / :87-124. */
@@ -6979,22 +7390,43 @@ function obDownloadHTML() {
   // offerCloudMeanwhile: "hidden once a cloud provider is configured —
   // nothing left to offer" (:110-111).
   const offerCloud = !OB.cloudReady;
+  /* r6 UX: these two ARE this screen's buttons — the only way off it short
+     of waiting — so they are cards a mouse can see, not the terminal's `┃`
+     rule around a paragraph. The copy and the `c` / `s` chords are the
+     TUI's, unchanged. */
   const cloud = offerCloud
-    ? '<button class="ob-offer cloud" data-obact="key:c">'
-      + (failed ? esc(OB_COPY.cloudOfferFailed) : esc(OB_COPY.cloudOffer[0]) + '<br>' + esc(OB_COPY.cloudOffer[1]))
-      + '<b>' + esc(OB_COPY.cloudOfferKey) + '</b></button>'
+    ? obOfferHTML(' cloud', 'key:c', '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+        failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey)
     : '';
-  /* r6 UX: these two ARE this screen's buttons — the only way off it
-     short of waiting — so they are drawn as cards a mouse can see, not as
-     the terminal's `┃` rule around a paragraph. The copy and the `press
-     c` / `press s` chords are the TUI's, unchanged. */
-  const skip = '<button class="ob-offer" data-obact="key:s">'
-    + (failed ? esc(OB_COPY.skipOfferFailed) : esc(OB_COPY.skipOffer[0]) + '<br>' + esc(OB_COPY.skipOffer[1]))
-    + '<b>' + esc(OB_COPY.skipOfferKey) + '</b></button>';
+  const skip = obOfferHTML('', 'key:s', '<span class="tk-ico">' + ic('arrowR') + '</span>',
+    failed ? [OB_COPY.skipOfferFailed] : OB_COPY.skipOffer, OB_COPY.skipOfferKey);
   return '<div class="ob-explain">'
       + esc(failed ? 'The ' + label + ' download failed.'
                    : 'Downloading ' + label + '. You can leave this running.') + '</div>'
     + obProgressBlockHTML() + cloud + skip;
+}
+
+/**
+ * One download offer as a card: an icon, the offer as a title and a detail
+ * line, and the chord's keycap. The copy is the TUI's two wrapped lines,
+ * rejoined and split where it reads: a first line ending in a dash is the
+ * title, otherwise the first sentence is.
+ */
+function obOfferHTML(cls, spec, icon, lines, chord) {
+  const text = lines.join(' ');
+  let title = text;
+  let detail = '';
+  if (lines.length > 1 && /—\s*$/.test(lines[0])) {
+    title = lines[0].replace(/\s*—\s*$/, '');
+    detail = lines.slice(1).join(' ');
+  } else if (text.indexOf('. ') > 0) {
+    title = text.slice(0, text.indexOf('. '));
+    detail = text.slice(text.indexOf('. ') + 2);
+  }
+  return '<button class="ob-offer' + cls + '" data-obact="' + spec + '">' + icon
+    + '<span class="ob-rbody"><span class="t">' + esc(title) + '</span>'
+    + (detail ? '<span class="d">' + esc(detail) + '</span>' : '') + '</span>'
+    + '<span class="kc">' + esc(String(chord).replace(/^press\s+/, '')) + '</span></button>';
 }
 
 /** onboarding-wait-or-jump-step.tsx:38-55, :139-150. */
@@ -7008,28 +7440,45 @@ function obWaitOrJumpHTML() {
     {label:'Add another cloud provider', detail:'one more key or endpoint, then straight back to this screen'},
   ];
   if (status === 'failed') rows.push({label:'Retry the download', detail:'starts the same download again'});
+  const icons = [
+    '<span class="tk-ico tk-ico--brand">' + ic('arrowR') + '</span>',
+    '<span class="tk-ico">' + ic('plus') + '</span>',
+    '<span class="tk-ico">' + ic('retry') + '</span>',
+  ];
   const cursor = OB.cursor % rows.length;
-  return '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(OB_COPY.cloudReadyLabel) + '</div>'
+  return obReadyHTML(OB_COPY.cloudReadyLabel)
     + (status === 'running'
         ? '<div class="ob-explain">' + esc('Still downloading ' + label + ' — it keeps running whichever row you pick.') + '</div>' : '')
-    + (status === 'ready'
-        ? '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(label + ' downloaded — the local model is ready too') + '</div>' : '')
+    + (status === 'ready' ? obReadyHTML(label + ' downloaded — the local model is ready too') : '')
     + (status === 'failed'
         ? '<div class="ob-explain">' + esc('The ' + label + ' download failed — the cloud model still works.') + '</div>' : '')
     + (status === 'ready' ? '' : obProgressBlockHTML())
-    + '<div class="ob-list">' + rows.map((row, i) => obRow(i, cursor === i, esc(row.label), esc(row.detail))).join('') + '</div>';
+    + '<div class="ob-list">' + rows.map((row, i) =>
+        obRow(i, cursor === i, esc(row.label), esc(row.detail), '', '', icons[i])).join('') + '</div>';
+}
+
+/** Something that is done, said once: a green tick and the sentence. */
+function obReadyHTML(text) {
+  return '<div class="ob-h ob-ready"><span class="ob-ok tk-ico tk-ico--sm tk-ico--green">' + ic('check') + '</span>'
+    + esc(text) + '</div>';
 }
 
 /** onboarding-propose-step.tsx:11-33. */
 function obProposeHTML() {
-  const accept = OB.offer === 'local'
+  const local = OB.offer === 'local';
+  const accept = local
     ? {label:'Set up local models too', detail:'one download, then it runs offline and costs nothing per token'}
     : {label:'Set up a cloud model too', detail:'an API key and a model — about a minute, for the heavy turns'};
   const rows = [accept, OB_COPY.proposeSkip];
-  return '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(obConfiguredLabel()) + '</div>'
-    + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join('\n')) + '</div>'
+  const icons = [
+    local ? '<span class="tk-ico tk-ico--indigo">' + ic('laptop') + '</span>'
+      : '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+    '<span class="tk-ico">' + ic('arrowR') + '</span>',
+  ];
+  return obReadyHTML(obConfiguredLabel())
+    + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
     + '<div class="ob-list">'
-    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail))).join('') + '</div>';
+    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail), '', '', icons[i])).join('') + '</div>';
 }
 
 /** buildImportPickRows (import-step.ts:101-113): agents, then the import
@@ -7060,8 +7509,9 @@ function obScanStripHTML() {
   const all = OB.importAgents || [];
   const done = OB.scanDone || 0;
   const at = OB.scanAt || '';
-  return '<div class="ob-scanstrip">'
-    + '<span class="ann caution">Scanning</span>'
+  return '<div class="ob-scanstrip" role="status">'
+    + '<span class="tk-spin" aria-hidden="true"></span>'
+    + '<b class="ob-scan-k">Scanning</b>'
     + '<span class="readout">' + esc(all.length ? (Math.min(done + 1, all.length) + ' of ' + all.length) : '…') + '</span>'
     + (at ? '<span class="ob-help">' + esc(at) + '</span>' : '')
     + '</div>';
@@ -7070,26 +7520,27 @@ function obScanStripHTML() {
 function obImportPickHTML() {
   const rows = obImportRows();
   const cursor = OB.cursor % rows.length;
-  return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join('\n')) + '</div>'
-    + '<div class="ob-list">' + rows.filter((r) => !r.offList).map((row, i) => {
+  /* B.5 — the scan is a readout (which source, how far through), so a scan
+     can be told from a hang. It sits above the list it is reading, and the
+     list dims while it runs. */
+  return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join(' ')) + '</div>'
+    + (OB.busy ? obScanStripHTML() : '')
+    + '<div class="ob-list' + (OB.busy ? ' is-busy' : '') + '">' + rows.filter((r) => !r.offList).map((row, i) => {
         if (row.kind === 'agent') {
-          /* r6 UX: `[x]` and `[ ]` are a terminal's checkbox. This row IS
-             a checkbox — it toggles, it does not navigate — so it is
-             drawn as one and announced as one. The tick is the same
-             state, in the shape a desktop reader already knows. */
-          return obRow(i, cursor === i,
-            '<span class="box' + (row.agent.enabled ? ' on' : '') + '" aria-hidden="true">'
-              + (row.agent.enabled ? '✓' : '') + '</span>' + esc(row.agent.label),
-            esc(row.agent.dir), 'ob-check',
-            ' role="checkbox" aria-checked="' + (row.agent.enabled ? 'true' : 'false') + '"');
+          /* r6 UX: this row IS a checkbox — it toggles, it does not
+             navigate — so it is drawn as one and announced as one. The
+             source wears its own mark; the terminal app wears ours. */
+          const agent = row.agent;
+          const mark = agent.id === OB_TUI_AGENT_ID
+            ? '<span class="logo ob-applogo">' + MARK_COLOR + '</span>'
+            : providerMark(providerLogoKey(agent.id) ? agent.id : agent.label);
+          return obRow(i, cursor === i, esc(agent.label), esc(agent.dir), 'ob-check',
+            ' role="checkbox" aria-checked="' + (agent.enabled ? 'true' : 'false') + '"',
+            '<span class="box' + (agent.enabled ? ' on' : '') + '" aria-hidden="true">'
+              + (agent.enabled ? ic('check') : '') + '</span>' + mark);
         }
         return '';
-      }).join('') + '</div>'
-    /* B.5 — "scanning the sources…" was a grey sentence that said nothing
-       about progress, so there was no way to tell a scan from a hang ("не было
-       полосы импорта. Я не понимаю, работает или нет"). It is a readout now:
-       which source, and how far through. */
-    + (OB.busy ? obScanStripHTML() : '');
+      }).join('') + '</div>';
 }
 
 /** summarizeImportReport (import-step.ts:167-189) + reportHeadline (:200-212). */
@@ -7137,16 +7588,33 @@ function obImportReportHTML(executed) {
   const report = OB.importReport;
   const bad = obImportFailures();
   const open = OB.importFailuresOpen;
-  return '<div class="ob-h">' + esc(obImportHeadline(report, executed)) + '</div>'
-    + (report ? '<div class="ob-explain">' + esc(obImportSummary(report).join('\n')) + '</div>' : '')
+  /* The headline keeps its words; a leading ✓ or ⚠ becomes the matching
+     icon. The per-kind summary is a two-column card: kind, then counts. */
+  const headline = obImportHeadline(report, executed);
+  const glyph = /^([✓⚠])\s+/.exec(headline);
+  const icon = !glyph ? ''
+    : glyph[1] === '✓' ? '<span class="tk-ico tk-ico--sm tk-ico--green">' + ic('check') + '</span>'
+    : '<span class="tk-ico tk-ico--sm tk-ico--amber">' + ic('alert') + '</span>';
+  const lines = report ? obImportSummary(report) : [];
+  return '<div class="ob-h ' + (glyph ? 'ob-ready' : 'ob-lede') + '">' + icon
+      + esc(glyph ? headline.slice(glyph[0].length) : headline) + '</div>'
+    + (lines.length
+      ? '<div class="ob-explain ob-summary">' + lines.map((line) => {
+          const at = line.indexOf(': ');
+          const kind = at > 0 ? line.slice(0, at) : '';
+          const counts = at > 0 ? line.slice(at + 2) : line;
+          return '<div class="ob-sumrow"><span class="k">' + esc(kind) + '</span>'
+            + '<span class="v' + (/in conflict/.test(counts) ? ' is-warn' : '') + '">' + esc(counts) + '</span></div>';
+        }).join('') + '</div>'
+      : '')
     + (bad.length && !OB.busy
       ? '<div class="ob-failures">'
         + '<button class="btn btn-s" data-obact="import:failures">'
-        + esc((open ? 'Hide' : 'What failed') + ' (' + bad.length + ')') + '</button>'
-        + (executed ? '<button class="btn btn-s" data-obact="import:retry">Retry failed</button>' : '')
+        + esc((open ? 'Hide' : 'What failed') + ' (' + bad.length + ')') + ic(open ? 'chevU' : 'chevD') + '</button>'
+        + (executed ? '<button class="btn btn-s" data-obact="import:retry">' + ic('retry') + 'Retry failed</button>' : '')
         + '</div>'
         + (open
-          ? '<div class="tbl-wrap"><table class="tbl"><thead><tr>'
+          ? '<div class="tbl-wrap ob-failtbl"><table class="tbl"><thead><tr>'
             + '<th>Item</th><th>Source</th><th>Why</th></tr></thead><tbody>'
             + bad.slice(0, 200).map((i) =>
                 '<tr><td>' + esc(i.name || i.id || i.kind || 'item') + '</td>'
@@ -7181,21 +7649,28 @@ function wizModelStepHTML(withFoot) {
   const all = WIZ.models || [];
   const rows = q ? all.filter((m) => (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)) : all;
   const shown = rows.slice(0, 200);
+  /* Soft Tactile: every row wears its model's mark. On the first-run layer
+     (withFoot) the provider's mark titles the step and search is a pill
+     with its magnifier; the popover's copy of this step keeps its plain
+     field and title. */
+  const search = '<input class="ob-inp" id="wiz-model-q" placeholder="Search models" value="' + esc(WIZ.modelFilter || '') + '">';
+  const providerId = WIZ.savedId || (WIZ.row && WIZ.row.id) || '';
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">Model</div>'
-    + '<div class="ob-h">' + esc(WIZ.savedLabel || 'Choose a model') + '</div>'
+    + '<div class="ob-h">' + (withFoot ? providerMark(providerId) : '') + esc(WIZ.savedLabel || 'Choose a model') + '</div>'
     + (WIZ.unverifiedNote
-        ? '<div class="ob-err">' + esc(WIZ.unverifiedNote) + '</div>'
+        ? '<div class="ob-err is-warn">' + esc(WIZ.unverifiedNote) + '</div>'
         : '')
     + '<div class="ob-help">'
       + esc(WIZ.defaultModel ? 'Our default for this provider is ' + WIZ.defaultModel + '.' : 'Pick the model this provider should answer with.')
     + '</div>'
     + (all.length > 8
-        ? '<input class="ob-inp" id="wiz-model-q" placeholder="Search models" value="' + esc(WIZ.modelFilter || '') + '">'
+        ? (withFoot ? '<div class="ob-field ob-search">' + ic('search') + search + '</div>' : search)
         : '')
     + '<div class="ob-wizlist"><div class="prows">'
       + shown.map((m) =>
           '<button class="prow' + (m.id === WIZ.modelPick ? ' on' : '') + '" data-wizmodel="' + esc(m.id) + '">'
+          + modelMark(m.id, 'sm')
           + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
           + '<span class="ep">' + esc(m.id) + '</span></span>'
           + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
@@ -7222,23 +7697,15 @@ function obWizardHTML() {
     selProviders().forEach((p) => { taken[p.id] = 1; });
     const rows = obWizRows();
     const cur = rows.length ? WIZ.cur % rows.length : 0;
-    /* B.3 — a row list, not a scrolling wall of identical boxes ("оч страшно
-       выглядит"). Each row is the provider's name over its endpoint in mono,
-       and one already set up carries a lit CONFIGURED cell rather than the
-       words "· already configured" tacked onto the endpoint.
-
-       The two we actually recommend sit above a hairline; the other twelve
-       are below it under MORE PROVIDERS. Fourteen equally-weighted rows is
-       not a choice, it is a wall — and the first thing anyone needs to know
-       is which two get them working fastest.
-
-       There are no logos: we have no right to draw most of them, and the
-       row's own structure carries the identity. */
+    /* B.3 — a row list, not a scrolling wall of identical boxes. Each row
+       is the provider's name over its endpoint in mono, and one already set
+       up carries a Configured chip. The two we recommend sit above More
+       providers. Soft Tactile: each row wears the provider's real mark
+       (renderer/logos, on a white badge); a URL you supply gets the server
+       badge, never a monogram. */
     const RECOMMENDED = new Set(['openrouter', 'aimlapi']);
     /* The three built-in kinds carry no baseUrl — the agent holds their
-       endpoints — so the row fell back to printing the kind id (`openrouter`)
-       in the slot where a host belongs, which says nothing. These are the
-       hosts those kinds actually talk to, for display only. */
+       endpoints — so these are the hosts those kinds talk to, for display. */
     const KIND_HOST = {
       openrouter: 'https://openrouter.ai/api',
       aimlapi: 'https://api.aimlapi.com',
@@ -7248,6 +7715,7 @@ function obWizardHTML() {
       '<button class="prow' + (n === cur ? ' on' : '') + '"'
       + ' data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
       + '" aria-selected="' + (n === cur ? 'true' : 'false') + '">'
+      + providerMark(k.custom ? '' : k.id)
       + '<span class="col"><span class="nm">' + esc(k.label.split(' (')[0]) + '</span>'
       + '<span class="ep">' + esc(k.custom ? 'a URL you supply' : k.baseUrl || KIND_HOST[k.kind] || k.kind) + '</span></span>'
       + (taken[k.id] ? '<span class="ann lit">Configured</span>' : '')
@@ -7257,7 +7725,9 @@ function obWizardHTML() {
     const at = (r) => rows.indexOf(r);
     return '<div class="ob-wiz">'
       + (WIZ.q === null ? ''
-          : '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '">')
+          : '<div class="ob-field ob-search">' + ic('search')
+            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '">'
+            + '<span class="kc">esc</span></div>')
       + '<div class="ob-wizlist">'
         + (top.length ? '<div class="prows">' + top.map((r) => row(r, at(r))).join('') + '</div>' : '')
         + (rest.length
@@ -7267,58 +7737,56 @@ function obWizardHTML() {
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
       // for it too, and it routes through the same action.
-      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">Back</button><span class="grow"></span></div>'
+      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">' + ic('chevL') + 'Back</button><span class="grow"></span></div>'
       + '</div>';
   }
   const k = WIZ.row;
   const verifying = WIZ.phase === 'verifying';
   /* COPY, disclosed rather than silently dropped: providers-wizard.tsx
      also has an `Embedding backend` (:445) and a `Chat model id` (:450)
-     screen. The desktop's add-provider wizard has neither phase — it
-     takes the kind's default chat model and never offers a cloud
-     embedding backend — so those two titles have nowhere honest to go
-     and are NOT rendered. `LLM provider — add provider`, `API key —
-     ${service}` and the .env sentence are all present, verbatim. */
-  /* r6 UX: the key box had no label at all — a bare dark rectangle under
-     a sentence about .env, which is a footnote and not a name. It is
-     labelled, it says what goes in it, and the .env sentence has moved
-     BELOW the field, where help text belongs. The sentence itself is the
-     copy contract's, verbatim. */
+     screen. The desktop's add-provider wizard has neither phase, so those
+     two titles have nowhere honest to go and are NOT rendered. */
   if (WIZ.phase === 'pick_model') return wizModelStepHTML(true);
-  /* B.4 — one label, not three. This screen used to say "API key — AI/ML API"
-     as a heading, "API key" again as the field's label, and then put the .env
-     sentence between them; the tester read it as the same words twice and she
-     was right. The screen is titled in the 11px label style, the provider is
-     the subhead, and naming the field is the placeholder's job.
+  /* B.4 — one label, not three: "API key" once as the kicker, the provider
+     (with its mark) as the title, and naming the field is the placeholder's
+     job. The .env sentence is the copy contract's, verbatim, under the field.
 
      F1 — when the key could not be CHECKED (as opposed to rejected), the two
      buttons below are the whole decision: try again, or save it knowing it is
-     unchecked. There is no path from here to a completion screen. */
+     unchecked. Unreachable reads amber, rejected reads red. */
   const service = k.label.split(' (')[0];
   const unchecked = WIZ.uncheckedFor;
+  const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
-    + '<div class="ob-h">' + esc(service) + '</div>'
+    + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
     + (k.custom ? '<label class="ob-flabel" for="wiz-url">API base URL</label>'
         + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
-    + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
-    + ' aria-label="API key for ' + esc(service) + '"'
-    + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
-    + ' value="' + esc(WIZ.apiKey) + '">'
-    + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
+    + '<div class="ob-field' + tone + '">' + ic('key')
+      + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
+      + ' aria-label="API key for ' + esc(service) + '"'
+      + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' value="' + esc(WIZ.apiKey) + '">'
+      + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
+    + '</div>'
+    + (WIZ.error
+        ? '<div class="ob-err' + (unchecked ? ' is-warn' : '') + '">' + ic(unchecked ? 'info' : 'alert')
+          + '<span>' + esc(WIZ.error) + '</span></div>'
+        : '')
     + (k.env ? '<div class="ob-help">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
     + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
     + (unchecked
       ? '<div class="ob-foot">'
-        + '<button class="btn btn-g" data-act="wiz:back">Back</button>'
+        + '<button class="btn btn-g" data-act="wiz:back">' + ic('chevL') + 'Back</button>'
         + '<span class="grow"></span>'
         + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
-        + '<button class="btn btn-p" data-act="wiz:next">Try again</button>'
+        + '<button class="btn btn-p" data-act="wiz:next">' + ic('retry') + 'Try again</button>'
         + '</div>'
-      : '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
+      : '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
+        + ic('chevL') + 'Back</button>'
         + '<span class="grow"></span>'
         + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-        + (verifying ? 'Verifying…' : 'Next') + '</button></div>')
+        + (verifying ? 'Verifying…' : 'Next' + ic('arrowR')) + '</button></div>')
     + '</div>';
 }
 
@@ -7339,9 +7807,9 @@ function obWizardHTML() {
    — the same router the keyboard uses. A control cannot drift from a
    chord because there is nothing for it to drift to.
    -------------------------------------------------------------------------- */
-function obBtn(spec, label, cls, disabled) {
+function obBtn(spec, label, cls, disabled, icon, trail) {
   return '<button class="btn ' + cls + '" data-obact="' + spec + '"'
-    + (disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+    + (disabled ? ' disabled' : '') + '>' + (icon ? ic(icon) : '') + esc(label) + (trail ? ic(trail) : '') + '</button>';
 }
 
 /** The verbs of one step, or '' for a step whose rows already carry them. */
@@ -7352,27 +7820,30 @@ function obFootHTML() {
   switch (OB.step) {
     case 'choose':
       left = obBtn('nav:back', 'Skip setup for now', 'btn-g');
+      /* Soft Tactile: Enter's verb as a button too. It presses Enter through
+         obPress, so it opens the route under the cursor, exactly as the key. */
+      right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       break;
     case 'local_pick':
-      left = obBtn('nav:back', 'Back', 'btn-g');
+      left = obBtn('nav:back', 'Back', 'btn-g', false, 'chevL');
       break;
     case 'local_hf_ref':
-      left = obBtn('nav:back', busy ? 'Cancel' : 'Back', 'btn-g');
+      left = obBtn('nav:back', busy ? 'Cancel' : 'Back', 'btn-g', false, busy ? '' : 'chevL');
       right = obBtn('nav:go', busy ? 'Looking it up…' : 'Look it up', 'btn-p',
         busy || OB.hfReference.length === 0);
       break;
     case 'local_hf_pick':
-      left = obBtn('nav:back', 'Back', 'btn-g');
-      right = obBtn('nav:go', 'Download this file', 'btn-p', false);
+      left = obBtn('nav:back', 'Back', 'btn-g', false, 'chevL');
+      right = obBtn('nav:go', 'Download this file', 'btn-p', false, 'download');
       break;
     case 'custom_chat_url':
-      left = obBtn('nav:back', 'Back', 'btn-g', busy);
+      left = obBtn('nav:back', 'Back', 'btn-g', busy, 'chevL');
       right = obBtn('nav:go', busy ? 'Testing…' : 'Test and continue', 'btn-p', busy);
       break;
     case 'custom_embedding_url':
-      left = obBtn('nav:back', 'Back', 'btn-g', busy)
-        + obBtn('url:skip', 'Continue without embeddings', 'btn-g', busy);
-      right = obBtn('nav:go', busy ? 'Testing…' : 'Test and save', 'btn-p', busy);
+      left = obBtn('nav:back', 'Back', 'btn-g', busy, 'chevL');
+      right = obBtn('url:skip', 'Continue without embeddings', 'btn-s', busy)
+        + obBtn('nav:go', busy ? 'Testing…' : 'Test and save', 'btn-p', busy);
       break;
     /* B.5 — the import step's two verbs, on the action bar with every other
        step's verbs rather than as underlined rows inside the list. Import is
@@ -7381,10 +7852,9 @@ function obFootHTML() {
     case 'import_pick': {
       const picked = (OB.importAgents || []).filter((a) => a.enabled).length;
       left = obBtn('import:skip', OB_COPY.importSkipLabel, 'btn-g', busy);
-      /* Nothing ticked, no import verb. A greyed "Import from 0 agents" is a
-         control that exists only to be unusable — the row it replaced was
-         simply absent until something was ticked, and that was right. */
-      right = picked === 0 ? '' : obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy);
+      /* Nothing ticked, no import verb: a greyed "Import from 0 agents" is a
+         control that exists only to be unusable. */
+      right = picked === 0 ? '' : obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy, busy ? '' : 'import');
       break;
     }
     case 'import_preview': {
@@ -7395,7 +7865,8 @@ function obFootHTML() {
       break;
     }
     case 'import_done':
-      right = obBtn('nav:go', 'Start using the agent', 'btn-p', false);
+      // The go moment of the whole flow: brand blue, not ink.
+      right = obBtn('nav:go', 'Start using the agent', 'btn-p btn-blue', false, '', 'arrowR');
       break;
     default:
       return '';
@@ -7427,14 +7898,17 @@ function obHTML() {
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
      under the field that was rejected; for every other step the surface
-     error is the only place it can go, and it sits above the action bar
-     rather than under it. */
-  const err = OB.error && !obErrorIsInline() ? '<div class="ob-err">' + esc(OB.error) + '</div>' : '';
+     error sits at the end of the body, above the action bar. */
+  const err = OB.error && !obErrorIsInline()
+    ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(OB.error) + '</span></div>' : '';
   /* r6 UX: it IS a modal — the app's chrome is behind it and cannot be
-     operated — so it says so, and Tab is trapped inside it to match. */
+     operated — so it says so, and Tab is trapped inside it to match.
+     Soft Tactile: the indigo rail on the left; on the right the title, a
+     body that owns the flexible height, the action bar and the hint strip. */
   return '<div id="onboarding" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
-    + '<div class="ob">' + obHeadHTML() + body + err + obFootHTML() + '</div>'
-    + obHintsHTML() + '</div>';
+    + obRailHTML()
+    + '<div class="ob">' + obHeadHTML() + '<div class="ob-body">' + body + err + '</div>'
+    + obFootHTML() + obHintsHTML() + '</div></div>';
 }
 
 /* ============================================================
@@ -9455,15 +9929,58 @@ function selPull(id) {
   });
 }
 
+/** Soft Tactile — the leading badge of one popover row: the route's own icon on
+ *  a backend row, the real brand mark on a provider or model row (the server /
+ *  CPU badge when there is none), a spinner on a local model that is starting. */
+function selRowLead(r) {
+  if (r.type === 'backend') {
+    return '<span class="tk-ico tk-ico--sm' + (r.active ? ' tk-ico--blue' : '') + '">'
+      + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : 'server') + '</span>';
+  }
+  if (r.type === 'provider') return providerMark(r.id, 'sm');
+  if (r.type === 'action') return '<span class="tk-ico tk-ico--sm">' + ic(r.id === 'add' ? 'plus' : 'download') + '</span>';
+  if (r.type === 'localModel' && SEL.busy && BSW.line === 'starting ' + r.id + '…') {
+    return '<span class="selspin"><span class="tk-spin"></span></span>';
+  }
+  return modelMark(r.id, 'sm');
+}
+
+/** Soft Tactile (MP-11) — the typed query, marked inside a result. Each query
+ *  token is marked wherever it occurs (modelMatches matches tokens, not the
+ *  whole string); the marks only wrap letters, so `.nm` keeps its text. */
+function selHilite(label, query) {
+  const s = String(label || '');
+  const toks = String(query || '').toLowerCase().split(/[\/\.\-_:\s]+/).filter(Boolean);
+  if (!toks.length) return esc(s);
+  const low = s.toLowerCase();
+  const hit = new Array(s.length).fill(false);
+  toks.forEach((t) => {
+    for (let at = low.indexOf(t); at >= 0; at = low.indexOf(t, at + 1)) {
+      for (let k = 0; k < t.length; k++) hit[at + k] = true;
+    }
+  });
+  let out = '';
+  for (let i = 0; i < s.length;) {
+    let j = i;
+    while (j < s.length && hit[j] === hit[i]) j++;
+    out += hit[i] ? '<mark class="selhit">' + esc(s.slice(i, j)) + '</mark>' : esc(s.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
 function selectorHTML() {
   const rows = selRows();
   SEL.rows = rows;
 
   if (SEL.pulling) {
+    /* The first `.popover .cap` is the line the pull's progress events patch
+       in place (selPull's listener) — keep it first. */
     return selShell('Downloading ' + SEL.pulling,
-      '<div class="selbody"><p class="cap">' + esc(SEL.pullLine) + '</p>'
+      '<div class="selbody selpull"><p class="cap selpullline">' + esc(SEL.pullLine) + '</p>'
       + '<p class="cap">It is selected automatically when it lands.</p></div>',
-      '<button class="btn btn-s" data-act="sel:cancelPull">Cancel</button>');
+      '<span class="grow"></span><button class="btn btn-g xs" data-act="sel:cancelPull">Cancel</button>',
+      '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>');
   }
 
   // Adding a provider is its own screen: the presets you have NOT
@@ -9478,15 +9995,16 @@ function selectorHTML() {
       + (free.length
         ? '<div class="sellist">' + free.map((p, i) =>
             '<button class="modelrow' + (i === SEL.presetCur ? ' on' : '') + '" data-sel-preset="' + i + '">'
-            + '<span class="radio"' + (i === SEL.presetCur ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+            + providerMark(p.id, 'sm')
             + '<span class="col"><span class="nm">' + esc(p.label) + '</span>'
-            + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span></button>').join('') + '</div>'
-            + '<div style="padding:10px 16px 0"><input class="field-inp" id="sel-key" type="password" style="width:100%" '
-            + 'placeholder="API key — blank reads ' + esc((free[SEL.presetCur] || free[0]).env) + '"></div>'
-        : '<p class="cap" style="padding:16px">Every preset is already configured.</p>')
+            + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span>'
+            + '<span class="selr"><span class="radio' + (i === SEL.presetCur ? ' on' : '') + '"></span></span></button>').join('') + '</div>'
+            + '<div class="selkey"><label class="tk-inpwrap">' + ic('key') + '<input id="sel-key" type="password" '
+            + 'placeholder="API key — blank reads ' + esc((free[SEL.presetCur] || free[0]).env) + '"></label></div>'
+        : '<p class="selnote cap">Every preset is already configured.</p>')
       + '</div>',
-      '<button class="btn btn-g" data-act="sel:closeAdd">Back</button>'
-      + (free.length ? '<button class="btn btn-p" data-act="sel:savePreset">Add provider</button>' : ''));
+      '<button class="btn btn-g xs" data-act="sel:closeAdd">Back</button><span class="grow"></span>'
+      + (free.length ? '<button class="btn btn-p xs" data-act="sel:savePreset">Add provider</button>' : ''));
   }
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
@@ -9498,43 +10016,61 @@ function selectorHTML() {
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
   if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
-    return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">Nothing to show.</p></div>', '');
+    return selShell(title, '<div class="selbody"><p class="selnote cap">Nothing to show.</p></div>', '');
   }
 
   const search = SEL.kind === 'model'
-    ? '<div class="selsearch"><input class="field-inp" id="sel-filter" style="width:100%" '
-      + 'placeholder="search models" value="' + esc(SEL.filter) + '"></div>'
+    ? '<div class="selsearch"><label class="tk-inpwrap">' + ic('search') + '<input id="sel-filter" '
+      + 'placeholder="search models" value="' + esc(SEL.filter) + '" spellcheck="false" autocomplete="off"></label></div>'
     : '';
 
+  /* Soft Tactile rows (MP-01, MP-05, MP-11, MP-14): badge · the id (DM Mono for
+     providers and models, the query marked) over its one-line facts · the right
+     slot. The first `.cap` in a row is its detail — integration.drive reads it. */
   const list = '<div class="sellist">'
-    + (SEL.modelsBusy || SEL.localBusy ? '<div class="pad cap">reading the catalogue…</div>' : '')
-    + (SEL.modelsErr ? '<div class="pad cap" style="color:var(--danger)">' + esc(SEL.modelsErr) + '</div>' : '')
-    + rows.map((r, i) => '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
-        + '<span class="radio' + (r.active ? ' on' : '') + '"></span>'
-        + '<span class="col"><span class="nm' + (r.type === 'cloudModel' || r.type === 'localModel' ? ' mono' : '') + '">'
-        + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
-        + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
-        /* F1 — an unlit cell, not a lit one: this is a state we could not
-           confirm, not a fault we found. It goes out when a turn succeeds. */
-        + (r.unverified ? '<span class="ann">Unverified</span>' : '')
-        + '</button>').join('')
-    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>reading the catalogue…</div>' : '')
+    + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
+    + rows.map((r, i) => {
+        const model = r.type === 'cloudModel' || r.type === 'localModel';
+        const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
+          + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'download</span>' : '')
+          /* F1 — an unlit cell, not a lit one: this is a state we could not
+             confirm, not a fault we found. It goes out when a turn succeeds. */
+          + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
+        return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
+          + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
+          + selRowLead(r)
+          + '<span class="col"><span class="nm' + (model || r.type === 'provider' ? ' mono' : '') + '">'
+          + (model ? selHilite(r.label, SEL.filter) : esc(r.label)) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
+          + (right ? '<span class="selr">' + right + '</span>' : '')
+          + '</button>';
+      }).join('')
+    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
   // Adding a provider is the pane's own trailing row now, as in the TUI.
-  const foot = '<button class="btn btn-s" data-act="close">Done</button>';
+  const foot = '<button class="btn btn-s xs" data-act="close">Done</button>';
 
   return selShell(title, search + list, foot);
 }
 
-/** One popup shell: fixed height, its own scroll, anchored to the chip. */
-function selShell(title, body, foot) {
+/** One popup shell: fixed height, its own scroll, anchored to the chip.
+ *  Soft Tactile: anchored to the chip of the pane it shows (backend, provider or
+ *  model), at that pane's width; `lead` is an optional badge before the title
+ *  (the provider's mark on the wizard's steps). */
+function selShell(title, body, foot, lead) {
+  const chip = (kind) => document.querySelector('#composer .cfoot [data-sel-open="' + kind + '"]');
+  const anchor = chip(SEL.kind) || chip('provider') || chip('backend')
+    || document.querySelector('.modelchip') || document.querySelector('.modechip');
+  const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' ? 520
+    : SEL.kind === 'provider' ? 420 : 440;
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover selpop" style="' + anchorStyle(document.querySelector('.modelchip') ? '.modelchip' : '.modechip', 460) + '">'
-    + '<div class="selhead">' + esc(title)
-    + (SEL.busy ? '<span class="cap" style="margin-left:auto">' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
+    + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
+    + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
+    + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
     + body
-    + (SEL.err ? '<div class="cap" style="padding:6px 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
+    /* The inline colour is the hook drive-selector reads switch errors by. */
+    + (SEL.err ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.err) + '</span></div>' : '')
     + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
     + '</div></div>';
 }
@@ -9890,14 +10426,21 @@ function repaintContextChip() {
 function contextChip() {
   if (!CTX.tokens) return '';
   const proj = CTX.source === 'projected';
+  // Soft Tactile spaces the figure: `36.6k / 1.0M`, projected `~7.4k / 256k`.
   const label = (proj ? '~' : '') + (CTX.window
-    ? fmtTokens(CTX.tokens) + '/' + fmtTokens(CTX.window)
+    ? fmtTokens(CTX.tokens) + ' / ' + fmtTokens(CTX.window)
     : fmtTokens(CTX.tokens));
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
-  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + '" data-act="context" title="'
+  /* The bar is a 20px ring over the same percentage: amber above 70%, red
+     above 85%. r = 7.5, so the circumference is 47.1. */
+  const tone = pct > 85 ? ' crit' : pct > 70 ? ' warn' : '';
+  const ring = CTX.window
+    ? '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
+      + '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.1 * pct / 100).toFixed(1) + ' 47.1" transform="rotate(-90 10 10)"/></svg>'
+    : '';
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context" title="'
     + (proj ? 'projected — nothing measured in this session yet' : 'context') + '">'
-    + (CTX.window ? '<span class="gauge"><i style="width:' + pct + '%"></i></span>' : '')
-    + '<span class="tnum gaugelb">' + label + '</span></button>';
+    + ring + '<span class="tnum gaugelb">' + label + '</span></button>';
 }
 
 /* ============================================================
@@ -9916,23 +10459,24 @@ function codingModeChip() {
   // No route on this agent build: print the honest blank rather than a
   // mode. Painting 'default' would name a stance the agent does not have.
   if (MODE.supported === false) {
-    return '<button class="cchip cmodechip" data-act="modes" '
-      + 'title="' + esc(MODE_NEEDS_NEWER) + '" '
-      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" '
+      + 'title="' + esc(MODE_NEEDS_NEWER) + '">' + ic('shield') + 'mode —' + ic('chevD', 'chev') + '</button>';
   }
   // The same blank, for the same reason, one state earlier: the route has not
   // answered yet (or its last answer was an error). Painting the seed would
   // name a stance the agent has not confirmed — at approvalLevel 5 it would
   // say a green `default` while the live stance is `bypass`.
   if (!MODE.known) {
-    return '<button class="cchip cmodechip" data-act="modes" '
-      + 'title="the agent has not reported a stance yet" '
-      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" '
+      + 'title="the agent has not reported a stance yet">' + ic('shield') + 'mode —' + ic('chevD', 'chev') + '</button>';
   }
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
-  const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
-    : look.tone === 'accent' ? 'var(--accent-text)' : 'var(--success)';
+  /* Soft Tactile tones as classes: default neutral, plan blue, auto amber,
+     bypass permissions red — each with its own icon. */
+  const tone = look.tone === 'bad' ? ' tone-bypass' : look.tone === 'warn' ? ' tone-auto'
+    : look.tone === 'accent' ? ' tone-plan' : '';
+  const icon = look.tone === 'bad' ? 'bolt' : look.tone === 'warn' ? 'edit' : look.tone === 'accent' ? 'list' : 'shield';
   // At a configured level of 5 the agent seeds its stance by inference and
   // reports `bypass`, because default/auto/bypass all resolve to level 5
   // with plan off — so the chip opens red until a mode is chosen. Say so
@@ -9941,49 +10485,55 @@ function codingModeChip() {
     ? 'what the agent may do without asking — your configured approval level is '
       + MAX_APPROVAL_LEVEL + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything'
     : 'what the agent may do without asking';
-  return '<button class="cchip cmodechip" data-act="modes" title="' + esc(title) + '" '
-    + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
+  return '<button class="cchip cmodechip' + tone + cchipOpen('modes') + '" data-act="modes" title="' + esc(title) + '">'
+    + ic(icon) + esc(look.label) + ic('chevD', 'chev') + '</button>';
 }
 
 function modesHTML() {
+  const off = MODE.supported === false;
+  /* Soft Tactile (CM-12…14): a titled menu of four radio rows whose word takes
+     the chip's colour, the note under them and Done — and, on an agent without
+     the route, the version it needs with Update agent in the footer. */
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
+    + '<div class="popover modepop tk-pop" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
+    + '<div class="modehead"><span>Mode</span>'
+    + (off ? '' : '<span class="cap">what the agent may do without asking</span>') + '</div>'
     + CODING_MODES.map((m) => {
-        const off = MODE.supported === false;
         // Nothing is "current" on an agent that has no such state, so no
         // row is marked, and the rows carry no data-mode: the click
         // handler keys off that attribute, so dropping it is what makes
         // them genuinely inert rather than merely grey.
         // ...and nothing is "current" before the route has answered either.
         const on = !off && MODE.known && m.id === currentMode();
-        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
+        return '<button class="poprow modetone-' + m.id + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
           + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
           + '<span class="radio' + (on ? ' on' : '') + '"></span>'
-          + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
-          + '<span class="cap" style="display:block">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
-          + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
+          + '<span class="col"><span class="ml">' + esc(m.label) + '</span>'
+          + '<span class="cap">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
+          + (on ? '<span class="cap modecur">current</span>' : '') + '</button>';
       }).join('')
-    + '<div style="padding:10px 16px">'
-    + (MODE.supported === false
+    + '<div class="modenote">'
+    + (off
         /* F4 — this is our packaging problem, and it used to be presented to
            the user as their broken feature: four greyed stances, an internal
            route name, and the path of the binary we happened to spawn. None
            of that is actionable by a person. Say which version is needed and
            offer the one thing that helps. */
-        ? '<p class="ob-help" style="margin:0">' + esc(MODE_NEEDS_NEWER)
-          + ' <button class="sysact" data-act="agent:update">Update agent</button></p>'
-        : '<p class="cap" style="margin:0">'
+        ? '<p class="ob-help">' + esc(MODE_NEEDS_NEWER) + '</p>'
+        : '<p class="cap">'
           + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
           + '</p>'
           // The disclosure that stops a level-5 operator reading a working
           // chip as a broken one: three of the four choices genuinely do
           // not change what the agent does at that base.
           + (MODE.baseLevel === MAX_APPROVAL_LEVEL
-              ? '<p class="cap" style="margin:6px 0 0">Your configured approval level is ' + MAX_APPROVAL_LEVEL
+              ? '<p class="cap modewarn">Your configured approval level is ' + MAX_APPROVAL_LEVEL
                 + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
               : ''))
     + '</div>'
-    + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+    + '<div class="popfoot">'
+    + (off ? '<button class="btn btn-p xs" data-act="agent:update">' + ic('download') + 'Update agent</button><span class="grow"></span>' : '')
+    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
 }
 
 /* Item 6 review fix: S.level has three writers and the diagnostics line
@@ -10192,13 +10742,15 @@ function planHandoffHTML() {
   // and quiet, because it is the one control here that does nothing
   // irreversible and putting it first would give the least consequential
   // choice the position the eye lands on.
-  return '<div class="planbar">'
-    + '<button class="btn planrun warn" data-plan="auto"' + off
+  // Soft Tactile: a lifted card holding the three pills; the chord keycaps
+  // (⌃Y ⌃B ⌃D) are drawn by chat.css so each label's text stays verbatim.
+  return '<div class="planbar"><div class="planbtns">'
+    + '<button class="btn sm planrun warn" data-plan="auto"' + off
       + ' title="run the plan with file writes inside this workspace no longer asking">▶ run it · auto</button>'
-    + '<button class="btn planrun bad" data-plan="bypass"' + off
+    + '<button class="btn sm planrun bad" data-plan="bypass"' + off
       + ' title="run the plan with nothing asking, for the rest of this session">▶ run it · bypass permissions</button>'
-    + '<button class="btn btn-s" data-plan="dismiss"' + off
-      + ' title="stays in plan mode — type to propose a different one">✕ dismiss plan</button>'
+    + '<button class="btn sm btn-s" data-plan="dismiss"' + off
+      + ' title="stays in plan mode — type to propose a different one">✕ dismiss plan</button></div>'
     // src/tui/tui-app.tsx:2011, without the ellipsis: here it is prose under
     // the bar rather than a placeholder. It carries the third option, and an
     // operator looking at two "execute" buttons needs telling that typing is
@@ -10597,16 +11149,18 @@ function noteSessionModelStamp(data) {
   if (!known) {
     // The TUI's own sentence for a stamp whose provider has since been
     // deleted (session-model-restore.ts describeModelRestore in 0.5.5).
-    S.log.push({id:nid(), k:'system', note:true, text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
+    // Soft Tactile: `tone` draws the row as a blue notice (sysRowHTML); the text stays verbatim.
+    S.log.push({id:nid(), k:'system', note:true, tone:'blue', text: esc('this session last ran on "' + label + '", which is no longer configured — keeping the current model')});
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
   // `note:true` (see endMarkIds): this row is appended to a REPLAYED
   // transcript whose last turn finished long ago, so it must not take that
-  // turn's full stop away.
-  S.log.push({id:nid(), k:'system', note:true, text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
-    + ' <button class="btn btn-s" style="height:22px" data-act="sessmodel:apply">Switch to it</button>'
-    + ' <span class="ter">(a switch restarts the agent, so it is refused while any turn is running)</span>'});
+  // turn's full stop away. Soft Tactile: a blue notice — sentence, caption
+  // under it, Switch to it on the right (chat.css places the three).
+  S.log.push({id:nid(), k:'system', note:true, tone:'blue', icon:'refresh', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
+    + ' <span class="tk-stampcap">(a switch restarts the agent, so it is refused while any turn is running)</span>'
+    + '<button class="btn sm btn-t tk-stampbtn" data-act="sessmodel:apply">Switch to it</button>'});
 }
 /* Full-id comparison, matching 0.5.5's planModelRestore
    (`turn.chatModel === (provider.defaultChatModel ?? provider.model)`).
@@ -10686,17 +11240,30 @@ function wizardHTML() {
     return selShell('Add a provider',
       '<div class="selbody"><div class="sellist">' + KIND_ROWS.map((k, i) =>
         '<button class="modelrow' + (taken.has(k.id) ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
+        + providerMark(k.custom ? '' : k.id, 'sm')
         + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
-        + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind) + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
+        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
+        + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
       + '</div></div>',
-      '<button class="btn btn-g" data-act="wiz:cancel">Cancel</button>');
+      '<button class="btn btn-g xs" data-act="wiz:cancel">Cancel</button>');
   }
   const k = WIZ.row;
+  const lead = providerMark(k.custom ? '' : k.id, 'sm');
+  const verifying = WIZ.phase === 'verifying';
+  const unchecked = WIZ.uncheckedFor;
+  /* Soft Tactile (MP-06…09): the field takes the tone of the line under it —
+     red for an error, amber for a key that could not be checked. */
+  const urlBad = !!(k.custom && WIZ.error && !/^https?:\/\/\S+$/.test(WIZ.baseUrl));
+  const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
   const fields = (k.custom
-      ? '<label class="cap">Base URL</label><input class="field-inp" id="wiz-url" style="width:100%" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">'
+      ? '<label class="tk-lbl" for="wiz-url">Base URL</label>'
+        + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
+        + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="cap">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
-    + '<input class="field-inp" id="wiz-key" type="password" style="width:100%" value="' + esc(WIZ.apiKey) + '">';
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
+    + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" spellcheck="false">'
+    + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>';
   /* The popover is a flex column with a fixed max-height, and `.selbody` is
      the child that scrolls. Handing it a bare `.ob-wiz` meant nothing
      scrolled: with a 37-model catalogue the content ran straight past the
@@ -10704,26 +11271,26 @@ function wizardHTML() {
      was drawn 90px below the last visible pixel. */
   if (WIZ.phase === 'pick_model') {
     return selShell(WIZ.savedLabel || 'Choose a model',
-      '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot());
+      '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot(), lead);
   }
-  const verifying = WIZ.phase === 'verifying';
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
      into a `<p class="cap">` with an inline colour, so the error slot the
      rest of the app (and F1's own check) looks for did not exist here at all.
      Same class, same slot, same two buttons when a key could not be checked. */
-  const unchecked = WIZ.uncheckedFor;
   return selShell(k.label,
-    '<div class="selbody" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">' + fields
+    '<div class="selbody selwiz">' + fields
     + (verifying ? '<p class="ob-help">Asking the provider to answer once with this key\u2026</p>' : '')
-    + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
+    + (WIZ.error ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '">' + esc(WIZ.error) + '</div>' : '')
     + '</div>',
     unchecked
-      ? '<button class="btn btn-g" data-act="wiz:back">Back</button>'
-        + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
-        + '<button class="btn btn-p" data-act="wiz:next">Try again</button>'
-      : '<button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
-        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>' + (verifying ? 'Verifying\u2026' : 'Next') + '</button>');
+      ? '<button class="btn btn-g xs" data-act="wiz:back">Back</button><span class="grow"></span>'
+        + '<button class="btn btn-s xs" data-act="wiz:saveUnchecked">Save unchecked</button>'
+        + '<button class="btn btn-p xs" data-act="wiz:next">Try again</button>'
+      : '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
+        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? '<span class="tk-spin"></span>Verifying\u2026' : 'Next') + '</button>',
+    lead);
 }
 
 /**
@@ -10997,10 +11564,21 @@ function renderItems() {
     `m.text` is already-escaped html on this path (the callers escape what
     they interpolate), so it is emitted as the single row would emit it. */
 function systemRun(m, times) {
-  return '<div class="sysrow"><span></span><span>' + m.text
-    + (m.act === 'switch-provider'
-        ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
-    + ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span></span></div>';
+  return sysRowHTML(m, times);
+}
+/* One system row, single or folded (`times` \u2265 2 adds the \u00d7N count). `m.text`
+   is already-escaped html. A row whose item carries `tone` (the session
+   model stamp) is drawn as a Tactile notice inside the same `.sysrow`; the
+   literal "loading session\u2026" row gets the kit spinner. */
+function sysRowHTML(m, times) {
+  const tail = (m.act === 'switch-provider'
+      ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
+    + (times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '');
+  if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
+    + ic(m.icon || 'info') + '<span class="grow">' + m.text + tail + '</span></div></div>';
+  return '<div class="sysrow"><span></span><span>'
+    + (m.text === 'loading session\u2026' ? '<span class="tk-spin"></span>' : '')
+    + m.text + tail + '</span></div>';
 }
 
 function groupCard(run) {
@@ -11017,17 +11595,16 @@ function groupCard(run) {
     : measured.length === run.length ? (observed ? 'sum of the calls; ' + observed + ' observed by this window until the store lands' : 'sum of the calls, measured by the agent (trace)')
     : measured.length ? measured.length + ' of ' + run.length + ' calls measured' + (observed ? ' (' + observed + ' observed by this window until the store lands)' : '') + '; the rest have no trace row'
     : 'no trace for these calls';
-  const glyph = pending ? '<span class="dot run"></span>'
-    : bad ? '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>'
-          : '<span style="color:var(--success);display:flex">' + ic('check') + '</span>';
+  const glyph = toolGlyph(pending ? 'run' : bad ? 'err' : 'ok');
   const previews = run.map((c) => previewArgs(c.args || c.arg)).filter(Boolean);
-  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card">'
+  // Soft Tactile: the same card as a single call; a run with a failure takes the red ring and a `N failed` chip.
+  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '">'
     + '<button class="cardhead" data-group="' + m.id + '">' + glyph
     + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '\u2026' : measured.length ? dur(ms) : '') + '</span>'
-    + (bad ? '<span class="cap" style="color:var(--danger)">' + bad + ' failed</span>' : '')
+    + (bad ? '<span class="tk-chip tk-chip--sm tk-chip--red">' + bad + ' failed</span>' : '')
     + '<span class="ar">' + esc(previews.slice(0, 3).join(' \u00b7 ') + (previews.length > 3 ? ' \u2026' : '')) + '</span>'
-    + '<span class="ter" style="display:flex">' + ic('chevR') + '</span></button>'
+    + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
 
@@ -11608,8 +12185,8 @@ function modelChipHtml() {
        route (a provider with a catalogue behind it) gets the call to action;
        everything else keeps the honest blank. */
     if (!selHasKind('model') || selBackend() !== 'cloud') return '';
-    return '<button class="cchip modelchip needsmodel" data-sel-open="model"'
-      + ' title="No model chosen for this provider — pick one">choose a model' + ic('chevD') + '</button>';
+    return '<button class="cchip modelchip needsmodel' + cchipOpen('model') + '" data-sel-open="model"'
+      + ' title="No model chosen for this provider — pick one">' + ic('cpu') + '<span class="cval">choose a model</span>' + ic('chevD', 'chev') + '</button>';
   }
   /* SELECTOR LANE — the model slot's TWO components, as
      composer-meta-controls.tsx has them. A model label is a `Control`, and
@@ -11624,8 +12201,11 @@ function modelChipHtml() {
      route's model control, for the composer strip and for anything reading
      it. `data-sel-dl` is the component split. */
   const cta = label === DOWNLOAD_MODEL_LABEL;
-  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + '" data-sel-open="model"'
-    + (cta ? ' data-sel-dl="1"' : '') + '>' + esc(shortModel(label)) + ic('chevD') + '</button>';
+  // Soft Tactile: the model family's real mark (CPU badge when there is none),
+  // the download icon on the call to action; the id itself in DM Mono.
+  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + cchipOpen('model') + '" data-sel-open="model"'
+    + (cta ? ' data-sel-dl="1"' : '') + '>' + (cta ? ic('download') : modelMark(label, 'xs'))
+    + '<span class="cval">' + esc(shortModel(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
 /**
  * What the two facts change on screen, repainted in place. These land
@@ -11642,7 +12222,7 @@ function bswRepaint() {
     const html = modelChipHtml();
     const el = foot.querySelector('.modelchip');
     if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
-    else if (html) { const spacer = foot.querySelector(':scope > span'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
+    else if (html) { const spacer = foot.querySelector(':scope > .cgrow'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
   }
   if (!SEL.open || OB.open) return;
   const f = document.getElementById('sel-filter');
@@ -11921,13 +12501,15 @@ async function tasksRefresh(quiet) {
 /* The Tasks list's filter bar only (the `refresh: auto (Ns ago)` clock);
    skipped while the `/` search input lives inside it. */
 function tkRefreshBar() {
-  if (TK.mode !== 'list' || TK.searchOpen) return;
+  if (TK.mode !== 'list') return;
   const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
-  const bar = box && box.querySelector('.tuibar');
-  if (!bar) return;
+  // Soft Tactile: only the readout ticks; the search box and the buttons in
+  // the same toolbar are left alone, so a caret or a focus ring survives.
+  const readout = box && box.querySelector('.tuibar .set-readout');
+  if (!readout || readout.contains(document.activeElement)) return;
   const tmp = document.createElement('div');
-  tmp.innerHTML = tkFilterBar(tkVisibleRows().length);
-  bar.replaceWith(tmp.firstElementChild);
+  tmp.innerHTML = tkReadoutHTML(tkVisibleRows().length);
+  readout.replaceWith(tmp.firstElementChild);
 }
 /* Repaint the Tasks tab in place and keep the focus on the button (by its
    data-act) the user was on. With nothing focused inside the window a full
@@ -11952,35 +12534,69 @@ function tasksTab() {
 function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
 }
+/* Soft Tactile (ST-01): the Tasks toolbar — the filters as a segmented
+   control (every TK_FILTER_ORDER value), then search, the auto-refresh
+   readout, Refresh and New task. `.tuibar` stays on it: tkRefreshBar finds the
+   readout inside. */
 function tkFilterBar(visibleCount) {
-  const now = Date.now();
+  const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
+    + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
+    + '</div>';
+  const search = TK.searchOpen
+    ? '<label class="tk-inpwrap set-search is-open">' + ic('search') + '<input id="tk-search" value="' + esc(TK.search) + '" placeholder="Search tasks" autocomplete="off" spellcheck="false"></label>'
+    : '<button class="tk-inpwrap set-search" data-act="tasks:search" title="Search (/)">' + ic('search')
+      + (TK.search.length ? '<span class="v">' + esc(TK.search) + '</span>' : '<span class="ph">Search tasks</span>') + '<span class="kc">/</span></button>';
+  return '<div class="tuibar tk-bar set-toolbar">'
+    + '<div class="set-tbrow">' + seg + '</div>'
+    + '<div class="set-tbrow">' + search
+      + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
+      + tkReadoutHTML(visibleCount)
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-s sm" data-act="tasks:refresh" title="r refresh">' + ic('refresh') + 'Refresh</button>'
+      + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
+    + '</div></div>';
+}
+/* The readout tkRefreshBar repaints on each poll: `auto · refreshed 4s ago ·
+   7 of 12`. A click is the TUI's `a auto`. */
+function tkReadoutHTML(visibleCount) {
   const mode = TK.auto ? 'auto' : 'manual';
   let refresh;
-  if (TK.lastRefreshedAt === null) refresh = mode + ' (never)';
+  if (TK.lastRefreshedAt === null) refresh = 'never refreshed';
   else {
-    const seconds = Math.floor(Math.max(0, now - TK.lastRefreshedAt) / 1000);
-    refresh = seconds < 1 ? mode + ' (just now)' : seconds < 60 ? mode + ' (' + seconds + 's ago)' : mode + ' (' + Math.floor(seconds / 60) + 'm ago)';
+    const seconds = Math.floor(Math.max(0, Date.now() - TK.lastRefreshedAt) / 1000);
+    refresh = seconds < 1 ? 'refreshed just now' : seconds < 60 ? 'refreshed ' + seconds + 's ago' : 'refreshed ' + Math.floor(seconds / 60) + 'm ago';
   }
-  const search = TK.searchOpen
-    ? '  ·  /<input id="tk-search" value="' + esc(TK.search) + '" placeholder="" autocomplete="off" spellcheck="false">'
-    : TK.search.length ? '  ·  /' + esc(TK.search) : '';
-  return '<div class="tuibar"><b>Tasks</b><span class="ter">  filter: ' + esc(TK.filter) + '  ·  ' + visibleCount + '/' + TK.rows.length
-    + search + '  ·  refresh: ' + esc(refresh) + (TK.loading ? '  ·  loading…' : '') + '</span></div>';
+  return '<button class="set-readout" data-act="tasks:auto" title="Auto-refresh every 5 s — a toggles">'
+    + (TK.loading ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (TK.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
+    + '<span>' + esc(mode + ' · ' + (TK.loading ? 'loading…' : refresh) + ' · ' + visibleCount + ' of ' + TK.rows.length) + '</span></button>';
+}
+/* Status chip: running pulses brand, failed red, blocked amber (waiting on
+   something), completed green words, cancelled an outline. */
+function tkStatusChip(status) {
+  const tone = {running:'tk-chip--blue', completed:'tk-chip--green', failed:'tk-chip--red', blocked:'tk-chip--amber', cancelled:'tk-chip--line'}[status] || '';
+  return '<span class="tk-chip tk-chip--sm ' + tone + '">'
+    + (status === 'running' ? '<span class="tk-dot tk-dot--brand tk-dot--pulse"></span>' : '') + esc(status) + '</span>';
 }
 function tkMessages() {
-  return (TK.msg ? '<div class="tuimsg">' + esc(TK.msg) + '</div>' : '')
-    + (TK.msg && TK.note ? '<div class="ter">' + esc(TK.note) + '</div>' : '')
-    + (TK.err ? '<div class="tuierr">! ' + esc(TK.err) + '</div>' : '');
+  return (TK.msg ? '<div class="tuimsg tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TK.msg)
+      + (TK.note ? '<span class="set-note">' + esc(TK.note) + '</span>' : '') + '</span></div>' : '')
+    + (TK.err ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TK.err) + '</span>'
+      + '<button class="btn btn-s xs" data-act="tasks:refresh">Try again</button></div>' : '');
 }
+/* ST-04: recurring tasks ask first (one-shot tasks cancel straight away). */
 function tkCancelModal() {
   if (!TK.cancel) return '';
-  return '<div class="tuimodal warn"><b style="color:var(--warn)">cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task?</b>'
-    + '<div><span class="ter">id:</span> ' + esc(TK.cancel.taskId) + '</div>'
-    + '<div class="tuihint" style="margin-top:2px"><span>this stops all future firings.</span>'
-    + '<button data-act="tasks:cancelConfirm">y = confirm</button><span>·</span><button data-act="tasks:cancelKeep">n / Esc = keep</button></div></div>';
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--warn set-modal" role="alertdialog" aria-label="Cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--amber">' + ic('alert') + '</span><h4>Cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task?</h4></div>'
+    + '<p class="mono">id: ' + esc(TK.cancel.taskId) + '</p>'
+    + '<p>This stops all future firings.</p>'
+    + '<div class="acts"><button class="btn btn-s sm" data-act="tasks:cancelKeep" title="n / Esc = keep">Keep<span class="kc">N</span></button>'
+      + '<button class="btn btn-df sm" data-act="tasks:cancelConfirm" title="y = confirm">Cancel task<span class="kc">Y</span></button></div>'
+    + '</div></div>';
 }
+/* One keycap hint button: `n new`, `R run-now`… (the Tasks tab's own hint strip). */
 function tkHint(key, label, act) {
-  return '<button data-act="' + act + '">' + esc(key + ' ' + label) + '</button><span>·</span>';
+  return '<button class="tk-hint" data-act="' + act + '"><span class="kc">' + esc(key) + '</span> ' + esc(label) + '</button>';
 }
 function tkListHTML() {
   const rows = tkVisibleRows();
@@ -11988,7 +12604,14 @@ function tkListHTML() {
   const cur = Math.max(0, Math.min(TK.cursor, rows.length - 1));
   let body;
   if (!rows.length) {
-    body = '<div class="ter" style="padding:10px 0">no tasks match the current filter — press `n` to create one, `f` to cycle filter, `r` to refresh.</div>';
+    // The TUI's three ways out (n / f / r), as buttons under the empty state.
+    const what = TK.filter === 'all' ? 'tasks' : TK.filter + ' tasks';
+    body = '<div class="tk-empty set-empty">'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('tasks') + '</span>'
+      + '<h4>' + (TK.rows.length ? 'No ' + esc(what) + (TK.search ? ' match “' + esc(TK.search) + '”' : ' match the current filter') : 'No tasks yet') + '</h4>'
+      + '<p>Create one, cycle the filter, or refresh.</p>'
+      + '<div class="tk-hints">' + tkHint('n', 'new task', 'tasks:new') + tkHint('f', 'cycle filter', 'tasks:filter') + tkHint('r', 'refresh', 'tasks:refresh') + '</div>'
+      + '</div>';
   } else {
     // tasks-list.tsx:37-41: window the rows around the cursor (row-window.ts
     // computeWindowStart) and say how many are hidden above / below. The
@@ -11998,88 +12621,123 @@ function tkListHTML() {
     const page = rows.slice(start, start + TK_MAX_ROWS);
     const hiddenBefore = start;
     const hiddenAfter = Math.max(0, rows.length - start - page.length);
-    body = '<div class="tuihead">  status   schedule               next-run       session   message</div>'
-      + (hiddenBefore > 0 ? '<button class="tuimore" data-act="tasks:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
+    const more = (dir, n) => '<tr class="set-morerow"><td colspan="5"><button class="tuimore" data-act="tasks:page:' + dir + '">' + (dir === 'up' ? '↑ ' + n + ' above' : '↓ ' + n + ' below') + '</button></td></tr>';
+    body = '<div class="tk-list set-tblcard"><table class="tk-tbl set-tktbl" aria-label="Tasks">'
+      + '<thead><tr><th>Status</th><th>Schedule</th><th>Next run</th><th>Session</th><th>Message</th></tr></thead><tbody>'
+      + (hiddenBefore > 0 ? more('up', hiddenBefore) : '')
       + page.map((row, idx) => {
         const i = idx + start;
         const sel = i === cur;
-        return '<button class="tuirow' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '">'
-          // TaskRow: `{chevron} {status(9)}{schedule(22)} {next(14)} {session(10)}{message}` — no
-          // separator after the status or session cells, so the columns sit under the header.
-          + (sel ? '▸' : ' ') + ' <span class="' + tkStatusClass(row.status) + '">' + esc(row.status.padEnd(9)) + '</span>'
-          + '<span class="ter">' + esc(tkTrunc(row.scheduleLabel, 22).padEnd(22) + ' ' + formatRelativeMs(row.scheduledFor, now).padEnd(14) + ' '
-            + (row.sessionId ? tkShortId(row.sessionId) : '—').padEnd(10)) + '</span>'
-          + esc(tkTrunc(row.userMessage, 64)) + '</button>';
+        return '<tr class="click' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+          + '<td><button class="set-rowbtn" data-act="tasks:detail:' + esc(row.id) + '" title="Open task ' + esc(row.id) + '">' + tkStatusChip(row.status) + '</button></td>'
+          + '<td class="mono set-sched" title="' + esc(row.scheduleLabel) + '">' + esc(row.scheduleLabel) + '</td>'
+          + '<td class="mono">' + esc(formatRelativeMs(row.scheduledFor, now)) + '</td>'
+          + '<td class="mono" title="' + esc(row.sessionId || '') + '">' + esc(row.sessionId ? tkShortId(row.sessionId) : '—') + '</td>'
+          + '<td class="set-msg" title="' + esc(row.userMessage) + '">' + esc(row.userMessage) + '</td></tr>';
       }).join('')
-      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="tasks:page:down">↓ ' + hiddenAfter + ' below</button>' : '');
+      + (hiddenAfter > 0 ? more('down', hiddenAfter) : '')
+      + '</tbody></table></div>';
   }
-  const hints = '<div class="tuihint"><span>j/k move</span><span>·</span><span>Enter detail</span><span>·</span>'
+  const selRow = rows.length ? rows[cur] : null;
+  const hints = '<div class="tuihint tk-hints set-hints"><span class="tk-hint"><span class="kc">j/k</span> move</span>'
+    + (selRow ? tkHint('Enter', 'detail', 'tasks:detail:' + esc(selRow.id)) : '<span class="tk-hint"><span class="kc">Enter</span> detail</span>')
     + tkHint('n', 'new', 'tasks:new') + tkHint('c', 'cancel', 'tasks:cancel') + tkHint('R', 'run-now', 'tasks:run')
     + tkHint('r', 'refresh', 'tasks:refresh') + tkHint('a', 'auto', 'tasks:auto') + tkHint('f', 'filter', 'tasks:filter')
-    + tkHint('/', 'search', 'tasks:search') + '<button data-act="tasks:clearSearch">Esc clear search</button></div>';
-  return '<div class="tui">' + tkFilterBar(rows.length) + tkMessages() + tkCancelModal() + body + hints + '</div>';
+    + tkHint('/', 'search', 'tasks:search') + tkHint('Esc', 'clear search', 'tasks:clearSearch') + '</div>';
+  return '<div class="set-pane set-tasks">' + tkFilterBar(rows.length) + tkMessages() + body + hints + tkCancelModal() + '</div>';
 }
+/* ST-02: everything the agent exposes about one task, the last error in
+   full, and its three actions. */
 function tkDetailHTML() {
   const row = TK.rows.find((r) => r.id === TK.detailId);
+  const back = '<button class="btn btn-g sm" data-act="tasks:back" title="Esc back">' + ic('chevL') + 'All tasks</button>';
   if (!row) {
-    return '<div class="tui"><div style="color:var(--warn);padding:10px 0">task ' + esc(TK.detailId || '?') + ' not found in the current snapshot. Press Esc to return to the list.</div>'
-      + '<div class="tuihint"><button data-act="tasks:back">Esc back</button></div></div>';
+    return '<div class="set-pane"><div class="tk-bar">' + back + '</div>'
+      + '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">task ' + esc(TK.detailId || '?') + ' not found in the current snapshot. Press Esc to return to the list.</span></div>'
+      + tuiHints([['Esc back', 'tasks:back']]) + '</div>';
   }
   const now = Date.now();
   const id = row.id;
-  return '<div class="tui">' + tkMessages() + tkCancelModal()
-    + '<div><b>' + esc(id) + '</b><span class="ter">  ·  ' + esc(row.origin) + '</span></div>'
-    + '<div><span class="ter">status:</span> ' + esc(row.status) + '  <span class="ter">schedule:</span> ' + esc(row.scheduleLabel) + (row.recurring ? ' (recurring)' : '') + '</div>'
-    + '<div><span class="ter">next-run:</span> ' + esc(formatRelativeMs(row.scheduledFor, now)) + ' <span class="ter">(' + esc(row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')</span></div>'
-    + '<div><span class="ter">attempts:</span> ' + row.attempts + '/' + row.maxAttempts + '  <span class="ter">session:</span> ' + esc(row.sessionId ?? '—') + '</div>'
-    + '<div class="ter">created: ' + esc(formatUnixMs(row.createdAt)) + ' · updated: ' + esc(formatUnixMs(row.updatedAt))
-      + (row.completedAt !== null ? ' · completed: ' + esc(formatUnixMs(row.completedAt)) : '') + '</div>'
-    + '<div class="ter" style="margin-top:8px">message:</div><div>' + esc(row.userMessage) + '</div>'
-    + (row.lastError ? '<div class="tuierr" style="margin-top:8px">last error: ' + esc(row.lastError) + '</div>' : '')
-    + '<div class="ter" style="margin-top:8px">recent firings:</div>'
+  const plate = [
+    ['Task', id + '  ·  ' + row.origin],
+    ['Schedule', row.scheduleLabel + (row.recurring ? ' (recurring)' : '')],
+    ['Next run', formatRelativeMs(row.scheduledFor, now) + ' (' + (row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')'],
+    ['Attempts', row.attempts + '/' + row.maxAttempts],
+    ['Session', row.sessionId ?? '—'],
+    ['Created', formatUnixMs(row.createdAt) + ' · updated ' + formatUnixMs(row.updatedAt) + (row.completedAt !== null ? ' · completed ' + formatUnixMs(row.completedAt) : '')],
+  ];
+  return '<div class="set-pane set-taskdetail">' + tkMessages()
+    + '<div class="tk-bar">' + back + '<span class="grow"></span>'
+      + '<button class="btn btn-s sm" data-act="tasks:open:' + esc(id) + '" title="o open session">' + ic('chat') + 'Open session</button>'
+      + '<button class="btn btn-s sm" data-act="tasks:run:' + esc(id) + '" title="R run-now">' + ic('play') + 'Run now</button>'
+      + '<button class="btn btn-danger sm" data-act="tasks:cancel:' + esc(id) + '" title="c cancel">Cancel task</button></div>'
+    + '<div class="set-wellcard">'
+      + '<h3 class="set-dtitle">' + esc(row.userMessage || id) + '</h3>'
+      + '<div class="set-chips">' + tkStatusChip(row.status) + (row.recurring ? '<span class="tk-chip tk-chip--sm">recurring</span>' : '')
+        + '<span class="mono set-meta">attempts ' + row.attempts + '/' + row.maxAttempts + '</span></div>'
+      + '<dl class="tk-plate set-plate">' + plate.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
+    + '</div>'
+    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>last error:</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
+    + '<div class="set-section"><div class="tk-sh">Recent firings</div>'
     // The TUI builds this feed in-process by diffing records between ticks; the HTTP API has no such surface.
-    + '<div class="ter">(firings are not exposed by the agent\'s HTTP API)</div>'
-    + '<div class="tuihint">' + tkHint('o', 'open session', 'tasks:open:' + esc(id)) + tkHint('R', 'run-now', 'tasks:run:' + esc(id))
-      + tkHint('c', 'cancel', 'tasks:cancel:' + esc(id)) + '<button data-act="tasks:back">Esc back</button></div>'
+    + '<p class="set-cap">(firings are not exposed by the agent\'s HTTP API)</p></div>'
+    + '<div class="tuihint tk-hints set-hints">' + tkHint('o', 'open session', 'tasks:open:' + esc(id)) + tkHint('R', 'run-now', 'tasks:run:' + esc(id))
+      + tkHint('c', 'cancel', 'tasks:cancel:' + esc(id)) + tkHint('Esc', 'back', 'tasks:back') + '</div>'
+    + tkCancelModal()
     + '</div>';
 }
 function tkNewForm() {
   return {kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
           preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
 }
+/* ST-03: kind as a segmented control, labelled fields, the next five
+   firings beside them, and Create task disabled until the schedule parses. */
 function tkFormHTML() {
   const f = TK.form || (TK.form = tkNewForm());
-  const label = (l) => '<span class="mk"></span><span class="lb"> ' + esc(l.padEnd(10)) + ': </span>';
-  const field = (l, name, value, placeholder) =>
-    '<div class="tkrow">' + label(l) + '<input data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"></div>';
-  const expr = f.kind === 'cron' ? field('cron', 'cronExpression', f.cronExpression, '0 * * * * (standard 5-field cron)')
-    : f.kind === 'interval' ? field('every (s)', 'intervalSeconds', f.intervalSeconds, '300')
-    : field('at', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z or Unix-ms');
+  const field = (l, name, value, placeholder, help, mono) =>
+    '<label class="tk-field tkrow"><span class="tk-lbl">' + esc(l) + '</span>'
+    + '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false">'
+    + (help ? '<span class="tk-help">' + esc(help) + '</span>' : '') + '</label>';
+  const expr = f.kind === 'cron' ? field('Cron', 'cronExpression', f.cronExpression, '0 * * * *', 'standard 5-field cron', true)
+    : f.kind === 'interval' ? field('Every (seconds)', 'intervalSeconds', f.intervalSeconds, '300', '', true)
+    : field('At', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z', 'an ISO time or Unix-ms', true);
   const canSubmit = f.preview.ok && !f.submitting;
-  return '<div class="tui"><div class="tuimodal"><b>new task</b>'
-    + '<div class="tkrow">' + label('kind') + ['cron','interval','at'].map((k, i) =>
-        (i ? '<span class="ter"> / </span>' : '') + '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '">' + k + '</button>').join('') + '</div>'
-    + expr
-    + (f.kind === 'cron' ? field('tz', 'tz', f.tz, '(optional, e.g. Europe/Berlin)') : '')
-    + field('message', 'message', f.message, 'what should the agent do when this fires?')
-    + '<div id="tk-preview">' + tkPreviewHTML(f) + '</div>'
-    + '<div class="tuihint"><button data-act="tasks:submit"' + (canSubmit ? ' style="color:var(--success)"' : ' disabled') + '>Ctrl+Enter submit</button>'
-      + '<span>  · Tab next · Shift+Tab back · </span><button data-act="tasks:back">Esc cancel</button>' + (f.submitting ? '<span> · submitting…</span>' : '') + '</div>'
-    + '</div></div>';
+  return '<div class="set-pane set-form">'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="set-formgrid">'
+      + '<div class="set-formcol">'
+        + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
+          + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
+        + '</div></div>'
+        + expr
+        + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
+        + field('Message', 'message', f.message, 'what should the agent do when this fires?', '', false)
+      + '</div>'
+      + '<div class="set-prevcard" id="tk-preview">' + tkPreviewHTML(f) + '</div>'
+    + '</div>'
+    + '<div class="set-formfoot">'
+      + '<span class="set-cap">Tab next · Shift+Tab back' + (f.submitting ? ' · submitting…' : '') + '</span>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-g" data-act="tasks:back">Cancel<span class="kc">Esc</span></button>'
+      + '<button class="btn btn-p set-submit" data-act="tasks:submit"' + (canSubmit ? '' : ' disabled') + ' title="Ctrl+Enter submit">'
+        + (f.submitting ? '<span class="tk-spin on-fill"></span>' : '') + 'Create task<span class="kc">⌃↩</span></button>'
+    + '</div>'
+    + '</div>';
 }
 function tkPreviewHTML(f) {
-  if (f.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.error) + '</div>';
-  if (f.preview.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.preview.error) + '</div>';
-  if (!f.preview.nextFirings.length) return '<div class="ter" style="margin-top:8px">(preview unavailable)</div>';
-  return '<div class="ter" style="margin-top:8px">next firings:</div>'
-    + f.preview.nextFirings.map((ms) => '<div class="ter">· ' + esc(formatUnixMs(ms)) + '</div>').join('')
+  const head = '<div class="set-prevh"><b>Next firings</b></div>';
+  if (f.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
+  if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
+  if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
+  return head
+    + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>'
     // Item 7: honest degradation on 0.5.4 — the desktop cannot reach TaskRunner.create, only the CLI.
     // The desktop submits through `atag task create --at`; on agent 0.5.4 that CLI path writes the
     // one-shot through the bare TaskStore with no next-run (scheduled_for NULL), which the scheduler
     // treats as due now — the row will show next-run "-" and be picked up at the next tick. The TUI
     // creates in-process through TaskRunner.create and keeps the `at`; the desktop says so instead
     // of pretending.
-    + (f.kind === 'at' ? '<div class="ter" style="margin-top:8px">' + esc(tkAtNote('the time above')) + '</div>' : '');
+    + (f.kind === 'at' ? '<div class="tk-help tk-help--warn set-atnote">' + esc(tkAtNote('the time above')) + '</div>' : '');
 }
 /* The same caveat, worded for the preview ("the time above") and for the
    success line/toast after submit ("the `at` time"). */
@@ -12186,7 +12844,7 @@ function tasksAct(what) {
   if (verb === 'refresh') { tasksRefresh(); return; }
   if (verb === 'page') { const n = tkVisibleRows().length; TK.cursor = Math.max(0, Math.min(TK.cursor + (arg === 'up' ? -TK_MAX_ROWS : TK_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'auto') { TK.auto = !TK.auto; render(); return; }
-  if (verb === 'filter') { TK.filter = TK_FILTER_ORDER[(TK_FILTER_ORDER.indexOf(TK.filter) + 1) % TK_FILTER_ORDER.length]; TK.cursor = 0; render(); return; }
+  if (verb === 'filter') { TK.filter = arg && TK_FILTER_ORDER.includes(arg) ? arg : TK_FILTER_ORDER[(TK_FILTER_ORDER.indexOf(TK.filter) + 1) % TK_FILTER_ORDER.length]; TK.cursor = 0; render(); return; } // `filter:<name>` = a segment of the filter control; bare `filter` cycles (the `f` key)
   if (verb === 'search') { TK.searchOpen = true; render(); const n = $('#tk-search'); if (n) n.focus(); return; }
   if (verb === 'clearSearch') { TK.searchOpen = false; TK.search = ''; TK.cursor = 0; render(); return; }
 }
@@ -12325,7 +12983,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', () => { ERR_COUNT++; });
   window.__menuGroups = () => MENU_GROUPS.map((g) => g[0]);
   window.__settingsTabs = () => SETTINGS_TABS.map((t) => t[0]);
-  window.__settingsLabels = () => [...document.querySelectorAll('#settings .settab')].map((b) => b.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim());
+  window.__settingsLabels = () => [...document.querySelectorAll('#settings .settab')].map((b) => ((b.querySelector('.lb') || b).textContent || '').trim()); // the label a person reads, without the count badge
   window.__settingsOpen = (id) => { act('settings:' + id); return settingsPaneId(S.settingsPane); };
   window.__settingsPane = () => (S.settings ? settingsPaneId(S.settingsPane) : null);
   window.__settingsClose = () => { act('settings:close'); };
@@ -12347,7 +13005,8 @@ if (typeof window !== 'undefined') {
   window.__privacySet = (on) => privacySet(on).then(() => privacyEffective()); // the slash verbs' write path
   window.__privacyIdle = () => !PRIV.busy && PRIV.pending === 0; // no analytics write queued or in flight
   window.__runSlash = (line) => { runSlash(String(line).replace(/^\//, '').split(/\s+/)); }; // exactly what Enter on a `/…` composer line does
-  window.__settingsStripRows = () => new Set([...document.querySelectorAll('#settings .settab')].map((b) => b.offsetTop)).size; // 1 = the TUI's single-line strip
+  // 1 = one strip that never wraps. Soft Tactile draws the tabs as the nav's single column, so the strip's one line is its one column (offsetLeft).
+  window.__settingsStripRows = () => new Set([...document.querySelectorAll('#settings .settab')].map((b) => b.offsetLeft)).size;
   window.__menuNodes = () => {
     const out = [];
     MENU_GROUPS.forEach(([group, nodes]) => nodes.forEach((n) => {
@@ -12398,15 +13057,32 @@ function tuiTrunc(text, max) { text = String(text == null ? '' : text); return t
 function tuiBodyLines(lines) {
   return '<div class="tuibody">' + lines.map((l) => '<div>' + (l.length ? esc(l) : ' ') + '</div>').join('') + '</div>';
 }
+/* Soft Tactile: a hint is a small text button (.tk-hint) — every keyboard
+   hint in Settings is also something a mouse can press. `opts.cls` adds to
+   the class, it no longer replaces it. */
 function tuiBtn(label, act, opts) {
-  return '<button data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.cls ? ' class="' + opts.cls + '"' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + esc(label) + '</button>';
+  return '<button class="tk-hint' + (opts && opts.cls ? ' ' + opts.cls : '') + '" data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + tuiKeyLabel(label) + '</button>';
 }
 function tuiHints(parts) {
-  return '<div class="tuihint">' + parts.map((p, i) => (i ? '<span>·</span>' : '') + (typeof p === 'string' ? '<span>' + esc(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
+  return '<div class="tuihint tk-hints">' + parts.map((p) => (typeof p === 'string' ? '<span class="tk-hint">' + tuiKeyLabel(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
 }
+/* The leading key of a hint label drawn as a keycap: `e toggle`, `Esc back`,
+   `[y] delete`, `a: analytics off`, `j/k move`. The TUI's brackets and colon
+   become the keycap itself, so the label reads "y delete", "a analytics off".
+   A label with no recognisable key stays plain text. */
+function tuiKeyLabel(label) {
+  const s = String(label == null ? '' : label);
+  const m = /^(\[([^\]\s]{1,8})\]|(j\/k|Ctrl\+Enter|Shift\+Tab|Enter|enter|Esc|esc|Tab|Space|[A-Za-z]|[\/<>?]))(:?)( .+)$/.exec(s);
+  if (!m) return esc(s);
+  const key = m[2] !== undefined ? m[2] : m[3];
+  return '<span class="kc">' + esc(key) + '</span>' + esc(m[5]);
+}
+/* A change that only lands after a runtime restart says so where it was made,
+   with the one button that makes it land. */
 function restartLine(text) {
-  return '<div class="tuimsg">' + esc(text) + ' <span class="ter">(applies to the running agent after Restart Agent Runtime)</span> '
-    + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>';
+  return '<div class="tuimsg tk-notice tk-notice--blue">' + ic('refresh')
+    + '<span class="grow">' + esc(text) + ' <span class="sec">(applies to the running agent after Restart Agent Runtime)</span></span>'
+    + '<button class="btn btn-t sm" data-act="agent:restart">Restart Agent Runtime</button></div>';
 }
 
 /* ---------------- Skills tab (skills-panel.tsx, skills-list.tsx, skills-detail.tsx,
@@ -12453,35 +13129,56 @@ async function skpReloadRows() {
 
 function skillsTab() {
   ensureSkillsPoll();
-  if (SKP.installConfirm) return '<div class="tui">' + skpInstallConfirmHTML() + '</div>';
-  if (SKP.removeConfirm) return '<div class="tui">' + skpRemoveConfirmHTML() + '</div>';
-  if (SKP.hubCard) return '<div class="tui">' + skpHubCardHTML() + '</div>';
-  if (SKP.mode === 'hub') {
-    if (SKP.hubCardLoading) return '<div class="tui"><div class="ter" style="padding:10px 0">loading skill card…</div></div>';
-    return '<div class="tui">' + skpHubListHTML() + '</div>';
+  // Soft Tactile (ST-08, ST-11): a confirm is a modal over the view it was
+  // raised from instead of replacing it; the same two states win as before.
+  const overlay = SKP.installConfirm ? skpInstallConfirmHTML() : SKP.removeConfirm ? skpRemoveConfirmHTML() : '';
+  let view;
+  if (SKP.hubCard) view = skpHubCardHTML();
+  else if (SKP.mode === 'hub') {
+    view = SKP.hubCardLoading ? '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill card…</p></div>' : skpHubListHTML();
+  } else {
+    const rows = SK.rows || [];
+    const visible = skpVisibleRows();
+    const enabledCount = rows.filter((r) => r.enabled).length;
+    // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools` —
+    // a segmented control, the counts, the auto readout, Built-in tools and the Skills Hub (ST-06).
+    const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
+      + '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
+        + SKP_FILTERS.map((f) => '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + (f === SKP.filter) + '">' + f + '</button>').join('')
+      + '</div>'
+      + '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
+      + '<button class="set-readout" data-act="skills:auto" title="Auto-refresh every 5 s — a toggles">'
+        + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
+        + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-g sm" data-act="menu:help.tools" title="/tools">Built-in tools</button>'
+      + '<button class="btn btn-t sm" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
+      + '</div></div>';
+    view = bar
+      + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
+      + (SK.err ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
+      + skpMessages()
+      + (SKP.mode === 'detail' ? skpDetailHTML() : skpListHTML(visible));
   }
-  const rows = SK.rows || [];
-  const visible = skpVisibleRows();
-  const enabledCount = rows.filter((r) => r.enabled).length;
-  // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools`
-  const bar = '<div class="tuibar"><span class="ter">filter: </span>'
-    + SKP_FILTERS.map((f, i) => (i ? '<span class="ter"> · </span>' : '') + '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '">' + f + '</button>').join('')
-    + '<span class="ter">   ' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled'
-    + (SKP.auto ? ' · auto' : '') + (SK.busy ? ' · …' : '') + '   built-in tools: </span><button class="skpf" data-act="menu:help.tools">/tools</button></div>';
-  return '<div class="tui">' + bar
-    + (SKP.lastError ? '<div class="tuierr">! ' + esc(SKP.lastError) + '</div>' : '')
-    + (SK.err ? '<div class="tuierr">! ' + esc(SK.err) + '</div>' : '')
-    + skpMessages()
-    + (SKP.mode === 'detail' ? skpDetailHTML() : skpListHTML(visible)) + '</div>';
+  return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
 function skpMessages() {
   if (!SKP.msg) return '';
-  return SKP.msg.restart ? restartLine(SKP.msg.text) : '<div class="tuimsg">' + esc(SKP.msg.text) + '</div>';
+  return SKP.msg.restart ? restartLine(SKP.msg.text) : '<div class="tuimsg tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(SKP.msg.text) + '</span></div>';
+}
+/* Source chip: project (this workspace) in blue, bundled as an outline, a `missing` disable-list entry amber. */
+function skpSourceChip(source) {
+  const tone = {project:' tk-chip--blue', bundled:' tk-chip--line', missing:' tk-chip--amber'}[source] || '';
+  return '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(source) + '</span>';
 }
 function skpListHTML(visible) {
-  if (!SK.rows && !SK.err) return '<div class="ter" style="padding:10px 0">loading skill list…</div>';
+  if (!SK.rows && !SK.err) return '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill list…</p></div>';
   if (!visible.length) {
-    return '<div class="ter" style="padding:10px 0">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</div>'
+    // The hint strip and the Skills Hub card below carry the three ways out.
+    return '<div class="tk-empty set-empty">'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('skills') + '</span>'
+      + '<h4>No skills match the current filter</h4>'
+      + '<p>Install one from the Skills Hub, cycle the filter, or refresh.</p></div>'
       + skpHintsHTML() + skpHubCtaHTML();
   }
   const cur = Math.max(0, Math.min(SKP.cursor, visible.length - 1));
@@ -12489,17 +13186,22 @@ function skpListHTML(visible) {
   const page = visible.slice(start, start + SKP_MAX_ROWS);
   const hiddenBefore = start;
   const hiddenAfter = Math.max(0, visible.length - start - page.length);
-  return '<div class="tuihead">  state     source   version  name                       description</div>'
+  // ST-06: one row per skill — switch · name · source · version · description. The switch is the
+  // `e toggle` of that row (a span: the row itself is the button that opens the detail).
+  return '<div class="tk-list set-sklist">'
+    + '<div class="set-skcols"><span>Enabled</span><span>Name</span><span>Source</span><span>Version</span><span>Description</span></div>'
     + (hiddenBefore > 0 ? '<button class="tuimore" data-act="skills:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
     + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
-      // SkillRow: `{chevron} {state(9)}` `{[source](9)} {v(8)}` `{name(26)}` `{description(60)}`
-      return '<button class="tuirow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '">'
-        + (sel ? '▸' : ' ') + ' <span class="' + (r.enabled ? 'sk-on' : 'sk-off') + '">' + (r.enabled ? 'enabled' : 'disabled').padEnd(9) + '</span>'
-        + '<span class="ter">' + esc(('[' + r.source + ']').padEnd(9) + ' ' + ('v' + r.version).padEnd(8)) + '</span>'
-        + esc(tuiTrunc(r.name, 24).padEnd(26)) + '<span class="' + (r.enabled ? '' : 'ter') + '">' + esc(tuiTrunc(r.description, 60)) + '</span></button>';
+      return '<button class="tk-li set-skrow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+        + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="e toggle" data-act="skills:toggle:' + esc(r.name) + '"></span>'
+        + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
+        + '<span class="set-src">' + skpSourceChip(r.source) + '</span>'
+        + '<span class="m">v' + esc(r.version) + '</span>'
+        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + '</span></button>';
     }).join('')
     + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
+    + '</div>'
     + skpHintsHTML() + skpHubCtaHTML();
 }
 function skpHintsHTML() {
@@ -12507,46 +13209,66 @@ function skpHintsHTML() {
     ['r refresh', 'skills:refresh'], ['a auto', 'skills:auto'], ['f filter', 'skills:filter']]);
 }
 function skpHubCtaHTML() {
-  return '<button class="tuimodal skphub" data-act="skills:hub"><b>i</b><span class="skpaccent"> · Skills Hub</span><span class="ter">  browse &amp; install skills from ClawHub</span></button>';
+  return '<div class="tk-list set-hubcta"><button class="tk-li skphub" data-act="skills:hub">'
+    + '<span class="tk-ico tk-ico--blue">' + ic('download') + '</span>'
+    + '<span class="body"><span class="t">Skills Hub</span>'
+      + '<span class="d">Browse and install skills from ClawHub</span></span>'
+    + '<span class="kc">i</span>' + ic('chevR') + '</button></div>';
 }
+/* ST-07: name, state, source and version, then SKILL.md itself. */
 function skpDetailHTML() {
   const name = SKP.detailName;
-  if (!name) return '<div class="ter" style="padding:10px 0">(no skill selected)</div>';
+  const back = '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'All skills</button>';
+  if (!name) return '<div class="tk-bar">' + back + '</div><p class="set-cap">(no skill selected)</p>';
   const row = (SK.rows || []).find((r) => r.name === name);
   const enabled = row ? row.enabled : true;
   let body;
-  if (SKP.detailBody === null) body = '<div class="ter">(loading…)</div>';
+  if (SKP.detailBody === null) body = '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>(loading…)</div>';
   else {
     const lines = SKP.detailBody.split('\n');
     const hidden = lines.length - SKP_DETAIL_LINES;
-    body = tuiBodyLines(lines.slice(0, SKP_DETAIL_LINES))
-      + (hidden > 0 ? '<div class="ter">… (' + hidden + ' more line' + (hidden === 1 ? '' : 's') + ' hidden)</div>' : '');
+    body = '<pre class="tk-out set-skmd">' + esc(lines.slice(0, SKP_DETAIL_LINES).join('\n'))
+      + (hidden > 0 ? '\n\n<span class="set-mdmore">… (' + hidden + ' more line' + (hidden === 1 ? '' : 's') + ' hidden)</span>' : '') + '</pre>';
   }
-  return '<div style="margin-top:6px"><b>' + esc(name) + '</b><span class="ter">  </span><span class="' + (enabled ? 'sk-on' : 'sk-off') + '">' + (enabled ? 'enabled' : 'disabled') + '</span>'
-    + (row ? '<span class="ter">  [' + esc(row.source) + '] v' + esc(row.version) + '</span>' : '') + '</div>'
-    + (row && row.description ? '<div class="ter" style="margin-top:8px">' + esc(row.description) + '</div>' : '')
-    + '<div style="margin-top:8px">' + body + '</div>'
+  // Remove is offered where `d remove` can act: a global skill gets the confirm, a project one the line saying where it lives.
+  const canRemove = row && (row.source === 'global' || row.source === 'project');
+  return '<div class="tk-bar">' + back + '<span class="grow"></span>'
+      + '<button class="tk-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" aria-label="' + (enabled ? 'Disable ' : 'Enable ') + esc(name) + '" title="e toggle" data-act="skills:toggle:' + esc(name) + '"' + (SKP.busy ? ' disabled' : '') + '></button>'
+      + '<span class="set-state' + (enabled ? ' on' : '') + '">' + (enabled ? 'enabled' : 'disabled') + '</span>'
+      + (canRemove ? '<button class="btn btn-danger sm" data-act="skills:remove:' + esc(name) + '">' + ic('trash') + 'Remove</button>' : '')
+    + '</div>'
+    + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(name) + '</h3>' + (row ? skpSourceChip(row.source) + '<span class="mono set-meta">v' + esc(row.version) + '</span>' : '') + '</div>'
+    + (row && row.description ? '<p class="set-desc">' + esc(row.description) + '</p>' : '')
+    + body
     + tuiHints([['Esc back', 'skills:back'], ['e toggle', 'skills:toggle:' + name], ['r refresh', 'skills:refresh']]);
 }
+/* ST-08: the red confirm, over the list. */
 function skpRemoveConfirmHTML() {
   const c = SKP.removeConfirm;
-  return '<div class="tuimodal danger"><b style="color:var(--danger)">Remove skill</b>'
-    + '<div class="ter">delete global skill ' + esc(c.name) + '?</div>'
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal" role="alertdialog" aria-label="Remove skill">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>Remove skill</h4></div>'
+    + '<p>Delete global skill <b class="mono">' + esc(c.name) + '</b>?</p>'
     // skills-remove-confirm.tsx warns when the skill is a bundled starter; listStarterSkillNames is not exposed by the agent, so the check cannot run here.
-    + '<div class="ter" style="margin-top:8px">(bundled-starter check unavailable)</div>'
-    + (c.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(c.error) + '</div>' : '')
-    + (c.submitting ? '<div class="ter" style="margin-top:8px">removing…</div>'
-        : tuiHints([['[y] delete', 'skills:removeConfirm'], ['[n] cancel', 'skills:removeCancel']])) + '</div>';
+    + '<p class="set-cap">(bundled-starter check unavailable)</p>'
+    + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + '</div>' : '')
+    + (c.submitting ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">removing…</span></div>'
+        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:removeCancel" title="[n] cancel">Cancel<span class="kc">N</span></button>'
+          + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete<span class="kc">Y</span></button></div>')
+    + '</div></div>';
 }
+/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override. */
 function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
-  return '<div class="tuimodal danger"><b style="color:var(--danger)">Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</b>'
-    + '<div class="ter">install ' + esc(c.identifier) + '?</div>'
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
+    + '<p>Install <b class="mono">' + esc(c.identifier) + '</b>?</p>'
     // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
-    + '<div style="margin-top:8px" class="tuierr">' + esc(c.message) + '</div>'
-    + '<div class="ter">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</div>'
-    + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
-        : '<div class="tuihint">' + tuiBtn('[y] install anyway (risk acknowledged)', 'skills:installAck') + '<span>  </span>' + tuiBtn('[n] cancel', 'skills:installCancel') + '</div>') + '</div>';
+    + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
+    + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
+    + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
+        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel<span class="kc">N</span></button>'
+          + '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)<span class="kc">Y</span></button></div>')
+    + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
   // skills-hub-list.tsx formatHubIdentifier: `owner/…/dir` for nested repo paths
@@ -12562,65 +13284,87 @@ function formatDownloads(n) {
   if (n < 1000000) return trim(n / 1000) + 'k';
   return trim(n / 1000000) + 'M';
 }
+/* ST-09: the hub — back to Installed, the search box, the count, and one row per result. */
 function skpHubListHTML() {
   const q = SKP.hubQuery;
-  const search = SKP.hubSearchEditing
-    ? '<input id="skp-hubq" value="' + esc(q) + '" autocomplete="off" spellcheck="false">'
-    : '<span>' + esc(q.length ? q : '(all)') + '</span>';
   const n = SKP.hubRows.length;
+  // Not editing: a button that opens the search (`/`), showing the query, or the placeholder while every row is listed.
+  const search = SKP.hubSearchEditing
+    ? '<label class="tk-inpwrap set-search set-hubsearch is-open">' + ic('search')
+      + '<input id="skp-hubq" value="' + esc(q) + '" placeholder="Search ClawHub and GitHub taps" aria-label="Search the skill hub" autocomplete="off" spellcheck="false"><span class="kc" aria-hidden="true">↩</span></label>'
+    : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="/ search">' + ic('search')
+      + '<span class="' + (q.length ? 'v' : 'ph') + '">' + esc(q.length ? q : 'Search ClawHub and GitHub taps') + '</span><span class="kc" aria-hidden="true">/</span></button>';
   let body;
-  if (SKP.hubLoading && !n) body = '<div class="ter" style="padding:10px 0">browsing the skill hub…</div>';
-  else if (!n) body = '<div class="ter" style="padding:10px 0">no skills found — press `/` to search, `r` to re-browse, or `Esc` to go back.</div>';
-  else {
+  if (SKP.hubLoading && !n) body = '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>browsing the skill hub…</p></div>';
+  else if (!n) {
+    body = '<div class="tk-empty set-empty">'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('search') + '</span><h4>No skills found</h4>'
+      + '<p>Search, browse again, or go back to the installed skills.</p></div>';
+  } else {
     const cur = Math.max(0, Math.min(SKP.hubCursor, n - 1));
     const start = computeWindowStart(cur, n, SKP_HUB_ROWS);
     const page = SKP.hubRows.slice(start, start + SKP_HUB_ROWS);
     const hiddenAfter = Math.max(0, n - start - page.length);
-    body = (start > 0 ? '<button class="tuimore" data-act="skills:hubPage:up">↑ ' + start + ' above</button>' : '')
+    body = '<div class="tk-list set-hublist">'
+      + (start > 0 ? '<button class="tuimore" data-act="skills:hubPage:up">↑ ' + start + ' above</button>' : '')
       + page.map((r, idx) => {
         const i = idx + start, sel = i === cur;
-        // HubRow: `{chevron} {claw|gh  } {identifier(32)}{↓dl(9)}{description(48)}`
-        return '<button class="tuirow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '">'
-          + (sel ? '▸' : ' ') + ' <span class="' + (r.source === 'clawhub' ? 'skpaccent' : 'ter') + '">' + (r.source === 'clawhub' ? 'claw' : 'gh  ') + '</span> '
-          + esc(tuiTrunc(skpHubIdLabel(r.identifier), 30).padEnd(32)) + '<span class="ter">' + esc(('↓' + formatDownloads(r.downloads)).padEnd(9)) + '</span>'
-          + '<span class="' + (sel ? '' : 'ter') + '">' + esc(tuiTrunc(r.description, 48)) + '</span></button>';
+        const claw = r.source === 'clawhub';
+        // HubRow: source · identifier · downloads · description.
+        return '<button class="tk-li set-hubrow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+          + '<span class="tk-chip tk-chip--sm set-srcchip' + (claw ? ' tk-chip--blue' : '') + '">' + (claw ? 'claw' : 'gh') + '</span>'
+          + '<span class="body"><span class="t mono" title="' + esc(r.identifier) + '">' + esc(skpHubIdLabel(r.identifier)) + '</span><span class="d">' + esc(r.description) + '</span></span>'
+          + '<span class="m">↓' + esc(formatDownloads(r.downloads)) + '</span></button>';
       }).join('')
-      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:hubPage:down">↓ ' + hiddenAfter + ' below</button>' : '');
+      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:hubPage:down">↓ ' + hiddenAfter + ' below</button>' : '')
+      + '</div>';
   }
-  return '<div class="tuibar"><span class="ter">hub search: </span>' + search + (SKP.hubSearchEditing ? '<span class="skpaccent">▌</span>' : '')
-    + '<span class="ter">   ' + n + ' result' + (n === 1 ? '' : 's') + (SKP.hubLoading ? ' · …' : '') + '</span></div>'
-    + (SKP.hubError ? '<div class="tuierr">! ' + esc(SKP.hubError) + '</div>' : '')
-    + (SKP.installError ? '<div class="tuierr">! install failed: ' + esc(SKP.installError) + '</div>' : '')
+  return '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
+      + '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'Installed</button>'
+      + search
+      + '<span class="set-counts">' + n + ' result' + (n === 1 ? '' : 's') + '</span>' + (SKP.hubLoading ? '<span class="tk-spin"></span>' : '')
+      + '<button class="btn btn-s sm" data-act="skills:rebrowse" title="r re-browse">' + ic('refresh') + 'Browse again</button>'
+    + '</div></div>'
+    + (SKP.hubError ? '<div class="tuierr tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(SKP.hubError) + '</span></div>' : '')
+    + (SKP.installError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">install failed: ' + esc(SKP.installError) + '</span></div>' : '')
     + skpMessages()
     + body
     + tuiHints(['j/k move', ['Enter open card', 'skills:card'], ['/ search', 'skills:hubSearch'], ['r re-browse', 'skills:rebrowse'], ['Esc back', 'skills:back']]);
 }
+/* ST-10: owner, downloads, version and the SKILL.md preview before installing. */
 function skpHubCardHTML() {
   const c = SKP.hubCard;
-  const badge = c.source === 'clawhub' ? 'claw' : 'gh';
+  const claw = c.source === 'clawhub';
+  const badge = claw ? 'claw' : 'gh';
   let body;
-  if (c.body === null) body = '<div class="ter">' + esc(c.bodyError || 'loading SKILL.md…') + '</div>';
-  else {
+  if (c.body === null) {
+    body = c.bodyError
+      ? '<div class="tk-notice set-softnote">' + ic('info') + '<span class="grow">' + esc(c.bodyError) + '</span></div>'
+      : '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>loading SKILL.md…</div>';
+  } else {
     const lines = c.body.split('\n');
     const start = Math.max(0, Math.min(SKP.cardScroll, Math.max(0, lines.length - SKP_CARD_LINES)));
     const win = lines.slice(start, start + SKP_CARD_LINES);
     const below = Math.max(0, lines.length - (start + win.length));
     body = (start > 0 ? '<button class="tuimore" data-act="skills:cardScroll:up">↑ ' + start + ' more line' + (start === 1 ? '' : 's') + ' above</button>' : '')
-      + tuiBodyLines(win)
+      + '<pre class="tk-out set-skmd">' + esc(win.join('\n')) + '</pre>'
       + (below > 0 ? '<button class="tuimore" data-act="skills:cardScroll:down">↓ ' + below + ' more line' + (below === 1 ? '' : 's') + ' below</button>' : '');
   }
   const canInstall = !!c.installId;
-  return '<div class="tuimodal"><div><span class="' + (c.source === 'clawhub' ? 'skpaccent' : 'ter') + '">[' + badge + '] </span><b>' + esc(c.name) + '</b><span class="ter">  ' + esc(c.identifier) + '</span></div>'
-    + '<div class="ter">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</div>'
-    + (c.version === null ? '<div class="ter">(version is not printed by `atag skill browse`)</div>' : '')
-    + (c.description ? '<div class="ter" style="margin-top:8px">' + esc(c.description) + '</div>' : '')
-    + '<div style="margin-top:8px">' + body + '</div>'
-    + (SKP.installError ? '<div class="tuierr" style="margin-top:8px">! install failed: ' + esc(SKP.installError) + '</div>' : '')
-    + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
-        : tuiHints([['[i] install', 'skills:install', {disabled: !canInstall}], ['[n] cancel', 'skills:back'], 'j/k scroll']))
+  return '<div class="tk-bar"><button class="btn btn-g sm" data-act="skills:back" title="[n] cancel">' + ic('chevL') + 'Results</button><span class="grow"></span>'
+      + (SKP.installing ? '<span class="tk-spin"></span><span class="set-cap">installing…</span>'
+        : '<button class="btn btn-p sm" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="i install">' + ic('download') + 'Install<span class="kc">i</span></button>')
+    + '</div>'
+    + '<div class="set-titlerow"><span class="tk-chip tk-chip--sm' + (claw ? ' tk-chip--blue' : '') + '" title="' + (claw ? 'ClawHub' : 'GitHub tap') + '">' + badge + '</span>'
+      + '<h3 class="set-dtitle">' + esc(c.name) + '</h3><span class="mono set-meta">' + esc(c.identifier) + '</span></div>'
+    + '<p class="set-meta">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</p>'
+    + (c.version === null ? '<p class="set-cap">(version is not printed by `atag skill browse`)</p>' : '')
+    + (c.description ? '<p class="set-desc">' + esc(c.description) + '</p>' : '')
+    + body
+    + (SKP.installError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">install failed: ' + esc(SKP.installError) + '</span></div>' : '')
+    + (SKP.installing ? '' : tuiHints([['[i] install', 'skills:install', {disabled: !canInstall}], ['[n] cancel', 'skills:back'], 'j/k scroll']))
     // `atag skill install` takes `@owner/slug`; a catalog-browse row carries only the slug (ClawHub's browse API prints no owner) and the detail answer carries none either.
-    + (!canInstall && c.source === 'clawhub' ? '<div class="ter">(install needs `@owner/slug` — this browse row has no owner; `/` search lists owner-qualified rows)</div>' : '')
-    + '</div>';
+    + (!canInstall && claw ? '<p class="set-cap">(install needs `@owner/slug` — this browse row has no owner; `/` search lists owner-qualified rows)</p>' : '');
 }
 
 /* Loaders and actions. */
@@ -13033,7 +13777,7 @@ async function memRefresh(quiet) {
     return;
   }
   if (memoryVisible()) paneRepaintKeepFocus(memoryTab()); else if (!quiet) render();
-  if (S.settings) { const tab = document.querySelector('#settings .settab.on'); if (tab) tab.textContent = 'Memory' + tabSuffix('memory'); } // the strip's ` (N)` follows the selected channel's rows
+  if (S.settings) { const tab = document.querySelector('#settings .settab[data-act="settings:memory"]'); if (tab) tab.innerHTML = settabInner('Memory', 'memory'); } // the nav's count badge follows the selected channel's rows
 }
 function memStatusLine() {
   return [MEM.loading ? 'loading' : null, MEM.auto ? 'auto' : 'manual',
@@ -13044,35 +13788,69 @@ function memStatusLine() {
 }
 function memoryTab() {
   ensureMemoryPoll();
-  const labels = MEM.available.map((ch, idx) => {
-    const label = (idx + 1) + ':' + ch;
-    return '<button class="memch' + (ch === MEM.channel ? ' on' : '') + '" data-act="memory:ch:' + ch + '">' + esc(ch === MEM.channel ? '[' + label + ']' : label) + '</button>';
-  }).join('<span class="ter">  </span>');
-  return '<div class="tui"><div class="tuibar">' + labels + '</div>'
-    + '<div class="ter memstatus">' + esc(memStatusLine()) + '</div>'
-    + (MEM.lastError ? '<div class="tuierr">! ' + esc(MEM.lastError) + '</div>' : '')
+  // Every channel the agent knows, as one segmented switch; the ones memory.*.enabled keeps off are disabled and say so.
+  const flagOf = {profile:'profile', notes:'notes', lessons:'lessons', procedures:'procedures', links:'links', votes:'voting'};
+  const seg = MEM_CHANNEL_ORDER.map((ch) => {
+    const on = ch === MEM.channel;
+    const off = !MEM.available.includes(ch);
+    return '<button class="' + (on ? 'on' : '') + '" aria-pressed="' + on + '" data-act="memory:ch:' + ch + '"'
+      + (off ? ' disabled title="' + esc('memory.' + flagOf[ch] + '.enabled is off in config') + '"' : '') + '>' + esc(ch) + '</button>';
+  }).join('');
+  const filter = MEM.channel === 'notes' && MEM.mode === 'list'
+    ? '<div class="tk-seg">' + MEM_NOTES_FILTERS.map((f) => '<button class="' + (f === MEM.notesFilter ? 'on' : '') + '" aria-pressed="' + (f === MEM.notesFilter) + '" data-act="memory:filter:' + f + '">' + esc(f) + '</button>').join('') + '</div>'
+    : '';
+  const dot = MEM.loading ? 'tk-dot--brand tk-dot--pulse' : MEM.auto ? 'tk-dot--green' : 'tk-dot--hollow';
+  return '<div class="sd-pane sd-mem">'
+    + '<div class="tk-bar"><div class="tk-seg" role="group" aria-label="Memory channel">' + seg + '</div>' + filter + '<span class="grow"></span>'
+    + '<span class="sd-status"><i class="tk-dot ' + dot + '"></i><span class="memstatus">' + esc(memStatusLine()) + '</span></span></div>'
+    + (MEM.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MEM.lastError) + '</span></div>' : '')
     + (MEM.mode === 'list' ? memListHTML() : memDetailHTML()) + '</div>';
 }
 function memListHTML() {
-  if (MEM.channelHint) return '<div style="color:var(--warn);padding:10px 0">' + esc(MEM.channelHint) + '</div>';
+  if (MEM.channelHint) {
+    // ST-15: the setting that keeps this channel empty, named in mono.
+    const m = /^(\S+=false)(.*)$/.exec(MEM.channelHint);
+    return '<div class="tk-notice tk-notice--amber">' + ic('info') + '<span class="grow">'
+      + (m ? '<span class="mono">' + esc(m[1]) + '</span>' + esc(m[2]) : esc(MEM.channelHint)) + '</span></div>'
+      + '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('memory') + '</span><h4>This channel is turned off</h4></div>';
+  }
   const rows = memVisibleRows();
   if (!rows.length) {
-    if (MEM.lastRefreshedAt === null) return '<div class="ter" style="padding:10px 0">(loading…)</div>';
-    return '<div class="ter" style="padding:10px 0">(empty) — press `r` to refresh' + (MEM.channel === 'notes' ? ' · `f` cycles active/archived/all' : '') + '</div>' + memHintsHTML();
+    if (MEM.lastRefreshedAt === null) return '<div class="tk-empty"><span class="tk-spin"></span><p>loading…</p></div>';
+    const none = {profile:'No profile facts', notes:'No notes', lessons:'No lessons', procedures:'No procedures', links:'No links', votes:'No vote events'}[MEM.channel] || 'Nothing here';
+    return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('memory') + '</span><h4>' + esc(none) + '</h4>'
+      + '<p>Press r to refresh' + (MEM.channel === 'notes' ? ' · f cycles active, archived and all' : '') + '</p></div>' + memHintsHTML();
   }
   const cur = Math.max(0, Math.min(MEM.cursor, rows.length - 1));
   const start = computeWindowStart(cur, rows.length, MEM_MAX_ROWS);
   const page = rows.slice(start, start + MEM_MAX_ROWS);
   const hiddenAfter = Math.max(0, rows.length - start - page.length);
-  return '<div class="tuihead">  primary                    secondary / meta     [' + esc(MEM.channel) + ']</div>'
-    + (start > 0 ? '<button class="tuimore" data-act="memory:page:up">↑ ' + start + ' above</button>' : '')
-    + page.map((r, idx) => {
+  const more = (dir, n) => '<button class="btn btn-g xs sd-more" data-act="memory:page:' + dir + '">' + (dir === 'up' ? '↑ ' + n + ' above' : '↓ ' + n + ' below') + '</button>';
+  let list;
+  if (MEM.channel === 'profile') {
+    // ST-12: key · value · pinned or contextual · vote score. meta is `pinned|contextual[ · vote ±n]` (memRowsProfile).
+    list = '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-memtbl"><thead><tr><th>Key</th><th>Value</th><th>Kind</th><th class="num">Votes</th></tr></thead><tbody>'
+      + page.map((r, idx) => {
+        const i = idx + start, sel = i === cur;
+        const [kind, vote] = r.meta.split(' · ');
+        return '<tr class="click' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
+          + '<td class="mono">' + esc(r.primary) + '</td><td class="sd-val">' + esc(r.secondary) + '</td>'
+          + '<td>' + (kind === 'pinned' ? '<span class="tk-chip tk-chip--sm tk-chip--blue">' + ic('pin') + 'pinned</span>' : '<span class="tk-chip tk-chip--sm">' + esc(kind || 'contextual') + '</span>') + '</td>'
+          + '<td class="num">' + esc(vote ? vote.replace(/^vote /, '') : '0') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } else {
+    // ST-13: id · first line · tag chips (notes, lessons, procedures); links and votes keep their meta on the right.
+    const tagged = MEM.channel === 'notes' || MEM.channel === 'lessons' || MEM.channel === 'procedures';
+    list = '<div class="tk-list">' + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
-      // MemoryRow: `{chevron} {primary(30)}{secondary(36)} · {meta(28)}`
-      return '<button class="tuirow' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
-        + (sel ? '▸' : ' ') + ' ' + esc(tuiTrunc(r.primary, 28).padEnd(30)) + '<span class="ter">' + esc(tuiTrunc(r.secondary, 36)) + (r.meta ? ' · ' + esc(tuiTrunc(r.meta, 28)) : '') + '</span></button>';
-    }).join('')
-    + (hiddenAfter > 0 ? '<button class="tuimore" data-act="memory:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
+      const tags = tagged && r.meta ? r.meta.split(', ').map((t) => '<span class="tk-chip tk-chip--sm">' + esc(t) + '</span>').join('') : '';
+      return '<button class="tk-li sd-memrow' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
+        + '<span class="sd-id">' + esc(r.primary) + '</span>'
+        + '<span class="body"><span class="t">' + esc(r.secondary) + '</span>' + (tags ? '<span class="d sd-tags">' + tags + '</span>' : '') + '</span>'
+        + (!tagged && r.meta ? '<span class="m">' + esc(r.meta) + '</span>' : '') + '</button>';
+    }).join('') + '</div>';
+  }
+  return (start > 0 ? more('up', start) : '') + list + (hiddenAfter > 0 ? more('down', hiddenAfter) : '')
     + memHintsHTML();
 }
 function memHintsHTML() {
@@ -13083,17 +13861,84 @@ function memHintsHTML() {
 }
 function memDetailHTML() {
   const d = MEM.detail;
-  if (!d) return '<div class="ter" style="padding:10px 0">(loading…)</div>';
+  if (!d) return '<div class="tk-empty"><span class="tk-spin"></span><p>loading…</p></div>';
   const title = d.channel === 'profile' ? 'profile: ' + d.key : d.channel === 'notes' ? 'note #' + d.id : d.channel === 'lessons' ? 'lesson #' + d.id
     : d.channel === 'procedures' ? 'procedure #' + d.id : d.channel;
-  const lines = d.body.split('\n');
-  const hidden = lines.length - MEM_DETAIL_LINES;
   const hints = [['Esc back', 'memory:back'], ['r refresh', 'memory:refresh']];
   if (d.channel === 'notes') { hints.push(['g expand graph', 'memory:expand']); hints.push(['Enter neighbor', 'memory:neighbor']); }
-  return '<div style="margin-top:6px"><b>' + esc(title) + '</b></div>'
-    + '<div style="margin-top:8px">' + tuiBodyLines(lines.slice(0, MEM_DETAIL_LINES))
-    + (hidden > 0 ? '<div class="ter">… (' + hidden + ' more lines hidden)</div>' : '') + '</div>'
+  const back = {profile:'Profile', notes:'Notes', lessons:'Lessons', procedures:'Procedures', links:'Links', votes:'Votes'}[d.channel] || 'Back';
+  const linksOn = memFlag('links') === true;
+  return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="memory:back">' + ic('chevL') + esc(back) + '</button><span class="grow"></span>'
+    + (d.channel === 'notes' ? '<button class="btn btn-s sm" data-act="memory:expand"' + (linksOn ? '' : ' disabled title="memory.links.enabled is off in config"') + '>Expand graph' + keycaps('g') + '</button>' : '')
+    + '</div>'
+    + (d.channel === 'notes' ? memNoteDetailView(d, title) : memPlateDetailView(d, title))
     + tuiHints(hints);
+}
+/* ST-14 — formatNoteDetailBody's text, drawn as a page: the header lines
+   become a plate, the content a prose well, the `--- links ---` section a
+   card of neighbour rows. Nothing is re-queried; the body is the source. */
+function memNoteDetailView(d, title) {
+  const body = d.body, cut = body.indexOf('\n\n');
+  const head = (cut < 0 ? body : body.slice(0, cut)).split('\n').slice(1); // line 0 is `#id`, the title says it
+  let rest = cut < 0 ? '' : body.slice(cut + 2);
+  const at = rest.lastIndexOf('\n\n--- links ---');
+  const links = at < 0 ? null : rest.slice(at + 2).split('\n').slice(1);
+  if (at >= 0) rest = rest.slice(0, at);
+  const lines = rest.split('\n'), hidden = lines.length - MEM_DETAIL_LINES;
+  const plate = head.map((l) => {
+    const m = /^([a-z_]+): (.*)$/.exec(l);
+    if (m) return '<dt>' + esc(m[1].replace(/_/g, ' ')) + '</dt><dd>' + esc(m[2]) + '</dd>';
+    const a = /^archived (→ .*)$/.exec(l);
+    return a ? '<dt>archived</dt><dd>' + esc(a[1]) + '</dd>' : '<dd class="sd-span">' + esc(l) + '</dd>';
+  }).join('');
+  // memPickNeighbor's order — outgoing, incoming, expanded — so the row Enter would open carries .on.
+  const all = d.outgoing.length + d.incoming.length + d.expandedNeighbors.length;
+  const pick = all ? Math.max(0, Math.min(MEM.cursor, all - 1)) : -1;
+  let k = 0;
+  let card = '';
+  if (links) {
+    const rows = [];
+    links.forEach((l) => {
+      const e = /^ {2}([→←]) #(\d+) (.*) \(w=([^)]*)\)$/.exec(l);
+      if (l === 'outgoing:' || l === 'incoming:') { rows.push('<div class="sd-lsec">' + (l === 'outgoing:' ? 'Outgoing' : 'Incoming') + '</div>'); return; }
+      if (e) {
+        const on = k++ === pick;
+        rows.push('<button class="sd-link' + (on ? ' on' : '') + '" data-act="memory:neighbor:' + e[2] + '"' + (on ? ' title="Enter opens this note"' : '') + '>'
+          + ic(e[1] === '→' ? 'arrowR' : 'chevL') + '<span class="sd-lid">#' + e[2] + '</span><span class="sd-lkind">' + esc(e[3]) + '</span>'
+          + '<span class="grow"></span><span class="tk-chip tk-chip--sm sd-w">w=' + esc(e[4]) + '</span></button>');
+        return;
+      }
+      const x = /^expanded \(g\): (.*)$/.exec(l);
+      if (x) {
+        rows.push('<div class="sd-lsec">Expanded (g)</div><div class="sd-chips">' + x[1].split(', ').map((s) => {
+          const id = s.replace(/^#/, ''), on = k++ === pick;
+          return '<button class="tk-chip tk-chip--sm sd-w' + (on ? ' tk-chip--blue' : '') + '" data-act="memory:neighbor:' + esc(id) + '">#' + esc(id) + '</button>';
+        }).join('') + '</div>');
+        return;
+      }
+      if (l === '(none)') rows.push('<p class="sd-cap">No links</p>');
+    });
+    card = '<div class="sd-links"><div class="sd-lh">Links</div>' + rows.join('') + '</div>';
+  }
+  return '<div class="sd-note"><div class="sd-notemain"><h3 class="sd-title">' + esc(title) + '</h3>'
+    + '<div class="sd-prose">' + esc(lines.slice(0, MEM_DETAIL_LINES).join('\n').trim()) + '</div>'
+    + (hidden > 0 ? '<p class="sd-cap">… (' + hidden + ' more lines hidden)</p>' : '')
+    + '<dl class="tk-plate sd-plate">' + plate + '</dl></div>' + card + '</div>';
+}
+/* Profile, lesson, procedure, link and vote details: the `key: value` lines
+   before the first blank line become a plate, the rest stays machine text. */
+function memPlateDetailView(d, title) {
+  const body = d.body, cut = body.indexOf('\n\n');
+  const head = (cut < 0 ? body : body.slice(0, cut)).split('\n');
+  const lines = cut < 0 ? [] : body.slice(cut + 2).split('\n');
+  const hidden = lines.length - MEM_DETAIL_LINES;
+  const plate = head.map((l) => {
+    const m = /^([a-z_ ]+): (.*)$/.exec(l);
+    return m && !m[2].includes(' · ') ? '<dt>' + esc(m[1].replace(/_/g, ' ')) + '</dt><dd>' + esc(m[2]) + '</dd>' : '<dd class="sd-span">' + esc(l) + '</dd>';
+  }).join('');
+  return '<div class="sd-detail"><h3 class="sd-title">' + esc(title) + '</h3><dl class="tk-plate sd-plate">' + plate + '</dl>'
+    + (lines.length ? '<pre class="tk-out">' + esc(lines.slice(0, MEM_DETAIL_LINES).join('\n')) + '</pre>' + (hidden > 0 ? '<p class="sd-cap">… (' + hidden + ' more lines hidden)</p>' : '') : '')
+    + '</div>';
 }
 /* memory-detail-text.ts, verbatim. */
 const MEM_MAX_DETAIL_CHARS = 12000;
@@ -13282,13 +14127,13 @@ function memoryAct(what) {
   if (verb === 'auto') { MEM.auto = !MEM.auto; render(); return; }
   if (verb === 'filter') {
     if (MEM.channel !== 'notes') return;
-    MEM.notesFilter = MEM_NOTES_FILTERS[(MEM_NOTES_FILTERS.indexOf(MEM.notesFilter) + 1) % MEM_NOTES_FILTERS.length]; MEM.cursor = 0;
+    MEM.notesFilter = MEM_NOTES_FILTERS.includes(arg) ? arg : MEM_NOTES_FILTERS[(MEM_NOTES_FILTERS.indexOf(MEM.notesFilter) + 1) % MEM_NOTES_FILTERS.length]; MEM.cursor = 0; // `filter:<name>` picks one (the segmented control); bare `filter` cycles as `f` does
     memRefresh(); return;
   }
   if (verb === 'page') { const n = memVisibleRows().length; MEM.cursor = Math.max(0, Math.min(MEM.cursor + (arg === 'up' ? -MEM_MAX_ROWS : MEM_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'back') { MEM.mode = 'list'; MEM.detailRowKey = null; MEM.detail = null; render(); return; }
   if (verb === 'expand') { memExpandNeighbors(); return; }
-  if (verb === 'neighbor') { const id = memPickNeighbor(); if (id !== null) memOpenNoteById(id); return; }
+  if (verb === 'neighbor') { const id = /^\d+$/.test(arg) ? +arg : memPickNeighbor(); if (id !== null) memOpenNoteById(id); return; } // `neighbor:<id>` is a clicked link row; bare `neighbor` is Enter's pick
 }
 /* memory-key-bindings.ts. */
 function memoryKey(e, k, inText) {
@@ -13372,7 +14217,7 @@ async function mcpRefreshRun(quiet) {
     return;
   }
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
-  if (S.settings) { const tab = document.querySelector('#settings .settab.on'); if (tab && mcpVisible()) tab.textContent = 'MCP' + tabSuffix('mcp'); }
+  if (S.settings) { const tab = document.querySelector('#settings .settab[data-act="settings:mcp"]'); if (tab) tab.innerHTML = settabInner('MCP', 'mcp'); }
 }
 function mcpStatusLine() {
   return [MCP.loading ? 'loading' : null, MCP.auto ? 'auto' : 'manual',
@@ -13389,30 +14234,49 @@ function mcpTab() {
   ensureMcpPoll();
   const rows = mcpRows();
   const hint = mcpHint();
-  return '<div class="tui"><div class="ter mcpstatus">' + esc(mcpStatusLine()) + '</div>'
-    + (hint.startsWith('<') ? hint : '<div class="ter">' + esc(hint) + '</div>')
-    + (MCP.lastError ? '<div class="tuierr">! ' + esc(MCP.lastError) + '</div>' : '')
-    + (MCP.msg ? (MCP.msg.restart ? '<div class="tuimsg" style="margin-top:6px">' + esc(MCP.msg.text) + ' <button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '<div class="tuimsg">' + esc(MCP.msg.text) + '</div>') : '')
-    + (!rows.length ? '<div class="ter" style="margin-top:6px">no MCP servers configured — add entries under `mcp.servers[]` in config.json</div>' : '')
-    + (MCP.addModal ? mcpAddModalHTML() : (MCP.mode === 'list' ? mcpListHTML(rows) : mcpDetailHTML()) + (MCP.removeConfirm ? mcpRemoveModalHTML() : ''))
+  const dot = MCP.loading ? 'tk-dot--brand tk-dot--pulse' : MCP.auto ? 'tk-dot--green' : 'tk-dot--hollow';
+  const view = MCP.mode === 'list' ? mcpListHTML(rows) : mcpDetailHTML();
+  // ST-18: a modal sits over the dimmed (inert) list or detail it belongs to; its keys and buttons are its own.
+  const modal = MCP.addModal ? mcpAddModalHTML() : MCP.removeConfirm ? mcpRemoveModalHTML() : '';
+  return '<div class="sd-pane sd-mcp">'
+    + '<div class="tk-bar"><span class="sd-status"><i class="tk-dot ' + dot + '"></i><span class="mcpstatus">' + esc(mcpStatusLine()) + '</span></span><span class="grow"></span>'
+    + (MCP.mode === 'list' ? '<button class="btn btn-p sm" data-act="mcp:add"' + (modal ? ' disabled' : '') + '>' + ic('plus') + 'Add server</button>' : '') + '</div>'
+    + (MCP.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MCP.lastError) + '</span></div>' : '')
+    + (MCP.msg ? (MCP.msg.restart ? restartLine(MCP.msg.text) : '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(MCP.msg.text) + '</span></div>') : '')
+    + (modal
+      ? '<div class="sd-stage"><div class="sd-behind" inert>' + view + '</div><div class="sd-over">' + modal + '</div></div>'
+      : view + (hint.startsWith('<') ? hint : ''))
     + '</div>';
 }
-function mcpPad(text, width) { text = String(text); return text.length >= width ? text.slice(0, width - 1) + ' ' : text.padEnd(width); }
+/* The server's mark: GitHub's when the name, command or URL says github, else the plug badge. */
+function mcpMark(cfg) {
+  const t = (cfg && cfg.transport) || {};
+  const hay = [cfg && cfg.name, t.command, Array.isArray(t.args) ? t.args.join(' ') : '', t.url].join(' ').toLowerCase();
+  return (/github/.test(hay) && logoHTML('github', '')) || '<span class="tk-ico">' + ic('plug') + '</span>';
+}
 function mcpListHTML(rows) {
-  if (!rows.length) return '<div class="ter" style="margin-top:6px">(no servers)</div>';
+  if (!rows.length) {
+    return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No MCP servers</h4>'
+      + '<p>no MCP servers configured — add entries under `mcp.servers[]` in config.json</p></div>';
+  }
   const cur = Math.max(0, Math.min(MCP.cursor, rows.length - 1));
   const start = Math.max(0, Math.min(rows.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
   const slice = rows.slice(start, Math.min(rows.length, start + MCP_MAX_ROWS));
-  const note = rows.some((r) => r.enabled) ? '<div class="ter" style="margin-top:6px">state not exposed — no MCP status route in this agent</div>' : '';
-  return '<div style="margin-top:6px">' + slice.map((r, idx) => {
+  const cfgs = mcpServers();
+  // ST-16: mark · name + honest state chip · description · transport · trust class · tool count.
+  return '<div class="tk-list">' + slice.map((r, idx) => {
     const i = idx + start, sel = i === cur;
-    // Row: `> name(18)[state](11)transport(18)trust(16)<t> tools · — res · — prompts`, then the description
-    return '<button class="tuirow tuirow2' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
-      + '<span>' + (sel ? '&gt;' : ' ') + ' <b>' + esc(mcpPad(r.name, 18)) + '</b>'
-      + '<span class="' + (r.state === 'disabled' ? 'ter' : 'ter') + '" title="' + (r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent') + '">' + esc(mcpPad('[' + r.state + ']', 11)) + '</span>'
-      + '<span class="ter">' + esc(mcpPad(r.transportKind, 18) + mcpPad(r.trust, 16) + r.toolCount + ' tools · — res · — prompts') + '</span></span>'
-      + (r.description ? '<span class="ter">  ' + esc(r.description) + '</span>' : '') + '</button>';
-  }).join('') + '</div>' + note;
+    const stateTitle = r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
+    return '<button class="tk-li sd-srv' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
+      + mcpMark(cfgs.find((s) => s && s.name === r.name))
+      + '<span class="body"><span class="sd-srvname"><span class="t">' + esc(r.name) + '</span>'
+      + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (r.state === 'disabled' ? 'disabled' : 'state —') + '</span></span>'
+      + (r.description ? '<span class="d">' + esc(r.description) + '</span>' : '') + '</span>'
+      + '<span class="tk-chip tk-chip--sm sd-mono">' + esc(r.transportKind) + '</span>'
+      + '<span class="tk-chip tk-chip--sm sd-mono ' + (r.trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(r.trust) + '</span>'
+      + '<span class="m sd-tools">' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') + '</span></button>';
+  }).join('') + '</div>'
+    + (rows.some((r) => r.enabled) ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">state not exposed — no MCP status route in this agent</span></div>' : '');
 }
 function mcpDescribeTransport(cfg) {
   const t = cfg.transport || {};
@@ -13426,52 +14290,60 @@ function mcpDescribeTransport(cfg) {
 }
 function mcpDetailHTML() {
   const cfg = mcpServers().find((s) => s.name === MCP.detailName);
-  if (!cfg) return '<div class="ter" style="margin-top:6px">(no server selected)</div>';
+  if (!cfg) return '<div class="tk-empty"><p>(no server selected)</p></div>';
   const row = mcpRows().find((r) => r.name === cfg.name);
   const tools = mcpToolsFor(cfg.name);
   const counts = {tools:String(tools.length), resources:'—', prompts:'—'};
-  const bar = MCP_TAB_ORDER.map((tab, idx) => {
-    const label = (idx + 1) + ':' + tab + '(' + counts[tab] + ')';
-    return '<button class="memch' + (tab === MCP.detailTab ? ' on' : '') + '" data-act="mcp:dtab:' + tab + '">' + esc(tab === MCP.detailTab ? '[' + label + ']' : label) + '</button>';
-  }).join('<span class="ter">  </span>');
+  const state = row ? row.state : '—', trust = row ? row.trust : 'approval_gated';
+  const stateTitle = state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
+  const seg = '<div class="tk-seg" role="group" aria-label="Server detail">' + MCP_TAB_ORDER.map((tab) => '<button class="' + (tab === MCP.detailTab ? 'on' : '') + '" aria-pressed="' + (tab === MCP.detailTab) + '" data-act="mcp:dtab:' + tab + '">'
+    + esc(tab) + '<span class="sd-count">' + esc(counts[tab]) + '</span></button>').join('') + '</div>';
   let body;
-  if (MCP.detailTab !== 'tools') body = '<div class="ter">not exposed by the agent\'s HTTP API</div>';
-  else if (!tools.length) body = '<div class="ter">(empty)</div>';
+  if (MCP.detailTab !== 'tools') body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('eyeOff') + '</span><p>not exposed by the agent\'s HTTP API</p></div>';
+  else if (!tools.length) body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No tools</h4></div>';
   else {
     const cur = Math.max(0, Math.min(MCP.detailCursor, tools.length - 1));
     const start = Math.max(0, Math.min(tools.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
-    body = tools.slice(start, start + MCP_MAX_ROWS).map((t, idx) => {
-      const sel = idx + start === cur;
+    // ST-17: tool name in mono · description; the cursor row (j/k) carries .on.
+    body = '<div class="tk-list">' + tools.slice(start, start + MCP_MAX_ROWS).map((t, idx) => '<div class="tk-li sd-tool' + (idx + start === cur ? ' on' : '') + '">'
+      + '<span class="sd-toolname">' + esc(t.rawName) + '</span><span class="d">' + esc(t.description) + '</span></div>').join('') + '</div>'
       // mcp-detail.tsx formatTool prints `rawName (resourceClass)`; the resource class is not on /api/capabilities.
-      return '<div class="' + (sel ? 'tuimsg' : '') + '">' + (sel ? '&gt; ' : '  ') + esc(t.rawName) + '</div>' + (t.description ? '<div class="ter">  ' + esc(t.description) + '</div>' : '');
-    }).join('') + '<div class="ter">(resource class is not exposed by the agent\'s HTTP API)</div>';
+      + '<p class="sd-cap">Resource class is not exposed by the agent\'s HTTP API.</p>';
   }
-  return '<div style="margin-top:6px"><b>' + esc(cfg.name) + ' </b><span class="ter" title="' + (row && row.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent') + '">[' + esc(row ? row.state : '—') + ']</span><span class="ter"> · trust: ' + esc(row ? row.trust : 'approval_gated') + '</span></div>'
-    + (cfg.description ? '<div class="ter">' + esc(cfg.description) + '</div>' : '')
-    + '<div class="ter">' + esc(mcpDescribeTransport(cfg)) + '</div>'
-    + (row && row.enabled ? '<div class="ter">state not exposed — no MCP status route in this agent</div>' : '')
-    + '<div class="tuibar" style="margin-top:8px">' + bar + '</div>'
-    + '<div style="margin-top:8px">' + body + '</div>';
+  return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="mcp:back">' + ic('chevL') + 'Servers</button><span class="grow"></span>'
+    + '<button class="btn btn-danger sm" data-act="mcp:remove">Remove</button></div>'
+    + '<div class="sd-srvhead">' + mcpMark(cfg) + '<h3 class="sd-title sd-mono">' + esc(cfg.name) + '</h3>'
+    + '<span class="tk-chip tk-chip--sm sd-mono ' + (trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(trust) + '</span>'
+    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (state === 'disabled' ? 'disabled' : 'state —') + '</span></div>'
+    + (cfg.description ? '<p class="sd-desc">' + esc(cfg.description) + '</p>' : '')
+    + '<pre class="tk-out">' + esc(mcpDescribeTransport(cfg)) + '</pre>'
+    + (row && row.enabled ? '<p class="sd-cap">' + ic('info') + 'state not exposed — no MCP status route in this agent</p>' : '')
+    + '<div class="tk-bar">' + seg + '</div>' + body;
 }
 function mcpAddModalHTML() {
   const m = MCP.addModal;
-  return '<div class="tuimodal' + (m.error ? ' danger' : '') + '" style="margin-top:8px"><b>+ add MCP server</b>'
-    + '<div class="ter" style="margin-top:8px">Paste one MCP server config as JSON. Bare object, or the Claude Desktop / Cursor envelope `{ "mcpServers": { ... } }`.</div>'
-    + '<div class="ter">Top-level `command` + `args` (no `transport` wrapper) is also accepted and auto-promoted to stdio.</div>'
-    + '<textarea id="mcp-json" class="tuiarea" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
-    + (m.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(m.error) + '</div>' : '')
-    + (m.submitting ? '<div class="ter" style="margin-top:8px">writing config…</div>' : '')
-    + '<div class="tuihint">' + tuiBtn('Enter: submit', 'mcp:addSubmit', {disabled: m.submitting}) + '<span>· Shift/Alt+Enter: newline ·</span>' + tuiBtn('Esc: cancel', 'mcp:addCancel') + '<span>· restart Atomic Agent for the new server to connect</span></div>'
-    + '</div>';
+  return '<div class="tk-modal sd-modal" role="dialog" aria-label="Add MCP server">'
+    + '<div class="sd-mhead"><span class="tk-ico tk-ico--blue">' + ic('plug') + '</span><h4>Add MCP server</h4></div>'
+    + '<p>Paste one MCP server config as JSON. Bare object, or the Claude Desktop / Cursor envelope <span class="sd-code">{ "mcpServers": { ... } }</span>.</p>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
+    + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
+    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · restart Atomic Agent for the new server to connect</span>'
+    + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel' + keycaps('esc') + '</button>'
+    + '<button class="btn btn-p sm" data-act="mcp:addSubmit"' + (m.submitting ? ' disabled' : '') + '>Add' + keycaps('↩') + '</button></div>'
+    // Secondary: under the actions, so the error and Add stay in view on a short window.
+    + '<p class="sd-cap sd-block">Top-level <span class="sd-code">command</span> + <span class="sd-code">args</span> (no <span class="sd-code">transport</span> wrapper) is also accepted and auto-promoted to stdio.</p></div>';
 }
 function mcpRemoveModalHTML() {
   const c = MCP.removeConfirm;
-  return '<div class="tuimodal' + (c.error ? ' danger' : ' warn') + '"><b style="color:var(--' + (c.error ? 'danger' : 'warn') + ')">remove MCP server?</b>'
-    + '<div><span class="ter">name:</span> ' + esc(c.name) + '</div>'
-    + '<div class="ter">rewrites config.json; restart Atomic Agent to drop the live connection.</div>'
-    + (c.error ? '<div class="tuierr">! ' + esc(c.error) + '</div>' : '')
-    + (c.submitting ? '<div class="ter">working…</div>' : '<div class="tuihint">' + tuiBtn('y / Enter = confirm', 'mcp:removeConfirm') + '<span>·</span>' + tuiBtn('n / Esc = keep', 'mcp:removeCancel') + '</div>')
-    + '</div>';
+  return '<div class="tk-modal tk-modal--danger sd-modal" role="alertdialog" aria-label="Remove MCP server">'
+    + '<div class="sd-mhead"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>Remove MCP server?</h4></div>'
+    + '<dl class="tk-plate"><dt>name</dt><dd>' + esc(c.name) + '</dd></dl>'
+    + '<p>Rewrites config.json; restart Atomic Agent to drop the live connection.</p>'
+    + (c.error ? '<p class="tk-help tk-help--err">' + esc(c.error) + '</p>' : '')
+    + '<div class="acts">' + (c.submitting ? '<span class="sd-cap sd-grow">working…</span>' : '')
+    + '<button class="btn btn-g sm" data-act="mcp:removeCancel"' + (c.submitting ? ' disabled' : '') + '>Keep' + keycaps('N') + '</button>'
+    + '<button class="btn btn-df sm" data-act="mcp:removeConfirm"' + (c.submitting ? ' disabled' : '') + '>Remove' + keycaps('Y') + '</button></div></div>';
 }
 /* persist-mcp-server.ts parseAddServerJson: the three accepted shapes —
    a bare object, the `{ mcpServers: { name: {…} } }` envelope with exactly
@@ -14037,27 +14909,84 @@ function llmRemoveLink(links, providerId) {
 function llmTab() {
   llmEnsurePoll();
   if (BR && LLMP.lastRefreshedAt === null && !LLMP.inflight) setTimeout(llmRefresh, 0); // reached without settingsPaneEntered (the --models harness's __pane)
-  if (LLMP.view === 'logs') return '<div class="tui">' + llmLogsHTML() + '</div>';
+  if (LLMP.view === 'logs') return '<div class="llm-pane llm-pane--logs">' + llmLogsHTML() + '</div>';
+  /* Soft Tactile (ST-24, ST-27): a confirm or a prompt floats over the pane
+     instead of replacing it. The pane behind is `inert`, so it takes no
+     click, no focus and no key — the same reach as when the modal took the
+     whole pane, which is what llmKey's modal branches already assume.
+     Item 7A: llm-panel.tsx gives the Hugging Face branch the whole pane —
+     "it owns every key while it is open, so drawing the model list behind
+     it would be a list nothing can reach." */
   const modal = llmModalHTML();
-  if (modal) return '<div class="tui">' + modal + '</div>';
-  // Item 7A: llm-panel.tsx gives the Hugging Face branch the whole pane —
-  // "it owns every key while it is open, so drawing the model list behind
-  // it would be a list nothing can reach."
-  if (LLMHF.open) return '<div class="tui">' + llmHfHTML() + '</div>';
+  const body = LLMHF.open ? llmHfHTML() : llmPanelHTML();
+  if (!modal) return '<div class="llm-pane">' + body + '</div>';
+  return '<div class="llm-pane has-modal"><div class="llm-modal-layer">' + modal + '</div>'
+    + '<div class="llm-behind" inert aria-hidden="true">' + body + '</div></div>';
+}
+/* The panel under the toolbar, top to bottom as SET-LLM-00 lists it:
+   banners, the message, the route card, run mode, the pane, its keys. */
+function llmPanelHTML() {
   const mode = LLMP.mode;
-  const hint = llmFooterHint(mode);
-  return '<div class="tui">'
-    + (LLMP.daemonPhase === 'starting' ? '<div class="tuimodal llm-start"><b class="sk-on">⟳ Model is starting — please stand by</b><div class="ter">Loading the model into llama-server. Inputs are paused until it is ready.</div></div>' : '')
+  const status = llmStatusLine();
+  const tone = llmStatusTone(status);
+  return llmBarHTML(mode, status, tone)
+    // External reports its probe under its own row (ST-24); the other panes report at the top.
+    + (mode !== 'external' ? llmStatusNoteHTML(status, tone) : '')
+    + (LLMP.daemonPhase === 'starting'
+      ? '<div class="tk-notice tk-notice--blue llm-start"><span class="tk-spin"></span><span class="grow"><b>Model is starting — please stand by</b>'
+        + '<span class="llm-note">Loading the model into llama-server. Inputs are paused until it is ready.</span></span></div>' : '')
     + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
+    + (LLMP.msg ? (LLMP.msg.restart ? restartLine(LLMP.msg.text) : llmMsgHTML(LLMP.msg.text)) : '')
     + llmRouteCardHTML()
     + llmRunModeHTML()
-    + '<div class="llm-modehead"><span>Mode: </span>' + LLM_PANEL_MODES.map((m, i) => (i ? '<span class="ter"> | </span>' : '')
-        + '<button class="llmmode' + (m === mode ? ' on' : '') + '" data-act="llm:mode:' + m + '">' + esc(LLM_MODE_LABELS[m]) + '</button>').join('') + '</div>'
-    + '<div class="ter">Press ←/→ to switch mode</div>'
-    + '<div class="ter llm-status" style="margin:4px 0 8px">' + esc(llmStatusLine()) + '</div>'
-    + (LLMP.msg ? (LLMP.msg.restart ? restartLine(LLMP.msg.text) : '<div class="tuimsg">' + esc(LLMP.msg.text) + '</div>') : '')
     + (mode === 'fallback' ? llmFallbackHTML() : mode === 'cloud' ? llmCloudHTML() : mode === 'external' ? llmExternalHTML() : llmLocalHTML())
-    + hint + '</div>';
+    + llmFooterHint(mode);
+}
+/* How loud the status line is on screen. The sentence is llmStatusLine's,
+   unchanged: a quiet readout in the toolbar while nothing is wrong or while
+   something is on its way, a notice when a step reported back. */
+function llmStatusNoteHTML(status, tone) {
+  if (tone !== 'ok' && tone !== 'err') return '';
+  return '<div class="tk-notice tk-notice--' + (tone === 'ok' ? 'green' : 'red') + ' llm-statusnote">' + ic(tone === 'ok' ? 'check' : 'alert')
+    + '<span class="grow">' + esc(status) + '</span></div>';
+}
+function llmStatusTone(line) {
+  if (line === 'status: ready') return 'ready';
+  if (/^probing |: (loading|updating)$/.test(line)) return 'busy';
+  if (/^local-llm URL saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
+  return 'err';
+}
+/* The pane toolbar (ST-20…25): the four panes as a segmented control, the
+   status readout, refresh and the daemon log. Drivers read
+   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
+function llmBarHTML(mode, status, tone) {
+  return '<div class="tk-bar llm-bar">'
+    + '<div class="llm-modehead">'
+      + '<span class="tk-seg llm-seg" role="tablist" aria-label="LLM panes">'
+      + LLM_PANEL_MODES.map((m) => '<button class="llmmode' + (m === mode ? ' on' : '') + '" role="tab" aria-selected="' + (m === mode) + '" data-act="llm:mode:' + m + '">'
+        + esc(LLM_MODE_LABELS[m]) + '</button>').join('')
+      + '</span></div>'
+    + (tone === 'ready' || tone === 'busy'
+      ? '<span class="llm-status is-' + tone + '">' + (tone === 'busy' ? '<span class="tk-spin"></span>' : '<span class="tk-dot tk-dot--hollow"></span>')
+        + '<span>' + esc(status) + '</span></span>' : '')
+    + '<span class="grow"></span>'
+    + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
+    + '<button class="btn btn-s sm" data-act="llm:logs" title="llama-server log (L)">' + ic('log') + 'LLM logs</button>'
+    + '</div>';
+}
+function llmMsgHTML(text) {
+  const bad = /^! /.test(text);
+  return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(text) + '</span></div>';
+}
+/* A provider entry's mark: its id's logo, else its kind's, else the server icon. */
+function llmProviderMark(p, size) {
+  if (!p) return providerMark('', size);
+  return providerMark(providerLogoKey(p.id) ? p.id : (p.kind || p.id), size);
+}
+/* A keyboard hint that is also a button, whose text reads "s start/stop"
+   whole (inline-block, so the keycap does not split it into lines). */
+function llmKeyBtn(key, rest, act) {
+  return '<button class="tk-hint llm-kb" data-act="' + esc(act) + '"><span class="kc">' + esc(key) + '</span> ' + esc(rest) + '</button>';
 }
 /* llm-panel.tsx RouteCard. `current:` is the provider's chat model; for the local route the TUI shows the daemon's /props model —
    the desktop has no /props, so `atag models status` "active model:" stands in, then localModels.managed.modelId (the critique's fallback). */
@@ -14071,34 +15000,39 @@ function llmRunModeHTML() {
   const mode = cfg.mode || 'cloud';
   const workers = (cfg.fusion && cfg.fusion.workers) || 3;
   const MODES = [
-    ['local', 'Local', 'everything runs on this Mac'],
-    ['cloud', 'Cloud', 'everything runs on the provider'],
-    ['fusion', 'Fusion', 'a cloud model plans, local workers do the work'],
+    ['local', 'Local', 'everything runs on this Mac', 'laptop'],
+    ['cloud', 'Cloud', 'everything runs on the provider', 'cloud'],
+    ['fusion', 'Fusion', 'a cloud model plans, local workers do the work', 'bolt'],
   ];
   const localReady = !!(LIVE_CONFIG && LIVE_CONFIG.localModels
     && LIVE_CONFIG.localModels.managed && LIVE_CONFIG.localModels.managed.modelId);
-  return '<div class="legend">Run mode</div>'
-    + '<div class="rows runmoderows">'
-    + MODES.map(([id, label, why]) =>
-        '<button class="row' + (id === mode ? ' on' : '') + '" data-act="runmode:' + id + '">'
-        + '<span class="col"><span class="nm">' + esc(label) + '</span>'
-        + '<span class="sub">' + esc(why) + '</span></span>'
-        + (id === mode ? '<span class="ann lit">Active</span>' : '')
-        + '</button>').join('')
+  // ST-20 / ST-22: three selectable cards, the worker count as a segmented choice.
+  return '<section class="llm-section llm-runmode"><div class="tk-sh llm-sh"><span class="llm-sh-t">Run mode</span></div>'
+    + '<div class="llm-rm-grid">'
+    + MODES.map(([id, label, why, icon]) => {
+        const on = id === mode;
+        return '<button class="llm-rm' + (on ? ' on' : '') + '" data-act="runmode:' + id + '" aria-pressed="' + on + '">'
+          + '<span class="tk-ico tk-ico--sm' + (on ? ' tk-ico--brand' : '') + '">' + ic(icon) + '</span>'
+          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(why) + '</span></span>'
+          + (on ? '<span class="tk-chip tk-chip--sm tk-chip--green">Active</span>' : '')
+          + '</button>';
+      }).join('')
     + '</div>'
     + (mode === 'fusion'
-        ? '<div class="ob-help">'
+        ? '<div class="llm-workers">'
+          + '<span class="tk-help' + (localReady ? '' : ' tk-help--warn') + '">'
           + esc('Workers: ' + workers + '. ')
           + esc(localReady
               ? 'The orchestrator uses the provider above; the workers use the local model.'
               : 'Fusion needs a local model as well — choose one under Local, or the workers have nothing to run on.')
-          + '</div>'
-          + '<div class="runmodeworkers">'
+          + '</span>'
+          + '<span class="tk-seg llm-workerseg" role="group" aria-label="Workers">'
           + [1, 2, 3, 4, 6, 8].map((n) =>
-              '<button class="btn' + (n === workers ? ' btn-s' : '') + '" data-act="runmode:workers:' + n + '">'
+              '<button class="' + (n === workers ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === workers) + '">'
               + n + '</button>').join('')
-          + '</div>'
-        : '');
+          + '</span></div>'
+        : '')
+    + '</section>';
 }
 
 function llmRouteCardHTML() {
@@ -14110,11 +15044,32 @@ function llmRouteCardHTML() {
   const emb = llmProvider(llmActiveEmbId());
   const lm = llmLocalModels();
   const mode = lm.mode || 'external';
-  return '<div class="llm-route"><b>Active chat route</b>'
-    + '<div>current: <b>' + esc(active ? active.id : 'unknown') + '</b>' + (model ? '<span class="ter"> / ' + esc(model) + '</span>' : '') + '</div>'
-    + '<div class="ter">tools ' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</div>'
-    + '<div class="ter">provider embeddings: ' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</div>'
-    + '<div class="ter">local daemon: ' + esc(llmFormatDaemon()) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</div>'
+  const daemon = llmFormatDaemon();
+  const route = llmRouteMode();
+  const ROUTE = {cloud:['cloud', 'Cloud'], local:['laptop', 'Local'], external:['server', 'External llama.cpp']};
+  /* The daemon chip only restates llmFormatDaemon's own word — running,
+     loading, starting, stopping, stopped, unreachable, unknown — in the
+     status colours. It never says more than `atag models status` did. */
+  const word = /^running/.test(daemon) ? 'running' : /^loading/.test(daemon) ? 'loading' : /unreachable$/.test(daemon) ? 'unreachable' : daemon;
+  const tone = word === 'running' ? ['tk-chip--green', 'tk-dot--green']
+    : word === 'loading' || word === 'starting' ? ['tk-chip--blue', 'tk-dot--brand tk-dot--pulse']
+    : word === 'stopping' ? ['tk-chip--amber', 'tk-dot--amber']
+    : word === 'unreachable' ? ['tk-chip--red', 'tk-dot--red'] : ['', 'tk-dot--hollow'];
+  /* Each TUI line ("current: aimlapi / gpt-5.5", "local daemon: stopped ·
+     mode managed") as a label and its value; the marks are inline images
+     with no text of their own. */
+  const kv = (label, value) => '<div class="llm-kv"><span class="llm-k">' + esc(label) + '</span>' + value + '</div>';
+  return '<div class="llm-route">'
+    + '<div class="llm-route-head"><b>Active chat route</b>'
+      + (route ? '<span class="tk-chip tk-chip--sm tk-chip--blue">' + ic(ROUTE[route][0]) + esc(ROUTE[route][1]) + '</span>' : '')
+      + '<span class="grow"></span>'
+      + '<span class="tk-chip tk-chip--sm ' + tone[0] + '"><span class="tk-dot ' + tone[1] + '"></span>' + esc('local daemon ' + word) + '</span>'
+    + '</div>'
+    + kv('current', (active ? llmProviderMark(active, 'xs') : '') + '<b class="mono">' + esc(active ? active.id : 'unknown') + '</b>'
+      + (model ? '<span class="llm-slash"> / </span>' + modelMark(model, 'xs') + '<span class="mono">' + esc(model) + '</span>' : ''))
+    + kv('tools', '<span class="mono">' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</span>')
+    + kv('provider embeddings', '<span class="mono">' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</span>')
+    + kv('local daemon', '<span class="mono">' + esc(daemon) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</span>')
     + '</div>';
 }
 /* llm-panel.tsx StatusLines: one line, the first that applies, else "status: ready". */
@@ -14135,38 +15090,89 @@ function llmStatusLine() {
 function llmReport(line, source) { LLMP.statusLine = line; LLMP.statusSource = source || 'cloud'; }
 /* llm-panel.tsx footerHint (the full form), each key a button. */
 function llmFooterHint(mode) {
-  if (mode === 'fallback') return tuiHints(['j/k move', ['< > reorder', 'llm:fb:move:1'], ['a add link', 'llm:fb:add'], ['d remove', 'llm:fb:remove'], ['l toggle local', 'llm:fb:local'], ['←/→ switch pane', 'llm:mode:next'], ['r refresh', 'llm:refresh']]);
-  if (mode === 'local') return tuiHints(['j/k move', ['Enter selected action', 'llm:enter'],
+  const lead = '<div class="llm-foot"><span class="llm-hintline">Press <span class="kc">←/→</span> to switch mode</span>';
+  if (mode === 'fallback') return lead + tuiHints(['j/k move', ['< > reorder', 'llm:fb:move:1'], ['a add link', 'llm:fb:add'], ['d remove', 'llm:fb:remove'], ['l toggle local', 'llm:fb:local'], ['←/→ switch pane', 'llm:mode:next'], ['r refresh', 'llm:refresh']]) + '</div>';
+  if (mode === 'local') return lead + tuiHints(['j/k move', ['Enter selected action', 'llm:enter'],
     // Item 7A — llm-panel-key-bindings.ts `a`: the reference is parsed and the repo listed in the
     // main process (desktop/main/huggingface.ts, a port of the agent's own huggingface-* modules),
     // the choice is written into localModels.customModels, and the download is `atag models pull`.
     ['a add from hugging face', 'llm:hf'],
     ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['s start/stop', 'llm:daemon'], ['r refresh', 'llm:refresh'],
-    ['E embeddings on/off', 'llm:embToggle'], ['d remove', 'llm:remove'], ['B backend update', 'llm:backend'], ['U auto-update', 'llm:autoUpdate'], ['G device', 'llm:device'], ['L LLM logs', 'llm:logs']]);
-  return tuiHints(['j/k move', ['Enter selected action', 'llm:enter'], ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['f filter', 'llm:filter'],
-    ['n add provider', 'llm:add'], ['c configure', 'llm:configure'], ['r refresh', 'llm:refresh'], ['e embedding', 'llm:embedding'], ['d remove', 'llm:remove'], ['L LLM logs', 'llm:logs']]);
+    ['E embeddings on/off', 'llm:embToggle'], ['d remove', 'llm:remove'], ['B backend update', 'llm:backend'], ['U auto-update', 'llm:autoUpdate'], ['G device', 'llm:device'], ['L LLM logs', 'llm:logs']]) + '</div>';
+  return lead + tuiHints(['j/k move', ['Enter selected action', 'llm:enter'], ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['f filter', 'llm:filter'],
+    ['n add provider', 'llm:add'], ['c configure', 'llm:configure'], ['r refresh', 'llm:refresh'], ['e embedding', 'llm:embedding'], ['d remove', 'llm:remove'], ['L LLM logs', 'llm:logs']]) + '</div>';
 }
 function llmRowHTML(row, index, cursor) {
   const selected = index === cursor;
-  const mark = row.active ? '*' : selected ? '>' : ' ';
   const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
-  /* A row that carries the model's blurb and its fit is four lines tall,
-     and `.tuirow` is a 24px single-line row with `overflow:hidden` — which
-     clipped every added line to nothing ON SCREEN while `innerText` went on
-     returning all four. `llm-model` unfixes the height. */
-  return '<button class="tuirow' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">'
-    + esc(mark + ' ' + row.text) + '<span class="ter"> · ' + esc(row.enterEffect) + '</span>'
+  /* Soft Tactile list row (ST-20, ST-23): the id and its chips on one line
+     ("qwen-3.5-9b downloaded ★ best fit for this machine" — the chips are
+     inline-block, and model-picks.drive.mjs reads that first line off
+     innerText), then the blurb and fit lines. A row that carries them keeps
+     `.llm-model` and `.llm-sub`: the driver measures the first one, because
+     `.tuirow` was once a clipped 24px line. */
+  const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
+    + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">';
+  const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
+  // The action Enter (or a click) takes on this row, as the TUI words it.
+  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + '">'
+    + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(row.enterEffect) + '</span>';
+  const chip = (tone, html) => '<span class="tk-chip tk-chip--sm llm-ib' + (tone ? ' tk-chip--' + tone : '') + '">' + html + '</span>';
+  if (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') {
+    const m = row.model;
+    const chat = row.kind === 'localTextModel';
+    const t = '<span class="llm-id mono">' + esc(m.id) + '</span>'
+      + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
+      + ' ' + chip(m.downloaded ? 'green' : 'line', m.downloaded ? 'downloaded' : 'remote')
+      + (row.text.indexOf('★ best fit for this machine') >= 0 ? ' ' + chip('indigo', '★ best fit for this machine') : '')
+      + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '');
     // r7 models: what the model is, how it fits this machine, and the one
     // caution it earns. Absent on a row that has no catalogue entry.
-    + (row.sub ? '<span class="llm-sub">' + esc(row.sub) + '</span>' : '')
-    + (row.fitNote ? '<span class="llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc(row.fitNote) + '</span>' : '')
-    + (row.caution ? '<span class="llm-sub llm-caution">' + esc(row.caution) + '</span>' : '')
-    + '</button>';
+    return open + radio + modelMark(m.id, '')
+      + '<span class="body"><span class="t">' + t + '</span>'
+      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (m.size ? ' · ' + m.size : '')) + '</span>' : '')
+      + (row.fitNote ? '<span class="d llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc(row.fitNote) + '</span>' : '')
+      + (row.caution ? '<span class="d llm-sub llm-caution">' + esc(row.caution) + '</span>' : '')
+      + '</span>' + effect + '</button>';
+  }
+  if (row.kind === 'cloudProvider') {
+    const p = row.provider;
+    const head = p.id + ' [' + p.kind + '] ';
+    const auth = row.text.indexOf(head) === 0 ? row.text.slice(head.length) : '';
+    // Until the key names are read every row says "missing key"; it is drawn neutral until they are.
+    const tone = !llmKeysKnown() ? 'line' : auth === 'key ok' ? 'green' : auth === 'missing key' ? 'red' : 'line';
+    const t = '<span class="llm-id mono">' + esc(p.id) + '</span>'
+      // The kind only when it says more than the id ("aimlapi" is an aimlapi provider).
+      + (p.kind === p.id ? '' : ' <span class="llm-kind">' + esc(p.kind) + '</span>')
+      + ' ' + chip(tone, esc(auth))
+      // Saved without a key check (the wizard's Save unchecked) — the same flag the composer's provider list shows.
+      + (UNVERIFIED.indexOf(p.id) >= 0 ? ' ' + chip('amber', 'Unverified') : '');
+    return open + radio + llmProviderMark(p, 'sm') + '<span class="body"><span class="t">' + t + '</span></span>' + effect + '</button>';
+  }
+  if (row.kind === 'cloudChatModel' || row.kind === 'cloudEmbeddingModel') {
+    return open + radio + modelMark(row.modelId, 'sm')
+      + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(row.providerId + '/' + row.modelId) + '</span> '
+      + chip('line', row.kind === 'cloudChatModel' ? 'text' : 'embedding') + '</span></span>'
+      + effect + '</button>';
+  }
+  if (row.kind === 'externalUrl') {
+    const m = /\[([^\]]*)\]$/.exec(row.text);
+    const status = m ? m[1] : '';
+    const tone = /^healthy/.test(status) ? 'green' : status === 'unreachable' ? 'amber' : 'line';
+    return open + '<span class="tk-ico">' + ic('server') + '</span>'
+      + '<span class="body"><span class="t"><span class="llm-k2">base URL </span><span class="llm-id mono">' + esc(row.url) + '</span> ' + chip(tone, esc(status)) + '</span>'
+      + '<span class="d llm-effect-d">' + esc(row.enterEffect) + '</span></span></button>';
+  }
+  return open + '<span class="body"><span class="t">' + esc(row.text) + '</span></span>' + effect + '</button>';
 }
-function llmSectionHTML(title, rows, offset, cursor, empty, emphasise) {
-  return '<div class="llm-section"><b>' + esc(title) + '</b>'
-    + (rows.length ? rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('')
-      : '<div class="' + (emphasise ? 'llm-empty' : 'ter') + '">  ' + esc(empty || 'No rows in this section yet.') + '</div>') + '</div>';
+function llmSectionHTML(title, rows, offset, cursor, empty, emphasise, extra) {
+  const x = extra || {};
+  return '<section class="llm-section">'
+    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">' + esc(title) + '</span><span class="grow"></span>' + (x.actions || '') + '</div>'
+    + (x.note || '')
+    + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('') + '</div>'
+      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'No rows in this section yet.') + '</div>')
+    + '</section>';
 }
 function llmLocalHTML() {
   const rows = llmLocalRows();
@@ -14175,10 +15181,11 @@ function llmLocalHTML() {
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
   const ram = hostRamGb();
   // r7 models: the basis for the order and for every fit line below it.
-  return '<div class="ter llm-ram">' + esc(ram
-      ? 'Ordered for this machine — it reports ' + ram + ' GB of RAM. Every fit line under a model is measured against that.'
-      : 'Reading this machine’s RAM…') + '</div>'
-    + llmSectionHTML('Local text models', text, 0, cursor)
+  return llmSectionHTML('Local text models', text, 0, cursor, null, false, {
+      note: '<p class="llm-ram">' + esc(ram
+        ? 'Ordered for this machine — it reports ' + ram + ' GB of RAM. Every fit line under a model is measured against that.'
+        : 'Reading this machine’s RAM…') + '</p>',
+      actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     + llmSectionHTML('Local embeddings', emb, text.length, cursor)
     // Item 7B — the Ollama signpost. atomic-agent has no Ollama download
     // path of any kind: `grep -rni ollama src/` finds provider presets, a
@@ -14187,7 +15194,7 @@ function llmLocalHTML() {
     // capability this window invented. What does work — adding the running
     // server as an OpenAI-compatible provider — is named first, with its
     // exact route, because that is the question this line exists to answer.
-    + '<div class="ter llm-ollama">' + esc(OLLAMA_SIGNPOST) + '</div>';
+    + '<div class="llm-ollama">' + logoHTML('ollama', 'sm') + '<span>' + esc(OLLAMA_SIGNPOST) + '</span></div>';
 }
 function llmCloudHTML() {
   const rows = llmCloudRows();
@@ -14196,13 +15203,20 @@ function llmCloudHTML() {
   const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
   const section = llmCloudSection();
   const embOffset = providers.length + section.filtered.length;
-  return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers configured. Press n to add one.', true)
-    + '<div class="llm-section"><b>Cloud text models</b>'
-    + '<div class="ter">provider: <b>' + esc(section.provider ? section.provider.id : 'none') + '</b></div>'
-    + '<div class="ter">filter: <input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="f to filter"></div>'
-    // The price facet needs the catalogue's pricing, which `atag models search --json` does not print: the facet stays at `all` and `p` is inert.
-    + '<div class="ter">price: ' + esc(LLMP.pricing) + ' · <button class="skpf" data-act="llm:pricing" disabled title="pricing is not in `atag models search --json` on this agent — the facet stays at all">p cycles free/paid/all</button></div>'
-    + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></div>'
+  const sp = section.provider;
+  return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers configured. Press n to add one.', true,
+      {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>'})
+    + '<section class="llm-section">'
+    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Cloud text models</span>'
+      + '<span class="llm-prov"><span class="llm-k3">provider: </span>' + (sp ? llmProviderMark(sp, 'xs') : '') + '<b class="mono">' + esc(sp ? sp.id : 'none') + '</b></span></div>'
+    + '<div class="tk-bar llm-modelbar">'
+      + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
+        + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="f to filter" aria-label="Filter models"></label></span>'
+      // The price facet needs the catalogue's pricing, which `atag models search --json` does not print: the facet stays at `all` and `p` is inert.
+      + '<span class="llm-price"><button class="btn btn-s xs llm-ib" data-act="llm:pricing" disabled title="pricing is not in `atag models search --json` on this agent — the facet stays at all">'
+        + esc('price: ' + LLMP.pricing) + '</button><span class="llm-price-note">pricing is not exposed</span></span>'
+    + '</div>'
+    + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></section>'
     + llmSectionHTML('Cloud embeddings', emb, embOffset, cursor);
 }
 /* The 12-row window of the text-model rows around the cursor, with the TUI's counter line. */
@@ -14214,70 +15228,118 @@ function llmCloudModelListHTML() {
   const start = Math.max(0, Math.min(cursorInSection - Math.floor(LLM_MODEL_WINDOW / 2), rows.length - LLM_MODEL_WINDOW));
   const visible = rows.slice(start, start + LLM_MODEL_WINDOW);
   const counter = rows.length === 0 ? 'no match' : (cursorInSection + 1) + '/' + rows.length + (rows.length !== section.models.length ? ' of ' + section.models.length : '');
-  return (section.status === 'loading' ? '<div class="ter">  fetching model list…</div>' : '')
-    + (section.status === 'error' ? '<div class="tuierr">  model list unavailable (' + esc(section.error || 'unknown error') + ') - showing current model only</div>' : '')
-    + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('')
-    + '<div class="ter">  ↑/↓ move (' + esc(counter) + ')' + (LLMP.filterFocused ? ' · type to filter · Enter select · Esc done' : '') + '</div>';
+  return (section.status === 'loading' ? '<div class="llm-loading"><span class="tk-spin"></span><span>fetching model list…</span></div>' : '')
+    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">model list unavailable (' + esc(section.error || 'unknown error') + ') - showing current model only</span></div>' : '')
+    + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
+    + '<div class="llm-counter">↑/↓ move (' + esc(counter) + ')' + (LLMP.filterFocused ? ' · type to filter · Enter select · Esc done' : '') + '</div>';
 }
 function llmExternalHTML() {
   const rows = llmExternalRows();
+  const status = llmStatusLine();
   return llmSectionHTML('External llama.cpp', rows, 0, LLMP.cursor.external)
-    + '<div class="ter">  managed daemon: ' + esc(llmFormatDaemon()) + ' · <button class="skpf" data-act="llm:daemon">s start/stop</button></div>'
-    + '<div class="ter">  ← <button class="skpf" data-act="llm:mode:local">Local pane</button>: pick a managed model to switch back</div>';
+    + llmStatusNoteHTML(status, llmStatusTone(status))
+    + '<div class="llm-extra">'
+      + '<div class="llm-line"><span class="tk-ico tk-ico--sm">' + ic('cpu') + '</span>'
+        + '<span class="llm-line-t">managed daemon: <span class="mono">' + esc(llmFormatDaemon()) + '</span></span>'
+        + '<span class="grow"></span>' + llmKeyBtn('s', 'start/stop', 'llm:daemon') + '</div>'
+      + '<p class="llm-back">← <button class="llm-link" data-act="llm:mode:local">Local pane</button>: pick a managed model to switch back</p>'
+    + '</div>';
 }
 function llmFallbackHTML() {
   const view = llmFallbackView();
   const cursor = LLMP.cursor.fallback;
   if (LLMP.fallbackPicker) {
     const c = LLMP.fallbackPicker.cursor;
-    return '<div class="llm-section"><b>Add fallback link</b>'
-      + (view.addableProviderIds.length ? view.addableProviderIds.map((id, i) => '<button class="tuirow' + (i === c ? ' on' : '') + '" data-llm-row="fb-pick:' + esc(id) + '" data-act="llm:fb:pick:' + esc(id) + '">' + (i === c ? '&gt;' : ' ') + ' ' + esc(id) + '</button>').join('')
-        : '<div class="ter">  Every configured provider is already in the chain.</div>')
-      + '<div class="ter">  ↑/↓ move · Enter add · <button class="skpf" data-act="llm:fb:pickCancel">Esc cancel</button></div></div>';
+    const ids = view.addableProviderIds;
+    return '<section class="llm-section"><div class="tk-sh llm-sh"><span class="llm-sh-t">Add fallback link</span><span class="grow"></span>'
+      + '<button class="btn btn-g sm" data-act="llm:fb:pickCancel">Cancel' + keycaps('Esc') + '</button></div>'
+      + (ids.length ? '<div class="tk-list llm-list">' + ids.map((id, i) => {
+          const p = llmProvider(id);
+          return '<button class="tuirow tk-li llm-row' + (i === c ? ' on' : '') + '" data-llm-row="fb-pick:' + esc(id) + '" data-act="llm:fb:pick:' + esc(id) + '">'
+            + llmProviderMark(p || {id, kind:''}, 'sm')
+            + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(id) + '</span></span>' + (p && p.kind ? '<span class="d">' + esc(p.kind) + '</span>' : '') + '</span></button>';
+        }).join('') + '</div>'
+        : '<div class="llm-empty">Every configured provider is already in the chain.</div>')
+      + '<p class="llm-counter">↑/↓ move · Enter add · Esc cancel</p></section>';
   }
   const rows = llmFallbackRows();
+  const declared = llmDeclaredChain(view.links);
+  /* ST-25: ordered rows with move buttons on the selected link (the moves
+     act on the selected link, as `<` and `>` do), the appended local last
+     resort locked, and the toggle as a switch. */
+  const move = (delta, can, icon, label) => '<span role="button" class="btn btn-g icon xs llm-mv' + (can ? '' : ' is-off') + '"'
+    + (can ? ' data-act="llm:fb:move:' + delta + '"' : ' aria-disabled="true"') + ' title="' + label + '" aria-label="' + label + '">' + ic(icon) + '</span>';
   // llm-fallback-rows.tsx StatusLine shows the last `provider_switched` event of the TUI process; the serve API exposes no fallover events.
-  return '<div class="ter" style="margin-bottom:8px">status: fallover events are not exposed by the agent\'s HTTP API</div>'
-    + '<div class="llm-section"><b>Fallback chain</b>'
-    + (view.links.length === 0 ? '<div class="ter">  No chain configured. Falls back to the active provider only.</div>' : '')
-    + rows.map((r, i) => {
+  return '<p class="llm-honest">' + ic('info') + '<span>status: fallover events are not exposed by the agent\'s HTTP API</span></p>'
+    + '<section class="llm-section"><div class="tk-sh llm-sh"><span class="llm-sh-t">Fallback chain</span></div>'
+    + (view.links.length === 0 ? '<div class="llm-empty">No chain configured. Falls back to the active provider only.</div>' : '')
+    + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => {
       const sel = i === cursor;
-      if (r.kind === 'add') return '<button class="tuirow' + (sel ? ' on' : '') + '" data-llm-row="fb-add" data-act="llm:fb:add">' + (sel ? '&gt;' : ' ') + ' + add link <span class="ter">· Enter or a to choose a provider</span></button>';
+      if (r.kind === 'add') return '<button class="tuirow tk-li llm-row llm-fb-add' + (sel ? ' on' : '') + '" data-llm-row="fb-add" data-act="llm:fb:add">'
+        + '<span class="tk-ico tk-ico--sm">' + ic('plus') + '</span><span class="body"><span class="t">Add link</span><span class="d">Enter or a to choose a provider</span></span></button>';
       const l = r.link;
       const note = l.isActive ? 'active (primary)' : l.isAppendedLocal ? 'local last resort (appendLocal)' : 'fallover link';
-      return '<button class="tuirow' + (sel ? ' on' : '') + '" data-llm-row="fb:' + esc(l.providerId) + '" data-act="llm:fb:select:' + i + '">' + (sel ? '&gt;' : ' ') + ' '
-        + esc((r.index + 1) + '. ' + l.providerId + (l.modelLabel ? '/' + l.modelLabel : '') + ' [' + l.kind + ']') + '<span class="ter"> · ' + esc(note) + '</span></button>';
-    }).join('') + '</div>'
-    + '<div class="ter">append local as last resort: <span class="' + (view.appendLocal ? 'sk-on' : 'ter') + '">' + (view.appendLocal ? 'on' : 'off') + '</span> · <button class="skpf" data-act="llm:fb:local">l to toggle</button></div>'
-    + '<div class="ter"><button class="skpf" data-act="llm:fb:move:-1">&lt;</button> <button class="skpf" data-act="llm:fb:move:1">&gt;</button> move priority · <button class="skpf" data-act="llm:fb:add">a add link</button> · <button class="skpf" data-act="llm:fb:remove">d remove</button> · <button class="skpf" data-act="llm:fb:local">l toggle local</button></div>';
+      const tone = l.isActive ? ' tk-chip--green' : l.isAppendedLocal ? ' tk-chip--indigo' : '';
+      const pos = declared.indexOf(l.providerId);
+      const p = llmProvider(l.providerId);
+      return '<button class="tuirow tk-li llm-row llm-fb-row' + (sel ? ' on' : '') + '" data-llm-row="fb:' + esc(l.providerId) + '" data-act="llm:fb:select:' + i + '">'
+        + '<span class="body"><span class="t"><span class="llm-idx">' + (r.index + 1) + '</span>'
+          + llmProviderMark(p || {id:l.providerId, kind:l.kind}, 'sm')
+          + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span></span>'
+          + '<span class="d">' + esc(l.kind) + '</span></span>'
+        + '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(note) + '</span>'
+        + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="local last resort">' + ic('lock') + '</span>'
+          : sel ? move(-1, pos > 0, 'chevU', 'Move up (&lt;)') + move(1, pos >= 0 && pos < declared.length - 1, 'chevD', 'Move down (&gt;)') : '') + '</span>'
+        + '</button>';
+    }).join('') + '</div>' : '')
+    + '<div class="llm-fbl">'
+      + '<button class="tk-switch' + (view.appendLocal ? ' on' : '') + '" role="switch" aria-checked="' + view.appendLocal + '" data-act="llm:fb:local" aria-label="Append local as last resort"></button>'
+      + '<span class="llm-fbl-t">append local as last resort: <b>' + (view.appendLocal ? 'on' : 'off') + '</b></span>'
+      + '<span class="grow"></span>' + llmKeyBtn('l', 'to toggle', 'llm:fb:local')
+    + '</div></section>';
 }
 /* llm-panel-modals.tsx PromptBox copy, one at a time; a modal takes the whole pane as in the TUI. */
 function llmModalHTML() {
   const c = LLMP.confirm;
   if (c) {
-    const err = c.error ? '<div class="tuierr">! ' + esc(c.error) + '</div>' : '';
-    const busy = c.submitting ? '<div class="ter">working…</div>' : '';
-    if (c.kind === 'removeProvider') return '<div class="tuimodal danger"><b style="color:var(--danger)">Remove provider ' + esc(c.id) + '?</b>' + err + busy
-      + tuiHints([['y confirm', 'llm:confirm', {disabled:c.submitting}], ['n/Esc cancel', 'llm:cancel']]) + '</div>';
-    if (c.kind === 'removeLocal') return '<div class="tuimodal danger"><b style="color:var(--danger)">Delete local model ' + esc(c.id) + '?</b>'
-      + '<div class="ter">Removes GGUF/mmproj files. y confirm · n/Esc cancel</div>' + err + busy + tuiHints([['y confirm', 'llm:confirm', {disabled:c.submitting}], ['n/Esc cancel', 'llm:cancel']]) + '</div>';
-    if (c.kind === 'removeEmbedding') return '<div class="tuimodal danger"><b style="color:var(--danger)">Delete local embedding model ' + esc(c.id) + '?</b>'
+    const err = c.error ? '<p class="tk-help tk-help--err">! ' + esc(c.error) + '</p>' : '';
+    const busy = c.submitting ? '<p class="llm-working"><span class="tk-spin"></span>working…</p>' : '';
+    const head = (title) => '<div class="llm-modal-h"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>' + esc(title) + '</h4></div>';
+    // ST-27: Cancel · N and the destructive fill · Y; the keys stay y / n / Esc.
+    const acts = (label, yes) => '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel">Cancel' + keycaps('N') + '</button>'
+      + '<button class="btn btn-df sm" data-act="llm:confirm"' + (yes.disabled ? ' disabled' : '') + (yes.title ? ' title="' + esc(yes.title) + '"' : '') + '>' + esc(label) + keycaps('Y') + '</button></div>';
+    if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + c.id + '?')
+      + err + busy + acts('Remove', {disabled:c.submitting}) + '</div>';
+    if (c.kind === 'removeLocal') {
+      const m = (LLMP.local || []).find((x) => x.id === c.id);
+      return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Delete local model ' + c.id + '?')
+        + '<p>Removes GGUF/mmproj files' + (m && m.size ? ' — <span class="mono">' + esc(m.size) + '</span>' : '') + '.</p>'
+        + err + busy + acts('Delete', {disabled:c.submitting}) + '</div>';
+    }
+    if (c.kind === 'removeEmbedding') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Delete local embedding model ' + c.id + '?')
       // `atag models remove` accepts chat catalogue ids only (runLocalModelsRemove isKnownLocalModelId), so the desktop cannot delete an embedding GGUF.
-      + '<div class="ter">y confirm · n/Esc cancel</div><div class="ter">(no CLI removes an embedding model on this agent — `atag models remove` accepts chat models only)</div>' + err
-      + tuiHints([['y confirm', 'llm:confirm', {disabled:true, title:'`atag models remove` accepts chat models only'}], ['n/Esc cancel', 'llm:cancel']]) + '</div>';
+      + '<p>(no CLI removes an embedding model on this agent — `atag models remove` accepts chat models only)</p>' + err
+      + acts('Delete', {disabled:true, title:'`atag models remove` accepts chat models only'}) + '</div>';
   }
   if (LLMP.externalDraft !== null) {
-    return '<div class="tuimodal"><b>External llama.cpp base URL</b>'
-      + '<div><input id="llm-url" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="http://host:8080"></div>'
-      + (LLMP.externalInvalid ? '<div class="tuierr">invalid URL</div>' : '')
-      + '<div class="ter">Saved after a /health probe succeeds. <button class="skpf" data-act="llm:external:save">Enter save</button> · <button class="skpf" data-act="llm:external:cancel">Esc cancel</button></div></div>';
+    return '<div class="tk-modal llm-modal" role="dialog">'
+      + '<label class="tk-field"><span class="tk-lbl">External llama.cpp base URL</span>'
+      + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="http://host:8080">'
+      + (LLMP.externalInvalid ? '<span class="tk-help tk-help--err">invalid URL</span>' : '')
+      + '<span class="tk-help">Saved after a /health probe succeeds.</span></label>'
+      + '<div class="acts"><button class="btn btn-g sm" data-act="llm:external:cancel">Cancel' + keycaps('Esc') + '</button>'
+      + '<button class="btn btn-p sm" data-act="llm:external:save">Save' + keycaps('↩') + '</button></div></div>';
   }
   if (LLMP.steerUrl !== null) {
     const url = LLMP.steerUrl;
     const ollama = llmLooksLikeOllama(url);
-    return '<div class="tuimodal"><b>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</b>'
-      + '<div>' + esc(url + ' answers like ' + (ollama ? 'Ollama' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</div>'
-      + tuiHints([['y open the provider wizard with this URL', 'llm:steer:y'], ['n/Esc dismiss', 'llm:steer:n']]) + '</div>';
+    // ST-24: an amber prompt, because nothing failed — the server is just the other kind.
+    return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
+      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
+      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
+      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
+      + '<div class="acts"><button class="btn btn-s sm" data-act="llm:steer:n">Dismiss' + keycaps('N') + '</button>'
+      + '<button class="btn btn-p sm" data-act="llm:steer:y">Open the provider wizard with this URL' + keycaps('Y') + '</button></div></div>';
   }
   return '';
 }
@@ -14356,17 +15418,27 @@ async function llmHfAdd() {
 function llmHfHTML() {
   if (LLMHF.step === 'pick' && LLMHF.repo) return llmHfPickHTML();
   const busy = LLMHF.busy;
-  return '<div class="llm-section llm-hf">'
-    + '<div>Which model? <span class="ter">' + esc(HF_REF_TITLE_TAIL) + '</span></div>'
-    + '<div class="ter">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
-    + '<div style="margin-top:8px"><input id="llm-hf-ref" value="' + esc(LLMHF.reference) + '" autocomplete="off" spellcheck="false" placeholder="owner/repo"'
-      + (busy ? ' disabled' : '') + '></div>'
-    + (!busy && LLMHF.reference.length > 0 ? '<div><button class="skpf" data-act="llm:hf:clear">[ clear ]</button></div>' : '')
-    + (busy ? '<div class="ter">asking huggingface.co…</div>' : '')
-    + (LLMHF.error ? '<div class="tuierr">' + esc(LLMHF.error) + '</div>' : '')
+  // ON-05's form, inside the pane: the Hugging Face field, then its buttons; the TUI's hint strip stays under it.
+  return '<section class="llm-hf">'
+    + '<div class="llm-hf-card">'
+      + '<div class="llm-hf-head">' + logoHTML('huggingface', 'lg')
+        + '<div class="llm-hf-title"><h4 class="llm-h">Which model? <span class="llm-h-tail">' + esc(HF_REF_TITLE_TAIL) + '</span></h4>'
+        + '<p class="llm-hf-ex">' + esc(HF_REF_EXAMPLES_LINE) + '</p></div></div>'
+      + '<div class="llm-hf-row"><label class="tk-inpwrap llm-hf-inp">' + ic('search')
+        + '<input id="llm-hf-ref" value="' + esc(LLMHF.reference) + '" autocomplete="off" spellcheck="false" placeholder="owner/repo"' + (busy ? ' disabled' : '') + '></label>'
+        + (!busy && LLMHF.reference.length > 0 ? '<button class="btn btn-g sm" data-act="llm:hf:clear">Clear</button>' : '')
+      + '</div>'
+      + (busy ? '<div class="llm-loading"><span class="tk-spin"></span><span>asking huggingface.co…</span></div>' : '')
+      + (LLMHF.error ? '<div class="tk-notice tk-notice--red llm-hf-err">' + ic('alert') + '<span class="grow">' + esc(LLMHF.error) + '</span></div>' : '')
+      + '<div class="llm-hf-acts">'
+        + (busy ? '<button class="btn btn-s sm" data-act="llm:hf:cancel">Cancel' + keycaps('Esc') + '</button>'
+          : '<button class="btn btn-g sm" data-act="llm:hf:close">Back to the list' + keycaps('Esc') + '</button>'
+            + '<button class="btn btn-p sm" data-act="llm:hf:look">Look it up' + keycaps('↩') + '</button>')
+      + '</div>'
+    + '</div>'
     + (busy ? tuiHints([['esc cancel', 'llm:hf:cancel']])
             : tuiHints([['enter look it up', 'llm:hf:look'], ['ctrl+l clear', 'llm:hf:clear'], ['esc back to the list', 'llm:hf:close']]))
-    + '</div>';
+    + '</section>';
 }
 function llmHfPickHTML() {
   const repo = LLMHF.repo;
@@ -14380,21 +15452,26 @@ function llmHfPickHTML() {
   // The fit check warns in one direction and nothing acts on it: weights
   // bigger than RAM still start, because llama.cpp maps the file.
   const warning = selected ? llmHfRamWarning(selected.fileSizeGb, LLMHF.ram) : null;
-  return '<div class="llm-section llm-hf"><b>' + esc(repo.repoId) + '</b>'
-    + visible.map((c, i) => {
+  return '<section class="llm-hf">'
+    + '<div class="tk-sh llm-sh llm-hf-repo">' + logoHTML('huggingface', 'sm') + '<b class="llm-sh-t mono">' + esc(repo.repoId) + '</b></div>'
+    + '<div class="tk-list llm-list">' + visible.map((c, i) => {
         const at = start + i;
         const active = at === cursor;
-        // hfChoiceLine, verbatim: `${active ? '›  ' : '   '}${filename.padEnd(44)}${sizeLabel.padStart(9)}`
-        const line = (active ? '›  ' : '   ') + String(c.filename).padEnd(44) + String(c.sizeLabel).padStart(9);
-        return '<button class="tuirow' + (active ? ' on' : '') + '" data-llm-row="hf:' + esc(c.path) + '" data-act="llm:hf:row:' + at + '">' + esc(line) + '</button>';
-      }).join('')
-    + (below > 0 ? '<div class="ter">' + esc('   ↓ ' + below + ' more') + '</div>' : '')
-    + (repo.hidden ? '<div class="ter">' + esc('   ' + repo.hidden) + '</div>' : '')
-    + (repo.mmproj ? '<div class="ter">' + esc(HF_MMPROJ_LINE) + '</div>' : '')
-    + (warning ? '<div class="sk-off">' + esc('   ⚠ ' + warning) + '</div>' : '')
-    + (LLMHF.error ? '<div class="tuierr">' + esc('   ' + LLMHF.error) + '</div>' : '')
+        // hfChoiceLine's two columns, filename and size, now as a list row.
+        return '<button class="tuirow tk-li llm-row llm-hf-file' + (active ? ' on' : '') + '" data-llm-row="hf:' + esc(c.path) + '" data-act="llm:hf:row:' + at + '">'
+          + '<span class="tk-radio' + (active ? ' on' : '') + '" aria-hidden="true"></span><span class="tk-ico tk-ico--sm">' + ic('file') + '</span>'
+          + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(c.filename) + '</span></span></span>'
+          + '<span class="llm-size">' + esc(c.sizeLabel) + '</span></button>';
+      }).join('') + '</div>'
+    + (below > 0 ? '<p class="llm-counter">' + esc('↓ ' + below + ' more') + '</p>' : '')
+    + (repo.hidden ? '<p class="llm-note">' + esc(repo.hidden) + '</p>' : '')
+    + (repo.mmproj ? '<p class="llm-note llm-mmproj">' + ic('image') + '<span>' + esc(HF_MMPROJ_LINE.trim()) + '</span></p>' : '')
+    + (warning ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(warning) + '</span></div>' : '')
+    + (LLMHF.error ? '<div class="tk-notice tk-notice--red llm-hf-err">' + ic('alert') + '<span class="grow">' + esc(LLMHF.error) + '</span></div>' : '')
+    + '<div class="llm-hf-acts"><button class="btn btn-g sm" data-act="llm:hf:back">Back' + keycaps('Esc') + '</button>'
+      + '<button class="btn btn-p sm" data-act="llm:hf:add">' + ic('download') + 'Download' + keycaps('↩') + '</button></div>'
     + tuiHints(['j/k move', ['Enter download', 'llm:hf:add'], ['esc back', 'llm:hf:back']])
-    + '</div>';
+    + '</section>';
 }
 /* huggingface-fit.ts ramWarningFor, ported so the sentence matches the TUI's. */
 function llmHfRamWarning(fileSizeGb, hostRamGb) {
@@ -14405,9 +15482,11 @@ function llmHfRamWarning(fileSizeGb, hostRamGb) {
 /* llm-panel.tsx DownloadBanner: the CLI streams lines, not a byte count, so the last line stands where the TUI draws its bar. */
 function llmDownloadBannerHTML() {
   const p = LLMP.pulling;
-  return '<div class="llm-section"><b>downloading — ' + esc(p.id) + '</b><div class="ter">model: ' + esc(p.id) + '</div>'
-    + '<div class="ter" id="llm-pull-line">' + esc(LLMP.pullLog[LLMP.pullLog.length - 1] || 'starting…') + '</div>'
-    + tuiHints([['cancel', 'llm:cancelPull']]) + '</div>';
+  // ST-21: a blue notice; the last CLI line keeps #llm-pull-line, which the pull subscriber writes into directly.
+  return '<div class="tk-notice tk-notice--blue llm-dl"><span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>'
+    + '<span class="grow llm-dl-body"><b>downloading — ' + esc(p.id) + '</b><span class="llm-note">model: ' + esc(p.id) + '</span>'
+    + '<span class="llm-dl-line" id="llm-pull-line">' + esc(LLMP.pullLog[LLMP.pullLog.length - 1] || 'starting…') + '</span></span>'
+    + '<button class="btn btn-g sm" data-act="llm:cancelPull">Cancel</button></div>';
 }
 /* local-llm-logs-panel.tsx: header (path or the waiting line), size · tail · last read, error, the last 30 lines coloured. */
 function llmLogsHTML() {
@@ -14415,12 +15494,17 @@ function llmLogsHTML() {
   const header = l && l.path ? l.path : '(waiting for the first daemon start — no log file yet)';
   const lines = l ? l.text.split('\n').filter((x) => x.length > 0) : [];
   const tail = lines.slice(-LLM_LOG_LINES);
-  const color = (line) => { const lower = line.toLowerCase(); if (/\b(error|fatal|fail|abort)\b/.test(lower)) return 'tuierr'; if (/\b(warn|warning)\b/.test(lower)) return 'sk-off'; if (/\b(loading|loaded|ready|listening)\b/.test(lower)) return 'sk-on'; return ''; };
-  return '<div class="ter">' + esc(header) + '</div>'
-    + (l && typeof l.size === 'number' ? '<div class="ter">' + esc(llmFormatBytes(l.size)) + (l.truncated ? ' · showing tail only' : '') + (l.lastReadAt ? ' · last read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') + '</div>' : '')
-    + (l && l.error ? '<div class="sk-off">' + esc(l.error) + '</div>' : '')
-    + '<div style="margin-top:8px">' + (tail.length === 0 ? '<div class="ter">' + (l && l.error ? '' : '(log is empty — start the daemon to see output)') + '</div>'
-      : tail.map((line) => '<div class="' + color(line) + '">' + esc(line) + '</div>').join('')) + '</div>'
+  const color = (line) => { const lower = line.toLowerCase(); if (/\b(error|fatal|fail|abort)\b/.test(lower)) return 'llm-log-err'; if (/\b(warn|warning)\b/.test(lower)) return 'llm-log-warn'; if (/\b(loading|loaded|ready|listening)\b/.test(lower)) return 'llm-log-ok'; return ''; };
+  const meta = l && typeof l.size === 'number'
+    ? llmFormatBytes(l.size) + (l.truncated ? ' · showing tail only' : '') + (l.lastReadAt ? ' · last read ' + new Date(l.lastReadAt).toLocaleTimeString() : '') : '';
+  // ST-26: back, the log path, size and read time, then the tail in a mono well — errors red, warnings amber, loading and ready in accent.
+  return '<div class="tk-bar llm-bar llm-logbar"><button class="btn btn-g sm" data-act="llm:back">' + ic('chevL') + 'Back' + keycaps('Esc') + '</button>'
+      + '<span class="llm-logpath" title="' + esc(header) + '">' + esc(header) + '</span><span class="grow"></span>'
+      + (meta ? '<span class="llm-note">' + esc(meta) + '</span>' : '')
+      + '<button class="iconbtn sm" data-act="llm:logsRefresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
+    + (l && l.error ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(l.error) + '</span></div>' : '')
+    + (tail.length === 0 ? '<div class="llm-log llm-log--empty">' + (l && l.error ? '' : '(log is empty — start the daemon to see output)') + '</div>'
+      : '<pre class="tk-out llm-log">' + tail.map((line) => '<span class="' + color(line) + '">' + esc(line) + '</span>').join('\n') + '</pre>')
     + tuiHints([['Esc back', 'llm:back'], ['r refresh', 'llm:logsRefresh']]);
 }
 function llmFormatBytes(n) { if (n < 1024) return n + ' B'; if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'; return (n / (1024 * 1024)).toFixed(1) + ' MB'; }
@@ -15134,47 +16218,67 @@ function telegramTab() {
   const owner = tgOwner();
   let body = '';
   if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
-  else if (hasToken === null) body += '<div class="ter">reading .env…</div>';
+  else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>reading .env…</p></div>';
   else if (!hasToken) {
-    // setup-state.ts not_connected (no token).
-    body += '<div class="tuimodal tgcard"><b>Connect Telegram</b>'
-      + '<div class="ter">Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</div>'
-      + '<div style="margin-top:8px"><button class="skpf skpaccent" data-act="telegram:token">Press Enter to paste a bot token</button></div></div>';
+    // setup-state.ts not_connected (no token). ST-28: one card, one action.
+    body += '<div class="tk-card pad sd-tgcard sd-center">'
+      + '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>'
+      + '<h3 class="sd-title">Connect Telegram</h3>'
+      + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
+      + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token' + keycaps('↩') + '</button></div>';
   } else if (owner === null) {
     // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
-    body += '<div class="tuimodal tgcard"><b>One last step — confirm it\'s you</b>'
-      + '<div class="ter">Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</div>'
-      + '<div class="ter" style="margin-top:8px">' + esc(TG_PAIRING_NOTE) + '</div></div>';
+    body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
+      + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
+      + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
   } else {
     // Token + owner: the TUI would say "✅ Telegram is connected" only with the channel `up`, which the desktop cannot see.
-    body += '<div class="ter">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</div>';
+    body += '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</span></div>';
   }
   const advanced = TG.showAdvanced || (hasToken && owner !== null);
   if (advanced && TG.mode !== 'tokenPrompt') body += tgAdvancedHTML(enabled, hasToken, owner);
-  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it is always shown, because the desktop's message carries the restart the serve process needs.
-  if (TG.message) body += '<div class="ter" style="margin-top:8px">· ' + esc(TG.message) + (TG.restart ? ' <span class="ter">(the agent loads .env and config.json at start)</span> <button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button>' : '') + '</div>';
-  return '<div class="tui">' + body
-    + '<div class="tuihint"><button data-act="telegram:advanced">' + (TG.showAdvanced ? 'a — hide advanced' : 'a — advanced') + '</button></div></div>';
+  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it leads the tab, because the desktop's message carries the restart the serve process needs.
+  const msg = TG.message ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TG.message)
+    + (TG.restart ? ' <span class="sec">(the agent loads .env and config.json at start)</span>' : '') + '</span>'
+    + (TG.restart ? '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>' : '') + '</div>' : '';
+  return '<div class="sd-pane sd-tg"><div class="tk-bar"><span class="grow"></span>'
+    + tuiBtn(TG.showAdvanced ? 'a — hide advanced' : 'a — advanced', 'telegram:advanced') + '</div>' + msg + body + '</div>';
 }
-/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. */
+/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. ST-30: one row per fact, its actions beside it. */
 function tgAdvancedHTML(enabled, hasToken, owner) {
-  return '<div style="margin-top:8px"><span class="ter">state </span><b class="ter" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</b>'
-    + '<span class="ter">   enabled </span><span class="' + (enabled ? 'skpaccent' : 'ter') + '">' + (enabled === null ? '—' : enabled ? 'yes' : 'no') + '</span>'
-    + '<span class="ter">   token </span><span class="' + (hasToken ? 'skpaccent' : 'tuierr') + '">' + (hasToken === null ? '—' : hasToken ? 'set' : 'missing') + '</span>'
-    + '<span class="ter">   owner </span><span class="' + (owner === null ? 'tuierr' : 'skpaccent') + '">' + (owner === null ? 'unset' : esc(String(owner))) + '</span></div>'
-    + (TG.lastError ? '<div class="tuierr">! ' + esc(TG.lastError) + '</div>' : '')
-    + '<div class="tuihint" style="margin-top:8px">' + tuiBtn('e — ' + (enabled ? 'disable' : 'enable'), 'telegram:enable', {disabled:TG.busy || enabled === null}) + '<span>·</span>' + tuiBtn('r — restart', 'telegram:restart') + '<span>·</span>' + tuiBtn('R — refresh', 'telegram:refresh') + '</div>'
-    + '<div class="tuihint">' + tuiBtn('T — clear token', 'telegram:clearToken', {disabled:TG.busy || !hasToken}) + '<span>·</span>' + tuiBtn('O — clear owner', 'telegram:clearOwner', {disabled:TG.busy || owner === null}) + '<span>·</span>' + tuiBtn('t — change token', 'telegram:token') + '<span>·</span>' + tuiBtn('o — re-pair', 'telegram:pair', {disabled:true, title:TG_PAIRING_NOTE}) + '</div>'
-    ;
+  const busy = TG.busy;
+  const tokenChip = hasToken === null ? '<span class="tk-chip tk-chip--sm">—</span>' : hasToken ? '<span class="tk-chip tk-chip--sm tk-chip--green">set</span>' : '<span class="tk-chip tk-chip--sm tk-chip--amber">missing</span>';
+  const ownerChip = owner === null ? '<span class="tk-chip tk-chip--sm tk-chip--amber">unset</span>' : '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>';
+  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+    + '<div class="tk-card sd-rows">'
+    + '<div class="tk-setrow"><div class="body"><div class="t">State</div><div class="d">The channel runs inside the agent; its live state is not readable here.</div></div>'
+    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</span></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Enabled</div><div class="d sd-mono">telegram.enabled</div></div>'
+    + '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Enabled" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Token</div><div class="d sd-mono">TELEGRAM_BOT_TOKEN in .env</div></div>' + tokenChip
+    + '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
+    + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy || !hasToken ? ' disabled' : '') + '>Clear token</button></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Owner</div><div class="d sd-mono">telegram.ownerUserId</div></div>' + ownerChip
+    + '<button class="btn btn-s sm" data-act="telegram:pair" disabled title="' + esc(TG_PAIRING_NOTE) + '">Re-pair</button>'
+    + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy || owner === null ? ' disabled' : '') + '>Clear owner</button></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Channel</div><div class="d">Restarts with the agent runtime.</div></div>'
+    + '<button class="btn btn-g sm" data-act="telegram:refresh">' + ic('refresh') + 'Refresh</button>'
+    + '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button></div>'
+    + '</div>'
+    + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token', 'T clear token', 'O clear owner']);
 }
-/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. */
+/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
   const t = TG.token;
-  return '<div class="tuimodal tgcard"><b>bot token</b>'
-    + '<div class="ter">Paste the token issued by @BotFather. Saved to <span class="skpaccent">.env</span> at mode 0600.</div>'
-    + '<div><span class="ter">&gt; </span><input id="tg-token" type="password" autocomplete="off" spellcheck="false"' + (t.submitting ? ' disabled' : '') + '></div>'
-    + (t.error ? '<div class="tuierr">! ' + esc(t.error) + '</div>' : '')
-    + '<div class="ter"><button class="skpf" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Enter to save</button> · <button class="skpf" data-act="telegram:tokenCancel">Esc to cancel</button> · Backspace to edit' + (t.submitting ? ' · saving…' : '') + '</div></div>';
+  return '<div class="tk-card pad sd-tgcard">'
+    + '<h3 class="sd-title">Bot token</h3>'
+    + '<p>Paste the token issued by @BotFather. Saved to <span class="sd-code">.env</span> at mode 0600.</p>'
+    + '<label class="tk-inpwrap sd-tokwrap' + (t.error ? ' is-error' : '') + '">' + ic('key')
+    + '<input id="tg-token" type="password" autocomplete="off" spellcheck="false" aria-label="Bot token"' + (t.submitting ? ' disabled' : '') + '></label>'
+    + (t.error ? '<p class="tk-help tk-help--err">' + esc(t.error) + '</p>' : '')
+    + '<div class="sd-acts">' + (t.submitting ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
+    + '<button class="btn btn-g sm" data-act="telegram:tokenCancel">Cancel' + keycaps('esc') + '</button>'
+    + '<button class="btn btn-p sm" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Save' + keycaps('↩') + '</button></div></div>';
 }
 function tgSetMessage(text, restart) { TG.message = text; TG.restart = !!restart; TG.lastError = null; }
 /* tui-telegram-orchestrator.ts submitToken: empty fails locally, then
@@ -15279,44 +16383,67 @@ function impDefaultDir(source) { return IMP.defaults ? (IMP.defaults[source] || 
 function importTab() {
   const f = IMP.form;
   const sourceLabel = f.source === 'openclaw' ? 'OpenClaw' : 'Hermes';
-  let body = '<b>Import · ' + sourceLabel + ' → Atomic Agent</b>';
-  if (IMP.notice) body += '<div class="tuierr" style="margin-top:8px">! ' + esc(IMP.notice) + '</div>';
+  const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
+  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(f.source === 'openclaw' ? 'openclaw' : 'hermes', 'sm') + '<h3 class="sd-title">' + sourceLabel + ' → Atomic Agent</h3></div>';
+  if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
-  else if (IMP.mode === 'running') body += '<div class="ter" style="margin-top:8px">importing… please wait</div>';
-  else if ((IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report) body += impReportHTML(IMP.report, IMP.mode === 'done');
-  return '<div class="tui">' + body + '</div>';
+  else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
+  else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
+  return '<div class="sd-pane sd-imp">' + body + '</div>';
 }
-function impLabel(label, focused) { return '<span class="ter">' + esc((focused ? '▸' : ' ') + ' ' + label.padEnd(10) + ': ') + '</span>'; }
 function impFormHTML(f) {
   const fc = f.focus;
-  const text = (label, field, placeholder) => '<div class="impline">' + impLabel(label, fc === field) + '<input class="impinp' + (f[field === 'source' ? 'sourceDir' : field] ? '' : ' empty') + '" data-imp-field="' + (field === 'source' ? 'sourceDir' : 'limit') + '" data-imp-focus="' + field + '" value="' + esc(f[field === 'source' ? 'sourceDir' : field]) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"></div>';
-  const toggle = (label, field, hint) => '<div class="impline">' + impLabel(label, fc === field) + '<button class="skpf' + (f[field] ? ' sk-on' : ' ter') + '" data-act="import:toggle:' + field + '">[' + (f[field] ? '✓' : ' ') + ']</button>' + (hint ? '<span class="ter">  ' + esc(hint) + '</span>' : '') + '</div>';
-  return '<div class="tuimodal impform">'
-    + '<div class="impline">' + impLabel('source-of', fc === 'sourceType') + '<button class="skpf' + (f.source === 'hermes' ? ' sk-on' : ' ter') + '" data-act="import:source:hermes">' + (f.source === 'hermes' ? '‹hermes›' : ' hermes ') + '</button><span class="ter"> / </span><button class="skpf' + (f.source === 'openclaw' ? ' sk-on' : ' ter') + '" data-act="import:source:openclaw">' + (f.source === 'openclaw' ? '‹openclaw›' : ' openclaw ') + '</button></div>'
-    + text('source', 'source', f.source === 'openclaw' ? '~/.openclaw' : '~/.hermes')
-    + toggle('sessions', 'sessions') + toggle('cron', 'cron')
-    + (f.source === 'hermes' ? toggle('secrets', 'secrets', 'OPENROUTER_API_KEY / AIMLAPI_API_KEY') : '')
-    + toggle('overwrite', 'overwrite', 'replace differing destinations')
-    + text('limit', 'limit', '(no limit)')
-    + '<div class="impline" style="margin-top:8px"><button class="skpf' + (fc === 'run' ? ' sk-on' : ' ter') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + (fc === 'run' ? '▸' : ' ') + ' Run preview</button></div>'
-    + '<div class="ter" style="margin-top:8px">↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview</div></div>';
+  const hermes = f.source === 'hermes';
+  // The agent's own option descriptions (src/import/<source>/import-options.ts).
+  const desc = hermes
+    ? {sessions:'Conversation history (state.db) → sessions.sqlite', cron:'Scheduled jobs (cron/jobs.json) → tasks.sqlite'}
+    : {sessions:'Transcript logs (agents/<agent>/sessions/*.jsonl) → sessions.sqlite', cron:'Scheduled jobs (state/openclaw.sqlite cron_jobs) → tasks.sqlite'};
+  const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
+    + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
+    + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
+  // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
+  return '<div class="sd-form">'
+    + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
+    + ['hermes', 'openclaw'].map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
+      + logoHTML(s, 'xs') + (s === 'hermes' ? 'Hermes' : 'OpenClaw') + '</button>').join('') + '</div></div>'
+    + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
+    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(hermes ? '~/.hermes' : '~/.openclaw') + '" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="tk-card sd-rows">' + sw('sessions', 'Sessions', esc(desc.sessions)) + sw('cron', 'Cron jobs', esc(desc.cron))
+    + (hermes ? sw('secrets', 'Secrets', '<span class="sd-mono">OPENROUTER_API_KEY / AIMLAPI_API_KEY</span>') : '')
+    + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
+    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Limit</label>'
+    + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="sd-run"><button class="btn btn-p' + (fc === 'run' ? ' sd-kfocus' : '') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Run preview' + keycaps('⌃ ↩') + '</button></div>'
+    + '<p class="sd-cap sd-block">↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview</p>'
+    + '</div>';
 }
-/* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. */
+/* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. ST-32. */
 function impReportHTML(report, executed) {
   const items = report.items.slice(0, IMP_REPORT_ROWS);
   const hidden = report.items.length - items.length;
   const s = report.summary;
-  const color = (st) => ({migrated:'sk-on', skipped:'ter', conflict:'sk-off', error:'tuierr'}[st] || 'ter');
-  return '<div style="margin-top:8px"><div class="ter">' + (executed ? 'result' : 'preview (dry-run)') + ' · ' + report.items.length + ' item' + (report.items.length === 1 ? '' : 's') + '</div>'
-    + items.map((it) => {
-      const arrow = it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || '');
-      return '<div class="improw" data-import-row="1"><span class="' + color(it.status) + '">' + esc(it.status.padEnd(8)) + '</span><span class="ter"> [' + esc(it.kind) + '] ' + esc(arrow) + (it.reason ? ' (' + esc(it.reason) + ')' : '') + '</span></div>';
-    }).join('')
-    + (hidden > 0 ? '<div class="ter">  … ' + hidden + ' more</div>' : '')
-    + '<div style="margin-top:8px"><span class="sk-on">migrated=' + s.migrated + '</span><span class="ter"> · skipped=' + s.skipped + '</span><span class="sk-off"> · conflict=' + s.conflict + '</span><span class="tuierr"> · error=' + s.error + '</span></div>'
-    + (IMP.state === 'nothing' ? '<div class="ter">Nothing to import.</div>' : '')
-    + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]))
-    + '</div>';
+  const n = report.items.length, noun = n === 1 ? ' item' : ' items';
+  const tone = (st) => ({migrated:'tk-chip--green', conflict:'tk-chip--amber', error:'tk-chip--red'}[st] || '');
+  const arrowOf = (it) => (it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || ''));
+  // The summary stays one line of text (`migrated=0 · skipped=2 · …`): the chips are inline, not flex items.
+  const sum = (label, v, t) => '<span class="tk-chip tk-chip--sm ' + (v > 0 ? t : '') + '">' + label + '=' + v + '</span>';
+  return '<div class="tk-bar"><h3 class="sd-title">' + (executed ? 'Result' : 'Preview') + ' · ' + n + noun + '</h3>'
+    + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="tk-chip tk-chip--sm">dry run</span>')
+    + '<span class="grow"></span>'
+    + (executed
+      ? '<button class="btn btn-s sm" data-act="import:reset">Back to form' + keycaps('↩') + '</button>'
+      : '<button class="btn btn-g sm" data-act="import:reset">Edit' + keycaps('e') + '</button><button class="btn btn-p sm" data-act="import:apply"' + (IMP.busy ? ' disabled' : '') + '>Apply' + keycaps('↩') + '</button>')
+    + '</div>'
+    + '<div class="sd-sum">' + sum('migrated', s.migrated, 'tk-chip--green') + '<span class="sd-sep"> · </span>' + sum('skipped', s.skipped, '')
+    + '<span class="sd-sep"> · </span>' + sum('conflict', s.conflict, 'tk-chip--amber') + '<span class="sd-sep"> · </span>' + sum('error', s.error, 'tk-chip--red') + '</div>'
+    + (items.length ? '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-imptbl"><thead><tr><th>Outcome</th><th>Kind</th><th>Item</th></tr></thead><tbody>'
+      + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(it.status) + '</span></td>'
+        + '<td><span class="tk-chip tk-chip--sm tk-chip--line">' + esc(it.kind) + '</span></td>'
+        + '<td class="sd-path" title="' + esc(arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : '')) + '">' + esc(arrowOf(it)) + (it.reason ? ' <span class="sd-reason">(' + esc(it.reason) + ')</span>' : '') + '</td></tr>').join('')
+      + '</tbody></table></div>' : '')
+    + (hidden > 0 ? '<p class="sd-cap">… ' + hidden + ' more</p>' : '')
+    + (IMP.state === 'nothing' ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">Nothing to import.</span></div>' : '')
+    + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]));
 }
 /* import-orchestrator.ts runImport: the option set from the toggles, the
    limit parsed, then one `atag import` subprocess — never while a turn is
@@ -15563,7 +16690,7 @@ if (typeof window !== 'undefined') {
   window.__transcript = () => S.log.map((m) => m.k);
   // ⌘3 / View › Skills / the palette rows still reach Skills — on this tree they
   // open Settings › Skills, and only the sidebar row is gone.
-  window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? h.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim() : ''; };
+  window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? ((h.querySelector('.lb') || h).textContent || '').trim() : ''; };
 }
 
 /* Hooks for --smoke: the review fixes.
