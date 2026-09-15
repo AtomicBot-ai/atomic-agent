@@ -89,6 +89,9 @@ describe("inspectContractProvides", () => {
         { task: "ship", kind: "file", name: "js/ship.js" },
         { task: "ship", kind: "file", name: "js/hud.js" },
         { task: "ship", kind: "symbol", name: "X", in: "js/nope.js" },
+        // Nowhere to look: the parser's warning, not a finding — a
+        // "missing" verdict over a search that never happened would
+        // read as the worker's failure.
         { task: "lost", kind: "symbol", name: "Y" },
       ],
     };
@@ -101,16 +104,13 @@ describe("inspectContractProvides", () => {
       ["js/ship.js", true, ["js/ship.js"]],
       ["js/hud.js", false, ["js/hud.js"]],
       ["X", false, ["js/nope.js"]],
-      ["Y", false, []],
     ]);
     expect(findings[6]!.detail).toBe("file missing or unreadable");
-    expect(findings[7]!.detail).toContain("no file to look in");
     expect(describeMissing(findings[1]!)).toBe(
       "[ship] symbol HD.Ship.fire not in js/ship.js",
     );
     expect(describeMissing(findings[2]!)).toBe("[html] id btn-launch not in index.html");
     expect(describeMissing(findings[5]!)).toBe("[ship] file js/hud.js does not exist");
-    expect(describeMissing(findings[7]!)).toContain("nowhere (no file to look in");
   });
 
   it("is satisfied by any one of several owned paths", async () => {
@@ -289,7 +289,19 @@ describe("renderContractLine", () => {
     ).toBe("contract: 2 checks not run — no check runner is wired");
   });
 
+  it("carries the warnings the call ran with, after everything else", () => {
+    const warning =
+      'requires "organized_files" (task index) has no provider — nothing produces it';
+    expect(
+      renderContractLine({ findings: [], checks: [], warnings: [warning] }),
+    ).toBe(`contract: ${warning}`);
+    expect(
+      renderContractLine({ findings: [present], checks: [], warnings: [warning] }),
+    ).toBe(`contract: all 1 provide present; ${warning}`);
+  });
+
   it("is absent when there was nothing to report", () => {
     expect(renderContractLine({ findings: [], checks: [] })).toBeUndefined();
+    expect(renderContractLine({ findings: [], checks: [], warnings: [] })).toBeUndefined();
   });
 });

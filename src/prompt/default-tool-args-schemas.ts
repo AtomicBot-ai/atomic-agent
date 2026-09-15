@@ -711,12 +711,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
           items: obj(
             {
               id: stringSchema,
+              // Optional since F44: the tool defaults it to the id.
               title: stringSchema,
               instructions: stringSchema,
               deliverable: stringSchema,
               files: { ...stringArraySchema, maxItems: 32 },
             },
-            ["id", "title", "instructions"],
+            ["id", "instructions"],
           ),
         },
         // No upper bound: the orchestrator sizes its own fan-out and

@@ -112,7 +112,9 @@ function error(
  *     Manage → LLM leaves fusion on the next read (§"Run modes"), and a
  *     tool that kept fanning out would be spending on a leg the operator
  *     just walked away from.
- *  3. **Only on valid args.** See `parseDelegateArgs`.
+ *  3. **Only on valid args.** See `parseDelegateArgs`: the refusal
+ *     names every problem of the call at once, so a slow local
+ *     orchestrator regenerates once, not once per field.
  *
  * Once the call runs, its status summarises its tasks
  * (`details.outcome`): `ok` while any task delivered anything — partial
@@ -161,7 +163,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers?, contract? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, instructions, title?, deliverable?, files? }], maxWorkers?, contract? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -367,12 +369,18 @@ export function buildFusionDelegateTool(
           { workingDir: ctx.workingDir, signal: ctx.signal },
         );
         results = applyCheckOutcomes(results, checks.outcomes);
+        // What the call was run with despite the contract — a require
+        // nobody provides, a provide nothing can check. The workers read
+        // it in their block; the orchestrator reads it here, on the line
+        // and in the details.
+        const warnings = parsed.contract.warnings ?? [];
         contract = {
           findings,
           checks: checks.outcomes,
           ...(checks.checksSkipped === undefined
             ? {}
             : { checksSkipped: checks.checksSkipped }),
+          ...(warnings.length === 0 ? {} : { warnings }),
         };
       }
       const contractLine =

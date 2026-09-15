@@ -173,6 +173,28 @@ describe("fusion.delegate", () => {
     expect(pins).toEqual(["local-llama", "other-llama"]);
   });
 
+  it("labels a task that named no title with its humanised id — in the table, the details and the feed", async () => {
+    // Every task of one live call lacked `title`; refusing it cost a
+    // ~5 tok/s orchestrator four minutes for a label.
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+      }),
+    );
+    const result = await tool.run(
+      { tasks: [{ id: "fix_main_sync", instructions: "Fix it." }] },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary.split("\n")[1]).toBe("- [fix_main_sync] ok — fix main sync");
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]).toMatchObject({ id: "fix_main_sync", title: "fix main sync" });
+    expect(
+      events.filter((e) => e.role === "worker").map((e) => e.title),
+    ).toEqual(["fix main sync", "fix main sync"]);
+  });
+
   it("brackets the fan-out with the orchestrator's own model", async () => {
     // Between these two lines every feed line belongs to a worker on the
     // local leg; the operator can otherwise only guess which model is
@@ -846,6 +868,94 @@ describe("fusion.delegate", () => {
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    });
+
+    it("runs a contract whose require has no provider and whose provide cannot be checked, warning everyone instead of refusing", async () => {
+      // Live, 2026-09-15: the third and fourth consecutive refusals of
+      // one fan-out, ~4–5 minutes of local generation each, were these
+      // two. Neither stops a worker from working, so the call runs and
+      // the notes travel with it — into every brief, onto the
+      // `contract:` line, into the details.
+      const dir = fixture();
+      try {
+        const briefs: string[] = [];
+        const tool = buildFusionDelegateTool(
+          deps({
+            workingDir: dir,
+            runTurn: async (_session, userMessage) => {
+              briefs.push(userMessage);
+              return turnResult();
+            },
+          }),
+        );
+        const result = await tool.run(
+          {
+            tasks: [
+              { id: "t1", title: "One", instructions: "x" },
+              { id: "organize", instructions: "y" },
+            ],
+            contract: {
+              provides: [
+                { task: "t1", kind: "symbol", name: "HD.Ship", in: "js/ship.js" },
+                { task: "organize", kind: "other", name: "done" },
+              ],
+              requires: [{ task: "t1", name: "organized_files" }],
+            },
+          },
+          ctx({ workingDir: dir }),
+        );
+        const provideNote =
+          'provides "done" (task organize) cannot be checked: no `in`, no owned path, no declared files';
+        const requireNote =
+          'requires "organized_files" (task t1) has no provider — nothing produces it';
+        expect(result.status).toBe("ok");
+        expect(briefs).toHaveLength(2);
+        for (const brief of briefs) {
+          expect(brief).toContain(`contract: ${provideNote}`);
+          expect(brief).toContain(`contract: ${requireNote}`);
+          expect(brief).toContain("- [organize] other done");
+        }
+        expect(briefs[0]).toContain("You may rely on: nothing from the other parts");
+        const lines = result.summary.split("\n");
+        expect(lines[0]).toBe("2 tasks: 2 ok");
+        expect(lines[1]).toBe(
+          `contract: all 1 provide present; ${provideNote}; ${requireNote}`,
+        );
+        expect(lines[2]).toBe("- [t1] ok — One");
+        // The title-less task is labelled by its id.
+        expect(lines[3]).toBe("- [organize] ok — organize");
+        const report = result.details.contract as {
+          findings: unknown[];
+          warnings: string[];
+        };
+        // The uncheckable provide got no finding — nothing was searched.
+        expect(report.findings).toHaveLength(1);
+        expect(report.warnings).toEqual([provideNote, requireNote]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a malformed call with every problem named at once, before any worker runs", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn }));
+      const result = await tool.run(
+        {
+          tasks: [
+            { id: "a" },
+            { id: "b", instructions: "x", files: ["ok.js", 3] },
+          ],
+          contract: { provides: [{ task: "ghost", kind: "file", name: "x" }] },
+        },
+        ctx(),
+      );
+      expect(result.status).toBe("error");
+      expect(result.summary).toContain(
+        "validation: tasks[0].instructions must be a non-empty string; " +
+          "tasks[1].files[1] must be a non-empty string; " +
+          'contract.provides[0].task names unknown task "ghost"',
+      );
+      expect(runTurn).not.toHaveBeenCalled();
     });
 
     it("rejects a contract that does not bind the tasks, before any worker runs", async () => {

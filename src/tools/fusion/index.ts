@@ -5,9 +5,11 @@ export {
   FUSION_WORKER_APPROVAL_MARKER,
 } from "./worker-tool-policy.js";
 export {
+  humaniseTaskId,
   parseDelegateArgs,
   MAX_DELEGATE_TASKS,
   MAX_INSTRUCTIONS_CHARS,
+  MAX_REPORTED_PROBLEMS,
   MAX_TASK_FILES,
 } from "./delegate-args.js";
 export type { DelegateTask, ParsedDelegateArgs } from "./delegate-args.js";
@@ -16,16 +18,23 @@ export {
   MAX_CONTRACT_CHECKS,
   MAX_CONTRACT_PROVIDES,
   MAX_CONTRACT_RENDERED_CHARS,
+  contractWarnings,
   describeProvide,
+  describeUncheckableProvide,
+  describeUnprovidedRequire,
   ownedPaths,
+  provideSearchPaths,
   renderContractBlock,
   renderContractForTask,
+  uncheckableProvides,
+  unprovidedRequires,
 } from "./contract.js";
 export type {
   ContractCheck,
   ContractProvide,
   ContractProvideKind,
   ContractRequire,
+  ContractTaskFiles,
   DelegateContract,
 } from "./contract.js";
 export {
