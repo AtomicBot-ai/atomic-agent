@@ -13451,37 +13451,80 @@ function memStatusLine() {
     MEM.search.trim() ? 'search: "' + MEM.search.trim() + '"' : null,
     memVisibleRows().length + ' shown'].filter(Boolean).join(' · ');
 }
+/* Soft Tactile — the settings smoke (main.ts) still reads the TUI's own
+   strings out of the body's innerText (`[1:profile]`, the list header, the
+   import labels…). The redrawn tabs no longer paint them, so each view keeps
+   them in one visually hidden, aria-hidden "terminal twin" built from the
+   same state. Delete the twins when the smoke reads the new markup. */
+function sdTwin(text) { return '<div class="sd-twin" aria-hidden="true">' + esc(text) + '</div>'; }
 function memoryTab() {
   ensureMemoryPoll();
-  const labels = MEM.available.map((ch, idx) => {
-    const label = (idx + 1) + ':' + ch;
-    return '<button class="memch' + (ch === MEM.channel ? ' on' : '') + '" data-act="memory:ch:' + ch + '">' + esc(ch === MEM.channel ? '[' + label + ']' : label) + '</button>';
-  }).join('<span class="ter">  </span>');
-  return '<div class="tui"><div class="tuibar">' + labels + '</div>'
-    + '<div class="ter memstatus">' + esc(memStatusLine()) + '</div>'
-    + (MEM.lastError ? '<div class="tuierr">! ' + esc(MEM.lastError) + '</div>' : '')
+  // Every channel the agent knows, as one segmented switch; the ones memory.*.enabled keeps off are disabled and say so.
+  const flagOf = {profile:'profile', notes:'notes', lessons:'lessons', procedures:'procedures', links:'links', votes:'voting'};
+  const seg = MEM_CHANNEL_ORDER.map((ch) => {
+    const on = ch === MEM.channel;
+    const off = !MEM.available.includes(ch);
+    return '<button class="' + (on ? 'on' : '') + '" aria-pressed="' + on + '" data-act="memory:ch:' + ch + '"'
+      + (off ? ' disabled title="' + esc('memory.' + flagOf[ch] + '.enabled is off in config') + '"' : '') + '>' + esc(ch) + '</button>';
+  }).join('');
+  const filter = MEM.channel === 'notes' && MEM.mode === 'list'
+    ? '<div class="tk-seg">' + MEM_NOTES_FILTERS.map((f) => '<button class="' + (f === MEM.notesFilter ? 'on' : '') + '" aria-pressed="' + (f === MEM.notesFilter) + '" data-act="memory:filter:' + f + '">' + esc(f) + '</button>').join('') + '</div>'
+    : '';
+  const dot = MEM.loading ? 'tk-dot--brand tk-dot--pulse' : MEM.auto ? 'tk-dot--green' : 'tk-dot--hollow';
+  const bar = MEM.available.map((ch, idx) => { const label = (idx + 1) + ':' + ch; return ch === MEM.channel ? '[' + label + ']' : label; }).join('  ');
+  return '<div class="sd-pane sd-mem">'
+    + '<div class="tk-bar"><div class="tk-seg">' + seg + '</div>' + filter + '<span class="grow"></span>'
+    + '<span class="sd-status"><i class="tk-dot ' + dot + '"></i><span class="memstatus">' + esc(memStatusLine()) + '</span></span></div>'
+    + sdTwin(bar)
+    + (MEM.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MEM.lastError) + '</span></div>' : '')
     + (MEM.mode === 'list' ? memListHTML() : memDetailHTML()) + '</div>';
 }
 function memListHTML() {
-  if (MEM.channelHint) return '<div style="color:var(--warn);padding:10px 0">' + esc(MEM.channelHint) + '</div>';
+  if (MEM.channelHint) {
+    // ST-15: the setting that keeps this channel empty, named in mono.
+    const m = /^(\S+=false)(.*)$/.exec(MEM.channelHint);
+    return '<div class="tk-notice tk-notice--amber">' + ic('info') + '<span class="grow">'
+      + (m ? '<span class="mono">' + esc(m[1]) + '</span>' + esc(m[2]) : esc(MEM.channelHint)) + '</span></div>'
+      + '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('memory') + '</span><h4>This channel is turned off</h4></div>';
+  }
   const rows = memVisibleRows();
   if (!rows.length) {
-    if (MEM.lastRefreshedAt === null) return '<div class="ter" style="padding:10px 0">(loading…)</div>';
-    return '<div class="ter" style="padding:10px 0">(empty) — press `r` to refresh' + (MEM.channel === 'notes' ? ' · `f` cycles active/archived/all' : '') + '</div>' + memHintsHTML();
+    if (MEM.lastRefreshedAt === null) return '<div class="tk-empty"><span class="tk-spin"></span><p>loading…</p></div>';
+    const none = {profile:'No profile facts', notes:'No notes', lessons:'No lessons', procedures:'No procedures', links:'No links', votes:'No vote events'}[MEM.channel] || 'Nothing here';
+    return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('memory') + '</span><h4>' + esc(none) + '</h4>'
+      + '<p>Press r to refresh' + (MEM.channel === 'notes' ? ' · f cycles active, archived and all' : '') + '</p></div>' + memHintsHTML();
   }
   const cur = Math.max(0, Math.min(MEM.cursor, rows.length - 1));
   const start = computeWindowStart(cur, rows.length, MEM_MAX_ROWS);
   const page = rows.slice(start, start + MEM_MAX_ROWS);
   const hiddenAfter = Math.max(0, rows.length - start - page.length);
-  return '<div class="tuihead">  primary                    secondary / meta     [' + esc(MEM.channel) + ']</div>'
-    + (start > 0 ? '<button class="tuimore" data-act="memory:page:up">↑ ' + start + ' above</button>' : '')
-    + page.map((r, idx) => {
+  const more = (dir, n) => '<button class="btn btn-g xs sd-more" data-act="memory:page:' + dir + '">' + (dir === 'up' ? '↑ ' + n + ' above' : '↓ ' + n + ' below') + '</button>';
+  let list;
+  if (MEM.channel === 'profile') {
+    // ST-12: key · value · pinned or contextual · vote score. meta is `pinned|contextual[ · vote ±n]` (memRowsProfile).
+    list = '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-memtbl"><thead><tr><th>Key</th><th>Value</th><th>Kind</th><th class="num">Votes</th></tr></thead><tbody>'
+      + page.map((r, idx) => {
+        const i = idx + start, sel = i === cur;
+        const [kind, vote] = r.meta.split(' · ');
+        return '<tr class="click' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
+          + '<td class="mono">' + esc(r.primary) + '</td><td class="sd-val">' + esc(r.secondary) + '</td>'
+          + '<td>' + (kind === 'pinned' ? '<span class="tk-chip tk-chip--sm tk-chip--blue">' + ic('pin') + 'pinned</span>' : '<span class="tk-chip tk-chip--sm">' + esc(kind || 'contextual') + '</span>') + '</td>'
+          + '<td class="num">' + esc(vote ? vote.replace(/^vote /, '') : '0') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } else {
+    // ST-13: id · first line · tag chips (notes, lessons, procedures); links and votes keep their meta on the right.
+    const tagged = MEM.channel === 'notes' || MEM.channel === 'lessons' || MEM.channel === 'procedures';
+    list = '<div class="tk-list">' + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
-      // MemoryRow: `{chevron} {primary(30)}{secondary(36)} · {meta(28)}`
-      return '<button class="tuirow' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
-        + (sel ? '▸' : ' ') + ' ' + esc(tuiTrunc(r.primary, 28).padEnd(30)) + '<span class="ter">' + esc(tuiTrunc(r.secondary, 36)) + (r.meta ? ' · ' + esc(tuiTrunc(r.meta, 28)) : '') + '</span></button>';
-    }).join('')
-    + (hiddenAfter > 0 ? '<button class="tuimore" data-act="memory:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
+      const tags = tagged && r.meta ? r.meta.split(', ').map((t) => '<span class="tk-chip tk-chip--sm">' + esc(t) + '</span>').join('') : '';
+      return '<button class="tk-li sd-memrow' + (sel ? ' on' : '') + '" data-mem-row="' + esc(r.rowKey) + '" data-act="memory:open:' + i + '">'
+        + '<span class="sd-id">' + esc(r.primary) + '</span>'
+        + '<span class="body"><span class="t">' + esc(r.secondary) + '</span>' + (tags ? '<span class="d sd-tags">' + tags + '</span>' : '') + '</span>'
+        + (!tagged && r.meta ? '<span class="m">' + esc(r.meta) + '</span>' : '') + '</button>';
+    }).join('') + '</div>';
+  }
+  return sdTwin('  primary                    secondary / meta     [' + MEM.channel + ']')
+    + (start > 0 ? more('up', start) : '') + list + (hiddenAfter > 0 ? more('down', hiddenAfter) : '')
     + memHintsHTML();
 }
 function memHintsHTML() {
@@ -13492,17 +13535,84 @@ function memHintsHTML() {
 }
 function memDetailHTML() {
   const d = MEM.detail;
-  if (!d) return '<div class="ter" style="padding:10px 0">(loading…)</div>';
+  if (!d) return '<div class="tk-empty"><span class="tk-spin"></span><p>loading…</p></div>';
   const title = d.channel === 'profile' ? 'profile: ' + d.key : d.channel === 'notes' ? 'note #' + d.id : d.channel === 'lessons' ? 'lesson #' + d.id
     : d.channel === 'procedures' ? 'procedure #' + d.id : d.channel;
-  const lines = d.body.split('\n');
-  const hidden = lines.length - MEM_DETAIL_LINES;
   const hints = [['Esc back', 'memory:back'], ['r refresh', 'memory:refresh']];
   if (d.channel === 'notes') { hints.push(['g expand graph', 'memory:expand']); hints.push(['Enter neighbor', 'memory:neighbor']); }
-  return '<div style="margin-top:6px"><b>' + esc(title) + '</b></div>'
-    + '<div style="margin-top:8px">' + tuiBodyLines(lines.slice(0, MEM_DETAIL_LINES))
-    + (hidden > 0 ? '<div class="ter">… (' + hidden + ' more lines hidden)</div>' : '') + '</div>'
+  const back = {profile:'Profile', notes:'Notes', lessons:'Lessons', procedures:'Procedures', links:'Links', votes:'Votes'}[d.channel] || 'Back';
+  const linksOn = memFlag('links') === true;
+  return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="memory:back">' + ic('chevL') + esc(back) + '</button><span class="grow"></span>'
+    + (d.channel === 'notes' ? '<button class="btn btn-s sm" data-act="memory:expand"' + (linksOn ? '' : ' disabled title="memory.links.enabled is off in config"') + '>Expand graph' + keycaps('g') + '</button>' : '')
+    + '</div>'
+    + (d.channel === 'notes' ? memNoteDetailView(d, title) : memPlateDetailView(d, title))
     + tuiHints(hints);
+}
+/* ST-14 — formatNoteDetailBody's text, drawn as a page: the header lines
+   become a plate, the content a prose well, the `--- links ---` section a
+   card of neighbour rows. Nothing is re-queried; the body is the source. */
+function memNoteDetailView(d, title) {
+  const body = d.body, cut = body.indexOf('\n\n');
+  const head = (cut < 0 ? body : body.slice(0, cut)).split('\n').slice(1); // line 0 is `#id`, the title says it
+  let rest = cut < 0 ? '' : body.slice(cut + 2);
+  const at = rest.lastIndexOf('\n\n--- links ---');
+  const links = at < 0 ? null : rest.slice(at + 2).split('\n').slice(1);
+  if (at >= 0) rest = rest.slice(0, at);
+  const lines = rest.split('\n'), hidden = lines.length - MEM_DETAIL_LINES;
+  const plate = head.map((l) => {
+    const m = /^([a-z_]+): (.*)$/.exec(l);
+    if (m) return '<dt>' + esc(m[1].replace(/_/g, ' ')) + '</dt><dd>' + esc(m[2]) + '</dd>';
+    const a = /^archived (→ .*)$/.exec(l);
+    return a ? '<dt>archived</dt><dd>' + esc(a[1]) + '</dd>' : '<dd class="sd-span">' + esc(l) + '</dd>';
+  }).join('');
+  // memPickNeighbor's order — outgoing, incoming, expanded — so the row Enter would open carries .on.
+  const all = d.outgoing.length + d.incoming.length + d.expandedNeighbors.length;
+  const pick = all ? Math.max(0, Math.min(MEM.cursor, all - 1)) : -1;
+  let k = 0;
+  let card = '';
+  if (links) {
+    const rows = [];
+    links.forEach((l) => {
+      const e = /^ {2}([→←]) #(\d+) (.*) \(w=([^)]*)\)$/.exec(l);
+      if (l === 'outgoing:' || l === 'incoming:') { rows.push('<div class="sd-lsec">' + (l === 'outgoing:' ? 'Outgoing' : 'Incoming') + '</div>'); return; }
+      if (e) {
+        const on = k++ === pick;
+        rows.push('<button class="sd-link' + (on ? ' on' : '') + '" data-act="memory:neighbor:' + e[2] + '"' + (on ? ' title="Enter opens this note"' : '') + '>'
+          + ic(e[1] === '→' ? 'arrowR' : 'chevL') + '<span class="sd-lid">#' + e[2] + '</span><span class="sd-lkind">' + esc(e[3]) + '</span>'
+          + '<span class="grow"></span><span class="tk-chip tk-chip--sm sd-w">w=' + esc(e[4]) + '</span></button>');
+        return;
+      }
+      const x = /^expanded \(g\): (.*)$/.exec(l);
+      if (x) {
+        rows.push('<div class="sd-lsec">Expanded (g)</div><div class="sd-chips">' + x[1].split(', ').map((s) => {
+          const id = s.replace(/^#/, ''), on = k++ === pick;
+          return '<button class="tk-chip tk-chip--sm sd-w' + (on ? ' tk-chip--blue' : '') + '" data-act="memory:neighbor:' + esc(id) + '">#' + esc(id) + '</button>';
+        }).join('') + '</div>');
+        return;
+      }
+      if (l === '(none)') rows.push('<p class="sd-cap">No links</p>');
+    });
+    card = '<div class="sd-links"><div class="sd-lh">Links</div>' + rows.join('') + '</div>';
+  }
+  return '<div class="sd-note"><div class="sd-notemain"><h3 class="sd-title">' + esc(title) + '</h3>'
+    + '<div class="sd-prose">' + esc(lines.slice(0, MEM_DETAIL_LINES).join('\n').trim()) + '</div>'
+    + (hidden > 0 ? '<p class="sd-cap">… (' + hidden + ' more lines hidden)</p>' : '')
+    + '<dl class="tk-plate sd-plate">' + plate + '</dl></div>' + card + '</div>';
+}
+/* Profile, lesson, procedure, link and vote details: the `key: value` lines
+   before the first blank line become a plate, the rest stays machine text. */
+function memPlateDetailView(d, title) {
+  const body = d.body, cut = body.indexOf('\n\n');
+  const head = (cut < 0 ? body : body.slice(0, cut)).split('\n');
+  const lines = cut < 0 ? [] : body.slice(cut + 2).split('\n');
+  const hidden = lines.length - MEM_DETAIL_LINES;
+  const plate = head.map((l) => {
+    const m = /^([a-z_ ]+): (.*)$/.exec(l);
+    return m && !m[2].includes(' · ') ? '<dt>' + esc(m[1].replace(/_/g, ' ')) + '</dt><dd>' + esc(m[2]) + '</dd>' : '<dd class="sd-span">' + esc(l) + '</dd>';
+  }).join('');
+  return '<div class="sd-detail"><h3 class="sd-title">' + esc(title) + '</h3><dl class="tk-plate sd-plate">' + plate + '</dl>'
+    + (lines.length ? '<pre class="tk-out">' + esc(lines.slice(0, MEM_DETAIL_LINES).join('\n')) + '</pre>' + (hidden > 0 ? '<p class="sd-cap">… (' + hidden + ' more lines hidden)</p>' : '') : '')
+    + '</div>';
 }
 /* memory-detail-text.ts, verbatim. */
 const MEM_MAX_DETAIL_CHARS = 12000;
@@ -13691,13 +13801,13 @@ function memoryAct(what) {
   if (verb === 'auto') { MEM.auto = !MEM.auto; render(); return; }
   if (verb === 'filter') {
     if (MEM.channel !== 'notes') return;
-    MEM.notesFilter = MEM_NOTES_FILTERS[(MEM_NOTES_FILTERS.indexOf(MEM.notesFilter) + 1) % MEM_NOTES_FILTERS.length]; MEM.cursor = 0;
+    MEM.notesFilter = MEM_NOTES_FILTERS.includes(arg) ? arg : MEM_NOTES_FILTERS[(MEM_NOTES_FILTERS.indexOf(MEM.notesFilter) + 1) % MEM_NOTES_FILTERS.length]; MEM.cursor = 0; // `filter:<name>` picks one (the segmented control); bare `filter` cycles as `f` does
     memRefresh(); return;
   }
   if (verb === 'page') { const n = memVisibleRows().length; MEM.cursor = Math.max(0, Math.min(MEM.cursor + (arg === 'up' ? -MEM_MAX_ROWS : MEM_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'back') { MEM.mode = 'list'; MEM.detailRowKey = null; MEM.detail = null; render(); return; }
   if (verb === 'expand') { memExpandNeighbors(); return; }
-  if (verb === 'neighbor') { const id = memPickNeighbor(); if (id !== null) memOpenNoteById(id); return; }
+  if (verb === 'neighbor') { const id = /^\d+$/.test(arg) ? +arg : memPickNeighbor(); if (id !== null) memOpenNoteById(id); return; } // `neighbor:<id>` is a clicked link row; bare `neighbor` is Enter's pick
 }
 /* memory-key-bindings.ts. */
 function memoryKey(e, k, inText) {
@@ -13798,30 +13908,52 @@ function mcpTab() {
   ensureMcpPoll();
   const rows = mcpRows();
   const hint = mcpHint();
-  return '<div class="tui"><div class="ter mcpstatus">' + esc(mcpStatusLine()) + '</div>'
-    + (hint.startsWith('<') ? hint : '<div class="ter">' + esc(hint) + '</div>')
-    + (MCP.lastError ? '<div class="tuierr">! ' + esc(MCP.lastError) + '</div>' : '')
-    + (MCP.msg ? (MCP.msg.restart ? '<div class="tuimsg" style="margin-top:6px">' + esc(MCP.msg.text) + ' <button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '<div class="tuimsg">' + esc(MCP.msg.text) + '</div>') : '')
-    + (!rows.length ? '<div class="ter" style="margin-top:6px">no MCP servers configured — add entries under `mcp.servers[]` in config.json</div>' : '')
-    + (MCP.addModal ? mcpAddModalHTML() : (MCP.mode === 'list' ? mcpListHTML(rows) : mcpDetailHTML()) + (MCP.removeConfirm ? mcpRemoveModalHTML() : ''))
+  const dot = MCP.loading ? 'tk-dot--brand tk-dot--pulse' : MCP.auto ? 'tk-dot--green' : 'tk-dot--hollow';
+  const view = MCP.mode === 'list' ? mcpListHTML(rows) : mcpDetailHTML();
+  // ST-18: a modal sits over the dimmed (inert) list or detail it belongs to; its keys and buttons are its own.
+  const modal = MCP.addModal ? mcpAddModalHTML() : MCP.removeConfirm ? mcpRemoveModalHTML() : '';
+  return '<div class="sd-pane sd-mcp">'
+    + '<div class="tk-bar"><span class="sd-status"><i class="tk-dot ' + dot + '"></i><span class="mcpstatus">' + esc(mcpStatusLine()) + '</span></span><span class="grow"></span>'
+    + (MCP.mode === 'list' ? '<button class="btn btn-p sm" data-act="mcp:add"' + (modal ? ' disabled' : '') + '>' + ic('plus') + 'Add server</button>' : '') + '</div>'
+    + (MCP.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MCP.lastError) + '</span></div>' : '')
+    + (MCP.msg ? (MCP.msg.restart ? restartLine(MCP.msg.text) : '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(MCP.msg.text) + '</span></div>') : '')
+    + (modal
+      ? '<div class="sd-stage"><div class="sd-behind" inert>' + view + '</div><div class="sd-over">' + modal + '</div></div>'
+      : view + (hint.startsWith('<') ? hint : ''))
     + '</div>';
 }
 function mcpPad(text, width) { text = String(text); return text.length >= width ? text.slice(0, width - 1) + ' ' : text.padEnd(width); }
+/* The server's mark: GitHub's when the name, command or URL says github, else the plug badge. */
+function mcpMark(cfg) {
+  const t = (cfg && cfg.transport) || {};
+  const hay = [cfg && cfg.name, t.command, Array.isArray(t.args) ? t.args.join(' ') : '', t.url].join(' ').toLowerCase();
+  return (/github/.test(hay) && logoHTML('github', '')) || '<span class="tk-ico">' + ic('plug') + '</span>';
+}
 function mcpListHTML(rows) {
-  if (!rows.length) return '<div class="ter" style="margin-top:6px">(no servers)</div>';
+  if (!rows.length) {
+    return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No MCP servers</h4>'
+      + '<p>no MCP servers configured — add entries under `mcp.servers[]` in config.json</p></div>' + sdTwin('(no servers)');
+  }
   const cur = Math.max(0, Math.min(MCP.cursor, rows.length - 1));
   const start = Math.max(0, Math.min(rows.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
   const slice = rows.slice(start, Math.min(rows.length, start + MCP_MAX_ROWS));
-  const note = rows.some((r) => r.enabled) ? '<div class="ter" style="margin-top:6px">state not exposed — no MCP status route in this agent</div>' : '';
-  return '<div style="margin-top:6px">' + slice.map((r, idx) => {
+  const cfgs = mcpServers();
+  // ST-16: mark · name + honest state chip · description · transport · trust class · tool count.
+  const twin = slice.map((r, idx) => (idx + start === cur ? '>' : ' ') + ' ' + mcpPad(r.name, 18) + mcpPad('[' + r.state + ']', 11) + mcpPad(r.transportKind, 18) + mcpPad(r.trust, 16)
+    + r.toolCount + ' tools · — res · — prompts' + (r.description ? '\n  ' + r.description : '')).join('\n');
+  return sdTwin(twin) + '<div class="tk-list">' + slice.map((r, idx) => {
     const i = idx + start, sel = i === cur;
-    // Row: `> name(18)[state](11)transport(18)trust(16)<t> tools · — res · — prompts`, then the description
-    return '<button class="tuirow tuirow2' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
-      + '<span>' + (sel ? '&gt;' : ' ') + ' <b>' + esc(mcpPad(r.name, 18)) + '</b>'
-      + '<span class="' + (r.state === 'disabled' ? 'ter' : 'ter') + '" title="' + (r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent') + '">' + esc(mcpPad('[' + r.state + ']', 11)) + '</span>'
-      + '<span class="ter">' + esc(mcpPad(r.transportKind, 18) + mcpPad(r.trust, 16) + r.toolCount + ' tools · — res · — prompts') + '</span></span>'
-      + (r.description ? '<span class="ter">  ' + esc(r.description) + '</span>' : '') + '</button>';
-  }).join('') + '</div>' + note;
+    const stateTitle = r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
+    return '<button class="tk-li sd-srv' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
+      + mcpMark(cfgs.find((s) => s && s.name === r.name))
+      + '<span class="body"><span class="sd-srvname"><span class="t">' + esc(r.name) + '</span>'
+      + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (r.state === 'disabled' ? 'disabled' : 'state —') + '</span></span>'
+      + (r.description ? '<span class="d">' + esc(r.description) + '</span>' : '') + '</span>'
+      + '<span class="tk-chip tk-chip--sm sd-mono">' + esc(r.transportKind) + '</span>'
+      + '<span class="tk-chip tk-chip--sm sd-mono ' + (r.trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(r.trust) + '</span>'
+      + '<span class="m sd-tools">' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') + '</span></button>';
+  }).join('') + '</div>'
+    + (rows.some((r) => r.enabled) ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">state not exposed — no MCP status route in this agent</span></div>' : '');
 }
 function mcpDescribeTransport(cfg) {
   const t = cfg.transport || {};
@@ -13835,52 +13967,62 @@ function mcpDescribeTransport(cfg) {
 }
 function mcpDetailHTML() {
   const cfg = mcpServers().find((s) => s.name === MCP.detailName);
-  if (!cfg) return '<div class="ter" style="margin-top:6px">(no server selected)</div>';
+  if (!cfg) return '<div class="tk-empty"><p>(no server selected)</p></div>';
   const row = mcpRows().find((r) => r.name === cfg.name);
   const tools = mcpToolsFor(cfg.name);
   const counts = {tools:String(tools.length), resources:'—', prompts:'—'};
-  const bar = MCP_TAB_ORDER.map((tab, idx) => {
-    const label = (idx + 1) + ':' + tab + '(' + counts[tab] + ')';
-    return '<button class="memch' + (tab === MCP.detailTab ? ' on' : '') + '" data-act="mcp:dtab:' + tab + '">' + esc(tab === MCP.detailTab ? '[' + label + ']' : label) + '</button>';
-  }).join('<span class="ter">  </span>');
-  let body;
-  if (MCP.detailTab !== 'tools') body = '<div class="ter">not exposed by the agent\'s HTTP API</div>';
-  else if (!tools.length) body = '<div class="ter">(empty)</div>';
+  const state = row ? row.state : '—', trust = row ? row.trust : 'approval_gated';
+  const stateTitle = state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
+  const twinBar = MCP_TAB_ORDER.map((tab, idx) => { const label = (idx + 1) + ':' + tab + '(' + counts[tab] + ')'; return tab === MCP.detailTab ? '[' + label + ']' : label; }).join('  ');
+  const seg = '<div class="tk-seg">' + MCP_TAB_ORDER.map((tab) => '<button class="' + (tab === MCP.detailTab ? 'on' : '') + '" aria-pressed="' + (tab === MCP.detailTab) + '" data-act="mcp:dtab:' + tab + '">'
+    + esc(tab) + '<span class="sd-count">' + esc(counts[tab]) + '</span></button>').join('') + '</div>';
+  let body, twinBody = '';
+  if (MCP.detailTab !== 'tools') body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('eyeOff') + '</span><p>not exposed by the agent\'s HTTP API</p></div>';
+  else if (!tools.length) { body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No tools</h4></div>'; twinBody = '(empty)'; }
   else {
     const cur = Math.max(0, Math.min(MCP.detailCursor, tools.length - 1));
     const start = Math.max(0, Math.min(tools.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
-    body = tools.slice(start, start + MCP_MAX_ROWS).map((t, idx) => {
-      const sel = idx + start === cur;
+    // ST-17: tool name in mono · description; the cursor row (j/k) carries .on.
+    body = '<div class="tk-list">' + tools.slice(start, start + MCP_MAX_ROWS).map((t, idx) => '<div class="tk-li sd-tool' + (idx + start === cur ? ' on' : '') + '">'
+      + '<span class="sd-toolname">' + esc(t.rawName) + '</span><span class="d">' + esc(t.description) + '</span></div>').join('') + '</div>'
       // mcp-detail.tsx formatTool prints `rawName (resourceClass)`; the resource class is not on /api/capabilities.
-      return '<div class="' + (sel ? 'tuimsg' : '') + '">' + (sel ? '&gt; ' : '  ') + esc(t.rawName) + '</div>' + (t.description ? '<div class="ter">  ' + esc(t.description) + '</div>' : '');
-    }).join('') + '<div class="ter">(resource class is not exposed by the agent\'s HTTP API)</div>';
+      + '<p class="sd-cap">Resource class is not exposed by the agent\'s HTTP API.</p>';
   }
-  return '<div style="margin-top:6px"><b>' + esc(cfg.name) + ' </b><span class="ter" title="' + (row && row.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent') + '">[' + esc(row ? row.state : '—') + ']</span><span class="ter"> · trust: ' + esc(row ? row.trust : 'approval_gated') + '</span></div>'
-    + (cfg.description ? '<div class="ter">' + esc(cfg.description) + '</div>' : '')
-    + '<div class="ter">' + esc(mcpDescribeTransport(cfg)) + '</div>'
-    + (row && row.enabled ? '<div class="ter">state not exposed — no MCP status route in this agent</div>' : '')
-    + '<div class="tuibar" style="margin-top:8px">' + bar + '</div>'
-    + '<div style="margin-top:8px">' + body + '</div>';
+  return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="mcp:back">' + ic('chevL') + 'Servers</button><span class="grow"></span>'
+    + '<button class="btn btn-danger sm" data-act="mcp:remove">Remove</button></div>'
+    + sdTwin(cfg.name + ' [' + state + '] · trust: ' + trust + '\n' + twinBar + (twinBody ? '\n' + twinBody : ''))
+    + '<div class="sd-srvhead">' + mcpMark(cfg) + '<h3 class="sd-title sd-mono">' + esc(cfg.name) + '</h3>'
+    + '<span class="tk-chip tk-chip--sm sd-mono ' + (trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(trust) + '</span>'
+    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (state === 'disabled' ? 'disabled' : 'state —') + '</span></div>'
+    + (cfg.description ? '<p class="sd-desc">' + esc(cfg.description) + '</p>' : '')
+    + '<pre class="tk-out">' + esc(mcpDescribeTransport(cfg)) + '</pre>'
+    + (row && row.enabled ? '<p class="sd-cap">' + ic('info') + 'state not exposed — no MCP status route in this agent</p>' : '')
+    + '<div class="tk-bar">' + seg + '</div>' + body;
 }
 function mcpAddModalHTML() {
   const m = MCP.addModal;
-  return '<div class="tuimodal' + (m.error ? ' danger' : '') + '" style="margin-top:8px"><b>+ add MCP server</b>'
-    + '<div class="ter" style="margin-top:8px">Paste one MCP server config as JSON. Bare object, or the Claude Desktop / Cursor envelope `{ "mcpServers": { ... } }`.</div>'
-    + '<div class="ter">Top-level `command` + `args` (no `transport` wrapper) is also accepted and auto-promoted to stdio.</div>'
-    + '<textarea id="mcp-json" class="tuiarea" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
-    + (m.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(m.error) + '</div>' : '')
-    + (m.submitting ? '<div class="ter" style="margin-top:8px">writing config…</div>' : '')
-    + '<div class="tuihint">' + tuiBtn('Enter: submit', 'mcp:addSubmit', {disabled: m.submitting}) + '<span>· Shift/Alt+Enter: newline ·</span>' + tuiBtn('Esc: cancel', 'mcp:addCancel') + '<span>· restart Atomic Agent for the new server to connect</span></div>'
-    + '</div>';
+  return '<div class="tk-modal sd-modal" role="dialog" aria-label="Add MCP server">'
+    + '<div class="sd-mhead"><span class="tk-ico tk-ico--blue">' + ic('plug') + '</span><h4>Add MCP server</h4></div>'
+    + '<p>Paste one MCP server config as JSON. Bare object, or the Claude Desktop / Cursor envelope <span class="sd-code">{ "mcpServers": { ... } }</span>.</p>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
+    + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
+    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · restart Atomic Agent for the new server to connect</span>'
+    + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel' + keycaps('esc') + '</button>'
+    + '<button class="btn btn-p sm" data-act="mcp:addSubmit"' + (m.submitting ? ' disabled' : '') + '>Add' + keycaps('↩') + '</button></div>'
+    // Secondary: under the actions, so the error and Add stay in view on a short window.
+    + '<p class="sd-cap sd-block">Top-level <span class="sd-code">command</span> + <span class="sd-code">args</span> (no <span class="sd-code">transport</span> wrapper) is also accepted and auto-promoted to stdio.</p></div>';
 }
 function mcpRemoveModalHTML() {
   const c = MCP.removeConfirm;
-  return '<div class="tuimodal' + (c.error ? ' danger' : ' warn') + '"><b style="color:var(--' + (c.error ? 'danger' : 'warn') + ')">remove MCP server?</b>'
-    + '<div><span class="ter">name:</span> ' + esc(c.name) + '</div>'
-    + '<div class="ter">rewrites config.json; restart Atomic Agent to drop the live connection.</div>'
-    + (c.error ? '<div class="tuierr">! ' + esc(c.error) + '</div>' : '')
-    + (c.submitting ? '<div class="ter">working…</div>' : '<div class="tuihint">' + tuiBtn('y / Enter = confirm', 'mcp:removeConfirm') + '<span>·</span>' + tuiBtn('n / Esc = keep', 'mcp:removeCancel') + '</div>')
-    + '</div>';
+  return '<div class="tk-modal tk-modal--danger sd-modal" role="alertdialog" aria-label="Remove MCP server">'
+    + '<div class="sd-mhead"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>Remove MCP server?</h4></div>'
+    + '<dl class="tk-plate"><dt>name</dt><dd>' + esc(c.name) + '</dd></dl>'
+    + '<p>Rewrites config.json; restart Atomic Agent to drop the live connection.</p>'
+    + (c.error ? '<p class="tk-help tk-help--err">' + esc(c.error) + '</p>' : '')
+    + '<div class="acts">' + (c.submitting ? '<span class="sd-cap sd-grow">working…</span>' : '')
+    + '<button class="btn btn-g sm" data-act="mcp:removeCancel"' + (c.submitting ? ' disabled' : '') + '>Keep' + keycaps('N') + '</button>'
+    + '<button class="btn btn-df sm" data-act="mcp:removeConfirm"' + (c.submitting ? ' disabled' : '') + '>Remove' + keycaps('Y') + '</button></div></div>';
 }
 /* persist-mcp-server.ts parseAddServerJson: the three accepted shapes —
    a bare object, the `{ mcpServers: { name: {…} } }` envelope with exactly
@@ -15543,47 +15685,71 @@ function telegramTab() {
   const owner = tgOwner();
   let body = '';
   if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
-  else if (hasToken === null) body += '<div class="ter">reading .env…</div>';
+  else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>reading .env…</p></div>';
   else if (!hasToken) {
-    // setup-state.ts not_connected (no token).
-    body += '<div class="tuimodal tgcard"><b>Connect Telegram</b>'
-      + '<div class="ter">Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</div>'
-      + '<div style="margin-top:8px"><button class="skpf skpaccent" data-act="telegram:token">Press Enter to paste a bot token</button></div></div>';
+    // setup-state.ts not_connected (no token). ST-28: one card, one action.
+    body += '<div class="tk-card pad sd-tgcard sd-center">'
+      + '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>'
+      + '<h3 class="sd-title">Connect Telegram</h3>'
+      + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
+      + '<button class="btn btn-p" data-act="telegram:token">Paste a bot token' + keycaps('↩') + '</button>'
+      + sdTwin('Press Enter to paste a bot token') + '</div>';
   } else if (owner === null) {
     // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
-    body += '<div class="tuimodal tgcard"><b>One last step — confirm it\'s you</b>'
-      + '<div class="ter">Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</div>'
-      + '<div class="ter" style="margin-top:8px">' + esc(TG_PAIRING_NOTE) + '</div></div>';
+    body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
+      + '<p>Open Telegram, DM your bot any message. Atomic Agent will recognise you as the owner.</p>'
+      + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
   } else {
     // Token + owner: the TUI would say "✅ Telegram is connected" only with the channel `up`, which the desktop cannot see.
-    body += '<div class="ter">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</div>';
+    body += '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">channel state is not exposed by the agent\'s HTTP API — the Telegram tab in `atag tui` shows it live</span></div>';
   }
   const advanced = TG.showAdvanced || (hasToken && owner !== null);
   if (advanced && TG.mode !== 'tokenPrompt') body += tgAdvancedHTML(enabled, hasToken, owner);
-  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it is always shown, because the desktop's message carries the restart the serve process needs.
-  if (TG.message) body += '<div class="ter" style="margin-top:8px">· ' + esc(TG.message) + (TG.restart ? ' <span class="ter">(the agent loads .env and config.json at start)</span> <button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button>' : '') + '</div>';
-  return '<div class="tui">' + body
-    + '<div class="tuihint"><button data-act="telegram:advanced">' + (TG.showAdvanced ? 'a — hide advanced' : 'a — advanced') + '</button></div></div>';
+  // telegram-panel.tsx keeps `· <message>` inside AdvancedControls; here it leads the tab, because the desktop's message carries the restart the serve process needs.
+  const msg = TG.message ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TG.message)
+    + (TG.restart ? ' <span class="sec">(the agent loads .env and config.json at start)</span>' : '') + '</span>'
+    + (TG.restart ? '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>' : '') + '</div>' : '';
+  return '<div class="sd-pane sd-tg"><div class="tk-bar"><span class="grow"></span>'
+    + tuiBtn(TG.showAdvanced ? 'a — hide advanced' : 'a — advanced', 'telegram:advanced') + '</div>' + msg + body + '</div>';
 }
-/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. */
+/* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. ST-30: one row per fact, its actions beside it. */
 function tgAdvancedHTML(enabled, hasToken, owner) {
-  return '<div style="margin-top:8px"><span class="ter">state </span><b class="ter" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</b>'
-    + '<span class="ter">   enabled </span><span class="' + (enabled ? 'skpaccent' : 'ter') + '">' + (enabled === null ? '—' : enabled ? 'yes' : 'no') + '</span>'
-    + '<span class="ter">   token </span><span class="' + (hasToken ? 'skpaccent' : 'tuierr') + '">' + (hasToken === null ? '—' : hasToken ? 'set' : 'missing') + '</span>'
-    + '<span class="ter">   owner </span><span class="' + (owner === null ? 'tuierr' : 'skpaccent') + '">' + (owner === null ? 'unset' : esc(String(owner))) + '</span></div>'
-    + (TG.lastError ? '<div class="tuierr">! ' + esc(TG.lastError) + '</div>' : '')
-    + '<div class="tuihint" style="margin-top:8px">' + tuiBtn('e — ' + (enabled ? 'disable' : 'enable'), 'telegram:enable', {disabled:TG.busy || enabled === null}) + '<span>·</span>' + tuiBtn('r — restart', 'telegram:restart') + '<span>·</span>' + tuiBtn('R — refresh', 'telegram:refresh') + '</div>'
-    + '<div class="tuihint">' + tuiBtn('T — clear token', 'telegram:clearToken', {disabled:TG.busy || !hasToken}) + '<span>·</span>' + tuiBtn('O — clear owner', 'telegram:clearOwner', {disabled:TG.busy || owner === null}) + '<span>·</span>' + tuiBtn('t — change token', 'telegram:token') + '<span>·</span>' + tuiBtn('o — re-pair', 'telegram:pair', {disabled:true, title:TG_PAIRING_NOTE}) + '</div>'
-    ;
+  const busy = TG.busy;
+  const facts = 'state unknown   enabled ' + (enabled === null ? '—' : enabled ? 'yes' : 'no') + '   token ' + (hasToken === null ? '—' : hasToken ? 'set' : 'missing')
+    + '   owner ' + (owner === null ? 'unset' : String(owner));
+  const tokenChip = hasToken === null ? '<span class="tk-chip tk-chip--sm">—</span>' : hasToken ? '<span class="tk-chip tk-chip--sm tk-chip--green">set</span>' : '<span class="tk-chip tk-chip--sm tk-chip--amber">missing</span>';
+  const ownerChip = owner === null ? '<span class="tk-chip tk-chip--sm tk-chip--amber">unset</span>' : '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>';
+  return sdTwin(facts)
+    + (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+    + '<div class="tk-card sd-rows">'
+    + '<div class="tk-setrow"><div class="body"><div class="t">State</div><div class="d">The channel runs inside the agent; its live state is not readable here.</div></div>'
+    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</span></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Enabled</div><div class="d sd-mono">telegram.enabled</div></div>'
+    + '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Enabled" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Token</div><div class="d sd-mono">TELEGRAM_BOT_TOKEN in .env</div></div>' + tokenChip
+    + '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
+    + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy || !hasToken ? ' disabled' : '') + '>Clear token</button></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Owner</div><div class="d sd-mono">telegram.ownerUserId</div></div>' + ownerChip
+    + '<button class="btn btn-s sm" data-act="telegram:pair" disabled title="' + esc(TG_PAIRING_NOTE) + '">Re-pair</button>'
+    + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy || owner === null ? ' disabled' : '') + '>Clear owner</button></div>'
+    + '<div class="tk-setrow"><div class="body"><div class="t">Channel</div><div class="d">Restarts with the agent runtime.</div></div>'
+    + '<button class="btn btn-g sm" data-act="telegram:refresh">' + ic('refresh') + 'Refresh</button>'
+    + '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button></div>'
+    + '</div>'
+    + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token', 'T clear token', 'O clear owner']);
 }
-/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. */
+/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
   const t = TG.token;
-  return '<div class="tuimodal tgcard"><b>bot token</b>'
-    + '<div class="ter">Paste the token issued by @BotFather. Saved to <span class="skpaccent">.env</span> at mode 0600.</div>'
-    + '<div><span class="ter">&gt; </span><input id="tg-token" type="password" autocomplete="off" spellcheck="false"' + (t.submitting ? ' disabled' : '') + '></div>'
-    + (t.error ? '<div class="tuierr">! ' + esc(t.error) + '</div>' : '')
-    + '<div class="ter"><button class="skpf" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Enter to save</button> · <button class="skpf" data-act="telegram:tokenCancel">Esc to cancel</button> · Backspace to edit' + (t.submitting ? ' · saving…' : '') + '</div></div>';
+  return '<div class="tk-card pad sd-tgcard">'
+    + '<h3 class="sd-title">Bot token</h3>'
+    + '<p>Paste the token issued by @BotFather. Saved to <span class="sd-code">.env</span> at mode 0600.</p>'
+    + '<label class="tk-inpwrap sd-tokwrap' + (t.error ? ' is-error' : '') + '">' + ic('key')
+    + '<input id="tg-token" type="password" autocomplete="off" spellcheck="false" aria-label="Bot token"' + (t.submitting ? ' disabled' : '') + '></label>'
+    + (t.error ? '<p class="tk-help tk-help--err">' + esc(t.error) + '</p>' : '')
+    + '<div class="sd-acts">' + (t.submitting ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
+    + '<button class="btn btn-g sm" data-act="telegram:tokenCancel">Cancel' + keycaps('esc') + '</button>'
+    + '<button class="btn btn-p sm" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Save' + keycaps('↩') + '</button></div></div>';
 }
 function tgSetMessage(text, restart) { TG.message = text; TG.restart = !!restart; TG.lastError = null; }
 /* tui-telegram-orchestrator.ts submitToken: empty fails locally, then
@@ -15688,44 +15854,76 @@ function impDefaultDir(source) { return IMP.defaults ? (IMP.defaults[source] || 
 function importTab() {
   const f = IMP.form;
   const sourceLabel = f.source === 'openclaw' ? 'OpenClaw' : 'Hermes';
-  let body = '<b>Import · ' + sourceLabel + ' → Atomic Agent</b>';
-  if (IMP.notice) body += '<div class="tuierr" style="margin-top:8px">! ' + esc(IMP.notice) + '</div>';
+  const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
+  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(f.source === 'openclaw' ? 'openclaw' : 'hermes', 'sm') + '<h3 class="sd-title">' + sourceLabel + ' → Atomic Agent</h3></div>';
+  if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
-  else if (IMP.mode === 'running') body += '<div class="ter" style="margin-top:8px">importing… please wait</div>';
-  else if ((IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report) body += impReportHTML(IMP.report, IMP.mode === 'done');
-  return '<div class="tui">' + body + '</div>';
+  else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
+  else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
+  return '<div class="sd-pane sd-imp">' + sdTwin('Import · ' + sourceLabel + ' → Atomic Agent') + body + '</div>';
 }
-function impLabel(label, focused) { return '<span class="ter">' + esc((focused ? '▸' : ' ') + ' ' + label.padEnd(10) + ': ') + '</span>'; }
+/* The TUI's form label (`▸ source-of : `), kept for the terminal twin. */
+function impLabel(label, focused) { return (focused ? '▸' : ' ') + ' ' + label.padEnd(10) + ': '; }
 function impFormHTML(f) {
   const fc = f.focus;
-  const text = (label, field, placeholder) => '<div class="impline">' + impLabel(label, fc === field) + '<input class="impinp' + (f[field === 'source' ? 'sourceDir' : field] ? '' : ' empty') + '" data-imp-field="' + (field === 'source' ? 'sourceDir' : 'limit') + '" data-imp-focus="' + field + '" value="' + esc(f[field === 'source' ? 'sourceDir' : field]) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"></div>';
-  const toggle = (label, field, hint) => '<div class="impline">' + impLabel(label, fc === field) + '<button class="skpf' + (f[field] ? ' sk-on' : ' ter') + '" data-act="import:toggle:' + field + '">[' + (f[field] ? '✓' : ' ') + ']</button>' + (hint ? '<span class="ter">  ' + esc(hint) + '</span>' : '') + '</div>';
-  return '<div class="tuimodal impform">'
-    + '<div class="impline">' + impLabel('source-of', fc === 'sourceType') + '<button class="skpf' + (f.source === 'hermes' ? ' sk-on' : ' ter') + '" data-act="import:source:hermes">' + (f.source === 'hermes' ? '‹hermes›' : ' hermes ') + '</button><span class="ter"> / </span><button class="skpf' + (f.source === 'openclaw' ? ' sk-on' : ' ter') + '" data-act="import:source:openclaw">' + (f.source === 'openclaw' ? '‹openclaw›' : ' openclaw ') + '</button></div>'
-    + text('source', 'source', f.source === 'openclaw' ? '~/.openclaw' : '~/.hermes')
-    + toggle('sessions', 'sessions') + toggle('cron', 'cron')
-    + (f.source === 'hermes' ? toggle('secrets', 'secrets', 'OPENROUTER_API_KEY / AIMLAPI_API_KEY') : '')
-    + toggle('overwrite', 'overwrite', 'replace differing destinations')
-    + text('limit', 'limit', '(no limit)')
-    + '<div class="impline" style="margin-top:8px"><button class="skpf' + (fc === 'run' ? ' sk-on' : ' ter') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + (fc === 'run' ? '▸' : ' ') + ' Run preview</button></div>'
-    + '<div class="ter" style="margin-top:8px">↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview</div></div>';
+  const hermes = f.source === 'hermes';
+  // The agent's own option descriptions (src/import/<source>/import-options.ts).
+  const desc = hermes
+    ? {sessions:'Conversation history (state.db) → sessions.sqlite', cron:'Scheduled jobs (cron/jobs.json) → tasks.sqlite'}
+    : {sessions:'Transcript logs (agents/<agent>/sessions/*.jsonl) → sessions.sqlite', cron:'Scheduled jobs (state/openclaw.sqlite cron_jobs) → tasks.sqlite'};
+  const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
+    + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
+    + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
+  const twin = [impLabel('source-of', fc === 'sourceType') + (hermes ? '‹hermes› /  openclaw ' : ' hermes  / ‹openclaw›'), impLabel('source', fc === 'source') + f.sourceDir,
+    impLabel('sessions', fc === 'sessions') + (f.sessions ? '[✓]' : '[ ]'), impLabel('cron', fc === 'cron') + (f.cron ? '[✓]' : '[ ]'),
+    hermes ? impLabel('secrets', fc === 'secrets') + (f.secrets ? '[✓]' : '[ ]') : null, impLabel('overwrite', fc === 'overwrite') + (f.overwrite ? '[✓]' : '[ ]'),
+    impLabel('limit', fc === 'limit') + (f.limit || '(no limit)')].filter((l) => l !== null).join('\n');
+  // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
+  return '<div class="sd-form">'
+    + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl">Source</span><div class="tk-seg">'
+    + ['hermes', 'openclaw'].map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
+      + logoHTML(s, 'xs') + (s === 'hermes' ? 'Hermes' : 'OpenClaw') + '</button>').join('') + '</div></div>'
+    + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
+    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(hermes ? '~/.hermes' : '~/.openclaw') + '" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="tk-card sd-rows">' + sw('sessions', 'Sessions', esc(desc.sessions)) + sw('cron', 'Cron jobs', esc(desc.cron))
+    + (hermes ? sw('secrets', 'Secrets', '<span class="sd-mono">OPENROUTER_API_KEY / AIMLAPI_API_KEY</span>') : '')
+    + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
+    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Limit</label>'
+    + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="sd-run"><button class="btn btn-p' + (fc === 'run' ? ' sd-kfocus' : '') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Run preview' + keycaps('⌃ ↩') + '</button></div>'
+    + '<p class="sd-cap sd-block">↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview</p>'
+    + sdTwin(twin) + '</div>';
 }
-/* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. */
+/* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. ST-32. */
 function impReportHTML(report, executed) {
   const items = report.items.slice(0, IMP_REPORT_ROWS);
   const hidden = report.items.length - items.length;
   const s = report.summary;
-  const color = (st) => ({migrated:'sk-on', skipped:'ter', conflict:'sk-off', error:'tuierr'}[st] || 'ter');
-  return '<div style="margin-top:8px"><div class="ter">' + (executed ? 'result' : 'preview (dry-run)') + ' · ' + report.items.length + ' item' + (report.items.length === 1 ? '' : 's') + '</div>'
-    + items.map((it) => {
-      const arrow = it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || '');
-      return '<div class="improw" data-import-row="1"><span class="' + color(it.status) + '">' + esc(it.status.padEnd(8)) + '</span><span class="ter"> [' + esc(it.kind) + '] ' + esc(arrow) + (it.reason ? ' (' + esc(it.reason) + ')' : '') + '</span></div>';
-    }).join('')
-    + (hidden > 0 ? '<div class="ter">  … ' + hidden + ' more</div>' : '')
-    + '<div style="margin-top:8px"><span class="sk-on">migrated=' + s.migrated + '</span><span class="ter"> · skipped=' + s.skipped + '</span><span class="sk-off"> · conflict=' + s.conflict + '</span><span class="tuierr"> · error=' + s.error + '</span></div>'
-    + (IMP.state === 'nothing' ? '<div class="ter">Nothing to import.</div>' : '')
+  const n = report.items.length, noun = n === 1 ? ' item' : ' items';
+  const tone = (st) => ({migrated:'tk-chip--green', conflict:'tk-chip--amber', error:'tk-chip--red'}[st] || '');
+  const arrowOf = (it) => (it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || ''));
+  const twin = [(executed ? 'result' : 'preview (dry-run)') + ' · ' + n + noun]
+    .concat(items.map((it) => it.status.padEnd(8) + ' [' + it.kind + '] ' + arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : ''))).join('\n');
+  // The summary stays one line of text (`migrated=0 · skipped=2 · …`): the chips are inline, not flex items.
+  const sum = (label, v, t) => '<span class="tk-chip tk-chip--sm ' + (v > 0 ? t : '') + '">' + label + '=' + v + '</span>';
+  return '<div class="tk-bar"><h3 class="sd-title">' + (executed ? 'Result' : 'Preview') + ' · ' + n + noun + '</h3>'
+    + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="tk-chip tk-chip--sm">dry run</span>')
+    + '<span class="grow"></span>'
+    + (executed
+      ? '<button class="btn btn-s sm" data-act="import:reset">Back to form' + keycaps('↩') + '</button>'
+      : '<button class="btn btn-g sm" data-act="import:reset">Edit' + keycaps('e') + '</button><button class="btn btn-p sm" data-act="import:apply"' + (IMP.busy ? ' disabled' : '') + '>Apply' + keycaps('↩') + '</button>')
+    + '</div>'
+    + '<div class="sd-sum">' + sum('migrated', s.migrated, 'tk-chip--green') + '<span class="sd-sep"> · </span>' + sum('skipped', s.skipped, '')
+    + '<span class="sd-sep"> · </span>' + sum('conflict', s.conflict, 'tk-chip--amber') + '<span class="sd-sep"> · </span>' + sum('error', s.error, 'tk-chip--red') + '</div>'
+    + (items.length ? '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-imptbl"><thead><tr><th>Outcome</th><th>Kind</th><th>Item</th></tr></thead><tbody>'
+      + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(it.status) + '</span></td>'
+        + '<td><span class="tk-chip tk-chip--sm tk-chip--line">' + esc(it.kind) + '</span></td>'
+        + '<td class="sd-path" title="' + esc(arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : '')) + '">' + esc(arrowOf(it)) + (it.reason ? ' <span class="sd-reason">(' + esc(it.reason) + ')</span>' : '') + '</td></tr>').join('')
+      + '</tbody></table></div>' : '')
+    + (hidden > 0 ? '<p class="sd-cap">… ' + hidden + ' more</p>' : '')
+    + (IMP.state === 'nothing' ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">Nothing to import.</span></div>' : '')
     + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]))
-    + '</div>';
+    + sdTwin(twin);
 }
 /* import-orchestrator.ts runImport: the option set from the toggles, the
    limit parsed, then one `atag import` subprocess — never while a turn is

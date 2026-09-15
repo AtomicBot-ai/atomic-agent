@@ -1,4 +1,154 @@
 /* ============================================================
    Settings tabs — Memory, MCP, Telegram, Import. Screens ST-12…19, ST-28…32.
    Loaded after css/settings.css (frame, nav, Tasks, Skills, Privacy).
+   Everything here is scoped to .sd-pane — the root these four tabs emit —
+   and composes the kit in styles.css; no kit rule is redefined.
    ============================================================ */
+
+/* ---- Pane ---- */
+.sd-pane{display:flex;flex-direction:column;gap:14px;min-width:0;position:relative;container-type:inline-size;
+  font-family:var(--font-ui);font-size:14px;line-height:1.45;white-space:normal;color:var(--ink)}
+.sd-pane .grow,.sd-grow{flex:1;min-width:0}
+.sd-pane > .tk-bar{min-height:34px}
+
+/* The terminal twin: the TUI strings the settings smoke reads from innerText.
+   Rendered (so innerText keeps it), clipped to nothing, hidden from assistive tech. */
+.sd-twin{position:absolute;top:0;left:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:pre;pointer-events:none}
+
+/* ---- Shared text ---- */
+.sd-cap{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-2);display:flex;align-items:center;gap:6px}
+.sd-cap > svg{width:14px;height:14px;color:var(--ink-3)}
+.sd-cap.sd-block{display:block}
+.sd-mono{font-family:var(--font-mono);letter-spacing:0}
+.sd-code{font:400 12px/1 var(--font-mono);letter-spacing:0;padding:2px 5px;border-radius:6px;background:var(--panel-2);color:var(--ink);white-space:nowrap}
+.sd-title{margin:0;font-size:19px;line-height:1.25;font-weight:600;letter-spacing:-.02em;color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.sd-title.sd-mono{font-size:18px;font-weight:500;letter-spacing:0}
+.sd-desc{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+.sd-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;color:var(--ink-2)}
+.sd-status .tk-dot{width:7px;height:7px}
+.sd-status > span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sd-quiet.tk-notice{background:var(--well);box-shadow:none;color:var(--ink-2);font-size:12.5px}
+.sd-quiet.tk-notice > svg{color:var(--ink-3)}
+.sd-more{align-self:flex-start}
+.sd-pane .tk-empty{padding:30px 20px}
+.sd-pane .tk-chip.sd-mono{font-family:var(--font-mono);font-size:11px}
+/* `.tk-modal p` / `.sd-tgcard p` (0,1,1) outrank the kit's help tones (0,1,0); an error must stay red. */
+.sd-pane .tk-help--err{color:var(--critical)}
+
+/* The shared settings helpers, as they sit inside these panes
+   (settings.css still styles .tuihint/.tuimsg for the terminal-text tabs). */
+.sd-pane .tuihint{margin:0;white-space:normal;color:var(--ink-2)}
+.sd-pane .tuihint .tk-hint{font:400 12px/1 var(--font-ui);height:24px;padding:0 6px;border-radius:8px;color:var(--ink-2)}
+.sd-pane .tuihint button.tk-hint:hover{background:var(--hover);color:var(--ink)}
+.sd-pane .tuihint button.tk-hint:disabled{background:transparent;color:var(--ink-3);cursor:default}
+.sd-pane .tuimsg{color:var(--ink)}
+.sd-pane .tk-bar > .tk-hint{font:400 12px/1 var(--font-ui);height:26px;padding:0 9px;border-radius:var(--r-pill);color:var(--ink-2)}
+.sd-pane .tk-bar > .tk-hint:hover{background:var(--hover);color:var(--ink)}
+
+/* ---- Memory · ST-12…15 ---- */
+.sd-tblwrap{padding:4px;overflow-x:auto}
+.sd-memtbl td.mono{font:600 12.5px/1.3 var(--font-mono);color:var(--ink)}
+.sd-memtbl td.sd-val{white-space:normal;color:var(--ink);min-width:160px}
+.sd-memtbl tbody tr.on td:first-child{color:var(--blue)}
+.sd-memtbl .tk-chip svg{width:12px;height:12px}
+.sd-memtbl th:nth-child(3),.sd-memtbl td:nth-child(3),.sd-memtbl th:nth-child(4),.sd-memtbl td:nth-child(4){width:1%}
+.sd-memrow .sd-id{flex:none;min-width:44px;font:400 12px/1.3 var(--font-mono);color:var(--ink-2);white-space:nowrap}
+.sd-memrow.on .sd-id{color:var(--blue)}
+.sd-memrow .t{font-size:13.5px;font-weight:500}
+.sd-memrow .m{font-size:11.5px;color:var(--ink-2)}
+.sd-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+
+.sd-note{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}
+@container (max-width:620px){.sd-note{grid-template-columns:minmax(0,1fr)}}
+.sd-notemain,.sd-detail{display:flex;flex-direction:column;gap:12px;min-width:0}
+.sd-prose{font-size:14.5px;line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.sd-plate{gap:8px 22px;margin-top:4px}
+.sd-plate .sd-span{grid-column:1 / -1;color:var(--ink-2)}
+.sd-links{display:flex;flex-direction:column;gap:1px;padding:12px 10px;border-radius:var(--r-card);background:var(--well);min-width:0}
+.sd-lh{padding:2px 8px 4px;font-size:13.5px;font-weight:600;color:var(--ink)}
+.sd-lsec{padding:8px 8px 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.sd-link{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:0 6px 0 8px;border-radius:12px;font-size:13px;color:var(--ink);
+  transition:background var(--t-state) var(--ease)}
+.sd-link:hover{background:var(--hover)}
+.sd-link.on{background:var(--brand-wash)}
+.sd-link > svg{width:14px;height:14px;color:var(--ink-3)}
+.sd-lid{font:400 12.5px/1 var(--font-mono);color:var(--ink)}
+.sd-link.on .sd-lid{color:var(--blue)}
+.sd-lkind{min-width:0;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sd-w{font-family:var(--font-mono);font-size:11px;letter-spacing:0}
+.sd-links .tk-chip{background:var(--lift)}
+.sd-links .tk-chip.tk-chip--blue{background:var(--brand-wash)}
+.sd-chips{display:flex;flex-wrap:wrap;gap:4px;padding:2px 8px 4px}
+.sd-links .sd-cap{padding:2px 8px}
+
+/* ---- MCP · ST-16…19 ---- */
+.sd-srv .body{gap:3px}
+.sd-srvname{display:flex;align-items:center;gap:8px;min-width:0}
+.sd-srv .t{font:500 13.5px/1.3 var(--font-mono);letter-spacing:0}
+.sd-srv .d{white-space:nowrap}
+.sd-srv .tk-chip--line,.sd-srvhead .tk-chip--line{height:20px;padding:0 7px;font-size:11px}
+.sd-srv .sd-tools{min-width:64px;text-align:right;font-size:12px;color:var(--ink-2)}
+.sd-srvhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.sd-count{margin-left:6px;font:400 11.5px/1 var(--font-mono);color:var(--ink-3)}
+.tk-seg button.on .sd-count{color:var(--ink-2)}
+.sd-tool{min-height:42px}
+.sd-toolname{flex:none;width:200px;font:400 13px/1.3 var(--font-mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sd-tool .d{flex:1;min-width:0;white-space:nowrap}
+.sd-tool.on .sd-toolname{color:var(--blue)}
+@container (max-width:560px){.sd-toolname{width:150px}}
+
+/* A modal over the dimmed, inert view it belongs to (add server, remove confirm). */
+.sd-stage{display:grid;min-width:0}
+.sd-stage > *{grid-area:1 / 1;min-width:0}
+.sd-behind{display:flex;flex-direction:column;gap:14px;opacity:.4;pointer-events:none;user-select:none}
+.sd-over{z-index:1;align-self:start;justify-self:center;width:min(560px,100%);padding:4px 0 8px}
+.sd-modal.tk-modal{gap:12px;padding:20px}
+.sd-mhead{display:flex;align-items:center;gap:10px}
+.sd-modal .tk-plate{margin:0}
+.sd-modal .acts{flex-wrap:wrap}
+/* Short enough that the error line and Add stay in view on a 620px window; it grows by drag. */
+textarea.tk-inp.sd-json{width:100%;height:104px;min-height:80px;font:400 12.5px/1.55 var(--font-mono);letter-spacing:0;white-space:pre;overflow:auto}
+
+/* ---- Telegram · ST-28…30 ---- */
+.sd-tgcard.tk-card.pad{width:min(480px,100%);align-self:center;gap:12px;padding:28px;margin:10px 0 4px}
+.sd-tgcard.sd-center{align-items:center;text-align:center}
+.sd-tgcard p{margin:0;font-size:14px;line-height:1.55;color:var(--ink-2)}
+.sd-tgcard .sd-title{font-size:20px}
+.sd-tgcard.sd-center .btn{margin-top:4px}
+.sd-tokwrap.tk-inpwrap{height:44px;padding:0 14px}
+.sd-tokwrap > svg{color:var(--ink-3)}
+.sd-tokwrap input{font:400 13.5px/1 var(--font-mono);letter-spacing:.06em}
+.sd-tokwrap.is-error{background:var(--lift);border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
+.sd-acts{display:flex;align-items:center;gap:8px;margin-top:2px}
+.sd-well{display:flex;flex-direction:column;gap:8px;padding:16px 18px;border-radius:var(--r-card);background:var(--well)}
+.sd-pairhead{display:flex;align-items:center;gap:10px}
+.sd-pairhead b{font-size:15px;font-weight:600;color:var(--ink)}
+.sd-pair p{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+.sd-rows.tk-card{padding:4px 0}
+.sd-rows .tk-setrow{gap:10px;flex-wrap:wrap}
+.sd-rows .tk-setrow .body{flex:1 1 220px}
+.sd-rows .tk-setrow .d{overflow-wrap:anywhere}
+.sd-rows .tk-setrow .d.sd-mono{font-size:12px}
+
+/* ---- Import · ST-31, ST-32 ---- */
+.sd-imphead{gap:10px}
+.sd-form{display:flex;flex-direction:column;gap:14px;max-width:640px;min-width:0}
+.sd-frow{border-radius:var(--r-row);transition:background var(--t-state) var(--ease)}
+.sd-form > .tk-field.sd-frow{padding:8px 10px;margin:0 -10px}
+.sd-form .tk-field .tk-inp{width:100%}
+.sd-form .sd-limit{max-width:220px}
+.sd-form .tk-field > .tk-seg{justify-self:start}
+/* importKey's form cursor (the TUI's ▸): a quiet wash and a blue label, not a selection. */
+.sd-frow.sd-kfocus{background:var(--hover)}
+.sd-frow.sd-kfocus .tk-lbl,.sd-frow.sd-kfocus .t{color:var(--blue)}
+.sd-rows .tk-setrow.sd-frow{margin:0 4px;padding:8px 12px}
+.sd-rows .tk-setrow.sd-kfocus,.sd-rows .tk-setrow.sd-kfocus + .tk-setrow{box-shadow:none}
+.btn.sd-kfocus{box-shadow:0 0 0 2px var(--lift),0 0 0 4px var(--brand)}
+.sd-form .tk-seg .logo{margin-left:-6px;margin-right:1px}
+.sd-run{display:flex;align-items:center;gap:10px}
+.sd-sum{display:block;line-height:28px;font-size:12px}
+.sd-sep{margin:0 3px;color:var(--ink-3)}
+.sd-imptbl{table-layout:fixed}
+.sd-imptbl th:nth-child(1),.sd-imptbl th:nth-child(2){width:112px}
+.sd-imptbl td.sd-path{font:400 12px/1.3 var(--font-mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.sd-reason{color:var(--ink-2)}
