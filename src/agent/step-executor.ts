@@ -14,7 +14,12 @@ import {
   type BatchLoopSignal,
 } from "./batch-executor.js";
 import type { ToolLoopTracker } from "./loop-detector.js";
-import { isBatchable, resourceClassFor } from "./tool-resource-class.js";
+import {
+  gatedCallRunsUnattended,
+  isBatchable,
+  resourceClassFor,
+  type BatchApprovalPosture,
+} from "./tool-resource-class.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import type {
   StreamParseEvent,
@@ -238,6 +243,24 @@ export interface StepDependencies {
    * Absent ⇒ loop detection disabled for this step.
    */
   tracker?: ToolLoopTracker;
+  /**
+   * The session's live approval posture, read when a batch holds
+   * approval-gated calls. When every gated call in the batch would run
+   * without a prompt (see `gatedCallRunsUnattended`), the batch runs
+   * one call after another in emitted order instead of being trimmed to
+   * its first gated call. Absent ⇒ today's trim. The `ApprovalGate`
+   * satisfies this shape: `{ getLevel: () => gate.getLevel(),
+   * sessionGrants: (id) => gate.sessionGrants(id) }`.
+   */
+  approvalPosture?: StepApprovalPostureSource;
+}
+
+/** Where the step reads the approval posture from — structurally an `ApprovalGate`. */
+export interface StepApprovalPostureSource {
+  getLevel(): BatchApprovalPosture["level"];
+  sessionGrants?(sessionId: string): {
+    categories: NonNullable<BatchApprovalPosture["grantedCategories"]>;
+  };
 }
 
 export interface StepContext {
@@ -317,13 +340,19 @@ export interface StepOutcome {
    */
   loopSignals: BatchLoopSignal[];
   /**
-   * Set when the step's parsed batch failed validation purely because
-   * it contained approval-gated tools. The runtime auto-split the batch
-   * to a length-1 execution (the first approval-gated call); this notice
-   * is meant to be injected into the next step's `transientNotice` so
-   * the model knows which calls were dropped and can retry them
-   * one-by-one. Distinct from `parse_retry` — no LLM round-trip
-   * happened for the trim.
+   * Next-step notice for a change the runtime made to this step's
+   * emission, meant to be injected into the next step's
+   * `transientNotice`. Set in two cases (joined when both happen):
+   *  - the parsed batch failed validation purely because it contained
+   *    approval-gated tools that could prompt, and the runtime auto-split
+   *    it to a length-1 execution (the first approval-gated call) — the
+   *    notice lists the dropped calls so the model can retry them
+   *    one-by-one. Distinct from `parse_retry`: no LLM round-trip.
+   *  - the completion wrote tool calls / results as plain text
+   *    (`detectFabricatedToolTranscript`): its `reply` / `finish` was not
+   *    accepted and the notice says none of that text ran.
+   * The name predates the second case; the agent loop already routes it
+   * to the next step, which is all either case needs.
    */
   trimmedBatchNotice?: string;
   /**
@@ -620,19 +649,76 @@ async function executeStepInner(
   // than all-at-once.
   let waveSplitNotice: string | undefined;
 
+  // Set when a batch holding approval-gated calls is run whole, one call
+  // after another in emitted order, because nobody would be asked to
+  // approve any of them. See `batchRunsUnattended`.
+  let runInOrder = false;
+
+  /**
+   * Does every approval-gated call in `batch` run without a prompt at the
+   * session's live approval posture? Only then may the batch run whole.
+   *
+   * The trim exists because a prompt per call cannot be answered for a
+   * batch: approving the first write says nothing about the four behind
+   * it, and a denial would leave later calls running against a state the
+   * operator refused. With no prompt in the picture that reason is gone,
+   * and trimming only throws generated work away — at level 5 on a local
+   * model that was a 5-file emission (20 minutes of decode) cut to its
+   * first file, then a 6-file retry cut to the one file already fine.
+   *
+   * Capped at `MAX_WAVE_SPLIT_CALLS` for the reason the wave split is: a
+   * derailed emission must not become dozens of mutations.
+   */
+  const batchRunsUnattended = (batch: ToolCallBatch): boolean => {
+    const source = deps.approvalPosture;
+    if (!source) return false;
+    if (batch.calls.length > MAX_WAVE_SPLIT_CALLS) return false;
+    let posture: BatchApprovalPosture;
+    try {
+      const granted = source.sessionGrants?.(ctx.session.id).categories;
+      posture = {
+        level: source.getLevel(),
+        ...(granted !== undefined ? { grantedCategories: granted } : {}),
+      };
+    } catch {
+      return false;
+    }
+    return batch.calls.every(
+      (call) =>
+        resourceClassFor(call.tool) !== "approval_gated" ||
+        gatedCallRunsUnattended(call.tool, posture),
+    );
+  };
+
   /**
    * Inline helper: if a `BatchValidationError` is purely about
-   * approval-gated tools batched together, trim the batch to the first
-   * approval-gated call (length-1), emit the observability event, and
-   * capture the notice for the next step. Returns the trimmed batch
-   * paired with a fresh `ok: true` parse result, or `null` if the
-   * failure is not trim-eligible (terminal verbs, oversized, unknown
-   * resource class — those still go through the LLM repair path).
+   * approval-gated tools batched together, either run the batch whole in
+   * emitted order (nobody would be prompted — `batchRunsUnattended`) or
+   * trim it to the first approval-gated call (length-1), emit the
+   * observability event, and capture the notice for the next step.
+   * Returns the batch to execute paired with a fresh `ok: true` parse
+   * result, or `null` if the failure is not eligible (terminal verbs,
+   * oversized, unknown resource class — those still go through the LLM
+   * repair path).
    */
   const tryTrimApprovalGated = (
     batch: ToolCallBatch,
     error: BatchValidationError,
   ): { ok: true; batch: ToolCallBatch } | null => {
+    if (!isApprovalGatedOnlyFailure(error)) return null;
+    if (batchRunsUnattended(batch)) {
+      runInOrder = true;
+      deps.logger?.info(
+        "approval-gated batch runs whole, in emitted order (no call would prompt)",
+        {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          size: batch.calls.length,
+          tools: batch.calls.map((call) => call.tool),
+        },
+      );
+      return { ok: true, batch };
+    }
     // An oversized batch is never trim-eligible, even when its only
     // per-call reason is approval-gated (e.g. `[os.fs.write, 13 reads]`
     // with a cap of 8). Trimming would keep the write solo and silently
@@ -641,7 +727,6 @@ async function executeStepInner(
     if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
       return null;
     }
-    if (!isApprovalGatedOnlyFailure(error)) return null;
     const trim = trimBatchToFirstApprovalGated(batch);
     if (trim === null) return null;
     trimmedBatchNotice = formatBatchTrimNotice(trim);
@@ -1013,8 +1098,40 @@ async function executeStepInner(
     }
   }
   const batch = parsed.batch;
-  const calls = batch.calls;
-  const batchSize = calls.length;
+
+  // A completion that wrote tool calls and their results out as TEXT —
+  // continuing the `assistant_tool_call:` / `tool_result[...]` lines the
+  // conversation section is rendered in — did none of that work. Its
+  // terminal (`reply` / `finish`) reports invented results as done, so it
+  // is not accepted; genuine non-terminal calls from the same completion
+  // still run, and the model is told on the next step why the turn did
+  // not close.
+  const fabricated = detectFabricatedToolTranscript(
+    completionFreeText(completion, deps.profile, assumesOpenReasoning(completion)),
+  );
+  let calls = batch.calls;
+  let suppressedTerminal: ToolCallPayload | null = null;
+  if (fabricated !== null) {
+    const notice = formatFabricatedTranscriptNotice(fabricated);
+    trimmedBatchNotice =
+      trimmedBatchNotice === undefined
+        ? notice
+        : `${trimmedBatchNotice}\n\n${notice}`;
+    const last = calls[calls.length - 1];
+    if (last !== undefined && resourceClassFor(last.tool) === "terminal") {
+      suppressedTerminal = last;
+      calls = calls.slice(0, -1);
+    }
+    deps.logger?.warn("completion wrote tool calls as plain text", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      textCalls: fabricated.calls,
+      textResults: fabricated.results,
+      suppressedTerminal: suppressedTerminal?.tool ?? null,
+      nativeCallsRun: calls.map((call) => call.tool),
+    });
+  }
+  const batchSize = calls.length + (suppressedTerminal !== null ? 1 : 0);
 
   // Registry membership: surfaces as `ToolExecutionError` (category
   // `tool`) instead of `BatchValidationError`. A missing tool is a
@@ -1055,6 +1172,18 @@ async function executeStepInner(
       batchSize,
     });
   }
+  const suppressed =
+    suppressedTerminal !== null && fabricated !== null
+      ? suppressedTerminalRecord(suppressedTerminal, fabricated)
+      : null;
+  if (suppressed !== null) {
+    deps.onEvent?.({
+      type: "tool_call_parsed",
+      call: suppressed.call,
+      batchIndex: calls.length,
+      batchSize,
+    });
+  }
 
   const stepStartedAt = Date.now();
   const inputs = toBatchInputs(calls);
@@ -1062,7 +1191,8 @@ async function executeStepInner(
   // these is short-circuited inside `executeBatch` with a terse pointer
   // instead of re-reading and re-dumping the body.
   const loadedSkillNames = new Set(ctx.session.loadedSkills.map((s) => s.name));
-  const batchOutcome = await executeBatch(inputs, deps.registry, {
+  const runBatch = runInOrder ? executeCallsInOrder : executeBatch;
+  const batchOutcome = await runBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
@@ -1163,13 +1293,29 @@ async function executeStepInner(
     }
   }
 
+  // The suppressed terminal joins the step as a call that never ran: its
+  // error result is what the transcript, the trace and the loop see, so
+  // the model reads on the next step that its reply was not delivered.
+  if (suppressed !== null) {
+    deps.onEvent?.({
+      type: "tool_call_executed",
+      result: suppressed.result,
+      batchIndex: calls.length,
+      batchSize,
+    });
+  }
+  const stepCalls =
+    suppressed !== null ? [...calls, suppressed.call] : calls;
+  const stepResults =
+    suppressed !== null ? [...toolResults, suppressed.result] : toolResults;
+
   // Apply state effects in batch-index order. `recordLatestResult` is
   // called on every result (last writer wins, deterministic). World
   // snapshot updates from multiple results collapse to last writer
   // by index.
   let nextSession: SessionState = workSession;
-  for (let i = 0; i < toolResults.length; i += 1) {
-    const result = toolResults[i]!;
+  for (let i = 0; i < stepResults.length; i += 1) {
+    const result = stepResults[i]!;
     nextSession = recordLatestResult(nextSession, {
       tool: result.tool,
       status: result.status,
@@ -1183,17 +1329,21 @@ async function executeStepInner(
   // the validator guarantees a terminal verb can only appear at the
   // tail, and the executor enforces a barrier so the terminal call
   // runs after every other call. For solo steps `lastIdx === 0` and
-  // the behaviour is identical to the legacy path.
+  // the behaviour is identical to the legacy path. A suppressed
+  // terminal never closes anything, so the last call that actually ran
+  // decides instead (none ran ⇒ the step is not terminal).
   const lastIdx = calls.length - 1;
-  const terminal: StepTerminal = classifyTerminal(
-    calls[lastIdx]!,
-    toolResults[lastIdx]!,
-  );
+  const terminal: StepTerminal =
+    lastIdx >= 0 &&
+    (suppressed === null ||
+      resourceClassFor(calls[lastIdx]!.tool) !== "terminal")
+      ? classifyTerminal(calls[lastIdx]!, toolResults[lastIdx]!)
+      : null;
 
   nextSession = appendBatchedTurns({
     state: nextSession,
-    calls,
-    results: toolResults,
+    calls: stepCalls,
+    results: stepResults,
     reasoning,
     terminal,
     onEvent: deps.onEvent,
@@ -1204,8 +1354,8 @@ async function executeStepInner(
     throw new CancelledError("batch cancelled mid-execution");
   }
   return {
-    toolCalls: calls,
-    toolResults,
+    toolCalls: stepCalls,
+    toolResults: stepResults,
     completion,
     prompt,
     nextSession,
@@ -1947,6 +2097,231 @@ export function formatWaveSplitNotice(
   waveCount: number,
 ): string {
   return `Your previous emission contained ${originalSize} reads that exceeded the parallel-call cap of ${cap}. The runtime executed all of them in ${waveCount} bounded wave${waveCount === 1 ? "" : "s"} — nothing was dropped. Do not re-emit those calls.`;
+}
+
+type ExecuteBatchArgs = Parameters<typeof executeBatch>;
+type BatchOutcome = Awaited<ReturnType<typeof executeBatch>>;
+
+/**
+ * Run a batch one call at a time, strictly in emitted order: each call is
+ * dispatched only after the previous one has settled, whatever its
+ * resource class. `executeBatch` groups by class and runs the groups
+ * concurrently, which is right for fan-out and wrong for "write the
+ * file, then edit it, then read it back" — so each call goes through its
+ * own length-1 `executeBatch` (same plan-mode / fusion / loop gates, same
+ * result folding as a solo step) and the indices are mapped back.
+ *
+ * Used for a batch holding approval-gated calls that would not prompt
+ * (`batchRunsUnattended`). An abort stops the sequence: the call in
+ * flight settles as `executeBatch` settles it and every later call is
+ * marked cancelled.
+ */
+async function executeCallsInOrder(
+  inputs: ExecuteBatchArgs[0],
+  registry: ExecuteBatchArgs[1],
+  ctx: ExecuteBatchArgs[2],
+): Promise<BatchOutcome> {
+  const batchSize = inputs.length;
+  const results: BatchOutcome["results"] = [];
+  const loopSignals: BatchOutcome["loopSignals"] = [];
+  let cancelled = false;
+  for (const input of inputs) {
+    if (cancelled || ctx.signal.aborted) {
+      cancelled = true;
+      results.push({
+        batchIndex: input.batchIndex,
+        call: input.call,
+        resourceClass: input.resourceClass,
+        durationMs: 0,
+        cancelled: true,
+      });
+      continue;
+    }
+    const { onCallStarted, onCallFinished } = ctx;
+    const one = await executeBatch([{ ...input, batchIndex: 0 }], registry, {
+      ...ctx,
+      ...(onCallStarted
+        ? {
+            onCallStarted: () =>
+              onCallStarted({ batchIndex: input.batchIndex, batchSize }),
+          }
+        : {}),
+      ...(onCallFinished
+        ? {
+            onCallFinished: (info) =>
+              onCallFinished({
+                ...info,
+                batchIndex: input.batchIndex,
+                batchSize,
+              }),
+          }
+        : {}),
+    });
+    results.push({ ...one.results[0]!, batchIndex: input.batchIndex });
+    loopSignals.push(...one.loopSignals);
+    if (one.cancelled) cancelled = true;
+  }
+  return { results, cancelled, loopSignals };
+}
+
+/**
+ * Line shapes of the text transcript the conversation section is rendered
+ * in (`renderTurnForPrompt`): `assistant_tool_call: <tool> {json}` and
+ * `tool_result[<tool> <ok|error>]: <summary>`. A bare `tool_call:` is
+ * accepted too — it is what a model abbreviating the prefix writes.
+ */
+const TEXT_TOOL_CALL_LINE = /^\s*(?:assistant_)?tool_call:\s*[\w.:-]+\s*[{[]/;
+const TEXT_TOOL_RESULT_LINE = /^\s*tool_result\[[\w.:-]+ (?:ok|error)\]:/;
+const FENCE_LINE = /^\s*(?:```|~~~)/;
+
+/**
+ * Transcript lines (outside closed code fences) it takes to call a
+ * completion's text a fabricated tool transcript. One line is a quote;
+ * two are a pattern.
+ */
+export const FABRICATED_TRANSCRIPT_MIN_LINES = 2;
+
+/** Counts of tool-call and tool-result lines a completion wrote as text. */
+export interface FabricatedToolTranscript {
+  calls: number;
+  results: number;
+}
+
+/**
+ * Detect a completion that continued the text transcript instead of
+ * calling tools: at least `FABRICATED_TRANSCRIPT_MIN_LINES` lines that
+ * START with a rendered tool-call or tool-result prefix.
+ *
+ * Why this happens: history reaches the model as text inside one user
+ * message, so a model that loses the thread of native function calling
+ * (Gemini Flash did, three times in one benchmark) keeps writing that
+ * text — invented `tool_result[os.fs.write ok]` lines, an invented test
+ * run printing "ALL ASSERTIONS PASSED!" — and then calls `reply` for
+ * real, reporting work that never happened.
+ *
+ * False-positive guards, all structural:
+ *  - a line must BEGIN with the prefix, so prose that mentions one
+ *    ("the `tool_result[os.fs.read ok]` line shows…"), a bullet or a
+ *    block quote does not count;
+ *  - lines inside a CLOSED fenced code block are ignored — that is how a
+ *    legitimate answer quotes the format. A fence left open to the end
+ *    of the text is not a quote, so its lines count;
+ *  - one line alone never triggers, and JSON tool-call arrays (the
+ *    grammar transport's body) never start a line with either prefix.
+ *
+ * Callers pass the completion's text with reasoning removed: a model's
+ * scratch space may legitimately walk through earlier results.
+ */
+export function detectFabricatedToolTranscript(
+  text: string,
+): FabricatedToolTranscript | null {
+  if (!text.includes("tool_call:") && !text.includes("tool_result[")) {
+    return null;
+  }
+  let calls = 0;
+  let results = 0;
+  let inFence = false;
+  let fencedCalls = 0;
+  let fencedResults = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (FENCE_LINE.test(line)) {
+      if (inFence) {
+        // Closed: whatever was inside was a quote.
+        fencedCalls = 0;
+        fencedResults = 0;
+      }
+      inFence = !inFence;
+      continue;
+    }
+    const isCall = TEXT_TOOL_CALL_LINE.test(line);
+    const isResult = !isCall && TEXT_TOOL_RESULT_LINE.test(line);
+    if (inFence) {
+      if (isCall) fencedCalls += 1;
+      if (isResult) fencedResults += 1;
+      continue;
+    }
+    if (isCall) calls += 1;
+    if (isResult) results += 1;
+  }
+  if (inFence) {
+    calls += fencedCalls;
+    results += fencedResults;
+  }
+  return calls + results >= FABRICATED_TRANSCRIPT_MIN_LINES
+    ? { calls, results }
+    : null;
+}
+
+/**
+ * The next-step notice for a completion that wrote tool calls as text.
+ * Blunt on purpose: the model believes that work is done.
+ */
+export function formatFabricatedTranscriptNotice(
+  fabricated: FabricatedToolTranscript,
+): string {
+  const count = Math.max(fabricated.calls, fabricated.results);
+  const noun = count === 1 ? "tool call" : "tool calls";
+  const outcome =
+    fabricated.results > 0
+      ? "None of them ran and their results were invented."
+      : "None of them ran.";
+  return `Your last response contained ${count} ${noun} written as plain text. ${outcome} Call tools natively — nothing is done until a real tool result comes back.`;
+}
+
+/**
+ * A completion's text as the user would see it: `content` with any
+ * inline reasoning block removed. The dedicated `reasoning_content`
+ * channel is never part of it.
+ */
+function completionFreeText(
+  completion: CompletionResult,
+  profile: ModelProfile,
+  assumeOpenReasoning: boolean,
+): string {
+  if (typeof completion.content !== "string" || completion.content === "") {
+    return "";
+  }
+  return extractReasoning(
+    normalizeContent(completion, profile, assumeOpenReasoning),
+    getReasoningTagOptions(profile),
+  ).body;
+}
+
+/** Longest string argument a suppressed terminal keeps in the transcript. */
+const SUPPRESSED_ARG_PREVIEW_CHARS = 400;
+
+/**
+ * The call/result pair that stands in for a `reply` / `finish` that was
+ * not accepted. The tool never runs. String arguments are clipped: when
+ * the reply was synthesised from the text itself, its `text` IS the
+ * fabricated transcript, and replaying 80k characters of invented tool
+ * results into the next prompt would teach the pattern again.
+ */
+function suppressedTerminalRecord(
+  call: ToolCallPayload,
+  fabricated: FabricatedToolTranscript,
+): { call: ToolCallPayload; result: CompressedToolResult } {
+  const args: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(call.args ?? {})) {
+    args[key] =
+      typeof value === "string" && value.length > SUPPRESSED_ARG_PREVIEW_CHARS
+        ? `${value.slice(0, SUPPRESSED_ARG_PREVIEW_CHARS)} … [${value.length - SUPPRESSED_ARG_PREVIEW_CHARS} more chars not delivered]`
+        : value;
+  }
+  const count = Math.max(fabricated.calls, fabricated.results);
+  return {
+    call: { ...call, args },
+    result: compressToolResult({
+      tool: call.tool,
+      status: "error",
+      output: `not delivered: the same response wrote ${count} tool call${count === 1 ? "" : "s"} as plain text instead of calling ${count === 1 ? "it" : "them"}, so the work it reports never happened. Do the work with real tool calls first.`,
+      details: {
+        notDelivered: true,
+        textToolCalls: fabricated.calls,
+        textToolResults: fabricated.results,
+      },
+    }),
+  };
 }
 
 /**

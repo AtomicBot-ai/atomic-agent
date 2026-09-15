@@ -27,6 +27,7 @@ export type TraceEvent =
   | TraceLlmCompletion
   | TraceToolInvocation
   | TraceParseRetry
+  | TraceBatchTrimmed
   | TraceLoopDetected
   | TraceTaskContinued
   | TraceProviderWaiting
@@ -169,6 +170,26 @@ export interface TraceParseRetry extends TraceEventBase {
   stepIndex: number;
   attempt: number;
   reason: string;
+}
+
+/**
+ * The model emitted several calls in one completion and the runtime ran
+ * only `kept`: the batch held approval-gated tools that would have asked
+ * someone, so it was cut to the first of them. Everything in `dropped`
+ * was generated and never executed — without this row a post-mortem sees
+ * one `tool_invocation` and no trace of the rest of the output.
+ */
+export interface TraceBatchTrimmed extends TraceEventBase {
+  type: "batch_trimmed";
+  turnIndex: number;
+  stepIndex: number;
+  /** Calls the model emitted. Always >= 2. */
+  originalSize: number;
+  /** The one tool that ran. */
+  kept: string;
+  /** Tools that never ran, in emitted order. */
+  dropped: string[];
+  reason: "approval-gated-batched";
 }
 
 /**

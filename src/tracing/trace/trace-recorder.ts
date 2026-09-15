@@ -240,6 +240,20 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
+      case "batch_trimmed":
+        push({
+          type: "batch_trimmed",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          originalSize: inner.originalSize,
+          kept: inner.kept,
+          dropped: [...inner.dropped],
+          reason: inner.reason,
+        });
+        return;
       case "step_error":
         push({
           type: "error",

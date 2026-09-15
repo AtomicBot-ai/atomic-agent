@@ -8,7 +8,13 @@ import {
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
-import { REPAIR_MAX_TOKENS } from "./step-executor.js";
+import {
+  REPAIR_MAX_TOKENS,
+  detectFabricatedToolTranscript,
+  formatFabricatedTranscriptNotice,
+  type StepApprovalPostureSource,
+  type StepEvent,
+} from "./step-executor.js";
 import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
 import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -1631,6 +1637,446 @@ describe("executeStep pure-read wave splitting (#111)", () => {
       expect(outcome.toolCalls).toHaveLength(1);
     },
   );
+});
+
+function mockCompletion(
+  content: string,
+  extra: Partial<CompletionResult> = {},
+): CompletionResult {
+  return {
+    content,
+    reasoningContent: "",
+    stop: true,
+    truncated: false,
+    timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+    cacheHitTokens: 0,
+    slotId: 0,
+    modelId: "mock",
+    ...extra,
+  };
+}
+
+/** Registry whose tools log `start`/`end` so tests can see the dispatch order. */
+function orderLoggingRegistry(log: string[]): ToolRegistry {
+  const registry = new ToolRegistry();
+  const register = (name: string, delayMs = 0): void => {
+    registry.register({
+      name,
+      description: name,
+      readonly: false,
+      async run(args) {
+        const target = String(args.path ?? args.command ?? args.text ?? "");
+        log.push(`start ${name} ${target}`);
+        if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+        log.push(`end ${name} ${target}`);
+        return compressToolResult({
+          tool: name,
+          status: "ok",
+          output: `${name} ${target}`,
+        });
+      },
+    });
+  };
+  register("os.fs.read", 25);
+  register("os.fs.write", 5);
+  register("os.fs.edit");
+  register("os.shell.run");
+  register("reply");
+  return registry;
+}
+
+describe("executeStep approval-gated batches that would not prompt", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  async function run(
+    body: string,
+    approvalPosture?: StepApprovalPostureSource,
+  ): Promise<{
+    outcome: Awaited<ReturnType<typeof executeStep>>;
+    log: string[];
+    events: StepEvent[];
+  }> {
+    const log: string[] = [];
+    const events: StepEvent[] = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-in-order", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry: orderLoggingRegistry(log),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => mockCompletion(body),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (event) => events.push(event),
+        ...(approvalPosture ? { approvalPosture } : {}),
+      },
+    );
+    return { outcome, log, events };
+  }
+
+  const LEVEL_5: StepApprovalPostureSource = { getLevel: () => 5 };
+
+  it("runs every call of a 5-write batch at level 5 instead of keeping the first", async () => {
+    const files = ["a.js", "b.js", "c.js", "d.js"];
+    const body = JSON.stringify([
+      ...files.map((path) => ({
+        tool: "os.fs.write",
+        args: { path, content: "x" },
+      })),
+      {
+        tool: "os.fs.edit",
+        args: { path: "a.js", oldString: "x", newString: "y" },
+      },
+    ]);
+    const { outcome, log, events } = await run(body, LEVEL_5);
+
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
+      "os.fs.write",
+      "os.fs.write",
+      "os.fs.write",
+      "os.fs.write",
+      "os.fs.edit",
+    ]);
+    expect(outcome.toolResults.every((r) => r.status === "ok")).toBe(true);
+    expect(log.filter((l) => l.startsWith("start"))).toEqual([
+      "start os.fs.write a.js",
+      "start os.fs.write b.js",
+      "start os.fs.write c.js",
+      "start os.fs.write d.js",
+      "start os.fs.edit a.js",
+    ]);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(0);
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+    const executed = events.flatMap((e) =>
+      e.type === "tool_call_executed" ? [[e.batchIndex, e.batchSize]] : [],
+    );
+    expect(executed).toEqual([
+      [0, 5],
+      [1, 5],
+      [2, 5],
+      [3, 5],
+      [4, 5],
+    ]);
+    expect(outcome.terminal).toBeNull();
+  });
+
+  it("dispatches each call only after the previous one settled, across resource classes", async () => {
+    // The read is the slowest call. Grouped execution would start the
+    // write alongside it; in-order execution must not.
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "x" } },
+      { tool: "os.fs.write", args: { path: "x", content: "1" } },
+      { tool: "os.fs.read", args: { path: "x" } },
+    ]);
+    const { log } = await run(body, LEVEL_5);
+    expect(log).toEqual([
+      "start os.fs.read x",
+      "end os.fs.read x",
+      "start os.fs.write x",
+      "end os.fs.write x",
+      "start os.fs.read x",
+      "end os.fs.read x",
+    ]);
+  });
+
+  it("closes the turn when the in-order batch ends in reply", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.write", args: { path: "b", content: "2" } },
+      { tool: "reply", args: { text: "wrote a and b" } },
+    ]);
+    const { outcome, log, events } = await run(body, LEVEL_5);
+    expect(outcome.terminal).toBe("turn");
+    expect(log.filter((l) => l.startsWith("start"))).toEqual([
+      "start os.fs.write a",
+      "start os.fs.write b",
+      "start reply wrote a and b",
+    ]);
+    expect(
+      events.filter((e) => e.type === "assistant_reply").map((e) => e.type),
+    ).toEqual(["assistant_reply"]);
+  });
+
+  it("still trims when a gated call could prompt (fs write below level 5)", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.write", args: { path: "b", content: "2" } },
+    ]);
+    const { outcome, log, events } = await run(body, { getLevel: () => 4 });
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(log).toEqual(["start os.fs.write a", "end os.fs.write a"]);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(1);
+    expect(outcome.trimmedBatchNotice).toContain("dropped the rest");
+  });
+
+  it("still trims when no approval posture is wired", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.write", args: { path: "b", content: "2" } },
+    ]);
+    const { outcome } = await run(body);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.trimmedBatchNotice).toBeDefined();
+  });
+
+  it("uses the session's category grants: a shell grant runs a shell batch whole, not a write", async () => {
+    const shellGrant: StepApprovalPostureSource = {
+      getLevel: () => 1,
+      sessionGrants: () => ({ categories: ["shell"] }),
+    };
+    const shells = JSON.stringify([
+      { tool: "os.shell.run", args: { command: "ls" } },
+      { tool: "os.shell.run", args: { command: "pwd" } },
+    ]);
+    const whole = await run(shells, shellGrant);
+    expect(whole.outcome.toolCalls).toHaveLength(2);
+    expect(whole.outcome.trimmedBatchNotice).toBeUndefined();
+
+    const mixed = JSON.stringify([
+      { tool: "os.shell.run", args: { command: "ls" } },
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+    ]);
+    const trimmed = await run(mixed, shellGrant);
+    expect(trimmed.outcome.toolCalls).toHaveLength(1);
+    expect(trimmed.outcome.trimmedBatchNotice).toBeDefined();
+  });
+
+  it("does not run a gated batch past the wave-split ceiling, even at level 5", async () => {
+    const body = JSON.stringify(
+      Array.from({ length: 33 }, (_, i) => ({
+        tool: "os.fs.write",
+        args: { path: `f${i}`, content: "x" },
+      })),
+    );
+    await expect(run(body, LEVEL_5)).rejects.toThrow(/maxParallelToolCalls/);
+  });
+});
+
+describe("fabricated tool transcripts", () => {
+  const FABRICATED = [
+    "I'll write the scene module and test it.",
+    'assistant_tool_call: os.fs.write {"path":"js/scene.js","content":"export const x = 1;"}',
+    "tool_result[os.fs.write ok]: wrote 20 bytes to js/scene.js",
+    'assistant_tool_call: os.shell.run {"command":"node test.js"}',
+    "tool_result[os.shell.run ok]: ALL ASSERTIONS PASSED!",
+    "We are ready to provide the final reply.",
+  ].join("\n");
+
+  const NOTICE =
+    "Your last response contained 2 tool calls written as plain text. " +
+    "None of them ran and their results were invented. " +
+    "Call tools natively — nothing is done until a real tool result comes back.";
+
+  describe("detectFabricatedToolTranscript", () => {
+    it("counts transcript lines written as text", () => {
+      expect(detectFabricatedToolTranscript(FABRICATED)).toEqual({
+        calls: 2,
+        results: 2,
+      });
+    });
+
+    it("accepts a bare tool_call: prefix and error results", () => {
+      const text = [
+        'tool_call: os.fs.read {"path":"a"}',
+        "tool_result[os.fs.read error]: ENOENT",
+      ].join("\n");
+      expect(detectFabricatedToolTranscript(text)).toEqual({
+        calls: 1,
+        results: 1,
+      });
+    });
+
+    it("counts a transcript inside a fence that is never closed", () => {
+      const text = ["```", ...FABRICATED.split("\n")].join("\n");
+      expect(detectFabricatedToolTranscript(text)).toEqual({
+        calls: 2,
+        results: 2,
+      });
+    });
+
+    it.each([
+      [
+        "prose that quotes one line",
+        "The build passed.\ntool_result[os.shell.run ok]: 12 tests passed\nThat is the last run.",
+      ],
+      [
+        "inline mentions",
+        "The `tool_result[os.fs.write ok]:` line and the `assistant_tool_call: os.fs.write {…}` line\nare how history is rendered.",
+      ],
+      [
+        "bullets and quotes",
+        "- tool_result[os.fs.read ok]: a\n> tool_result[os.fs.read ok]: b\n* assistant_tool_call: os.fs.read {}",
+      ],
+      [
+        "a closed code fence quoting the format",
+        "History looks like this:\n```\nassistant_tool_call: os.fs.read {\"path\":\"a\"}\ntool_result[os.fs.read ok]: hello\n```\nThat is all.",
+      ],
+      [
+        "a JSON tool-call array",
+        JSON.stringify([
+          { tool: "os.fs.write", args: { path: "a", content: "tool_result[x ok]: y\nz" } },
+        ]),
+      ],
+      ["a call line without arguments", "assistant_tool_call: done\ntool_call: nothing here"],
+    ])("ignores %s", (_label, text) => {
+      expect(detectFabricatedToolTranscript(text)).toBeNull();
+    });
+
+    it("renders the notice, without claiming invented results when there were none", () => {
+      expect(formatFabricatedTranscriptNotice({ calls: 2, results: 2 })).toBe(
+        NOTICE,
+      );
+      expect(formatFabricatedTranscriptNotice({ calls: 3, results: 0 })).toBe(
+        "Your last response contained 3 tool calls written as plain text. None of them ran. " +
+          "Call tools natively — nothing is done until a real tool result comes back.",
+      );
+    });
+  });
+
+  describe("executeStep", () => {
+    function toolCall(id: string, name: string, args: Record<string, unknown>) {
+      return {
+        id,
+        type: "function" as const,
+        function: { name, arguments: JSON.stringify(args) },
+      };
+    }
+
+    async function runNative(
+      completion: CompletionResult,
+      approvalPosture?: StepApprovalPostureSource,
+    ): Promise<{
+      outcome: Awaited<ReturnType<typeof executeStep>>;
+      log: string[];
+      events: StepEvent[];
+    }> {
+      const log: string[] = [];
+      const events: StepEvent[] = [];
+      const outcome = await executeStep(
+        {
+          session: createEmptySessionState({ id: "s-fabricated", workingDir: "/w" }),
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "build the scene",
+        },
+        {
+          registry: orderLoggingRegistry(log),
+          slotManager: new SlotManager(2),
+          llmComplete: async () => completion,
+          grammar: "",
+          profile: PLAIN_INSTRUCT_PROFILE,
+          toolTransport: "native_tools",
+          toolCallAdapter: null,
+          supportsSlotAffinity: false,
+          onEvent: (event) => events.push(event),
+          ...(approvalPosture ? { approvalPosture } : {}),
+        },
+      );
+      return { outcome, log, events };
+    }
+
+    it("does not accept a native reply that follows an invented transcript", async () => {
+      const { outcome, log, events } = await runNative(
+        mockCompletion(FABRICATED, {
+          toolCalls: [
+            toolCall("c1", "reply", { text: "Implemented js/scene.js and verified it." }),
+          ],
+        }),
+      );
+      expect(outcome.terminal).toBeNull();
+      expect(log).toEqual([]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+      expect(outcome.toolResults[0]!.status).toBe("error");
+      expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+      expect(events.some((e) => e.type === "assistant_reply")).toBe(false);
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+      // The rejected reply is in the trace pair like any other call.
+      const parsed = events.flatMap((e) =>
+        e.type === "tool_call_parsed" ? [e.call.tool] : [],
+      );
+      const executed = events.flatMap((e) =>
+        e.type === "tool_call_executed" ? [e.result.status] : [],
+      );
+      expect(parsed).toEqual(["reply"]);
+      expect(executed).toEqual(["error"]);
+    });
+
+    it("still runs genuine non-terminal native calls from the same completion", async () => {
+      const { outcome, log } = await runNative(
+        mockCompletion(FABRICATED, {
+          toolCalls: [
+            toolCall("c1", "os__fs__read", { path: "js/scene.js" }),
+            toolCall("c2", "reply", { text: "done" }),
+          ],
+        }),
+      );
+      expect(log).toEqual(["start os.fs.read js/scene.js", "end os.fs.read js/scene.js"]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.read", "reply"]);
+      expect(outcome.toolResults.map((r) => r.status)).toEqual(["ok", "error"]);
+      expect(outcome.terminal).toBeNull();
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+    });
+
+    it("runs genuine native writes in order and drops only the reply at level 5", async () => {
+      const { outcome, log } = await runNative(
+        mockCompletion(FABRICATED, {
+          toolCalls: [
+            toolCall("c1", "os__fs__write", { path: "a.js", content: "1" }),
+            toolCall("c2", "os__fs__write", { path: "b.js", content: "2" }),
+            toolCall("c3", "reply", { text: "done" }),
+          ],
+        }),
+        { getLevel: () => 5 },
+      );
+      expect(log.filter((l) => l.startsWith("start"))).toEqual([
+        "start os.fs.write a.js",
+        "start os.fs.write b.js",
+      ]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
+        "os.fs.write",
+        "os.fs.write",
+        "reply",
+      ]);
+      expect(outcome.terminal).toBeNull();
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+    });
+
+    it("suppresses the reply synthesised from text-only content and clips it in the transcript", async () => {
+      const longText = `${FABRICATED}\n${"x".repeat(5000)}`;
+      const { outcome, log } = await runNative(mockCompletion(longText));
+      expect(log).toEqual([]);
+      expect(outcome.terminal).toBeNull();
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+      const text = String(outcome.toolCalls[0]!.args.text);
+      expect(text.length).toBeLessThan(600);
+      expect(text).toContain("more chars not delivered");
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+    });
+
+    it("accepts a reply whose prose quotes a single transcript line", async () => {
+      const { outcome, log } = await runNative(
+        mockCompletion(
+          "The last run said:\ntool_result[os.shell.run ok]: 12 tests passed",
+          { toolCalls: [toolCall("c1", "reply", { text: "All 12 tests pass." })] },
+        ),
+      );
+      expect(outcome.terminal).toBe("turn");
+      expect(log).toEqual(["start reply All 12 tests pass.", "end reply All 12 tests pass."]);
+      expect(outcome.trimmedBatchNotice).toBeUndefined();
+    });
+  });
 });
 
 describe("executeStep streaming reasoning accumulator", () => {
