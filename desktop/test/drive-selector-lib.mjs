@@ -77,7 +77,11 @@ export async function launch({
   // only the first.
   const child = spawn(
     'npx',
-    ['electron', '.', `--remote-debugging-port=${port}`, ...args],
+    /* A throwaway Chromium profile inside the throwaway state dir, as
+       drive.mjs does: without it `electron .` shares ~/Library/Application
+       Support/Atomic Agent with the operator's installed app (prefs.json,
+       voice.json, localStorage) and two windows fight over one profile. */
+    ['electron', '.', `--remote-debugging-port=${port}`, `--user-data-dir=${stateDir}/.chromium-profile`, ...args],
     {
       cwd: DESKTOP_DIR,
       env: { ...process.env, ATOMIC_AGENT_STATE_DIR: stateDir, ...env },
