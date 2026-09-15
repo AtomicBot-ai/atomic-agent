@@ -1,30 +1,25 @@
-import { readFile, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, resolve, dirname, basename } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { dirname, basename } from "node:path";
 import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
 import { withParseWarning } from "./fs-parse-check.js";
+import { dryRunFile, type PreviewOutcome } from "./fs-patch-preview.js";
+import {
+  guardReplacedFile,
+  priorFromText,
+  withReplaceNotes,
+  type ReplaceGuardOutcome,
+} from "./fs-replace-guard.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
-/**
- * Per-file outcome of applying a patch. Tracked per target so the tool can
- * report "files 1/3 applied, 2/3 rejected" instead of silently dropping
- * bad hunks.
- */
-interface FileOutcome {
-  path: string;
-  absolute: string;
-  applied: boolean;
-  reason?: string;
-  addedLines: number;
-  removedLines: number;
-}
+export type { FileOutcome, PreviewOutcome } from "./fs-patch-preview.js";
 
 interface PatchArgs {
   patch: string;
@@ -90,6 +85,7 @@ export function buildOsFsPatchTool(
       }
 
       const parseWarnings: string[] = [];
+      const guards: ReplaceGuardOutcome[] = [];
       for (let i = 0; i < parsed.length; i++) {
         const hunkFile = parsed[i];
         const outcome = previews[i];
@@ -105,6 +101,9 @@ export function buildOsFsPatchTool(
           );
         }
         await writeFile(outcome.absolute, patched, "utf8");
+        guards.push(
+          await guardAfterPatch(options, ctx.sessionId, outcome, patched),
+        );
         const warning = parseWarningAfterPatch(
           outcome,
           patched,
@@ -113,12 +112,47 @@ export function buildOsFsPatchTool(
         if (warning !== null) parseWarnings.push(warning);
       }
 
-      return withParseWarning(
-        buildResult(previews, "applied"),
-        parseWarnings.length > 0 ? parseWarnings.join("\n") : null,
+      return withReplaceNotes(
+        withParseWarning(
+          buildResult(previews, "applied"),
+          parseWarnings.length > 0 ? parseWarnings.join("\n") : null,
+        ),
+        guards,
       );
     },
   };
+}
+
+/**
+ * A patch that created the file marks it as the agent's; one that cut a
+ * user's file down by 80 % or more saves what it replaced and says so
+ * (`fs-replace-guard.ts`). The absolute path is what the note spells,
+ * since a patch path is relative to `rootDir`, not the working dir.
+ */
+async function guardAfterPatch(
+  options: FsDangerousToolOptions,
+  sessionId: string,
+  outcome: PreviewOutcome,
+  patched: string,
+): Promise<ReplaceGuardOutcome> {
+  if (!outcome.existed) {
+    try {
+      await options.restore?.recordCreated(sessionId, outcome.absolute);
+    } catch {
+      // Best effort: the patch landed either way.
+    }
+    return { note: null };
+  }
+  return guardReplacedFile({
+    store: options.restore,
+    sessionId,
+    absolute: outcome.absolute,
+    display: outcome.absolute,
+    tool: "os.fs.patch",
+    change: "shrink",
+    prior: priorFromText(outcome.originalContent ?? ""),
+    after: patched,
+  });
 }
 
 /**
@@ -198,108 +232,6 @@ function safeParsePatch(source: string): StructuredPatch[] {
       `os.fs.patch: failed to parse patch — ${(err as Error).message}`,
     );
   }
-}
-
-interface PreviewOutcome extends FileOutcome {
-  /** Raw source content at the time of preview (used again when we decide to write). */
-  originalContent?: string;
-}
-
-async function dryRunFile(
-  hunkFile: StructuredPatch,
-  rootDir: string,
-  fuzzFactor: number,
-  stripComponents: number,
-): Promise<PreviewOutcome> {
-  const targetRel = pickTargetPath(hunkFile, stripComponents);
-  const abs = isAbsolute(targetRel) ? targetRel : resolve(rootDir, targetRel);
-  const counts = countLines(hunkFile);
-
-  let originalContent = "";
-  try {
-    const info = await stat(abs);
-    if (!info.isFile()) {
-      return {
-        path: targetRel,
-        absolute: abs,
-        applied: false,
-        reason: "target is not a regular file",
-        addedLines: counts.added,
-        removedLines: counts.removed,
-      };
-    }
-    originalContent = await readFile(abs, "utf8");
-  } catch (err) {
-    const isMissing = (err as NodeJS.ErrnoException).code === "ENOENT";
-    if (!isMissing) {
-      return {
-        path: targetRel,
-        absolute: abs,
-        applied: false,
-        reason: `cannot read target: ${(err as Error).message}`,
-        addedLines: counts.added,
-        removedLines: counts.removed,
-      };
-    }
-    // Missing target is fine only if the patch creates the file from
-    // scratch (empty original). Let applyPatch decide.
-  }
-
-  const patched = applyPatch(originalContent, hunkFile, { fuzzFactor });
-  if (patched === false) {
-    return {
-      path: targetRel,
-      absolute: abs,
-      applied: false,
-      reason: `hunk(s) did not match (fuzzFactor=${fuzzFactor})`,
-      addedLines: counts.added,
-      removedLines: counts.removed,
-      originalContent,
-    };
-  }
-  return {
-    path: targetRel,
-    absolute: abs,
-    applied: true,
-    addedLines: counts.added,
-    removedLines: counts.removed,
-    originalContent,
-  };
-}
-
-function pickTargetPath(
-  hunkFile: StructuredPatch,
-  stripComponents: number,
-): string {
-  // Prefer the "new" side; fall back to the "old" side for pure deletions.
-  const raw =
-    typeof hunkFile.newFileName === "string" &&
-    hunkFile.newFileName !== "/dev/null"
-      ? hunkFile.newFileName
-      : (hunkFile.oldFileName ?? "");
-  return stripPathComponents(raw, stripComponents);
-}
-
-function stripPathComponents(p: string, n: number): string {
-  if (n <= 0) return p;
-  // Drop `a/`, `b/` prefixes that `git diff` emits.
-  const parts = p.split(/[\\/]/);
-  return parts.slice(Math.min(n, parts.length - 1)).join("/");
-}
-
-function countLines(hunkFile: StructuredPatch): {
-  added: number;
-  removed: number;
-} {
-  let added = 0;
-  let removed = 0;
-  for (const hunk of hunkFile.hunks) {
-    for (const line of hunk.lines) {
-      if (line.startsWith("+")) added++;
-      else if (line.startsWith("-")) removed++;
-    }
-  }
-  return { added, removed };
 }
 
 function buildResult(

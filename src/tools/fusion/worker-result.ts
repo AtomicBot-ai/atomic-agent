@@ -58,6 +58,7 @@ export const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.write",
   "os.fs.edit",
   "os.fs.patch",
+  "os.fs.restore",
 ]);
 
 /**

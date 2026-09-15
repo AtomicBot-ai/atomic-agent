@@ -127,6 +127,7 @@ describe("tool-resource-class", () => {
       "os.fs.edit",
       "os.fs.trash",
       "os.fs.patch",
+      "os.fs.restore",
       "os.fs.archive.extract",
       "os.git.init",
       "os.git.add",

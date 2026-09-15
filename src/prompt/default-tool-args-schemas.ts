@@ -153,6 +153,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["path", "content"],
     ),
   ],
+  ["os.fs.restore", obj({ path: stringSchema }, ["path"])],
   ["os.fs.trash", obj({ paths: stringArraySchema }, ["paths"])],
   [
     "os.fs.list",

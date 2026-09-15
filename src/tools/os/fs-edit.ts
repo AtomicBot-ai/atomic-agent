@@ -4,15 +4,18 @@ import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
+import { clampDiffPreview, renderUnifiedDiff } from "./fs-edit-diff.js";
 import { withParseWarning } from "./fs-parse-check.js";
+import {
+  guardReplacedFile,
+  priorFromText,
+  withReplaceNotes,
+} from "./fs-replace-guard.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
 import type { ToolDefinition } from "../tool-registry.js";
-
-const DIFF_MAX_LINES = 40;
-const PREVIEW_MAX_LEN = 800;
 
 interface EditArgs {
   path: string;
@@ -53,7 +56,7 @@ export function buildOsFsEditTool(
         ? replaceAll(original, args.oldString, args.newString)
         : replaceOnce(original, args.oldString, args.newString);
       const diff = renderUnifiedDiff(original, updated, absolute);
-      const preview = clamp(diff, PREVIEW_MAX_LEN);
+      const preview = clampDiffPreview(diff);
       await requireFsApproval(
         options,
         {
@@ -72,6 +75,20 @@ export function buildOsFsEditTool(
 
       await atomicWrite(absolute, updated);
 
+      // An edit that cut a user's file down by 80 % or more — the blind
+      // `replaceAll` that ate a dataset — saves what it replaced and says
+      // so (`fs-replace-guard.ts`); an ordinary edit is silent here.
+      const guard = await guardReplacedFile({
+        store: options.restore,
+        sessionId: ctx.sessionId,
+        absolute,
+        display: args.path,
+        tool: "os.fs.edit",
+        change: "shrink",
+        prior: priorFromText(original),
+        after: updated,
+      });
+
       const replacedOccurrences = args.replaceAll ? occurrences : 1;
       // Judged after the write landed, against the file as it was before:
       // an edit that turns a parsing file into a broken one — the classic
@@ -86,20 +103,24 @@ export function buildOsFsEditTool(
         replacedOccurrences,
       });
 
-      return withParseWarning(
-        compressToolResult({
-          tool: "os.fs.edit",
-          status: "ok",
-          output: diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
-          details: {
-            path: absolute,
-            replacedOccurrences,
-            replaceAll: args.replaceAll,
-            sizeBefore: Buffer.byteLength(original, "utf8"),
-            sizeAfter: Buffer.byteLength(updated, "utf8"),
-          },
-        }),
-        parseWarning,
+      return withReplaceNotes(
+        withParseWarning(
+          compressToolResult({
+            tool: "os.fs.edit",
+            status: "ok",
+            output:
+              diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
+            details: {
+              path: absolute,
+              replacedOccurrences,
+              replaceAll: args.replaceAll,
+              sizeBefore: Buffer.byteLength(original, "utf8"),
+              sizeAfter: Buffer.byteLength(updated, "utf8"),
+            },
+          }),
+          parseWarning,
+        ),
+        [guard],
       );
     },
   };
@@ -190,101 +211,4 @@ async function atomicWrite(target: string, content: string): Promise<void> {
     }
     throw err;
   }
-}
-
-/**
- * Minimal unified diff, capped at DIFF_MAX_LINES total lines. We avoid a
- * full LCS algorithm: the edit is a single substring replacement, so the
- * diff is well approximated by a simple before/after line listing around
- * the changed region.
- */
-function renderUnifiedDiff(
-  before: string,
-  after: string,
-  path: string,
-): string {
-  const beforeLines = before.split(/\r?\n/);
-  const afterLines = after.split(/\r?\n/);
-  const firstDiff = findFirstDiffLine(beforeLines, afterLines);
-  if (firstDiff === -1) return "";
-  const contextBefore = 2;
-  const contextAfter = 2;
-  const head = Math.max(0, firstDiff - contextBefore);
-  const lastDiffBefore = findLastDiffLine(beforeLines, afterLines);
-  const lastDiffAfter = findLastDiffLineFromEnd(beforeLines, afterLines);
-  const tailBefore = Math.min(
-    beforeLines.length - 1,
-    lastDiffBefore + contextAfter,
-  );
-
-  const segments: string[] = [];
-  segments.push(`--- a/${path}`);
-  segments.push(`+++ b/${path}`);
-  for (
-    let i = head;
-    i <= Math.min(beforeLines.length - 1, tailBefore) && i < firstDiff;
-    i++
-  ) {
-    segments.push(` ${beforeLines[i]}`);
-  }
-  for (let i = firstDiff; i <= lastDiffBefore; i++) {
-    segments.push(`-${beforeLines[i] ?? ""}`);
-  }
-  for (let i = firstDiff; i <= lastDiffAfter; i++) {
-    segments.push(`+${afterLines[i] ?? ""}`);
-  }
-  for (
-    let i = Math.max(lastDiffBefore + 1, firstDiff);
-    i <= tailBefore && i < beforeLines.length;
-    i++
-  ) {
-    segments.push(` ${beforeLines[i]}`);
-  }
-  if (segments.length > DIFF_MAX_LINES + 2) {
-    return (
-      segments.slice(0, DIFF_MAX_LINES + 2).join("\n") + "\n… [diff truncated]"
-    );
-  }
-  return segments.join("\n");
-}
-
-function findFirstDiffLine(before: string[], after: string[]): number {
-  const limit = Math.min(before.length, after.length);
-  for (let i = 0; i < limit; i++) {
-    if (before[i] !== after[i]) return i;
-  }
-  if (before.length !== after.length) return limit;
-  return -1;
-}
-
-function findLastDiffLine(before: string[], after: string[]): number {
-  // Returns the last index in `before` that differs from `after` (walking
-  // from the end). Treats missing indices as different.
-  const len = Math.max(before.length, after.length);
-  for (
-    let i = before.length - 1, j = after.length - 1;
-    i >= 0 && j >= 0;
-    i--, j--
-  ) {
-    if (before[i] !== after[j]) return i;
-  }
-  if (before.length < after.length) return -1;
-  return before.length - 1 - (len - Math.max(before.length, after.length));
-}
-
-function findLastDiffLineFromEnd(before: string[], after: string[]): number {
-  for (
-    let i = after.length - 1, j = before.length - 1;
-    i >= 0 && j >= 0;
-    i--, j--
-  ) {
-    if (after[i] !== before[j]) return i;
-  }
-  if (after.length > before.length) return after.length - 1;
-  return -1;
-}
-
-function clamp(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen - 15) + "\n… [truncated]";
 }

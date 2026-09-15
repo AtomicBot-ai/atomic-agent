@@ -316,7 +316,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       ? [
           `Call tools now, through the native function-calling interface (the \`tools\` your API request carries) — do NOT write tool-call JSON as text. The \`### tools\` catalog above is reference documentation for those same tools (tiers, examples, \`tool.view\`). For the final user-facing answer call \`reply\`, or answer in plain text.`,
           `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), emit up to ${maxParallelToolCalls} tool calls in the SAME response — they run in parallel and cut wall time by ~Nx.`,
-          `Emit a single tool call (no others alongside) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+          `Emit a single tool call (no others alongside) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.restore\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
         ]
       : [
           `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call. Use \`reply\` for natural-language answers to the user.`,
@@ -324,7 +324,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
           `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
           `  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]`,
           `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,
-          `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+          `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.restore\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
         ]),
     ``,
   ].join("\n");

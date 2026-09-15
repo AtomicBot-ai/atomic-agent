@@ -593,6 +593,7 @@ describe("registerOsTools", () => {
         "os.fs.patch",
         "os.fs.read",
         "os.fs.read_document",
+        "os.fs.restore",
         "os.fs.trash",
         "os.fs.watch",
         "os.fs.write",

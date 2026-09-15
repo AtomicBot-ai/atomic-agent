@@ -262,6 +262,25 @@ describe("os-tool names the local-model grammar admits", () => {
     }
   });
 
+  it("includes os.fs.restore — the undo the replace guard's note tells the model to call", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const grammar = readFileSync(
+      resolve(__dirname, "../../../grammars/tool-call.gbnf"),
+      "utf8",
+    );
+    const osToolLine =
+      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    expect(osToolLine).toContain('"fs.restore"');
+    expect(
+      gbnfAccepts(
+        grammar,
+        "root",
+        '[{"tool":"os.fs.restore","args":{"path":"sales.csv"}}]',
+      ),
+    ).toBe(true);
+  });
+
   it("includes the git WRITE tools, not just the read half", () => {
     // Same class of bug as the missing `fusion.delegate`: the local-first
     // git tools were registered and described, and the grammar still only
