@@ -2339,6 +2339,10 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    // The gate itself, not a copied level: a batch of approval-gated calls
+    // runs in order when nothing in it would ask (`--no-approval`), and the
+    // step must see the level the operator has now, not at boot.
+    approvalPosture: approvals,
     // The same live resolution the `fusion.delegate` descriptor gate
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
