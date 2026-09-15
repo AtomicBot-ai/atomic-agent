@@ -174,7 +174,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   check("fusion: workers write fusion.workers and managed.parallel together, with the TUI's notice",
     vw.write && w.llm?.runMode?.fusion?.workers === 4 && w.localModels?.managed?.parallel === 4
       && w.llm?.runMode?.mode === "fusion" && w.llm?.activeTextProvider === "aimlapi"
-      && vw.notice === "fusion: 4 workers — restart the local daemon (Manage › LLM › Local, `s`) to apply --parallel 4"
+      && vw.notice === "fusion: 4 workers — restart the local model (Manage › LLM › Local) so it runs 4 at once"
       && vw1.notice === "fusion: 1 worker" && !vw9.write && vw9.refusal === "workers must be an integer 1-8, got 9",
     `${vw.notice} · ${vw1.notice} · ${vw9.refusal}`);
 

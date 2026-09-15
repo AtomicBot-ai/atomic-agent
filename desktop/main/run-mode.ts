@@ -358,7 +358,9 @@ export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeV
   cfg.llm = { ...llm, runMode: { ...llm.runMode, fusion: { ...llm.runMode?.fusion, workers } } };
   cfg.localModels = { ...cfg.localModels, managed: { ...cfg.localModels?.managed, parallel: workers } };
   const hint = cfg.localModels.mode === "managed" && parallelBefore !== workers
-    ? ` — restart the local daemon (Manage › LLM › Local, \`s\`) to apply --parallel ${workers}`
+    // The TUI's notice names its `s` chord and the `--parallel` flag; the
+    // desktop says what to do in its own terms.
+    ? ` — restart the local model (Manage › LLM › Local) so it runs ${workers} at once`
     : "";
   return {
     write: JSON.stringify(cfg) !== snapshot,

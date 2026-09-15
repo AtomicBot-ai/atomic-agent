@@ -195,7 +195,7 @@ try {
   await landed((c) => c.runMode.fusion.workers === 3, 'three workers written');
   const toastF = await until(() => app.eval(`(() => { const t = window.__lastToast(); return t && /^fusion: 3 workers/.test(t.t) ? t.t : null; })()`), 'the workers notice', 20000);
   check('F: /runmode workers 3 writes the count and the llama-server slots together, with the TUI notice',
-    cfg().parallel === 3 && toastF === 'fusion: 3 workers — restart the local daemon (Manage › LLM › Local, `s`) to apply --parallel 3', toastF);
+    cfg().parallel === 3 && toastF === 'fusion: 3 workers — restart the local model (Manage › LLM › Local) so it runs 3 at once', toastF);
 
   /* G — Settings › LLM: the same state, the same write path. */
   await app.clickSel('.sb-settings');
