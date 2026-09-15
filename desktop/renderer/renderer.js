@@ -1985,26 +1985,42 @@ function apprCard(m) {
 
 function composer() {
   const running = S.busy || !!S.pending;
+  /* Soft Tactile: every status line is a chip, then machine text. What the
+     drivers and the ticker read is kept — `.statusstrip` (+ gated / waiting /
+     appstatus), the waiting strip's `.ann` / `.readout` / `.ob-help`, the busy
+     strip's FIRST `.tnum` (the 100 ms ticker writes the elapsed time into it),
+     `data-act="stop"` and `data-act="jump:appr"`. */
   const status = S.pending
-    ? '<div class="statusstrip gated">' + ic('warn') + 'Waiting for your approval'
-      + '<button class="btn-g" style="text-decoration:underline" data-act="jump:appr">Jump to request</button></div>'
+    ? '<div class="statusstrip gated">'
+      + '<span class="tk-chip tk-chip--sm tk-chip--amber">' + ic('alert') + 'Waiting for your approval</span>'
+      + '<span class="ss-grow"></span>'
+      + '<button class="btn btn-g xs ss-jump" data-act="jump:appr">Jump to request' + ic('up') + '</button></div>'
     /* F3 — a parked turn says so, and says when it tries again. The brief's
        shape: WAITING · <provider> · ATTEMPT n · NEXT TRY 30s, with a Stop.
        Caution, not critical: nothing has failed yet. */
     : WAIT
     ? '<div class="statusstrip waiting">'
-      + '<span class="ann caution">Waiting</span>'
+      + '<span class="ann caution"><span class="ss-dot"></span>Waiting</span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
-      + (WAIT.reason ? '<span class="ob-help">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
-      + '<button class="btn-g" data-act="stop" style="margin-left:auto">Stop</button></div>'
+      + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
+      + '<span class="ss-grow"></span>'
+      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
     : S.busy
-    ? '<div class="statusstrip"><span class="threedot"><i></i><i></i><i></i></span><span>' + S.phase + '</span>'
-      + '<span class="mono ter tnum" style="margin-left:auto">' + (S.elapsed / 10).toFixed(1) + 's</span>'
-      + '<button class="btn-g" data-act="stop">Stop</button></div>'
+    ? '<div class="statusstrip busy">'
+      + '<span class="tk-chip tk-chip--sm tk-chip--blue ss-phase"><span class="threedot"><i></i><i></i><i></i></span>'
+      + '<span class="ss-word">' + S.phase + '</span></span>'
+      + '<span class="mono tnum ss-time">' + (S.elapsed / 10).toFixed(1) + 's</span>'
+      + '<span class="ss-grow"></span>'
+      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
-    // the operator needs this next to the button that was disabled.
+    // the operator needs this next to the button that was disabled. The
+    // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
     : SWX.err
-    ? '<div class="statusstrip gated">' + ic('warn') + esc(SWX.err) + '</div>'
+    ? '<div class="statusstrip gated">'
+      + (/has not finished/.test(SWX.err)
+          ? '<span class="ann caution">' + ic('alert') + 'Caution</span>'
+          : '<span class="ann critical">' + ic('alert') + 'Switch failed</span>')
+      + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
     /* F10 — where the app reports on itself. Lowest priority: a running turn,
        a pending approval or a failed switch all matter more than the last
        thing that changed. */
@@ -2015,8 +2031,9 @@ function composer() {
       + '<span class="readout">' + esc(APPSTATUS.text) + '</span></div>'
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
-      '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
-      + '<button class="iconbtn" style="width:20px;height:20px" data-unqueue="' + i + '">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+      '<div class="qchip"><span class="qlb">Queued</span><span class="qtx">' + esc(t) + '</span>'
+      + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+  const backend = selBackend();
   return '<div class="composerwrap">' + status + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
@@ -2042,34 +2059,43 @@ function composer() {
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask for an outcome, or / for a command') + '"></textarea>'
       + micButton() + sendButton() + '</div>'
-      /* B.7 — the control row is a legend plate: each control is named above
-         it in the 11px label style, and its value is machine text. It used to
-         read as five unlabelled dropdowns, and on the cloud route three of
-         them are the route itself — backend, then provider, then model — with
-         no way to tell which was which without opening one. */
+      /* B.7, Soft Tactile — Valerii's ruling: Backend · Provider · Model, a
+         spacer, then Context · Mode. The controls are still named, but the
+         name is a caption INSIDE the pill, drawn by CSS from `data-cap`
+         (::before), so each chip's textContent stays exactly the id the
+         drivers compare. Every chip is a direct child of `.cfoot`, so the
+         popovers can anchor to `#composer .cfoot [data-sel-open=…]`. */
       + '<div class="cfoot">'
-        + '<span class="cgrp"><span class="clabel">Backend</span>'
-        + '<button class="cchip modechip" data-sel-open="backend">'
-          + ic(selBackend() === 'cloud' ? 'cloud' : 'cpu') + selBackend() + ic('chevD') + '</button></span>'
+        + '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend">'
+          + ic(backend === 'cloud' ? 'cloud' : backend === 'custom' ? 'server' : 'laptop')
+          + '<span class="cval" data-cap="Backend">' + esc(backend) + '</span>' + ic('chevD', 'chev') + '</button>'
         // SELECTOR LANE: the visible control set follows composerSwitchKindsFor,
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
         + (selHasKind('provider')
-            ? '<span class="cgrp"><span class="clabel">Provider</span>'
-              + '<button class="cchip providerchip" data-sel-open="provider">' + esc(selProviderLabel()) + ic('chevD') + '</button></span>'
+            ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider">'
+              + providerMark(selProviderLabel(), 'xs')
+              + '<span class="cval" data-cap="Provider">' + esc(selProviderLabel()) + '</span>' + ic('chevD', 'chev') + '</button>'
             : '')
         // Lane B — backend switch: the TUI's ComposerMetaControls renders
         // no model control when there is no model (cloud provider without
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
-        + (modelChipHtml()
-            ? '<span class="cgrp"><span class="clabel">Model</span>' + modelChipHtml() + '</span>' : '')
-        + '<span style="flex:1"></span>'
-        + '<span class="cgrp"><span class="clabel">Context</span>' + contextChip() + '</span>'
-        + '<span class="cgrp"><span class="clabel">Mode</span>' + codingModeChip() + '</span>'
+        + modelChipHtml()
+        + '<span class="cgrow"></span>'
+        + contextChip()
+        + codingModeChip()
       + '</div>'
     + '</div></div>';
+}
+
+/** ' is-open' while the popover a composer chip opens is up (presentation only). */
+function cchipOpen(kind) {
+  if (kind === 'backend' || kind === 'provider' || kind === 'model') {
+    return SEL.open && !OB.open && SEL.kind === kind ? ' is-open' : '';
+  }
+  return S.overlay === kind ? ' is-open' : '';
 }
 
 /**
@@ -2125,7 +2151,7 @@ function sendButton() {
     // Item 7C: this sends a steer into the running turn. It is parked as
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
-    if (S.draft.trim()) return '<button class="sendbtn" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
+    if (S.draft.trim()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
     return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
@@ -2183,9 +2209,14 @@ function voiceStripHTML() {
   if (!rec && !VOICE.menu && VOICE.state !== 'error') return '<div class="voicestrip" hidden></div>';
   let h = '<div class="voicestrip">';
   if (rec) {
+    /* Soft Tactile: nine level bars share one `--lv` (0…1) — refreshVoice
+       patches that single property in place on every audio chunk. While the
+       helper finalizes there is no audio, so a spinner stands in for them. */
     h += '<div class="vsrow">'
       + '<span class="vsdot' + (VOICE.state === 'recording' ? ' live' : '') + '"></span>'
-      + '<span class="vslevel"><i style="width:' + voiceLevelPct() + '%"></i></span>'
+      + (VOICE.state === 'finishing'
+          ? '<span class="tk-spin vsspin"></span>'
+          : '<span class="vslevel" style="--lv:' + (voiceLevelPct() / 100) + '">' + '<i></i>'.repeat(9) + '</span>')
       + '<span class="vstext">' + voiceTextInner() + '</span>'
       + voiceChipHTML()
       + '</div>';
@@ -2196,13 +2227,14 @@ function voiceStripHTML() {
        again, so a sentence naming the Settings pane leaves the operator to
        find it themselves. Give them the switch instead — the button opens
        Privacy & Security › Microphone directly. */
-    h += '<div class="vsrow"><span class="vserr">' + esc(VOICE.err) + '</span>'
-      + (VOICE.canOpenSettings ? '<button class="btn btn-g vsopen" data-act="voice:settings">Open Settings</button>' : '')
-      + (VOICE.canResetPermission ? '<button class="btn btn-g vsopen" data-act="voice:reset">Reset and ask again</button>' : '')
+    h += '<div class="vsrow"><span class="tk-ico tk-ico--sm tk-ico--red vsico">' + ic('micOff') + '</span>'
+      + '<span class="vserr">' + esc(VOICE.err) + '</span>'
+      + (VOICE.canOpenSettings ? '<button class="btn btn-t xs vsopen" data-act="voice:settings">Open Settings</button>' : '')
+      + (VOICE.canResetPermission ? '<button class="btn btn-t xs vsopen" data-act="voice:reset">Reset and ask again</button>' : '')
       + voiceChipHTML()
-      + '<button class="vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
+      + '<button class="iconbtn sm vsx" data-act="voice:dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   } else {
-    h += '<div class="vsrow"><span class="vstext ter">Dictation language</span>' + voiceChipHTML() + '</div>';
+    h += '<div class="vsrow"><span class="vstext vslabel">Dictation language</span>' + voiceChipHTML() + '</div>';
   }
   // The sentence has to be true in the state it is painted in: while the
   // helper is finalizing, Enter no longer stops anything — submit() holds it
@@ -2248,7 +2280,7 @@ function voiceChipHTML() {
     ? voiceLangName(VOICE.winner) + ' matched'
     : voiceLangName(primary) + (second ? ' + ' + voiceLangName(second) : '');
   return '<button class="vschip' + (won ? ' won' : '') + '" data-act="voice:lang" title="Choose the dictation language">'
-    + esc(label) + ic('chevD') + '</button>';
+    + esc(label) + ic('chevD', 'chev') + '</button>';
 }
 
 function voiceMenuHTML() {
@@ -2613,11 +2645,15 @@ function slashMatches() {
 function slashPopover() {
   const m = slashMatches();
   const q = S.draft.replace(/^\//, '');
-  if (!m.length) return '<div class="slash"><div class="slashrow"><span class="cmd" style="color:var(--warn)">no matching command</span><span></span><span></span></div></div>';
+  // Soft Tactile: one amber row, no inline colour.
+  if (!m.length) return '<div class="slash"><div class="slashlist"><div class="slashrow nomatch"><span class="cmd">no matching command</span></div></div></div>';
+  // Rows scroll inside .slashlist; the footer (count + keys) stays put.
   return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a], i) =>
     '<button class="slashrow' + (i === S.slashCur ? ' on' : '') + '" data-slash="' + esc(n) + '">'
     + '<span class="cmd">/' + bold(n, q) + '</span><span class="ds">' + esc(d) + '</span>'
-    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div></div>';
+    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div>'
+    + '<div class="slashfoot"><span>' + m.length + (m.length === 1 ? ' command' : ' commands') + '</span>'
+    + '<span class="grow"></span>' + keycaps('↑↓ tab esc') + '</div></div>';
 }
 
 /* ---------------- overlays ---------------- */
@@ -4126,8 +4162,9 @@ function refreshVoice() {
     // this branch leaves the dot where it is.
     const t = strip.querySelector('.vstext');
     if (t) t.innerHTML = voiceTextInner();
-    const l = strip.querySelector('.vslevel i');
-    if (l) l.style.width = voiceLevelPct() + '%';
+    // The nine bars read one custom property, so the level is one write.
+    const l = strip.querySelector('.vslevel');
+    if (l) l.style.setProperty('--lv', String(voiceLevelPct() / 100));
   } else {
     VOICE_STRIP_KEY = key;
     if (strip) strip.outerHTML = voiceStripHTML();
@@ -10000,14 +10037,21 @@ function repaintContextChip() {
 function contextChip() {
   if (!CTX.tokens) return '';
   const proj = CTX.source === 'projected';
+  // Soft Tactile spaces the figure: `36.6k / 1.0M`, projected `~7.4k / 256k`.
   const label = (proj ? '~' : '') + (CTX.window
-    ? fmtTokens(CTX.tokens) + '/' + fmtTokens(CTX.window)
+    ? fmtTokens(CTX.tokens) + ' / ' + fmtTokens(CTX.window)
     : fmtTokens(CTX.tokens));
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
-  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + '" data-act="context" title="'
+  /* The bar is a 20px ring over the same percentage: amber above 70%, red
+     above 85%. r = 7.5, so the circumference is 47.1. */
+  const tone = pct > 85 ? ' crit' : pct > 70 ? ' warn' : '';
+  const ring = CTX.window
+    ? '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
+      + '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.1 * pct / 100).toFixed(1) + ' 47.1" transform="rotate(-90 10 10)"/></svg>'
+    : '';
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context" title="'
     + (proj ? 'projected — nothing measured in this session yet' : 'context') + '">'
-    + (CTX.window ? '<span class="gauge"><i style="width:' + pct + '%"></i></span>' : '')
-    + '<span class="tnum gaugelb">' + label + '</span></button>';
+    + ring + '<span class="tnum gaugelb">' + label + '</span></button>';
 }
 
 /* ============================================================
@@ -10026,23 +10070,24 @@ function codingModeChip() {
   // No route on this agent build: print the honest blank rather than a
   // mode. Painting 'default' would name a stance the agent does not have.
   if (MODE.supported === false) {
-    return '<button class="cchip cmodechip" data-act="modes" '
-      + 'title="' + esc(MODE_NEEDS_NEWER) + '" '
-      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" '
+      + 'title="' + esc(MODE_NEEDS_NEWER) + '">' + ic('shield') + 'mode —' + ic('chevD', 'chev') + '</button>';
   }
   // The same blank, for the same reason, one state earlier: the route has not
   // answered yet (or its last answer was an error). Painting the seed would
   // name a stance the agent has not confirmed — at approvalLevel 5 it would
   // say a green `default` while the live stance is `bypass`.
   if (!MODE.known) {
-    return '<button class="cchip cmodechip" data-act="modes" '
-      + 'title="the agent has not reported a stance yet" '
-      + 'style="color:var(--text-disabled)">' + ic('key') + 'mode —' + ic('chevD') + '</button>';
+    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" '
+      + 'title="the agent has not reported a stance yet">' + ic('shield') + 'mode —' + ic('chevD', 'chev') + '</button>';
   }
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
-  const colour = look.tone === 'bad' ? 'var(--danger)' : look.tone === 'warn' ? 'var(--warn)'
-    : look.tone === 'accent' ? 'var(--accent-text)' : 'var(--success)';
+  /* Soft Tactile tones as classes: default neutral, plan blue, auto amber,
+     bypass permissions red — each with its own icon. */
+  const tone = look.tone === 'bad' ? ' tone-bypass' : look.tone === 'warn' ? ' tone-auto'
+    : look.tone === 'accent' ? ' tone-plan' : '';
+  const icon = look.tone === 'bad' ? 'bolt' : look.tone === 'warn' ? 'edit' : look.tone === 'accent' ? 'list' : 'shield';
   // At a configured level of 5 the agent seeds its stance by inference and
   // reports `bypass`, because default/auto/bypass all resolve to level 5
   // with plan off — so the chip opens red until a mode is chosen. Say so
@@ -10051,8 +10096,8 @@ function codingModeChip() {
     ? 'what the agent may do without asking — your configured approval level is '
       + MAX_APPROVAL_LEVEL + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything'
     : 'what the agent may do without asking';
-  return '<button class="cchip cmodechip" data-act="modes" title="' + esc(title) + '" '
-    + 'style="color:' + colour + '">' + ic('key') + esc(look.label) + ic('chevD') + '</button>';
+  return '<button class="cchip cmodechip' + tone + cchipOpen('modes') + '" data-act="modes" title="' + esc(title) + '">'
+    + ic(icon) + esc(look.label) + ic('chevD', 'chev') + '</button>';
 }
 
 function modesHTML() {
@@ -11718,8 +11763,8 @@ function modelChipHtml() {
        route (a provider with a catalogue behind it) gets the call to action;
        everything else keeps the honest blank. */
     if (!selHasKind('model') || selBackend() !== 'cloud') return '';
-    return '<button class="cchip modelchip needsmodel" data-sel-open="model"'
-      + ' title="No model chosen for this provider — pick one">choose a model' + ic('chevD') + '</button>';
+    return '<button class="cchip modelchip needsmodel' + cchipOpen('model') + '" data-sel-open="model"'
+      + ' title="No model chosen for this provider — pick one">' + ic('cpu') + '<span class="cval">choose a model</span>' + ic('chevD', 'chev') + '</button>';
   }
   /* SELECTOR LANE — the model slot's TWO components, as
      composer-meta-controls.tsx has them. A model label is a `Control`, and
@@ -11734,8 +11779,11 @@ function modelChipHtml() {
      route's model control, for the composer strip and for anything reading
      it. `data-sel-dl` is the component split. */
   const cta = label === DOWNLOAD_MODEL_LABEL;
-  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + '" data-sel-open="model"'
-    + (cta ? ' data-sel-dl="1"' : '') + '>' + esc(shortModel(label)) + ic('chevD') + '</button>';
+  // Soft Tactile: the model family's real mark (CPU badge when there is none),
+  // the download icon on the call to action; the id itself in DM Mono.
+  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + cchipOpen('model') + '" data-sel-open="model"'
+    + (cta ? ' data-sel-dl="1"' : '') + '>' + (cta ? ic('download') : modelMark(label, 'xs'))
+    + '<span class="cval">' + esc(shortModel(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
 /**
  * What the two facts change on screen, repainted in place. These land
@@ -11752,7 +11800,7 @@ function bswRepaint() {
     const html = modelChipHtml();
     const el = foot.querySelector('.modelchip');
     if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
-    else if (html) { const spacer = foot.querySelector(':scope > span'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
+    else if (html) { const spacer = foot.querySelector(':scope > .cgrow'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
   }
   if (!SEL.open || OB.open) return;
   const f = document.getElementById('sel-filter');
