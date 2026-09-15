@@ -334,6 +334,8 @@ export interface AtomicAgentConfig {
       autoContinue: boolean;
     };
     toolTimeoutMs: number;
+    /** Where reads may go: the working directory and user-named paths, or anywhere. */
+    readScope: ReadScope;
     /**
      * Boot value for the five-step approval ladder (1 = ask for
      * everything … 5 = approve everything). The live value is owned by
@@ -514,6 +516,25 @@ export interface AtomicAgentConfig {
    */
   projects: {
     roots: string[];
+  };
+  /**
+   * Per-tool operator settings. Mirrors `UserConfigFile.tools`.
+   */
+  tools: {
+    shell: {
+      /**
+       * Wall-clock wait for an `os.shell.run` call whose `timeoutMs`
+       * the model omitted; a command still running then is detached as
+       * a job, not killed. `0` = no default (the command runs until it
+       * exits or the turn is cancelled). An explicit `timeoutMs`,
+       * including `0`, always wins over this — and kills at its limit.
+       */
+      defaultTimeoutMs: number;
+      /** Absolute ceiling for a detached job, from its start. */
+      jobMaxMs: number;
+      /** Detached jobs running per session; the next detach evicts the oldest. */
+      maxJobs: number;
+    };
   };
   log: {
     level: LogLevel;
@@ -1311,6 +1332,33 @@ export function parseLocalTemplateSetting(
   );
 }
 
+/**
+ * Where a session's tools may READ (config v67).
+ *
+ *  - `working-dir`: the working directory plus every absolute or
+ *    `~`-prefixed path the user named in this session's own messages
+ *    (see `src/tools/read-scope/`). The default.
+ *  - `unrestricted`: the pre-v67 behaviour — reads anywhere on disk.
+ *
+ * Fusion workers are confined regardless (and more narrowly).
+ */
+export type ReadScope = "working-dir" | "unrestricted";
+
+export const READ_SCOPES: readonly ReadScope[] = ["working-dir", "unrestricted"];
+
+export function parseReadScope(raw: unknown, field: string): ReadScope {
+  if (
+    typeof raw === "string" &&
+    (READ_SCOPES as readonly string[]).includes(raw)
+  ) {
+    return raw as ReadScope;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected ${READ_SCOPES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
 export interface UserManagedLocalLlmConfig {
   modelId: string | null;
   port: number;
@@ -1541,6 +1589,13 @@ export interface UserConfigFile {
     };
     toolTimeoutMs: number;
     /**
+     * Where a session's reads may go (config v67). `working-dir` (the
+     * default) confines filesystem reads and shell path arguments to the
+     * working directory and the paths the user named in the conversation;
+     * `unrestricted` is the pre-v67 behaviour.
+     */
+    readScope: ReadScope;
+    /**
      * Five-step approval ladder (config v37). Replaces the binary
      * `approvalRequired`; the legacy key is still read once for
      * migration (see `resolveApprovalLevel`) and never written back.
@@ -1593,6 +1648,36 @@ export interface UserConfigFile {
    */
   projects: {
     roots: string[];
+  };
+  /**
+   * Per-tool operator settings (config v67).
+   */
+  tools: {
+    shell: {
+      /**
+       * Wall-clock wait, in milliseconds, for an `os.shell.run` call
+       * whose `timeoutMs` the model omitted. Default 600 000 (10 min).
+       * A command still running then is not killed: it is detached as a
+       * job the model can `wait` for or `kill`, with its output so far
+       * in the result. `0` = no default, which is the pre-v67 behaviour.
+       * The model can still pass an explicit `timeoutMs` per call (`0`
+       * for none); that always wins and kills at its limit. A
+       * non-negative integer.
+       */
+      defaultTimeoutMs: number;
+      /**
+       * Absolute ceiling, in milliseconds, for a detached job, counted
+       * from its start — kept or not, waited on or not. Default
+       * 3 600 000 (1 h). A positive integer.
+       */
+      jobMaxMs: number;
+      /**
+       * Detached jobs that may run at once per session. Default 3. The
+       * next detach stops the oldest un-kept job first and says so. A
+       * positive integer.
+       */
+      maxJobs: number;
+    };
   };
   tracing: {
     trace: {
@@ -2277,7 +2362,29 @@ export interface UserConfigFile {
 // matching prefix (see `swa-full.ts`). Additive: an older file has no
 // field and gets `"auto"`, which is off unless the full-SWA KV estimate
 // fits the launch's memory budget.
-export const USER_CONFIG_VERSION = 66;
+// v67: session-boundary fields.
+// `tools.shell.defaultTimeoutMs` (default 600 000) — the wall-clock
+// wait for an `os.shell.run` call whose `timeoutMs` the model omitted.
+// Before v67 an omitted `timeoutMs` meant no limit at all, and a
+// recursive grep over a home directory ran for twenty minutes until a
+// person killed it; `agent.toolTimeoutMs` never applied to the shell.
+// A command still running when the default elapses is detached as a
+// job (`src/tools/os/shell-jobs.ts`) rather than killed; the model
+// reaches it through the `wait` / `kill` / `jobs` forms of the tool.
+// `0` keeps the old unbounded behaviour; an explicit per-call
+// `timeoutMs` (including `0`) always wins and kills at its limit.
+// `tools.shell.jobMaxMs` (default 3 600 000) — the absolute ceiling for
+// a detached job, from its start. `tools.shell.maxJobs` (default 3) —
+// detached jobs running at once per session; the next detach evicts the
+// oldest un-kept one. All three additive: an older file has no field
+// and takes the default.
+// `agent.readScope` (`"working-dir"` | `"unrestricted"`, default
+// `"working-dir"`) — a session's filesystem reads and shell path
+// arguments are confined to the working directory and the paths the user
+// named in the conversation (`src/tools/read-scope/`). A DEFAULT-BEHAVIOUR
+// CHANGE: an older file has no field and takes `"working-dir"`; the
+// pre-v67 behaviour is one line away (`agent.readScope: "unrestricted"`).
+export const USER_CONFIG_VERSION = 67;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2432,6 +2539,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   63,
   64,
   65,
+  66,
   USER_CONFIG_VERSION,
 ];
 
@@ -2490,6 +2598,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       autoContinue: true,
     },
     toolTimeoutMs: 60_000,
+    readScope: "working-dir",
     approvalLevel: 1,
     // `0` = let the model's context window decide (CONVERSATION_CAP_AUTO);
     // the fixed 32K fallback applies only when no window is known.
@@ -2536,6 +2645,20 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   projects: {
     roots: [],
+  },
+  tools: {
+    shell: {
+      // Ten minutes: long enough for an install or a test suite, short
+      // enough that a runaway scan is reported the same hour it started.
+      // The detach notice tells the model how to wait for or stop it.
+      defaultTimeoutMs: 600_000,
+      // An hour: a build or a download that has not finished by then is
+      // not going to, and nobody is watching it any more.
+      jobMaxMs: 3_600_000,
+      // Three concurrent jobs is a server, a watcher and a build; more
+      // is a model that has stopped waiting for anything.
+      maxJobs: 3,
+    },
   },
   tracing: {
     trace: {
@@ -4212,6 +4335,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
   const web = (obj.web as Record<string, unknown> | undefined) ?? {};
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
+  const tools = (obj.tools as Record<string, unknown> | undefined) ?? {};
+  const toolsShell = (tools.shell as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchProvider = parseWebSearchProviderName(
@@ -4467,6 +4592,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
         "agent.toolTimeoutMs",
       ),
+      // The upgrade step for a pre-v67 file: no field, the default.
+      readScope: parseReadScope(
+        agent.readScope ?? USER_CONFIG_DEFAULTS.agent.readScope,
+        "agent.readScope",
+      ),
       approvalLevel: resolveApprovalLevel(
         agent.approvalLevel,
         agent.approvalRequired,
@@ -4629,6 +4759,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           projects.roots ?? USER_CONFIG_DEFAULTS.projects.roots,
           "projects.roots",
         ) ?? [],
+    },
+    tools: {
+      shell: {
+        // Non-negative rather than positive: `0` is "no default", the
+        // behaviour every pre-v67 file had.
+        defaultTimeoutMs: parseNonNegativeInt(
+          toolsShell.defaultTimeoutMs ??
+            USER_CONFIG_DEFAULTS.tools.shell.defaultTimeoutMs,
+          "tools.shell.defaultTimeoutMs",
+        ),
+        jobMaxMs: parsePositiveInt(
+          toolsShell.jobMaxMs ?? USER_CONFIG_DEFAULTS.tools.shell.jobMaxMs,
+          "tools.shell.jobMaxMs",
+        ),
+        maxJobs: parsePositiveInt(
+          toolsShell.maxJobs ?? USER_CONFIG_DEFAULTS.tools.shell.maxJobs,
+          "tools.shell.maxJobs",
+        ),
+      },
     },
     tracing: {
       trace: {

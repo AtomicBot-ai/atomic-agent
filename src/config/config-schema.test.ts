@@ -703,6 +703,39 @@ describe("parseUserConfigFile", () => {
     }
   });
 
+  it("defaults agent.readScope to working-dir and accepts only the two scopes (v67)", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).agent.readScope,
+    ).toBe("working-dir");
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { readScope: "unrestricted" },
+      }).agent.readScope,
+    ).toBe("unrestricted");
+    // `null` is "absent" here, as for every other `agent.*` field.
+    for (const bad of ["everywhere", "", 1, true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { readScope: bad },
+        }),
+      ).toThrow(/agent.readScope/);
+    }
+  });
+
+  it("upgrades a v66 file to v67 with the confined read scope", () => {
+    // The default-behaviour change: an older file has no field and takes
+    // `working-dir`; what it did carry is kept.
+    const parsed = parseUserConfigFile({
+      version: 66,
+      agent: { toolTimeoutMs: 45_000 },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.agent.readScope).toBe("working-dir");
+    expect(parsed.agent.toolTimeoutMs).toBe(45_000);
+  });
+
   it("accepts conversationMaxTokens: 0 as the auto sentinel", () => {
     // `0` is not a request for a zero-token transcript: it is "let the
     // window decide", the same sentinel `localModels.managed.contextSize`
@@ -1528,6 +1561,70 @@ describe("parseUserConfigFile", () => {
         projects: { roots: "~/dev" },
       }),
     ).toThrow(/projects\.roots/);
+  });
+
+  it("accepts a v66 file and fills in the tools.shell defaults transparently", () => {
+    // v67: an existing file has no `tools` block; it takes the defaults so
+    // an omitted `timeoutMs` detaches at ten minutes from the next start,
+    // a detached job dies within the hour, and three may run at once.
+    const parsed = parseUserConfigFile({ version: 66 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tools).toEqual({
+      shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 },
+    });
+  });
+
+  it("preserves explicit tools.shell.jobMaxMs and maxJobs, and rejects non-positive ones", () => {
+    const pinned = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { jobMaxMs: 7_200_000, maxJobs: 1 } },
+    });
+    expect(pinned.tools.shell.jobMaxMs).toBe(7_200_000);
+    expect(pinned.tools.shell.maxJobs).toBe(1);
+    // A ceiling of 0 would be "kill at once" and a job limit of 0 "never
+    // detach" — neither is what the fields mean, so both are refused.
+    for (const field of ["jobMaxMs", "maxJobs"] as const) {
+      for (const value of [0, -1, 1.5, Infinity, NaN, "many", true]) {
+        expect(() =>
+          parseUserConfigFile({
+            version: USER_CONFIG_VERSION,
+            tools: { shell: { [field]: value } },
+          }),
+        ).toThrow(new RegExp(`tools\\.shell\\.${field}`));
+      }
+    }
+  });
+
+  it("keeps the shell default timeout at ten minutes or more", () => {
+    // A long install or test suite has to fit; the timeout message tells
+    // the model what to pass for longer, so the default must not shrink.
+    expect(
+      USER_CONFIG_DEFAULTS.tools.shell.defaultTimeoutMs,
+    ).toBeGreaterThanOrEqual(600_000);
+  });
+
+  it("preserves an explicit tools.shell.defaultTimeoutMs, including 0 (no default)", () => {
+    const pinned = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { defaultTimeoutMs: 1_800_000 } },
+    });
+    expect(pinned.tools.shell.defaultTimeoutMs).toBe(1_800_000);
+    const unbounded = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { defaultTimeoutMs: 0 } },
+    });
+    expect(unbounded.tools.shell.defaultTimeoutMs).toBe(0);
+  });
+
+  it("rejects a tools.shell.defaultTimeoutMs that is not a non-negative finite integer", () => {
+    for (const defaultTimeoutMs of [-1, 1.5, Infinity, NaN, "soon", true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          tools: { shell: { defaultTimeoutMs } },
+        }),
+      ).toThrow(/tools\.shell\.defaultTimeoutMs/);
+    }
   });
 
   it("preserves an explicit telegram.progressIndicator=false", () => {
