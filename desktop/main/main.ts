@@ -1875,9 +1875,9 @@ async function smokeTest(): Promise<void> {
 
     await js<void>("window.__selOpen('backend')");
     const back = await js<{ rows: number; backend: string }>("window.__sel()");
-    // Three rows since the review fix put the TUI's `custom` back (cloud,
-    // local, custom — composer-switch-rows.ts backendRows).
-    check("selector: backend pane", back.rows === 3, `backend=${back.backend}, ${back.rows} rows`);
+    // Four rows: the review fix put the TUI's `custom` back, and round 2 added
+    // Fusion (cloud, local, custom, fusion — composer-switch-rows.ts backendRows).
+    check("selector: backend pane", back.rows === 4, `backend=${back.backend}, ${back.rows} rows`);
 
     await js<void>("window.__selTab('model')");
     await new Promise((r) => setTimeout(r, 9000));
@@ -3892,10 +3892,11 @@ async function settingsTest(
   );
   check(
     "settings: Go, Observe and the debug pane left the tree",
-    /* 33 rows since `help.report` joined Help — the count is here to catch a
-       Go/Observe node creeping back in, so it moves with a deliberate
-       addition rather than pinning the menu's size forever. */
-    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 33,
+    /* 33 rows since `help.report` joined Help, 34 since Run › Where it runs…
+       (round 2, Fusion) — the count is here to catch a Go/Observe node
+       creeping back in, so it moves with a deliberate addition rather than
+       pinning the menu's size forever. */
+    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 34,
     JSON.stringify(gone),
   );
   const viaNode = await js<{ settings: boolean; pane: string | null }>(
@@ -7462,7 +7463,7 @@ async function backendSwitchTest(
         const localRow = customRows.rows.find((r) => r.id === "local");
         check(
           "backend: an external route reads as custom, not as the managed local one",
-          managedRows.backend === "local" && managedRows.rows.length === 3
+          managedRows.backend === "local" && managedRows.rows.length === 4 // cloud, local, custom, fusion
             && customRows.backend === "custom" && /custom/.test(customRows.chip) && !customRows.modelChip
             && !!custom && custom.active && custom.detail.includes("http://127.0.0.1:19199") && custom.detail.includes("Settings › LLM › External")
             && !!localRow && !localRow.active,
