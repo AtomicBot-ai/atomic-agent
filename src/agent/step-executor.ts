@@ -14,6 +14,7 @@ import {
   type BatchLoopSignal,
 } from "./batch-executor.js";
 import type { ToolLoopTracker } from "./loop-detector.js";
+import { capBatchSummaries } from "./batch-summary-cap.js";
 import {
   gatedCallRunsUnattended,
   isBatchable,
@@ -2793,10 +2794,11 @@ export function readReplyAttachments(
  * flag to close the session without any additional transcript magic.
  *
  * Per-batch char cap: when the combined summary text would exceed
- * `agent.batchToolResultCharCap`, oldest within-batch results get
- * truncated before being appended. This keeps the conversation
- * section bounded under pathological large-batch outputs without
- * losing the call/result pairing.
+ * `agent.batchToolResultCharCap`, the results share it evenly before
+ * being appended (`batch-summary-cap.ts`): none is erased, and each cut
+ * one says how to get the rest. This keeps the conversation section
+ * bounded under pathological large-batch outputs without losing the
+ * call/result pairing.
  */
 function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
   const { state, calls, results, reasoning, terminal, onEvent } = params;
@@ -2812,11 +2814,9 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
     const hasNonTerminal = terminalIdx > 0;
     let next = state;
     if (hasNonTerminal) {
-      const nonTerminalSummaries = results
-        .slice(0, terminalIdx)
-        .map((r) => r.summary);
       const renderedSummaries = capBatchSummaries(
-        nonTerminalSummaries,
+        results.slice(0, terminalIdx),
+        calls.slice(0, terminalIdx),
         getConfig().agent.batchToolResultCharCap,
       );
       for (let i = 0; i < terminalIdx; i += 1) {
@@ -2870,7 +2870,8 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
   }
 
   const renderedSummaries = capBatchSummaries(
-    results.map((r) => r.summary),
+    results,
+    calls,
     getConfig().agent.batchToolResultCharCap,
   );
 
@@ -2899,36 +2900,6 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
     );
   }
   return next;
-}
-
-/**
- * Apply a soft per-batch char cap across all summaries in one step.
- * Truncates from the start of the list (oldest within-batch results
- * lose detail first) so the freshest results — typically the ones the
- * model will reason about next — keep their full text.
- */
-function capBatchSummaries(
-  summaries: readonly string[],
-  capChars: number,
-): string[] {
-  const total = summaries.reduce((acc, s) => acc + s.length, 0);
-  if (total <= capChars) return summaries.slice();
-  const out = summaries.slice();
-  let overshoot = total - capChars;
-  for (let i = 0; i < out.length && overshoot > 0; i += 1) {
-    const s = out[i]!;
-    if (s.length === 0) continue;
-    const drop = Math.min(s.length, overshoot);
-    const keep = s.length - drop;
-    if (keep <= 16) {
-      out[i] = "[truncated]";
-      overshoot -= s.length - "[truncated]".length;
-    } else {
-      out[i] = `${s.slice(0, keep)} … [truncated]`;
-      overshoot -= drop - " … [truncated]".length;
-    }
-  }
-  return out;
 }
 
 /**

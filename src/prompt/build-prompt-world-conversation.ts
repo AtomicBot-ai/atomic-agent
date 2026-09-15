@@ -1,6 +1,7 @@
 import type { SessionState } from "../session/session-state.js";
 import {
   findCurrentMacroTurnStart,
+  readStartLineOf,
   renderTurnForPrompt,
   type ConversationTurn,
   type RenderTurnOptions,
@@ -53,18 +54,4 @@ export function renderPackedConversation(packed: {
     lines.push(renderTurnForPrompt(turn, options));
   }
   return lines.join("\n");
-}
-
-/**
- * First file line an `os.fs.read` call returns, mirroring the tool's own
- * argument handling: no numeric `offset` (or `0`) reads from line 1. A
- * negative offset counts from the end of a file whose length is not known
- * here, so it yields `undefined`.
- */
-function readStartLineOf(args: Record<string, unknown>): number | undefined {
-  const offset = args.offset;
-  if (typeof offset !== "number" || !Number.isFinite(offset)) return 1;
-  const whole = Math.trunc(offset);
-  if (whole < 0) return undefined;
-  return Math.max(1, whole);
 }

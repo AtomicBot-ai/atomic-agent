@@ -222,18 +222,35 @@ function capSummary(summary: string, capChars: number): string {
   return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
 }
 
-/** Room left under the render cap for `capReadSummary`'s paging hint. */
+/**
+ * First file line an `os.fs.read` call returns, mirroring the tool's own
+ * argument handling: no numeric `offset` (or `0`) reads from line 1. A
+ * negative offset counts from the end of a file whose length is not known
+ * here, so it yields `undefined`.
+ */
+export function readStartLineOf(
+  args: Record<string, unknown>,
+): number | undefined {
+  const offset = args.offset;
+  if (typeof offset !== "number" || !Number.isFinite(offset)) return 1;
+  const whole = Math.trunc(offset);
+  if (whole < 0) return undefined;
+  return Math.max(1, whole);
+}
+
+/** Room left under the cap for `capReadSummary`'s paging hint. */
 const READ_PAGING_HINT_RESERVE_CHARS = 260;
 
 /**
- * `capSummary` for file reads. A read cut mid-line with only a char count
- * sends the model back to read the same file again, which renders the same
- * cut again — a fusion reviewer re-read a 4.5 KB `main.js` five times and
- * never saw its last 486 chars. Cut on a line boundary instead and name the
- * range to ask for next. A result with no usable line break keeps the plain
- * character cut.
+ * `capSummary` for file reads, used at prompt render time and when a
+ * batched step's results share one budget (`agent/batch-summary-cap.ts`).
+ * A read cut mid-line with only a char count sends the model back to read
+ * the same file again, which renders the same cut again — a fusion
+ * reviewer re-read a 4.5 KB `main.js` five times and never saw its last
+ * 486 chars. Cut on a line boundary instead and name the range to ask for
+ * next. A result with no usable line break keeps the plain character cut.
  */
-function capReadSummary(
+export function capReadSummary(
   summary: string,
   capChars: number,
   startLine: number | undefined,
