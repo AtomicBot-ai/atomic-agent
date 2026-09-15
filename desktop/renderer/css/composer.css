@@ -195,6 +195,39 @@
 .cfoot .cchip.needsmodel.is-open{background:color-mix(in srgb, var(--amber) 28%, transparent)}
 .cfoot .cchip.needsmodel > svg,.cfoot .cchip.dlchip > svg{color:var(--amber-text)}
 
+/* Fusion: the ⇄ between the two seats and the fourth control, `workers`
+   (composer-meta-controls.tsx). Neutral like the rest of the row — the
+   backend chip's own icon says which route this is. */
+.cfoot .fzswap{padding:0 7px;color:var(--ink-2)}
+.cfoot .fzswap > svg{width:14px;height:14px;color:currentColor}
+.cfoot .fzswap:hover{color:var(--ink)}
+.cfoot .workerschip{flex:0 1 auto}
+.cfoot .workerschip .cval{max-width:24ch;font:500 12px/1 var(--font-mono);letter-spacing:0}
+.cfoot .workerschip .cval[data-cap]::before{font-family:var(--font-ui)}
+/* The Fusion row is seven controls in the width cloud gives three: the
+   captions go (each pill keeps its icon or mark, and its popover title names
+   it), the seat chips drop their chevrons, and the pills tighten — otherwise
+   the two model ids shrink to one letter each. */
+.cfoot.is-fusion .cval[data-cap]::before{content:none}
+.cfoot.is-fusion .cchip{padding:0 7px 0 9px;gap:5px}
+.cfoot.is-fusion .providerchip > svg.chev,.cfoot.is-fusion .modelchip > svg.chev,.cfoot.is-fusion .workerschip > svg.chev{display:none}
+.cfoot.is-fusion .fzswap{padding:0 4px}
+.cfoot.is-fusion .modelchip .cval,.cfoot.is-fusion .workerschip .cval{max-width:18ch}
+
+/* The fan-out while the turn runs (fusion-live-workers.ts): one line per
+   worker, the status dot in the app's grammar — pulsing brand while it
+   works, green done, red failed, amber cancelled. No control of its own. */
+.fzlive{display:flex;flex-direction:column;gap:1px;min-width:0;padding:0 6px 4px}
+.fzlive .fzw{display:flex;align-items:center;gap:8px;min-width:0;min-height:20px;
+  font:400 11.5px/18px var(--font-mono);letter-spacing:0;color:var(--ink-2)}
+.fzlive .fzt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fzlive .fzdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--brand);animation:fzpulse 1.4s var(--ease) infinite}
+.fzlive .fzw.done .fzdot{background:var(--success);animation:none}
+.fzlive .fzw.failed .fzdot{background:var(--critical);animation:none}
+.fzlive .fzw.cancelled .fzdot{background:var(--amber);animation:none}
+@keyframes fzpulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.fzlive .fzdot{animation:none}}
+
 /* Context gauge: a 20px ring and used / window in mono. */
 .cfoot .ctxbtn{padding:0 10px;color:var(--ink-2)}
 .ctxring{width:20px;height:20px;flex:none}

@@ -142,8 +142,6 @@ contextBridge.exposeInMainWorld("atomic", {
 
   platform: process.platform,
   build: () => ipcRenderer.invoke("app:build"),
-  setRunMode: (mode: string, workers?: number) =>
-    ipcRenderer.invoke("cli:runMode", { mode, workers }),
   debugBundle: () => ipcRenderer.invoke("app:debugBundle"),
   unverified: () => ipcRenderer.invoke("app:unverified"),
   unverifiedSet: (id: string, on: boolean) => ipcRenderer.invoke("app:unverifiedSet", { id, on }),
@@ -167,6 +165,12 @@ contextBridge.exposeInMainWorld("atomic", {
   activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),
   selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
   selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
+  /** Run mode — Fusion: RunModeOrchestrator's writes (enter / swap / workers / worker model), each a whole-file write + agent restart. */
+  enterFusion: (pins?: { orchestratorProvider?: string; workerProvider?: string }) =>
+    ipcRenderer.invoke("cli:enterFusion", pins ?? {}),
+  swapFusionLegs: () => ipcRenderer.invoke("cli:swapFusionLegs"),
+  fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
+  fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
   setExternalLlamaUrl: (url: string) => ipcRenderer.invoke("cli:setExternalLlamaUrl", url),
   providersReady: () => ipcRenderer.invoke("cli:providersReady"),

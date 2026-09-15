@@ -1072,7 +1072,7 @@ export interface UserConfigShape {
   localModels?: {
     url?: string;
     mode?: string;
-    managed?: { modelId?: string | null; port?: number };
+    managed?: { modelId?: string | null; port?: number; parallel?: number | string };
     // r5 item 7 (setup wizard): the custom-endpoint branch writes modelId
     // as persistUserRemoteLlmUrls does, so the field has to exist here.
     embeddings?: { url?: string; enabled?: boolean; modelId?: string | null };
@@ -1158,11 +1158,20 @@ async function syncLocalLlamaProviderUrlInFileNow(): Promise<WriteResult> {
  * the TUI does when it is absent (url only — no baseUrl), refuses an id
  * that names no provider, writes ONLY llm.activeTextProvider.
  */
-export function setActiveTextProvider(id: string): Promise<WriteResult> {
-  return withConfigLock(() => setActiveTextProviderNow(id));
+export function setActiveTextProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<WriteResult> {
+  return withConfigLock(() => setActiveTextProviderNow(id, opts));
 }
 
-async function setActiveTextProviderNow(id: string): Promise<WriteResult> {
+/**
+ * `leaveFusion`: the TUI's activateCloud / activateLocal. A plain route
+ * switch writes `llm.activeTextProvider` alone, and `resolveRunMode` keeps
+ * honouring a stored `runMode.mode: "fusion"` for as long as the active
+ * provider is the orchestrator — which is exactly the provider "cloud"
+ * picks. So a switch that means to leave Fusion writes the stored mode in
+ * the same write (`RunModeOrchestrator.setMode`), or the window lands in
+ * effective Fusion while its chip says cloud.
+ */
+async function setActiveTextProviderNow(id: string, opts: { leaveFusion?: boolean } = {}): Promise<WriteResult> {
   if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, changed: false, error: `not a provider id: ${id}` };
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
@@ -1181,8 +1190,13 @@ async function setActiveTextProviderNow(id: string): Promise<WriteResult> {
   if (!providers.some((p) => p.id === id)) {
     return { ok: false, changed: false, error: `provider "${id}" is not configured` };
   }
-  if (llm.activeTextProvider === id && !synthesized) return { ok: true, changed: false };
+  const run = llm.runMode;
+  const leaving = opts.leaveFusion === true && run?.mode === "fusion";
+  if (llm.activeTextProvider === id && !synthesized && !leaving) return { ok: true, changed: false };
   llm.activeTextProvider = id;
+  if (leaving && run) {
+    run.mode = providers.find((p) => p.id === id)?.kind === "llama-server" ? "local" : "cloud";
+  }
   const w = await writeWholeConfig(cfg);
   return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
 }
@@ -1375,38 +1389,29 @@ export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNam
   return false;
 }
 
-/** Ids of the configured cloud providers that have a usable key, for the selector's row copy. */
 /**
- * The run mode, as the TUI's `/runmode` writes it.
+ * Read, plan and write the whole file under ONE hold of the config lock.
  *
- * The desktop had no way to reach this at all: three run modes in the TUI
- * (local, cloud, and fusion — a cloud model orchestrating local workers) and
- * a window that could only pick a provider. It is ordinary config, so it goes
- * through the same whole-file path every other write here uses; there is no
- * route for it and inventing one would be a second source of truth.
+ * The run-mode writes (main/run-mode.ts) decide what to write from what the
+ * file says — which leg is active, which provider is pinned — so reading it
+ * outside the lock and writing it inside would let a write that landed in
+ * between be silently undone. `plan` mutates the object it is handed and
+ * says whether it did; nothing is written when it did not.
  */
-export async function setRunMode(
-  mode: "local" | "cloud" | "fusion",
-  fusion?: { workers?: number },
-): Promise<WriteResult> {
+export function rewriteWholeConfig<V extends { write: boolean }>(
+  plan: (cfg: UserConfigShape) => V,
+): Promise<{ ok: boolean; changed: boolean; error?: string; verdict?: V }> {
   return withConfigLock(async () => {
     const read = await readWholeConfig();
     if (!read.ok || !read.config) return { ok: false, changed: false, error: read.error };
-    const cfg = read.config;
-    const llm = (cfg.llm ??= {});
-    const run = (llm.runMode ??= {});
-    const before = JSON.stringify(run);
-    run.mode = mode;
-    if (fusion?.workers !== undefined) {
-      const f = (run.fusion ??= {});
-      f.workers = Math.max(1, Math.min(16, Math.floor(fusion.workers)));
-    }
-    if (JSON.stringify(run) === before) return { ok: true, changed: false };
-    const w = await writeWholeConfig(cfg);
-    return w.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: w.error };
+    const verdict = plan(read.config);
+    if (!verdict.write) return { ok: true, changed: false, verdict };
+    const w = await writeWholeConfig(read.config);
+    return w.ok ? { ok: true, changed: true, verdict } : { ok: false, changed: false, error: w.error, verdict };
   });
 }
 
+/** Ids of the configured cloud providers that have a usable key, for the selector's row copy. */
 export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; error?: string }> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
