@@ -1,184 +1,247 @@
 /* ============================================================
-   Composer dock — status strip, queue tray, voice strip, slash commands, the composer card, its control row (Backend · Provider · Model · Context · Mode), send and mic. Screens CM-01…07, CM-09…11.
+   Composer dock — Soft Tactile. Screens CM-01…07, CM-09…11, the dock in
+   every CH / MP screen.
+   Top to bottom inside `.composerwrap`: status line · queue tray · voice
+   strip · composer card; the slash list hangs above it all.
    Loaded after styles.css (tokens + kit). Colours come from tokens only.
+   Hooks the drivers read are kept by the renderer: #composer, #entry,
+   .composerwrap, .cfoot [data-sel-open], .cchip, .sendbtn(.locked/.stop),
+   .statusstrip, .slash/.slashrow, .micbtn, .qchip, .voicestrip.
    ============================================================ */
 
-/* composer */
-.composerwrap{flex:none;padding:0 var(--s6) var(--s5);max-width:720px;margin:0 auto;width:100%}
-.statusstrip{height:32px;display:flex;align-items:center;gap:var(--s3);color:var(--text-secondary);font-size:13px}
-.statusstrip.gated{color:var(--warn)}
-.threedot{display:inline-flex;gap:3px}
-.threedot i{width:4px;height:4px;border-radius:999px;background:var(--accent);animation:pulse 1.2s var(--ease) infinite}
-.threedot i:nth-child(2){animation-delay:.15s} .threedot i:nth-child(3){animation-delay:.3s}
-.qtray{display:flex;flex-direction:column;gap:var(--s2);padding-bottom:var(--s3)}
-.qchip{height:28px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s3);border:1px dashed var(--line);border-radius:0;background:var(--bg-raised);font-size:13px;color:var(--text-secondary)}
-.composer{border:1px solid var(--line);background:var(--bg-raised);border-radius:0;cursor:text;position:relative;overflow:hidden}
-.composer.focus{border-color:var(--accent)}
-.composer.running::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:sweep 1.4s linear infinite}
-@keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
-.composer .field{display:flex;align-items:flex-end;gap:var(--s3);padding:12px 14px}
-#entry{flex:1;min-width:0;background:none;border:none;outline:none;resize:none;font-size:15px;line-height:23px;height:23px;max-height:180px;overflow-y:auto;padding:0}
-#entry::placeholder{color:var(--text-tertiary)}
-.sendbtn{width:28px;height:28px;flex:none;border-radius:0;display:flex;align-items:center;justify-content:center;background:var(--accent);color:var(--on-fill)}
-.sendbtn.mute{background:var(--bg-active);color:var(--text-disabled)}
-.sendbtn.stop{background:transparent;border:1.5px solid var(--danger);color:var(--danger)}
-.cfoot{height:28px;display:flex;align-items:center;gap:var(--s3);padding:0 10px 0 14px;box-shadow:inset 0 1px 0 var(--line-soft);margin:0 0 4px;overflow:hidden}
-.cfoot > *{flex:none}
-.cchip{white-space:nowrap}
-.seg button{white-space:nowrap}
-.cchip{height:22px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:0;font-size:11px;color:var(--text-secondary)}
-.cchip:hover{background:var(--bg-hover);color:var(--text-primary)}
-.gauge{width:40px;height:4px;border-radius:0;background:var(--bg-sunken);overflow:hidden;flex:none}
-.ctxbtn .gaugelb{font-size:11px}
-.modechip{color:var(--accent-text);background:var(--accent-wash-soft)}
-.modechip:hover{background:var(--accent-wash);color:var(--accent-text)}
-.ctxbtn:hover .gauge i{background:var(--accent)}
-.gauge i{display:block;height:100%;background:var(--text-tertiary)}
+/* ---- The dock ---------------------------------------------------------- */
+.composerwrap{flex:none;position:relative;width:100%;max-width:760px;margin:0 auto;
+  padding:0 28px 14px;display:flex;flex-direction:column;gap:8px}
 
-.slash{position:absolute;bottom:100%;left:0;margin-bottom:8px;width:520px;max-width:100%;background:var(--bg-overlay);border-radius:0;box-shadow:var(--shadow-overlay);overflow:hidden;z-index:15}
-.slashrow{height:32px;display:grid;grid-template-columns:120px 1fr auto;gap:var(--s3);align-items:center;padding:0 var(--s4);width:100%}
-.slashrow .cmd{font-family:var(--font-mono);font-size:13px;color:var(--accent-text)}
-.slashrow .ds{font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.slashrow .hint{font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono)}
-.slashrow.on{background:var(--accent-wash)}
-.slashlist{max-height:192px;overflow-y:auto;padding:4px 0}
+/* ---- Status line: a chip, then machine text ----------------------------
+   Variants in priority order (renderer composer()): approval gated ·
+   provider waiting · busy · switch failed · Ready / Caution. */
+.statusstrip{display:flex;align-items:center;gap:8px;min-height:28px;min-width:0;padding:0 6px;
+  font-size:12.5px;line-height:1.3;color:var(--ink-2)}
+.statusstrip > *{flex:none}
+.statusstrip .tk-chip svg,.statusstrip .ann svg{width:12px;height:12px}
+/* The kit's red chip text on --well is 4.1:1 in light at 11.5px. Mixing a
+   little --ink into the red darkens it in light and lightens it in dark, so
+   the word clears 4.5:1 in both without a new hue. */
+.statusstrip .ann.critical{background:color-mix(in srgb, var(--critical) 8%, transparent);color:color-mix(in srgb, var(--critical) 85%, var(--ink))}
+.statusstrip .ss-grow{flex:1 1 auto;min-width:0}
+.statusstrip .readout,.statusstrip .ss-time{flex:0 1 auto;min-width:0;font:400 11.5px/18px var(--font-mono);
+  color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.statusstrip .ss-text,.statusstrip .ss-why{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;color:var(--ink-2)}
+.statusstrip .ss-why::before{content:"· "}
+.statusstrip .btn svg{width:11px;height:11px}
+.statusstrip .ss-jump{color:var(--blue)}
+.statusstrip .ss-jump:hover{color:var(--blue-deep)}
+.statusstrip .ss-jump svg{width:13px;height:13px}
+.ss-phase{min-width:0;max-width:60%;flex:0 1 auto}
+.ss-phase .ss-word{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ss-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 1.6s var(--ease) infinite}
+.threedot{display:inline-flex;align-items:center;gap:3px;flex:none}
+.threedot i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:pulse 1s var(--ease) infinite}
+.threedot i:nth-child(2){animation-delay:.2s}
+.threedot i:nth-child(3){animation-delay:.4s}
 
-@media (max-width:1120px){.cfoot .gauge,.cfoot .gaugelb{display:none}}
+/* ---- Queue tray: outline pills "Queued · text · ×" --------------------- */
+.qtray{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px;min-width:0}
+.qchip{display:inline-flex;align-items:center;gap:6px;height:30px;max-width:300px;min-width:0;
+  padding:0 3px 0 11px;border-radius:var(--r-pill);box-shadow:inset 0 0 0 1.5px var(--bd-2);
+  font-size:12.5px;color:var(--ink-2)}
+.qchip .qlb{flex:none;font-weight:600;color:var(--ink-2)}
+.qchip .qtx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.qchip .qx{width:24px;height:24px}
+.qchip .qx svg{width:12px;height:12px}
 
-/* Lane B — context before the first message (item 3): a projection is visibly not a measurement */
-.ctxbtn.proj .gauge i { background: repeating-linear-gradient(90deg, var(--text-tertiary) 0 3px, transparent 3px 5px); }
-.ctxbtn.proj:hover .gauge i { background: repeating-linear-gradient(90deg, var(--accent) 0 3px, transparent 3px 5px); }
-.ctxbtn.proj .gaugelb { font-style: italic; }
+/* ---- Voice strip -------------------------------------------------------
+   Always in the DOM; `hidden` while idle, so the display rule below must
+   not resurrect it. */
+.voicestrip{display:grid;gap:4px;min-width:0;padding:9px 10px 8px 14px;border-radius:var(--r-card);
+  background:var(--lift);box-shadow:var(--sh-card)}
+.voicestrip[hidden]{display:none}
+.vsrow{display:flex;align-items:center;gap:10px;min-height:30px;min-width:0;font-size:14.5px;line-height:1.45;color:var(--ink)}
+.vsdot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--critical);opacity:.5}
+.vsdot.live{opacity:1;animation:pulse 1.6s var(--ease) infinite}
+/* Nine level bars. `--lv` (0…1) is the live level the audio tap reports;
+   each bar scales its own share of it and breathes on a stagger. Reduced
+   motion stops the breathing; the bars still follow the level. */
+.vslevel{--lv:0;display:flex;align-items:center;gap:2px;height:20px;flex:none}
+.vslevel i{display:block;width:3px;border-radius:2px;background:var(--brand);
+  height:calc(16% + var(--lv) * var(--h, 60%));transform-origin:center;
+  transition:height .1s linear;animation:vswave 1.1s ease-in-out infinite}
+.vslevel i:nth-child(1){--h:38%;animation-delay:0s}
+.vslevel i:nth-child(2){--h:70%;animation-delay:-.13s}
+.vslevel i:nth-child(3){--h:50%;animation-delay:-.26s}
+.vslevel i:nth-child(4){--h:78%;animation-delay:-.39s}
+.vslevel i:nth-child(5){--h:84%;animation-delay:-.52s}
+.vslevel i:nth-child(6){--h:66%;animation-delay:-.65s}
+.vslevel i:nth-child(7){--h:80%;animation-delay:-.78s}
+.vslevel i:nth-child(8){--h:46%;animation-delay:-.91s}
+.vslevel i:nth-child(9){--h:62%;animation-delay:-1.04s}
+@keyframes vswave{0%,100%{transform:scaleY(.6)}50%{transform:scaleY(1)}}
+.vsspin{width:14px;height:14px}
+.vstext{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:44px;overflow-y:auto}
+.vspart{color:var(--ink-3)}
+.vswait{color:var(--ink-2)}
+.vslabel{font-size:13px;color:var(--ink-2)}
+.vschip{display:inline-flex;align-items:center;gap:6px;height:30px;flex:none;padding:0 8px 0 10px;
+  border-radius:var(--r-pill);font:500 12.5px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.vschip:hover{background:color-mix(in srgb, var(--ink) 7%, transparent);color:var(--ink)}
+.vschip svg{width:12px;height:12px;opacity:.6}
+.vschip.won{background:var(--success-tint);color:var(--success)}
+.vschip.won:hover{background:color-mix(in srgb, var(--success) 18%, transparent);color:var(--success)}
+.vsnote{font-size:11.5px;line-height:1.4;color:var(--ink-2)}
+.vsico svg{width:13px;height:13px}
+.vserr{flex:1;min-width:0;font-size:13.5px;font-weight:600;line-height:1.4;color:var(--critical)}
+.voicestrip .vsopen{flex:none}
+.voicestrip .vsx svg{width:13px;height:13px}
 
-/* ---- Item 2: voice input ----
-   The microphone sits inside `.field`, immediately left of send, and the
-   interim strip sits above the composer — never inside the textarea, whose
-   value is S.draft and only S.draft. */
-.micbtn{width:28px;height:28px;flex:none;border-radius:0;display:flex;align-items:center;justify-content:center;
-  background:transparent;color:var(--text-secondary)}
-.micbtn:hover:not([disabled]){background:var(--bg-hover);color:var(--text-primary)}
-.micbtn[disabled]{color:var(--text-disabled);cursor:default}
-.micbtn.rec{color:var(--danger);background:var(--danger-wash);animation:micpulse 1.4s var(--ease) infinite}
-@keyframes micpulse{0%,100%{opacity:1}50%{opacity:.55}}
-.voicestrip{padding:0 0 var(--s3)}
-.vsrow{display:flex;align-items:center;gap:var(--s3);min-height:28px;font-size:13px;color:var(--text-primary)}
-.vsdot{width:8px;height:8px;flex:none;border-radius:999px;background:var(--text-tertiary)}
-.vsdot.live{background:var(--danger);animation:micpulse 1.2s var(--ease) infinite}
-.vslevel{width:36px;height:4px;flex:none;border-radius:0;background:var(--bg-sunken);overflow:hidden}
-.vslevel i{display:block;height:100%;background:var(--danger);transition:width .1s linear}
-.vstext{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:46px;overflow-y:auto;line-height:23px}
-.vspart{opacity:.65}
-.vswait{color:var(--text-tertiary)}
-.vserr{flex:1;color:var(--danger);font-size:13px}
-.vschip{height:22px;flex:none;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:0;
-  font-size:11px;color:var(--text-secondary)}
-.vschip:hover{background:var(--bg-hover);color:var(--text-primary)}
-.vschip.won{color:var(--accent-text);background:var(--accent-wash-soft)}
-.vsnote{font-size:11px;line-height:16px;color:var(--text-tertiary);padding-top:2px}
-.vsmenu{margin-top:var(--s3);border:1px solid var(--line);border-radius:0;background:var(--bg-raised);
-  max-height:280px;overflow-y:auto;padding:var(--s2) 0}
-.vsmhead{padding:var(--s2) var(--s4) 2px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.04em}
-.vsmrow{display:flex;align-items:center;gap:var(--s2);padding:0 var(--s2) 0 0}
-.vsmrow.on{background:var(--accent-wash-soft)}
-.vsmpick{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s3);height:28px;padding:0 var(--s4);
-  font-size:13px;color:var(--text-primary);text-align:left}
-.vsmrow:hover{background:var(--bg-hover)}
-.vsmname{flex:none}
-.vsmtag{font-size:11px}
-.vsmnote{flex:1;min-width:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
-.vsmbadge{flex:none;font-size:10px;padding:1px 5px;border-radius:0;background:var(--accent-wash);color:var(--accent-text)}
-.vsmadd{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:0;color:var(--text-tertiary)}
-.vsmadd.on{color:var(--accent-text)}
-.vsmadd:hover{background:var(--bg-active);color:var(--text-primary)}
-.vsmerr{padding:var(--s2) var(--s4);font-size:11px;color:var(--danger)}
-.vsmfoot{padding:var(--s3) var(--s4) var(--s2);font-size:11px;line-height:16px;color:var(--text-tertiary)}
-.vsmempty{padding:var(--s3) var(--s4);font-size:12px;color:var(--text-secondary)}
-@media (prefers-reduced-motion:reduce){.micbtn.rec,.vsdot.live{animation:none}}
+/* The dictation-language menu is the popovers slice's surface; these are
+   zero-specificity defaults so its own rules win wherever they exist. */
+:where(.vsmenu){margin-top:4px;padding:4px 0 2px;box-shadow:0 -1px 0 var(--divider);max-height:280px;overflow-y:auto}
+:where(.vsmhead){padding:8px 10px 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+:where(.vsmrow){display:flex;align-items:center;gap:6px;padding:0 4px 0 0;border-radius:12px}
+:where(.vsmrow:hover){background:var(--hover)}
+:where(.vsmrow.on){background:var(--brand-wash)}
+:where(.vsmpick){flex:1;min-width:0;display:flex;align-items:center;gap:10px;min-height:32px;padding:0 10px;
+  font-size:13px;color:var(--ink);text-align:left}
+:where(.vsmname){flex:none}
+:where(.vsmtag){font-size:11px}
+:where(.vsmnote){flex:1;min-width:0;font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+:where(.vsmbadge){flex:none;height:18px;display:inline-flex;align-items:center;padding:0 6px;border-radius:var(--r-pill);
+  font-size:11px;background:var(--brand-wash);color:var(--blue)}
+:where(.vsmadd){width:26px;height:26px;flex:none;display:grid;place-items:center;border-radius:50%;color:var(--ink-2)}
+:where(.vsmadd.on){color:var(--blue)}
+:where(.vsmadd:hover){background:var(--press);color:var(--ink)}
+:where(.vsmerr){padding:6px 10px;font-size:12px;color:var(--critical)}
+:where(.vsmfoot){padding:8px 10px 4px;font-size:11.5px;line-height:1.45;color:var(--ink-2)}
+:where(.vsmempty){padding:8px 10px;font-size:12.5px;color:var(--ink-2)}
 
-/* ---- Item 2: voice input — review fixes ----
-   The error strip's own dismiss. Escape deliberately no longer clears the
-   error state (it would outrank whatever modal the user is looking at), so
-   the strip carries the control that does. */
-.vsx{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;
-  border-radius:0;color:var(--text-tertiary)}
-.vsx:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* ---- The composer card --------------------------------------------------
+   Translucent lift over a blur — the only glass in the app — with the
+   indigo-tinted composer shadow. Typing in it adds the brand ring. */
+.composer{position:relative;display:flex;flex-direction:column;gap:6px;min-width:0;
+  padding:10px 10px 8px 16px;border-radius:var(--r-comp);cursor:text;
+  background:color-mix(in srgb, var(--lift) 86%, transparent);
+  -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+  box-shadow:var(--sh-comp);transition:box-shadow var(--t-state) var(--ease)}
+.composer:has(#entry:focus),.composer.focus{box-shadow:var(--sh-comp),0 0 0 2px color-mix(in srgb, var(--brand) 45%, transparent)}
+/* Running: a soft brand glint travelling along the top edge, not a bar. */
+.composer.running::after{content:"";position:absolute;top:0;left:28px;right:28px;height:2px;border-radius:2px;pointer-events:none;
+  background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand) 60%, transparent), transparent) no-repeat;
+  background-size:36% 100%;animation:cmp-glint 2.2s var(--ease) infinite}
+@keyframes cmp-glint{from{background-position:-60% 0}to{background-position:160% 0}}
 
-/* ---- r5 item 10: the switch lock on the send button ------------------------
-   The user's words: "the send button is a bit locked and has a small loading
-   indicator on it." Muted like `.sendbtn.mute` — this is not an error state,
-   it is a wait — with one small ring spinning inside it. The button itself
-   carries `disabled`, so the pointer never turns into a hand. The markup only
-   appears after SWX_SPINNER_DELAY_MS, so a 2 ms coding-mode switch never
-   paints it at all. */
-.sendbtn.locked{background:var(--bg-active);color:var(--text-disabled);cursor:default}
-.sspin{width:13px;height:13px;border-radius:999px;border:1.5px solid var(--text-disabled);
-  border-top-color:transparent;animation:sspin .7s linear infinite}
-@keyframes sspin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.sspin{animation-duration:2.4s}}
+.composer .field{display:flex;align-items:flex-end;gap:4px;min-width:0}
+#entry{flex:1;min-width:0;height:36px;max-height:180px;padding:6px 8px 6px 0;border:0;outline:none;
+  background:transparent;resize:none;overflow-y:auto;
+  font:400 15px/24px var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
+#entry::placeholder{color:var(--ink-3)}
 
-/* ============================================================
-   Selector lane — the composer's model slot as a call to action
-   ============================================================ */
+/* Mic: a quiet round icon; recording turns it red and it breathes. */
+.micbtn{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:50%;
+  background:transparent;color:var(--ink-2);
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.micbtn svg{width:16px;height:16px}
+.micbtn:hover:not([disabled]){background:var(--hover);color:var(--ink)}
+.micbtn[disabled]{color:var(--ink-3);opacity:.55;cursor:default}
+.micbtn.rec,.micbtn.rec:hover:not([disabled]){background:var(--critical-wash);color:var(--critical);animation:cmp-rec 1.4s var(--ease) infinite}
+@keyframes cmp-rec{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--critical) 22%, transparent)}
+  50%{box-shadow:0 0 0 5px color-mix(in srgb, var(--critical) 0%, transparent)}}
 
-/* composer-meta-controls.tsx draws `download model` in the rail's own warn,
-   bold, rather than the route's foreground: "this slot is the one thing on
-   the bar the operator has to act on, and in the route's own tone it reads as
-   just another label". `--warn` is the desktop's counterpart, and it is
-   declared in all three theme blocks. */
-.cchip.dlchip{color:var(--warn);font-weight:600}
-.cchip.dlchip:hover{background:var(--warn-wash);color:var(--warn)}
+/* Send: 36px circle. Empty = muted · draft = ink · busy + empty = stop ·
+   busy + draft = brand (steer) · switch lock = muted with a small spinner. */
+.sendbtn{width:36px;height:36px;flex:none;display:grid;place-items:center;border-radius:50%;
+  background:var(--ink);color:var(--paper);
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
+.sendbtn svg{width:16px;height:16px;stroke-width:2.2}
+.sendbtn:hover{background:color-mix(in srgb, var(--ink) 84%, var(--paper))}
+.sendbtn:active:not([disabled]):not(.mute){transform:scale(.94)}
+.sendbtn.mute,.sendbtn.mute:hover{background:var(--panel-2);color:var(--ink-3);cursor:default}
+.sendbtn.stop svg{width:12px;height:12px}
+.sendbtn.steer{background:var(--brand);color:var(--on-strong)}
+.sendbtn.steer:hover{background:var(--brand-press);color:var(--on-strong)}
+.sendbtn.locked,.sendbtn.locked:hover{background:var(--panel-2);color:var(--ink-3);cursor:default}
+.sspin{width:14px;height:14px;border-radius:50%;border:2px solid color-mix(in srgb, var(--ink-3) 35%, transparent);
+  border-top-color:var(--ink-2);animation:spin .9s linear infinite}
 
-/* --- the microphone refusal offers the switch, not directions --- */
-.voicestrip .vsopen{height:24px;padding:0 10px;font-size:12px;margin-left:8px;white-space:nowrap}
+/* ---- Control row: Backend · Provider · Model, spacer, Context · Mode ----
+   Pill selects, transparent until hovered or open. Captions ("Backend",
+   "Provider") are drawn from `data-cap` with ::before, so the chip's
+   textContent stays exactly the id the drivers compare. */
+.cfoot{display:flex;align-items:center;gap:2px;min-width:0;margin-left:-6px}
+.cfoot .cgrow{flex:1 1 auto;min-width:6px}
+.cfoot .cchip{display:inline-flex;align-items:center;gap:6px;height:30px;min-width:0;flex:none;
+  padding:0 8px 0 10px;border-radius:var(--r-pill);background:transparent;color:var(--ink);
+  font:500 12.5px/1 var(--font-ui);white-space:nowrap;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.cfoot .cchip:hover,.cfoot .cchip.is-open{background:color-mix(in srgb, var(--ink) 7%, transparent)}
+.cfoot .cchip:active{transform:scale(.97)}
+.cfoot .cchip > svg{width:14px;height:14px;color:var(--ink-2)}
+.cfoot .cchip > svg.chev{width:12px;height:12px;opacity:.6}
+.cfoot .cchip > .logo,.cfoot .cchip > .tk-ico{width:20px;height:20px;margin-left:-4px}
+.cfoot .cchip > .tk-ico svg{width:12px;height:12px}
+.cfoot .cval{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cfoot .cval[data-cap]::before{content:attr(data-cap);margin-right:5px;font-size:11px;font-weight:500;color:var(--ink-2)}
+/* When the row runs out of room only the model id gives way: a provider id
+   is short and is the thing that tells two routes apart. */
+.cfoot .modelchip{flex:0 1 auto}
+.cfoot .providerchip .cval{max-width:22ch}
+.cfoot .modelchip .cval{max-width:30ch;font:500 12px/1 var(--font-mono);letter-spacing:0}
 
-/* A model control with nothing chosen is a call to action, not a label:
-   same warn treatment the `download model` CTA already uses, so the one
-   control the operator has to touch reads as one. */
-.cchip.modelchip.needsmodel{color:var(--warn);border-color:var(--warn-wash)}
-.cchip.modelchip.needsmodel:hover{background:var(--warn-wash)}
+/* The model slot as a call to action: `choose a model` / `download model`. */
+.cfoot .cchip.needsmodel,.cfoot .cchip.dlchip{background:var(--amber-wash);color:var(--amber-text)}
+.cfoot .cchip.needsmodel:hover,.cfoot .cchip.dlchip:hover,
+.cfoot .cchip.needsmodel.is-open{background:color-mix(in srgb, var(--amber) 28%, transparent)}
+.cfoot .cchip.needsmodel > svg,.cfoot .cchip.dlchip > svg{color:var(--amber-text)}
 
-/* The app's own report on itself (F10): an annunciator and a readout, on the
-   line above the composer — not rows in the conversation. */
-.statusstrip.appstatus{display:flex;align-items:center;gap:var(--s3);min-height:24px;
-  padding:0 var(--s2)}
-.statusstrip.appstatus .readout{background:transparent;color:var(--ink-3);text-align:left;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-label)}
+/* Context gauge: a 20px ring and used / window in mono. */
+.cfoot .ctxbtn{padding:0 10px;color:var(--ink-2)}
+.ctxring{width:20px;height:20px;flex:none}
+.ctxring circle{fill:none;stroke-width:3}
+.ctxring .bg{stroke:color-mix(in srgb, var(--ink) 17%, transparent)}
+/* Butt caps: a near-empty window reads as an empty track, never as a
+   spinner beside the send button's real one. */
+.ctxring .fg{stroke:var(--brand);stroke-linecap:butt}
+.ctxring.warn .fg{stroke:var(--amber)}
+.ctxring.crit .fg{stroke:var(--critical)}
+.ctxbtn .gaugelb{font:400 11.5px/1 var(--font-mono);letter-spacing:0;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.ctxbtn.warn .gaugelb{color:var(--amber-text)}
+.ctxbtn.crit .gaugelb{color:var(--critical)}
 
-/* B.7 — the composer's control row as a legend plate: the name above, the
-   value below, values in machine type. Five unlabelled dropdowns is not a
-   control row, it is a puzzle. */
-/* The row was a single 28px strip clipped to its own height; a named control
-   is two lines, so it sizes to its content. */
-.cfoot{display:flex;align-items:flex-end;gap:var(--s4);height:auto;overflow:visible;
-  padding:var(--s2) var(--s3) var(--s1) var(--s4);box-shadow:none;margin:0;
-  border-top:1px solid var(--line-hair)}
-.cgrp{display:flex;flex-direction:column;gap:1px;min-width:0}
-.clabel{font:500 var(--fs-label)/1.2 var(--font-ui);letter-spacing:var(--tr-label);
-  text-transform:uppercase;color:var(--ink-3);padding:0 var(--s2)}
-.cfoot .cchip{height:22px;font-family:var(--font-mono);font-size:var(--fs-label);
-  color:var(--ink);border-radius:var(--r);max-width:26ch;overflow:hidden;text-overflow:ellipsis}
-.cfoot .cchip:hover{background:var(--panel)}
+/* Mode chip tones: default neutral · plan blue · auto amber · bypass red. */
+.cfoot .cmodechip.tone-plan{background:var(--brand-wash);color:var(--blue)}
+.cfoot .cmodechip.tone-plan:hover,.cfoot .cmodechip.tone-plan.is-open{background:var(--brand-wash-2)}
+.cfoot .cmodechip.tone-auto{background:var(--amber-wash);color:var(--amber-text)}
+.cfoot .cmodechip.tone-auto:hover,.cfoot .cmodechip.tone-auto.is-open{background:color-mix(in srgb, var(--amber) 28%, transparent)}
+.cfoot .cmodechip.tone-bypass{background:var(--critical-wash);color:var(--critical)}
+.cfoot .cmodechip.tone-bypass:hover,.cfoot .cmodechip.tone-bypass.is-open{background:color-mix(in srgb, var(--critical) 18%, transparent)}
+.cfoot .cmodechip.tone-plan > svg,.cfoot .cmodechip.tone-auto > svg,.cfoot .cmodechip.tone-bypass > svg{color:currentColor}
+.cfoot .cmodechip.blank{color:var(--ink-3)}
+.cfoot .cmodechip.blank > svg{color:var(--ink-3)}
 
-/* F14 — the command list is anchored on the composer's WRAPPER, because the
-   composer itself clips (it has to: the running indicator and the field's own
-   corners depend on it). The wrapper is the same anchor visually — the
-   composer is its last child — and the popover keeps its own scroller so a
-   long list cannot run off the top of the window. */
-.composerwrap{position:relative}
-.composerwrap > .slash{bottom:auto;top:auto;left:var(--s6);right:var(--s6);width:auto;
-  max-width:none;transform:translateY(-100%);margin-top:calc(var(--s2) * -1)}
-.slash{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
-  box-shadow:none;max-height:min(48vh,360px);overflow-y:auto;z-index:40;scrollbar-gutter:stable}
-.slashlist{display:flex;flex-direction:column}
-.slashrow{height:32px;border:0;background:transparent;text-align:left;cursor:pointer;
-  border-left:var(--rule) solid transparent}
-.slashrow:hover{background:var(--panel)}
-.slashrow.on{background:var(--panel);border-left-color:var(--accent)}
-.slashrow .cmd{color:var(--ink);font-weight:500}
-.slashrow .ds{color:var(--ink-2)}
-.slashrow .hint{color:var(--ink-3)}
+/* ---- Slash commands ------------------------------------------------------
+   F14: anchored on the WRAPPER, never inside #composer — it opens upward
+   above the whole dock and keeps its own scroller. */
+.composerwrap > .slash{position:absolute;left:28px;right:28px;bottom:calc(100% - 4px);z-index:40;
+  max-width:560px;display:flex;flex-direction:column;padding:6px;border-radius:var(--r-pop);
+  background:var(--lift);box-shadow:var(--sh-pop)}
+.slashlist{display:flex;flex-direction:column;gap:1px;max-height:min(44vh, 340px);overflow-y:auto;min-height:0}
+.slashrow{display:grid;grid-template-columns:104px minmax(0,1fr) auto;align-items:center;gap:12px;
+  height:34px;flex:none;width:100%;padding:0 10px;border-radius:12px;background:transparent;color:var(--ink);
+  text-align:left;cursor:pointer;transition:background var(--t-state) var(--ease)}
+.slashrow:hover{background:var(--hover)}
+.slashrow.on{background:var(--brand-wash)}
+.slashrow .cmd{font:400 13px/1 var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slashrow .cmd b{font-weight:500;color:var(--blue)}
+.slashrow .ds{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slashrow .hint{font:400 11px/1 var(--font-mono);letter-spacing:0;color:var(--ink-3);white-space:nowrap}
+.slashrow.nomatch{display:flex;cursor:default}
+.slashrow.nomatch:hover{background:transparent}
+.slashrow.nomatch .cmd{font:500 13px/1 var(--font-ui);color:var(--amber-text)}
+.slashfoot{display:flex;align-items:center;gap:4px;margin-top:4px;padding:7px 10px 2px;box-shadow:0 -1px 0 var(--divider);font-size:12px;color:var(--ink-2)}
+.slashfoot .grow{flex:1}
 
-@media (max-width:820px){
-  .composerwrap{padding:0 var(--s4) var(--s4)}
-  .cfoot .seg{display:none}
-}
+/* ---- Narrow windows ------------------------------------------------------ */
+@media (max-width:1120px){.cfoot .ctxbtn:has(.ctxring) .gaugelb{display:none}}
+@media (max-width:820px){.composerwrap{padding:0 16px 12px}.composerwrap > .slash{left:16px;right:16px}}
