@@ -98,7 +98,7 @@ describe("the ### fusion prefix section", () => {
 
   it("says a worker brief must stand alone", () => {
     expect(FUSION_GUIDANCE).toMatch(/stand alone|self-contained/i);
-    expect(FUSION_GUIDANCE).toContain("no memory of this conversation");
+    expect(FUSION_GUIDANCE).toContain("see the operator's request, not this chat");
   });
 
   it("says the call is solo and that results must be verified", () => {

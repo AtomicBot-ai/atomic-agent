@@ -752,6 +752,18 @@ export interface RunTurnResult {
   reason: AgentLoopReason;
   stepCount: number;
   /**
+   * Set when a ceiling — not the model — ended the task: always on
+   * `max_steps`, and on a `reply` / `finish` produced by the forced
+   * finalization step (the last step the step or time ceiling allows,
+   * where only the terminal tools are offered). A reply written there
+   * summarises how far the work got; it is not evidence the work
+   * finished. Absent when the model ended the turn on an ordinary step,
+   * and on `cancelled` / `failed`. A fusion worker reads it to report
+   * `max_steps` rather than `ok` for a worker that ran out of steps and
+   * said so in its reply.
+   */
+  stopCause?: "step_ceiling" | "time_ceiling" | "no_progress";
+  /**
    * Steering messages that were pushed but never reached a step — the
    * turn ended (or was cancelled) before the loop could drain them.
    * Callers MUST re-route these, normally onto their own message queue,
@@ -944,6 +956,12 @@ export class AgentLoop {
      */
     let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" =
       "step_ceiling";
+    /**
+     * The model's `reply` / `finish` came on the forced finalization
+     * step, so a ceiling ended the task even though the model closed it.
+     * Surfaced as `RunTurnResult.stopCause`.
+     */
+    let endedOnFinalizationStep = false;
     /** Set by any step in the current leg that produced a usable result. */
     let legMadeProgress = false;
     // Provider-outage parking. A transport failure means "this link is
@@ -1384,11 +1402,13 @@ export class AgentLoop {
         });
         if (outcome.terminal === "session") {
           reason = "finish";
+          endedOnFinalizationStep = finalizationStep;
           state = { ...state, status: "completed" };
           break;
         }
         if (outcome.terminal === "turn") {
           reason = "reply";
+          endedOnFinalizationStep = finalizationStep;
           break;
         }
         // A trimmed-batch step (auto-split: approval-gated solo) seeds
@@ -2169,6 +2189,9 @@ export class AgentLoop {
       session: state,
       reason,
       stepCount: stepsTaken,
+      ...(reason === "max_steps" || endedOnFinalizationStep
+        ? { stopCause }
+        : {}),
       undelivered: this.flushSteering(state.id),
     };
   }

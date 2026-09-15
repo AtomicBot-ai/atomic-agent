@@ -69,7 +69,11 @@ import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
-import { buildFusionDelegateTool } from "../tools/fusion/index.js";
+import {
+  buildFusionDelegateTool,
+  confineWorkerReads,
+  pickOriginalRequest,
+} from "../tools/fusion/index.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import {
@@ -2711,6 +2715,13 @@ export async function createAgentRuntime(
   const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
     createFusionWorkerSession({ workingDir, meta });
 
+  // What the operator asked for, per session, for the turn now running
+  // on it — quoted into every fusion worker's brief (`worker-prompt.ts`).
+  // Set and cleared by `executeTurn` around the loop. Only that turn can
+  // call `fusion.delegate` on the session (the controller runs one turn
+  // per session), so a read always finds its own turn's request.
+  const turnRequests = new Map<string, string>();
+
   /**
    * The loop-side budget for one turn. An explicit `maxSteps` from a
    * caller (a durable task that pins its own budget, `run --max-steps`)
@@ -2813,6 +2824,14 @@ export async function createAgentRuntime(
     };
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
+        // Recorded for `fusion.delegate`, which quotes it to the workers.
+        const turnRequest = pickOriginalRequest({
+          current: userMessage,
+          earlierTurns: session.turns,
+        });
+        if (turnRequest !== undefined) {
+          turnRequests.set(session.id, turnRequest);
+        }
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -2842,6 +2861,7 @@ export async function createAgentRuntime(
         return { ...result, session: finished };
       } finally {
         lastTurnContextUsage.delete(session.id);
+        turnRequests.delete(session.id);
         activeTraceSessions.delete(session.id);
         // A delete that arrived mid-turn was deferred to keep the pin honest;
         // complete it now that nothing is writing through the recorder.
@@ -3017,6 +3037,7 @@ export async function createAgentRuntime(
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
+      resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,
@@ -3034,6 +3055,13 @@ export async function createAgentRuntime(
       logger,
     }),
   );
+  // A fusion worker reads inside its working directory and its fan-out's
+  // write scope, never the rest of the disk (`worker-read-scope.ts`).
+  // Installed here, after every native filesystem tool is registered;
+  // other sessions' reads are untouched.
+  confineWorkerReads(toolRegistry, {
+    grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
+  });
 
   const scheduler =
     config.tasks.enabled && config.tasks.schedulerEnabled

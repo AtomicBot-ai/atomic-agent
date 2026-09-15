@@ -5,6 +5,10 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
+  applyDeclaredFileReport,
+  inspectDeclaredFiles,
+} from "./declared-files.js";
+import {
   renderWorkerBrief,
   WORKER_REPLY_CHAR_BUDGET,
 } from "./worker-prompt.js";
@@ -71,6 +75,12 @@ export interface RunWorkerTasksOptions {
    * the operator sees it as every task returning `needs_orchestrator`.
    */
   writeScope?: readonly string[];
+  /**
+   * The operator's request behind the orchestrator's turn, quoted into
+   * every worker's brief as context (`renderWorkerBrief`). Absent when
+   * the parent turn has none to give.
+   */
+  originalRequest?: string;
   signal: AbortSignal;
 }
 
@@ -206,21 +216,30 @@ async function runOneTask(
     deps.approvals.fanoutScopes?.grant(session.id, writeScope);
   }
 
+  // The worker's own clock, kept apart from the operator's signal: when
+  // it is the one that fired, the worker ran out of time — a ceiling,
+  // reported as `max_steps` — rather than being cancelled by anybody.
+  const timeLimit = AbortSignal.timeout(options.workerTimeoutMs);
+  const hitTimeLimit = (): boolean =>
+    timeLimit.aborted && !options.signal.aborted;
+
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(
       session,
-      renderWorkerBrief(task, { workingDir: deps.workingDir }),
+      renderWorkerBrief(task, {
+        workingDir: deps.workingDir,
+        ...(options.originalRequest === undefined
+          ? {}
+          : { originalRequest: options.originalRequest }),
+      }),
       {
         origin: "fusion",
         providerId: options.providerId,
         maxSteps: options.workerMaxSteps,
         taskMaxDurationMs: options.workerTimeoutMs,
         toolFilter: isWorkerVisibleTool,
-        signal: AbortSignal.any([
-          options.signal,
-          AbortSignal.timeout(options.workerTimeoutMs),
-        ]),
+        signal: AbortSignal.any([options.signal, timeLimit]),
         eventHook: (event) => {
           if (event.type === "turn_started") announceStart();
           if (
@@ -237,28 +256,61 @@ async function runOneTask(
         },
       },
     );
+    const timedOut = turn.reason === "cancelled" && hitTimeLimit();
+    const stopCause = timedOut ? "time_ceiling" : turn.stopCause;
     result = collector.finish({
       id: task.id,
       title: task.title,
-      reason: turn.reason,
+      reason: timedOut ? "max_steps" : turn.reason,
       stepCount: turn.stepCount,
       durationMs: Date.now() - startedAt,
+      ...(stopCause === undefined ? {} : { stopCause }),
+      // The loop stores the error that ended a failed turn on the
+      // session; without it the orchestrator saw only "(the worker
+      // produced no reply)" for a worker killed by its server.
+      ...(turn.reason === "failed" && turn.session.lastError
+        ? { error: turn.session.lastError }
+        : {}),
     });
   } catch (error) {
-    const aborted = options.signal.aborted || isAbortError(error);
+    const timedOut = hitTimeLimit();
+    const aborted =
+      !timedOut && (options.signal.aborted || isAbortError(error));
     result = collector.finish({
       id: task.id,
       title: task.title,
-      reason: aborted ? "cancelled" : null,
+      reason: timedOut ? "max_steps" : aborted ? "cancelled" : null,
       stepCount: 0,
       durationMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
+      ...(timedOut
+        ? // The abort's own message ("aborted due to timeout") says
+          // nothing the status does not; the collector's provider
+          // error, when there is one, is the cause worth showing.
+          { stopCause: "time_ceiling" as const }
+        : { error: error instanceof Error ? error.message : String(error) }),
     });
   } finally {
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
     deps.approvals.fanoutScopes?.clear(session.id);
+  }
+
+  // Ground truth before the orchestrator reads the reply: a worker that
+  // says it wrote a file it never wrote must not come back `ok`. Only
+  // for statuses that still claim some work; a failed or cancelled task
+  // is expected to have left its files missing.
+  if (
+    task.files !== undefined &&
+    task.files.length > 0 &&
+    (result.status === "ok" ||
+      result.status === "max_steps" ||
+      result.status === "needs_orchestrator")
+  ) {
+    result = applyDeclaredFileReport(
+      result,
+      await inspectDeclaredFiles(task.files, deps.workingDir, startedAt),
+    );
   }
 
   // Keep the feed paired: a turn that died before it ever stepped never
