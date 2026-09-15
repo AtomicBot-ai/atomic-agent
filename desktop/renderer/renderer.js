@@ -437,11 +437,14 @@ const OB_HALO_TIERS    = [['bright',0.14],['mid',0.28],['dim',0.34],['faint',0.2
 /* Last resort if a token ever resolves empty — ink, never a literal
    colour, so the fallback still belongs to the system. */
 const FALLBACK_TIER_INK = 'currentColor';
+/* Soft Tactile: the title card is indigo in both themes, so a star is always
+   a light ink on it. (The card draws no #ob-sky canvas today — the smoke
+   asserts there is none — so this only matters if the sky ever returns.) */
 const OB_TIER_LOOK = {
-  faint:  {r:0.6, a:0.35, token:'--text-tertiary', drift:0.35},
-  dim:    {r:0.9, a:0.55, token:'--accent-text',   drift:0.55},
-  mid:    {r:1.3, a:0.80, token:'--accent-text',   drift:0.80},
-  bright: {r:1.8, a:1.00, token:'--text-primary',  drift:1.00},
+  faint:  {r:0.6, a:0.35, token:'--indigo-muted', drift:0.35},
+  dim:    {r:0.9, a:0.55, token:'--on-indigo',    drift:0.55},
+  mid:    {r:1.3, a:0.80, token:'--on-indigo',    drift:0.80},
+  bright: {r:1.8, a:1.00, token:'--on-strong',    drift:1.00},
 };
 /** Live canvas state for the intro sky. Never read outside obSky*. */
 const OBSKY = {
@@ -6281,28 +6284,45 @@ function obHintsHTML() {
  *  product's name was wrong and the step indicator was the smallest thing on
  *  a 1470px screen. */
 function obHeadHTML() {
-  const here = OB_PHASE_OF[OB.step] || null;
-  /* `ob-stepmark`, not `ob-phase`: the download progress ROW is `.ob-phase`
-     and has been since before this header existed. Reusing the name meant my
-     rule — uppercase, letter-spaced, Inter — landed on that row instead, made
-     it wide enough to wrap, and so changed its height every time the ETA text
-     changed length. Everything below it moved, and a pointer parked on the
-     offer card kept losing :hover. That is the exact flicker the operator
-     reported, reintroduced by a name. */
-  const phases = here === null ? '' : '<div class="ob-stepmarks">' + OB_PHASES.map((p) =>
-    '<span class="ob-stepmark' + (p.n === here ? ' on' : '') + '">'
-    + '<span class="n">' + p.n + '</span> ' + esc(p.label) + '</span>').join('') + '</div>';
+  /* Soft Tactile moved the lockup and the phase row onto the rail
+     (obRailHTML); the step column's head is the screen's own title. The
+     cloud step's key and model screens title themselves with the provider
+     (the wizard's `.ob-h`), so the step title is left off there rather than
+     saying "Connect a cloud provider" over a screen that is no longer that. */
   const title = OB_TITLES[OB.step] || OB_SUBTITLES[OB.step] || '';
+  const wizTitled = OB.step === 'cloud' && WIZ.phase !== 'pick_kind' && !!WIZ.row;
   return '<div class="ob-head">'
-    + '<div class="ob-lock">'
-      + '<span class="ob-mark">' + MARK_COLOR.replace('width="16" height="16"', 'width="20" height="20"') + '</span>'
-      + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span>'
-      + '<span class="ob-headspacer"></span>'
-      + phases
-    + '</div>'
-    + '<hr class="ob-headrule">'
-    + (title ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
+    + (title && !wizTitled ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
     + '</div>';
+}
+
+/**
+ * The indigo rail beside every step after the title card: the lockup, one
+ * statement for the phase, the two phases with the current one lit and a
+ * finished one ticked, and the build. It carries no controls.
+ *
+ * `.ob-stepmark`, not `.ob-phase`: the download progress ROW is `.ob-phase`,
+ * and reusing that name once put this row's type on the progress rows and
+ * brought back the hover flicker. The smoke reads the phases by this class.
+ */
+function obRailHTML() {
+  const here = OB_PHASE_OF[OB.step] || null;
+  const importing = OB.step === 'import_pick' || OB.step === 'import_preview' || OB.step === 'import_done';
+  const statement = importing ? 'Bring what you already taught other agents.' : 'Choose how it runs. Change it any time.';
+  const phases = here === null ? '' : '<div class="ob-stepmarks">' + OB_PHASES.map((p) => {
+    const state = p.n === here ? 'on' : p.n < here ? 'done' : '';
+    return '<span class="ob-stepmark' + (state ? ' ' + state : '') + '">'
+      + '<span class="n">' + (state === 'done' ? ic('check') : p.n) + '</span> ' + esc(p.label) + '</span>';
+  }).join('') + '</div>';
+  const build = obBuildLine();
+  return '<aside class="ob-rail">'
+    + '<span class="ob-orb ob-orb-a" aria-hidden="true"></span><span class="ob-orb ob-orb-b" aria-hidden="true"></span>'
+    + '<div class="ob-lock"><span class="ob-mark">' + MARK_COLOR + '</span>'
+      + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span></div>'
+    + '<p class="ob-statement">' + esc(statement) + '</p>'
+    + phases
+    + (build ? '<span class="ob-railbuild">' + esc(build) + '</span>' : '')
+    + '</aside>';
 }
 
 /* ============================================================
@@ -6709,27 +6729,31 @@ function obStartTyping() {
 
 /** The intro screen. No header — onboarding-step-body.tsx:62-64. */
 function obIntroHTML() {
-  /* A 1975 title card, not a screensaver. The starfield that used to run
-     behind this — 220 drifting particles on a canvas — is the one thing the
-     visual system names as out of bounds, and it was also the only part of
-     the app doing continuous work before the user had done anything.
+  /* The title card: the mark, the product's name at display size and which
+     build this is, on one indigo block with a soft brand glow behind the
+     mark. Nothing animates, and it sizes to the window.
 
-     What is left is what a title card is for: the mark, the product's name at
-     display size, one 3px rule, and a line saying which build you are looking
-     at. It sizes to the window rather than to a fixed block, so it is a title
-     card at 1470x923 and still one at the minimum window size. */
-  const b = BUILD || {};
-  const build = b.version
-    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
-    : '';
+     `.ob-introc` keeps exactly its five children — the glow belongs to the
+     card, not the column — and the rule stays as a spacer: the smoke reads
+     both, and Soft Tactile draws no 3px rules (see onboarding.css). */
+  const build = obBuildLine();
   return '<div id="ob-intro">'
+    + '<span class="ob-glow" aria-hidden="true"></span>'
     + '<div class="ob-introc">'
-      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="64" height="64"') + '</span>'
+      + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="96" height="96"') + '</span>'
       + '<h1 class="ob-word">' + esc(OB_COPY.wordmark) + '</h1>'
       + '<hr class="ob-rule">'
       + (build ? '<span class="ob-build">' + esc(build) + '</span>' : '')
       + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
     + '</div></div>';
+}
+
+/** Which build this is — `0.5.5 · macOS arm64` — for the title card and the rail. */
+function obBuildLine() {
+  const b = BUILD || {};
+  return b.version
+    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
+    : '';
 }
 
 
@@ -7020,16 +7044,24 @@ function renderDlbar() {
 /** OnboardingDownloadProgress (onboarding-download-progress.tsx:63-99). */
 function obProgressHTML() {
   if (DL.job === null && DL.error !== null) {
-    return '<div class="ob-err">✗  ' + esc(DL.error) + '</div>';
+    return '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.error) + '</span></div>';
   }
+  /* Soft Tactile: each phase is an icon, its name, a real progress bar and
+     a fixed-width trailing figure. The bar is `.tk-prog` here rather than the
+     strip's glyph bar (dlBarHTML, which #dlbar keeps). `.pb i` keeps its
+     colour contract: a waiting phase's fill is dimmer than a live one's, and
+     the smoke compares the two. */
   const row = (label, phase) => {
     const percent = phase.state === 'done' ? 100 : (phase.percent || 0);
     const trailing = phase.state === 'done' ? 'done'
       : phase.state === 'active' && phase.totalBytes > 0
         ? Math.round(percent) + '%   ' + dlBytes(phase.transferredBytes) + ' / ' + dlBytes(phase.totalBytes)
         : phase.state === 'active' ? Math.round(percent) + '%' : 'waiting';
-    return '<div class="ob-phase ' + phase.state + '"><span class="pl">' + esc(label) + '</span>'
-      + '<span class="pb">' + dlBarHTML(percent, 36) + '</span>'
+    const icon = phase.state === 'done' ? '<span class="tk-ico tk-ico--sm tk-ico--green">' + ic('check') + '</span>'
+      : phase.state === 'active' ? '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>'
+      : '<span class="tk-ico tk-ico--sm">' + ic('clock') + '</span>';
+    return '<div class="ob-phase ' + phase.state + '">' + icon + '<span class="pl">' + esc(label) + '</span>'
+      + '<span class="pb tk-prog"><i style="width:' + Math.round(Math.min(100, Math.max(0, percent))) + '%"></i></span>'
       + '<span class="pt">' + esc(trailing) + '</span></div>';
   };
   const rate = DL.job && DL.job.sawProgress
@@ -7038,7 +7070,7 @@ function obProgressHTML() {
   // The runtime step's own failure, said once and not folded into the
   // weights bar: the model download below it is still running.
   const runtimeErr = DL.runtimeError
-    ? '<div class="ob-err">✗  ' + esc(DL.runtimeError) + '</div>' : '';
+    ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.runtimeError) + '</span></div>' : '';
   return row(OB_COPY.phaseRuntime, DL.runtime) + runtimeErr + row(OB_COPY.phaseWeights, DL.weights)
     + '<div class="ob-rate">' + esc(rate) + '</div>';
 }
@@ -7046,18 +7078,23 @@ function obProgressHTML() {
 /* ---------------- rows and screens ---------------- */
 
 /** rowPrefix (onboarding-rows.ts): `›  ` selected, three spaces otherwise. */
-function obRow(index, selected, label, detail, extraClass, attrs) {
+function obRow(index, selected, label, detail, extraClass, attrs, lead, trail) {
   /* r6 UX: roving tabindex, the desktop list convention. Only the row
      under the cursor is in the Tab order, so Tab enters the list at the
      current row and one more Tab leaves it; the arrows move within.
      `attrs` is for a row that is something more specific than a row —
-     the import step's tick boxes, which are checkboxes and say so. */
+     the import step's tick boxes, which are checkboxes and say so.
+     Soft Tactile: `lead` is the row's icon, logo or tick box and `trail`
+     its keycap, both outside `.t`, whose text the drivers compare. The `›`
+     marker stays in the markup and is not drawn; the tint is the cursor. */
   return '<button class="ob-row' + (selected ? ' on' : '') + (extraClass ? ' ' + extraClass : '')
     + '" data-obrow="' + index + '" tabindex="' + (selected ? '0' : '-1')
     + '" aria-selected="' + (selected ? 'true' : 'false') + '"' + (attrs || '') + '>'
     + '<span class="mk">' + (selected ? '›' : '') + '</span>'
-    + '<span><span class="t">' + label + '</span>'
-    + (detail ? '<span class="d">' + detail + '</span>' : '') + '</span></button>';
+    + (lead || '')
+    + '<span class="ob-rbody"><span class="t">' + label + '</span>'
+    + (detail ? '<span class="d">' + detail + '</span>' : '') + '</span>'
+    + (trail || '') + '</button>';
 }
 
 /** describeDownloadingModel (local-model-picks.ts:139-145). */
@@ -7101,10 +7138,18 @@ function obOutOfReach() {
 }
 
 function obChooseHTML() {
-  const rows = OB_CHOICES.map((choice, i) =>
-    obRow(i, OB.cursor === i, esc(choice.label), esc(choice.detail[0]) + '<br>' + esc(choice.detail[1]))).join('');
-  return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join('\n')) + '</div>'
-    + '<div class="ob-list">' + rows + '</div>';
+  /* Route cards: where it runs, the route, one line, and the digit that
+     jumps to it. */
+  const look = {local:['laptop', ' tk-ico--indigo'], cloud:['cloud', ' tk-ico--blue'], custom:['server', '']};
+  const rows = OB_CHOICES.map((choice, i) => {
+    const l = look[choice.id] || ['server', ''];
+    return obRow(i, OB.cursor === i, esc(choice.label),
+      esc(choice.detail[0]) + (choice.detail[1] ? '<br>' + esc(choice.detail[1]) : ''), '', '',
+      '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
+      '<span class="kc">' + (i + 1) + '</span>');
+  }).join('');
+  return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
+    + '<div class="ob-list ob-routes">' + rows + '</div>';
 }
 
 function obLocalPickHTML() {
@@ -7112,35 +7157,29 @@ function obLocalPickHTML() {
   const models = rows.filter((r) => r.kind === 'model');
   const onHf = OB.cursor >= models.length;
   /* r6 UX: windowLocalPicks paints six rows and says `↓ 7 more`, because
-     a terminal cannot scroll a region. This one can — and while the
-     window was a mouse DEAD END (there is no gesture that reaches the
-     seventh model; only an arrow key moves the window), a scroller is
-     the desktop's own list. Every row is drawn, the box scrolls, and the
-     cursor is kept in view for the keyboard — which behaves exactly as
-     it did, six rows at a time or not. */
+     a terminal cannot scroll a region. This one can: every row is drawn,
+     the box scrolls, and the cursor is kept in view for the keyboard. */
   const best = bestModelFor(OB.models, OB.ram);
   const body = models.length
     ? models.map((row, at) => {
         const model = row.model;
         return obRow(at, !onHf && at === OB.cursor,
           obModelRowLabel(model, best && model.id === best.id),
-          obModelRowDetail(model));
+          obModelRowDetail(model), '', '', modelMark(model.id));
       }).join('')
     : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : obNothingFitsLine()) + '</div>';
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
-    esc('paste an owner/repo id or a huggingface.co URL'));
+    esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
       + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM, '
         + 'and the list below is ordered for it — the best fit first.') + '</div>'
-    + '<div class="ob-h">' + esc(OB_COPY.localHeading) + '</div>'
+    + '<div class="ob-h ob-sec">' + esc(OB_COPY.localHeading) + '</div>'
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
-       Beside it, it collapsed the list to nothing: `.ob-models` carries
-       `overflow-y:auto`, which sets its `min-height` to 0, so as a flex
-       item next to a sibling that cannot shrink it absorbed every pixel of
-       shrinkage and rendered 0px tall — three model rows present in the
-       DOM, readable by script, and INVISIBLE on screen. Caught in a
-       screenshot of the 8 GB pass; the 68 GB pass has no such sibling and
-       looked perfect. `min-height` below is the second belt. */
+       Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
+       item next to a sibling that cannot shrink absorbs every pixel of
+       shrinkage and renders 0px tall — rows present in the DOM, readable by
+       script, and invisible on screen. `min-height` on `.ob-models` is the
+       second belt. */
     + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf;
 }
 
@@ -7198,7 +7237,7 @@ function obOutOfReachHTML() {
   if (!out.length) return '';
   return '<div class="ob-h ob-out-h">' + esc('Needs a bigger machine than this one') + '</div>'
     + '<div class="ob-out-list">' + out.map((model) =>
-      '<div class="ob-out">'
+      '<div class="ob-out">' + modelMark(model.id, 'xs')
       + '<span class="t"><span class="ob-mono">' + esc(model.id) + '</span></span>'
       + (model.description ? '<span class="ob-desc">' + esc(model.description) + '</span>' : '')
       + '<span class="ob-fit ob-fit-over">' + esc(fitFor(model, OB.ram).label) + '</span></div>').join('')
@@ -7211,24 +7250,26 @@ function obErrorIsInline() {
 }
 /** The step error, rendered where the step wants it. */
 function obInlineErrHTML() {
-  return OB.error ? '<div class="ob-err ob-err-field">' + esc(OB.error) + '</div>' : '';
+  return OB.error ? '<div class="ob-err ob-err-field">' + ic('alert') + '<span>' + esc(OB.error) + '</span></div>' : '';
 }
 
 /** hf-reference-editor.tsx, as its own step rather than a jump into Settings. */
 function obHfRefHTML() {
   /* r6 UX: a `<label for>` rather than a paragraph that happens to sit
-     above a box — so clicking the words puts the caret in the field. */
-  return '<label for="ob-hf-ref">' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></label>'
-    + '<div class="ob-explain">' + esc(HF_REF_EXAMPLES_LINE) + '</div>'
-    + '<div><input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
-      + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+     above a box — so clicking the words puts the caret in the field.
+     Soft Tactile: the field is a 52px pill wearing the Hugging Face mark,
+     and Clear rides at its end. `[ clear ]` lost its brackets in r6; the
+     control, the chord behind it and the footer hint are unchanged. */
+  const clear = !OB.busy && OB.hfReference.length > 0
+    ? '<button class="ob-offer ob-offer-inline" data-obact="hf:clear">Clear</button>' : '';
+  return '<label class="ob-lbl" for="ob-hf-ref">' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></label>'
+    + '<div class="ob-field' + (OB.error ? ' is-error' : '') + '">' + logoHTML('huggingface', 'sm')
+      + '<input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
+      + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '>'
+      + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + clear + '</div>'
     + obInlineErrHTML()
-    + (!OB.busy && OB.hfReference.length > 0
-        /* r6 UX: `[ clear ]` is a terminal writing a button with the
-           punctuation it has. The control, the chord behind it and the
-           footer hint are unchanged; only the brackets are gone. */
-        ? '<div><button class="ob-offer ob-offer-inline" data-obact="hf:clear">Clear</button></div>' : '')
-    + (OB.busy ? '<div class="ob-explain">asking huggingface.co…</div>' : '');
+    + (OB.busy ? '<div class="ob-explain ob-help">asking huggingface.co…</div>' : '')
+    + '<div class="ob-explain ob-examples">' + esc(HF_REF_EXAMPLES_LINE) + '</div>';
 }
 
 /** hf-pick-list.tsx, ported column for column. */
@@ -7238,35 +7279,41 @@ function obHfPickHTML() {
   const cursor = Math.min(OB.cursor, Math.max(0, choices.length - 1));
   const selected = choices[cursor];
   const warning = selected ? llmHfRamWarning(selected.fileSizeGb, OB.ram) : null;
-  /* r6 UX: a scroller for the same reason the model list has one — a
-     repo with nine quants offered six of them to the mouse and no way at
-     all to reach the rest. */
-  return '<div class="ob-h">' + esc(repo ? repo.repoId : '') + '</div>'
+  /* r6 UX: a scroller for the same reason the model list has one — a repo
+     with nine quants offered six of them to the mouse and no way at all to
+     reach the rest. Soft Tactile: each quantisation is a radio row, the
+     filename in mono and its size at the end; the projector line and the
+     RAM warning are notices. */
+  return '<div class="ob-h ob-repo">' + logoHTML('huggingface', 'sm') + esc(repo ? repo.repoId : '') + '</div>'
     + '<div class="ob-list ob-scroll">'
     + choices.map((choice, at) => {
-        const line = (at === cursor ? '›  ' : '   ') + String(choice.filename).padEnd(44) + String(choice.sizeLabel).padStart(9);
-        return '<button class="ob-row' + (at === cursor ? ' on' : '') + '" data-obrow="' + at
-          + '" tabindex="' + (at === cursor ? '0' : '-1')
-          + '" aria-selected="' + (at === cursor ? 'true' : 'false') + '">'
-          + '<span class="mk"></span><span class="ob-mono">' + esc(line) + '</span></button>';
+        const on = at === cursor;
+        return '<button class="ob-row ob-file' + (on ? ' on' : '') + '" data-obrow="' + at
+          + '" tabindex="' + (on ? '0' : '-1')
+          + '" aria-selected="' + (on ? 'true' : 'false') + '">'
+          + '<span class="mk"></span><span class="tk-radio' + (on ? ' on' : '') + '" aria-hidden="true"></span>'
+          + '<span class="ob-rbody"><span class="t">' + esc(choice.filename) + '</span></span>'
+          + '<span class="ob-size">' + esc(choice.sizeLabel) + '</span></button>';
       }).join('')
     + '</div>'
-    + (repo && repo.hidden ? '<div class="ob-explain">' + esc('   ' + repo.hidden) + '</div>' : '')
-    + (repo && repo.mmproj ? '<div class="ob-explain">' + esc(HF_MMPROJ_LINE) + '</div>' : '')
-    + (warning ? '<div class="ob-warn ob-mono">' + esc('   ⚠ ' + warning) + '</div>' : '');
+    + (repo && repo.hidden ? '<div class="ob-help">' + esc(String(repo.hidden).trim()) + '</div>' : '')
+    + (repo && repo.mmproj ? '<div class="ob-note is-blue">' + ic('info') + '<span>' + esc(HF_MMPROJ_LINE.trim()) + '</span></div>' : '')
+    + (warning ? '<div class="ob-warn ob-note is-amber">' + ic('alert') + '<span>' + esc(warning) + '</span></div>' : '');
 }
 
 /** onboarding-url-step.tsx:8-19, both halves. */
 function obUrlHTML(kind) {
   const chat = kind === 'chat';
-  return '<label for="ob-url">' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
+  return '<label class="ob-lbl" for="ob-url">' + esc(chat ? OB_COPY.urlChatTitle : OB_COPY.urlEmbeddingTitle)
       + '<span class="ob-explain">' + esc(OB_COPY.urlHealthNote) + '</span></label>'
-    + (chat ? '' : '<div class="ob-explain">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
-    + '<div><input id="ob-url" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="'
+    + '<div class="ob-field' + (OB.error ? ' is-error' : '') + '">'
+      + '<input id="ob-url" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="'
       + esc(chat ? OB_COPY.urlChatPlaceholder : OB_COPY.urlEmbeddingPlaceholder) + '" value="'
-      + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '></div>'
+      + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '>'
+      + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + '</div>'
     + obInlineErrHTML()
-    + (OB.busy ? '<div class="ob-explain">' + esc(OB_COPY.urlProbing) + '</div>' : '');
+    + (chat ? '' : '<div class="ob-explain ob-help">' + esc(OB_COPY.urlEmbeddingNote) + '</div>')
+    + (OB.busy ? '<div class="ob-explain ob-help">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
 
 /** onboarding-download-step.tsx:18-38 / :87-124. */
@@ -7276,22 +7323,43 @@ function obDownloadHTML() {
   // offerCloudMeanwhile: "hidden once a cloud provider is configured —
   // nothing left to offer" (:110-111).
   const offerCloud = !OB.cloudReady;
+  /* r6 UX: these two ARE this screen's buttons — the only way off it short
+     of waiting — so they are cards a mouse can see, not the terminal's `┃`
+     rule around a paragraph. The copy and the `c` / `s` chords are the
+     TUI's, unchanged. */
   const cloud = offerCloud
-    ? '<button class="ob-offer cloud" data-obact="key:c">'
-      + (failed ? esc(OB_COPY.cloudOfferFailed) : esc(OB_COPY.cloudOffer[0]) + '<br>' + esc(OB_COPY.cloudOffer[1]))
-      + '<b>' + esc(OB_COPY.cloudOfferKey) + '</b></button>'
+    ? obOfferHTML(' cloud', 'key:c', '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+        failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey)
     : '';
-  /* r6 UX: these two ARE this screen's buttons — the only way off it
-     short of waiting — so they are drawn as cards a mouse can see, not as
-     the terminal's `┃` rule around a paragraph. The copy and the `press
-     c` / `press s` chords are the TUI's, unchanged. */
-  const skip = '<button class="ob-offer" data-obact="key:s">'
-    + (failed ? esc(OB_COPY.skipOfferFailed) : esc(OB_COPY.skipOffer[0]) + '<br>' + esc(OB_COPY.skipOffer[1]))
-    + '<b>' + esc(OB_COPY.skipOfferKey) + '</b></button>';
+  const skip = obOfferHTML('', 'key:s', '<span class="tk-ico">' + ic('arrowR') + '</span>',
+    failed ? [OB_COPY.skipOfferFailed] : OB_COPY.skipOffer, OB_COPY.skipOfferKey);
   return '<div class="ob-explain">'
       + esc(failed ? 'The ' + label + ' download failed.'
                    : 'Downloading ' + label + '. You can leave this running.') + '</div>'
     + obProgressBlockHTML() + cloud + skip;
+}
+
+/**
+ * One download offer as a card: an icon, the offer as a title and a detail
+ * line, and the chord's keycap. The copy is the TUI's two wrapped lines,
+ * rejoined and split where it reads: a first line ending in a dash is the
+ * title, otherwise the first sentence is.
+ */
+function obOfferHTML(cls, spec, icon, lines, chord) {
+  const text = lines.join(' ');
+  let title = text;
+  let detail = '';
+  if (lines.length > 1 && /—\s*$/.test(lines[0])) {
+    title = lines[0].replace(/\s*—\s*$/, '');
+    detail = lines.slice(1).join(' ');
+  } else if (text.indexOf('. ') > 0) {
+    title = text.slice(0, text.indexOf('. '));
+    detail = text.slice(text.indexOf('. ') + 2);
+  }
+  return '<button class="ob-offer' + cls + '" data-obact="' + spec + '">' + icon
+    + '<span class="ob-rbody"><span class="t">' + esc(title) + '</span>'
+    + (detail ? '<span class="d">' + esc(detail) + '</span>' : '') + '</span>'
+    + '<span class="kc">' + esc(String(chord).replace(/^press\s+/, '')) + '</span></button>';
 }
 
 /** onboarding-wait-or-jump-step.tsx:38-55, :139-150. */
@@ -7305,28 +7373,45 @@ function obWaitOrJumpHTML() {
     {label:'Add another cloud provider', detail:'one more key or endpoint, then straight back to this screen'},
   ];
   if (status === 'failed') rows.push({label:'Retry the download', detail:'starts the same download again'});
+  const icons = [
+    '<span class="tk-ico tk-ico--brand">' + ic('arrowR') + '</span>',
+    '<span class="tk-ico">' + ic('plus') + '</span>',
+    '<span class="tk-ico">' + ic('retry') + '</span>',
+  ];
   const cursor = OB.cursor % rows.length;
-  return '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(OB_COPY.cloudReadyLabel) + '</div>'
+  return obReadyHTML(OB_COPY.cloudReadyLabel)
     + (status === 'running'
         ? '<div class="ob-explain">' + esc('Still downloading ' + label + ' — it keeps running whichever row you pick.') + '</div>' : '')
-    + (status === 'ready'
-        ? '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(label + ' downloaded — the local model is ready too') + '</div>' : '')
+    + (status === 'ready' ? obReadyHTML(label + ' downloaded — the local model is ready too') : '')
     + (status === 'failed'
         ? '<div class="ob-explain">' + esc('The ' + label + ' download failed — the cloud model still works.') + '</div>' : '')
     + (status === 'ready' ? '' : obProgressBlockHTML())
-    + '<div class="ob-list">' + rows.map((row, i) => obRow(i, cursor === i, esc(row.label), esc(row.detail))).join('') + '</div>';
+    + '<div class="ob-list">' + rows.map((row, i) =>
+        obRow(i, cursor === i, esc(row.label), esc(row.detail), '', '', icons[i])).join('') + '</div>';
+}
+
+/** Something that is done, said once: a green tick and the sentence. */
+function obReadyHTML(text) {
+  return '<div class="ob-h ob-ready"><span class="ob-ok tk-ico tk-ico--sm tk-ico--green">' + ic('check') + '</span>'
+    + esc(text) + '</div>';
 }
 
 /** onboarding-propose-step.tsx:11-33. */
 function obProposeHTML() {
-  const accept = OB.offer === 'local'
+  const local = OB.offer === 'local';
+  const accept = local
     ? {label:'Set up local models too', detail:'one download, then it runs offline and costs nothing per token'}
     : {label:'Set up a cloud model too', detail:'an API key and a model — about a minute, for the heavy turns'};
   const rows = [accept, OB_COPY.proposeSkip];
-  return '<div class="ob-h"><span class="ob-ok">✓</span>  ' + esc(obConfiguredLabel()) + '</div>'
-    + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join('\n')) + '</div>'
+  const icons = [
+    local ? '<span class="tk-ico tk-ico--indigo">' + ic('laptop') + '</span>'
+      : '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+    '<span class="tk-ico">' + ic('arrowR') + '</span>',
+  ];
+  return obReadyHTML(obConfiguredLabel())
+    + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
     + '<div class="ob-list">'
-    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail))).join('') + '</div>';
+    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail), '', '', icons[i])).join('') + '</div>';
 }
 
 /** buildImportPickRows (import-step.ts:101-113): agents, then the import
@@ -7357,8 +7442,9 @@ function obScanStripHTML() {
   const all = OB.importAgents || [];
   const done = OB.scanDone || 0;
   const at = OB.scanAt || '';
-  return '<div class="ob-scanstrip">'
-    + '<span class="ann caution">Scanning</span>'
+  return '<div class="ob-scanstrip" role="status">'
+    + '<span class="tk-spin" aria-hidden="true"></span>'
+    + '<b class="ob-scan-k">Scanning</b>'
     + '<span class="readout">' + esc(all.length ? (Math.min(done + 1, all.length) + ' of ' + all.length) : '…') + '</span>'
     + (at ? '<span class="ob-help">' + esc(at) + '</span>' : '')
     + '</div>';
@@ -7367,26 +7453,27 @@ function obScanStripHTML() {
 function obImportPickHTML() {
   const rows = obImportRows();
   const cursor = OB.cursor % rows.length;
-  return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join('\n')) + '</div>'
-    + '<div class="ob-list">' + rows.filter((r) => !r.offList).map((row, i) => {
+  /* B.5 — the scan is a readout (which source, how far through), so a scan
+     can be told from a hang. It sits above the list it is reading, and the
+     list dims while it runs. */
+  return '<div class="ob-explain">' + esc(OB_COPY.importExplainer.join(' ')) + '</div>'
+    + (OB.busy ? obScanStripHTML() : '')
+    + '<div class="ob-list' + (OB.busy ? ' is-busy' : '') + '">' + rows.filter((r) => !r.offList).map((row, i) => {
         if (row.kind === 'agent') {
-          /* r6 UX: `[x]` and `[ ]` are a terminal's checkbox. This row IS
-             a checkbox — it toggles, it does not navigate — so it is
-             drawn as one and announced as one. The tick is the same
-             state, in the shape a desktop reader already knows. */
-          return obRow(i, cursor === i,
-            '<span class="box' + (row.agent.enabled ? ' on' : '') + '" aria-hidden="true">'
-              + (row.agent.enabled ? '✓' : '') + '</span>' + esc(row.agent.label),
-            esc(row.agent.dir), 'ob-check',
-            ' role="checkbox" aria-checked="' + (row.agent.enabled ? 'true' : 'false') + '"');
+          /* r6 UX: this row IS a checkbox — it toggles, it does not
+             navigate — so it is drawn as one and announced as one. The
+             source wears its own mark; the terminal app wears ours. */
+          const agent = row.agent;
+          const mark = agent.id === OB_TUI_AGENT_ID
+            ? '<span class="logo ob-applogo">' + MARK_COLOR + '</span>'
+            : providerMark(providerLogoKey(agent.id) ? agent.id : agent.label);
+          return obRow(i, cursor === i, esc(agent.label), esc(agent.dir), 'ob-check',
+            ' role="checkbox" aria-checked="' + (agent.enabled ? 'true' : 'false') + '"',
+            '<span class="box' + (agent.enabled ? ' on' : '') + '" aria-hidden="true">'
+              + (agent.enabled ? ic('check') : '') + '</span>' + mark);
         }
         return '';
-      }).join('') + '</div>'
-    /* B.5 — "scanning the sources…" was a grey sentence that said nothing
-       about progress, so there was no way to tell a scan from a hang ("не было
-       полосы импорта. Я не понимаю, работает или нет"). It is a readout now:
-       which source, and how far through. */
-    + (OB.busy ? obScanStripHTML() : '');
+      }).join('') + '</div>';
 }
 
 /** summarizeImportReport (import-step.ts:167-189) + reportHeadline (:200-212). */
@@ -7434,16 +7521,33 @@ function obImportReportHTML(executed) {
   const report = OB.importReport;
   const bad = obImportFailures();
   const open = OB.importFailuresOpen;
-  return '<div class="ob-h">' + esc(obImportHeadline(report, executed)) + '</div>'
-    + (report ? '<div class="ob-explain">' + esc(obImportSummary(report).join('\n')) + '</div>' : '')
+  /* The headline keeps its words; a leading ✓ or ⚠ becomes the matching
+     icon. The per-kind summary is a two-column card: kind, then counts. */
+  const headline = obImportHeadline(report, executed);
+  const glyph = /^([✓⚠])\s+/.exec(headline);
+  const icon = !glyph ? ''
+    : glyph[1] === '✓' ? '<span class="tk-ico tk-ico--sm tk-ico--green">' + ic('check') + '</span>'
+    : '<span class="tk-ico tk-ico--sm tk-ico--amber">' + ic('alert') + '</span>';
+  const lines = report ? obImportSummary(report) : [];
+  return '<div class="ob-h ' + (glyph ? 'ob-ready' : 'ob-lede') + '">' + icon
+      + esc(glyph ? headline.slice(glyph[0].length) : headline) + '</div>'
+    + (lines.length
+      ? '<div class="ob-explain ob-summary">' + lines.map((line) => {
+          const at = line.indexOf(': ');
+          const kind = at > 0 ? line.slice(0, at) : '';
+          const counts = at > 0 ? line.slice(at + 2) : line;
+          return '<div class="ob-sumrow"><span class="k">' + esc(kind) + '</span>'
+            + '<span class="v' + (/in conflict/.test(counts) ? ' is-warn' : '') + '">' + esc(counts) + '</span></div>';
+        }).join('') + '</div>'
+      : '')
     + (bad.length && !OB.busy
       ? '<div class="ob-failures">'
         + '<button class="btn btn-s" data-obact="import:failures">'
-        + esc((open ? 'Hide' : 'What failed') + ' (' + bad.length + ')') + '</button>'
-        + (executed ? '<button class="btn btn-s" data-obact="import:retry">Retry failed</button>' : '')
+        + esc((open ? 'Hide' : 'What failed') + ' (' + bad.length + ')') + ic(open ? 'chevU' : 'chevD') + '</button>'
+        + (executed ? '<button class="btn btn-s" data-obact="import:retry">' + ic('retry') + 'Retry failed</button>' : '')
         + '</div>'
         + (open
-          ? '<div class="tbl-wrap"><table class="tbl"><thead><tr>'
+          ? '<div class="tbl-wrap ob-failtbl"><table class="tbl"><thead><tr>'
             + '<th>Item</th><th>Source</th><th>Why</th></tr></thead><tbody>'
             + bad.slice(0, 200).map((i) =>
                 '<tr><td>' + esc(i.name || i.id || i.kind || 'item') + '</td>'
@@ -7478,21 +7582,28 @@ function wizModelStepHTML(withFoot) {
   const all = WIZ.models || [];
   const rows = q ? all.filter((m) => (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)) : all;
   const shown = rows.slice(0, 200);
+  /* Soft Tactile: every row wears its model's mark. On the first-run layer
+     (withFoot) the provider's mark titles the step and search is a pill
+     with its magnifier; the popover's copy of this step keeps its plain
+     field and title. */
+  const search = '<input class="ob-inp" id="wiz-model-q" placeholder="Search models" value="' + esc(WIZ.modelFilter || '') + '">';
+  const providerId = WIZ.savedId || (WIZ.row && WIZ.row.id) || '';
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">Model</div>'
-    + '<div class="ob-h">' + esc(WIZ.savedLabel || 'Choose a model') + '</div>'
+    + '<div class="ob-h">' + (withFoot ? providerMark(providerId) : '') + esc(WIZ.savedLabel || 'Choose a model') + '</div>'
     + (WIZ.unverifiedNote
-        ? '<div class="ob-err">' + esc(WIZ.unverifiedNote) + '</div>'
+        ? '<div class="ob-err is-warn">' + esc(WIZ.unverifiedNote) + '</div>'
         : '')
     + '<div class="ob-help">'
       + esc(WIZ.defaultModel ? 'Our default for this provider is ' + WIZ.defaultModel + '.' : 'Pick the model this provider should answer with.')
     + '</div>'
     + (all.length > 8
-        ? '<input class="ob-inp" id="wiz-model-q" placeholder="Search models" value="' + esc(WIZ.modelFilter || '') + '">'
+        ? (withFoot ? '<div class="ob-field ob-search">' + ic('search') + search + '</div>' : search)
         : '')
     + '<div class="ob-wizlist"><div class="prows">'
       + shown.map((m) =>
           '<button class="prow' + (m.id === WIZ.modelPick ? ' on' : '') + '" data-wizmodel="' + esc(m.id) + '">'
+          + modelMark(m.id, 'sm')
           + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
           + '<span class="ep">' + esc(m.id) + '</span></span>'
           + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
@@ -7519,23 +7630,15 @@ function obWizardHTML() {
     selProviders().forEach((p) => { taken[p.id] = 1; });
     const rows = obWizRows();
     const cur = rows.length ? WIZ.cur % rows.length : 0;
-    /* B.3 — a row list, not a scrolling wall of identical boxes ("оч страшно
-       выглядит"). Each row is the provider's name over its endpoint in mono,
-       and one already set up carries a lit CONFIGURED cell rather than the
-       words "· already configured" tacked onto the endpoint.
-
-       The two we actually recommend sit above a hairline; the other twelve
-       are below it under MORE PROVIDERS. Fourteen equally-weighted rows is
-       not a choice, it is a wall — and the first thing anyone needs to know
-       is which two get them working fastest.
-
-       There are no logos: we have no right to draw most of them, and the
-       row's own structure carries the identity. */
+    /* B.3 — a row list, not a scrolling wall of identical boxes. Each row
+       is the provider's name over its endpoint in mono, and one already set
+       up carries a Configured chip. The two we recommend sit above More
+       providers. Soft Tactile: each row wears the provider's real mark
+       (renderer/logos, on a white badge); a URL you supply gets the server
+       badge, never a monogram. */
     const RECOMMENDED = new Set(['openrouter', 'aimlapi']);
     /* The three built-in kinds carry no baseUrl — the agent holds their
-       endpoints — so the row fell back to printing the kind id (`openrouter`)
-       in the slot where a host belongs, which says nothing. These are the
-       hosts those kinds actually talk to, for display only. */
+       endpoints — so these are the hosts those kinds talk to, for display. */
     const KIND_HOST = {
       openrouter: 'https://openrouter.ai/api',
       aimlapi: 'https://api.aimlapi.com',
@@ -7545,6 +7648,7 @@ function obWizardHTML() {
       '<button class="prow' + (n === cur ? ' on' : '') + '"'
       + ' data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
       + '" aria-selected="' + (n === cur ? 'true' : 'false') + '">'
+      + providerMark(k.custom ? '' : k.id)
       + '<span class="col"><span class="nm">' + esc(k.label.split(' (')[0]) + '</span>'
       + '<span class="ep">' + esc(k.custom ? 'a URL you supply' : k.baseUrl || KIND_HOST[k.kind] || k.kind) + '</span></span>'
       + (taken[k.id] ? '<span class="ann lit">Configured</span>' : '')
@@ -7554,7 +7658,9 @@ function obWizardHTML() {
     const at = (r) => rows.indexOf(r);
     return '<div class="ob-wiz">'
       + (WIZ.q === null ? ''
-          : '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '">')
+          : '<div class="ob-field ob-search">' + ic('search')
+            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '">'
+            + '<span class="kc">esc</span></div>')
       + '<div class="ob-wizlist">'
         + (top.length ? '<div class="prows">' + top.map((r) => row(r, at(r))).join('') + '</div>' : '')
         + (rest.length
@@ -7564,58 +7670,56 @@ function obWizardHTML() {
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
       // for it too, and it routes through the same action.
-      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">Back</button><span class="grow"></span></div>'
+      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">' + ic('chevL') + 'Back</button><span class="grow"></span></div>'
       + '</div>';
   }
   const k = WIZ.row;
   const verifying = WIZ.phase === 'verifying';
   /* COPY, disclosed rather than silently dropped: providers-wizard.tsx
      also has an `Embedding backend` (:445) and a `Chat model id` (:450)
-     screen. The desktop's add-provider wizard has neither phase — it
-     takes the kind's default chat model and never offers a cloud
-     embedding backend — so those two titles have nowhere honest to go
-     and are NOT rendered. `LLM provider — add provider`, `API key —
-     ${service}` and the .env sentence are all present, verbatim. */
-  /* r6 UX: the key box had no label at all — a bare dark rectangle under
-     a sentence about .env, which is a footnote and not a name. It is
-     labelled, it says what goes in it, and the .env sentence has moved
-     BELOW the field, where help text belongs. The sentence itself is the
-     copy contract's, verbatim. */
+     screen. The desktop's add-provider wizard has neither phase, so those
+     two titles have nowhere honest to go and are NOT rendered. */
   if (WIZ.phase === 'pick_model') return wizModelStepHTML(true);
-  /* B.4 — one label, not three. This screen used to say "API key — AI/ML API"
-     as a heading, "API key" again as the field's label, and then put the .env
-     sentence between them; the tester read it as the same words twice and she
-     was right. The screen is titled in the 11px label style, the provider is
-     the subhead, and naming the field is the placeholder's job.
+  /* B.4 — one label, not three: "API key" once as the kicker, the provider
+     (with its mark) as the title, and naming the field is the placeholder's
+     job. The .env sentence is the copy contract's, verbatim, under the field.
 
      F1 — when the key could not be CHECKED (as opposed to rejected), the two
      buttons below are the whole decision: try again, or save it knowing it is
-     unchecked. There is no path from here to a completion screen. */
+     unchecked. Unreachable reads amber, rejected reads red. */
   const service = k.label.split(' (')[0];
   const unchecked = WIZ.uncheckedFor;
+  const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
-    + '<div class="ob-h">' + esc(service) + '</div>'
+    + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
     + (k.custom ? '<label class="ob-flabel" for="wiz-url">API base URL</label>'
         + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
-    + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
-    + ' aria-label="API key for ' + esc(service) + '"'
-    + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
-    + ' value="' + esc(WIZ.apiKey) + '">'
-    + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
+    + '<div class="ob-field' + tone + '">' + ic('key')
+      + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
+      + ' aria-label="API key for ' + esc(service) + '"'
+      + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' value="' + esc(WIZ.apiKey) + '">'
+      + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
+    + '</div>'
+    + (WIZ.error
+        ? '<div class="ob-err' + (unchecked ? ' is-warn' : '') + '">' + ic(unchecked ? 'info' : 'alert')
+          + '<span>' + esc(WIZ.error) + '</span></div>'
+        : '')
     + (k.env ? '<div class="ob-help">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
     + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
     + (unchecked
       ? '<div class="ob-foot">'
-        + '<button class="btn btn-g" data-act="wiz:back">Back</button>'
+        + '<button class="btn btn-g" data-act="wiz:back">' + ic('chevL') + 'Back</button>'
         + '<span class="grow"></span>'
         + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
-        + '<button class="btn btn-p" data-act="wiz:next">Try again</button>'
+        + '<button class="btn btn-p" data-act="wiz:next">' + ic('retry') + 'Try again</button>'
         + '</div>'
-      : '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
+      : '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
+        + ic('chevL') + 'Back</button>'
         + '<span class="grow"></span>'
         + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-        + (verifying ? 'Verifying…' : 'Next') + '</button></div>')
+        + (verifying ? 'Verifying…' : 'Next' + ic('arrowR')) + '</button></div>')
     + '</div>';
 }
 
@@ -7636,9 +7740,9 @@ function obWizardHTML() {
    — the same router the keyboard uses. A control cannot drift from a
    chord because there is nothing for it to drift to.
    -------------------------------------------------------------------------- */
-function obBtn(spec, label, cls, disabled) {
+function obBtn(spec, label, cls, disabled, icon, trail) {
   return '<button class="btn ' + cls + '" data-obact="' + spec + '"'
-    + (disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+    + (disabled ? ' disabled' : '') + '>' + (icon ? ic(icon) : '') + esc(label) + (trail ? ic(trail) : '') + '</button>';
 }
 
 /** The verbs of one step, or '' for a step whose rows already carry them. */
@@ -7649,27 +7753,30 @@ function obFootHTML() {
   switch (OB.step) {
     case 'choose':
       left = obBtn('nav:back', 'Skip setup for now', 'btn-g');
+      /* Soft Tactile: Enter's verb as a button too. It presses Enter through
+         obPress, so it opens the route under the cursor, exactly as the key. */
+      right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       break;
     case 'local_pick':
-      left = obBtn('nav:back', 'Back', 'btn-g');
+      left = obBtn('nav:back', 'Back', 'btn-g', false, 'chevL');
       break;
     case 'local_hf_ref':
-      left = obBtn('nav:back', busy ? 'Cancel' : 'Back', 'btn-g');
+      left = obBtn('nav:back', busy ? 'Cancel' : 'Back', 'btn-g', false, busy ? '' : 'chevL');
       right = obBtn('nav:go', busy ? 'Looking it up…' : 'Look it up', 'btn-p',
         busy || OB.hfReference.length === 0);
       break;
     case 'local_hf_pick':
-      left = obBtn('nav:back', 'Back', 'btn-g');
-      right = obBtn('nav:go', 'Download this file', 'btn-p', false);
+      left = obBtn('nav:back', 'Back', 'btn-g', false, 'chevL');
+      right = obBtn('nav:go', 'Download this file', 'btn-p', false, 'download');
       break;
     case 'custom_chat_url':
-      left = obBtn('nav:back', 'Back', 'btn-g', busy);
+      left = obBtn('nav:back', 'Back', 'btn-g', busy, 'chevL');
       right = obBtn('nav:go', busy ? 'Testing…' : 'Test and continue', 'btn-p', busy);
       break;
     case 'custom_embedding_url':
-      left = obBtn('nav:back', 'Back', 'btn-g', busy)
-        + obBtn('url:skip', 'Continue without embeddings', 'btn-g', busy);
-      right = obBtn('nav:go', busy ? 'Testing…' : 'Test and save', 'btn-p', busy);
+      left = obBtn('nav:back', 'Back', 'btn-g', busy, 'chevL');
+      right = obBtn('url:skip', 'Continue without embeddings', 'btn-s', busy)
+        + obBtn('nav:go', busy ? 'Testing…' : 'Test and save', 'btn-p', busy);
       break;
     /* B.5 — the import step's two verbs, on the action bar with every other
        step's verbs rather than as underlined rows inside the list. Import is
@@ -7678,10 +7785,9 @@ function obFootHTML() {
     case 'import_pick': {
       const picked = (OB.importAgents || []).filter((a) => a.enabled).length;
       left = obBtn('import:skip', OB_COPY.importSkipLabel, 'btn-g', busy);
-      /* Nothing ticked, no import verb. A greyed "Import from 0 agents" is a
-         control that exists only to be unusable — the row it replaced was
-         simply absent until something was ticked, and that was right. */
-      right = picked === 0 ? '' : obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy);
+      /* Nothing ticked, no import verb: a greyed "Import from 0 agents" is a
+         control that exists only to be unusable. */
+      right = picked === 0 ? '' : obBtn('import:go', busy ? 'Scanning…' : obImportActionLabel(picked), 'btn-p', busy, busy ? '' : 'import');
       break;
     }
     case 'import_preview': {
@@ -7692,7 +7798,8 @@ function obFootHTML() {
       break;
     }
     case 'import_done':
-      right = obBtn('nav:go', 'Start using the agent', 'btn-p', false);
+      // The go moment of the whole flow: brand blue, not ink.
+      right = obBtn('nav:go', 'Start using the agent', 'btn-p btn-blue', false, '', 'arrowR');
       break;
     default:
       return '';
@@ -7724,14 +7831,17 @@ function obHTML() {
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
      under the field that was rejected; for every other step the surface
-     error is the only place it can go, and it sits above the action bar
-     rather than under it. */
-  const err = OB.error && !obErrorIsInline() ? '<div class="ob-err">' + esc(OB.error) + '</div>' : '';
+     error sits at the end of the body, above the action bar. */
+  const err = OB.error && !obErrorIsInline()
+    ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(OB.error) + '</span></div>' : '';
   /* r6 UX: it IS a modal — the app's chrome is behind it and cannot be
-     operated — so it says so, and Tab is trapped inside it to match. */
+     operated — so it says so, and Tab is trapped inside it to match.
+     Soft Tactile: the indigo rail on the left; on the right the title, a
+     body that owns the flexible height, the action bar and the hint strip. */
   return '<div id="onboarding" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
-    + '<div class="ob">' + obHeadHTML() + body + err + obFootHTML() + '</div>'
-    + obHintsHTML() + '</div>';
+    + obRailHTML()
+    + '<div class="ob">' + obHeadHTML() + '<div class="ob-body">' + body + err + '</div>'
+    + obFootHTML() + obHintsHTML() + '</div></div>';
 }
 
 /* ============================================================
