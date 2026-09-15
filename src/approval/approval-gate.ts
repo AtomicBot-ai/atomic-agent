@@ -2,6 +2,10 @@ import { FanoutScopeRegistry } from "./fanout-scope.js";
 import { ReadScopeGrants } from "./read-scope-grants.js";
 import { randomUUID } from "node:crypto";
 import {
+  currentApprovalLedger,
+  type ToolApprovalRecord,
+} from "./approval-ledger.js";
+import {
   clampApprovalLevel,
   isAutoApprovedAt,
   isGrantableCategory,
@@ -114,6 +118,13 @@ interface PendingEntry {
    * closure over its `request` (which carries the command preview).
    */
   detach: () => void;
+  /**
+   * The ledger of the tool call that asked (see `approval-ledger.ts`),
+   * captured in the caller's async context when the prompt goes out. The
+   * verdict is written to it on `resolve`, so the transcript can say where
+   * in the turn the operator was asked and what they answered.
+   */
+  ledger: ToolApprovalRecord[] | undefined;
 }
 
 /**
@@ -283,7 +294,12 @@ export class ApprovalGate {
       const detach = (): void => {
         signal?.removeEventListener("abort", onAbort);
       };
-      this.pending.set(approvalId, { resolve, request, detach });
+      this.pending.set(approvalId, {
+        resolve,
+        request,
+        detach,
+        ledger: currentApprovalLedger(),
+      });
       // An already-aborted signal never fires `abort`, so check before
       // subscribing rather than hanging until the turn is torn down.
       if (signal?.aborted) {
@@ -328,6 +344,11 @@ export class ApprovalGate {
     if (!entry) return false;
     this.pending.delete(decision.approvalId);
     entry.detach();
+    entry.ledger?.push({
+      verdict: decision.approved ? "approved" : "denied",
+      category: entry.request.category,
+      at: Date.now(),
+    });
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);
     }
