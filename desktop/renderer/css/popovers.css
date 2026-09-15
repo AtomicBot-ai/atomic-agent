@@ -1,0 +1,65 @@
+/* ============================================================
+   Composer popovers — Where it runs / Provider / Model (.selpop), the add-provider wizard inside it, context breakdown, modes, voice language. Screens MP-01…19, CM-08, CM-12…17.
+   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+   ============================================================ */
+
+.popover{position:absolute;background:var(--bg-overlay);border-radius:0;box-shadow:var(--shadow-overlay);width:340px;z-index:25;overflow:hidden}
+.poprow{display:flex;align-items:flex-start;gap:var(--s3);padding:8px var(--s4);width:100%}
+.poprow:hover{background:var(--bg-hover)}
+.poprow.on{background:var(--accent-wash)}
+
+.ctxbar{display:flex;height:6px;border-radius:0;overflow:hidden;margin-top:10px;gap:1px}
+.ctxbar i{display:block}
+.swatch{width:8px;height:8px;border-radius:0;flex:none}
+.popfoot{display:flex;align-items:center;justify-content:flex-end;gap:var(--s3);padding:var(--s4);box-shadow:inset 0 1px 0 var(--line-soft)}
+
+.modellist{display:flex;flex-direction:column}
+.modelrow{display:flex;align-items:center;gap:var(--s4);padding:8px var(--s4);width:100%;border-left:2px solid transparent;cursor:pointer}
+.modelrow + .modelrow{box-shadow:inset 0 1px 0 var(--line-soft)}
+.modelrow:hover{background:var(--bg-hover)}
+.modelrow.on{background:var(--accent-wash);border-left-color:var(--accent)}
+.modelrow .col{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.modelrow .nm{color:var(--text-primary);font-size:13px}
+
+/* ---------------- model selector popup ---------------- */
+.selpop { width: 460px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; max-height: 60vh; }
+.selhead {
+  flex: none; height: 36px; display: flex; align-items: center; gap: var(--s3);
+  padding: 0 var(--s5); font-size: 13px; font-weight: 500;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.selsearch { flex: none; padding: var(--s3) var(--s5); }
+.selbody { flex: 1; min-height: 0; overflow-y: auto; }
+/* The list scrolls inside the popup — it must never grow past the window. */
+.sellist { flex: 1; min-height: 0; max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; }
+.selpop .popfoot { flex: none; }
+
+/* context panel dials */
+.ctxdials { box-shadow: inset 0 1px 0 var(--line-soft); padding: var(--s3) 0; }
+.ctxdial { display: flex; align-items: center; gap: var(--s4); padding: var(--s2) var(--s5); }
+.ctxdial .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
+.ctxdial .btn { min-width: 28px; justify-content: center; }
+
+.modelrow.dim { opacity: .5; }
+
+/* ============================================================
+   Coding-mode popover — the unavailable state (item 6)
+   ============================================================
+   `.dim` is applied to the mode rows when the agent has no
+   /api/coding-mode route, but the only `.dim` rules that existed were
+   `.palrow`, `.modelrow` and `.tuirow`, so the unavailable state was
+   invisible. A disabled row also has to stop looking clickable. */
+.poprow.dim{opacity:.5}
+.poprow[disabled]{cursor:default}
+.poprow[disabled]:hover{background:transparent}
+
+/* ---- Item 7C: the context panel's binding line ---- */
+.ctxbound{color:var(--warn)}
+
+.modelrow .ann{margin-left:auto}
+
+/* Inside the popover the shell's own body is the scroller, so the list must
+   not add a second one — two nested scrollers is how the footer ends up
+   somewhere nobody can reach. */
+.selpop .ob-wizlist{max-height:none;overflow:visible}
+.selpop .ob-wiz{padding:var(--s4) var(--s5)}
