@@ -87,3 +87,46 @@ describe("providerPreferences through the built-in factories", () => {
     },
   );
 });
+
+describe("vision capability through the built-in factories", () => {
+  async function build(entry: LlmProviderConfigEntry) {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory(entry.kind);
+    if (!factory) throw new Error(`${entry.kind} is not registered`);
+    return factory({
+      config: {} as AtomicAgentConfig,
+      entry,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    });
+  }
+
+  /* The field session: `deepseek/deepseek-v4-flash` on AI/ML API, no
+     `supportsVision` on the entry, three `400 Validation failed` from
+     `vision.describe` in one turn. */
+  it("a text-only catalogue model is not declared vision-capable", async () => {
+    const provider = await build({
+      id: "aimlapi", kind: "aimlapi", apiKey: "k", defaultChatModel: "deepseek/deepseek-v4-flash",
+    });
+    expect(provider.capabilities.vision).toBe(false);
+    await expect(
+      provider.describeImage({ prompt: "x", images: [{ id: 1, bytes: new Uint8Array([1]), mimeType: "image/png" }] }),
+    ).rejects.toMatchObject({ name: "VisionUnsupportedError" });
+  });
+
+  it.each([
+    ["aimlapi", "openai/gpt-5.4-2026-03-05", true],
+    ["aimlapi", "some/model-the-catalogue-does-not-know", true],
+    ["openrouter", "deepseek/deepseek-v4-flash", false],
+    ["openrouter", "anthropic/claude-sonnet-5", true],
+  ] as const)("%s %s → vision %s", async (kind, model, vision) => {
+    const provider = await build({ id: kind, kind, apiKey: "k", defaultChatModel: model });
+    expect(provider.capabilities.vision).toBe(vision);
+  });
+
+  it("an explicit supportsVision on the entry still wins", async () => {
+    const provider = await build({
+      id: "aimlapi", kind: "aimlapi", apiKey: "k", defaultChatModel: "deepseek/deepseek-v4-flash", supportsVision: true,
+    });
+    expect(provider.capabilities.vision).toBe(true);
+  });
+});

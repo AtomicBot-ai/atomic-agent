@@ -12,6 +12,10 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { CancelledError } from "../llm/index.js";
 import {
+  runWithApprovalLedger,
+  type ToolApprovalRecord,
+} from "../approval/approval-ledger.js";
+import {
   isParallelWithinGroup,
   resourceClassFor,
   type ResourceClass,
@@ -386,13 +390,19 @@ export async function executeBatch(
     ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
     const startedAt = Date.now();
     let compressed: CompressedToolResult;
+    // Collects the approvals this call raises, whatever async context the
+    // verdict arrives from (an HTTP resolve, a Telegram button). A denial
+    // throws out of the tool, so the ledger is read after the catch too.
+    const approvals: ToolApprovalRecord[] = [];
     try {
-      compressed = await registry.invoke(input.call.tool, input.call.args, {
-        workingDir: ctx.workingDir,
-        sessionId: ctx.sessionId,
-        stepIndex: ctx.stepIndex,
-        signal: ctx.signal,
-      });
+      compressed = await runWithApprovalLedger(approvals, () =>
+        registry.invoke(input.call.tool, input.call.args, {
+          workingDir: ctx.workingDir,
+          sessionId: ctx.sessionId,
+          stepIndex: ctx.stepIndex,
+          signal: ctx.signal,
+        }),
+      );
     } catch (err) {
       if (ctx.signal.aborted) {
         // Cooperative cancellation: the tool honoured the signal and
@@ -412,6 +422,9 @@ export async function executeBatch(
         output: cause.message,
         details: { errorName: cause.name },
       });
+    }
+    if (approvals.length > 0) {
+      compressed = { ...compressed, approvals: [...approvals] };
     }
     const durationMs = Date.now() - startedAt;
     slots[input.batchIndex] = {

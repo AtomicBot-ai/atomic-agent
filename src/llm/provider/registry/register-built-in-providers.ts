@@ -1,7 +1,12 @@
 import { getConfig } from "../../../config/index.js";
 import { LlamaServerClient } from "../../llama-server-client.js";
 import { AimlapiProvider } from "../aimlapi/aimlapi-provider.js";
-import { AIMLAPI_DEFAULT_CHAT_MODEL } from "../aimlapi/aimlapi-models-catalog.js";
+import {
+  AIMLAPI_DEFAULT_CHAT_MODEL,
+  AIMLAPI_MODELS_CATALOG,
+} from "../aimlapi/aimlapi-models-catalog.js";
+import type { ModelCatalogEntry } from "../model-resolver.js";
+import { OPENROUTER_MODELS_CATALOG } from "../openrouter/openrouter-models-catalog.js";
 import {
   GeminiProvider,
   GEMINI_DEFAULT_CHAT_MODEL,
@@ -23,6 +28,30 @@ import {
 import { registerProviderKind } from "./provider-types.js";
 
 let registered = false;
+
+/**
+ * Whether the provider may send images, for a service with a bundled
+ * catalogue: the entry's explicit `supportsVision` first, then what the
+ * catalogue says about the model `describeImage` will actually call
+ * (`defaultChatModel`), then the old optimistic `true` for an id the
+ * catalogue does not know.
+ *
+ * The catalogue step is the fix. The factory used to read only the entry,
+ * and no entry the desktop or the wizard writes carries the flag, so a
+ * text-only model was declared vision-capable: `vision.describe` sent a
+ * screenshot to `deepseek/deepseek-v4-flash` on AI/ML API three times in
+ * one turn and got `400 Validation failed` each time, a whole step spent
+ * on every attempt. With the catalogue consulted the tool answers at once,
+ * without a request, that this model does not take images.
+ */
+export function catalogVisionDefault(
+  explicit: boolean | undefined,
+  catalog: ReadonlyMap<string, ModelCatalogEntry>,
+  model: string,
+): boolean {
+  if (explicit !== undefined) return explicit;
+  return catalog.get(model)?.supportsVision ?? true;
+}
 
 export function registerBuiltInProviderKinds(): void {
   if (registered) return;
@@ -104,7 +133,11 @@ export function registerBuiltInProviderKinds(): void {
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel ?? "openrouter/auto",
       headers: entry.headers,
-      supportsVision: entry.supportsVision ?? true,
+      supportsVision: catalogVisionDefault(
+        entry.supportsVision,
+        OPENROUTER_MODELS_CATALOG,
+        entry.defaultChatModel ?? "openrouter/auto",
+      ),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -132,7 +165,11 @@ export function registerBuiltInProviderKinds(): void {
       maxOutputTokens: entry.maxOutputTokens,
       strictTools: entry.strictTools,
       headers: entry.headers,
-      supportsVision: entry.supportsVision ?? true,
+      supportsVision: catalogVisionDefault(
+        entry.supportsVision,
+        AIMLAPI_MODELS_CATALOG,
+        entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
+      ),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,

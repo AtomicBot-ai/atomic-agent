@@ -84,8 +84,11 @@ export function buildVisionDescribeTool(
         );
       }
       if (!options.provider.capabilities.vision) {
+        // Said so the model stops asking: the answer will not change
+        // within this turn, and a retry with a smaller image was exactly
+        // what the field session did next.
         return errorResult(
-          `vision is not available on the active provider (${options.provider.capabilities.visionSource})`,
+          `vision is not available: the model on provider "${options.provider.name}" does not accept images (${options.provider.capabilities.visionSource}). Do not retry vision.describe in this turn; check the image another way or tell the user.`,
         );
       }
 
@@ -162,9 +165,14 @@ export function buildVisionDescribeTool(
 }
 
 function errorResult(message: string) {
-  return compressToolResult({
-    tool: "vision.describe",
-    status: "error",
-    output: message,
-  });
+  // A provider refusal is one long line with its reason at the end of a
+  // JSON body; the 400-character default cut it mid-sentence.
+  return compressToolResult(
+    {
+      tool: "vision.describe",
+      status: "error",
+      output: message,
+    },
+    { maxSummaryLength: 1_200 },
+  );
 }
