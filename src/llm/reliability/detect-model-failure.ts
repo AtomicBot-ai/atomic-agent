@@ -18,8 +18,21 @@ export interface DetectModelFailureOptions {
    * The `max_tokens` / `n_predict` cap the request carried. Without it a
    * truncated reply cannot be told apart from a full context window, so
    * the message can only say "truncated".
+   *
+   * `null` means the request carried NO cap at all — the provider applied
+   * its own output limit. That is its own wall (`provider_limit`): a
+   * message naming a cap of ours would name a number nobody sent.
    */
-  requestedMaxTokens?: number;
+  requestedMaxTokens?: number | null;
+  /**
+   * The cap the runtime would have applied had it sent one — the step's
+   * reply cap. Consulted only when no cap was sent and no window is
+   * known, where it keeps the old split: a reply cut short of it is
+   * judged the context window (a local OpenAI-compatible server filling
+   * an unknown window still gets the window retry), a reply cut at or
+   * past it the provider's own limit.
+   */
+  defaultReplyCap?: number;
   /**
    * Which attempt produced the completion. The repair pass runs under
    * its own cap, and the message names that instead of the config key.
@@ -64,6 +77,7 @@ export function detectModelFailure(
       completion,
       options.requestedMaxTokens,
       options.contextWindow ?? null,
+      options.defaultReplyCap,
     );
     return {
       reason: "truncated",
@@ -121,11 +135,21 @@ const WINDOW_FILL_RATIO = 0.9;
  * llama-server never sends `usage`, only `timings`, and its `truncated`
  * flag has one meaning — the context overflowed — so a timings-only
  * completion is the window whatever the count says.
+ *
+ * A request that carried no cap (`requestedMaxTokens === null`) cannot
+ * have spent one. Seen live: an OpenRouter request with no `max_tokens`
+ * cut at 33,678 tokens was reported as having "spent the reply cap of
+ * 8192". Without a cap the provider stopped at its own output limit —
+ * unless a known window shows prompt + reply filling it, or, with no
+ * window known, the reply is shorter than the cap the runtime would have
+ * sent (`defaultReplyCap`), which is how an unknown local window has
+ * always been recognised.
  */
 export function classifyTruncation(
   completion: CompletionResult,
-  requestedMaxTokens?: number,
+  requestedMaxTokens?: number | null,
   contextWindow: number | null = null,
+  defaultReplyCap?: number,
 ): TruncationDetail {
   const completionTokens =
     completion.usage?.completionTokens ??
@@ -134,15 +158,31 @@ export function classifyTruncation(
   const promptTokens =
     completion.usage?.promptTokens ?? completion.timing?.promptTokens ?? 0;
   const requested = requestedMaxTokens ?? 0;
+  const windowKnown = contextWindow !== null && contextWindow > 0;
   let cause: TruncationCause = "unknown";
   if (completion.usage === undefined && completionTokens > 0) {
     cause = "context_window";
+  } else if (requestedMaxTokens === null) {
+    if (windowKnown) {
+      cause =
+        completionTokens > 0 &&
+        promptTokens + completionTokens >= contextWindow * WINDOW_FILL_RATIO
+          ? "context_window"
+          : "provider_limit";
+    } else {
+      cause =
+        completionTokens > 0 &&
+        defaultReplyCap !== undefined &&
+        defaultReplyCap > 0 &&
+        completionTokens + REPLY_CAP_SLACK_TOKENS < defaultReplyCap
+          ? "context_window"
+          : "provider_limit";
+    }
   } else if (completionTokens > 0 && requested > 0) {
     if (completionTokens + REPLY_CAP_SLACK_TOKENS >= requested) {
       cause = "reply_cap";
     } else if (
-      contextWindow !== null &&
-      contextWindow > 0 &&
+      windowKnown &&
       promptTokens + completionTokens < contextWindow * WINDOW_FILL_RATIO
     ) {
       cause = "output_limit";
@@ -154,7 +194,7 @@ export function classifyTruncation(
     cause,
     completionTokens,
     promptTokens,
-    requestedMaxTokens: requested,
+    ...(requested > 0 ? { requestedMaxTokens: requested } : {}),
   };
 }
 
@@ -193,9 +233,15 @@ export function formatTruncatedMessage(
         `of ${truncation.requestedMaxTokens} — this model's output limit is about ` +
         `${truncation.completionTokens} tokens; lower the cap to it, or pick another model`
       );
+    case "provider_limit":
+      return truncation.completionTokens > 0
+        ? `model response truncated: the provider stopped at its own output limit after ` +
+            `${truncation.completionTokens} tokens (no reply cap was sent)`
+        : "model response truncated: the provider stopped at its own output limit " +
+            "(no reply cap was sent, and it reported no token counts)";
     default: {
       const walls =
-        truncation.requestedMaxTokens > 0
+        (truncation.requestedMaxTokens ?? 0) > 0
           ? `the ${truncation.requestedMaxTokens}-token reply cap (localModels.completionMaxTokens) or the model server's context window`
           : "the reply cap (localModels.completionMaxTokens) or the model server's context window";
       return `model response truncated${at}: it hit ${walls}; the provider reported no token counts`;

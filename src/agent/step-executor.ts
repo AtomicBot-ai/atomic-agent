@@ -36,10 +36,19 @@ import {
   ToolExecutionError,
   TransportError,
   classifyFailure,
+  detectFabricatedToolTranscript,
   detectModelFailure,
   humanizeOpenAiHttpError,
   isRequestSizeRejection,
+  type FabricatedToolTranscript,
 } from "../llm/index.js";
+// The detector moved to the llm layer so the stream consumer can share its
+// rules; re-exported for existing importers.
+export {
+  FABRICATED_TRANSCRIPT_MIN_LINES,
+  detectFabricatedToolTranscript,
+} from "../llm/index.js";
+export type { FabricatedToolTranscript } from "../llm/index.js";
 import { getConfig } from "../config/index.js";
 import {
   getToolDescriptorByName,
@@ -583,7 +592,8 @@ async function executeStepInner(
   // the model may have thought but failed to emit a required tool call, and
   // the existing repair path can recover with a stricter one-shot prompt.
   const initialModelFailure = detectModelFailure(completion, {
-    requestedMaxTokens: replyCap,
+    requestedMaxTokens: replyCapSent(completion, replyCap),
+    defaultReplyCap: replyCap,
     stage: "initial",
     contextWindow: deps.contextWindow ?? null,
   });
@@ -980,7 +990,11 @@ async function executeStepInner(
     // failure, not a grammar one — no point emitting `GrammarError` for
     // an empty body.
     const retryModelFailure = detectModelFailure(completion, {
-      requestedMaxTokens: repairReplyCap(deps.toolTransport, replyCap),
+      requestedMaxTokens: replyCapSent(
+        completion,
+        repairReplyCap(deps.toolTransport, replyCap),
+      ),
+      defaultReplyCap: repairReplyCap(deps.toolTransport, replyCap),
       stage: "repair",
       contextWindow: deps.contextWindow ?? null,
     });
@@ -1105,10 +1119,16 @@ async function executeStepInner(
   // terminal (`reply` / `finish`) reports invented results as done, so it
   // is not accepted; genuine non-terminal calls from the same completion
   // still run, and the model is told on the next step why the turn did
-  // not close.
-  const fabricated = detectFabricatedToolTranscript(
-    completionFreeText(completion, deps.profile, assumesOpenReasoning(completion)),
-  );
+  // not close. A completion the stream consumer already cut short for
+  // this reason is the same case, reached before the provider's limit.
+  const fabricated =
+    detectFabricatedToolTranscript(
+      completionFreeText(
+        completion,
+        deps.profile,
+        assumesOpenReasoning(completion),
+      ),
+    ) ?? fabricationFromEarlyStop(completion);
   let calls = batch.calls;
   let suppressedTerminal: ToolCallPayload | null = null;
   if (fabricated !== null) {
@@ -1129,6 +1149,7 @@ async function executeStepInner(
       textResults: fabricated.results,
       suppressedTerminal: suppressedTerminal?.tool ?? null,
       nativeCallsRun: calls.map((call) => call.tool),
+      streamAborted: completion.earlyStop?.reason === "fabricated_transcript",
     });
   }
   const batchSize = calls.length + (suppressedTerminal !== null ? 1 : 0);
@@ -2165,91 +2186,37 @@ async function executeCallsInOrder(
 }
 
 /**
- * Line shapes of the text transcript the conversation section is rendered
- * in (`renderTurnForPrompt`): `assistant_tool_call: <tool> {json}` and
- * `tool_result[<tool> <ok|error>]: <summary>`. A bare `tool_call:` is
- * accepted too — it is what a model abbreviating the prefix writes.
+ * The transcript counts a stream consumer cut the completion short over
+ * (`CompletionEarlyStop`). Stands in when the detector finds nothing in
+ * the free text — the profile's reasoning extraction can strip text the
+ * consumer judged as plain content — because the stream was ended on
+ * those lines, and whatever came back is not an answer to deliver.
  */
-const TEXT_TOOL_CALL_LINE = /^\s*(?:assistant_)?tool_call:\s*[\w.:-]+\s*[{[]/;
-const TEXT_TOOL_RESULT_LINE = /^\s*tool_result\[[\w.:-]+ (?:ok|error)\]:/;
-const FENCE_LINE = /^\s*(?:```|~~~)/;
-
-/**
- * Transcript lines (outside closed code fences) it takes to call a
- * completion's text a fabricated tool transcript. One line is a quote;
- * two are a pattern.
- */
-export const FABRICATED_TRANSCRIPT_MIN_LINES = 2;
-
-/** Counts of tool-call and tool-result lines a completion wrote as text. */
-export interface FabricatedToolTranscript {
-  calls: number;
-  results: number;
+function fabricationFromEarlyStop(
+  completion: CompletionResult,
+): FabricatedToolTranscript | null {
+  const stop = completion.earlyStop;
+  return stop?.reason === "fabricated_transcript"
+    ? { calls: stop.calls, results: stop.results }
+    : null;
 }
 
 /**
- * Detect a completion that continued the text transcript instead of
- * calling tools: at least `FABRICATED_TRANSCRIPT_MIN_LINES` lines that
- * START with a rendered tool-call or tool-result prefix.
- *
- * Why this happens: history reaches the model as text inside one user
- * message, so a model that loses the thread of native function calling
- * (Gemini Flash did, three times in one benchmark) keeps writing that
- * text — invented `tool_result[os.fs.write ok]` lines, an invented test
- * run printing "ALL ASSERTIONS PASSED!" — and then calls `reply` for
- * real, reporting work that never happened.
- *
- * False-positive guards, all structural:
- *  - a line must BEGIN with the prefix, so prose that mentions one
- *    ("the `tool_result[os.fs.read ok]` line shows…"), a bullet or a
- *    block quote does not count;
- *  - lines inside a CLOSED fenced code block are ignored — that is how a
- *    legitimate answer quotes the format. A fence left open to the end
- *    of the text is not a quote, so its lines count;
- *  - one line alone never triggers, and JSON tool-call arrays (the
- *    grammar transport's body) never start a line with either prefix.
- *
- * Callers pass the completion's text with reasoning removed: a model's
- * scratch space may legitimately walk through earlier results.
+ * The reply cap a completion actually ran under, for the failure
+ * detector. A provider that reports what went on the wire is believed,
+ * `null` included: no cap was sent, and a cut was the provider's own
+ * limit (request cloud-00312 carried no `max_tokens`, stopped at 33,678
+ * tokens, and was reported as having "spent the reply cap of 8192"). A
+ * provider that does not report keeps the old assumption — the cap the
+ * step asked for, which is what llama-server's `n_predict` resolves to.
  */
-export function detectFabricatedToolTranscript(
-  text: string,
-): FabricatedToolTranscript | null {
-  if (!text.includes("tool_call:") && !text.includes("tool_result[")) {
-    return null;
-  }
-  let calls = 0;
-  let results = 0;
-  let inFence = false;
-  let fencedCalls = 0;
-  let fencedResults = 0;
-  for (const line of text.split(/\r?\n/)) {
-    if (FENCE_LINE.test(line)) {
-      if (inFence) {
-        // Closed: whatever was inside was a quote.
-        fencedCalls = 0;
-        fencedResults = 0;
-      }
-      inFence = !inFence;
-      continue;
-    }
-    const isCall = TEXT_TOOL_CALL_LINE.test(line);
-    const isResult = !isCall && TEXT_TOOL_RESULT_LINE.test(line);
-    if (inFence) {
-      if (isCall) fencedCalls += 1;
-      if (isResult) fencedResults += 1;
-      continue;
-    }
-    if (isCall) calls += 1;
-    if (isResult) results += 1;
-  }
-  if (inFence) {
-    calls += fencedCalls;
-    results += fencedResults;
-  }
-  return calls + results >= FABRICATED_TRANSCRIPT_MIN_LINES
-    ? { calls, results }
-    : null;
+function replyCapSent(
+  completion: CompletionResult,
+  assumed: number,
+): number | null {
+  return completion.sentMaxTokens === undefined
+    ? assumed
+    : completion.sentMaxTokens;
 }
 
 /**

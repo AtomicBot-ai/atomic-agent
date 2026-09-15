@@ -210,8 +210,9 @@ export async function openAiPostJson(
   path: string,
   body: Record<string, unknown>,
   request: { signal?: AbortSignal },
+  onSend?: OnOpenAiRequestBody,
 ): Promise<Record<string, unknown>> {
-  return withCreditLimitRetry(deps, body, (attemptBody) =>
+  return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
     runOpenAiWithRetry(deps, path, request.signal, async () => {
       const res = await openAiFetch(
         deps,
@@ -291,19 +292,31 @@ async function readJsonBody(
  * is untouched, and any failure this declines to handle propagates
  * unchanged so the fallback chain classifies it exactly as before.
  */
+/**
+ * Told which body a request is about to go out with. The credit-limit
+ * retry re-sends with a lower `max_tokens`, so the body the caller built
+ * is not necessarily the one that produced the response — and the cap
+ * that response ran under is what a truncation has to be judged against.
+ */
+export type OnOpenAiRequestBody = (body: Record<string, unknown>) => void;
+
 async function withCreditLimitRetry<T>(
   deps: OpenAiHttpDeps,
   body: Record<string, unknown>,
+  onSend: OnOpenAiRequestBody | undefined,
   send: (body: Record<string, unknown>) => Promise<T>,
 ): Promise<T> {
   try {
+    onSend?.(body);
     return await send(body);
   } catch (err) {
     if (!(err instanceof OpenAiHttpError)) throw err;
     const plan = planCreditLimitRetry(err);
     if (!plan) throw err;
     warnCreditLimitRetry(deps, plan);
-    return await send({ ...body, max_tokens: plan.retryMaxTokens });
+    const retryBody = { ...body, max_tokens: plan.retryMaxTokens };
+    onSend?.(retryBody);
+    return await send(retryBody);
   }
 }
 
@@ -341,11 +354,12 @@ export async function openAiStartStream(
   body: Record<string, unknown>,
   request: { signal?: AbortSignal },
   budget?: OpenAiAttemptBudget,
+  onSend?: OnOpenAiRequestBody,
 ): Promise<Response & { body: NonNullable<Response["body"]> }> {
   // The credit-limit retry wraps the open, not the stream: a 402 is
   // refused before any bytes exist, so re-sending with a lower ceiling
   // cannot duplicate output — the same argument the open-retry makes.
-  return withCreditLimitRetry(deps, body, (attemptBody) =>
+  return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
     runOpenAiWithRetry(
       deps,
       path,

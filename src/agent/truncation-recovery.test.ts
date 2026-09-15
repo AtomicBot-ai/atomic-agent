@@ -93,6 +93,21 @@ describe("planTruncationRetry", () => {
     expect(plan?.retry).toEqual({ kind: "raise_cap", maxTokens: 32_768 });
   });
 
+  it("sends a cap when the provider stopped at its own limit with none on the wire", () => {
+    // The live case: no cap sent, cut at 33,678; the retry under 32,768
+    // then succeeded.
+    const plan = planTruncationRetry({
+      ...BASE,
+      error: truncated({
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        promptTokens: 21_000,
+        requestedMaxTokens: undefined,
+      }),
+    });
+    expect(plan?.retry).toEqual({ kind: "raise_cap", maxTokens: 32_768 });
+  });
+
   it("learns the window when the reply stopped short of the cap", () => {
     const plan = planTruncationRetry({
       ...BASE,

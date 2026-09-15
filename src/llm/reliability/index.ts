@@ -36,3 +36,13 @@ export type {
   DetectModelFailureOptions,
   DetectedModelFailure,
 } from "./detect-model-failure.js";
+export {
+  FABRICATED_TRANSCRIPT_MIN_LINES,
+  STREAM_FABRICATION_ABORT_MIN_LINES,
+  createFabricatedTranscriptWatcher,
+  detectFabricatedToolTranscript,
+} from "./fabricated-tool-transcript.js";
+export type {
+  FabricatedToolTranscript,
+  FabricatedTranscriptWatcher,
+} from "./fabricated-tool-transcript.js";

@@ -496,7 +496,9 @@ export function createTraceRecorder(
             cause: event.cause,
             completionTokens: event.completionTokens,
             promptTokens: event.promptTokens,
-            requestedMaxTokens: event.requestedMaxTokens,
+            ...(event.requestedMaxTokens !== undefined
+              ? { requestedMaxTokens: event.requestedMaxTokens }
+              : {}),
             retry: event.retry.kind,
             retryValue:
               event.retry.kind === "raise_cap"

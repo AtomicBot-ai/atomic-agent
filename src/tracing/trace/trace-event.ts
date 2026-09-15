@@ -262,10 +262,16 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   type: "completion_truncated";
   turnIndex: number;
   stepIndex: number;
-  cause: "reply_cap" | "context_window" | "output_limit" | "unknown";
+  cause:
+    | "reply_cap"
+    | "context_window"
+    | "output_limit"
+    | "provider_limit"
+    | "unknown";
   completionTokens: number;
   promptTokens: number;
-  requestedMaxTokens: number;
+  /** The cap the cut request carried; absent when it carried none. */
+  requestedMaxTokens?: number;
   retry: "raise_cap" | "fit_window";
   retryValue: number;
 }

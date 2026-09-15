@@ -688,9 +688,13 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.completionTokens > 0
           ? `reply cut off at ${event.completionTokens} tokens`
           : "reply cut off";
+      const cap =
+        event.requestedMaxTokens !== undefined
+          ? `cap ${event.requestedMaxTokens}`
+          : "no cap sent";
       const line =
         event.retry.kind === "raise_cap"
-          ? `» ${cut} (cap ${event.requestedMaxTokens}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
+          ? `» ${cut} (${cap}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
           : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
       return appendFeed(state, {
         kind: "runtime_info",

@@ -171,6 +171,107 @@ describe("detectModelFailure", () => {
     expect(result?.message).not.toContain("localModels.completionMaxTokens");
   });
 
+  it("names the provider's own limit when the request carried no cap", () => {
+    // Request cloud-00312: no `max_tokens` on the wire, cut by the
+    // provider at 33,678 tokens. It used to read "it spent the reply cap
+    // (localModels.completionMaxTokens) of 8192".
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      usage: {
+        promptTokens: 21_000,
+        completionTokens: 33_678,
+        totalTokens: 54_678,
+      },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: null,
+      defaultReplyCap: 8_192,
+    });
+    expect(result?.truncation).toEqual({
+      cause: "provider_limit",
+      completionTokens: 33_678,
+      promptTokens: 21_000,
+    });
+    expect(result?.message).toBe(
+      "model response truncated: the provider stopped at its own output limit after 33678 tokens (no reply cap was sent)",
+    );
+  });
+
+  it("stays the provider's limit inside a known window that is nowhere near full", () => {
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      usage: { promptTokens: 6_000, completionTokens: 4_096, totalTokens: 10_096 },
+    });
+    expect(
+      detectModelFailure(completion, {
+        requestedMaxTokens: null,
+        defaultReplyCap: 8_192,
+        contextWindow: 1_048_576,
+      })?.truncation?.cause,
+    ).toBe("provider_limit");
+  });
+
+  it("blames a known window that a no-cap reply filled", () => {
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      usage: {
+        promptTokens: 30_000,
+        completionTokens: 30_000,
+        totalTokens: 60_000,
+      },
+    });
+    expect(
+      detectModelFailure(completion, {
+        requestedMaxTokens: null,
+        defaultReplyCap: 8_192,
+        contextWindow: 64_000,
+      })?.truncation?.cause,
+    ).toBe("context_window");
+  });
+
+  it("keeps judging a short no-cap cut against an unknown window", () => {
+    // A local OpenAI-compatible server sends no cap and reports no window.
+    // A reply cut short of the runtime's own cap is that window filling,
+    // and the window retry is what recovers it.
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      usage: {
+        promptTokens: 30_000,
+        completionTokens: 2_768,
+        totalTokens: 32_768,
+      },
+    });
+    expect(
+      detectModelFailure(completion, {
+        requestedMaxTokens: null,
+        defaultReplyCap: 8_192,
+      })?.truncation,
+    ).toEqual({
+      cause: "context_window",
+      completionTokens: 2_768,
+      promptTokens: 30_000,
+    });
+  });
+
+  it("says so when a no-cap cut came back without token counts", () => {
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: null,
+      defaultReplyCap: 8_192,
+    });
+    expect(result?.truncation?.cause).toBe("provider_limit");
+    expect(result?.message).toContain("no reply cap was sent");
+    expect(result?.message).toContain("no token counts");
+  });
+
   it("reads llama-server timings when there is no usage block", () => {
     // The grammar path reports `predicted_n`, never `usage`, and its
     // `truncated` flag means one thing: the context overflowed. Even a

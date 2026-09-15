@@ -1,10 +1,12 @@
 import type { StreamConsumer } from "../adapters/stream-consumer.js";
 import type {
+  CompletionEarlyStop,
   CompletionUsage,
   OpenAiToolCall,
   StreamFinalResult,
 } from "../completion-types.js";
 import type { ReasoningFormat } from "../llm-provider.js";
+import { createFabricatedTranscriptWatcher } from "../../reliability/fabricated-tool-transcript.js";
 import { createReasoningExtractor } from "./reasoning-extractor.js";
 import {
   parseOpenAiSseEvent,
@@ -74,6 +76,12 @@ export function createOpenAiStreamConsumer(
       // arguments may be mid-stream.
       let terminalObserved = false;
       const toolCalls = createToolCallAccumulator();
+      // A model that writes atag's text transcript (`assistant_tool_call:`
+      // / `tool_result[...]:` lines) instead of calling tools does not
+      // stop on its own — one ran 297 s and 33,678 tokens to the provider's
+      // limit. Plain `content` only; the reasoning channel is scratch space.
+      const fabrication = createFabricatedTranscriptWatcher();
+      let earlyStop: CompletionEarlyStop | undefined;
       try {
         while (true) {
           if (signal?.aborted) break;
@@ -139,7 +147,23 @@ export function createOpenAiStreamConsumer(
                 done: false,
               };
             }
+            if (chunk.delta.length > 0) {
+              const fabricated = fabrication.push(chunk.delta);
+              if (fabricated !== null) {
+                earlyStop = { reason: "fabricated_transcript", ...fabricated };
+                break;
+              }
+            }
             boundary = buffer.indexOf("\n\n");
+          }
+          if (earlyStop !== undefined) {
+            // Abort the upstream request. Cancelling a fetch body aborts
+            // the fetch, which closes the connection; a routing provider
+            // (OpenRouter) cancels generation — and billing, where the
+            // upstream supports it — when its client goes away. A body
+            // that is already closed makes this a no-op.
+            await reader.cancel(FABRICATED_TRANSCRIPT_STOP).catch(() => {});
+            break;
           }
           if (done) break;
         }
@@ -155,9 +179,31 @@ export function createOpenAiStreamConsumer(
         usage,
         toolCalls,
         terminalObserved,
+        ...(earlyStop !== undefined ? { earlyStop } : {}),
       });
     },
   };
+}
+
+/**
+ * The finish reason a completion this consumer cut short reports, so
+ * traces and raw-completion events say why it ended. Neither `length`
+ * (not a truncation) nor absent (not a dropped stream).
+ */
+export const FABRICATED_TRANSCRIPT_STOP = "fabricated_transcript";
+
+/**
+ * Tool-call arguments that finished arriving: a JSON object or array
+ * that parses. A call still streaming when the completion was cut has a
+ * prefix that does not, and running it would run half a call.
+ */
+function argumentsComplete(args: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(args);
+    return typeof parsed === "object" && parsed !== null;
+  } catch {
+    return false;
+  }
 }
 
 function applyToolCallDeltas(
@@ -267,19 +313,30 @@ function buildFinalResult(args: {
   usage?: CompletionUsage;
   toolCalls: ToolCallAccumulator;
   terminalObserved: boolean;
+  earlyStop?: CompletionEarlyStop;
 }): StreamFinalResult {
   const sortedToolCalls = [...args.toolCalls.slots.values()]
     .sort((a, b) => a.order - b.order)
     .map((call) => toOpenAiToolCall(call))
-    .filter((call): call is OpenAiToolCall => call !== null);
+    .filter((call): call is OpenAiToolCall => call !== null)
+    // Cut short: only calls that had fully arrived are real calls.
+    .filter(
+      (call) =>
+        args.earlyStop === undefined ||
+        argumentsComplete(call.function.arguments),
+    );
   return {
     content: args.content,
     reasoningContent: args.reasoningContent,
-    finishReason: args.finishReason,
+    finishReason:
+      args.earlyStop !== undefined
+        ? FABRICATED_TRANSCRIPT_STOP
+        : args.finishReason,
     modelId: args.modelId,
     terminalObserved: args.terminalObserved,
     ...(args.usage ? { usage: args.usage } : {}),
     ...(sortedToolCalls.length > 0 ? { toolCalls: sortedToolCalls } : {}),
+    ...(args.earlyStop !== undefined ? { earlyStop: args.earlyStop } : {}),
   };
 }
 

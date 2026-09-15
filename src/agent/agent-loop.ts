@@ -601,7 +601,8 @@ export type AgentLoopEvent =
       cause: TruncationCause;
       completionTokens: number;
       promptTokens: number;
-      requestedMaxTokens: number;
+      /** The cap the cut request carried; absent when it carried none. */
+      requestedMaxTokens?: number;
       retry: TruncationRetry;
     }
   | {
@@ -1663,7 +1664,9 @@ export class AgentLoop {
             cause: detail.cause,
             completionTokens: detail.completionTokens,
             promptTokens: detail.promptTokens,
-            requestedMaxTokens: detail.requestedMaxTokens,
+            ...(detail.requestedMaxTokens !== undefined
+              ? { requestedMaxTokens: detail.requestedMaxTokens }
+              : {}),
             retry,
           });
           this.deps.logger?.warn("completion truncated; retrying the step", {
@@ -1672,7 +1675,8 @@ export class AgentLoop {
             cause: detail.cause,
             completionTokens: detail.completionTokens,
             promptTokens: detail.promptTokens,
-            requestedMaxTokens: detail.requestedMaxTokens,
+            // `null` in the log: the request carried no cap at all.
+            requestedMaxTokens: detail.requestedMaxTokens ?? null,
             retry: retry.kind,
             ...(retry.kind === "raise_cap"
               ? { maxTokens: retry.maxTokens }

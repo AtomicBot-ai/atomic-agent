@@ -1144,6 +1144,24 @@ describe("truncated completion", () => {
     expect(next.feed.at(-1)?.color).toBe("yellow");
   });
 
+  it("says no cap was sent when the provider stopped at its own limit", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        promptTokens: 21_000,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("reply cut off at 33678 tokens (no cap sent)");
+    expect(line).toContain("32768-token cap");
+    expect(line).not.toContain("undefined");
+  });
+
   it("explains a window retry in the operator's terms", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",

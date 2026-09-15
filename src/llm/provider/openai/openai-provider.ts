@@ -157,6 +157,8 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    // The body the response actually came from; see `OnOpenAiRequestBody`.
+    let sentBody: Record<string, unknown> | undefined;
     // Unary only: sub-calls carry `response_format`, streamed turns never do.
     const json = await sendWithStructuredOutputFallback(
       {
@@ -181,13 +183,19 @@ export class OpenAiProvider implements LlmProvider {
           `${this.apiPathPrefix}/chat/completions`,
           body,
           request,
+          (sent) => {
+            sentBody = sent;
+          },
         ),
     );
     const adapted =
       this.taggedToolCompatibility === "qwen"
         ? adaptQwenTaggedToolResponse(json, request)
         : json;
-    return normaliseOpenAiChatResponse(adapted, this.defaultChatModel);
+    return withSentMaxTokens(
+      normaliseOpenAiChatResponse(adapted, this.defaultChatModel),
+      sentBody,
+    );
   }
 
   async *completeStream(
@@ -206,6 +214,8 @@ export class OpenAiProvider implements LlmProvider {
     let accumulated = "";
     let accumulatedReasoning = "";
     let streamFinal: StreamFinalResult | void = undefined;
+    // The body the live stream was opened with; see `OnOpenAiRequestBody`.
+    let sentBody: Record<string, unknown> | undefined;
     // Flipped the instant the first chunk leaves this generator. Before
     // that the caller has seen nothing, so throwing the half-opened
     // stream away and starting over is invisible to everyone — the same
@@ -251,6 +261,9 @@ export class OpenAiProvider implements LlmProvider {
           body,
           request,
           budget,
+          (sent) => {
+            sentBody = sent;
+          },
         );
         // A reopen starts from an empty transcript: whatever the dead
         // attempt accumulated was never yielded and must not be mixed
@@ -356,9 +369,17 @@ export class OpenAiProvider implements LlmProvider {
       this.taggedToolCompatibility === "qwen"
         ? adaptQwenCompletionResult(final, request)
         : final;
-    return applyToolCallTerminationSafety(
-      adaptedFinal,
-      streamFinal?.terminalObserved === true,
+    return withSentMaxTokens(
+      applyToolCallTerminationSafety(
+        adaptedFinal,
+        // A stream the consumer ended itself has no provider terminal
+        // event by definition, and it kept only calls whose arguments had
+        // fully arrived — so the missing terminal is not a sign of a cut
+        // call, and the completion must not be marked truncated.
+        streamFinal?.terminalObserved === true ||
+          streamFinal?.earlyStop !== undefined,
+      ),
+      sentBody,
     );
   }
 
@@ -448,7 +469,31 @@ function completionFromStreamFinal(
     usage,
     toolCalls: streamFinal?.toolCalls,
     finishReason,
+    ...(streamFinal?.earlyStop !== undefined
+      ? { earlyStop: streamFinal.earlyStop }
+      : {}),
   };
+}
+
+/**
+ * Stamp the output cap the request carried on the wire. `max_tokens` is
+ * what `buildOpenAiChatBody` writes; `max_completion_tokens` can only
+ * arrive through `extraBody`, and bounds the reply just the same. Neither
+ * present is recorded as `null` — no cap was sent — which is different
+ * from not knowing.
+ */
+function withSentMaxTokens(
+  result: CompletionResult,
+  sentBody: Record<string, unknown> | undefined,
+): CompletionResult {
+  if (sentBody === undefined) return result;
+  const cap =
+    typeof sentBody.max_tokens === "number"
+      ? sentBody.max_tokens
+      : typeof sentBody.max_completion_tokens === "number"
+        ? sentBody.max_completion_tokens
+        : null;
+  return { ...result, sentMaxTokens: cap };
 }
 
 /**

@@ -48,10 +48,18 @@ export type ModelFailureReason = "truncated" | "empty" | "no_stop";
  *                      — the provider clamps this model's output below
  *                      our cap. Neither a bigger cap nor a smaller prompt
  *                      helps; the cap has to come down to the limit.
+ *  - `provider_limit`: the request carried NO cap, so the provider
+ *                      stopped at its own output limit for the model.
+ *                      Nothing of ours was spent; sending a cap is what
+ *                      bounds the retry.
  *  - `unknown`:        no usage came back; the walls cannot be told apart.
  */
 export type TruncationCause =
-  "reply_cap" | "context_window" | "output_limit" | "unknown";
+  | "reply_cap"
+  | "context_window"
+  | "output_limit"
+  | "provider_limit"
+  | "unknown";
 
 /** What is known about a truncation, for the message and the retry. */
 export interface TruncationDetail {
@@ -60,8 +68,12 @@ export interface TruncationDetail {
   completionTokens: number;
   /** Prompt tokens as the provider counted them; `0` when unreported. */
   promptTokens: number;
-  /** The reply cap the request carried; `0` when the caller did not say. */
-  requestedMaxTokens: number;
+  /**
+   * The reply cap the request carried. Absent when it carried none
+   * (`provider_limit`) or the caller did not say; never a cap that was
+   * only assumed.
+   */
+  requestedMaxTokens?: number;
 }
 
 /**

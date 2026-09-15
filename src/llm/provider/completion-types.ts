@@ -75,6 +75,23 @@ export interface CompletionTiming {
   predictedTokens: number;
 }
 
+/**
+ * Why the runtime ended a completion itself, before the provider did.
+ *
+ * `fabricated_transcript`: the plain content kept writing atag's own text
+ * transcript (`assistant_tool_call:` / `tool_result[...]:` lines) instead
+ * of calling tools, so the stream was aborted
+ * (`createFabricatedTranscriptWatcher`). `calls` / `results` are the
+ * transcript lines seen when it was cut. Not a truncation and not a
+ * provider failure: the completion is judged like one whose text was
+ * detected as fabricated after it finished.
+ */
+export interface CompletionEarlyStop {
+  reason: "fabricated_transcript";
+  calls: number;
+  results: number;
+}
+
 export interface CompletionResult {
   content: string;
   reasoningContent: string;
@@ -89,6 +106,16 @@ export interface CompletionResult {
   /** Raw OpenAI tool_calls when transport is native_tools. */
   toolCalls?: ReadonlyArray<OpenAiToolCall>;
   finishReason?: string | null;
+  /** Set when the runtime cut the completion short. See `CompletionEarlyStop`. */
+  earlyStop?: CompletionEarlyStop;
+  /**
+   * The output cap the request actually carried on the wire
+   * (`max_tokens`, or `max_completion_tokens` from a passthrough); `null`
+   * when it carried none, so any cut was the provider's own limit.
+   * Absent when the provider does not report it — callers then fall back
+   * to the cap they asked for.
+   */
+  sentMaxTokens?: number | null;
   /**
    * Tool-call transport of the provider that actually served this
    * completion. Providers never set it — it is stamped by the fallback
@@ -142,4 +169,9 @@ export interface StreamFinalResult {
    * not treat an absent value as confirmation of a clean completion.
    */
   terminalObserved?: boolean;
+  /**
+   * Set when the consumer ended the stream itself. The tool calls on the
+   * result are then only those whose arguments had fully arrived.
+   */
+  earlyStop?: CompletionEarlyStop;
 }

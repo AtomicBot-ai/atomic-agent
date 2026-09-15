@@ -2076,6 +2076,122 @@ describe("fabricated tool transcripts", () => {
       expect(log).toEqual(["start reply All 12 tests pass.", "end reply All 12 tests pass."]);
       expect(outcome.trimmedBatchNotice).toBeUndefined();
     });
+
+    describe("a stream the consumer cut short", () => {
+      const SIX_LINES = [
+        "I'll write the scene module and test it.",
+        'assistant_tool_call: os.fs.write {"path":"js/scene.js","content":"export const x = 1;"}',
+        "tool_result[os.fs.write ok]: wrote 20 bytes to js/scene.js",
+        'assistant_tool_call: os.shell.run {"command":"node test.js"}',
+        "tool_result[os.shell.run ok]: ALL ASSERTIONS PASSED!",
+        'assistant_tool_call: os.fs.write {"path":"js/main.js","content":"import x"}',
+        "tool_result[os.fs.write ok]: wrote 8 bytes to js/main.js",
+        "",
+      ].join("\n");
+      const EARLY_STOP = {
+        reason: "fabricated_transcript" as const,
+        calls: 3,
+        results: 3,
+      };
+
+      async function runStreamed(completion: CompletionResult): Promise<{
+        outcome: Awaited<ReturnType<typeof executeStep>>;
+        log: string[];
+        events: StepEvent[];
+      }> {
+        const log: string[] = [];
+        const events: StepEvent[] = [];
+        const outcome = await executeStep(
+          {
+            session: createEmptySessionState({ id: "s-cut", workingDir: "/w" }),
+            toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+            capabilities: CAPS,
+            skillCatalog: SKILLS,
+            stepIndex: 0,
+            signal: new AbortController().signal,
+            userMessage: "build the scene",
+          },
+          {
+            registry: orderLoggingRegistry(log),
+            slotManager: new SlotManager(2),
+            // No second request of any kind: the cut completion is judged
+            // as it stands, not repaired.
+            llmComplete: async () => {
+              throw new Error("a cut completion must not trigger another request");
+            },
+            llmCompleteStream: async function* () {
+              for (const line of completion.content.split(/(?<=\n)/)) {
+                yield { delta: line, reasoningDelta: "", done: false };
+              }
+              return completion;
+            },
+            grammar: "",
+            profile: PLAIN_INSTRUCT_PROFILE,
+            toolTransport: "native_tools",
+            toolCallAdapter: null,
+            supportsSlotAffinity: false,
+            onEvent: (event) => events.push(event),
+          },
+        );
+        return { outcome, log, events };
+      }
+
+      it("delivers no reply, runs nothing and injects the notice", async () => {
+        const { outcome, log, events } = await runStreamed(
+          mockCompletion(SIX_LINES, {
+            earlyStop: EARLY_STOP,
+            finishReason: "fabricated_transcript",
+          }),
+        );
+        expect(outcome.terminal).toBeNull();
+        expect(log).toEqual([]);
+        expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+        expect(outcome.toolResults[0]!.status).toBe("error");
+        expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+        expect(events.some((e) => e.type === "assistant_reply")).toBe(false);
+        expect(events.some((e) => e.type === "step_error")).toBe(false);
+        expect(outcome.trimmedBatchNotice).toBe(
+          "Your last response contained 3 tool calls written as plain text. " +
+            "None of them ran and their results were invented. " +
+            "Call tools natively — nothing is done until a real tool result comes back.",
+        );
+      });
+
+      it("still runs a native call that had fully arrived before the cut", async () => {
+        const { outcome, log } = await runStreamed(
+          mockCompletion(SIX_LINES, {
+            earlyStop: EARLY_STOP,
+            finishReason: "fabricated_transcript",
+            toolCalls: [toolCall("c1", "os__fs__read", { path: "js/scene.js" })],
+          }),
+        );
+        expect(log).toEqual([
+          "start os.fs.read js/scene.js",
+          "end os.fs.read js/scene.js",
+        ]);
+        expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.read"]);
+        expect(outcome.terminal).toBeNull();
+        expect(outcome.trimmedBatchNotice).toContain(
+          "3 tool calls written as plain text",
+        );
+      });
+
+      it("trusts the cut when the detector cannot see the lines in what came back", async () => {
+        const { outcome, log } = await runStreamed(
+          mockCompletion("Working on the scene now.\n", {
+            earlyStop: { reason: "fabricated_transcript", calls: 4, results: 2 },
+          }),
+        );
+        expect(log).toEqual([]);
+        expect(outcome.terminal).toBeNull();
+        expect(outcome.toolResults.map((r) => r.status)).toEqual(["error"]);
+        expect(outcome.trimmedBatchNotice).toBe(
+          "Your last response contained 4 tool calls written as plain text. " +
+            "None of them ran and their results were invented. " +
+            "Call tools natively — nothing is done until a real tool result comes back.",
+        );
+      });
+    });
   });
 });
 
@@ -3734,6 +3850,90 @@ describe("truncated completions", () => {
       reason: "truncated",
       stage: "repair",
       truncation: { cause: "reply_cap", requestedMaxTokens: 8_192 },
+    });
+  });
+
+  it("native_tools: a cut with no cap on the wire is the provider's own limit, not our cap", async () => {
+    // Request cloud-00312: no `max_tokens`, cut by the provider at 33,678
+    // tokens, reported as "it spent the reply cap … of 8192".
+    const session = createEmptySessionState({
+      id: "s-trunc-nocap",
+      workingDir: "/w",
+    });
+    const error = await executeStep(ctxFor(session), {
+      registry: makeNativeRegistry(),
+      slotManager: new SlotManager(2),
+      async llmComplete() {
+        return nativeCompletion({
+          reasoningContent: "Let me write every file out first…",
+          stop: false,
+          truncated: true,
+          finishReason: "length",
+          sentMaxTokens: null,
+          usage: {
+            promptTokens: 21_000,
+            completionTokens: 33_678,
+            totalTokens: 54_678,
+          },
+        });
+      },
+      grammar: "",
+      profile: PLAIN_INSTRUCT_PROFILE,
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      supportsSlotAffinity: false,
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(error).toMatchObject({
+      name: "ModelError",
+      reason: "truncated",
+      truncation: { cause: "provider_limit", completionTokens: 33_678 },
+    });
+    expect(
+      (error as { truncation: Record<string, unknown> }).truncation,
+    ).not.toHaveProperty("requestedMaxTokens");
+    expect((error as Error).message).toContain(
+      "the provider stopped at its own output limit after 33678 tokens (no reply cap was sent)",
+    );
+    expect((error as Error).message).not.toContain("8192");
+  });
+
+  it("native_tools: judges a cut against the cap the provider reports it sent", async () => {
+    // The step asked for nothing (config cap 8192), but the provider entry
+    // carries a 16k ceiling — that is the cap the request ran under.
+    const session = createEmptySessionState({
+      id: "s-trunc-sent",
+      workingDir: "/w",
+    });
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          return nativeCompletion({
+            reasoningContent: "thinking…",
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            sentMaxTokens: 16_384,
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
+            },
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      truncation: { cause: "reply_cap", requestedMaxTokens: 16_384 },
     });
   });
 });
