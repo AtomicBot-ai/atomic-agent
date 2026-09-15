@@ -57,6 +57,7 @@ import { openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
+import { createHerdrReporter } from "./herdr-reporter.js";
 import {
   detectTerminalBackground,
   resolveStartupTheme,
@@ -398,11 +399,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
     });
   };
 
+  // Created out here rather than inside the app so the goodbye call
+  // survives quit paths that tear the process down without unmounting
+  // the React tree; null outside a herdr pane.
+  const herdrReporter = createHerdrReporter();
+
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
       bus,
       ...(initialLayout ? { initialLayout } : {}),
+      ...(herdrReporter ? { herdrReporter } : {}),
       callbacks: {
         onAbort: () => orchestrator.abortCurrentTurn(),
         onQuit: () => orchestrator.quit(),
@@ -831,6 +838,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   try {
     await ink.waitUntilExit();
   } finally {
+    // Tell herdr the pane label is free again before anything else in
+    // the teardown can throw; idempotent with the unmount-time call.
+    herdrReporter?.release();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     process.off("SIGHUP", onSignal);
