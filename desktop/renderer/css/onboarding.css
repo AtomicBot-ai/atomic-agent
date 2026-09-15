@@ -85,7 +85,10 @@
   -webkit-app-region:drag;user-select:none;
 }
 #onboarding .ob-rail > *{position:relative}
-#onboarding .ob-rail > .ob-orb{position:absolute;border-radius:50%;pointer-events:none;filter:blur(2px)}
+/* The orbs are radial gradients that already fade to nothing, so they carry
+   no blur filter: it drew nothing visible and only added a paint surface on
+   a 440px layer inside the rail. Drawn soft by the gradient alone. */
+#onboarding .ob-rail > .ob-orb{position:absolute;border-radius:50%;pointer-events:none}
 #onboarding .ob-orb-a{width:440px;height:440px;right:-180px;bottom:-160px;
   background:radial-gradient(circle,color-mix(in srgb,var(--brand) 75%,transparent) 0%,transparent 68%)}
 #onboarding .ob-orb-b{width:240px;height:240px;left:-90px;top:230px;
