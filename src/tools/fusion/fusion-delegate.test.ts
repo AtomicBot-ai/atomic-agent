@@ -832,7 +832,8 @@ describe("fusion.delegate", () => {
 
         // Presence: `HD.Ship.reset` was never written; the id is spelled the other way.
         const lines = result.summary.split("\n");
-        expect(lines[0]).toBe("2 tasks: 1 ok, 1 failed");
+        // t2 requires what t1 provides, so t2 ran in a second wave (F45).
+        expect(lines[0]).toBe("2 tasks in 2 waves (t1 → t2): 1 ok, 1 failed");
         expect(lines[1]).toBe(
           "contract: 2 missing — [t1] symbol HD.Ship.reset not in js/ship.js; [t2] id btn-launch not in index.html; call-level checks: 1 of 1 passed",
         );
@@ -971,6 +972,236 @@ describe("fusion.delegate", () => {
       expect(result.status).toBe("error");
       expect(result.summary).toContain('contract.provides[0].task names unknown task "ghost"');
       expect(runTurn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("waves ordered by the contract (F45)", () => {
+    it("is byte-identical without a contract: one wave, no wave plan on the head line or in the details", async () => {
+      const tool = buildFusionDelegateTool(deps());
+      const result = await tool.run({ tasks: TASKS, maxWorkers: 2 }, ctx());
+      const rows = (result.details.tasks as WorkerTaskResult[]).map(
+        ({ durationMs: _ms, ...row }) => row,
+      );
+      expect(result.summary).toMatchInlineSnapshot(`
+        "2 tasks: 2 ok
+        - [t1] ok — One
+        - [t2] ok — Two
+        [t1] ok — One (1 steps, 0s, 0 tool calls, 0 errors)
+        (the worker produced no reply)
+        [t2] ok — Two (1 steps, 0s, 0 tool calls, 0 errors)
+        (the worker produced no reply)"
+      `);
+      expect(result.details).not.toHaveProperty("waves");
+      expect({ ...result.details, tasks: rows }).toMatchInlineSnapshot(`
+        {
+          "maxWorkers": 2,
+          "outcome": "all_ok",
+          "requestedWorkers": 2,
+          "slotPoolSize": 4,
+          "tasks": [
+            {
+              "id": "t1",
+              "reply": "",
+              "status": "ok",
+              "stepCount": 1,
+              "title": "One",
+              "tools": {
+                "byTool": {},
+                "calls": 0,
+                "errors": 0,
+                "writes": 0,
+              },
+            },
+            {
+              "id": "t2",
+              "reply": "",
+              "status": "ok",
+              "stepCount": 1,
+              "title": "Two",
+              "tools": {
+                "byTool": {},
+                "calls": 0,
+                "errors": 0,
+                "writes": 0,
+              },
+            },
+          ],
+        }
+      `);
+    });
+
+    /** The live pipeline: `analyze` provides the manifest both others require. */
+    const PIPELINE = [
+      { id: "analyze", title: "Analyze", instructions: "a", files: ["manifest.json"] },
+      { id: "organize", title: "Organize", instructions: "o" },
+      { id: "index", title: "Index", instructions: "i" },
+    ];
+    const PIPELINE_CONTRACT = {
+      provides: [{ task: "analyze", kind: "file", name: "manifest.json" }],
+      requires: [
+        { task: "organize", name: "manifest.json" },
+        { task: "index", name: "manifest.json" },
+      ],
+    };
+
+    /**
+     * A fake `runTurn` that records, for each worker, which siblings had
+     * already RESOLVED when it started, and how many were in flight.
+     */
+    function ordering(over: {
+      reasonFor?: (taskId: string) => RunTurnResult["reason"];
+      briefs?: string[];
+    } = {}) {
+      const started: string[] = [];
+      const resolvedBefore: Record<string, string[]> = {};
+      const resolved: string[] = [];
+      let inFlight = 0;
+      let peakInFlight = 0;
+      const runTurn: FusionDelegateDeps["runTurn"] = async (session, brief) => {
+        const taskId = (session.metadata as { fusionWorker: { taskId: string } })
+          .fusionWorker.taskId;
+        started.push(taskId);
+        over.briefs?.push(brief);
+        resolvedBefore[taskId] = [...resolved];
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        resolved.push(taskId);
+        return turnResult({ reason: over.reasonFor?.(taskId) ?? "reply" });
+      };
+      return { runTurn, started, resolvedBefore, peak: () => peakInFlight };
+    }
+
+    it("runs the dependents in a second wave, after the provider's turn resolved", async () => {
+      const fake = ordering();
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        { tasks: PIPELINE, contract: PIPELINE_CONTRACT, maxWorkers: 3 },
+        ctx(),
+      );
+      expect(fake.started).toEqual(["analyze", "organize", "index"]);
+      expect(fake.resolvedBefore.analyze).toEqual([]);
+      expect(fake.resolvedBefore.organize).toEqual(["analyze"]);
+      expect(fake.resolvedBefore.index).toEqual(["analyze"]);
+      // The second wave still ran two wide.
+      expect(fake.peak()).toBe(2);
+      expect(result.status).toBe("ok");
+      const lines = result.summary.split("\n");
+      expect(lines[0]).toBe("3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed");
+      expect(result.details.waves).toEqual([["analyze"], ["organize", "index"]]);
+      // Rows keep the caller's order, whatever wave each ran in.
+      expect((result.details.tasks as WorkerTaskResult[]).map((r) => r.id)).toEqual([
+        "analyze",
+        "organize",
+        "index",
+      ]);
+    });
+
+    it("bounds each wave by maxWorkers", async () => {
+      const fake = ordering();
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const tasks = [
+        ...PIPELINE,
+        { id: "report", title: "Report", instructions: "r" },
+      ];
+      const contract = {
+        ...PIPELINE_CONTRACT,
+        requires: [...PIPELINE_CONTRACT.requires, { task: "report", name: "manifest.json" }],
+      };
+      const result = await tool.run({ tasks, contract, maxWorkers: 2 }, ctx());
+      expect(fake.started).toEqual(["analyze", "organize", "index", "report"]);
+      expect(fake.resolvedBefore.report).toContain("analyze");
+      expect(fake.peak()).toBe(2);
+      expect(result.details.waves).toEqual([["analyze"], ["organize", "index", "report"]]);
+      expect(result.summary.split("\n")[0]).toBe(
+        "4 tasks in 2 waves (analyze → organize, index, report): 3 ok, 1 failed",
+      );
+    });
+
+    it("still runs a dependent whose provider did not deliver, warning it and the orchestrator", async () => {
+      const briefs: string[] = [];
+      const fake = ordering({
+        briefs,
+        reasonFor: (taskId) => (taskId === "analyze" ? "failed" : "reply"),
+      });
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        { tasks: PIPELINE, contract: PIPELINE_CONTRACT },
+        ctx(),
+      );
+      const organizeNote = "task organize depends on analyze, which ended failed";
+      const indexNote = "task index depends on analyze, which ended failed";
+      expect(fake.started).toEqual(["analyze", "organize", "index"]);
+      // The provider's own brief carried no such note; the dependents' do.
+      expect(briefs[0]).not.toContain("depends on");
+      expect(briefs[1]).toContain(`contract: ${organizeNote}`);
+      expect(briefs[1]).toContain(`contract: ${indexNote}`);
+      expect(briefs[2]).toContain(`contract: ${indexNote}`);
+      const lines = result.summary.split("\n");
+      expect(lines[0]).toBe("3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed");
+      expect(lines[1]).toBe(
+        `contract: 1 missing — [analyze] file manifest.json does not exist; ${organizeNote}; ${indexNote}`,
+      );
+      expect((result.details.tasks as WorkerTaskResult[]).map((r) => r.status)).toEqual([
+        "failed",
+        "ok",
+        "ok",
+      ]);
+      const report = result.details.contract as { warnings: string[] };
+      expect(report.warnings).toEqual([organizeNote, indexNote]);
+    });
+
+    it("runs a cyclic contract as one wave, in the order given, with a warning", async () => {
+      const briefs: string[] = [];
+      const fake = ordering({ briefs });
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        {
+          tasks: [
+            { id: "a", title: "A", instructions: "a" },
+            { id: "b", title: "B", instructions: "b" },
+          ],
+          contract: {
+            provides: [
+              { task: "a", kind: "file", name: "a.txt" },
+              { task: "b", kind: "file", name: "b.txt" },
+            ],
+            requires: [
+              { task: "a", name: "b.txt" },
+              { task: "b", name: "a.txt" },
+            ],
+          },
+          maxWorkers: 2,
+        },
+        ctx(),
+      );
+      const note =
+        "requires form a cycle (a → b → a), so the tasks run in one wave in the order given";
+      expect(fake.started).toEqual(["a", "b"]);
+      expect(fake.peak()).toBe(2);
+      for (const brief of briefs) expect(brief).toContain(`contract: ${note}`);
+      expect(result.details.waves).toEqual([["a", "b"]]);
+      const lines = result.summary.split("\n");
+      expect(lines[0]).toBe("2 tasks in 1 wave (a, b): 2 ok");
+      expect(lines[1]).toContain(note);
+      expect((result.details.contract as { warnings: string[] }).warnings).toEqual([note]);
+    });
+
+    it("orders nothing when the requires name nothing any task provides", async () => {
+      const fake = ordering();
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        {
+          tasks: PIPELINE,
+          contract: { requires: [{ task: "organize", name: "ghost" }] },
+          maxWorkers: 3,
+        },
+        ctx(),
+      );
+      expect(fake.peak()).toBe(3);
+      expect(result.details).not.toHaveProperty("waves");
+      expect(result.summary.split("\n")[0]).toBe("3 tasks: 2 ok, 1 failed");
     });
   });
 

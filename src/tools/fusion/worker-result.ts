@@ -497,6 +497,19 @@ export interface DelegateOutputExtras {
   contractLine?: string;
   /** The fan-out's priced worker spend, when the worker model is priced. */
   spend?: FanoutSpend | null;
+  /**
+   * The wave plan the contract's requires imposed (`contract-waves.ts`),
+   * task ids wave by wave. Absent when the contract ordered nothing —
+   * the head line then reads exactly as before.
+   */
+  waves?: readonly (readonly string[])[];
+}
+
+/** `analyze → organize, index` — waves in order, each wave's tasks together. */
+export function describeWaves(
+  waves: readonly (readonly string[])[],
+): string {
+  return waves.map((wave) => wave.join(", ")).join(" → ");
 }
 
 /**
@@ -529,6 +542,13 @@ function renderStatusTable(
       : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in / ${spend.completionTokens.toLocaleString("en-US")} out)`;
   const replacedCount = countReplacedInputs(results);
   const replaced = replacedCount === null ? "" : ` — ${replacedCount}`;
+  // The order the contract imposed, on the head line: which tasks
+  // waited for which, so a report of "no_changes" on a later wave reads
+  // against what its provider delivered.
+  const waves =
+    extra.waves === undefined
+      ? ""
+      : ` in ${extra.waves.length} wave${extra.waves.length === 1 ? "" : "s"} (${describeWaves(extra.waves)})`;
   const lines = results.map((r) =>
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
@@ -541,7 +561,7 @@ function renderStatusTable(
     ].join(" — "),
   );
   return [
-    `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}${replaced}${cost}`,
+    `${results.length} task${results.length === 1 ? "" : "s"}${waves}: ${tally}${replaced}${cost}`,
     ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
   ].join("\n");

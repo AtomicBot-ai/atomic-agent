@@ -54,6 +54,15 @@ export type {
   ContractReport,
 } from "./contract-checks.js";
 export {
+  contractForWave,
+  dependenciesOf,
+  dependencyWarnings,
+  describeCycleWarning,
+  planWaves,
+  UNDELIVERED_STATUSES,
+} from "./contract-waves.js";
+export type { WavePlan } from "./contract-waves.js";
+export {
   renderWorkerBrief,
   pickOriginalRequest,
   WORKER_REPLY_CHAR_BUDGET,
@@ -64,6 +73,7 @@ export {
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
+  describeWaves,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
   workerFailureHint,
