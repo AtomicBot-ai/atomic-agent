@@ -44,7 +44,6 @@ import {
   configSetWhole,
   explainConfigWriteFailure,
   readWholeConfig,
-  setRunMode,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
@@ -72,11 +71,16 @@ import {
 } from "./huggingface.js";
 import {
   activateProvider,
+  enterFusion,
   selectCloudModel,
+  selectFusionWorkerModel,
   selectLocalModel,
+  setFusionWorkers,
+  swapFusionLegs,
   switchBackend,
   type SwitchResult,
 } from "./backend-switch.js";
+import { fusionSmokeTest } from "./fusion-smoke.js";
 // Lane B — context before the first message (item 3): the no-trace smoke dir.
 import { mkdirSync, rmSync } from "node:fs";
 // Item 7 (settings surface)
@@ -139,6 +143,8 @@ const SMOKE = process.argv.includes("--smoke");
 const FORCE_ONBOARDING = process.argv.includes("--onboarding");
 /** `--models` drives the Models pane end to end and asserts config changed. */
 const MODELS_TEST = process.argv.includes("--models");
+/** `--smoke --smoke-fusion` runs only the run-mode (Fusion) checks — the whole smoke is ~30 minutes. */
+const FUSION_ONLY = process.argv.includes("--smoke-fusion");
 /**
  * r5 item 9, review fix (minor) — `--first-run-probe`.
  *
@@ -1397,12 +1403,28 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("cli:runMode", (_event, payload: unknown) => {
-    const p = (payload || {}) as { mode?: unknown; workers?: unknown };
-    if (p.mode !== "local" && p.mode !== "cloud" && p.mode !== "fusion") {
-      return { ok: false, error: "mode must be local, cloud or fusion" };
+  /* Run mode — Fusion. The TUI's RunModeOrchestrator writes, each through
+     applySwitch like every other route change (serve reads its config once).
+     Local and Cloud are cli:switchBackend, which leaves Fusion in its write. */
+  const providerIdOk = (v: unknown) => v === undefined || (typeof v === "string" && /^[\w.-]{1,48}$/.test(v));
+  ipcMain.handle("cli:enterFusion", async (_event, payload: unknown) => {
+    const p = (payload ?? {}) as { orchestratorProvider?: unknown; workerProvider?: unknown };
+    if (!providerIdOk(p.orchestratorProvider) || !providerIdOk(p.workerProvider)) {
+      return { ok: false, error: "orchestratorProvider and workerProvider must be provider ids" };
     }
-    return setRunMode(p.mode, typeof p.workers === "number" ? { workers: p.workers } : undefined);
+    return applySwitch(await enterFusion({
+      ...(typeof p.orchestratorProvider === "string" ? { orchestratorProvider: p.orchestratorProvider } : {}),
+      ...(typeof p.workerProvider === "string" ? { workerProvider: p.workerProvider } : {}),
+    }));
+  });
+  ipcMain.handle("cli:swapFusionLegs", async () => applySwitch(await swapFusionLegs()));
+  ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
+    if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
+    return applySwitch(await setFusionWorkers(workers));
+  });
+  ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "model id required" };
+    return applySwitch(await selectFusionWorkerModel(id));
   });
 
   ipcMain.handle("app:build", () => ({
@@ -1624,6 +1646,13 @@ async function smokeTest(): Promise<void> {
     await new Promise((r) => setTimeout(r, 500));
   }
   check("agent connected", state === "connected", `state=${state}`);
+
+  if (FUSION_ONLY) {
+    if (state === "connected") await fusionSmokeTest(js, check);
+    process.stdout.write(`SMOKE fusion-only failures=${fail.length}\n`);
+    app.exit(fail.length === 0 ? 0 : 1);
+    return;
+  }
 
   if (state === "connected") {
     // Item 6: boot state. Nothing has been opened, so no row may be drawn as
@@ -2566,6 +2595,8 @@ async function smokeTest(): Promise<void> {
     // all asserted. Everything is restored in finally — the whole file,
     // the daemon state, and a fresh agent — so an assertion throw cannot
     // leave the route changed.
+    // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
+    await fusionSmokeTest(js, check);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
@@ -3790,7 +3821,7 @@ async function settingsTest(
     ["Session", "New session", "n"], ["Session", "Switch session…", "u"], ["Session", "Clear transcript", null],
     ["Session", "Context window", null], ["Session", "Show session id", null], ["Session", "New terminal window", null],
     ["Model", "Switch chat model…", "k"],
-    ["Run", "Coding mode…", "M"], ["Run", "Abort turn", "a"], ["Run", "Queued messages", null],
+    ["Run", "Where it runs…", null], ["Run", "Coding mode…", "M"], ["Run", "Abort turn", "a"], ["Run", "Queued messages", null],
     ["Run", "Steer the running turn", null], ["Run", "Expand all tool cards", null], ["Run", "Collapse all tool cards", null],
     ["Setup", "Theme…", "h"], ["Setup", "Mouse…", null], ["Setup", "Hide or show the sidebar", null], ["Setup", "Analytics", null],
     ["Setup", "Enable or disable a skill…", null], ["Setup", "Create, cancel or run a task…", null],
@@ -7076,7 +7107,9 @@ async function isolationAndSwitchTest(
   }
   const inSwx = (at: number) => swxRanges.some(([a, b]) => at > a && at < b);
   const stray = [...rendererSrc.matchAll(/SWXBR\.\w+\(/g)].filter((m) => !inSwx(m.index ?? 0)).map((m) => m[0]);
-  const onceOnly = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel"]
+  const onceOnly = ["switchBackend", "activateProvider", "selectCloudModel", "selectLocalModel",
+    // Run mode — Fusion: the four RunModeOrchestrator writes go through the same funnel.
+    "enterFusion", "swapFusionLegs", "fusionWorkers", "fusionWorkerModel"]
     // The lookbehind matters: `SWXBR.switchBackend(` contains the substring
     // `BR.switchBackend(`, so a naive count would find the funnel plus every
     // call site and this check would never go green.

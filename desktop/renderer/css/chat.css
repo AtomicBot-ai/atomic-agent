@@ -277,6 +277,10 @@
 .sysrow .sysact{display:inline;margin-left:6px;color:var(--blue);font-weight:600;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
 .sysrow .sysact:hover{color:var(--blue-deep)}
 .sysrow code{font:400 12px var(--font-mono);color:var(--ink)}
+/* Fusion's first-switch intro (fusion-intro.ts): the tree mark, then paragraphs. */
+.sysrow .fz-intro{display:flex;flex-direction:column;gap:8px;padding:6px 0 4px;max-width:72ch}
+.sysrow .fz-mark{display:block;white-space:pre;overflow-x:auto;font:400 12px/1.35 var(--font-mono);letter-spacing:0;color:var(--ink)}
+.sysrow .fz-p{display:block}
 .sysrow .tk-spin{display:inline-block;vertical-align:-2px;margin-right:8px;width:13px;height:13px}
 /* a repeated warning is one row with a count, not a wall */
 .sysrow .sysrep{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 7px;border-radius:var(--r-pill);

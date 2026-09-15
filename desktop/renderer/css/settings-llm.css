@@ -116,6 +116,10 @@
 .llm-pane .llm-workers{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:0 2px}
 .llm-pane .llm-workers .tk-help{flex:1;min-width:220px}
 .llm-pane .llm-workerseg button{min-width:34px;padding:0 10px}
+/* Fusion's card while its pre-flight refuses: the reason, in the waiting colour. */
+.llm-pane .llm-rm.blocked .llm-rm-d{color:var(--amber-text)}
+/* /runmode status under the cards — machine text. */
+.llm-pane .llm-rm-status{margin:0;padding:0 2px;font:400 12px/1.45 var(--font-mono);letter-spacing:0;color:var(--ink-2);overflow-wrap:anywhere}
 
 /* ---- Cloud: provider, filter, price facet ---- */
 .llm-pane .llm-prov{min-width:0;font-size:12.5px;color:var(--ink-2)}

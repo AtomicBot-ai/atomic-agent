@@ -1,5 +1,6 @@
 import {
   chatModelsList,
+  keyNamesAvailable,
   localDaemonRunning,
   modelsList,
   modelsStart,
@@ -7,12 +8,22 @@ import {
   modelsUse,
   providerHasKey,
   readWholeConfig,
+  rewriteWholeConfig,
   setActiveTextProvider,
   setMemoryEmbeddingsEnabled,
   setProviderModel,
   useManagedMode,
   type ProviderEntry,
 } from "./agent-cli.js";
+import {
+  describeRunMode,
+  planEnterFusion,
+  planFusionWorkers,
+  planSwapLegs,
+  resolveRunMode,
+  type RunModeProvider,
+  type RunModeVerdict,
+} from "./run-mode.js";
 
 /**
  * Lane B — backend switch.
@@ -65,6 +76,12 @@ export interface SwitchResult {
   /** selectLocalModel on a model that is not on disk — pull it first. */
   needsDownload?: boolean;
   error?: string;
+  /** Run-mode switches: the one sentence a refused change is told in (nothing was written). */
+  refusal?: string;
+  /** Run-mode switches: the effective mode either side of the write, and the TUI's `run mode: …` line. */
+  runMode?: { before: string; after: string; line: string; enteredFusion: boolean };
+  /** setFusionWorkers: the TUI's `fusion: N workers …` line. */
+  notice?: string;
 }
 
 const LOCAL_ID = "local-llama";
@@ -92,7 +109,7 @@ function readyLine(stdout: string): string | undefined {
  * only a successful stop is followed by write 2 (memory.embeddings.enabled
  * = false), which is the order the TUI's stopDaemon does it.
  */
-export async function activateProvider(id: string): Promise<SwitchResult> {
+export async function activateProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<SwitchResult> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === id);
@@ -101,7 +118,14 @@ export async function activateProvider(id: string): Promise<SwitchResult> {
   if (cloud && !providerHasKey(entry)) {
     return { ok: false, needsKey: true, providerId: id, error: "no API key" };
   }
-  const w = await setActiveTextProvider(id);
+  /* Under effective Fusion the orchestrator IS the active provider, and its
+     own model chip re-activates it: that keeps the mode (the TUI's
+     selectChatModel on the active provider), and it must not stop the local
+     daemon the workers run on. Every other activation — another provider,
+     or the backend row's `cloud` — leaves Fusion in the same write. */
+  const rm = resolveRunMode(read.config);
+  const keepFusion = !opts.leaveFusion && rm.effective === "fusion" && rm.orchestratorProviderId === id;
+  const w = await setActiveTextProvider(id, { leaveFusion: !keepFusion });
   if (!w.ok) return { ok: false, error: w.error };
   // `restart` says the file moved. main.ts also restarts when the file did
   // NOT move but `atag serve` booted on another route (the TUI or a hand
@@ -109,7 +133,7 @@ export async function activateProvider(id: string): Promise<SwitchResult> {
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
-  if (cloud && (await localDaemonRunning())) {
+  if (cloud && !keepFusion && (await localDaemonRunning())) {
     const s = await modelsStop();
     if (s.ok) {
       daemon = "stopped";
@@ -150,7 +174,7 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
     if (!used.ok) return { ok: false, error: used.error };
     restart = true;
   }
-  const w = await setActiveTextProvider(LOCAL_ID);
+  const w = await setActiveTextProvider(LOCAL_ID, { leaveFusion: true });
   if (!w.ok) return { ok: false, error: w.error };
   if (w.changed) restart = true;
 
@@ -200,7 +224,9 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
       cloud.find((p) => providerHasKey(p)) ??
       cloud[0];
     if (!provider) return { ok: false, needsProvider: true, error: "add a provider first" };
-    return activateProvider(provider.id);
+    // Under Fusion the active provider is the orchestrator, so "cloud" picks
+    // it — and without leaveFusion the stored mode would keep it in Fusion.
+    return activateProvider(provider.id, { leaveFusion: true });
   }
 
   // Embedding models are a separate daemon; the chat route never picks
@@ -213,7 +239,7 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
     // Nothing on disk: point the route at local-llama and make the mode
     // managed so the control does not read `custom` on the next frame;
     // the renderer opens the model pane.
-    const w = await setActiveTextProvider(LOCAL_ID);
+    const w = await setActiveTextProvider(LOCAL_ID, { leaveFusion: true });
     if (!w.ok) return { ok: false, error: w.error };
     const m = await useManagedMode();
     if (!m.ok) return { ok: false, error: m.error };
@@ -250,6 +276,150 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   const res = await activateProvider(providerId);
   if (!res.ok) return res;
   return { ...res, model: modelId.trim(), restart: res.restart || modelChanged };
+}
+
+/* ---------------------------------------------------------------
+   Run mode — Fusion. RunModeOrchestrator's writes, main-process side.
+
+   Each one is ONE whole-file write under one hold of the config lock
+   (rewriteWholeConfig + a planner from run-mode.ts), then the same
+   `restart` the other switches return: `atag serve` reads its config once
+   (getConfig is cached in-process), so neither the active provider nor the
+   run mode reaches a running agent any other way.
+   --------------------------------------------------------------- */
+
+function keyed(): (p: RunModeProvider) => boolean {
+  const names = keyNamesAvailable();
+  return (p) => providerHasKey(p as ProviderEntry, names);
+}
+
+/** Start the managed daemon when it is down (restart it when the model moved). */
+async function bringUpLocalDaemon(modelChanged: boolean): Promise<{ daemon: DaemonEffect; daemonLine?: string; error?: string }> {
+  const running = await localDaemonRunning();
+  if (running && !modelChanged) return { daemon: "untouched" };
+  if (running) {
+    const s = await modelsStop();
+    if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
+    const st = await modelsStart();
+    return st.ok ? { daemon: "restarted", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+  }
+  const st = await modelsStart();
+  return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+}
+
+async function afterRunModeWrite(res: {
+  ok: boolean;
+  changed: boolean;
+  error?: string;
+  verdict?: RunModeVerdict;
+}): Promise<SwitchResult> {
+  if (!res.ok) return { ok: false, error: res.error };
+  const v = res.verdict;
+  if (v?.refusal) return { ok: false, refusal: v.refusal, error: v.refusal };
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, error: read.error };
+  const now = resolveRunMode(read.config);
+  const leg = v?.leg ?? now.primaryProviderId;
+  const entry = (read.config.llm?.providers ?? []).find((p) => p.id === leg);
+  /* The worker daemon. autoStartIfReady keys on local-llama being the ACTIVE
+     provider, and under Fusion the active provider is the orchestrator — so
+     nothing else would bring a local leg up. Only for a model that is on
+     disk: a start for a file that is not there is a failure line about
+     nothing the operator chose. */
+  let up: { daemon: DaemonEffect; daemonLine?: string; error?: string } = { daemon: "untouched" };
+  const lm = read.config.localModels ?? {};
+  const localLeg = now.effective === "fusion" && (now.workerProviderId === LOCAL_ID || now.orchestratorProviderId === LOCAL_ID);
+  if (localLeg && lm.mode === "managed" && lm.managed?.modelId) {
+    const list = await chatModelsList();
+    if (list.ok && (list.models ?? []).some((m) => m.id === lm.managed?.modelId && m.downloaded)) {
+      up = await bringUpLocalDaemon(false);
+    }
+  }
+  return {
+    ok: true,
+    providerId: leg,
+    model: entry ? (entry.defaultChatModel ?? entry.model ?? null) : null,
+    transport: transportFor(leg),
+    ...up,
+    restart: res.changed,
+    runMode: {
+      before: v?.before.effective ?? now.effective,
+      after: now.effective,
+      line: `run mode: ${describeRunMode(now)}`,
+      enteredFusion: now.effective === "fusion" && (v?.before.effective ?? now.effective) !== "fusion",
+    },
+  };
+}
+
+/**
+ * setMode("fusion", {fusion: pins}) — the backend row's `fusion`, the
+ * provider control under Fusion (orchestrator pin) and a cloud row in the
+ * workers control (worker pin).
+ */
+export async function enterFusion(pins: { orchestratorProvider?: string; workerProvider?: string } = {}): Promise<SwitchResult> {
+  const isKeyed = keyed();
+  return afterRunModeWrite(await rewriteWholeConfig((cfg) => planEnterFusion(cfg, pins, isKeyed)));
+}
+
+/** swapLegs — the composer's ⇄ and `/runmode swap`. */
+export async function swapFusionLegs(): Promise<SwitchResult> {
+  const isKeyed = keyed();
+  return afterRunModeWrite(await rewriteWholeConfig((cfg) => planSwapLegs(cfg, isKeyed)));
+}
+
+/**
+ * setWorkers — `fusion.workers` and `managed.parallel` together. The agent
+ * took the count at boot, so it restarts only while Fusion is what runs;
+ * off Fusion the count is remembered for the next time it is picked.
+ */
+export async function setFusionWorkers(workers: number): Promise<SwitchResult> {
+  const res = await rewriteWholeConfig((cfg) => planFusionWorkers(cfg, workers));
+  if (!res.ok) return { ok: false, error: res.error };
+  const v = res.verdict;
+  if (v?.refusal) return { ok: false, refusal: v.refusal, error: v.refusal };
+  return { ok: true, notice: v?.notice, restart: res.changed && v?.after?.effective === "fusion" };
+}
+
+/**
+ * The workers control's model rows: activateComposerSwitchRow
+ * `fusionWorkerModel`. Picking a model for the worker slot claims the slot
+ * for the local provider, then the managed daemon moves to it through
+ * `models use` — which writes localModels.* only, never activeTextProvider,
+ * so Fusion survives the pick (the TUI deliberately avoids
+ * triggerLlmPrimary here for the same reason).
+ */
+export async function selectFusionWorkerModel(modelId: string): Promise<SwitchResult> {
+  if (!/^[\w.-]{1,96}$/.test(modelId)) return { ok: false, error: `not a model id: ${modelId}` };
+  const list = await chatModelsList();
+  if (!list.ok || !list.models) return { ok: false, error: list.error };
+  const row = list.models.find((m) => m.id === modelId);
+  if (!row) return { ok: false, error: `unknown model id: ${modelId}` };
+  if (!row.downloaded) {
+    return { ok: false, needsDownload: true, modelId, error: `local model ${modelId} is not downloaded` };
+  }
+  const isKeyed = keyed();
+  const pin = await rewriteWholeConfig((cfg): RunModeVerdict => {
+    const rm = resolveRunMode(cfg);
+    if (rm.effective === "fusion" && rm.workerProviderId === LOCAL_ID) return { write: false, before: rm };
+    return planEnterFusion(cfg, { workerProvider: LOCAL_ID }, isKeyed);
+  });
+  const settled = await afterRunModeWrite(pin);
+  if (!settled.ok) return settled;
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, error: read.error };
+  const lm = read.config.localModels ?? {};
+  const changed = lm.mode !== "managed" || (lm.managed?.modelId ?? null) !== modelId;
+  if (changed) {
+    const used = await modelsUse(modelId);
+    if (!used.ok) return { ok: false, error: used.error };
+  }
+  const up = await bringUpLocalDaemon(changed);
+  return {
+    ...settled,
+    ...up,
+    modelId,
+    restart: !!settled.restart || changed,
+  };
 }
 
 /** triggerLocalChatModel for a downloaded model; a pull is the renderer's job. */

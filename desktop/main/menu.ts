@@ -98,6 +98,13 @@ export function buildMenu(send: (command: string) => void): void {
         item("Clear Transcript", "clear", "CommandOrControl+Backspace"),
         sep,
         item("Choose Model…", "selector:model", "Shift+CommandOrControl+M"),
+        // The TUI's "Where it runs…" submenu (menu-registry.ts run.type): the
+        // same switch the composer's Backend control and /runmode run.
+        { label: "Where it runs…", submenu: [
+          item("Local", "runmode:local"),
+          item("Cloud", "runmode:cloud"),
+          item("Fusion", "runmode:fusion"),
+        ] },
       ],
     },
     {
