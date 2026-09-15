@@ -31,8 +31,25 @@ export type ConversationTurn =
       reasoning?: string;
       /** Absolute paths of files delivered with the reply, if any. */
       attachments?: readonly string[];
+      /**
+       * A `reply` the model batched with work tools: recorded as an
+       * interim note while the turn went on, so it does not end the
+       * macro-turn the way a sole `reply` does (`agent/progress-note-reply.ts`).
+       */
+      progressNote?: true;
       at: number;
     };
+
+/**
+ * Whether a turn is a reply that closed its macro-turn. A progress note
+ * is an `assistant_reply` row too, but the turn continued past it, so a
+ * scan for "the reply that answered the user" must skip it.
+ */
+export function isFinalReplyTurn(
+  turn: ConversationTurn | undefined,
+): turn is Extract<ConversationTurn, { kind: "assistant_reply" }> {
+  return turn?.kind === "assistant_reply" && turn.progressNote !== true;
+}
 
 export function userTurn(text: string, at = Date.now()): ConversationTurn {
   return { kind: "user", text, at };
@@ -84,7 +101,12 @@ export function assistantReplyTurn(
   text: string,
   atOrOptions:
     | number
-    | { at?: number; reasoning?: string; attachments?: readonly string[] } = {},
+    | {
+        at?: number;
+        reasoning?: string;
+        attachments?: readonly string[];
+        progressNote?: boolean;
+      } = {},
 ): ConversationTurn {
   const options =
     typeof atOrOptions === "number" ? { at: atOrOptions } : atOrOptions;
@@ -95,6 +117,9 @@ export function assistantReplyTurn(
   }
   if (options.attachments !== undefined && options.attachments.length > 0) {
     turn = { ...turn, attachments: [...options.attachments] };
+  }
+  if (options.progressNote === true) {
+    turn = { ...turn, progressNote: true };
   }
   return turn;
 }
@@ -291,13 +316,14 @@ export function capReadSummary(
  * Find the index of the first turn that belongs to the current
  * macro-turn — i.e. the slice of turns strictly after the most recent
  * `assistant_reply`. Returns `0` when no reply has been emitted yet
- * (everything is part of the current macro-turn).
+ * (everything is part of the current macro-turn). A progress note did
+ * not close anything, so the scan looks past it.
  */
 export function findCurrentMacroTurnStart(
   turns: readonly ConversationTurn[],
 ): number {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
-    if (turns[i]?.kind === "assistant_reply") return i + 1;
+    if (isFinalReplyTurn(turns[i])) return i + 1;
   }
   return 0;
 }
@@ -415,7 +441,7 @@ export function macroTurnBoundaries(
   }
   const derived = [0];
   for (let i = 1; i < turns.length; i += 1) {
-    if (turns[i]?.kind === "user" && turns[i - 1]?.kind === "assistant_reply") {
+    if (turns[i]?.kind === "user" && isFinalReplyTurn(turns[i - 1])) {
       derived.push(i);
     }
   }
@@ -755,7 +781,7 @@ function renderDroppedSummary(
   for (const t of turns) {
     if (t.kind === "user") user += 1;
     else if (t.kind === "assistant_tool_call") toolCalls += 1;
-    else if (t.kind === "assistant_reply") replies += 1;
+    else if (isFinalReplyTurn(t)) replies += 1;
   }
   const first = turns[0]?.at ?? 0;
   const last = turns[turns.length - 1]?.at ?? first;

@@ -58,6 +58,22 @@ export {
   isRecoverableEmptyCompletion,
   repeatedEmptyCompletionError,
 } from "./empty-completion-recovery.js";
+export {
+  PROGRESS_NOTE_RESULT,
+  createProgressNoteNoticeState,
+  formatProgressNoteNotice,
+  formatProgressNoteStepSummary,
+  isProgressNoteResult,
+  progressNoteResult,
+  progressNoteText,
+  recordProgressNote,
+  splitProgressNoteReply,
+} from "./progress-note-reply.js";
+export type {
+  ProgressNoteNoticeState,
+  ProgressNoteSplit,
+  RecordProgressNoteParams,
+} from "./progress-note-reply.js";
 export { classifyTestCommand } from "./test-command-key.js";
 export type { RecognizedTestCommand } from "./test-command-key.js";
 export {

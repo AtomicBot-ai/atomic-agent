@@ -32,6 +32,7 @@ export {
   assistantToolCallTurn,
   toolResultTurn,
   assistantReplyTurn,
+  isFinalReplyTurn,
   renderTurnForPrompt,
   trimTurnsToTokens,
   packConversation,

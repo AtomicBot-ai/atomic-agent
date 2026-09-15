@@ -93,6 +93,8 @@ export interface TraceStepFinished extends TraceEventBase {
   stepIndex: number;
   summary: string;
   durationMs: number;
+  /** The step kept a `reply` batched with work as a progress note. */
+  progressNote?: true;
 }
 
 export interface TracePromptTokens {

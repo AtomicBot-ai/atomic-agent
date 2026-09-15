@@ -129,6 +129,13 @@ export type StepEvent =
        * the text; the TUI lists them under the bubble.
        */
       attachments?: readonly string[];
+      /**
+       * An interim message, not the end of the turn: the model batched
+       * this `reply` with work tools, the work ran and the step loop
+       * goes on (`progress-note-reply.ts`). Consumers that treat
+       * `assistant_reply` as the turn's answer should expect another.
+       */
+      progressNote?: true;
     }
   /**
    * Emitted once when the first `parseToolCall` threw and the executor

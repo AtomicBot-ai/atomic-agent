@@ -258,48 +258,51 @@ describe("executeStep batch handling", () => {
   });
 
   it("rejects a batch with a terminal verb NOT at the last position", async () => {
-    // `reply` at index 0 of a 2-call batch is invalid: the runtime
-    // cannot keep firing tools after the turn has been closed. Same
+    // `finish` at index 0 of a 2-call batch is invalid: the runtime
+    // cannot keep firing tools after the session has been closed. Same
     // body returned twice — both attempts fail validation, so the
     // executor surfaces the error as a GrammarError after the
-    // one-shot retry.
+    // one-shot retry. (A misplaced `reply` is no longer this case: it
+    // is taken out as a progress note — see `progress-note-reply.ts`.)
     const body = JSON.stringify([
-      { tool: "reply", args: { text: "done" } },
+      { tool: "finish", args: { summary: "done" } },
       { tool: "os.fs.read", args: { path: "a" } },
     ]);
     await expect(runWithBody(body)).rejects.toThrow(
-      /terminal verb 'reply' must be the last call in a batch/,
+      /terminal verb 'finish' must be the last call in a batch/,
     );
   });
 
-  it("executes a [tool, reply] tail-terminal batch in one inference", async () => {
-    // Validator allows `reply` as the last call of a batch; executor
-    // runs the read first, then the reply solo (terminal-tail
-    // barrier). Outcome is identical to a `reply`-only solo step:
-    // `terminal === "turn"` so the agent loop closes the turn.
+  it("keeps a [tool, reply] batch's reply as a progress note and leaves the turn open", async () => {
+    // F50: a `reply` batched with work is a note about the work, not
+    // the end of the turn. The read runs; the reply never does — its
+    // text is kept as an `ok` `reply` result flagged `progressNote`,
+    // and `terminal` stays `null` so the loop takes another step.
     const body = JSON.stringify([
       { tool: "os.fs.read", args: { path: "a" } },
-      { tool: "reply", args: { text: "all done" } },
+      { tool: "reply", args: { text: "reading first" } },
     ]);
     const outcome = await runWithBody(body);
-    expect(outcome.toolCalls).toHaveLength(2);
     expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
       "os.fs.read",
       "reply",
     ]);
-    expect(outcome.toolResults).toHaveLength(2);
     expect(outcome.toolResults[0]!.summary).toBe("read a");
-    expect(outcome.toolResults[1]!.status).toBe("ok");
-    expect(outcome.terminal).toBe("turn");
-    // Transcript: read's tool_call + tool_result pair, then a single
-    // assistant_reply that collapses the terminal call.
-    const turns = outcome.nextSession.turns;
-    const tail = turns.slice(-3);
+    expect(outcome.toolResults[1]).toMatchObject({
+      tool: "reply",
+      status: "ok",
+      details: { progressNote: true },
+    });
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.progressNote).toBe("reading first");
+    // Transcript: the read's pair, then the note as a flagged reply row.
+    const tail = outcome.nextSession.turns.slice(-3);
     expect(tail.map((t) => t.kind)).toEqual([
       "assistant_tool_call",
       "tool_result",
       "assistant_reply",
     ]);
+    expect(tail[2]).toMatchObject({ text: "reading first", progressNote: true });
   });
 
   it("native_tools: unparseable reasoning-only completion routes through parse_retry, never leaks CoT as a reply", async () => {
@@ -996,11 +999,11 @@ describe("executeStep batch handling", () => {
       workingDir: "/w",
     });
     const prompts: string[] = [];
-    // Mid-batch terminal: invalid (`reply` must be last); the model is
+    // Mid-batch terminal: invalid (`finish` must be last); the model is
     // asked to re-emit. The repair attempt returns a clean solo reply.
     const bodies = [
       JSON.stringify([
-        { tool: "reply", args: { text: "done" } },
+        { tool: "finish", args: { summary: "done" } },
         { tool: "os.fs.read", args: { path: "a" } },
       ]),
       JSON.stringify({ tool: "reply", args: { text: "done" } }),
@@ -1047,7 +1050,7 @@ describe("executeStep batch handling", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("### tool-call-repair");
     expect(prompts[1]).toContain(
-      "terminal verb 'reply' must be the last call in a batch",
+      "terminal verb 'finish' must be the last call in a batch",
     );
     expect(prompts[1]).toContain("Use a length-1 array");
   });
@@ -1070,11 +1073,11 @@ describe("executeStep batch handling", () => {
       // emit the JSON body. The repair attempt has the same shape:
       // prompt ends with `<think>` (re-appended after strip), model
       // closes it and emits JSON.
-      // Mid-batch terminal: invalid (`reply` must be last); the model
+      // Mid-batch terminal: invalid (`finish` must be last); the model
       // recovers with a clean solo reply on the repair attempt.
       const bodies = [
         `</think>${JSON.stringify([
-          { tool: "reply", args: { text: "done" } },
+          { tool: "finish", args: { summary: "done" } },
           { tool: "os.fs.read", args: { path: "a" } },
         ])}`,
         `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
@@ -1254,17 +1257,17 @@ describe("executeStep batch handling", () => {
     "still routes a batch with a mid-position terminal verb through the " +
       "LLM repair path (mid-batch terminals are not trim-eligible)",
     async () => {
-      // `[reply, read]` puts the terminal verb at index 0 — invalid by
-      // the new tail-only rule. The trim shortcut only fires for
+      // `[finish, read]` puts the terminal verb at index 0 — invalid by
+      // the tail-only rule. The trim shortcut only fires for
       // approval-gated-only failures; a misplaced terminal goes
       // through repair. Both attempts return the same offending body,
       // surfacing the legacy GrammarError after the one-shot repair.
       const body = JSON.stringify([
-        { tool: "reply", args: { text: "done" } },
+        { tool: "finish", args: { summary: "done" } },
         { tool: "os.fs.read", args: { path: "a" } },
       ]);
       await expect(runWithBody(body)).rejects.toThrow(
-        /terminal verb 'reply' must be the last call in a batch/,
+        /terminal verb 'finish' must be the last call in a batch/,
       );
     },
   );
@@ -1633,7 +1636,10 @@ describe("executeStep pure-read wave splitting (#111)", () => {
   });
 
   it.each([
-    ["terminal mid-batch", [{ tool: "reply", args: { text: "hi" } }], 13],
+    // `finish`, not `reply`: a reply batched with work is taken out as a
+    // progress note before validation (F50), and `[reply, 13 reads]`
+    // then legitimately wave-splits.
+    ["terminal mid-batch", [{ tool: "finish", args: { summary: "hi" } }], 13],
     ["unknown class", [{ tool: "mystery.tool", args: {} }], 13],
   ] as const)(
     "routes an oversized batch containing %s to repair (no wave split, no trim)",
@@ -1802,22 +1808,25 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     ]);
   });
 
-  it("closes the turn when the in-order batch ends in reply", async () => {
+  it("runs the in-order batch whole and keeps its reply as a progress note", async () => {
+    // F50: the reply batched with the writes is a note, not the end of
+    // the turn — the writes still run in order, the reply never runs,
+    // and the interim reply the UI gets is flagged.
     const body = JSON.stringify([
       { tool: "os.fs.write", args: { path: "a", content: "1" } },
       { tool: "os.fs.write", args: { path: "b", content: "2" } },
       { tool: "reply", args: { text: "wrote a and b" } },
     ]);
     const { outcome, log, events } = await run(body, LEVEL_5);
-    expect(outcome.terminal).toBe("turn");
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.progressNote).toBe("wrote a and b");
     expect(log.filter((l) => l.startsWith("start"))).toEqual([
       "start os.fs.write a",
       "start os.fs.write b",
-      "start reply wrote a and b",
     ]);
-    expect(
-      events.filter((e) => e.type === "assistant_reply").map((e) => e.type),
-    ).toEqual(["assistant_reply"]);
+    expect(events.filter((e) => e.type === "assistant_reply")).toEqual([
+      { type: "assistant_reply", text: "wrote a and b", progressNote: true },
+    ]);
   });
 
   it("still trims when a gated call could prompt (fs write below level 5)", async () => {

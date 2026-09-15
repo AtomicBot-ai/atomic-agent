@@ -30,6 +30,13 @@ import {
   unverifiedClaims,
   type CheckClaim,
 } from "./claim-evidence.js";
+import {
+  formatProgressNoteNotice,
+  progressNoteText,
+  recordProgressNote,
+  splitProgressNoteReply,
+  type ProgressNoteNoticeState,
+} from "./progress-note-reply.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
 import {
@@ -252,6 +259,13 @@ export interface StepDependencies {
    * claimed a check that never ran. Absent ⇒ replies are never held.
    */
   claimEvidence?: { noticed: () => boolean; markNoticed: () => void };
+  /**
+   * Per-turn state for the progress-note notice
+   * (`progress-note-reply.ts`): whether this turn was already told that
+   * a `reply` batched with work was kept as a note. Absent ⇒ the notice
+   * accompanies every note.
+   */
+  progressNotes?: ProgressNoteNoticeState;
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -480,8 +494,10 @@ export interface StepOutcome {
    *  - the completion wrote tool calls / results as plain text
    *    (`detectFabricatedToolTranscript`): its `reply` / `finish` was not
    *    accepted and the notice says none of that text ran.
-   * The name predates the second case; the agent loop already routes it
-   * to the next step, which is all either case needs.
+   *  - a `reply` batched with work tools was kept as a progress note
+   *    (`progressNote`), once per turn.
+   * The name predates the later cases; the agent loop already routes it
+   * to the next step, which is all any of them needs.
    */
   trimmedBatchNotice?: string;
   /**
@@ -493,6 +509,14 @@ export interface StepOutcome {
    * pending notice.
    */
   waveSplitNotice?: string;
+  /**
+   * The text of a `reply` the model batched with work tools this step.
+   * It was kept as a progress note — `toolResults` carries an `ok`
+   * `reply` result with `details.progressNote`, the transcript a flagged
+   * `assistant_reply` row — and `terminal` is `null`: the turn goes on
+   * (`progress-note-reply.ts`).
+   */
+  progressNote?: string;
 }
 
 /**
@@ -895,6 +919,45 @@ async function executeStepInner(
   let runInOrder = false;
 
   /**
+   * Did this completion write tool calls and results out as text? Read
+   * before the batch is touched and again once it is final — the same
+   * scan, so the two cannot disagree.
+   */
+  const fabricationOf = (
+    result: CompletionResult,
+  ): FabricatedToolTranscript | null =>
+    detectFabricatedToolTranscript(
+      completionFreeText(result, deps.profile, assumesOpenReasoning(result)),
+    ) ?? fabricationFromEarlyStop(result);
+
+  // A `reply` batched with work tools is a progress note, not the end of
+  // the turn (`progress-note-reply.ts`). Taken out before validation so
+  // it is found in any position — `[reply, shell]` used to fail the
+  // tail-only rule and go to repair — and so `[shell, reply]` leaves a
+  // sole approval-gated call behind, which runs as one always did. The
+  // note comes from the batch that executes: a repair re-emission
+  // replaces whatever the first one carried. A completion that wrote an
+  // invented transcript keeps today's refusal instead — its reply
+  // reports work that never happened and is not kept as anything.
+  let progressNote: ToolCallPayload | null = null;
+  const takeProgressNote = (
+    batch: ToolCallBatch,
+    result: CompletionResult,
+  ): { batch: ToolCallBatch; note: ToolCallPayload | null } => {
+    if (fabricationOf(result) !== null) return { batch, note: null };
+    const split = splitProgressNoteReply(batch.calls, {
+      terminalOnly: ctx.terminalOnly === true,
+    });
+    if (split === null) return { batch, note: null };
+    deps.logger?.info("reply batched with work kept as a progress note", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      tools: split.calls.map((call) => call.tool),
+    });
+    return { batch: { ...batch, calls: split.calls }, note: split.note };
+  };
+
+  /**
    * Does every approval-gated call in `batch` run without a prompt at the
    * session's live approval posture? Only then may the batch run whole.
    *
@@ -1104,6 +1167,9 @@ async function executeStepInner(
     thinkingOff,
   );
   if (parsed.ok) {
+    const taken = takeProgressNote(parsed.batch, completion);
+    progressNote = taken.note;
+    parsed = { ok: true, batch: taken.batch };
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
       // Try the cheap mechanical fixes first, in order:
@@ -1312,6 +1378,9 @@ async function executeStepInner(
       thinkingOff,
     );
     if (parsed.ok) {
+      const taken = takeProgressNote(parsed.batch, completion);
+      progressNote = taken.note;
+      parsed = { ok: true, batch: taken.batch };
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
         // Same mechanical-fix shortcuts for the post-repair attempt:
@@ -1376,14 +1445,7 @@ async function executeStepInner(
   // still run, and the model is told on the next step why the turn did
   // not close. A completion the stream consumer already cut short for
   // this reason is the same case, reached before the provider's limit.
-  const fabricated =
-    detectFabricatedToolTranscript(
-      completionFreeText(
-        completion,
-        deps.profile,
-        assumesOpenReasoning(completion),
-      ),
-    ) ?? fabricationFromEarlyStop(completion);
+  const fabricated = fabricationOf(completion);
   let calls = batch.calls;
   let suppressedTerminal: ToolCallPayload | null = null;
   if (fabricated !== null) {
@@ -1446,7 +1508,10 @@ async function executeStepInner(
       }
     }
   }
-  const batchSize = calls.length + (suppressedTerminal !== null ? 1 : 0);
+  const batchSize =
+    calls.length +
+    (suppressedTerminal !== null ? 1 : 0) +
+    (progressNote !== null ? 1 : 0);
 
   // Registry membership: surfaces as `ToolExecutionError` (category
   // `tool`) instead of `BatchValidationError`. A missing tool is a
@@ -1509,6 +1574,17 @@ async function executeStepInner(
       type: "tool_call_parsed",
       call: suppressed.call,
       batchIndex: calls.length,
+      batchSize,
+    });
+  }
+  // The note is the last call of the step's events: parsed now, with
+  // the rest, and answered after the work ran (`recordProgressNote`).
+  const progressNoteIndex = calls.length + (suppressed !== null ? 1 : 0);
+  if (progressNote !== null) {
+    deps.onEvent?.({
+      type: "tool_call_parsed",
+      call: progressNote,
+      batchIndex: progressNoteIndex,
       batchSize,
     });
   }
@@ -1705,13 +1781,39 @@ async function executeStepInner(
     onEvent: deps.onEvent,
   });
 
+  // The progress note lands after the step's tool pairs, as the reply it
+  // was — flagged, so nothing reads it as the end of the macro-turn —
+  // and the model is told once per turn why the turn did not close.
+  let outcomeCalls = stepCalls;
+  let outcomeResults = stepResults;
+  if (progressNote !== null) {
+    const noted = recordProgressNote({
+      state: nextSession,
+      note: progressNote,
+      batchIndex: progressNoteIndex,
+      batchSize,
+      ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
+    });
+    nextSession = noted.state;
+    outcomeCalls = [...stepCalls, progressNote];
+    outcomeResults = [...stepResults, noted.result];
+    if (deps.progressNotes === undefined || !deps.progressNotes.noticed()) {
+      deps.progressNotes?.markNoticed();
+      const notice = formatProgressNoteNotice();
+      trimmedBatchNotice =
+        trimmedBatchNotice === undefined
+          ? notice
+          : `${trimmedBatchNotice}\n\n${notice}`;
+    }
+  }
+
   void stepDurationMs; // captured for future cross-call observability hooks
   if (batchOutcome.cancelled) {
     throw new CancelledError("batch cancelled mid-execution");
   }
   return {
-    toolCalls: stepCalls,
-    toolResults: stepResults,
+    toolCalls: outcomeCalls,
+    toolResults: outcomeResults,
     completion,
     prompt,
     nextSession,
@@ -1719,6 +1821,9 @@ async function executeStepInner(
     loopSignals: batchOutcome.loopSignals,
     ...(trimmedBatchNotice !== undefined ? { trimmedBatchNotice } : {}),
     ...(waveSplitNotice !== undefined ? { waveSplitNotice } : {}),
+    ...(progressNote !== null
+      ? { progressNote: progressNoteText(progressNote) }
+      : {}),
   };
 }
 
