@@ -63,7 +63,7 @@ import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { registerOsTools } from "../tools/os/index.js";
-import { registerVerifyTools } from "../tools/verify/index.js";
+import { registerVerifyTools, runChecks } from "../tools/verify/index.js";
 import { registerGithubTools } from "../tools/github/index.js";
 import { resolveGithubToken } from "../github/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
@@ -3075,6 +3075,15 @@ export async function createAgentRuntime(
       emitEvent: emitAgentLoopEventFor,
       workingDir,
       outputCharCap: config.agent.batchToolResultCharCap,
+      // A contract's declared `checks` run through the verify family,
+      // each on a throwaway copy of the workspace, so a fan-out is judged
+      // by what its output does, never by what a worker's reply says.
+      runChecks: (specs, ctx) =>
+        runChecks(specs, {
+          workingDir: ctx.workingDir,
+          signal: ctx.signal,
+          config,
+        }),
       logger,
     }),
   );
