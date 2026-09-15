@@ -14,8 +14,6 @@
      .set-pane    — a tab's root: a column with 14px gaps
      .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · readout · actions)
      .set-overlay > .tk-modal.set-modal — a confirm over the whole body card
-     .set-sr — text kept for assistive tech and text checks, not drawn
-     .set-z  — characters kept in the text at zero size (brackets, colons)
    ============================================================ */
 
 /* ---------------- Window ---------------- */
@@ -100,9 +98,6 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-kv--wide{flex:1 1 100%}
 
 /* ---------------- Utilities ---------------- */
-.set-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;
-  clip:rect(0 0 0 0);clip-path:inset(50%);white-space:pre}
-.set-z{font-size:0!important;letter-spacing:0}
 .set-cap{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
 .set-meta{margin:0;font:400 12px/1.5 var(--font-mono);color:var(--ink-2)}
 .set-desc{margin:0;font-size:14px;line-height:1.5;color:var(--ink-2)}

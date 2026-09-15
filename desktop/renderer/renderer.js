@@ -3223,6 +3223,14 @@ function tabSuffix(id) {
   else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
   return n === 0 ? '' : ' (' + n + ')';
 }
+/* What a Manage tab shows in the nav: its label, then the count as a badge
+   (nothing at zero). The space between them takes no room in the flex row;
+   it keeps the row's accessible name "Skills 18" rather than "Skills18".
+   The Memory and MCP refreshes repaint it in place. */
+function settabInner(label, id) {
+  const suffix = tabSuffix(id);
+  return '<span class="lb">' + esc(label) + '</span>' + (suffix ? ' <span class="setcount">' + esc(suffix.slice(2, -1)) + '</span>' : '');
+}
 
 function menuTreeHTML() {
   const cur = settingsPaneId(S.settingsPane);
@@ -3238,9 +3246,10 @@ function menuTreeHTML() {
     'danger.uninstall':'trash',
   };
   // The chord is live in the desktop too: ctrl+g then the key (the keydown
-  // handler's CHORD layer). The keycap shows the letter; the `ctrl+g ` prefix
-  // stays in the text at zero size, so the node still reads "ctrl+g t".
-  const chordCap = (n) => n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '"><span class="set-z">ctrl+g </span><span class="kc">' + esc(n.chord) + '</span></span>' : '';
+  // handler's CHORD layer). The keycap shows the letter and the nav foot says
+  // "⌃G then a letter"; the row carries the whole chord as aria-keyshortcuts.
+  const chordCap = (n) => n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '"><span class="kc">' + esc(n.chord) + '</span></span>' : '';
+  const shortcut = (n) => n.chord ? ' aria-keyshortcuts="Control+G ' + esc(n.chord) + '"' : '';
   const row = (n, sub) => {
     const on = n.tab && n.tab === cur;
     const icon = ic(ICON[n.id] || 'dots');
@@ -3250,17 +3259,14 @@ function menuTreeHTML() {
     }
     if (n.tab) {
       /* A Manage node is also the tab switcher: `.settab` carries the tab's
-         act, label and count ("Tasks (12)" as text; the brackets are drawn at
-         zero size so the row shows "Tasks 12"). A click on the label lands on
-         `settings:<id>`, anywhere else on the row on `menu:go.manage.<id>` —
-         the same destination. */
-      const suffix = tabSuffix(n.tab);
-      const count = suffix ? '<span class="setcount"><span class="set-z"> (</span>' + esc(suffix.slice(2, -1)) + '<span class="set-z">)</span></span>' : '';
-      return '<button class="menurow setrow' + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + (on ? ' aria-current="page"' : '') + '>' + icon
-        + '<span class="settab' + (on ? ' on' : '') + '" data-act="settings:' + esc(n.tab) + '"><span class="lb">' + esc(n.label) + '</span>' + count + '</span>'
+         act, its label (`.lb`) and the count badge (`.setcount`, absent at
+         zero). A click on the label lands on `settings:<id>`, anywhere else
+         on the row on `menu:go.manage.<id>` — the same destination. */
+      return '<button class="menurow setrow' + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + (on ? ' aria-current="page"' : '') + shortcut(n) + '>' + icon
+        + '<span class="settab' + (on ? ' on' : '') + '" data-act="settings:' + esc(n.tab) + '">' + settabInner(n.label, n.tab) + '</span>'
         + chordCap(n) + '</button>';
     }
-    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '">' + icon
+    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + shortcut(n) + '>' + icon
       + '<span class="lb">' + esc(n.label) + '</span>' + chordCap(n) + '</button>';
   };
   // r4-ui item 5: no node carries `sub` any more — `Observe` and `Manage` were
@@ -3427,7 +3433,7 @@ function privacyPane() {
   const known = typeof eff === 'boolean';
   const on = known && eff;
   const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
-  // ST-33: the state word the TUI prints ("anonymous usage on / off / …"), kept as the switch row's accessible text.
+  // ST-33: the state word beside the switch (the switch itself carries aria-checked).
   const stateWord = known ? (on ? 'on' : 'off') : pending ? '…' : '—';
   const unknownNote = !known && !pending
     ? '<div class="tk-help tk-help--warn">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</div>' : '';
@@ -3442,7 +3448,7 @@ function privacyPane() {
     + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '')
     + '<div class="tk-list set-setlist">'
       + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t"><span class="set-sr">Analytics · anonymous usage ' + stateWord + '</span><span aria-hidden="true">Anonymous usage analytics</span></div>'
+        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
           + '<div class="d">Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
           + unknownNote + '</div>'
         + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : stateWord)) + '</span>'
@@ -12598,14 +12604,13 @@ function tkListHTML() {
   const cur = Math.max(0, Math.min(TK.cursor, rows.length - 1));
   let body;
   if (!rows.length) {
-    // The TUI sentence is the pane's accessible text; the same three keys are buttons below it.
+    // The TUI's three ways out (n / f / r), as buttons under the empty state.
     const what = TK.filter === 'all' ? 'tasks' : TK.filter + ' tasks';
     body = '<div class="tk-empty set-empty">'
-      + '<span class="set-sr">no tasks match the current filter — press `n` to create one, `f` to cycle filter, `r` to refresh.</span>'
       + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('tasks') + '</span>'
-      + '<h4 aria-hidden="true">' + (TK.rows.length ? 'No ' + esc(what) + (TK.search ? ' match “' + esc(TK.search) + '”' : ' match the current filter') : 'No tasks yet') + '</h4>'
-      + '<p aria-hidden="true">Create one, cycle the filter, or refresh.</p>'
-      + '<div class="tk-hints" aria-hidden="true">' + tkHint('n', 'new task', 'tasks:new') + tkHint('f', 'cycle filter', 'tasks:filter') + tkHint('r', 'refresh', 'tasks:refresh') + '</div>'
+      + '<h4>' + (TK.rows.length ? 'No ' + esc(what) + (TK.search ? ' match “' + esc(TK.search) + '”' : ' match the current filter') : 'No tasks yet') + '</h4>'
+      + '<p>Create one, cycle the filter, or refresh.</p>'
+      + '<div class="tk-hints">' + tkHint('n', 'new task', 'tasks:new') + tkHint('f', 'cycle filter', 'tasks:filter') + tkHint('r', 'refresh', 'tasks:refresh') + '</div>'
       + '</div>';
   } else {
     // tasks-list.tsx:37-41: window the rows around the cursor (row-window.ts
@@ -12617,9 +12622,7 @@ function tkListHTML() {
     const hiddenBefore = start;
     const hiddenAfter = Math.max(0, rows.length - start - page.length);
     const more = (dir, n) => '<tr class="set-morerow"><td colspan="5"><button class="tuimore" data-act="tasks:page:' + dir + '">' + (dir === 'up' ? '↑ ' + n + ' above' : '↓ ' + n + ' below') + '</button></td></tr>';
-    body = '<div class="tk-list set-tblcard"><table class="tk-tbl set-tktbl">'
-      // The TUI's column header, kept as the table's accessible caption.
-      + '<caption class="set-sr">  status   schedule               next-run       session   message</caption>'
+    body = '<div class="tk-list set-tblcard"><table class="tk-tbl set-tktbl" aria-label="Tasks">'
       + '<thead><tr><th>Status</th><th>Schedule</th><th>Next run</th><th>Session</th><th>Message</th></tr></thead><tbody>'
       + (hiddenBefore > 0 ? more('up', hiddenBefore) : '')
       + page.map((row, idx) => {
@@ -12722,7 +12725,7 @@ function tkFormHTML() {
     + '</div>';
 }
 function tkPreviewHTML(f) {
-  const head = '<div class="set-prevh"><span class="set-sr">next firings:</span><b aria-hidden="true">Next firings</b></div>';
+  const head = '<div class="set-prevh"><b>Next firings</b></div>';
   if (f.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
   if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
   if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
@@ -12980,7 +12983,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', () => { ERR_COUNT++; });
   window.__menuGroups = () => MENU_GROUPS.map((g) => g[0]);
   window.__settingsTabs = () => SETTINGS_TABS.map((t) => t[0]);
-  window.__settingsLabels = () => [...document.querySelectorAll('#settings .settab')].map((b) => b.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim());
+  window.__settingsLabels = () => [...document.querySelectorAll('#settings .settab')].map((b) => ((b.querySelector('.lb') || b).textContent || '').trim()); // the label a person reads, without the count badge
   window.__settingsOpen = (id) => { act('settings:' + id); return settingsPaneId(S.settingsPane); };
   window.__settingsPane = () => (S.settings ? settingsPaneId(S.settingsPane) : null);
   window.__settingsClose = () => { act('settings:close'); };
@@ -13064,18 +13067,15 @@ function tuiHints(parts) {
   return '<div class="tuihint tk-hints">' + parts.map((p) => (typeof p === 'string' ? '<span class="tk-hint">' + tuiKeyLabel(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
 }
 /* The leading key of a hint label drawn as a keycap: `e toggle`, `Esc back`,
-   `[y] delete`, `a: analytics off`, `j/k move`. Only the look changes — the
-   brackets and the colon stay in the text at zero size, so the label reads
-   exactly as the TUI wrote it (copy, screen readers, and the checks that
-   compare it). A label with no recognisable key stays plain text. */
+   `[y] delete`, `a: analytics off`, `j/k move`. The TUI's brackets and colon
+   become the keycap itself, so the label reads "y delete", "a analytics off".
+   A label with no recognisable key stays plain text. */
 function tuiKeyLabel(label) {
   const s = String(label == null ? '' : label);
   const m = /^(\[([^\]\s]{1,8})\]|(j\/k|Ctrl\+Enter|Shift\+Tab|Enter|enter|Esc|esc|Tab|Space|[A-Za-z]|[\/<>?]))(:?)( .+)$/.exec(s);
   if (!m) return esc(s);
   const key = m[2] !== undefined ? m[2] : m[3];
-  const cap = '<span class="kc">' + esc(key) + '</span>';
-  const body = m[2] !== undefined ? '<span class="set-z">[</span>' + cap + '<span class="set-z">]</span>' : cap;
-  return body + (m[4] ? '<span class="set-z">:</span>' : '') + esc(m[5]);
+  return '<span class="kc">' + esc(key) + '</span>' + esc(m[5]);
 }
 /* A change that only lands after a runtime restart says so where it was made,
    with the one button that makes it land. */
@@ -13143,7 +13143,7 @@ function skillsTab() {
     // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools` —
     // a segmented control, the counts, the auto readout, Built-in tools and the Skills Hub (ST-06).
     const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
-      + '<div class="tk-seg set-seg" role="group" aria-label="Filter"><span class="set-sr">filter: </span>'
+      + '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
         + SKP_FILTERS.map((f) => '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + (f === SKP.filter) + '">' + f + '</button>').join('')
       + '</div>'
       + '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
@@ -13151,7 +13151,7 @@ function skillsTab() {
         + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
         + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>'
       + '<span class="grow"></span>'
-      + '<button class="btn btn-g sm" data-act="menu:help.tools" aria-label="built-in tools: /tools"><span class="set-sr">built-in tools: /tools</span><span aria-hidden="true">Built-in tools</span></button>'
+      + '<button class="btn btn-g sm" data-act="menu:help.tools" title="/tools">Built-in tools</button>'
       + '<button class="btn btn-t sm" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
       + '</div></div>';
     view = bar
@@ -13174,12 +13174,11 @@ function skpSourceChip(source) {
 function skpListHTML(visible) {
   if (!SK.rows && !SK.err) return '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill list…</p></div>';
   if (!visible.length) {
-    // The TUI sentence is the accessible text; the visible copy and the hint strip below carry the same three ways out.
+    // The hint strip and the Skills Hub card below carry the three ways out.
     return '<div class="tk-empty set-empty">'
-      + '<span class="set-sr">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</span>'
       + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('skills') + '</span>'
-      + '<h4 aria-hidden="true">No skills match the current filter</h4>'
-      + '<p aria-hidden="true">Install one from the Skills Hub, cycle the filter, or refresh.</p></div>'
+      + '<h4>No skills match the current filter</h4>'
+      + '<p>Install one from the Skills Hub, cycle the filter, or refresh.</p></div>'
       + skpHintsHTML() + skpHubCtaHTML();
   }
   const cur = Math.max(0, Math.min(SKP.cursor, visible.length - 1));
@@ -13190,8 +13189,7 @@ function skpListHTML(visible) {
   // ST-06: one row per skill — switch · name · source · version · description. The switch is the
   // `e toggle` of that row (a span: the row itself is the button that opens the detail).
   return '<div class="tk-list set-sklist">'
-    + '<span class="set-sr">  state     source   version  name                       description</span>'
-    + '<div class="set-skcols" aria-hidden="true"><span>Enabled</span><span>Name</span><span>Source</span><span>Version</span><span>Description</span></div>'
+    + '<div class="set-skcols"><span>Enabled</span><span>Name</span><span>Source</span><span>Version</span><span>Description</span></div>'
     + (hiddenBefore > 0 ? '<button class="tuimore" data-act="skills:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
     + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
@@ -13214,7 +13212,7 @@ function skpHubCtaHTML() {
   return '<div class="tk-list set-hubcta"><button class="tk-li skphub" data-act="skills:hub">'
     + '<span class="tk-ico tk-ico--blue">' + ic('download') + '</span>'
     + '<span class="body"><span class="t">Skills Hub</span>'
-      + '<span class="d"><span class="set-sr">browse &amp; install skills from ClawHub</span><span aria-hidden="true">Browse and install skills from ClawHub</span></span></span>'
+      + '<span class="d">Browse and install skills from ClawHub</span></span>'
     + '<span class="kc">i</span>' + ic('chevR') + '</button></div>';
 }
 /* ST-07: name, state, source and version, then SKILL.md itself. */
@@ -13290,18 +13288,18 @@ function formatDownloads(n) {
 function skpHubListHTML() {
   const q = SKP.hubQuery;
   const n = SKP.hubRows.length;
-  // Not editing: a button that opens the search (`/`), carrying the TUI's `hub search: <query | (all)>` as its text.
+  // Not editing: a button that opens the search (`/`), showing the query, or the placeholder while every row is listed.
   const search = SKP.hubSearchEditing
-    ? '<label class="tk-inpwrap set-search set-hubsearch is-open"><span class="set-sr">hub search: </span>' + ic('search')
-      + '<input id="skp-hubq" value="' + esc(q) + '" placeholder="Search ClawHub and GitHub taps" autocomplete="off" spellcheck="false"><span class="kc" aria-hidden="true">↩</span></label>'
-    : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="/ search"><span class="set-sr">hub search: ' + esc(q.length ? q : '(all)') + '</span>' + ic('search')
-      + '<span aria-hidden="true" class="' + (q.length ? 'v' : 'ph') + '">' + esc(q.length ? q : 'Search ClawHub and GitHub taps') + '</span><span class="kc" aria-hidden="true">/</span></button>';
+    ? '<label class="tk-inpwrap set-search set-hubsearch is-open">' + ic('search')
+      + '<input id="skp-hubq" value="' + esc(q) + '" placeholder="Search ClawHub and GitHub taps" aria-label="Search the skill hub" autocomplete="off" spellcheck="false"><span class="kc" aria-hidden="true">↩</span></label>'
+    : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="/ search">' + ic('search')
+      + '<span class="' + (q.length ? 'v' : 'ph') + '">' + esc(q.length ? q : 'Search ClawHub and GitHub taps') + '</span><span class="kc" aria-hidden="true">/</span></button>';
   let body;
   if (SKP.hubLoading && !n) body = '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>browsing the skill hub…</p></div>';
   else if (!n) {
-    body = '<div class="tk-empty set-empty"><span class="set-sr">no skills found — press `/` to search, `r` to re-browse, or `Esc` to go back.</span>'
-      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('search') + '</span><h4 aria-hidden="true">No skills found</h4>'
-      + '<p aria-hidden="true">Search, browse again, or go back to the installed skills.</p></div>';
+    body = '<div class="tk-empty set-empty">'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('search') + '</span><h4>No skills found</h4>'
+      + '<p>Search, browse again, or go back to the installed skills.</p></div>';
   } else {
     const cur = Math.max(0, Math.min(SKP.hubCursor, n - 1));
     const start = computeWindowStart(cur, n, SKP_HUB_ROWS);
@@ -13357,7 +13355,7 @@ function skpHubCardHTML() {
       + (SKP.installing ? '<span class="tk-spin"></span><span class="set-cap">installing…</span>'
         : '<button class="btn btn-p sm" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="i install">' + ic('download') + 'Install<span class="kc">i</span></button>')
     + '</div>'
-    + '<div class="set-titlerow"><span class="set-sr">[' + badge + '] </span><span class="tk-chip tk-chip--sm' + (claw ? ' tk-chip--blue' : '') + '" aria-hidden="true">' + badge + '</span>'
+    + '<div class="set-titlerow"><span class="tk-chip tk-chip--sm' + (claw ? ' tk-chip--blue' : '') + '" title="' + (claw ? 'ClawHub' : 'GitHub tap') + '">' + badge + '</span>'
       + '<h3 class="set-dtitle">' + esc(c.name) + '</h3><span class="mono set-meta">' + esc(c.identifier) + '</span></div>'
     + '<p class="set-meta">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</p>'
     + (c.version === null ? '<p class="set-cap">(version is not printed by `atag skill browse`)</p>' : '')
@@ -13779,7 +13777,7 @@ async function memRefresh(quiet) {
     return;
   }
   if (memoryVisible()) paneRepaintKeepFocus(memoryTab()); else if (!quiet) render();
-  if (S.settings) { const tab = document.querySelector('#settings .settab.on'); if (tab) tab.textContent = 'Memory' + tabSuffix('memory'); } // the strip's ` (N)` follows the selected channel's rows
+  if (S.settings) { const tab = document.querySelector('#settings .settab[data-act="settings:memory"]'); if (tab) tab.innerHTML = settabInner('Memory', 'memory'); } // the nav's count badge follows the selected channel's rows
 }
 function memStatusLine() {
   return [MEM.loading ? 'loading' : null, MEM.auto ? 'auto' : 'manual',
@@ -13788,12 +13786,6 @@ function memStatusLine() {
     MEM.search.trim() ? 'search: "' + MEM.search.trim() + '"' : null,
     memVisibleRows().length + ' shown'].filter(Boolean).join(' · ');
 }
-/* Soft Tactile — the settings smoke (main.ts) still reads the TUI's own
-   strings out of the body's innerText (`[1:profile]`, the list header, the
-   import labels…). The redrawn tabs no longer paint them, so each view keeps
-   them in one visually hidden, aria-hidden "terminal twin" built from the
-   same state. Delete the twins when the smoke reads the new markup. */
-function sdTwin(text) { return '<div class="sd-twin" aria-hidden="true">' + esc(text) + '</div>'; }
 function memoryTab() {
   ensureMemoryPoll();
   // Every channel the agent knows, as one segmented switch; the ones memory.*.enabled keeps off are disabled and say so.
@@ -13808,11 +13800,9 @@ function memoryTab() {
     ? '<div class="tk-seg">' + MEM_NOTES_FILTERS.map((f) => '<button class="' + (f === MEM.notesFilter ? 'on' : '') + '" aria-pressed="' + (f === MEM.notesFilter) + '" data-act="memory:filter:' + f + '">' + esc(f) + '</button>').join('') + '</div>'
     : '';
   const dot = MEM.loading ? 'tk-dot--brand tk-dot--pulse' : MEM.auto ? 'tk-dot--green' : 'tk-dot--hollow';
-  const bar = MEM.available.map((ch, idx) => { const label = (idx + 1) + ':' + ch; return ch === MEM.channel ? '[' + label + ']' : label; }).join('  ');
   return '<div class="sd-pane sd-mem">'
-    + '<div class="tk-bar"><div class="tk-seg">' + seg + '</div>' + filter + '<span class="grow"></span>'
+    + '<div class="tk-bar"><div class="tk-seg" role="group" aria-label="Memory channel">' + seg + '</div>' + filter + '<span class="grow"></span>'
     + '<span class="sd-status"><i class="tk-dot ' + dot + '"></i><span class="memstatus">' + esc(memStatusLine()) + '</span></span></div>'
-    + sdTwin(bar)
     + (MEM.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MEM.lastError) + '</span></div>' : '')
     + (MEM.mode === 'list' ? memListHTML() : memDetailHTML()) + '</div>';
 }
@@ -13860,8 +13850,7 @@ function memListHTML() {
         + (!tagged && r.meta ? '<span class="m">' + esc(r.meta) + '</span>' : '') + '</button>';
     }).join('') + '</div>';
   }
-  return sdTwin('  primary                    secondary / meta     [' + MEM.channel + ']')
-    + (start > 0 ? more('up', start) : '') + list + (hiddenAfter > 0 ? more('down', hiddenAfter) : '')
+  return (start > 0 ? more('up', start) : '') + list + (hiddenAfter > 0 ? more('down', hiddenAfter) : '')
     + memHintsHTML();
 }
 function memHintsHTML() {
@@ -14228,7 +14217,7 @@ async function mcpRefreshRun(quiet) {
     return;
   }
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
-  if (S.settings) { const tab = document.querySelector('#settings .settab.on'); if (tab && mcpVisible()) tab.textContent = 'MCP' + tabSuffix('mcp'); }
+  if (S.settings) { const tab = document.querySelector('#settings .settab[data-act="settings:mcp"]'); if (tab) tab.innerHTML = settabInner('MCP', 'mcp'); }
 }
 function mcpStatusLine() {
   return [MCP.loading ? 'loading' : null, MCP.auto ? 'auto' : 'manual',
@@ -14259,7 +14248,6 @@ function mcpTab() {
       : view + (hint.startsWith('<') ? hint : ''))
     + '</div>';
 }
-function mcpPad(text, width) { text = String(text); return text.length >= width ? text.slice(0, width - 1) + ' ' : text.padEnd(width); }
 /* The server's mark: GitHub's when the name, command or URL says github, else the plug badge. */
 function mcpMark(cfg) {
   const t = (cfg && cfg.transport) || {};
@@ -14269,16 +14257,14 @@ function mcpMark(cfg) {
 function mcpListHTML(rows) {
   if (!rows.length) {
     return '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No MCP servers</h4>'
-      + '<p>no MCP servers configured — add entries under `mcp.servers[]` in config.json</p></div>' + sdTwin('(no servers)');
+      + '<p>no MCP servers configured — add entries under `mcp.servers[]` in config.json</p></div>';
   }
   const cur = Math.max(0, Math.min(MCP.cursor, rows.length - 1));
   const start = Math.max(0, Math.min(rows.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
   const slice = rows.slice(start, Math.min(rows.length, start + MCP_MAX_ROWS));
   const cfgs = mcpServers();
   // ST-16: mark · name + honest state chip · description · transport · trust class · tool count.
-  const twin = slice.map((r, idx) => (idx + start === cur ? '>' : ' ') + ' ' + mcpPad(r.name, 18) + mcpPad('[' + r.state + ']', 11) + mcpPad(r.transportKind, 18) + mcpPad(r.trust, 16)
-    + r.toolCount + ' tools · — res · — prompts' + (r.description ? '\n  ' + r.description : '')).join('\n');
-  return sdTwin(twin) + '<div class="tk-list">' + slice.map((r, idx) => {
+  return '<div class="tk-list">' + slice.map((r, idx) => {
     const i = idx + start, sel = i === cur;
     const stateTitle = r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
     return '<button class="tk-li sd-srv' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
@@ -14310,12 +14296,11 @@ function mcpDetailHTML() {
   const counts = {tools:String(tools.length), resources:'—', prompts:'—'};
   const state = row ? row.state : '—', trust = row ? row.trust : 'approval_gated';
   const stateTitle = state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
-  const twinBar = MCP_TAB_ORDER.map((tab, idx) => { const label = (idx + 1) + ':' + tab + '(' + counts[tab] + ')'; return tab === MCP.detailTab ? '[' + label + ']' : label; }).join('  ');
-  const seg = '<div class="tk-seg">' + MCP_TAB_ORDER.map((tab) => '<button class="' + (tab === MCP.detailTab ? 'on' : '') + '" aria-pressed="' + (tab === MCP.detailTab) + '" data-act="mcp:dtab:' + tab + '">'
+  const seg = '<div class="tk-seg" role="group" aria-label="Server detail">' + MCP_TAB_ORDER.map((tab) => '<button class="' + (tab === MCP.detailTab ? 'on' : '') + '" aria-pressed="' + (tab === MCP.detailTab) + '" data-act="mcp:dtab:' + tab + '">'
     + esc(tab) + '<span class="sd-count">' + esc(counts[tab]) + '</span></button>').join('') + '</div>';
-  let body, twinBody = '';
+  let body;
   if (MCP.detailTab !== 'tools') body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('eyeOff') + '</span><p>not exposed by the agent\'s HTTP API</p></div>';
-  else if (!tools.length) { body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No tools</h4></div>'; twinBody = '(empty)'; }
+  else if (!tools.length) body = '<div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('plug') + '</span><h4>No tools</h4></div>';
   else {
     const cur = Math.max(0, Math.min(MCP.detailCursor, tools.length - 1));
     const start = Math.max(0, Math.min(tools.length - MCP_MAX_ROWS, Math.max(0, cur - Math.floor(MCP_MAX_ROWS / 2))));
@@ -14327,7 +14312,6 @@ function mcpDetailHTML() {
   }
   return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="mcp:back">' + ic('chevL') + 'Servers</button><span class="grow"></span>'
     + '<button class="btn btn-danger sm" data-act="mcp:remove">Remove</button></div>'
-    + sdTwin(cfg.name + ' [' + state + '] · trust: ' + trust + '\n' + twinBar + (twinBody ? '\n' + twinBody : ''))
     + '<div class="sd-srvhead">' + mcpMark(cfg) + '<h3 class="sd-title sd-mono">' + esc(cfg.name) + '</h3>'
     + '<span class="tk-chip tk-chip--sm sd-mono ' + (trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(trust) + '</span>'
     + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (state === 'disabled' ? 'disabled' : 'state —') + '</span></div>'
@@ -14974,17 +14958,12 @@ function llmStatusTone(line) {
 }
 /* The pane toolbar (ST-20…25): the four panes as a segmented control, the
    status readout, refresh and the daemon log. Drivers read
-   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`; the smoke
-   reads this strip's text as "Mode: Local | Cloud | External llama.cpp |
-   Fallback". So the label and the pipes stay in the text as zero-size glyphs
-   (llmSr), and the segment is inline-block — the children of a flex or grid
-   box each start a new innerText line, which would split that sentence. */
+   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
 function llmBarHTML(mode, status, tone) {
   return '<div class="tk-bar llm-bar">'
-    + '<div class="llm-modehead">' + llmSr('Mode: ')
+    + '<div class="llm-modehead">'
       + '<span class="tk-seg llm-seg" role="tablist" aria-label="LLM panes">'
-      + LLM_PANEL_MODES.map((m, i) => (i ? llmSr(' | ') : '')
-        + '<button class="llmmode' + (m === mode ? ' on' : '') + '" role="tab" aria-selected="' + (m === mode) + '" data-act="llm:mode:' + m + '">'
+      + LLM_PANEL_MODES.map((m) => '<button class="llmmode' + (m === mode ? ' on' : '') + '" role="tab" aria-selected="' + (m === mode) + '" data-act="llm:mode:' + m + '">'
         + esc(LLM_MODE_LABELS[m]) + '</button>').join('')
       + '</span></div>'
     + (tone === 'ready' || tone === 'busy'
@@ -14995,9 +14974,6 @@ function llmBarHTML(mode, status, tone) {
     + '<button class="btn btn-s sm" data-act="llm:logs" title="llama-server log (L)">' + ic('log') + 'LLM logs</button>'
     + '</div>';
 }
-/* Text that stays in innerText (the smoke and the drivers compare the TUI's
-   sentences) but takes no room on screen: zero font size, still rendered. */
-function llmSr(text) { return '<span class="llm-sr">' + esc(text) + '</span>'; }
 function llmMsgHTML(text) {
   const bad = /^! /.test(text);
   return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(text) + '</span></div>';
@@ -15079,22 +15055,21 @@ function llmRouteCardHTML() {
     : word === 'loading' || word === 'starting' ? ['tk-chip--blue', 'tk-dot--brand tk-dot--pulse']
     : word === 'stopping' ? ['tk-chip--amber', 'tk-dot--amber']
     : word === 'unreachable' ? ['tk-chip--red', 'tk-dot--red'] : ['', 'tk-dot--hollow'];
-  /* Each line reads as the TUI line ("current: aimlapi / gpt-5.5",
-     "local daemon: stopped · mode managed") — the smoke compares those —
-     laid out as label and value: the colon is a zero-size glyph and the
-     marks are inline, with no text of their own. */
-  const kv = (label, sep, value) => '<div class="llm-kv"><span class="llm-k">' + esc(label) + '</span>' + llmSr(sep) + value + '</div>';
+  /* Each TUI line ("current: aimlapi / gpt-5.5", "local daemon: stopped ·
+     mode managed") as a label and its value; the marks are inline images
+     with no text of their own. */
+  const kv = (label, value) => '<div class="llm-kv"><span class="llm-k">' + esc(label) + '</span>' + value + '</div>';
   return '<div class="llm-route">'
     + '<div class="llm-route-head"><b>Active chat route</b>'
       + (route ? '<span class="tk-chip tk-chip--sm tk-chip--blue">' + ic(ROUTE[route][0]) + esc(ROUTE[route][1]) + '</span>' : '')
       + '<span class="grow"></span>'
       + '<span class="tk-chip tk-chip--sm ' + tone[0] + '"><span class="tk-dot ' + tone[1] + '"></span>' + esc('local daemon ' + word) + '</span>'
     + '</div>'
-    + kv('current', ': ', (active ? llmProviderMark(active, 'xs') : '') + '<b class="mono">' + esc(active ? active.id : 'unknown') + '</b>'
+    + kv('current', (active ? llmProviderMark(active, 'xs') : '') + '<b class="mono">' + esc(active ? active.id : 'unknown') + '</b>'
       + (model ? '<span class="llm-slash"> / </span>' + modelMark(model, 'xs') + '<span class="mono">' + esc(model) + '</span>' : ''))
-    + kv('tools', ' ', '<span class="mono">' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</span>')
-    + kv('provider embeddings', ': ', '<span class="mono">' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</span>')
-    + kv('local daemon', ': ', '<span class="mono">' + esc(daemon) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</span>')
+    + kv('tools', '<span class="mono">' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</span>')
+    + kv('provider embeddings', '<span class="mono">' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</span>')
+    + kv('local daemon', '<span class="mono">' + esc(daemon) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</span>')
     + '</div>';
 }
 /* llm-panel.tsx StatusLines: one line, the first that applies, else "status: ready". */
@@ -15130,13 +15105,12 @@ function llmFooterHint(mode) {
 function llmRowHTML(row, index, cursor) {
   const selected = index === cursor;
   const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
-  /* Soft Tactile list row (ST-20, ST-23). Its first line still reads as the
-     TUI row's text — "qwen-3.5-9b [downloaded] ★ best fit for this machine",
-     "aimlapi [aimlapi] key ok" — because model-picks.drive.mjs and the smoke
-     read it off innerText: brackets are zero-size glyphs and the chips on
-     that line are inline-block. A row that carries the model's blurb and its
-     fit keeps `.llm-model` and `.llm-sub` on those lines: the driver measures
-     the first one, because `.tuirow` was once a clipped 24px line. */
+  /* Soft Tactile list row (ST-20, ST-23): the id and its chips on one line
+     ("qwen-3.5-9b downloaded ★ best fit for this machine" — the chips are
+     inline-block, and model-picks.drive.mjs reads that first line off
+     innerText), then the blurb and fit lines. A row that carries them keeps
+     `.llm-model` and `.llm-sub`: the driver measures the first one, because
+     `.tuirow` was once a clipped 24px line. */
   const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
     + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">';
   const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
@@ -15144,13 +15118,12 @@ function llmRowHTML(row, index, cursor) {
   const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + '">'
     + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(row.enterEffect) + '</span>';
   const chip = (tone, html) => '<span class="tk-chip tk-chip--sm llm-ib' + (tone ? ' tk-chip--' + tone : '') + '">' + html + '</span>';
-  const bracket = (s) => llmSr('[') + esc(s) + llmSr(']');
   if (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') {
     const m = row.model;
     const chat = row.kind === 'localTextModel';
     const t = '<span class="llm-id mono">' + esc(m.id) + '</span>'
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
-      + ' ' + chip(m.downloaded ? 'green' : 'line', bracket(m.downloaded ? 'downloaded' : 'remote'))
+      + ' ' + chip(m.downloaded ? 'green' : 'line', m.downloaded ? 'downloaded' : 'remote')
       + (row.text.indexOf('★ best fit for this machine') >= 0 ? ' ' + chip('indigo', '★ best fit for this machine') : '')
       + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '');
     // r7 models: what the model is, how it fits this machine, and the one
@@ -15169,7 +15142,8 @@ function llmRowHTML(row, index, cursor) {
     // Until the key names are read every row says "missing key"; it is drawn neutral until they are.
     const tone = !llmKeysKnown() ? 'line' : auth === 'key ok' ? 'green' : auth === 'missing key' ? 'red' : 'line';
     const t = '<span class="llm-id mono">' + esc(p.id) + '</span>'
-      + ' <span class="llm-kind' + (p.kind === p.id ? ' llm-sr' : '') + '">' + bracket(p.kind) + '</span>'
+      // The kind only when it says more than the id ("aimlapi" is an aimlapi provider).
+      + (p.kind === p.id ? '' : ' <span class="llm-kind">' + esc(p.kind) + '</span>')
       + ' ' + chip(tone, esc(auth))
       // Saved without a key check (the wizard's Save unchecked) — the same flag the composer's provider list shows.
       + (UNVERIFIED.indexOf(p.id) >= 0 ? ' ' + chip('amber', 'Unverified') : '');
@@ -15178,7 +15152,7 @@ function llmRowHTML(row, index, cursor) {
   if (row.kind === 'cloudChatModel' || row.kind === 'cloudEmbeddingModel') {
     return open + radio + modelMark(row.modelId, 'sm')
       + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(row.providerId + '/' + row.modelId) + '</span> '
-      + chip('line', bracket(row.kind === 'cloudChatModel' ? 'text' : 'embedding')) + '</span></span>'
+      + chip('line', row.kind === 'cloudChatModel' ? 'text' : 'embedding') + '</span></span>'
       + effect + '</button>';
   }
   if (row.kind === 'externalUrl') {
@@ -15186,7 +15160,7 @@ function llmRowHTML(row, index, cursor) {
     const status = m ? m[1] : '';
     const tone = /^healthy/.test(status) ? 'green' : status === 'unreachable' ? 'amber' : 'line';
     return open + '<span class="tk-ico">' + ic('server') + '</span>'
-      + '<span class="body"><span class="t"><span class="llm-k2">base URL </span><span class="llm-id mono">' + esc(row.url) + '</span> ' + chip(tone, bracket(status)) + '</span>'
+      + '<span class="body"><span class="t"><span class="llm-k2">base URL </span><span class="llm-id mono">' + esc(row.url) + '</span> ' + chip(tone, esc(status)) + '</span>'
       + '<span class="d llm-effect-d">' + esc(row.enterEffect) + '</span></span></button>';
   }
   return open + '<span class="body"><span class="t">' + esc(row.text) + '</span></span>' + effect + '</button>';
@@ -15236,11 +15210,11 @@ function llmCloudHTML() {
     + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Cloud text models</span>'
       + '<span class="llm-prov"><span class="llm-k3">provider: </span>' + (sp ? llmProviderMark(sp, 'xs') : '') + '<b class="mono">' + esc(sp ? sp.id : 'none') + '</b></span></div>'
     + '<div class="tk-bar llm-modelbar">'
-      + '<span class="llm-filter">' + llmSr('filter: ') + '<label class="tk-inpwrap llm-filterbox">' + ic('search')
+      + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
         + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="f to filter" aria-label="Filter models"></label></span>'
       // The price facet needs the catalogue's pricing, which `atag models search --json` does not print: the facet stays at `all` and `p` is inert.
       + '<span class="llm-price"><button class="btn btn-s xs llm-ib" data-act="llm:pricing" disabled title="pricing is not in `atag models search --json` on this agent — the facet stays at all">'
-        + esc('price: ' + LLMP.pricing) + llmSr(' · p cycles free/paid/all') + '</button><span class="llm-price-note">pricing is not exposed</span></span>'
+        + esc('price: ' + LLMP.pricing) + '</button><span class="llm-price-note">pricing is not exposed</span></span>'
     + '</div>'
     + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></section>'
     + llmSectionHTML('Cloud embeddings', emb, embOffset, cursor);
@@ -15309,9 +15283,9 @@ function llmFallbackHTML() {
       const pos = declared.indexOf(l.providerId);
       const p = llmProvider(l.providerId);
       return '<button class="tuirow tk-li llm-row llm-fb-row' + (sel ? ' on' : '') + '" data-llm-row="fb:' + esc(l.providerId) + '" data-act="llm:fb:select:' + i + '">'
-        + '<span class="body"><span class="t"><span class="llm-idx">' + (r.index + 1) + llmSr('.') + '</span>' + llmSr(' ')
+        + '<span class="body"><span class="t"><span class="llm-idx">' + (r.index + 1) + '</span>'
           + llmProviderMark(p || {id:l.providerId, kind:l.kind}, 'sm')
-          + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span>' + llmSr(' [' + l.kind + ']') + '</span>'
+          + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span></span>'
           + '<span class="d">' + esc(l.kind) + '</span></span>'
         + '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(note) + '</span>'
         + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="local last resort">' + ic('lock') + '</span>'
@@ -15492,7 +15466,7 @@ function llmHfPickHTML() {
     + (below > 0 ? '<p class="llm-counter">' + esc('↓ ' + below + ' more') + '</p>' : '')
     + (repo.hidden ? '<p class="llm-note">' + esc(repo.hidden) + '</p>' : '')
     + (repo.mmproj ? '<p class="llm-note llm-mmproj">' + ic('image') + '<span>' + esc(HF_MMPROJ_LINE.trim()) + '</span></p>' : '')
-    + (warning ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + llmSr('⚠ ') + esc(warning) + '</span></div>' : '')
+    + (warning ? '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(warning) + '</span></div>' : '')
     + (LLMHF.error ? '<div class="tk-notice tk-notice--red llm-hf-err">' + ic('alert') + '<span class="grow">' + esc(LLMHF.error) + '</span></div>' : '')
     + '<div class="llm-hf-acts"><button class="btn btn-g sm" data-act="llm:hf:back">Back' + keycaps('Esc') + '</button>'
       + '<button class="btn btn-p sm" data-act="llm:hf:add">' + ic('download') + 'Download' + keycaps('↩') + '</button></div>'
@@ -16251,8 +16225,7 @@ function telegramTab() {
       + '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>'
       + '<h3 class="sd-title">Connect Telegram</h3>'
       + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
-      + '<button class="btn btn-p" data-act="telegram:token">Paste a bot token' + keycaps('↩') + '</button>'
-      + sdTwin('Press Enter to paste a bot token') + '</div>';
+      + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token' + keycaps('↩') + '</button></div>';
   } else if (owner === null) {
     // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
     body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
@@ -16274,12 +16247,9 @@ function telegramTab() {
 /* telegram-panel.tsx AdvancedControls; `state` is the one fact the desktop cannot read. ST-30: one row per fact, its actions beside it. */
 function tgAdvancedHTML(enabled, hasToken, owner) {
   const busy = TG.busy;
-  const facts = 'state unknown   enabled ' + (enabled === null ? '—' : enabled ? 'yes' : 'no') + '   token ' + (hasToken === null ? '—' : hasToken ? 'set' : 'missing')
-    + '   owner ' + (owner === null ? 'unset' : String(owner));
   const tokenChip = hasToken === null ? '<span class="tk-chip tk-chip--sm">—</span>' : hasToken ? '<span class="tk-chip tk-chip--sm tk-chip--green">set</span>' : '<span class="tk-chip tk-chip--sm tk-chip--amber">missing</span>';
   const ownerChip = owner === null ? '<span class="tk-chip tk-chip--sm tk-chip--amber">unset</span>' : '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>';
-  return sdTwin(facts)
-    + (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
     + '<div class="tk-card sd-rows">'
     + '<div class="tk-setrow"><div class="body"><div class="t">State</div><div class="d">The channel runs inside the agent; its live state is not readable here.</div></div>'
     + '<span class="tk-chip tk-chip--sm tk-chip--line" title="no channel status route in this agent\'s HTTP API — the state lives inside the serve process">unknown</span></div>'
@@ -16419,10 +16389,8 @@ function importTab() {
   if (IMP.mode === 'configure') body += impFormHTML(f);
   else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
   else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
-  return '<div class="sd-pane sd-imp">' + sdTwin('Import · ' + sourceLabel + ' → Atomic Agent') + body + '</div>';
+  return '<div class="sd-pane sd-imp">' + body + '</div>';
 }
-/* The TUI's form label (`▸ source-of : `), kept for the terminal twin. */
-function impLabel(label, focused) { return (focused ? '▸' : ' ') + ' ' + label.padEnd(10) + ': '; }
 function impFormHTML(f) {
   const fc = f.focus;
   const hermes = f.source === 'hermes';
@@ -16433,13 +16401,9 @@ function impFormHTML(f) {
   const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
     + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
     + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
-  const twin = [impLabel('source-of', fc === 'sourceType') + (hermes ? '‹hermes› /  openclaw ' : ' hermes  / ‹openclaw›'), impLabel('source', fc === 'source') + f.sourceDir,
-    impLabel('sessions', fc === 'sessions') + (f.sessions ? '[✓]' : '[ ]'), impLabel('cron', fc === 'cron') + (f.cron ? '[✓]' : '[ ]'),
-    hermes ? impLabel('secrets', fc === 'secrets') + (f.secrets ? '[✓]' : '[ ]') : null, impLabel('overwrite', fc === 'overwrite') + (f.overwrite ? '[✓]' : '[ ]'),
-    impLabel('limit', fc === 'limit') + (f.limit || '(no limit)')].filter((l) => l !== null).join('\n');
   // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
   return '<div class="sd-form">'
-    + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl">Source</span><div class="tk-seg">'
+    + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
     + ['hermes', 'openclaw'].map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
       + logoHTML(s, 'xs') + (s === 'hermes' ? 'Hermes' : 'OpenClaw') + '</button>').join('') + '</div></div>'
     + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
@@ -16451,7 +16415,7 @@ function impFormHTML(f) {
     + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
     + '<div class="sd-run"><button class="btn btn-p' + (fc === 'run' ? ' sd-kfocus' : '') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Run preview' + keycaps('⌃ ↩') + '</button></div>'
     + '<p class="sd-cap sd-block">↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview</p>'
-    + sdTwin(twin) + '</div>';
+    + '</div>';
 }
 /* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. ST-32. */
 function impReportHTML(report, executed) {
@@ -16461,8 +16425,6 @@ function impReportHTML(report, executed) {
   const n = report.items.length, noun = n === 1 ? ' item' : ' items';
   const tone = (st) => ({migrated:'tk-chip--green', conflict:'tk-chip--amber', error:'tk-chip--red'}[st] || '');
   const arrowOf = (it) => (it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || ''));
-  const twin = [(executed ? 'result' : 'preview (dry-run)') + ' · ' + n + noun]
-    .concat(items.map((it) => it.status.padEnd(8) + ' [' + it.kind + '] ' + arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : ''))).join('\n');
   // The summary stays one line of text (`migrated=0 · skipped=2 · …`): the chips are inline, not flex items.
   const sum = (label, v, t) => '<span class="tk-chip tk-chip--sm ' + (v > 0 ? t : '') + '">' + label + '=' + v + '</span>';
   return '<div class="tk-bar"><h3 class="sd-title">' + (executed ? 'Result' : 'Preview') + ' · ' + n + noun + '</h3>'
@@ -16481,8 +16443,7 @@ function impReportHTML(report, executed) {
       + '</tbody></table></div>' : '')
     + (hidden > 0 ? '<p class="sd-cap">… ' + hidden + ' more</p>' : '')
     + (IMP.state === 'nothing' ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">Nothing to import.</span></div>' : '')
-    + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]))
-    + sdTwin(twin);
+    + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]));
 }
 /* import-orchestrator.ts runImport: the option set from the toggles, the
    limit parsed, then one `atag import` subprocess — never while a turn is
@@ -16729,7 +16690,7 @@ if (typeof window !== 'undefined') {
   window.__transcript = () => S.log.map((m) => m.k);
   // ⌘3 / View › Skills / the palette rows still reach Skills — on this tree they
   // open Settings › Skills, and only the sidebar row is gone.
-  window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? h.textContent.replace(/\s*\((\d+|up|down)\)$/, '').trim() : ''; };
+  window.__skillsReachable = () => { act('room:skills'); const h = document.querySelector('#settings .settab.on'); return h ? ((h.querySelector('.lb') || h).textContent || '').trim() : ''; };
 }
 
 /* Hooks for --smoke: the review fixes.

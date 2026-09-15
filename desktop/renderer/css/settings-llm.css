@@ -4,13 +4,11 @@
    Loaded after css/settings.css (frame, nav, Tasks, Skills, Privacy).
 
    Two contracts shape this file:
-   1. The smoke and model-picks.drive.mjs read this pane's innerText for the
-      TUI's own sentences ("Mode: Local | Cloud | …", "current: aimlapi /
-      gpt-5.5", "aimlapi [aimlapi] key ok"). Every child of a flex or grid box
-      starts a new innerText line, so anything that must read as one sentence
-      is laid out inline or inline-block (.llm-ib, .llm-kv, .llm-seg), and
-      punctuation the design does not show sits in .llm-sr (zero font size,
-      still rendered, so still in the text).
+   1. model-picks.drive.mjs reads a local model row's first line off innerText
+      ("gemma-4-e4b remote ★ best fit for this machine"). Every child of a flex
+      or grid box starts a new innerText line, so the id and its chips are laid
+      out inline or inline-block (.llm-ib); the route card's label and value
+      (.llm-kv) and the mode segment (.llm-seg) keep the same inline layout.
    2. Rules here outrank the 0.5.5 LLM rules that css/settings.css may still
       carry (.tuirow 24px lines, #llm-filter underline, .llmmode) — every
       selector is scoped under .llm-pane, and the two ids keep their id.
@@ -27,7 +25,7 @@
 .llm-pane .llm-seg .llmmode{display:inline-flex;align-items:center;vertical-align:top;height:28px;padding:0 13px;border-radius:var(--r-pill);
   background:transparent;color:var(--ink-2);font:600 12.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;box-shadow:none;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-.llm-pane .llm-seg .llmmode + .llm-sr + .llmmode{margin-left:2px}
+.llm-pane .llm-seg .llmmode + .llmmode{margin-left:2px}
 .llm-pane .llm-seg .llmmode:hover{background:transparent;color:var(--ink)}
 .llm-pane .llm-seg .llmmode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-soft)}
 .llm-pane .llm-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;color:var(--ink-2)}
@@ -153,11 +151,11 @@
 .llm-pane .llm-idx{display:inline-block;width:24px;height:24px;margin-right:10px;border-radius:50%;background:var(--hover);
   font:500 11.5px/24px var(--font-mono);color:var(--ink-2);text-align:center;vertical-align:middle}
 .llm-pane .llm-fb-row .t .logo,.llm-pane .llm-fb-row .t .tk-ico{vertical-align:middle;margin:-2px 8px 0 0}
-/* A mark inside a sentence the smoke reads ("current: aimlapi / gpt-5.5",
-   "provider: aimlapi", "1. aimlapi"): Blink's innerText breaks the line
-   around an atomic inline that holds a block-level image — and a grid item,
-   or the kit's svg{display:block}, is one. Inline-block box, inline image,
-   centred by margin, keeps the sentence whole. */
+/* A mark inside a line of text (the route card's "aimlapi / gpt-5.5",
+   "provider: aimlapi", a fallback link): an atomic inline that holds a
+   block-level image — a grid item, or the kit's svg{display:block} — breaks
+   the line around it. Inline-block box, inline image, centred by margin,
+   keeps the line whole. */
 .llm-pane .llm-kv :is(.logo,.tk-ico),.llm-pane .llm-prov :is(.logo,.tk-ico),.llm-pane .llm-fb-row .t :is(.logo,.tk-ico){display:inline-block;line-height:0;text-align:center}
 .llm-pane .llm-kv .logo img,.llm-pane .llm-prov .logo img,.llm-pane .llm-fb-row .t .logo img{display:inline;vertical-align:top;margin-top:19%}
 .llm-pane .llm-kv .tk-ico svg,.llm-pane .llm-prov .tk-ico svg,.llm-pane .llm-fb-row .t .tk-ico svg{display:inline;vertical-align:top;margin-top:calc(50% - 6.5px)}
@@ -231,6 +229,3 @@
   .llm-pane .llm-effect{max-width:36%}
   .llm-pane .llm-price-note{flex-basis:100%}
 }
-
-/* Last, so nothing above can give it back a size. */
-.llm-pane .llm-sr{font-size:0;letter-spacing:0}

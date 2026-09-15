@@ -369,18 +369,24 @@ try {
   await app.clickText('LLM', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
   await app.waitFor(`!!document.querySelector('[data-act="llm:mode:cloud"]')`, { timeoutMs: 20000, label: 'the LLM pane opens' });
   await app.clickSel('[data-act="llm:mode:cloud"]', { settleMs: 2500 });
+  /* A provider row as the Cloud pane draws it: the id, its key chip, and
+     what Enter does on it. Read per row, so a chip on the wrong row fails. */
+  const providerRow = (id) => `(() => { const r = document.querySelector('#settings [data-llm-row="cloud-provider:${id}"]'); if (!r) return null;`
+    + ` const chip = r.querySelector('.t .tk-chip');`
+    + ` return {id: ((r.querySelector('.t .llm-id') || {}).textContent || '').trim(), auth: chip ? chip.textContent.trim() : '', effect: ((r.querySelector('.llm-effect') || {}).textContent || '').trim()}; })()`;
+  const keyOk = (id) => `((row) => !!row && row.id === '${id}' && row.auth === 'key ok')(${providerRow(id)})`;
   check('both providers are listed with a resolved key',
-    await app.js(`/openrouter \\[openrouter\\] key ok/.test(document.body.textContent) && /aimlapi \\[aimlapi\\] key ok/.test(document.body.textContent)`));
+    await app.js(`${keyOk('openrouter')} && ${keyOk('aimlapi')}`));
   await app.clickText('switch cloud route to openrouter', { settleMs: 2000 });
   await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => (n.textContent||'').trim() === 'openrouter')`,
     { timeoutMs: 90000, label: 'the route moves to openrouter' });
   /* The pane repaints from the live config a beat after the route moves,
      so this waits for the row to say it rather than sampling once. */
   const settingsAgrees = await app.waitFor(
-    `/openrouter \\[openrouter\\] key ok · Current provider: openrouter/.test(document.body.textContent)`,
+    `((row) => !!row && row.id === 'openrouter' && row.auth === 'key ok' && row.effect === 'Current provider: openrouter')(${providerRow('openrouter')})`,
     { timeoutMs: 30000, label: 'Settings names openrouter as current' }).catch(() => false);
   check('Settings agrees the current provider is openrouter', settingsAgrees,
-    await app.js(`(document.body.textContent.match(/openrouter \\[openrouter\\][^\\n]{0,60}/) || [''])[0]`));
+    JSON.stringify(await app.js(providerRow('openrouter'))));
 
   step(14, 'switch to a different OpenRouter model by clicking its row');
   await pickCloudModel(SWITCH_MODEL);
