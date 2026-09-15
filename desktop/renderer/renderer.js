@@ -1085,6 +1085,7 @@ const P = {
   up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
+  home:'<path d="M2.5 7.25 8 2.75l5.5 4.5"/><path d="M4 6.1V13a.5.5 0 0 0 .5.5H7V10h2v3.5h2.5a.5.5 0 0 0 .5-.5V6.1"/>',
   gear:'<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
   cloud:'<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8.9 2.6 2.6 0 0 1-.4 5.1z"/>',
   cpu:'<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 6.5h3v3h-3zM6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/>',
@@ -1530,7 +1531,7 @@ function renderSidebar() {
     // is not collapsed by the user (CSS hides it on the responsive rail too).
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
-        + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
+        + '<span class="sb-settings-ic">' + ic('home') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
         + (S.sidebar === 'rail' ? '' : keycaps('⌘,'))
       + '</button></div>'
@@ -2077,14 +2078,10 @@ function composer() {
           ? '<span class="ann caution">' + ic('alert') + 'Caution</span>'
           : '<span class="ann critical">' + ic('alert') + 'Switch failed</span>')
       + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
-    /* F10 — where the app reports on itself. Lowest priority: a running turn,
-       a pending approval or a failed switch all matter more than the last
-       thing that changed. */
-    : APPSTATUS.text
-    ? '<div class="statusstrip appstatus">'
-      + '<span class="ann' + (APPSTATUS.tone === 'caution' ? ' caution' : ' lit') + '">'
-      + (APPSTATUS.tone === 'caution' ? 'Caution' : 'Ready') + '</span>'
-      + '<span class="readout">' + esc(APPSTATUS.text) + '</span></div>'
+    /* r2 (DMG feedback): the F10 "Ready · <last thing that changed>" strip is
+       no longer drawn under the transcript — it read as noise. APPSTATUS is
+       still kept (and logged) for diagnostics; only the strip is gone. The
+       strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
       '<div class="qchip"><span class="qlb">Queued</span><span class="qtx">' + esc(t) + '</span>'
@@ -3537,7 +3534,10 @@ function renderToasts() {
     return '<div class="toast' + (bad ? ' bad' : '') + '">'
       + '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
       + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
-      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span></div>';
+      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
+      // r2: every toast can be dismissed before its 6 s are up. Icon only, so
+      // the toast's textContent (what the drivers read) is unchanged.
+      + '<button class="iconbtn sm toast-x" data-act="toastx:' + t.id + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
   }).join('');
 }
 function toast(t, s, kind) {
@@ -3584,6 +3584,7 @@ function act(a) {
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   if (a === 'close') { close(); render(); return; }
+  if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -4270,7 +4271,12 @@ document.addEventListener('click', (e) => {
      when the flow is closed, and the composer's popover is the other place
      this step renders. */
   const wizModel = e.target.closest && e.target.closest('[data-wizmodel]');
-  if (wizModel) { WIZ.modelPick = wizModel.dataset.wizmodel; render(); return; }
+  if (wizModel) {
+    WIZ.modelPick = wizModel.dataset.wizmodel;
+    // r2: double click = Use this model (see the first-run handler).
+    if (e.detail >= 2) { act('wiz:model'); return; }
+    render(); return;
+  }
   if (wizKind) {
     /* A key belongs to the provider it was typed for. WIZ.apiKey survived a
      Back and a different pick, so the field came up pre-filled with the
@@ -6320,29 +6326,9 @@ function obFooter() {
 }
 
 
-/** The hint strip, split back into chords and sentences by OB_KEY_TOKEN. */
-function obHintsHTML() {
-  const footer = obFooter();
-  if (!footer) return '';
-  const hints = footer.split(/\s{3,}/).filter(Boolean).map((chunk) => {
-    const words = chunk.split(' ');
-    let n = 0;
-    while (n < words.length && OB_KEY_TOKEN.test(words[n])) n += 1;
-    const caps = words.slice(0, n).join(' ');
-    const rest = words.slice(n).join(' ');
-    const body = keycaps(caps) + (rest ? '<span>' + esc(rest) + '</span>' : '');
-    /* r6 cloud item 1 — `esc back` is the ONLY way off the local-model
-       list, and the strip drew it as dead text. A mouse-only operator who
-       opened `Local models` to look at the picks could not get back to
-       `Cloud models` at all: no Back control on that screen, no clickable
-       hint, and the choose screen unreachable. The chord is unambiguous
-       on every step that advertises it, so the hint becomes a real
-       button routed through the same key router the keyboard uses. */
-    if (caps === 'esc') return '<button class="hint hint-live" data-obact="key:esc">' + body + '</button>';
-    return '<span class="hint">' + body + '</span>';
-  }).join('');
-  return '<div class="ob-hints">' + hints + '</div>';
-}
+/* r2 (DMG feedback): the hint strip is no longer drawn. obFooter stays as the
+   step → chord table (the smoke reads it through __obFooterFor); every chord
+   it names is also a button on the action bar or a card in the body. */
 
 /** The header lockup (onboarding-header.tsx:42-72), rebuilt as the top of a
  *  checklist card: the product's own name, the two phases with the current one
@@ -6381,14 +6367,12 @@ function obRailHTML() {
     return '<span class="ob-stepmark' + (state ? ' ' + state : '') + '">'
       + '<span class="n">' + (state === 'done' ? ic('check') : p.n) + '</span> ' + esc(p.label) + '</span>';
   }).join('') + '</div>';
-  const build = obBuildLine();
   return '<aside class="ob-rail">'
     + '<span class="ob-orb ob-orb-a" aria-hidden="true"></span><span class="ob-orb ob-orb-b" aria-hidden="true"></span>'
     + '<div class="ob-lock"><span class="ob-mark">' + MARK_COLOR + '</span>'
       + '<span class="ob-wm">' + esc(OB_COPY.headerWordmark) + '</span></div>'
     + '<p class="ob-statement">' + esc(statement) + '</p>'
     + phases
-    + (build ? '<span class="ob-railbuild">' + esc(build) + '</span>' : '')
     + '</aside>';
 }
 
@@ -6803,25 +6787,19 @@ function obIntroHTML() {
      `.ob-introc` keeps exactly its five children — the glow belongs to the
      card, not the column — and the rule stays as a spacer: the smoke reads
      both, and Soft Tactile draws no 3px rules (see onboarding.css). */
-  const build = obBuildLine();
+  /* r2 (DMG feedback): the build line is gone from the card and the rail —
+     `.ob-introc` now holds four children. The build is still in Settings
+     and on the empty chat's card. */
   return '<div id="ob-intro">'
     + '<span class="ob-glow" aria-hidden="true"></span>'
     + '<div class="ob-introc">'
       + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="96" height="96"') + '</span>'
       + '<h1 class="ob-word">' + esc(OB_COPY.wordmark) + '</h1>'
       + '<hr class="ob-rule">'
-      + (build ? '<span class="ob-build">' + esc(build) + '</span>' : '')
       + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
     + '</div></div>';
 }
 
-/** Which build this is — `0.5.5 · macOS arm64` — for the title card and the rail. */
-function obBuildLine() {
-  const b = BUILD || {};
-  return b.version
-    ? b.version + ' · ' + (b.platform === 'darwin' ? 'macOS' : b.platform) + ' ' + b.arch
-    : '';
-}
 
 
 /* ============================================================
@@ -7234,7 +7212,11 @@ function obLocalPickHTML() {
           obModelRowLabel(model, best && model.id === best.id),
           obModelRowDetail(model), '', '', modelMark(model.id));
       }).join('')
-    : '<div class="ob-explain">' + (OB.busy ? 'reading the catalogue…' : obNothingFitsLine()) + '</div>';
+    /* r2: while `atag models list` is out, a spinner where the list will be
+       rather than a sentence about reading a catalogue. */
+    : OB.busy
+      ? '<div class="ob-loading" role="status" aria-label="Loading models"><span class="tk-spin" aria-hidden="true"></span></div>'
+      : '<div class="ob-explain">' + obNothingFitsLine() + '</div>';
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
     esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
@@ -7387,17 +7369,18 @@ function obUrlHTML(kind) {
 function obDownloadHTML() {
   const failed = dlStatus() === 'failed';
   const label = obModelLabel();
-  // offerCloudMeanwhile: "hidden once a cloud provider is configured —
-  // nothing left to offer" (:110-111).
-  const offerCloud = !OB.cloudReady;
   /* r6 UX: these two ARE this screen's buttons — the only way off it short
      of waiting — so they are cards a mouse can see, not the terminal's `┃`
      rule around a paragraph. The copy and the `c` / `s` chords are the
-     TUI's, unchanged. */
-  const cloud = offerCloud
-    ? obOfferHTML(' cloud', 'key:c', '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
-        failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey)
-    : '';
+     TUI's, unchanged.
+
+     r2 (DMG feedback): the cloud card is ALWAYS offered, like the skip card
+     beside it. The TUI hides the block once a cloud provider exists
+     (offerCloudMeanwhile), but its `c` chord stays live — and on a machine
+     that already had one the screen showed a single way off it. Adding a
+     cloud model from here is a real choice either way. */
+  const cloud = obOfferHTML(' cloud', 'key:c', '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+    failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey);
   const skip = obOfferHTML('', 'key:s', '<span class="tk-ico">' + ic('arrowR') + '</span>',
     failed ? [OB_COPY.skipOfferFailed] : OB_COPY.skipOffer, OB_COPY.skipOfferKey);
   return '<div class="ob-explain">'
@@ -7674,6 +7657,8 @@ function wizModelStepHTML(withFoot) {
           + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
           + '<span class="ep">' + esc(m.id) + '</span></span>'
           + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
+          // r2: the picked row carries a tick on the right; a double click uses it.
+          + (m.id === WIZ.modelPick ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
           + '</button>').join('')
     + '</div></div>'
     + (rows.length > shown.length
@@ -7878,7 +7863,7 @@ function obFootHTML() {
 function obHTML() {
   if (OB.step === 'intro') {
     return '<div id="onboarding" class="ob-intro-layer" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
-      + obIntroHTML() + obHintsHTML() + '</div>';
+      + obIntroHTML() + '</div>';
   }
   let body = '';
   if (OB.step === 'choose') body = obChooseHTML();
@@ -7894,6 +7879,10 @@ function obHTML() {
   else if (OB.step === 'import_pick') body = obImportPickHTML();
   else if (OB.step === 'import_preview') body = obImportReportHTML(false);
   else if (OB.step === 'import_done') body = obImportReportHTML(true);
+  /* r2 (DMG feedback): the closing screen keeps its title and draws a small
+     comet crossing the middle of the column instead of a second, smaller
+     "setting up…" line. */
+  else if (OB.step === 'finished') body = '<div class="ob-comet" role="status" aria-label="Setting up"><i></i></div>';
   else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
@@ -7904,11 +7893,14 @@ function obHTML() {
   /* r6 UX: it IS a modal — the app's chrome is behind it and cannot be
      operated — so it says so, and Tab is trapped inside it to match.
      Soft Tactile: the indigo rail on the left; on the right the title, a
-     body that owns the flexible height, the action bar and the hint strip. */
+     body that owns the flexible height and the action bar.
+     r2 (DMG feedback): no keycap hint strip under the action bar. Every verb
+     it named is a button on the bar or a card in the body (r6), and the
+     chords still work. */
   return '<div id="onboarding" role="dialog" aria-modal="true" aria-label="Set up Atomic Agent">'
     + obRailHTML()
     + '<div class="ob">' + obHeadHTML() + '<div class="ob-body">' + body + err + '</div>'
-    + obFootHTML() + obHintsHTML() + '</div></div>';
+    + obFootHTML() + '</div></div>';
 }
 
 /* ============================================================
@@ -9252,9 +9244,16 @@ document.addEventListener('click', (e) => {
   const ctl = e.target.closest && e.target.closest('[data-obact]');
   if (ctl) { obControlClick(ctl.dataset.obact); return; }
   /* F6 — a click on a model row selects it; the verb is on the action bar,
-     the way every other step in this flow works. */
+     the way every other step in this flow works.
+     r2 (DMG feedback): a double click is that verb — "Use this model" on the
+     row just picked. `detail` counts the clicks of one gesture, so the second
+     click still counts after the first one's repaint replaced the row. */
   const wm = e.target.closest && e.target.closest('[data-wizmodel]');
-  if (wm) { WIZ.modelPick = wm.dataset.wizmodel; render(); return; }
+  if (wm) {
+    WIZ.modelPick = wm.dataset.wizmodel;
+    if (e.detail >= 2) { act('wiz:model'); return; }
+    render(); return;
+  }
   const wr = e.target.closest && e.target.closest('[data-obwiz]');
   if (wr) { obWizRowClick(+wr.dataset.obwiz); return; }
 });
@@ -10520,9 +10519,9 @@ function modesHTML() {
            of that is actionable by a person. Say which version is needed and
            offer the one thing that helps. */
         ? '<p class="ob-help">' + esc(MODE_NEEDS_NEWER) + '</p>'
-        : '<p class="cap">'
-          + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
-          + '</p>'
+        /* r2 (DMG feedback): the "a stance for this session …" paragraph is
+           gone — the four rows and their captions already say it. */
+        : ''
           // The disclosure that stops a level-5 operator reading a working
           // chip as a broken one: three of the four choices genuinely do
           // not change what the agent does at that base.
