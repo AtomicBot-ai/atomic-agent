@@ -443,6 +443,32 @@ export function buildStreamEventHook(
       }
       return;
     }
+    /* One leg of a fusion fan-out. `fusion.delegate` emits these in the
+       PARENT session's frame (emitAgentLoopEventFor → TurnController.emit),
+       so they reach this hook for the whole minutes a fan-out holds the
+       turn — the TUI draws a live worker list and feed lines from them, and
+       an HTTP host had nothing at all: no frames between the delegate call
+       and the orchestrator's reply. Extensions-only, like every other
+       atomic frame. Absent fields stay absent: a model the runtime does not
+       know is not named here, for the reason the TUI line omits it. */
+    if (event.type === "fusion_worker") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("fusion_worker", {
+          object: "atomic.fusion_worker",
+          session_id: env.session.id,
+          task_id: event.taskId,
+          title: event.title,
+          phase: event.phase,
+          role: event.role ?? "worker",
+          ...(event.model === undefined ? {} : { model: event.model }),
+          ...(event.tool === undefined ? {} : { tool: event.tool }),
+          ...(event.stepCount === undefined ? {} : { step_count: event.stepCount }),
+          ...(event.durationMs === undefined ? {} : { duration_ms: event.durationMs }),
+          ...(event.summary === undefined ? {} : { summary: event.summary }),
+        });
+      }
+      return;
+    }
     if (event.type === "loop_failed") {
       /* The thrown error is the chain's LAST link, kept untouched for
          classification and the outage wait (runWithFallback). A host that
