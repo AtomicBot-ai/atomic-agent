@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
 import { resetConfigCache } from "../config/index.js";
+import { workerSlotFootprint } from "../local-llm/worker-slots.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { buildPrompt } from "./build-prompt.js";
 import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
@@ -14,7 +15,10 @@ type Providers = NonNullable<AtomicAgentConfig["llm"]>["providers"];
 
 function config(over: {
   mode?: "managed" | "external";
-  parallel?: number;
+  parallel?: number | "auto";
+  contextSize?: number;
+  device?: string;
+  completionMaxTokens?: number;
   modelId?: string | null;
   workerModel?: string;
   workerProvider?: string;
@@ -23,8 +27,13 @@ function config(over: {
   return {
     localModels: {
       mode: over.mode ?? "managed",
+      ...(over.completionMaxTokens === undefined
+        ? {}
+        : { completionMaxTokens: over.completionMaxTokens }),
       managed: {
         parallel: over.parallel ?? 4,
+        contextSize: over.contextSize ?? 0,
+        ...(over.device === undefined ? {} : { device: over.device }),
         modelId: over.modelId === undefined ? "qwen3-4b" : over.modelId,
       },
     },
@@ -50,7 +59,9 @@ describe("resolveFusionMachineFacts", () => {
     // Managed mode is the one case where the runtime itself launches the
     // server, so `managed.parallel` IS the `--parallel` it will get.
     expect(resolveFusionMachineFacts(config({ parallel: 6 }))).toEqual({
+      workerLeg: "local",
       workerSlots: 6,
+      workerTokenBudget: workerSlotFootprint(),
       workerModel: "qwen3-4b",
     });
   });
@@ -58,10 +69,64 @@ describe("resolveFusionMachineFacts", () => {
   it("states no slot count for an external server", () => {
     // Started out of band with flags this process never saw. A guess
     // here becomes a number the orchestrator plans its fan-out against.
+    const facts = resolveFusionMachineFacts(
+      config({ mode: "external", parallel: 6 }),
+    );
+    expect(facts.workerSlots).toBeNull();
+    // What a worker needs is a fact about the worker, not the server.
+    expect(facts.workerLeg).toBe("local");
+    expect(facts.workerTokenBudget).toBe(workerSlotFootprint());
+  });
+
+  it("counts auto slots from a pinned context the way the daemon does", () => {
     expect(
-      resolveFusionMachineFacts(config({ mode: "external", parallel: 6 }))
+      resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 131_072 }))
+        .workerSlots,
+    ).toBe(5);
+    expect(
+      resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 32_768 }))
+        .workerSlots,
+    ).toBe(1);
+    expect(
+      resolveFusionMachineFacts(
+        config({ parallel: "auto", contextSize: 131_072, completionMaxTokens: 16_384 }),
+      ).workerSlots,
+    ).toBe(4);
+    expect(
+      resolveFusionMachineFacts(
+        config({ parallel: "auto", contextSize: 131_072, device: "cpu" }),
+      ).workerSlots,
+    ).toBe(1);
+    // Auto-sized context: known only at daemon start, so unsaid here.
+    expect(
+      resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 0 }))
         .workerSlots,
     ).toBeNull();
+  });
+
+  it("sizes each local worker's share of the context from the reply cap", () => {
+    expect(
+      resolveFusionMachineFacts(config({ completionMaxTokens: 16_384 }))
+        .workerTokenBudget,
+    ).toBe(workerSlotFootprint(16_384));
+  });
+
+  it("describes cloud workers without slots or a shared context", () => {
+    const providers = [
+      { id: "local-llama", kind: "llama-server", model: "entry-3b" },
+      { id: "openrouter", kind: "openai-compatible", defaultChatModel: "gpt-x" },
+    ] as unknown as Providers;
+    expect(
+      resolveFusionMachineFacts(
+        config({ parallel: 6, workerProvider: "openrouter", providers }),
+      ),
+    ).toEqual({
+      workerLeg: "cloud",
+      workerSlots: null,
+      workerTokenBudget: null,
+      // Never the idle managed daemon's model.
+      workerModel: "gpt-x",
+    });
   });
 
   it("prefers the explicit worker-model pin over the managed model", () => {
@@ -103,7 +168,7 @@ describe("the facts reaching the prompt", () => {
     resetConfigCache();
   });
 
-  it("puts the live config's slot count into the ### fusion block", () => {
+  it("puts the live config's capacity into the ### fusion block", () => {
     // The wiring test: `buildPrompt` reads the facts from the config it
     // already holds, so nothing has to be threaded down through the
     // agent loop for the orchestrator to learn what it is choosing over.
@@ -131,5 +196,7 @@ describe("the facts reaching the prompt", () => {
     expect(prompt.stablePrefix).toContain("### fusion");
     expect(prompt.stablePrefix).toContain("5 request slots");
     expect(prompt.stablePrefix).toContain("`qwen-3.5-4b`");
+    expect(prompt.stablePrefix).toContain("~24K tokens");
+    expect(prompt.stablePrefix).toContain("`maxWorkers` at most 5");
   });
 });

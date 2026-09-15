@@ -191,11 +191,25 @@ export interface AtomicAgentConfig {
     /**
      * For a unary `complete()`, the whole-request budget. For
      * `completeStream()`, an **idle** budget: how long llama-server may
-     * stay silent between bytes. A healthy generation refreshes it on
-     * every chunk, so it never caps how long an answer may be — see
-     * `streamTotalTimeoutMs` for that.
+     * stay silent between bytes once the reply has started. A healthy
+     * generation refreshes it on every chunk, so it never caps how long
+     * an answer may be — see `streamTotalTimeoutMs` for that — and it
+     * does not bound the wait for the first byte — see
+     * `firstTokenTimeoutMs`.
      */
     requestTimeoutMs: number;
+    /**
+     * How long a `completeStream()` may wait for its FIRST byte, from the
+     * moment the request is sent. That wait is queueing behind busy slots
+     * plus prompt evaluation — on one GPU shared by several fusion
+     * workers, legitimately many minutes — so it has its own budget
+     * rather than `requestTimeoutMs`: at 300 s a queued worker whose slot
+     * had not evaluated a single token was cancelled as if the server
+     * were dead. Never shorter than `requestTimeoutMs` in effect.
+     * Env-only, like the other local-LLM timeouts:
+     * `ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS`.
+     */
+    firstTokenTimeoutMs: number;
     /**
      * Absolute cap on one streaming response, measured from the moment
      * response headers arrive. `requestTimeoutMs` only bounds silence,
@@ -2645,6 +2659,19 @@ export const ENV_DEFAULTS = {
   STATE_DIR: "~/.atomic-agent",
   HEALTH_TIMEOUT_MS: 3000,
   REQUEST_TIMEOUT_MS: 300_000,
+  /**
+   * 30 minutes. How long a local stream may wait for its first byte — see
+   * `AtomicAgentConfig.localModels.firstTokenTimeoutMs`.
+   *
+   * Sized for the slowest honest wait fusion produces, not for one
+   * request on an idle server: several workers on one GPU queue behind
+   * each other's prompt evals, and a queued worker whose slot had not
+   * yet evaluated a token was cancelled at the 300 s idle budget. A wait
+   * that is really stuck still ends on the caller's own bounds (the
+   * worker's turn timeout, Esc). Raise it with
+   * `ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS`.
+   */
+  FIRST_TOKEN_TIMEOUT_MS: 30 * 60 * 1_000,
   /**
    * 6 hours. The backstop on a single streaming response — see
    * `AtomicAgentConfig.localModels.streamTotalTimeoutMs`.

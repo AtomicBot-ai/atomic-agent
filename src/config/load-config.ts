@@ -169,6 +169,10 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS",
         ENV_DEFAULTS.REQUEST_TIMEOUT_MS,
       ),
+      firstTokenTimeoutMs: readInt(
+        "ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS",
+        ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS,
+      ),
       streamTotalTimeoutMs: readInt(
         "ATOMIC_AGENT_LLAMA_STREAM_TOTAL_TIMEOUT_MS",
         ENV_DEFAULTS.STREAM_TOTAL_TIMEOUT_MS,

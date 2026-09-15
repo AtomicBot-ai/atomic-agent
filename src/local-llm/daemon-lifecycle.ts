@@ -1,3 +1,4 @@
+import { getConfig } from "../config/index.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
@@ -80,6 +81,13 @@ export interface DaemonStartOptions {
    * `--parallel 2` so an embedder's launch stays byte-identical.
    */
   parallel?: number | "auto";
+  /**
+   * `localModels.completionMaxTokens` — the reply part of the worker
+   * footprint `"auto"` slots are counted in (see `worker-slots.ts`).
+   * `startDaemon` reads it from config when omitted, so the slot count a
+   * daemon launches with is the one the `### fusion` prompt block states.
+   */
+  completionMaxTokens?: number;
 }
 
 /**
@@ -126,6 +134,9 @@ export function buildLlamaServerArgs(
                 ? effectiveContextSize
                 : null,
             cpuOnly: opts.device === "cpu",
+            ...(opts.completionMaxTokens === undefined
+              ? {}
+              : { completionMaxTokens: opts.completionMaxTokens }),
           }),
     ),
     "-kvu",
@@ -209,6 +220,19 @@ async function resolveEffectiveContextSize(
     maxContextLength: model.maxContextLength,
     configuredContextSize: opts.configured,
   });
+}
+
+/**
+ * `localModels.completionMaxTokens` for a launch whose caller passed
+ * none. Best-effort: a config that cannot be read leaves the slot math on
+ * its default reply allowance rather than failing the launch.
+ */
+function readConfiguredCompletionMaxTokens(): number | undefined {
+  try {
+    return getConfig().localModels.completionMaxTokens;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface DaemonStatus {
@@ -396,8 +420,14 @@ export async function startDaemon(
       hasMmproj: Boolean(opts.mmprojFile),
     },
   );
+  const completionMaxTokens =
+    opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
   const args = buildLlamaServerArgs(
-    { ...opts, device },
+    {
+      ...opts,
+      device,
+      ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
+    },
     modelPath,
     model.id,
     contextSize,

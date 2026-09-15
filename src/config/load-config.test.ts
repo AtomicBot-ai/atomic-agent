@@ -66,6 +66,25 @@ describe("loadConfig", () => {
     expect(loadConfig().localModels.completionMaxTokens).toBe(131_072);
   });
 
+  it("gives the first token its own budget, longer than the idle timeout", () => {
+    // A fusion worker queued behind busy slots on a shared GPU waits
+    // minutes for its first byte; the 300 s idle budget killed it.
+    const config = loadConfig();
+    expect(config.localModels.firstTokenTimeoutMs).toBe(
+      ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS,
+    );
+    expect(config.localModels.firstTokenTimeoutMs).toBeGreaterThan(
+      config.localModels.requestTimeoutMs,
+    );
+    process.env.ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS = "90000";
+    try {
+      resetConfigCache();
+      expect(loadConfig().localModels.firstTokenTimeoutMs).toBe(90_000);
+    } finally {
+      delete process.env.ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS;
+    }
+  });
+
   it("clamps ATOMIC_AGENT_SKILLS_CATALOG_BUDGET to a positive range", () => {
     // The budget multiplies into the skill catalog's char cap; 0 or a
     // negative value would collapse the catalog, so the loader clamps.

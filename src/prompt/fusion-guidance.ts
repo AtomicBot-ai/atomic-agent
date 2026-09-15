@@ -18,10 +18,12 @@
  * Third — and this is why the block carries numbers at all — *how many*
  * to send. The width of a fan-out is the orchestrator's call now, not
  * `llm.runMode.fusion.workers`, and a model choosing over hardware it
- * cannot see has nothing to choose with. So the last line states what
- * this machine actually serves (see `fusion-machine-facts.ts`): the
- * llama-server slot count, the local model behind it, and therefore how
- * many workers run at once before the rest queue.
+ * cannot see has nothing to choose with. So the last lines state what
+ * this machine actually serves (see `fusion-machine-facts.ts`). For a
+ * local leg: the llama-server slot count and so how many workers run at
+ * once before the rest queue, the model behind it, how much of the
+ * server's one shared context a worker needs, and that the workers share
+ * one GPU. For a cloud leg: no slot limit, but every step is billed.
  *
  * Placement mirrors `composio-guidance.ts`: a `### fusion` block after
  * `### integrations` and before `### instructions`, present only when
@@ -72,23 +74,49 @@ export const FUSION_GUIDANCE = [
 ].join("\n");
 
 /**
- * The one line that differs per machine. Each clause is dropped whole
- * when its fact is unknown, and the line itself when none are known:
+ * The lines that differ per machine. Each clause is dropped whole when
+ * its fact is unknown, and the lines themselves when nothing is known:
  * a sentence with a hole in it reads as a fact the model can lean on.
+ *
+ * A local leg gets its capacity, not just a count, because the fan-out
+ * that measured a worker's footprint failed on exactly what the
+ * orchestrator could not see: four workers on one GPU and one shared
+ * context, each prompt a little too big, all four dying together after
+ * ten minutes. A cloud leg has none of those limits; its cost is the bill.
  */
 export function formatFusionMachineLine(
   facts: FusionMachineFacts,
 ): string | null {
-  const { workerSlots, workerModel } = facts;
+  const { workerLeg, workerSlots, workerTokenBudget, workerModel } = facts;
   const on = workerModel === null ? "" : ` \`${workerModel}\``;
+  if (workerLeg === "cloud") {
+    return `This machine: workers run${on} on a cloud provider — no slot limit, but every worker step is billed, so send only as many workers as the work needs.`;
+  }
+  if (workerLeg === null) {
+    return workerModel === null ? null : `This machine: workers run${on}.`;
+  }
+  const lines: string[] = [];
   if (workerSlots !== null) {
     const slots = `${workerSlots} request slot${workerSlots === 1 ? "" : "s"}`;
-    return `This machine: workers run${on} on a local llama-server with ${slots}, so up to ${workerSlots} run at once and any beyond that queue behind them.`;
+    lines.push(
+      `This machine: workers run${on} on a local llama-server with ${slots}, so up to ${workerSlots} run at once and any beyond that queue behind them.`,
+    );
+  } else {
+    lines.push(`This machine: workers run${on} on a local llama-server.`);
   }
-  if (workerModel !== null) {
-    return `This machine: workers run${on} on a local llama-server.`;
+  if (workerTokenBudget !== null) {
+    lines.push(
+      `Each worker needs ~${Math.round(workerTokenBudget / 1000)}K tokens of that server's one shared context; workers that overflow it together all fail.`,
+    );
   }
-  return null;
+  const width =
+    workerSlots === null
+      ? "the fan-out narrow"
+      : `\`maxWorkers\` at most ${workerSlots}`;
+  lines.push(
+    `Local workers share one GPU: N at once run about N times slower each and can hit timeouts, so keep briefs short and ${width}.`,
+  );
+  return lines.join("\n");
 }
 
 /**

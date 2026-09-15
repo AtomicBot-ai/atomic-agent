@@ -8,41 +8,67 @@
  * either a timid two on hardware that could serve six, or six on a
  * server whose context cannot hold them.
  *
- * **What actually bounds it.** llama.cpp divides `--ctx-size` between
- * `--parallel` slots: each slot gets `ctx / parallel` tokens, and a
- * worker whose slot is smaller than its own prompt cannot run at all. A
- * worker's prompt is the same stable prefix every turn carries (persona,
- * tool catalog, capabilities — ~5.2k tokens on its own) plus the brief
- * and whatever it reads, and it generates against
- * `completionMaxTokens`. So the honest ceiling is how many times
- * `MIN_SLOT_CONTEXT` fits in the context the daemon was actually given —
- * which is itself already sized from VRAM by `context-size.ts`. Bigger
- * machine, bigger context, more slots, with no new hardware probe and
- * nothing for the operator to decide.
+ * **What actually bounds it.** The managed daemon launches with `-kvu`, a
+ * unified KV cache: `--ctx-size` is ONE pool of tokens every `--parallel`
+ * slot draws from, not `ctx / parallel` private shares. Nothing stops N
+ * slots from each accepting a prompt the pool can only hold once — the
+ * server finds out when the sum crosses the ceiling, and then every
+ * request still running fails together with HTTP 500 "Context size has
+ * been exceeded". So the honest ceiling is how many whole worker
+ * footprints (`workerSlotFootprint`) fit in the context the daemon was
+ * actually given — which is itself sized from memory by `context-size.ts`.
+ * Bigger machine, bigger context, more slots, with no new hardware probe
+ * and nothing for the operator to decide.
  *
  * The context is the binding constraint rather than VRAM directly
- * because the KV cache for the whole context is allocated up front:
- * splitting it four ways costs nothing extra in memory, it just makes
- * each share smaller.
+ * because the KV cache for the whole context is allocated up front: more
+ * slots cost nothing extra in memory, they only compete for the same
+ * pool.
  */
 
 /**
- * Tokens a worker slot needs to be useful.
+ * Tokens a worker's prompt carries before it generates anything: the
+ * stable prefix (persona, the worker tool catalog, capabilities) plus the
+ * framing of its brief.
  *
- * Measured, not guessed: a worker's stable prefix in a real session was
- * 7,388 tokens, and its brief plus the file it is working on is the
- * rest. 8k is that floor with room to finish a tool call.
- *
- * It was 16,384 — `MIN_AUTO_CONTEXT`, borrowed on the assumption that a
- * worker needs what a chat session needs. It does not, and the
- * borrowed number did real damage: a 12B model whose auto-context
- * lands at ~16-24k divided to exactly ONE slot, so every fan-out ran
- * sequentially. In the session that exposed it, three tasks queued
- * behind each other and two died on the worker timeout — after which
- * the orchestrator gave up on the workers and built everything itself.
- * A conservative number in the wrong place is not conservative.
+ * Measured, not guessed. It was taken as 7,388 from one session, and the
+ * old per-slot floor of 8,192 was built on that. A Gemma 4 31B fan-out on
+ * a 64 GB M1 Max then put four workers' prompts at 8,121 / 8,292 / 8,147 /
+ * 8,212 tokens before any of them produced a token — 32,772 together on a
+ * 32,768-token unified pool — and all four died on the same HTTP 500
+ * after 590 s. A second fan-out's prompts reached 9,300 and 10,295. Ten
+ * thousand is the stable part of that, rounded to what was seen.
  */
-export const MIN_SLOT_CONTEXT = 8_192;
+export const WORKER_PROMPT_BASE_TOKENS = 10_000;
+
+/**
+ * What a worker adds to its own context while it works: the brief's
+ * content and the files and tool results it reads back.
+ */
+export const WORKER_READS_ALLOWANCE_TOKENS = 6_000;
+
+/**
+ * The reply allowance when `localModels.completionMaxTokens` is unknown or
+ * `0` ("no client-side cap"). A `0` really means a reply may run until the
+ * context fills, which no finite footprint can honour; the schema default
+ * is the number the rest of the local path already plans against, and
+ * `worker-slots.test.ts` pins that the two stay equal.
+ */
+export const DEFAULT_WORKER_COMPLETION_TOKENS = 8_192;
+
+/**
+ * Tokens one worker occupies in the shared pool at its peak: its prompt,
+ * what it reads, and its reply — ~24k at the default reply cap.
+ */
+export function workerSlotFootprint(completionMaxTokens?: number): number {
+  const reply =
+    completionMaxTokens !== undefined &&
+    Number.isFinite(completionMaxTokens) &&
+    completionMaxTokens > 0
+      ? Math.floor(completionMaxTokens)
+      : DEFAULT_WORKER_COMPLETION_TOKENS;
+  return WORKER_PROMPT_BASE_TOKENS + WORKER_READS_ALLOWANCE_TOKENS + reply;
+}
 
 /**
  * Ceiling on the derived count. Past a handful of slots the local server
@@ -57,18 +83,6 @@ export const MAX_AUTO_SLOTS = 8;
 /** What a launch with nothing known falls back to — the historical default. */
 export const DEFAULT_SLOTS = 2;
 
-/**
- * Floor for a GPU launch.
- *
- * A fan-out of one is not a fan-out — it is the orchestrator waiting in
- * a queue it built itself, paying the delegation overhead for none of
- * the parallelism. Two slots on a context that can only really afford
- * one is the better failure: each worker gets a smaller share and may
- * truncate, which comes back as a task to re-delegate, where being
- * serialised comes back as a timeout and a mode that looks broken.
- */
-export const MIN_GPU_SLOTS = 2;
-
 export interface WorkerSlotsInput {
   /**
    * The context the daemon is being launched with, in tokens. `null`
@@ -78,10 +92,23 @@ export interface WorkerSlotsInput {
   contextSize: number | null;
   /** CPU-only launch (`-ngl 0`). */
   cpuOnly: boolean;
+  /**
+   * `localModels.completionMaxTokens` — the reply part of a worker's
+   * footprint. Omitted (or `0`) uses `DEFAULT_WORKER_COMPLETION_TOKENS`.
+   */
+  completionMaxTokens?: number;
 }
 
 /**
  * The slot count for a managed launch.
+ *
+ * At least one, never a floor of two. There used to be one ("a fan-out
+ * of one is not a fan-out"), on the theory that two narrow slots fail
+ * softer than one wide one because a truncated worker can be
+ * re-delegated. On a unified pool that is backwards: two workers that
+ * each need most of the pool do not truncate, they overflow it together
+ * and both fail — the run that measured the footprint lost every worker
+ * to one 500. One worker at a time is slow; it also finishes.
  *
  * CPU-only is always one: concurrent slots there share the same cores,
  * so two workers do not finish sooner than two in a row — they finish at
@@ -91,8 +118,8 @@ export function resolveWorkerSlots(input: WorkerSlotsInput): number {
   if (input.cpuOnly) return 1;
   const ctx = input.contextSize;
   if (ctx === null || !Number.isFinite(ctx) || ctx <= 0) return DEFAULT_SLOTS;
-  const fits = Math.floor(ctx / MIN_SLOT_CONTEXT);
-  return Math.max(MIN_GPU_SLOTS, Math.min(fits, MAX_AUTO_SLOTS));
+  const fits = Math.floor(ctx / workerSlotFootprint(input.completionMaxTokens));
+  return Math.max(1, Math.min(fits, MAX_AUTO_SLOTS));
 }
 
 /**

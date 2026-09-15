@@ -98,6 +98,27 @@ describe("buildLlamaServerArgs", () => {
     expect(defaults[defaults.indexOf("--parallel") + 1]).toBe("2");
   });
 
+  it("counts auto slots in whole worker footprints of the reply cap", () => {
+    // `-kvu` makes --ctx-size one pool every slot draws from, so a slot
+    // is only worth launching if a whole worker fits in the pool.
+    const slotsFor = (
+      opts: Partial<DaemonStartOptions>,
+      contextSize: number,
+    ): string | undefined => {
+      const args = buildLlamaServerArgs(
+        { ...baseOpts, parallel: "auto", ...opts },
+        "/tmp/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+        "qwen-3.5-4b",
+        contextSize,
+      );
+      return args[args.indexOf("--parallel") + 1];
+    };
+    expect(slotsFor({}, 32_768)).toBe("1");
+    expect(slotsFor({ completionMaxTokens: 8_192 }, 65_536)).toBe("2");
+    expect(slotsFor({ completionMaxTokens: 8_192 }, 131_072)).toBe("5");
+    expect(slotsFor({ completionMaxTokens: 16_384 }, 131_072)).toBe("4");
+  });
+
   it("appends --ctx-size when an effective context size is provided", () => {
     const args = buildLlamaServerArgs(
       baseOpts,
