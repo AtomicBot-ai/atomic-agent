@@ -8774,8 +8774,16 @@ async function obReadiness() {
 async function obSettle() {
   if (OB.settling || !BR) return;
   OB.settling = true;
+  /* The flow this settle belongs to. A settle outlives its flow when the
+     flow is closed and opened again while one of the awaits below is out
+     (the menu's `onboarding`, or a driven re-stage), and it then closed the
+     NEW flow or raised a step on it. Found by onboarding-mouse.mjs after the
+     round-2 merges made the readiness reads slower. */
+  const gen = OB.openGen || 0;
+  const stale = () => (OB.openGen || 0) !== gen;
   const outcome = OB.outcome || 'skipped';
   const state = await obReadiness();
+  if (stale()) return;
   if (!OB.open) { OB.settling = false; return; }
   /* r8: `handOver` is the operator saying "put me in the agent now", from
      one of the two rows that promised exactly that. Neither remaining offer
@@ -8809,6 +8817,7 @@ async function obSettle() {
   }
   if (!OB.handOver && !state.stamps.importOfferedAt && !OB_STAMPED.importOfferedAt) {
     const agents = await obDetectAgents();
+    if (stale()) return;
     if (!OB.open) { OB.settling = false; return; }
     if (agents.length > 0) {
       OB.settling = false;
@@ -8833,6 +8842,7 @@ async function obSettle() {
   OB_STAMP_LOG.push({leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
   if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
   const res = await BR.configSet('tui.onboarding.' + closing, stamp);
+  if (stale()) return;
   if (res && res.ok === false) {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
@@ -8856,6 +8866,8 @@ async function openOnboarding() {
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
   });
+  // A new flow: any settle still out for the previous one must not touch it (obSettle).
+  OB.openGen = (OB.openGen || 0) + 1;
   // A re-run (the menu's `onboarding`, or --onboarding) stamps again.
   for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
   // The one place a fresh intro starts from zero — obSkyStart itself
@@ -18623,6 +18635,7 @@ if (typeof window !== 'undefined') {
    */
   window.__obOpen = (step, opts) => {
     OB.open = true;
+    OB.openGen = (OB.openGen || 0) + 1;
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
