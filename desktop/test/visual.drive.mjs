@@ -36,16 +36,26 @@ try {
      blocked and the app would quietly fall back to Helvetica — the kind of
      thing that looks fine in a screenshot until you compare letterforms. Ask
      the font loader, not the CSS. */
+  /* Soft Tactile: Figtree draws every Latin glyph, so Inter is fetched only for
+     Cyrillic (its faces are unicode-ranged to it). Ask for a Cyrillic sample,
+     or the fallback face that Russian text depends on is never exercised. A
+     face the CSP blocks fails to load, so check() stays false either way. */
   const fonts = await app.eval(`(async () => {
     await document.fonts.ready;
+    await Promise.allSettled([
+      document.fonts.load('600 34px Figtree', 'Atomic'),
+      document.fonts.load('600 34px Inter', 'Жизнь'),
+      document.fonts.load('400 13px "DM Mono"', 'atag'),
+    ]);
     return {
-      inter: document.fonts.check('600 34px Inter'),
-      mono: document.fonts.check('400 13px "DM Mono"'),
+      figtree: document.fonts.check('600 34px Figtree', 'Atomic'),
+      inter: document.fonts.check('600 34px Inter', 'Жизнь'),
+      mono: document.fonts.check('400 13px "DM Mono"', 'atag'),
       loaded: [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family + ' ' + f.weight),
     };
   })()`);
-  console.log(`FONTS inter=${fonts.inter} mono=${fonts.mono} loaded=${fonts.loaded.length}`);
-  if (!fonts.inter || !fonts.mono) {
+  console.log(`FONTS figtree=${fonts.figtree} inter(cyrillic)=${fonts.inter} mono=${fonts.mono} loaded=${fonts.loaded.length}`);
+  if (!fonts.figtree || !fonts.inter || !fonts.mono) {
     console.log('FAIL the vendored fonts did not load — the CSP or the paths are wrong');
   }
 
