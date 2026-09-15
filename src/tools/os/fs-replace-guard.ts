@@ -45,7 +45,10 @@ export type ReplaceChange = "replace" | "shrink";
 
 export interface ReplaceGuardInput {
   store: FileRestoreStore | undefined;
+  /** Decides the created-set (`wasCreated` is per session). */
   sessionId: string;
+  /** Decides where the copy goes: copies are shared per working directory (F43). */
+  workingDir: string;
   absolute: string;
   /** The path as the model should spell it in `os.fs.restore`. */
   display: string;
@@ -61,7 +64,10 @@ export interface ReplaceGuardInput {
 }
 
 export interface ReplacedFileDetails {
+  /** Absolute. */
   path: string;
+  /** The path as the call spelled it — what `os.fs.restore` takes verbatim. */
+  display: string;
   bytesBefore: number;
   linesBefore: number | null;
   linesAfter: number;
@@ -165,10 +171,14 @@ export async function guardReplacedFile(
   if (prior.content !== null && prior.bytes <= RESTORE_MAX_BYTES) {
     try {
       const copy = await store.saveCopy(
-        input.sessionId,
+        input.workingDir,
         input.absolute,
         prior.content,
-        { tool: input.tool, lines: prior.lines ?? 0 },
+        {
+          tool: input.tool,
+          lines: prior.lines ?? 0,
+          sessionId: input.sessionId,
+        },
       );
       saved = "saved";
       copyFile = copy.file;
@@ -194,6 +204,7 @@ export async function guardReplacedFile(
     note,
     replaced: {
       path: input.absolute,
+      display: input.display,
       bytesBefore: prior.bytes,
       linesBefore: prior.lines,
       linesAfter,

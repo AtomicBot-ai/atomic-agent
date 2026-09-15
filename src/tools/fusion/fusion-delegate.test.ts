@@ -576,6 +576,73 @@ describe("fusion.delegate", () => {
     expect(result.details.outcome).toBe("all_ok");
   });
 
+  it("carries a worker's replaced input into the head line, the row and details.tasks (F43)", async () => {
+    // Live, 2026-09-15: the worker's write result warned that it had
+    // replaced the user's 2,401-row `sales.csv`; the orchestrator saw
+    // the warning only inside the worker's prose block and merged.
+    const replaced = {
+      path: "/repo/sales.csv",
+      display: "sales.csv",
+      bytesBefore: 60_000,
+      linesBefore: 2401,
+      linesAfter: 9,
+      shrunk: true,
+      headerChanged: false,
+      saved: "saved",
+      copy: "1-sales.csv",
+    };
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (session, _message, options) => {
+          if (session.id.endsWith("1")) {
+            options.eventHook?.({
+              type: "llm_event",
+              event: {
+                type: "tool_call_executed",
+                result: {
+                  tool: "os.fs.write",
+                  status: "ok",
+                  summary: "⚠ replaced the user's file `sales.csv` (2,401 lines → 9); …",
+                  details: { replaced },
+                  truncated: false,
+                },
+                batchIndex: 0,
+                batchSize: 1,
+              },
+            });
+          }
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "done" },
+          });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.outcome).toBe("all_ok");
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.replacedInputs).toEqual([
+      {
+        path: "sales.csv",
+        tool: "os.fs.write",
+        bytesBefore: 60_000,
+        linesBefore: 2401,
+        linesAfter: 9,
+        headerChanged: false,
+        saved: "saved",
+      },
+    ]);
+    expect(rows[1]?.replacedInputs).toBeUndefined();
+    const lines = result.summary.split("\n");
+    expect(lines[0]).toBe("2 tasks: 2 ok — 1 replaced input");
+    expect(lines[1]).toBe(
+      "- [t1] ok — One — replaced the user's file sales.csv (2,401 → 9 lines)",
+    );
+    expect(lines[2]).toBe("- [t2] ok — Two");
+  });
+
   it("is status:error only when every task failed — the per-task rows still come back", async () => {
     // A fan-out where every worker died used to return `ok`; an
     // orchestrator reading the status merged nothing as something.

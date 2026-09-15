@@ -13,10 +13,13 @@ const PREVIEW_MAX_LEN = 400;
 
 /**
  * `os.fs.restore { path }` — put back the previous content that
- * `os.fs.write` / `edit` / `patch` saved before replacing a user file this
- * session (see `fs-replace-guard.ts`). A write in every sense, so it
- * rides the same approval ladder; the copy stays in the store, so a
- * second restore of the same path still works.
+ * `os.fs.write` / `edit` / `patch` saved before replacing a user file in
+ * this working directory (see `fs-replace-guard.ts`). Whichever session
+ * replaced it: the copies are shared per working directory (F43), so a
+ * fusion worker restores what an earlier worker of another fan-out
+ * replaced. A write in every sense, so it rides the same approval
+ * ladder; the copy stays in the store, so a second restore of the same
+ * path still works.
  */
 export function buildOsFsRestoreTool(
   options: FsDangerousToolOptions,
@@ -24,7 +27,7 @@ export function buildOsFsRestoreTool(
   return {
     name: "os.fs.restore",
     description:
-      "Bring back the previous content of a file this session replaced or shrank (saved automatically by os.fs.write / os.fs.edit / os.fs.patch). Dangerous — always requires approval.",
+      "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory — by this session or another (a fusion worker's included); the copy is saved automatically. Dangerous — always requires approval.",
     readonly: false,
     async run(rawArgs, ctx) {
       const path = rawArgs.path;
@@ -38,15 +41,15 @@ export function buildOsFsRestoreTool(
         );
       }
       const absolute = resolveUserPath(path, ctx.workingDir);
-      const copy = await store.latestCopy(ctx.sessionId, absolute);
+      const copy = await store.latestCopy(ctx.workingDir, absolute);
       if (copy === null) {
         throw new Error(
-          `os.fs.restore: nothing saved for \`${path}\` in this session — only a pre-existing file replaced by os.fs.write / edit / patch has a copy`,
+          `os.fs.restore: nothing saved for \`${path}\` in this working directory — only a pre-existing file replaced by os.fs.write / edit / patch (by any session working here) has a copy`,
         );
       }
       let content: Buffer;
       try {
-        content = await store.readCopy(ctx.sessionId, copy);
+        content = await store.readCopy(ctx.workingDir, copy);
       } catch {
         throw new Error(
           `os.fs.restore: the saved copy of \`${path}\` is gone (${copy.file})`,
@@ -86,6 +89,7 @@ export function buildOsFsRestoreTool(
           lines: copy.lines,
           savedAt: copy.savedAt,
           savedBefore: copy.tool,
+          savedBy: copy.sessionId,
           copy: copy.file,
         },
       });

@@ -17,6 +17,7 @@ import {
   FileRestoreStore,
   RESTORE_COPY_CAP,
   RESTORE_MAX_BYTES,
+  restoreKey,
 } from "./fs-restore-store.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { registerOsTools } from "./index.js";
@@ -29,6 +30,11 @@ import { registerOsTools } from "./index.js";
  * write still lands (warn-only), the previous content is saved first,
  * the result says so — loudly on a ≥ 80 % shrink or a changed header,
  * quietly otherwise — and `os.fs.restore` brings the bytes back.
+ *
+ * F43. The copies are keyed by WORKING DIRECTORY, not session: a fusion
+ * worker is its own ephemeral session, and the worker sent to restore
+ * `sales.csv` was not the one that replaced it. Only the created set
+ * stays per session.
  */
 describe("replace guard (F36)", () => {
   let dir: string;
@@ -36,6 +42,8 @@ describe("replace guard (F36)", () => {
   let store: FileRestoreStore;
   let prompts: ApprovalRequest[];
   let gate: ApprovalGate;
+  /** `<stateDir>/restore/<key of dir>` — where this working directory's copies live. */
+  const copiesDir = (): string => join(stateDir, "restore", restoreKey(dir));
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "atomic-replace-guard-"));
@@ -105,6 +113,7 @@ describe("replace guard (F36)", () => {
       );
       expect(result.details.replaced).toMatchObject({
         path: join(dir, "sales.csv"),
+        display: "sales.csv",
         linesBefore: 2402,
         linesAfter: 10,
         shrunk: true,
@@ -116,8 +125,16 @@ describe("replace guard (F36)", () => {
       expect(result.details.lines).toBe(10);
       // The write landed anyway: warn-only.
       expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(after);
-      const copy = join(stateDir, "restore", "s-guard", "1-sales.csv");
+      const copy = join(copiesDir(), "1-sales.csv");
       expect(await readFile(copy, "utf8")).toBe(before);
+      // The manifest names the working directory for a human reading the folder.
+      expect(
+        JSON.parse(await readFile(join(copiesDir(), "manifest.json"), "utf8")),
+      ).toMatchObject({
+        version: 2,
+        workingDir: dir,
+        copies: [{ n: 1, file: "1-sales.csv", tool: "os.fs.write", sessionId: "s-guard" }],
+      });
     });
 
     it("is loud on a header change alone (a .json whose first line moved)", async () => {
@@ -168,9 +185,7 @@ describe("replace guard (F36)", () => {
         headerChanged: false,
         saved: "saved",
       });
-      expect(existsSync(join(stateDir, "restore", "s-guard", "1-a.py"))).toBe(
-        true,
-      );
+      expect(existsSync(join(copiesDir(), "1-a.py"))).toBe(true);
     });
 
     it("says nothing about a file the agent created earlier this session, and still counts the lines", async () => {
@@ -191,8 +206,12 @@ describe("replace guard (F36)", () => {
         `wrote 7 bytes to ${join(dir, "out", "report.md")} (replace, 3 lines → 1)`,
       );
       expect(second.details.replaced).toBeUndefined();
-      expect(await readdir(join(stateDir, "restore", "s-guard"))).toEqual([
-        "manifest.json",
+      // No copy was taken: the working directory has no restore folder
+      // at all, only the session's created-set record.
+      expect(existsSync(copiesDir())).toBe(false);
+      expect(await readdir(join(stateDir, "restore"))).toEqual(["sessions"]);
+      expect(await readdir(join(stateDir, "restore", "sessions"))).toEqual([
+        "s-guard.json",
       ]);
     });
 
@@ -272,7 +291,7 @@ describe("replace guard (F36)", () => {
         linesBefore: null,
       });
       expect(result.summary).toContain("(replace, 5.0 MB → 1 line)");
-      expect(await store.listCopies("s-guard")).toEqual([]);
+      expect(await store.listCopies(dir)).toEqual([]);
     });
 
     it("spells the operator's retarget in the note when the write was moved", async () => {
@@ -318,6 +337,7 @@ describe("replace guard (F36)", () => {
         bytes: before.length,
         lines: 2402,
         savedBefore: "os.fs.write",
+        savedBy: "s-guard",
         copy: "1-sales.csv",
       });
       expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(before);
@@ -346,7 +366,7 @@ describe("replace guard (F36)", () => {
     it("refuses when nothing was saved for the path, and when no store is wired", async () => {
       await expect(
         tools().restore.run({ path: "never.csv" }, ctx()),
-      ).rejects.toThrow(/nothing saved for `never.csv` in this session/);
+      ).rejects.toThrow(/nothing saved for `never.csv` in this working directory/);
       await expect(
         tools(null).restore.run({ path: "never.csv" }, ctx()),
       ).rejects.toThrow(/keeps no restore copies/);
@@ -397,24 +417,123 @@ describe("replace guard (F36)", () => {
       await registry
         .get("os.fs.write")
         .run({ path: "user.csv", content: csv(1, "q") }, ctx("s-reg"));
-      expect(
-        existsSync(join(stateDir, "restore", "s-reg", "1-user.csv")),
-      ).toBe(true);
+      expect(existsSync(join(copiesDir(), "1-user.csv"))).toBe(true);
+    });
+  });
+
+  describe("copies are shared per working directory (F43)", () => {
+    // Live, fusion, 2026-09-15: worker A (its own ephemeral session)
+    // overwrote the user's 2,401-row `sales.csv` with a 9-row sample;
+    // the copy went under A's session, and worker B — a different
+    // session — sent to restore it found nothing.
+    it("lets another session on the same working directory restore what one session replaced", async () => {
+      const before = csv(2401);
+      await writeFile(join(dir, "sales.csv"), before, "utf8");
+      const t = tools();
+      const replaced = await t.write.run(
+        { path: "sales.csv", content: csv(9, "sku,qty") },
+        ctx("s-fw-worker-a"),
+      );
+      expect(replaced.summary).toContain("⚠ replaced the user's file `sales.csv`");
+
+      // Worker B of a later fan-out, and the orchestrator itself.
+      const byB = await t.restore.run({ path: "sales.csv" }, ctx("s-fw-worker-b"));
+      expect(byB.status).toBe("ok");
+      expect(byB.details).toMatchObject({ savedBy: "s-fw-worker-a", copy: "1-sales.csv" });
+      expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(before);
+
+      await t.write.run({ path: "sales.csv", content: "gone\n" }, ctx("s-fw-worker-c"));
+      await t.restore.run({ path: "sales.csv" }, ctx("s-orchestrator"));
+      expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(before);
+
+      // A new process (a fresh store over the same state dir) sees it too.
+      await t.write.run({ path: "sales.csv", content: "gone again\n" }, ctx("s-fw-worker-d"));
+      const later = tools(new FileRestoreStore(join(stateDir, "restore")));
+      await later.restore.run({ path: "sales.csv" }, ctx("s-resumed"));
+      expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(before);
+    });
+
+    it("keeps working directories apart: a copy taken in one is not visible from another", async () => {
+      const other = await mkdtemp(join(tmpdir(), "atomic-replace-guard-other-"));
+      try {
+        await writeFile(join(dir, "sales.csv"), csv(100), "utf8");
+        await writeFile(join(other, "sales.csv"), csv(50, "x,y"), "utf8");
+        const t = tools();
+        await t.write.run({ path: "sales.csv", content: csv(1) }, ctx());
+        expect(restoreKey(other)).not.toBe(restoreKey(dir));
+        expect(existsSync(join(stateDir, "restore", restoreKey(other)))).toBe(false);
+
+        const otherCtx: ToolContext = { ...ctx(), workingDir: other };
+        await expect(
+          t.restore.run({ path: "sales.csv" }, otherCtx),
+        ).rejects.toThrow(/nothing saved for `sales.csv` in this working directory/);
+        expect(await readFile(join(other, "sales.csv"), "utf8")).toBe(csv(50, "x,y"));
+
+        // The other directory gets its own folder once something is replaced there.
+        await t.write.run({ path: "sales.csv", content: "z\n" }, otherCtx);
+        expect(await store.listCopies(other)).toMatchObject([{ n: 1, path: join(other, "sales.csv") }]);
+        expect(await store.listCopies(dir)).toMatchObject([{ n: 1, path: join(dir, "sales.csv") }]);
+        await t.restore.run({ path: "sales.csv" }, otherCtx);
+        expect(await readFile(join(other, "sales.csv"), "utf8")).toBe(csv(50, "x,y"));
+      } finally {
+        await rm(other, { recursive: true, force: true });
+      }
+    });
+
+    it("keys on the absolute working directory, however it was spelled", () => {
+      expect(restoreKey(dir)).toMatch(/^[0-9a-f]{32}$/);
+      expect(restoreKey(`${dir}/`)).toBe(restoreKey(dir));
+      expect(restoreKey(join(dir, "sub", ".."))).toBe(restoreKey(dir));
+      expect(restoreKey(join(dir, "sub"))).not.toBe(restoreKey(dir));
+    });
+
+    it("gives concurrent replacements by several sessions distinct copies (a fan-out shares one manifest)", async () => {
+      const t = tools();
+      const names = ["a.csv", "b.csv", "c.csv", "d.csv", "e.csv"];
+      for (const name of names) {
+        await writeFile(join(dir, name), `user ${name}\n1\n2\n3\n4\n`, "utf8");
+      }
+      await Promise.all(
+        names.map((name, i) =>
+          t.write.run({ path: name, content: `agent ${name}\n` }, ctx(`s-fw-${i}`)),
+        ),
+      );
+      const copies = await store.listCopies(dir);
+      expect(copies.map((c) => c.n)).toEqual([1, 2, 3, 4, 5]);
+      expect(new Set(copies.map((c) => c.file)).size).toBe(5);
+      expect(new Set(copies.map((c) => c.sessionId)).size).toBe(5);
+      for (const name of names) {
+        await t.restore.run({ path: name }, ctx("s-later"));
+        expect(await readFile(join(dir, name), "utf8")).toBe(`user ${name}\n1\n2\n3\n4\n`);
+      }
+    });
+
+    it("the created set stays per session: a file one worker created is the user's to another", async () => {
+      const t = tools();
+      await t.write.run({ path: "out.csv", content: csv(10) }, ctx("s-fw-a"));
+      const sameSession = await t.write.run({ path: "out.csv", content: csv(1) }, ctx("s-fw-a"));
+      expect(sameSession.details.replaced).toBeUndefined();
+      const otherSession = await t.write.run({ path: "out.csv", content: "x\n" }, ctx("s-fw-b"));
+      expect(otherSession.summary.split("\n")[0]).toBe(
+        '⚠ replaced the user\'s file `out.csv` (2 lines → 1, header changed); the previous content is saved — `os.fs.restore {"path":"out.csv"}` brings it back',
+      );
+      expect(await store.wasCreated("s-fw-a", join(dir, "out.csv"))).toBe(true);
+      expect(await store.wasCreated("s-fw-b", join(dir, "out.csv"))).toBe(false);
     });
   });
 
   describe("copy cap", () => {
-    it(`keeps the last ${RESTORE_COPY_CAP} copies per session, dropping the oldest file`, async () => {
+    it(`keeps the last ${RESTORE_COPY_CAP} copies per working directory, dropping the oldest file`, async () => {
       const t = tools();
       for (let i = 1; i <= RESTORE_COPY_CAP + 1; i++) {
         await writeFile(join(dir, `f${i}.txt`), `user ${i}\n`, "utf8");
         await t.write.run({ path: `f${i}.txt`, content: `agent ${i}\n` }, ctx());
       }
-      const copies = await store.listCopies("s-guard");
+      const copies = await store.listCopies(dir);
       expect(copies).toHaveLength(RESTORE_COPY_CAP);
       expect(copies[0]?.n).toBe(2);
       expect(copies.at(-1)?.n).toBe(RESTORE_COPY_CAP + 1);
-      const files = (await readdir(join(stateDir, "restore", "s-guard"))).sort();
+      const files = (await readdir(copiesDir())).sort();
       expect(files).not.toContain("1-f1.txt");
       expect(files).toContain("2-f2.txt");
       expect(files).toContain(`${RESTORE_COPY_CAP + 1}-f${RESTORE_COPY_CAP + 1}.txt`);

@@ -610,6 +610,80 @@ describe("runWorkerTasks", () => {
     }
   });
 
+  it("carries a replaced input onto the row through the declared-file check, whatever the status becomes (F43)", async () => {
+    // The Gemma worker that wrote a 9-row sample over the user's
+    // 2,401-row `sales.csv`: the guard's hit rides the write result's
+    // details, and the row must keep it when the status is folded.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      const replaced = {
+        path: join(dir, "sales.csv"),
+        display: "sales.csv",
+        bytesBefore: 60_000,
+        linesBefore: 2401,
+        linesAfter: 9,
+        shrunk: true,
+        headerChanged: false,
+        saved: "saved",
+        copy: "1-sales.csv",
+      };
+      const { deps } = harness(async ({ options }) => {
+        writeFileSync(join(dir, "sales.csv"), "sku,qty\n1,2\n");
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: {
+              tool: "os.fs.write",
+              status: "ok",
+              summary: "⚠ replaced the user's file `sales.csv` (2,401 lines → 9); …",
+              details: { replaced },
+              truncated: false,
+            },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "Wrote the sample" },
+        });
+        return turnResult({ stepCount: 2 });
+      });
+      deps.workingDir = dir;
+      const signal = new AbortController().signal;
+      const [ok] = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Sales", instructions: "x", files: ["sales.csv"] }],
+        maxWorkers: 1,
+        signal,
+      });
+      // The status stands — the write landed and the reply may be right.
+      expect(ok).toMatchObject({
+        status: "ok",
+        tools: { writes: 1 },
+        replacedInputs: [
+          { path: "sales.csv", tool: "os.fs.write", linesBefore: 2401, linesAfter: 9, saved: "saved" },
+        ],
+      });
+      // A declared file missing turns the row `failed`; the replaced
+      // input is still on it.
+      const [failed] = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [{ id: "t1", title: "Sales", instructions: "x", files: ["sales.csv", "chart.png"] }],
+        maxWorkers: 1,
+        signal,
+      });
+      expect(failed).toMatchObject({
+        status: "failed",
+        error: "declared file chart.png does not exist after the task",
+        replacedInputs: [{ path: "sales.csv" }],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("never reports no_changes for a task without declared files, or one whose write succeeded", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
     try {

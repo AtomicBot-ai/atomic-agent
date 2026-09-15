@@ -81,6 +81,7 @@ export function buildOsFsEditTool(
       const guard = await guardReplacedFile({
         store: options.restore,
         sessionId: ctx.sessionId,
+        workingDir: ctx.workingDir,
         absolute,
         display: args.path,
         tool: "os.fs.edit",

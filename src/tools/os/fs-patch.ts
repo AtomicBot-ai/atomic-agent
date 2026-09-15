@@ -17,7 +17,7 @@ import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
-import type { ToolDefinition } from "../tool-registry.js";
+import type { ToolContext, ToolDefinition } from "../tool-registry.js";
 
 export type { FileOutcome, PreviewOutcome } from "./fs-patch-preview.js";
 
@@ -101,9 +101,7 @@ export function buildOsFsPatchTool(
           );
         }
         await writeFile(outcome.absolute, patched, "utf8");
-        guards.push(
-          await guardAfterPatch(options, ctx.sessionId, outcome, patched),
-        );
+        guards.push(await guardAfterPatch(options, ctx, outcome, patched));
         const warning = parseWarningAfterPatch(
           outcome,
           patched,
@@ -131,13 +129,13 @@ export function buildOsFsPatchTool(
  */
 async function guardAfterPatch(
   options: FsDangerousToolOptions,
-  sessionId: string,
+  ctx: Pick<ToolContext, "sessionId" | "workingDir">,
   outcome: PreviewOutcome,
   patched: string,
 ): Promise<ReplaceGuardOutcome> {
   if (!outcome.existed) {
     try {
-      await options.restore?.recordCreated(sessionId, outcome.absolute);
+      await options.restore?.recordCreated(ctx.sessionId, outcome.absolute);
     } catch {
       // Best effort: the patch landed either way.
     }
@@ -145,7 +143,8 @@ async function guardAfterPatch(
   }
   return guardReplacedFile({
     store: options.restore,
-    sessionId,
+    sessionId: ctx.sessionId,
+    workingDir: ctx.workingDir,
     absolute: outcome.absolute,
     display: outcome.absolute,
     tool: "os.fs.patch",

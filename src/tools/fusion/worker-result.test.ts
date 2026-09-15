@@ -193,6 +193,125 @@ describe("WorkerRunCollector", () => {
   });
 });
 
+/** What the replace guard puts on a write result that replaced `sales.csv` (2,401 → 9 lines). */
+const SALES_REPLACED = {
+  path: "/repo/sales.csv",
+  display: "sales.csv",
+  bytesBefore: 60_000,
+  linesBefore: 2401,
+  linesAfter: 9,
+  shrunk: true,
+  headerChanged: false,
+  saved: "saved",
+  copy: "1-sales.csv",
+};
+
+describe("WorkerRunCollector — replaced inputs (F43)", () => {
+  // Live, fusion, Gemma worker (2026-09-15): the write result's warning
+  // about the 2,401-row `sales.csv` reached the orchestrator only inside
+  // the worker's prose block, and it merged anyway.
+  it("records every replace-guard hit from the worker's tool results, in call order", () => {
+    const c = new WorkerRunCollector();
+    c.observe(toolExecuted("os.fs.write", "ok", "⚠ replaced …", { replaced: SALES_REPLACED }));
+    c.observe(toolExecuted("os.fs.read", "ok"));
+    // A patch reports its files as an array; an edit that shrank reports one.
+    c.observe(
+      toolExecuted("os.fs.patch", "ok", "patch applied", {
+        replaced: [
+          { ...SALES_REPLACED, path: "/repo/a.csv", display: "/repo/a.csv", linesBefore: 40, linesAfter: 3 },
+          { ...SALES_REPLACED, path: "/repo/big.bin", display: "big.bin", linesBefore: null, bytesBefore: 6 * 1024 * 1024, linesAfter: 1, saved: "too_large" },
+        ],
+      }),
+    );
+    c.observe(toolExecuted("os.fs.edit", "ok", "diff", { replaced: { ...SALES_REPLACED, display: "notes.md", linesBefore: 500, linesAfter: 2, headerChanged: true } }));
+    const result = c.finish({ id: "t1", title: "Sales", reason: "reply", stepCount: 4, durationMs: 1 });
+    expect(result.status).toBe("ok");
+    expect(result.replacedInputs).toEqual([
+      { path: "sales.csv", tool: "os.fs.write", bytesBefore: 60_000, linesBefore: 2401, linesAfter: 9, headerChanged: false, saved: "saved" },
+      { path: "/repo/a.csv", tool: "os.fs.patch", bytesBefore: 60_000, linesBefore: 40, linesAfter: 3, headerChanged: false, saved: "saved" },
+      { path: "big.bin", tool: "os.fs.patch", bytesBefore: 6 * 1024 * 1024, linesBefore: null, linesAfter: 1, headerChanged: false, saved: "too_large" },
+      { path: "notes.md", tool: "os.fs.edit", bytesBefore: 60_000, linesBefore: 500, linesAfter: 2, headerChanged: true, saved: "saved" },
+    ]);
+  });
+
+  it("carries nothing when no result carried a guard hit, and ignores a shape it does not know", () => {
+    const c = new WorkerRunCollector();
+    c.observe(toolExecuted("os.fs.write", "ok", "wrote 10 bytes", { path: "/repo/new.txt", existed: false }));
+    c.observe(toolExecuted("os.fs.write", "ok", "wrote", { replaced: "sales.csv" }));
+    c.observe(toolExecuted("os.fs.write", "ok", "wrote", { replaced: { path: "/repo/x" } }));
+    const result = c.finish({ id: "t1", title: "T", reason: "reply", stepCount: 1, durationMs: 1 });
+    expect(result.replacedInputs).toBeUndefined();
+    expect("replacedInputs" in result).toBe(false);
+  });
+});
+
+describe("formatDelegateOutput — a replaced input (F43)", () => {
+  it("counts it on the head line and puts it first on the task's row, ahead of the error and the notes", () => {
+    const out = formatDelegateOutput(
+      [
+        row({
+          id: "t1",
+          title: "Sales summary",
+          status: "max_steps",
+          error: "step limit",
+          notes: ["stopped at its step limit"],
+          replacedInputs: [
+            { path: "sales.csv", tool: "os.fs.write", bytesBefore: 60_000, linesBefore: 2401, linesAfter: 9, headerChanged: false, saved: "saved" },
+          ],
+        }),
+        row({ id: "t2", title: "Chart" }),
+      ],
+      8000,
+      { spend: { usd: 0.5, model: "m", promptTokens: 10, completionTokens: 5 } },
+    );
+    const lines = out.split("\n");
+    // The status stands; the fact rides the head line with the bill.
+    expect(lines[0]).toBe("2 tasks: 1 ok, 1 max_steps — 1 replaced input — cloud spend $0.50 on m (10 in / 5 out)");
+    expect(lines[1]).toBe(
+      "- [t1] max_steps — Sales summary — replaced the user's file sales.csv (2,401 → 9 lines) — error: step limit — stopped at its step limit",
+    );
+    expect(lines[2]).toBe("- [t2] ok — Chart");
+    // And it is the first diagnosis line of the block, above the reply.
+    const block = out.split("\n\n")[1]!.split("\n");
+    expect(block[0]).toContain("[t1] max_steps — Sales summary");
+    expect(block[1]).toBe("replaced the user's file sales.csv (2,401 → 9 lines)");
+    expect(block[2]).toBe("note: stopped at its step limit");
+  });
+
+  it("pluralises the count across tasks and spells the header, size and unsaved cases", () => {
+    const out = formatDelegateOutput(
+      [
+        row({
+          id: "t1",
+          replacedInputs: [
+            { path: "sales.csv", tool: "os.fs.write", bytesBefore: 1, linesBefore: 2401, linesAfter: 1, headerChanged: true, saved: "saved" },
+            { path: "notes.md", tool: "os.fs.edit", bytesBefore: 1, linesBefore: 500, linesAfter: 2, headerChanged: false, saved: "failed" },
+          ],
+        }),
+        row({
+          id: "t2",
+          replacedInputs: [
+            { path: "big.bin", tool: "os.fs.patch", bytesBefore: 6 * 1024 * 1024, linesBefore: null, linesAfter: 3, headerChanged: false, saved: "too_large" },
+          ],
+        }),
+      ],
+      8000,
+    );
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("2 tasks: 2 ok — 3 replaced inputs");
+    expect(lines[1]).toBe(
+      "- [t1] ok — Map — replaced the user's file sales.csv (2,401 → 1 line, header changed) — shrank the user's file notes.md (500 → 2 lines); not saved",
+    );
+    expect(lines[2]).toBe(
+      "- [t2] ok — Map — shrank the user's file big.bin (6.0 MB → 3 lines); not saved (too large)",
+    );
+  });
+
+  it("says nothing on the head line when no task replaced anything", () => {
+    expect(formatDelegateOutput([row(), row({ id: "t2" })], 4000).split("\n")[0]).toBe("2 tasks: 2 ok");
+  });
+});
+
 describe("classifyWorkerStatus", () => {
   it("maps the loop reasons onto worker statuses", () => {
     expect(classifyWorkerStatus("reply", false)).toBe("ok");

@@ -155,7 +155,8 @@ export function registerOsTools(
   );
   // One option bag for every tool that replaces file content, so the
   // write, the edit, the patch and the restore share the store that
-  // remembers what this session created and what it replaced.
+  // remembers what each session created and what was replaced in each
+  // working directory (by any session — a fusion worker's included).
   const fsMutation = {
     approvals: options.approvals,
     approvalRequired: options.approvalRequired,
