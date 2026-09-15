@@ -2497,6 +2497,7 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
             status: result.status,
             summary: cappedSummary,
             ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
+            ...(result.approvals ? { approvals: result.approvals } : {}),
           }),
         );
       }
@@ -2553,6 +2554,7 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
         status: result.status,
         summary: cappedSummary,
         ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
+        ...(result.approvals ? { approvals: result.approvals } : {}),
       }),
     );
   }

@@ -1,3 +1,4 @@
+import type { ToolApprovalRecord } from "../approval/approval-ledger.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 
 /**
@@ -22,6 +23,13 @@ export type ConversationTurn =
       status: "ok" | "error";
       summary: string;
       truncated?: boolean;
+      /**
+       * Approvals the operator was asked for while this call ran, in the
+       * order they were answered. Transcript-only: never rendered into the
+       * prompt. A host replaying the session puts the approval back under
+       * the call that raised it instead of dropping it.
+       */
+      approvals?: readonly ToolApprovalRecord[];
       at: number;
     }
   | {
@@ -61,16 +69,20 @@ export function toolResultTurn(params: {
   status: "ok" | "error";
   summary: string;
   truncated?: boolean;
+  approvals?: readonly ToolApprovalRecord[];
   at?: number;
 }): ConversationTurn {
-  const turn: ConversationTurn = {
+  let turn: ConversationTurn = {
     kind: "tool_result",
     tool: params.tool,
     status: params.status,
     summary: params.summary,
     at: params.at ?? Date.now(),
   };
-  if (params.truncated) return { ...turn, truncated: true };
+  if (params.truncated) turn = { ...turn, truncated: true };
+  if (params.approvals !== undefined && params.approvals.length > 0) {
+    turn = { ...turn, approvals: [...params.approvals] };
+  }
   return turn;
 }
 

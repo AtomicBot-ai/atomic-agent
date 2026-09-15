@@ -1,3 +1,5 @@
+import type { ToolApprovalRecord } from "../approval/approval-ledger.js";
+
 export interface RawToolResult {
   tool: string;
   status: "ok" | "error";
@@ -19,6 +21,11 @@ export interface CompressedToolResult {
   summary: string;
   details: Record<string, unknown>;
   truncated: boolean;
+  /**
+   * Prompted approvals answered while the call ran. Stamped by the batch
+   * executor, never by a tool; see `approval-ledger.ts`.
+   */
+  approvals?: readonly ToolApprovalRecord[];
 }
 
 export interface CompressorOptions {
