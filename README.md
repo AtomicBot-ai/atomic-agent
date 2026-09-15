@@ -215,6 +215,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
 | **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
 | **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
+| **[Composio](https://composio.dev)** | Connect 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) with OAuth handled for you. Set up from the Integrations tab; tools arrive as `mcp.composio.*` and every write to a real account stays approval-gated. |
 
 ### Memory That Grows Outside the Prompt
 
@@ -485,6 +486,29 @@ Send the bot a photo, document, voice note or any other file and it is saved und
 Ask for a file and you get a file: when the agent attaches something to its reply (a report it wrote, a screenshot, a converted document) it arrives as a Telegram message right after the text — images inline, everything else as a document, up to Telegram's 50 MB bot limit.
 
 Scheduled tasks can report back to the same chat: create a cron job with `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or ask the agent to schedule with `notify: "telegram"`), and each run posts its final result to your paired DM when it finishes. Reporting is strictly per-task opt-in, and the report's result text is sent to Telegram's servers; when the channel is down or unpaired the report is skipped with a logged warning and the task itself is unaffected.
+
+</details>
+
+<details>
+<summary><b>Composio toolkits</b> (1500+ SaaS apps)</summary>
+
+[Composio](https://composio.dev) is a hosted catalogue of 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) that also brokers each app's OAuth, so you never register an OAuth client yourself.
+
+Open the **Integrations** tab in the TUI and follow the setup, or drop a key into `<stateDir>/.env`:
+
+```sh
+COMPOSIO_API_KEY=ck-your-key
+```
+
+The key is the real gate: with no key the runtime opens no connection and registers no tool. Set `"composio": { "enabled": false }` in `config.json` to keep the key on disk with the toolkits off.
+
+Under the hood this is not a new subsystem. Composio's tool router speaks Streamable HTTP MCP and authenticates with a static header, which is exactly the transport the MCP client already supports, so the agent treats it as one more MCP server. Tools land as `mcp.composio.*`.
+
+Rather than loading 1500 toolkits into the prompt, the session exposes four meta-tools: the agent searches for a tool by use case, fetches its schema, then executes. Discovery is annotated read-only and flows without prompting; `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_MANAGE_CONNECTIONS` are marked destructive, so every write to a real account still hits the approval gate.
+
+Connected accounts are scoped by a random install id minted once and stored in `config.json`, never your email. Losing it means re-authorising every connected app.
+
+Note that Composio is a hosted service: your OAuth tokens for connected apps live on Composio's infrastructure, and tool calls are executed through their servers rather than from your machine.
 
 </details>
 
