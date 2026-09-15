@@ -947,6 +947,7 @@ export interface AtomicAgentConfig {
       apiKeyEnvVar?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
+      supportsParallelTools?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       /**

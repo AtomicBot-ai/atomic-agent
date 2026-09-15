@@ -62,6 +62,73 @@ describe("ProviderRegistry", () => {
     expect(registry.activeText).toBeInstanceOf(GeminiProvider);
   });
 
+  it("Gemini defaults to supportsParallelTools: false", async () => {
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "gemini",
+        activeEmbeddingProvider: "local-llama-embed",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "gemini",
+            kind: "gemini",
+            apiKey: "test-key",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      } as never,
+    });
+
+    const provider = registry.activeText as GeminiProvider;
+    expect(provider.capabilities.supportsParallelTools).toBe(false);
+  });
+
+  it("Gemini respects explicit supportsParallelTools: true override", async () => {
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "gemini",
+        activeEmbeddingProvider: "local-llama-embed",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "gemini",
+            kind: "gemini",
+            apiKey: "test-key",
+            supportsParallelTools: true,
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      } as never,
+    });
+
+    const provider = registry.activeText as GeminiProvider;
+    expect(provider.capabilities.supportsParallelTools).toBe(true);
+  });
+
   it("rejects unknown provider kind at fromConfig", async () => {
     registerBuiltInProviderKinds();
     const fakeConfig = {

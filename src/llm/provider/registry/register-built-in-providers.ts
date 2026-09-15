@@ -62,7 +62,8 @@ export function registerBuiltInProviderKinds(): void {
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
@@ -86,7 +87,8 @@ export function registerBuiltInProviderKinds(): void {
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
@@ -105,7 +107,8 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? "openrouter/auto",
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
@@ -133,7 +136,8 @@ export function registerBuiltInProviderKinds(): void {
       strictTools: entry.strictTools,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,
     });
@@ -151,7 +155,11 @@ export function registerBuiltInProviderKinds(): void {
       strictTools: entry.strictTools,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      // Gemini does not emit stable indices for parallel tool calls —
+      // the wire still carries parallel_tool_calls: true, but the
+      // model drops or reorders slots, breaking the batch executor.
+      // Users can override with supportsParallelTools: true in config.
+      supportsParallelTools: entry.supportsParallelTools ?? false,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,
     });
