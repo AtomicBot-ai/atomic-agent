@@ -12,6 +12,10 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import { describeArgumentError } from "../tools/argument-error-hint.js";
+import {
+  describeCorruptedCall,
+  findControlMarkers,
+} from "../tools/control-marker-guard.js";
 import { CancelledError } from "../llm/index.js";
 import {
   isParallelWithinGroup,
@@ -405,19 +409,12 @@ export async function executeBatch(
 
   const groups = planBatch(toInvoke);
 
-  const invokeOne = async (input: BatchCallInput): Promise<void> => {
-    if (ctx.signal.aborted) {
-      slots[input.batchIndex] = {
-        ...slots[input.batchIndex]!,
-        cancelled: true,
-      };
-      return;
-    }
-    ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
-    const startedAt = Date.now();
-    let compressed: CompressedToolResult;
+  /** The registry call itself; a thrown error becomes an error result. */
+  const invokeRegistry = async (
+    input: BatchCallInput,
+  ): Promise<CompressedToolResult> => {
     try {
-      compressed = await registry.invoke(input.call.tool, input.call.args, {
+      return await registry.invoke(input.call.tool, input.call.args, {
         workingDir: ctx.workingDir,
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,
@@ -446,7 +443,7 @@ export async function executeBatch(
         args: input.call.args,
         message: cause.message,
       });
-      compressed = compressToolResult({
+      return compressToolResult({
         tool: input.call.tool,
         status: "error",
         output: hint?.message ?? cause.message,
@@ -460,6 +457,43 @@ export async function executeBatch(
             : {}),
         },
       });
+    }
+  };
+
+  const invokeOne = async (input: BatchCallInput): Promise<void> => {
+    if (ctx.signal.aborted) {
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        cancelled: true,
+      };
+      return;
+    }
+    ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+    const startedAt = Date.now();
+    let compressed: CompressedToolResult;
+    // A call whose argument carries the model's own control markup (F37)
+    // never reaches the registry: a `path` holding `<|channel>` is a
+    // thought block that fell into the call, and the tool would run on
+    // the garbage (it listed an ENAMETOOLONG path as "empty" once, and
+    // the model overwrote the input file on that reading). The refusal
+    // is an ordinary error result — recorded in the loop tracker like
+    // any other, on the trace row via `details.corrupted` — that the
+    // model reads on its next step; no parse-recovery budget is spent.
+    // Terminals are exempt for the reason every gate exempts them: a
+    // reply's text is shown, not run, and the turn must be able to close.
+    const markers =
+      input.resourceClass === "terminal"
+        ? []
+        : findControlMarkers(input.call.args, input.call.tool);
+    if (markers.length > 0) {
+      compressed = compressToolResult({
+        tool: input.call.tool,
+        status: "error",
+        output: describeCorruptedCall(markers),
+        details: { corrupted: true, markers },
+      });
+    } else {
+      compressed = await invokeRegistry(input);
     }
     const durationMs = Date.now() - startedAt;
     slots[input.batchIndex] = {

@@ -15,6 +15,8 @@ import {
   type BatchLoopSignal,
 } from "./batch-executor.js";
 import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
+import { createTraceRecorder } from "../tracing/trace/trace-recorder.js";
+import type { TraceEvent } from "../tracing/trace/trace-event.js";
 
 function ctx(signal: AbortSignal) {
   return {
@@ -1436,5 +1438,154 @@ describe("executeBatch outcome-repeat detector (F25)", () => {
     expect(outcome[0]!.warningKey.startsWith("outcome_repeat:os.fs.glob|ok|")).toBe(
       true,
     );
+  });
+});
+
+describe("executeBatch refuses a corrupted call (F37)", () => {
+  /** The live Gemma 4 call: a thought channel opened inside `path`. */
+  const LIVE_PATH = ".}}]<tool_call|>thought<|channel>thought---<channel|>";
+
+  it("does not run a call whose argument carries a control marker and answers with the error shape", async () => {
+    const run = vi.fn(async () => okResult("os.fs.list", "(empty)"));
+    const registry = buildRegistry({ "os.fs.list": run });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.list", args: { path: LIVE_PATH } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).not.toHaveBeenCalled();
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("error");
+    expect(result.summary).toBe(
+      'corrupted tool call: argument `path` contains a model control marker (`<tool_call|>` at char 4: ".}}]<tool_call|>thought<|channel…"). The call was not run — re-emit it with clean arguments.',
+    );
+    expect(result.details).toEqual({
+      corrupted: true,
+      markers: [
+        {
+          path: "path",
+          marker: "<tool_call|>",
+          index: 4,
+          excerpt: ".}}]<tool_call|>thought<|channel…",
+        },
+      ],
+    });
+    expect(out.cancelled).toBe(false);
+  });
+
+  it("lands details.corrupted on the tool_invocation trace row", async () => {
+    const registry = buildRegistry({
+      "os.fs.list": async () => okResult("os.fs.list"),
+    });
+    const events: TraceEvent[] = [];
+    const recorder = createTraceRecorder({
+      sessionId: "s1",
+      emit: (event) => events.push(event),
+      now: () => 0,
+    });
+    recorder.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    recorder.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    const call = { tool: "os.fs.list", args: { path: LIVE_PATH } };
+    recorder.onAgentEvent({
+      type: "llm_event",
+      event: { type: "tool_call_parsed", call, batchIndex: 0, batchSize: 1 },
+    });
+    await executeBatch(toBatchInputs([call]), registry, {
+      ...ctx(new AbortController().signal),
+      onCallFinished: ({ result, batchIndex, batchSize }) =>
+        recorder.onAgentEvent({
+          type: "llm_event",
+          event: { type: "tool_call_executed", result, batchIndex, batchSize },
+        }),
+    });
+    const row = events.find((e) => e.type === "tool_invocation");
+    expect(row).toMatchObject({
+      type: "tool_invocation",
+      tool: "os.fs.list",
+      status: "error",
+      args: { path: LIVE_PATH },
+      details: { corrupted: true },
+    });
+  });
+
+  it("counts toward the loop detector like any other error", async () => {
+    const run = vi.fn(async () => okResult("os.fs.list"));
+    const registry = buildRegistry({ "os.fs.list": run });
+    const tracker = new ToolLoopTracker({ criticalThreshold: 3 });
+    const signals: BatchLoopSignal[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const out = await executeBatch(
+        toBatchInputs([{ tool: "os.fs.list", args: { path: LIVE_PATH } }]),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+      signals.push(...out.loopSignals);
+    }
+    expect(run).not.toHaveBeenCalled();
+    // The same refused call, repeated, is a no-progress loop: the
+    // refusals were recorded as outcomes and the gate eventually vetoes.
+    expect(signals.some((s) => s.kind === "critical")).toBe(true);
+  });
+
+  it("runs a write whose content mentions a marker mid-line, refuses one whose line starts with it", async () => {
+    const run = vi.fn(async () => okResult("os.fs.write", "wrote"));
+    const registry = buildRegistry({ "os.fs.write": run }, false);
+    const clean = await executeBatch(
+      toBatchInputs([
+        {
+          tool: "os.fs.write",
+          args: { path: "a.ts", content: "// wraps <think> tags\nconst x = 1;" },
+        },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(clean.results[0]!.compressed?.status).toBe("ok");
+
+    const corrupted = await executeBatch(
+      toBatchInputs([
+        {
+          tool: "os.fs.write",
+          args: { path: "a.ts", content: "const x = 1;\n<|channel>thought\n" },
+        },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(corrupted.results[0]!.compressed).toMatchObject({
+      status: "error",
+      details: { corrupted: true, markers: [{ path: "content", marker: "<|channel>" }] },
+    });
+  });
+
+  it("refuses only the corrupted call of a batch; its siblings and the tail reply run", async () => {
+    const list = vi.fn(async () => okResult("os.fs.list"));
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply"));
+    const registry = buildRegistry({
+      "os.fs.list": list,
+      "os.fs.read": read,
+      reply,
+    });
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.fs.read", args: { path: "README.md" } },
+        { tool: "os.fs.list", args: { path: LIVE_PATH } },
+        { tool: "reply", args: { text: "the tag is spelled <think>" } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(list).not.toHaveBeenCalled();
+    // A terminal's text is shown, not run; the turn must be able to close.
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results.map((r) => r.compressed?.status)).toEqual([
+      "ok",
+      "error",
+      "ok",
+    ]);
   });
 });

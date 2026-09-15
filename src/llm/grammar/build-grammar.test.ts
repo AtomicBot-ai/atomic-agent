@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +14,90 @@ import {
   buildGrammarForTools,
   grammarToolNames,
 } from "./build-grammar.js";
+import { gbnfAccepts } from "./gbnf-test-helpers.js";
+
+const GRAMMAR_FILE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../grammars/tool-call.gbnf",
+);
+
+describe("string arguments under a reasoning profile (F37)", () => {
+  const CALL = (path: string): string =>
+    `[{"tool":"os.fs.list","args":{"path":${JSON.stringify(path)}}}]`;
+  const GEMMA_COMPLETION = (path: string): string =>
+    `<|channel>thought\nlist first<channel|>\n${CALL(path)}`;
+  const LIVE_PATH = ".}}]<tool_call|>thought<|channel>thought---<channel|>";
+
+  it("keeps the plain profile's grammar byte-identical to the file", async () => {
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(grammar).toBe(await readFile(GRAMMAR_FILE, "utf8"));
+    expect(grammar).not.toContain("str-neutral");
+  });
+
+  it("the matcher reads the base grammar as llama.cpp would: a well-formed array in, a bare object out", async () => {
+    const plain = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(gbnfAccepts(plain, "root", CALL("."))).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.fs.list","args":{"path":"a","n":1,"x":[true,null]}},{"tool":"reply","args":{"text":"ok"}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '{"tool":"os.fs.list","args":{}}')).toBe(false);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.fs.nope","args":{}}]')).toBe(false);
+    // The plain string body admits the marker: that grammar is unchanged.
+    expect(gbnfAccepts(plain, "string", '"<|channel>"')).toBe(true);
+  });
+
+  it("rejects a string containing <|channel> and accepts a<b, a|b, <b> under gemma and qwen", async () => {
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const grammar = await buildGrammar(profile);
+      expect(grammar, profile.id).toContain("chars ::= str-neutral");
+      expect(grammar, profile.id).not.toContain("chars ::= char*");
+      for (const bad of [
+        '"<|channel>"',
+        '"x<|channel>"',
+        '"<channel|>"',
+        '"a<|"',
+        '"|>a"',
+        '"<<|channel>"',
+        '"||>"',
+        '"<|im_start|>"',
+        `"${LIVE_PATH.replace(/"/g, '\\"')}"`,
+      ]) {
+        expect(gbnfAccepts(grammar, "string", bad), `${profile.id} ${bad}`).toBe(
+          false,
+        );
+      }
+      for (const good of [
+        '""',
+        '"a<b"',
+        '"a|b"',
+        '"<b>"',
+        '"<>"',
+        '"|<"',
+        '"a<<b>>c||d"',
+        '"<\\"|"',
+        '"a\\"b\\\\c\\n\\u003c"',
+        '"src/index.ts"',
+      ]) {
+        expect(gbnfAccepts(grammar, "string", good), `${profile.id} ${good}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it("makes the live corruption unemittable in a whole gemma completion while the clean call passes", async () => {
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    expect(gbnfAccepts(gemma, "root", GEMMA_COMPLETION("."))).toBe(true);
+    expect(gbnfAccepts(gemma, "root", GEMMA_COMPLETION("a<b|c>d"))).toBe(true);
+    expect(gbnfAccepts(gemma, "root", GEMMA_COMPLETION(LIVE_PATH))).toBe(false);
+  });
+
+  it("survives the per-request rewrite, which touches only the tool-name rule", async () => {
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    const narrowed = buildGrammarForTools(gemma, ["os.fs.list"]);
+    expect(narrowed).toContain("chars ::= str-neutral");
+    expect(gbnfAccepts(narrowed, "root", GEMMA_COMPLETION("."))).toBe(true);
+    expect(gbnfAccepts(narrowed, "root", GEMMA_COMPLETION(LIVE_PATH))).toBe(false);
+  });
+});
 
 describe("buildGrammar", () => {
   it("keeps the plain instruct grammar pinned to the array-only root", async () => {
