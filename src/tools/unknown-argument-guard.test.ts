@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { findUnknownArguments, suggestKey } from "./unknown-argument-guard.js";
 
 const NOT_RUN = "— the call was not run; re-emit it with the right keys";
+/** `os.shell.run`'s schema keys in schema order: the command form, then the job forms (F47). */
+const SHELL_KEYS = ["cmd", "args", "cwd", "timeoutMs", "keep", "wait", "kill", "jobs"];
 
 describe("findUnknownArguments", () => {
   it("refuses the live Gemma call: a flag used as a key, the script under it", () => {
@@ -11,10 +13,10 @@ describe("findUnknownArguments", () => {
     });
     expect(report).not.toBeNull();
     expect(report!.unknownKeys).toEqual(["-e"]);
-    expect(report!.expectedKeys).toEqual(["cmd", "args", "cwd", "timeoutMs"]);
+    expect(report!.expectedKeys).toEqual(SHELL_KEYS);
     expect(report!.nearest).toEqual([]);
     expect(report!.message).toBe(
-      "unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs; " +
+      `unknown argument \`-e\` for os.shell.run (expected: ${SHELL_KEYS.join(", ")}; ` +
         `put the script in args: ["-c", "…"]) ${NOT_RUN}`,
     );
   });
@@ -35,7 +37,7 @@ describe("findUnknownArguments", () => {
     expect(report!.unknownKeys).toEqual(["-args"]);
     expect(report!.nearest).toEqual([{ received: "-args", expected: "args" }]);
     expect(report!.message).toBe(
-      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs; " +
+      `unknown argument \`-args\` for os.shell.run (expected: ${SHELL_KEYS.join(", ")}; ` +
         `did you mean \`args\`?) ${NOT_RUN}`,
     );
   });
@@ -82,7 +84,7 @@ describe("findUnknownArguments", () => {
     });
     expect(report!.unknownKeys).toEqual(["-e", "-args"]);
     expect(report!.message).toBe(
-      "unknown arguments `-e`, `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs; " +
+      `unknown arguments \`-e\`, \`-args\` for os.shell.run (expected: ${SHELL_KEYS.join(", ")}; ` +
         "did you mean `args` instead of `-args`?; " +
         `put the script in args: ["-c", "…"]) ${NOT_RUN}`,
     );
@@ -140,9 +142,9 @@ describe("suggestKey", () => {
     expect(suggestKey("oldstring", ["path", "oldString"])).toBe("oldString");
   });
 
-  it("suggests nothing for a bare flag: `-e` is not `cmd`", () => {
-    expect(suggestKey("-e", ["cmd", "args", "cwd", "timeoutMs"])).toBeNull();
-    expect(suggestKey("-c", ["cmd", "args", "cwd", "timeoutMs"])).toBeNull();
+  it("suggests nothing for a bare flag: `-e` is not `cmd`, nor `keep`", () => {
+    expect(suggestKey("-e", SHELL_KEYS)).toBeNull();
+    expect(suggestKey("-c", SHELL_KEYS)).toBeNull();
     expect(suggestKey("-", ["cmd"])).toBeNull();
   });
 });

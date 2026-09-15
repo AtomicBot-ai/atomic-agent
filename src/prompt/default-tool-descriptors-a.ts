@@ -43,9 +43,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.shell.run",
     summary:
-      "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed.",
+      "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.",
     argsSchema:
-      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number }",
+      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
   },
   {
     name: "os.fs.read",
