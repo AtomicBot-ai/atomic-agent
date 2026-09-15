@@ -1054,56 +1054,166 @@ const MAX_QUEUED = 20; // chat-orchestrator.ts:66 MAX_QUEUED_MESSAGES
    is a page mockup; in Tauri the OS draws them.
    ============================================================ */
 
-/* ---------------- icons: 16px optical, 1.5px stroke ---------------- */
+/* ---------------- icons: 16px optical, 1.75px stroke, round caps ----------------
+   Soft Tactile's set (the reference's ICONS map). The 0.5.5 names stay as
+   keys so every call site keeps working; the Tactile names that 0.5.5 lacked
+   are added in camelCase. */
 const P = {
-  chat:'<rect x="2.25" y="3.25" width="11.5" height="8.5"/><path d="M5.5 11.75v2.1l2.8-2.1"/>',
-  tasks:'<rect x="2.5" y="3.5" width="11" height="10"/><path d="M2.5 6.5h11M5.5 2.25v2.5M10.5 2.25v2.5M5.5 9.5h5"/>',
-  skills:'<path d="M8 2.2 9.55 5.6l3.7.42-2.75 2.5.75 3.63L8 10.35 4.75 12.15l.75-3.63L2.75 6.02l3.7-.42z"/>',
-  memory:'<path d="M8 2.6C6.2 2.6 4.8 3.7 4.8 5.1c0 .5.2 1 .5 1.4-.6.5-1 1.2-1 2 0 1.6 1.6 2.9 3.7 2.9s3.7-1.3 3.7-2.9c0-.8-.4-1.5-1-2 .3-.4.5-.9.5-1.4 0-1.4-1.4-2.5-3.2-2.5Z"/><path d="M8 2.6v9"/>',
-  search:'<circle cx="7.2" cy="7.2" r="4"/><path d="M10.2 10.2 13.5 13.5"/>',
-  sidebar:'<rect x="2" y="3" width="12" height="10"/><path d="M6.2 3v10"/>',
-  inspector:'<rect x="2" y="3" width="12" height="10"/><path d="M10 3v10"/>',
-  console:'<rect x="2" y="3" width="12" height="10"/><path d="M2 9.6h12"/>',
-  plus:'<path d="M8 3.5v9M3.5 8h9"/>',
-  chevD:'<path d="M4 6.2 8 10l4-3.8"/>',
-  chevR:'<path d="M6.2 4 10 8l-3.8 4"/>',
-  check:'<path d="M3.5 8.4 6.4 11.3 12.5 5.2"/>',
-  x:'<path d="M4 4l8 8M12 4l-8 8"/>',
-  warn:'<path d="M8 2.8 14 12.6H2z"/><path d="M8 6.6v3M8 11.1h.01"/>',
-  stop:'<rect x="4.5" y="4.5" width="7" height="7"/>',
-  up:'<path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8"/>',
-  copy:'<rect x="5.5" y="5.5" width="8" height="8"/><path d="M10.5 5.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/>',
-  gear:'<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"/>',
-  cloud:'<path d="M4.6 12.2h6.6a2.9 2.9 0 0 0 .3-5.78A4 4 0 0 0 4.3 6.9a2.65 2.65 0 0 0 .3 5.3Z"/>',
-  cpu:'<rect x="5" y="5" width="6" height="6"/><path d="M6.5 2.5v2.5M9.5 2.5v2.5M6.5 11v2.5M9.5 11v2.5M2.5 6.5h2.5M2.5 9.5h2.5M11 6.5h2.5M11 9.5h2.5"/>',
-  key:'<circle cx="5.5" cy="8" r="2.6"/><path d="M8.1 8h5.4M11.6 8v2.2M13.5 8v1.6"/>',
+  chat:'<path d="M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v6a1.5 1.5 0 0 1-1.5 1.5H7l-3 2.5v-2.5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+  tasks:'<path d="M2.5 4.5l1.3 1.3L6 3.5M2.5 10.5l1.3 1.3L6 9.5M8.5 5h5M8.5 11h5"/>',
+  skills:'<path d="M2.5 3.5h4a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1.5 1.5 0 0 1 1.5-1.5h4z"/>',
+  memory:'<path d="M8 2.5l5.5 3L8 8.5l-5.5-3zM2.5 8.5 8 11.5l5.5-3M2.5 11 8 14l5.5-3"/>',
+  search:'<circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13.5 13.5"/>',
+  sidebar:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>',
+  inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
+  console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
+  plus:'<path d="M8 3v10M3 8h10"/>',
+  minus:'<path d="M3 8h10"/>',
+  chevD:'<path d="M4.5 6.5 8 10l3.5-3.5"/>',
+  chevR:'<path d="M6.5 4.5 10 8l-3.5 3.5"/>',
+  chevL:'<path d="M9.5 4.5 6 8l3.5 3.5"/>',
+  chevU:'<path d="M4.5 9.5 8 6l3.5 3.5"/>',
+  check:'<path d="M3.5 8.5l3 3 6-7"/>',
+  x:'<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+  warn:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
+  alert:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
+  info:'<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.5M8 5.2v.2"/>',
+  stop:'<rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="currentColor" stroke="none"/>',
+  up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
+  arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
+  copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
+  gear:'<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
+  cloud:'<path d="M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.8.9 2.6 2.6 0 0 1-.4 5.1z"/>',
+  cpu:'<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 6.5h3v3h-3zM6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"/>',
+  laptop:'<rect x="3.5" y="3.5" width="9" height="6.5" rx="1.2"/><path d="M2 12.5h12"/>',
+  server:'<rect x="2.5" y="3" width="11" height="4" rx="1.5"/><rect x="2.5" y="9" width="11" height="4" rx="1.5"/><path d="M5 5h.01M5 11h.01"/>',
+  key:'<circle cx="5.5" cy="10.5" r="3"/><path d="M7.6 8.4 13 3M11 5l1.5 1.5M9.5 6.5 11 8"/>',
   link:'<path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 1 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 1 0 3.7 3.7l.9-.9"/>',
-  folder:'<path d="M2.5 4.6a1.6 1.6 0 0 1 1.6-1.6h2.1l1.4 1.7h4.3a1.6 1.6 0 0 1 1.6 1.6v5.1a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6z"/>',
-  refresh:'<path d="M13 8a5 5 0 1 1-1.5-3.55"/><path d="M13.2 2.6v3h-3"/>',
-  filter:'<path d="M2.6 3.7h10.8L9.4 8.4v4l-2.8-1.4V8.4z"/>',
+  folder:'<path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
+  file:'<path d="M4 2.5h5L12 5.5v8H4zM9 2.5v3h3"/>',
+  doc:'<path d="M4 2.5h5L12 5.5v8H4zM9 2.5v3h3"/>',
+  image:'<rect x="2.5" y="3" width="11" height="10" rx="2"/><circle cx="6" cy="6.5" r="1.2"/><path d="m3 12 3.5-3.5 2.5 2.5 1.5-1.5 3 2.5"/>',
+  refresh:'<path d="M13 5.5A5.5 5.5 0 0 0 3 6M3 10.5A5.5 5.5 0 0 0 13 10M13 2.5v3h-3M3 13.5v-3h3"/>',
+  retry:'<path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5V5h-2.5"/>',
+  filter:'<path d="M2.5 3.5h11L9.2 8.5v4l-2.4-1.2V8.5z"/>',
   atom:'<path d="M8 2.6v10.8M2.6 8h10.8"/><circle cx="8" cy="8" r="5.4"/>',
-  bolt:'<path d="M8.8 2.4 4.2 9.1h3.2l-.6 4.5 4.8-6.9H8.3z"/>',
-  doc:'<path d="M4 2.6h5l3 3v7.8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1Z"/><path d="M9 2.6v3h3"/>',
-  play:'<path d="M5.5 3.6 12 8l-6.5 4.4z"/>',
-  trash:'<path d="M3 4.6h10M6.4 4.6V3.4a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9v1.2M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/>',
-  // item 6: pin / unpin a chat row
-  pin:'<path d="M9.6 2.4 13.6 6.4l-2.1.7-2 2 .3 2.4-4.8-4.8 2.4.3 2-2z"/><path d="M5 11 2.6 13.4"/>',
+  bolt:'<path d="M9 2 3.5 9H8l-1 5 5.5-7H8z"/>',
+  play:'<path d="M5 3.5v9l7-4.5z"/>',
+  pause:'<path d="M5.5 3.5v9M10.5 3.5v9"/>',
+  trash:'<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>',
+  pin:'<path d="M6 2.5h4l-.5 4 2 2v1h-7v-1l2-2zM8 9.5v4"/>',
   /* r5 item 3: the filled dot the row is about to show. The inline fill/stroke
      override ic()'s `fill="none" stroke="currentColor"` wrapper, so the glyph
-     reads as `.sdot.filled` rather than as an outline. */
+     reads as a filled dot rather than as an outline. */
   unread:'<circle cx="8" cy="8" r="3.4" fill="currentColor" stroke="none"/>',
-  // item 2: voice input — capsule + stand, on the same 1.5-stroke grid
-  mic:'<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.6a4.2 4.2 0 0 0 8.4 0"/><path d="M8 11.8v2M5.8 13.8h4.4"/>',
+  mic:'<path d="M6.25 3.5a1.75 1.75 0 0 1 3.5 0v4a1.75 1.75 0 0 1-3.5 0zM4 7.5a4 4 0 0 0 8 0M8 11.5v2.5"/>',
+  micOff:'<path d="M6.25 5.2V3.5a1.75 1.75 0 0 1 3.3-.8M9.75 7v.5A1.75 1.75 0 0 1 7 9M4 7.5a4 4 0 0 0 6.6 3M12 7.5c0 .6-.1 1.1-.3 1.6M8 11.5v2.5M2.5 2.5l11 11"/>',
+  download:'<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
+  upload:'<path d="M8 10.5v-8M4.5 6 8 2.5 11.5 6M3 13.5h10"/>',
+  import:'<path d="M8 2.5v7M5 6.5l3 3 3-3M3 10.5v3h10v-3"/>',
+  term:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
+  globe:'<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.9 1.7 1.9 9.3 0 11M8 2.5c-1.9 1.7-1.9 9.3 0 11"/>',
+  plug:'<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2a3.5 3.5 0 0 1-7 0zM8 11v2.5"/>',
+  branch:'<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 2-7 4.5"/>',
+  dots:'<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" stroke-width="2.6"/>',
+  clock:'<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
+  calendar:'<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>',
+  bell:'<path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3zM6.5 14h3"/>',
+  keyboard:'<rect x="2" y="4" width="12" height="8" rx="2"/><path d="M4.5 6.5h.01M7 6.5h.01M9.5 6.5h.01M12 6.5h.01M5 9.5h6"/>',
+  sliders:'<path d="M3 4.5h6M12 4.5h1M3 11.5h1M7 11.5h6"/><circle cx="10.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/>',
+  lock:'<rect x="3.5" y="7" width="9" height="6.5" rx="2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  shield:'<path d="M8 2 13 4v4c0 3-2.2 5.2-5 6-2.8-.8-5-3-5-6V4z"/>',
+  eye:'<path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/>',
+  eyeOff:'<path d="M6.6 4a6.6 6.6 0 0 1 1.4-.2c4 0 6.2 4.2 6.2 4.2a11 11 0 0 1-1.6 2.1M4.2 5.1C2.7 6.2 1.8 8 1.8 8S4 12.2 8 12.2c1 0 1.9-.2 2.7-.6M2.5 2.5l11 11"/>',
+  open:'<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4"/>',
+  sun:'<circle cx="8" cy="8" r="2.6"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/>',
+  moon:'<path d="M12.8 9.8A5.5 5.5 0 0 1 6.2 3.2a5.5 5.5 0 1 0 6.6 6.6z"/>',
+  send:'<path d="M13.5 2.5 2.5 7l4.5 2 2 4.5z M7 9l2.5-2.5"/>',
+  mail:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="m3 5 5 3.5L13 5"/>',
+  hash:'<path d="M6 2.5 5 13.5M11 2.5l-1 11M3 6h10.5M2.5 10H13"/>',
+  user:'<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5a5 5 0 0 1 10 0"/>',
+  expand:'<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>',
+  list:'<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/>',
+  flag:'<path d="M3.5 14V2.5M3.5 3h8l-1.5 3 1.5 3h-8"/>',
+  gauge:'<path d="M2.5 11a5.5 5.5 0 1 1 11 0M8 11l2.5-3"/>',
+  log:'<path d="M3 3.5h10M3 6.5h7M3 9.5h10M3 12.5h5"/>',
+  bulb:'<path d="M6 12h4M6.5 14h3M5.2 9.6A4 4 0 1 1 10.8 9.6c-.6.5-.8 1-.8 1.9H6c0-.9-.2-1.4-.8-1.9z"/>',
+  edit:'<path d="M10.5 3.5l2 2L6 12H4v-2z"/>',
+  undo:'<path d="M5 4 2.5 6.5 5 9M2.5 6.5H10a3.5 3.5 0 0 1 0 7H7"/>',
+  wand:'<path d="M3 13l7-7M9 3.5V2M12.5 7H14M11.5 4.5l1-1M10 6l1 1"/>',
+  slash:'<path d="M10.5 2.5 5.5 13.5"/>',
+  star:'<path d="M8 2.2 9.7 5.8l3.9.5-2.9 2.7.8 3.9L8 11l-3.5 1.9.8-3.9-2.9-2.7 3.9-.5z" fill="currentColor" stroke="none"/>',
 };
 function ic(n, cls) {
-  return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
-    /* Square caps and joins. The icon set is on a 16px grid at 1.5px, which
-       was right; the round caps were the last soft edge left in a system that
-       has no radius above 2px anywhere else. */
-    + 'stroke-linecap="square" stroke-linejoin="miter"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
+  return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" '
+    + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
-const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" fill="var(--accent)"/><path fill="var(--on-fill)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="var(--brand)"/><path fill="var(--on-brand)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+
+/* ---------------- brand logos ----------------
+   Real marks for models and providers (LobeHub icons, MIT; the AI/ML API mark
+   from aimlapi.com), shipped as local files under renderer/logos/ — the CSP
+   allows img-src 'self' only. Always drawn on a white round badge (.logo) so a
+   black mark stays visible in the dark theme; never recoloured. Anything with
+   no mark (llama.cpp, a custom OpenAI-compatible endpoint, local-llama) gets
+   the server icon for a provider and the CPU icon for a model instead — never
+   a monogram. */
+const LOGO_FILES = {
+  qwen:'qwen-color.svg', gemma:'gemma.svg', openai:'openai.svg', claude:'claude-color.svg', anthropic:'anthropic.svg',
+  openrouter:'openrouter.svg', aimlapi:'aimlapi.png', gemini:'gemini-color.svg', groq:'groq.svg', deepseek:'deepseek-color.svg',
+  mistral:'mistral-color.svg', cerebras:'cerebras-color.svg', together:'together-color.svg', fireworks:'fireworks-color.svg',
+  xai:'xai.svg', moonshot:'moonshot.svg', perplexity:'perplexity-color.svg', nous:'nousresearch.svg', novita:'novita-color.svg',
+  ollama:'ollama.svg', lmstudio:'lmstudio.svg', huggingface:'huggingface-color.svg', nvidia:'nvidia-color.svg', zhipu:'zhipu-color.svg',
+  codex:'codex-color.svg', claudecode:'claudecode-color.svg', hermes:'hermesagent.svg', openclaw:'openclaw-color.svg', github:'github.svg',
+};
+/** Model id → the family whose mark it wears ('' when there is none). */
+function modelLogoKey(id) {
+  const s = String(id || '').toLowerCase();
+  if (!s) return '';
+  if (s.includes('claude')) return 'claude';
+  if (s.includes('gpt') || s.startsWith('openai/') || /(^|\/)o[134](-|$)/.test(s)) return 'openai';
+  if (s.includes('qwen') || s.includes('qwq')) return 'qwen';
+  if (s.includes('gemma')) return 'gemma';
+  if (s.includes('gemini')) return 'gemini';
+  if (s.includes('deepseek')) return 'deepseek';
+  if (s.includes('nemotron')) return 'nvidia';
+  if (s.includes('glm')) return 'zhipu';
+  if (s.includes('mistral') || s.includes('devstral') || s.includes('magistral') || s.includes('codestral')) return 'mistral';
+  if (s.includes('grok')) return 'xai';
+  if (s.includes('kimi')) return 'moonshot';
+  if (s.includes('sonar')) return 'perplexity';
+  if (s.includes('hermes')) return 'nous';
+  if (s.startsWith('openrouter/')) return 'openrouter';
+  return '';
+}
+const PROVIDER_LOGO_KEYS = {
+  aimlapi:'aimlapi', 'ai/ml api':'aimlapi', openrouter:'openrouter', gemini:'gemini', 'gemini (google ai)':'gemini',
+  anthropic:'anthropic', 'anthropic (claude)':'anthropic', groq:'groq', deepseek:'deepseek', mistral:'mistral', cerebras:'cerebras',
+  together:'together', 'together ai':'together', fireworks:'fireworks', 'fireworks ai':'fireworks', xai:'xai', 'xai (grok)':'xai',
+  moonshot:'moonshot', 'moonshot ai':'moonshot', 'moonshot ai (kimi)':'moonshot', perplexity:'perplexity', nous:'nous',
+  'nous research':'nous', novita:'novita', 'novita ai':'novita', ollama:'ollama', 'ollama (local)':'ollama', lmstudio:'lmstudio',
+  'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
+  github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
+};
+/** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
+function providerLogoKey(p) {
+  const s = String(p || '').toLowerCase().trim();
+  return PROVIDER_LOGO_KEYS[s] || PROVIDER_LOGO_KEYS[s.split(' (')[0]] || PROVIDER_LOGO_KEYS[s.split(/[\s(]/)[0]] || '';
+}
+/** The badge for a mark key; size is '', 'sm', 'xs' or 'lg'. '' when the key has no file. */
+function logoHTML(key, size) {
+  const f = LOGO_FILES[key];
+  return f ? '<span class="logo' + (size ? ' logo--' + size : '') + '"><img src="logos/' + f + '" alt=""></span>' : '';
+}
+/** A model's mark, or the CPU icon on a neutral badge. */
+function modelMark(id, size) {
+  return logoHTML(modelLogoKey(id), size) || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('cpu') + '</span>';
+}
+/** A provider's mark, or the server icon on a neutral badge. */
+function providerMark(idOrLabel, size) {
+  return logoHTML(providerLogoKey(idOrLabel), size) || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('server') + '</span>';
+}
 
 const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -12398,15 +12508,21 @@ function tuiTrunc(text, max) { text = String(text == null ? '' : text); return t
 function tuiBodyLines(lines) {
   return '<div class="tuibody">' + lines.map((l) => '<div>' + (l.length ? esc(l) : ' ') + '</div>').join('') + '</div>';
 }
+/* Soft Tactile: a hint is a small text button (.tk-hint) — every keyboard
+   hint in Settings is also something a mouse can press. `opts.cls` adds to
+   the class, it no longer replaces it. */
 function tuiBtn(label, act, opts) {
-  return '<button data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.cls ? ' class="' + opts.cls + '"' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + esc(label) + '</button>';
+  return '<button class="tk-hint' + (opts && opts.cls ? ' ' + opts.cls : '') + '" data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + esc(label) + '</button>';
 }
 function tuiHints(parts) {
-  return '<div class="tuihint">' + parts.map((p, i) => (i ? '<span>·</span>' : '') + (typeof p === 'string' ? '<span>' + esc(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
+  return '<div class="tuihint tk-hints">' + parts.map((p) => (typeof p === 'string' ? '<span class="tk-hint">' + esc(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
 }
+/* A change that only lands after a runtime restart says so where it was made,
+   with the one button that makes it land. */
 function restartLine(text) {
-  return '<div class="tuimsg">' + esc(text) + ' <span class="ter">(applies to the running agent after Restart Agent Runtime)</span> '
-    + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>';
+  return '<div class="tuimsg tk-notice tk-notice--blue">' + ic('refresh')
+    + '<span class="grow">' + esc(text) + ' <span class="sec">(applies to the running agent after Restart Agent Runtime)</span></span>'
+    + '<button class="btn btn-t sm" data-act="agent:restart">Restart Agent Runtime</button></div>';
 }
 
 /* ---------------- Skills tab (skills-panel.tsx, skills-list.tsx, skills-detail.tsx,

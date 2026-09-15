@@ -1,0 +1,184 @@
+/* ============================================================
+   Composer dock — status strip, queue tray, voice strip, slash commands, the composer card, its control row (Backend · Provider · Model · Context · Mode), send and mic. Screens CM-01…07, CM-09…11.
+   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+   ============================================================ */
+
+/* composer */
+.composerwrap{flex:none;padding:0 var(--s6) var(--s5);max-width:720px;margin:0 auto;width:100%}
+.statusstrip{height:32px;display:flex;align-items:center;gap:var(--s3);color:var(--text-secondary);font-size:13px}
+.statusstrip.gated{color:var(--warn)}
+.threedot{display:inline-flex;gap:3px}
+.threedot i{width:4px;height:4px;border-radius:999px;background:var(--accent);animation:pulse 1.2s var(--ease) infinite}
+.threedot i:nth-child(2){animation-delay:.15s} .threedot i:nth-child(3){animation-delay:.3s}
+.qtray{display:flex;flex-direction:column;gap:var(--s2);padding-bottom:var(--s3)}
+.qchip{height:28px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s3);border:1px dashed var(--line);border-radius:0;background:var(--bg-raised);font-size:13px;color:var(--text-secondary)}
+.composer{border:1px solid var(--line);background:var(--bg-raised);border-radius:0;cursor:text;position:relative;overflow:hidden}
+.composer.focus{border-color:var(--accent)}
+.composer.running::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:sweep 1.4s linear infinite}
+@keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.composer .field{display:flex;align-items:flex-end;gap:var(--s3);padding:12px 14px}
+#entry{flex:1;min-width:0;background:none;border:none;outline:none;resize:none;font-size:15px;line-height:23px;height:23px;max-height:180px;overflow-y:auto;padding:0}
+#entry::placeholder{color:var(--text-tertiary)}
+.sendbtn{width:28px;height:28px;flex:none;border-radius:0;display:flex;align-items:center;justify-content:center;background:var(--accent);color:var(--on-fill)}
+.sendbtn.mute{background:var(--bg-active);color:var(--text-disabled)}
+.sendbtn.stop{background:transparent;border:1.5px solid var(--danger);color:var(--danger)}
+.cfoot{height:28px;display:flex;align-items:center;gap:var(--s3);padding:0 10px 0 14px;box-shadow:inset 0 1px 0 var(--line-soft);margin:0 0 4px;overflow:hidden}
+.cfoot > *{flex:none}
+.cchip{white-space:nowrap}
+.seg button{white-space:nowrap}
+.cchip{height:22px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:0;font-size:11px;color:var(--text-secondary)}
+.cchip:hover{background:var(--bg-hover);color:var(--text-primary)}
+.gauge{width:40px;height:4px;border-radius:0;background:var(--bg-sunken);overflow:hidden;flex:none}
+.ctxbtn .gaugelb{font-size:11px}
+.modechip{color:var(--accent-text);background:var(--accent-wash-soft)}
+.modechip:hover{background:var(--accent-wash);color:var(--accent-text)}
+.ctxbtn:hover .gauge i{background:var(--accent)}
+.gauge i{display:block;height:100%;background:var(--text-tertiary)}
+
+.slash{position:absolute;bottom:100%;left:0;margin-bottom:8px;width:520px;max-width:100%;background:var(--bg-overlay);border-radius:0;box-shadow:var(--shadow-overlay);overflow:hidden;z-index:15}
+.slashrow{height:32px;display:grid;grid-template-columns:120px 1fr auto;gap:var(--s3);align-items:center;padding:0 var(--s4);width:100%}
+.slashrow .cmd{font-family:var(--font-mono);font-size:13px;color:var(--accent-text)}
+.slashrow .ds{font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slashrow .hint{font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono)}
+.slashrow.on{background:var(--accent-wash)}
+.slashlist{max-height:192px;overflow-y:auto;padding:4px 0}
+
+@media (max-width:1120px){.cfoot .gauge,.cfoot .gaugelb{display:none}}
+
+/* Lane B — context before the first message (item 3): a projection is visibly not a measurement */
+.ctxbtn.proj .gauge i { background: repeating-linear-gradient(90deg, var(--text-tertiary) 0 3px, transparent 3px 5px); }
+.ctxbtn.proj:hover .gauge i { background: repeating-linear-gradient(90deg, var(--accent) 0 3px, transparent 3px 5px); }
+.ctxbtn.proj .gaugelb { font-style: italic; }
+
+/* ---- Item 2: voice input ----
+   The microphone sits inside `.field`, immediately left of send, and the
+   interim strip sits above the composer — never inside the textarea, whose
+   value is S.draft and only S.draft. */
+.micbtn{width:28px;height:28px;flex:none;border-radius:0;display:flex;align-items:center;justify-content:center;
+  background:transparent;color:var(--text-secondary)}
+.micbtn:hover:not([disabled]){background:var(--bg-hover);color:var(--text-primary)}
+.micbtn[disabled]{color:var(--text-disabled);cursor:default}
+.micbtn.rec{color:var(--danger);background:var(--danger-wash);animation:micpulse 1.4s var(--ease) infinite}
+@keyframes micpulse{0%,100%{opacity:1}50%{opacity:.55}}
+.voicestrip{padding:0 0 var(--s3)}
+.vsrow{display:flex;align-items:center;gap:var(--s3);min-height:28px;font-size:13px;color:var(--text-primary)}
+.vsdot{width:8px;height:8px;flex:none;border-radius:999px;background:var(--text-tertiary)}
+.vsdot.live{background:var(--danger);animation:micpulse 1.2s var(--ease) infinite}
+.vslevel{width:36px;height:4px;flex:none;border-radius:0;background:var(--bg-sunken);overflow:hidden}
+.vslevel i{display:block;height:100%;background:var(--danger);transition:width .1s linear}
+.vstext{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:46px;overflow-y:auto;line-height:23px}
+.vspart{opacity:.65}
+.vswait{color:var(--text-tertiary)}
+.vserr{flex:1;color:var(--danger);font-size:13px}
+.vschip{height:22px;flex:none;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:0;
+  font-size:11px;color:var(--text-secondary)}
+.vschip:hover{background:var(--bg-hover);color:var(--text-primary)}
+.vschip.won{color:var(--accent-text);background:var(--accent-wash-soft)}
+.vsnote{font-size:11px;line-height:16px;color:var(--text-tertiary);padding-top:2px}
+.vsmenu{margin-top:var(--s3);border:1px solid var(--line);border-radius:0;background:var(--bg-raised);
+  max-height:280px;overflow-y:auto;padding:var(--s2) 0}
+.vsmhead{padding:var(--s2) var(--s4) 2px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.04em}
+.vsmrow{display:flex;align-items:center;gap:var(--s2);padding:0 var(--s2) 0 0}
+.vsmrow.on{background:var(--accent-wash-soft)}
+.vsmpick{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s3);height:28px;padding:0 var(--s4);
+  font-size:13px;color:var(--text-primary);text-align:left}
+.vsmrow:hover{background:var(--bg-hover)}
+.vsmname{flex:none}
+.vsmtag{font-size:11px}
+.vsmnote{flex:1;min-width:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.vsmbadge{flex:none;font-size:10px;padding:1px 5px;border-radius:0;background:var(--accent-wash);color:var(--accent-text)}
+.vsmadd{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:0;color:var(--text-tertiary)}
+.vsmadd.on{color:var(--accent-text)}
+.vsmadd:hover{background:var(--bg-active);color:var(--text-primary)}
+.vsmerr{padding:var(--s2) var(--s4);font-size:11px;color:var(--danger)}
+.vsmfoot{padding:var(--s3) var(--s4) var(--s2);font-size:11px;line-height:16px;color:var(--text-tertiary)}
+.vsmempty{padding:var(--s3) var(--s4);font-size:12px;color:var(--text-secondary)}
+@media (prefers-reduced-motion:reduce){.micbtn.rec,.vsdot.live{animation:none}}
+
+/* ---- Item 2: voice input — review fixes ----
+   The error strip's own dismiss. Escape deliberately no longer clears the
+   error state (it would outrank whatever modal the user is looking at), so
+   the strip carries the control that does. */
+.vsx{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;
+  border-radius:0;color:var(--text-tertiary)}
+.vsx:hover{background:var(--bg-hover);color:var(--text-primary)}
+
+/* ---- r5 item 10: the switch lock on the send button ------------------------
+   The user's words: "the send button is a bit locked and has a small loading
+   indicator on it." Muted like `.sendbtn.mute` — this is not an error state,
+   it is a wait — with one small ring spinning inside it. The button itself
+   carries `disabled`, so the pointer never turns into a hand. The markup only
+   appears after SWX_SPINNER_DELAY_MS, so a 2 ms coding-mode switch never
+   paints it at all. */
+.sendbtn.locked{background:var(--bg-active);color:var(--text-disabled);cursor:default}
+.sspin{width:13px;height:13px;border-radius:999px;border:1.5px solid var(--text-disabled);
+  border-top-color:transparent;animation:sspin .7s linear infinite}
+@keyframes sspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.sspin{animation-duration:2.4s}}
+
+/* ============================================================
+   Selector lane — the composer's model slot as a call to action
+   ============================================================ */
+
+/* composer-meta-controls.tsx draws `download model` in the rail's own warn,
+   bold, rather than the route's foreground: "this slot is the one thing on
+   the bar the operator has to act on, and in the route's own tone it reads as
+   just another label". `--warn` is the desktop's counterpart, and it is
+   declared in all three theme blocks. */
+.cchip.dlchip{color:var(--warn);font-weight:600}
+.cchip.dlchip:hover{background:var(--warn-wash);color:var(--warn)}
+
+/* --- the microphone refusal offers the switch, not directions --- */
+.voicestrip .vsopen{height:24px;padding:0 10px;font-size:12px;margin-left:8px;white-space:nowrap}
+
+/* A model control with nothing chosen is a call to action, not a label:
+   same warn treatment the `download model` CTA already uses, so the one
+   control the operator has to touch reads as one. */
+.cchip.modelchip.needsmodel{color:var(--warn);border-color:var(--warn-wash)}
+.cchip.modelchip.needsmodel:hover{background:var(--warn-wash)}
+
+/* The app's own report on itself (F10): an annunciator and a readout, on the
+   line above the composer — not rows in the conversation. */
+.statusstrip.appstatus{display:flex;align-items:center;gap:var(--s3);min-height:24px;
+  padding:0 var(--s2)}
+.statusstrip.appstatus .readout{background:transparent;color:var(--ink-3);text-align:left;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-label)}
+
+/* B.7 — the composer's control row as a legend plate: the name above, the
+   value below, values in machine type. Five unlabelled dropdowns is not a
+   control row, it is a puzzle. */
+/* The row was a single 28px strip clipped to its own height; a named control
+   is two lines, so it sizes to its content. */
+.cfoot{display:flex;align-items:flex-end;gap:var(--s4);height:auto;overflow:visible;
+  padding:var(--s2) var(--s3) var(--s1) var(--s4);box-shadow:none;margin:0;
+  border-top:1px solid var(--line-hair)}
+.cgrp{display:flex;flex-direction:column;gap:1px;min-width:0}
+.clabel{font:500 var(--fs-label)/1.2 var(--font-ui);letter-spacing:var(--tr-label);
+  text-transform:uppercase;color:var(--ink-3);padding:0 var(--s2)}
+.cfoot .cchip{height:22px;font-family:var(--font-mono);font-size:var(--fs-label);
+  color:var(--ink);border-radius:var(--r);max-width:26ch;overflow:hidden;text-overflow:ellipsis}
+.cfoot .cchip:hover{background:var(--panel)}
+
+/* F14 — the command list is anchored on the composer's WRAPPER, because the
+   composer itself clips (it has to: the running indicator and the field's own
+   corners depend on it). The wrapper is the same anchor visually — the
+   composer is its last child — and the popover keeps its own scroller so a
+   long list cannot run off the top of the window. */
+.composerwrap{position:relative}
+.composerwrap > .slash{bottom:auto;top:auto;left:var(--s6);right:var(--s6);width:auto;
+  max-width:none;transform:translateY(-100%);margin-top:calc(var(--s2) * -1)}
+.slash{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:none;max-height:min(48vh,360px);overflow-y:auto;z-index:40;scrollbar-gutter:stable}
+.slashlist{display:flex;flex-direction:column}
+.slashrow{height:32px;border:0;background:transparent;text-align:left;cursor:pointer;
+  border-left:var(--rule) solid transparent}
+.slashrow:hover{background:var(--panel)}
+.slashrow.on{background:var(--panel);border-left-color:var(--accent)}
+.slashrow .cmd{color:var(--ink);font-weight:500}
+.slashrow .ds{color:var(--ink-2)}
+.slashrow .hint{color:var(--ink-3)}
+
+@media (max-width:820px){
+  .composerwrap{padding:0 var(--s4) var(--s4)}
+  .cfoot .seg{display:none}
+}

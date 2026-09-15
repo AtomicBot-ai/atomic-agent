@@ -1,0 +1,191 @@
+/* ============================================================
+   Settings “Menu › Manage” — window frame and nav, Tasks, Skills, Memory, MCP, LLM, Telegram, Import, Privacy. Screens ST-01…33.
+   Loaded after styles.css (tokens + kit). Colours come from tokens only.
+   ============================================================ */
+
+/* settings window */
+#settings{position:absolute;inset:0;background:var(--scrim);z-index:28;display:flex;align-items:center;justify-content:center}
+.setwin{width:720px;max-width:calc(100% - 40px);height:560px;max-height:calc(100% - 40px);background:var(--bg-content);border-radius:0;box-shadow:var(--shadow-window);display:flex;flex-direction:column;overflow:hidden}
+.settb{height:44px;flex:none;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);background:var(--bg-window);border-bottom:1px solid var(--line)}
+.settabs{display:flex;gap:2px;margin-left:var(--s5)}
+.settab{height:30px;padding:0 10px;border-radius:0;display:flex;align-items:center;gap:5px;color:var(--text-secondary);font-size:13px}
+.settab:hover{background:var(--bg-hover);color:var(--text-primary)}
+.settab.on{background:var(--accent-wash);color:var(--accent-text);font-weight:500}
+.setbody{flex:1;min-height:0;overflow-y:auto;padding:var(--s6)}
+
+/* ladder */
+.stepper{display:flex;align-items:center;margin:var(--s5) 0 var(--s6)}
+.stopwrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:var(--s2);position:relative}
+.stopwrap::before{content:"";position:absolute;top:9px;left:-50%;width:100%;height:2px;background:var(--line)}
+.stopwrap:first-child::before{display:none}
+.stopwrap.filled::before{background:var(--accent)}
+.stopdot{width:20px;height:20px;border-radius:0;border:2px solid var(--line);background:var(--bg-content);z-index:1;display:flex;align-items:center;justify-content:center}
+.stopwrap.filled .stopdot{border-color:var(--accent);background:var(--accent)}
+.stopwrap.on .stopdot{box-shadow:0 0 0 4px var(--accent-wash)}
+.stoplb{font-size:11px;color:var(--text-secondary);text-align:center}
+.stopwrap.on .stoplb{color:var(--text-primary);font-weight:500}
+.card-h{height:32px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);box-shadow:inset 0 -1px 0 var(--line-soft);font-size:11px;color:var(--text-secondary)}
+
+/* ---------------- Item 7: settings surface (the TUI menu + Manage tabs) ---------------- */
+.setwin{width:900px;height:640px}
+.settb .setttl{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);margin-left:var(--s3)}
+.setcols{flex:1;min-height:0;display:flex}
+.setmenu{width:236px;flex:none;overflow-y:auto;border-right:1px solid var(--line);padding:var(--s2) 0 var(--s4);font-family:var(--font-mono);font-size:12px;background:var(--bg-window)}
+.menuhd{padding:10px 12px 2px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary)}
+.menurow{display:flex;align-items:center;gap:6px;width:100%;height:24px;padding:0 12px;color:var(--text-primary);text-align:left;font-family:inherit;font-size:inherit}
+.menurow.sub{padding-left:26px}
+.menurow.parent{color:var(--text-secondary)}
+button.menurow:hover{background:var(--bg-hover)}
+.menurow.on{background:var(--accent-wash);color:var(--accent-text)}
+.menurow.na{color:var(--text-tertiary);cursor:default}
+.menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.menurow .ch{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.menurow .note{font-size:10px;color:var(--text-tertiary);white-space:nowrap}
+.setmain{flex:1;min-width:0;display:flex;flex-direction:column}
+.setmain .settabs{margin:0;padding:8px 10px 0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;align-items:center;gap:0}
+.setmain .settab{flex:none;font-family:var(--font-mono);font-size:12px;padding:0 2px;height:24px;gap:0;white-space:pre}
+.setmain .settab::before{content:"  ";white-space:pre}
+.setmain .settab.on::before{content:"▸ "}
+.tabsep{flex:none;white-space:pre;color:var(--text-tertiary);font-family:var(--font-mono);font-size:12px}
+.setdiag{padding:4px 16px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;border-bottom:1px solid var(--line-soft)}
+.tui{font-family:var(--font-mono);font-size:12.5px;line-height:20px;white-space:pre-wrap;display:flex;flex-direction:column;gap:2px;color:var(--text-primary)}
+.tui b{color:var(--accent-text);font-weight:600}
+.tuibar{white-space:pre}
+.tuihead{color:var(--text-tertiary);white-space:pre;margin-top:6px}
+.tuirow{display:block;height:24px;line-height:24px;width:100%;text-align:left;white-space:pre;overflow:hidden;text-overflow:ellipsis;font-family:inherit;font-size:inherit;padding:0 4px;border-radius:0;color:var(--text-primary)}
+.tuirow:hover{background:var(--bg-hover)}
+.tuirow.on{background:var(--accent-wash);color:var(--accent-text)}
+.tuihint{color:var(--text-tertiary);display:flex;flex-wrap:wrap;gap:0 4px;align-items:center;margin-top:8px;white-space:pre}
+.tuihint button,.tkkind{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 4px;border-radius:0;height:22px}
+.tuihint button:hover,.tkkind:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tuihint button:disabled{color:var(--text-tertiary);background:transparent}
+.tkkind.on{color:var(--accent-text);font-weight:600}
+.tuimodal{border:1px solid var(--accent);border-radius:0;padding:8px 12px;margin:6px 0;display:flex;flex-direction:column;gap:2px}
+.tuimodal.warn{border-color:var(--warn)}
+.tkrow{display:flex;align-items:center;height:26px}
+.tkrow .mk{width:1ch;white-space:pre;color:var(--accent-text)}
+.tkrow .mk::before{content:" "}
+.tkrow:focus-within .mk::before{content:"▸"}
+.tkrow .lb{white-space:pre;color:var(--text-tertiary)}
+.tkrow input{flex:1;min-width:0;background:transparent;border:0;outline:none;font:inherit;color:var(--accent-text);border-bottom:1px solid var(--line-soft)}
+.tkrow input:focus{border-bottom-color:var(--accent)}
+.tkrow input::placeholder{font-style:italic;color:var(--text-tertiary)}
+#tk-search{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:160px}
+.st-running{color:var(--accent-text)} .st-completed{color:var(--success)} .st-failed,.st-blocked{color:var(--danger)} .st-cancelled{color:var(--warn)} .st-pending{color:var(--text-tertiary)}
+.tuimsg{color:var(--accent-text)} .tuierr{color:var(--danger)}
+.sk-on{color:var(--success)} .sk-off{color:var(--warn)}
+.tuiwrap{padding:var(--s5)}
+/* Item 7 (settings surface): the TUI's `↑ N above` / `↓ N below` window lines, clickable here. */
+.tuimore{display:block;color:var(--text-tertiary);font-family:inherit;font-size:inherit;padding:0 4px;height:22px;line-height:22px;text-align:left;border-radius:0;white-space:pre}
+.tuimore:hover{background:var(--bg-hover);color:var(--text-primary)}
+/* ---------------- Item 7 part B: the Skills, Memory and MCP tabs ---------------- */
+.tuirow.dim{color:var(--text-tertiary)}
+.tuirow2{height:auto;line-height:20px;padding:2px 4px;white-space:pre}
+.tuirow2 > span{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.tuibody{white-space:pre-wrap;word-break:break-word;color:var(--text-primary)}
+.tuibody > div{min-height:20px}
+.skpf,.memch{color:var(--text-secondary);font-family:inherit;font-size:inherit;padding:0 2px;border-radius:0;height:22px;white-space:pre}
+.skpf:hover,.memch:hover{background:var(--bg-hover);color:var(--text-primary)}
+.skpf.on,.memch.on{color:var(--accent-text);font-weight:600}
+.skpaccent{color:var(--accent-text)}
+.skphub{display:block;width:100%;text-align:left;font-family:inherit;font-size:inherit;color:var(--text-primary);cursor:pointer}
+.skphub:hover{background:var(--bg-hover)}
+.tuimodal.danger{border-color:var(--danger)}
+#skp-hubq{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:220px}
+.tuiarea{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--bg-sunken);border:1px solid var(--line);border-radius:0;padding:6px 8px;font:inherit;color:var(--text-primary);resize:vertical;outline:none;white-space:pre}
+.tuiarea:focus{border-color:var(--accent)}
+.tuiarea::placeholder{color:var(--text-tertiary)}
+/* ---------------- Item 7 part C: the LLM, Telegram and Import tabs ---------------- */
+/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open. */
+#window:has(#settings) #overlays{z-index:29}
+.llm-route{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.llm-modehead{white-space:pre}
+.llmmode{color:var(--text-tertiary);font-family:inherit;font-size:inherit;font-weight:600;padding:0 2px;border-radius:0;height:22px}
+.llmmode:hover{background:var(--bg-hover);color:var(--text-primary)}
+.llmmode.on{color:var(--accent-text)}
+.llm-section{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.llm-empty{font-weight:600;color:var(--text-primary);white-space:pre}
+#llm-filter,#llm-url{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:260px}
+#llm-filter:focus,#llm-url:focus{border-bottom-color:var(--accent)}
+#llm-filter::placeholder{color:var(--text-tertiary);font-style:normal}
+#llm-url{width:360px}
+.llm-start{border-color:var(--success)}
+.tgcard{margin-top:6px}
+#tg-token{background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text);width:320px;letter-spacing:2px}
+#tg-token:focus{border-bottom-color:var(--accent)}
+.impform{margin-top:8px}
+.impline{display:flex;align-items:center;min-height:24px;white-space:pre}
+.impinp{flex:0 1 420px;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--line-soft);outline:none;font:inherit;color:var(--accent-text)}
+.impinp:focus{border-bottom-color:var(--accent)}
+.impinp::placeholder{font-style:italic;color:var(--text-tertiary)}
+.improw{white-space:pre}
+
+/* ---- Item 7A: the Hugging Face branch in Settings › LLM › Local, and
+   the Ollama signpost under the model lists ---- */
+.llm-hf input{width:100%;max-width:520px;height:26px;padding:0 6px;border:1px solid var(--line);border-radius:0;
+  background:var(--bg-sunken);color:var(--text-primary);font-family:var(--font-mono);font-size:12px}
+.llm-hf input:disabled{color:var(--text-tertiary)}
+.llm-hf .tuierr{white-space:pre-wrap;max-width:72ch;margin-top:4px}
+.llm-ollama{margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);max-width:72ch;line-height:1.5}
+
+/* ---- r4 review fixes (hf-models) ------------------------------------------
+   The Hugging Face pick list is a port of the TUI's screen and carries its
+   leading indentation verbatim: HF_MMPROJ_LINE, the `↓ N more` line, the
+   hidden-files note and the RAM warning all open with three spaces that mark
+   them as annotations of the list rather than list items. `.tuirow` is
+   white-space:pre so the choice rows keep their padEnd/padStart columns, but
+   the four sub-lines beneath them were plain HTML and collapsed to one space.
+   `pre-wrap`, not `pre`: a long error must still wrap inside the pane. */
+.llm-hf .ter,.llm-hf .sk-off,.llm-hf .tuierr{white-space:pre-wrap}
+
+/* Item 5. The settings backdrop covers the 52px toolbar band, and
+   `body.electron #toolbar` is a `-webkit-app-region: drag` region. Chromium
+   unions the rects of elements that DECLARE a value and subtracts only those
+   that declare `no-drag`; an element painted on top with the initial value
+   contributes nothing and does not mask the region beneath it. So a real
+   mousedown in the top band of the backdrop started a window drag and never
+   produced a click, and the dismiss-on-outside-click branch could not fire
+   there. (The synthetic MouseEvents the suite dispatches bypass drag-region
+   hit testing entirely, which is why the checks stayed green over a dead
+   band.) #onboarding already applies this same pattern deliberately. */
+body.electron #settings{-webkit-app-region:no-drag}
+
+/* --- Settings › LLM › Local --- */
+.llm-ram{margin-bottom:6px}
+/* `.tuirow` is a fixed 24px line that hides its overflow — right for a
+   one-line TUI row, fatal for a model row that now carries a description,
+   a fit verdict and sometimes a caution. */
+.tuirow.llm-model{height:auto;line-height:20px;padding:3px 4px;margin-bottom:2px;white-space:pre-wrap}
+/* Indented with padding rather than two leading spaces, so a caution that
+   wraps keeps its hanging indent instead of returning to column 0. */
+.tuirow .llm-sub{display:block;font-size:11.5px;color:var(--text-secondary);
+  font-family:var(--font-mono);line-height:1.5;white-space:pre-wrap;padding-left:2ch}
+.tuirow .llm-fit-comfortable{color:var(--success)}
+.tuirow .llm-fit-tight{color:var(--warn)}
+.tuirow .llm-fit-over{color:var(--text-tertiary)}
+.tuirow .llm-caution{color:var(--warn)}
+
+/* ---------------- Manage / Settings (B.8) ----------------
+   The tab strip wraps instead of scrolling: a strip that cannot overflow
+   cannot hide its own navigation. The selected tab is marked by a rule under
+   it, the way selection is marked everywhere else in this system. */
+.settabs{display:flex;flex-wrap:wrap;gap:0;margin:0;padding:0 var(--s5);
+  border-bottom:1px solid var(--line)}
+.settab{height:32px;padding:0 var(--s4);border-radius:0;display:flex;align-items:center;gap:var(--s1);
+  color:var(--ink-2);font-size:var(--fs-cap);font-weight:500;border:0;background:transparent;
+  box-shadow:inset 0 -1px 0 transparent}
+.settab:hover{background:var(--panel);color:var(--ink)}
+.settab.on{color:var(--ink);box-shadow:inset 0 calc(var(--rule) * -1) 0 var(--accent)}
+.settab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* The scrollbar never sits on top of the text it scrolls. */
+.setbody,.setmenu{scrollbar-gutter:stable;padding-right:var(--s2)}
+/* The diagnostics data plate, at the foot of the window. */
+.setplate{margin:0;border:0;border-top:1px solid var(--line);background:var(--panel);
+  padding:var(--s3) var(--s5)}
+.setplate dl{grid-template-columns:auto 1fr;gap:2px var(--s4)}
+
+/* The run mode (Settings › LLM). Three rows, and the worker count only when
+   fusion is the one running — a control for a mode you are not in is noise. */
+.runmoderows{border:1px solid var(--line);margin-bottom:var(--s4)}
+.runmodeworkers{display:flex;gap:var(--s1);margin-top:var(--s2)}
+.runmodeworkers .btn{min-width:32px;justify-content:center}
