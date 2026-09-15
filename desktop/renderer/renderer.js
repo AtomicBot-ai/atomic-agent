@@ -4273,6 +4273,11 @@ document.addEventListener('click', (e) => {
      this step renders. */
   const wizModel = e.target.closest && e.target.closest('[data-wizmodel]');
   if (wizModel) {
+    /* The first-run layer has its own click listener for these rows. Both
+       listeners sit on document, so without this the double click fired
+       "Use this model" twice while the flow was open (caught by a driven
+       double click, not by a single one: picking twice is harmless). */
+    if (OB.open) return;
     WIZ.modelPick = wizModel.dataset.wizmodel;
     // r2: double click = Use this model (see the first-run handler).
     if (e.detail >= 2) { act('wiz:model'); return; }
