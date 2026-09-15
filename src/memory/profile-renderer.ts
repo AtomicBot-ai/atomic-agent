@@ -26,15 +26,25 @@ export interface RenderProfileOptions {
   profileFilterThreshold?: number;
 }
 
+/** Rendered when no fact survives the filters. */
+export const PROFILE_SECTION_EMPTY = "(no profile)";
+
 /**
  * Render the contents of the `### profile` prompt section. This lives in
  * the variable tail of the prompt (never the stable prefix) so the KV
  * cache does not invalidate when the profile is edited between turns.
  *
- * Output format (stable, sorted by key):
+ * Output format — pinned facts first, then contextual ones, each group
+ * sorted by key:
  *   - language: ru
- *   - name: Alex
  *   - timezone: Europe/Moscow
+ *   - deploy_cmd: pnpm run deploy     (contextual, keyword hit)
+ *
+ * Pinned-first is what the `memory.profile.maxTokens` clip relies on:
+ * it packs lines in this order, so every pinned fact has its place
+ * decided before any contextual fact is considered. Sorting the whole
+ * list by key let a late-sorting pinned fact (a consent or security
+ * rule) fall off behind contextual noise (issue #407).
  *
  * When the gate is enabled, facts with `pinned=false` are only emitted
  * if at least one of their `keywords` matches the current user message.
@@ -48,6 +58,25 @@ export function renderProfileSection(
   facts: readonly ProfileFact[],
   options: RenderProfileOptions = {},
 ): string {
+  const selected = selectProfileFacts(facts, options);
+  if (selected.length === 0) return PROFILE_SECTION_EMPTY;
+  return selected.map(renderProfileLine).join("\n");
+}
+
+/** One fact as its `### profile` line. Always a single line. */
+export function renderProfileLine(fact: ProfileFact): string {
+  return `- ${fact.key}: ${escapeValue(fact.value)}`;
+}
+
+/**
+ * The facts `### profile` shows, in render order: vote and keyword
+ * filters applied, pinned facts first, then contextual, key order
+ * inside each group.
+ */
+export function selectProfileFacts(
+  facts: readonly ProfileFact[],
+  options: RenderProfileOptions = {},
+): ProfileFact[] {
   const gate = options.contextualKeywordGate ?? true;
   const message = (options.userMessage ?? "").toLowerCase();
   // Phase 7a — vote-driven suppression. Applied **before** the
@@ -66,11 +95,10 @@ export function renderProfileSection(
     return fact.keywords.some((keyword) => matchesKeyword(message, keyword));
   });
 
-  if (filtered.length === 0) return "(no profile)";
-  const sorted = [...filtered].sort((a, b) => a.key.localeCompare(b.key));
-  return sorted
-    .map((fact) => `- ${fact.key}: ${escapeValue(fact.value)}`)
-    .join("\n");
+  return filtered.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return a.key.localeCompare(b.key);
+  });
 }
 
 /**

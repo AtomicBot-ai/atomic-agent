@@ -21,6 +21,21 @@ import {
 
 const DEAD_PID = 2_000_000_000;
 
+/**
+ * The pid the fake spawn reports.
+ *
+ * `DEAD_PID`, not a small round number: `readDownloadJob` reclassifies a
+ * `running` record whose pid is gone as `interrupted`, so a test that
+ * asserts `interrupted` is asserting that this pid is dead. The value
+ * used to be 777, which is dead on a developer's laptop and alive often
+ * enough on a busy CI container to fail the run about one time in three
+ * — the assertion read `expected { version: 1, … } to match { pid: 777,
+ * status: 'interrupted' }` because the record came back `running`.
+ * Above the 4,194,304 ceiling Linux will hand out, so nothing can hold
+ * it.
+ */
+const SPAWNED_PID = DEAD_PID;
+
 function job(patch: Partial<DownloadJob> = {}): DownloadJob {
   return {
     version: 1,
@@ -56,7 +71,7 @@ describe("download-spawn", () => {
 
   it("arms, keeps or disarms the end-of-job ping beside the record", () => {
     const spawn = vi.fn(
-      () => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess,
+      () => ({ pid: SPAWNED_PID, unref: vi.fn() }) as unknown as ChildProcess,
     );
     const base = {
       dataDir,
@@ -88,7 +103,7 @@ describe("download-spawn", () => {
 
   it("spawns a detached copy of this program with the worker argv, logging to the job log", () => {
     const spawn = vi.fn(
-      () => ({ pid: 777, unref: vi.fn() }) as unknown as ChildProcess,
+      () => ({ pid: SPAWNED_PID, unref: vi.fn() }) as unknown as ChildProcess,
     );
 
     const result = spawnDownloadWorker({
@@ -127,7 +142,7 @@ describe("download-spawn", () => {
       dataDir,
       downloadJobId("chat", "qwen-3.5-4b"),
     );
-    expect(seeded).toMatchObject({ pid: 777, status: "interrupted" });
+    expect(seeded).toMatchObject({ pid: SPAWNED_PID, status: "interrupted" });
     expect(
       existsSync(resolveDownloadLogPath(dataDir, "chat-qwen-3.5-4b")),
     ).toBe(true);

@@ -88,8 +88,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "serve",
-    summary:
-      "Expose an OpenAI-compatible HTTP API plus atomic-agent admin routes",
+    summary: "Serve the HTTP API and run the enabled Telegram/Discord channels",
     run: serveCommand,
   },
   {

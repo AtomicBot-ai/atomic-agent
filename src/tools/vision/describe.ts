@@ -1,7 +1,13 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { VisionUnsupportedError, type LlmProvider } from "../../llm/index.js";
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { loadImageFile, UnsupportedImageFormatError } from "./load-image.js";
+import {
+  ImageTooLargeError,
+  loadImageFile,
+  NotARegularFileError,
+  UnsupportedImageFormatError,
+} from "./load-image.js";
 
 export interface VisionDescribeToolOptions {
   provider: LlmProvider;
@@ -9,6 +15,11 @@ export interface VisionDescribeToolOptions {
   maxImagesPerCall: number;
   /** Per-image byte cap mirrored from `config.vision.maxImageBytes`. */
   maxImageBytes: number;
+  /**
+   * Optional — `loadImageFile` warns through it when a file's extension
+   * contradicts its bytes. Absent in tests that do not care.
+   */
+  logger?: StructuredLogger | undefined;
 }
 
 interface ParsedArgs {
@@ -81,7 +92,13 @@ export function buildVisionDescribeTool(
       const images = [];
       for (let i = 0; i < parsed.paths.length; i += 1) {
         try {
-          const loaded = await loadImageFile(parsed.paths[i]!, ctx.workingDir);
+          const loaded = await loadImageFile(parsed.paths[i]!, ctx.workingDir, {
+            logger: options.logger,
+            maxBytes: options.maxImageBytes,
+          });
+          // `maxBytes` already rejected an over-cap file from its `stat`;
+          // this covers the one case that cannot: a file that grew
+          // between the stat and the read.
           if (loaded.bytes.byteLength > options.maxImageBytes) {
             return errorResult(
               `image ${loaded.path} exceeds maxImageBytes=${options.maxImageBytes}`,
@@ -91,10 +108,15 @@ export function buildVisionDescribeTool(
             id: i + 1,
             bytes: loaded.bytes,
             mimeType: loaded.mimeType,
+            mimeTypeSource: loaded.mimeTypeSource,
             path: loaded.path,
           });
         } catch (error) {
-          if (error instanceof UnsupportedImageFormatError) {
+          if (
+            error instanceof UnsupportedImageFormatError ||
+            error instanceof ImageTooLargeError ||
+            error instanceof NotARegularFileError
+          ) {
             return errorResult(error.message);
           }
           return errorResult(
@@ -124,6 +146,7 @@ export function buildVisionDescribeTool(
               path: img.path,
               bytes: img.bytes.byteLength,
               mimeType: img.mimeType,
+              mimeTypeSource: img.mimeTypeSource,
             })),
             durationMs: result.durationMs,
           },

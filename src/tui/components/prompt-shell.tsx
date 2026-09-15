@@ -84,8 +84,6 @@ export interface PromptShellProps extends Omit<
    * managed-local route with nothing on disk to run.
    */
   needsModelDownload?: boolean;
-  /** Fusion's fourth control (`2 workers`); `null` off that route. */
-  workers?: string | null;
   /**
    * Optional content rendered at the start of the action bar, before the
    * model/provider labels. Used by the chat surface to show the live
@@ -120,7 +118,6 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     model,
     provider,
     needsModelDownload,
-    workers,
     leftSlot,
     rightSlot,
     contextSlot,
@@ -264,7 +261,6 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           model={model ?? null}
           provider={provider ?? null}
           needsModelDownload={needsModelDownload ?? false}
-          workers={workers ?? null}
           fusion={fusion}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}

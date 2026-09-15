@@ -1,3 +1,4 @@
+import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
   closeSync,
@@ -73,10 +74,12 @@ export interface DaemonStartOptions {
    */
   tensorSplit?: readonly number[];
   /**
-   * Request slots (`localModels.managed.parallel`). Undefined keeps the
-   * historical `--parallel 2` so existing launches stay byte-identical.
+   * Request slots (`localModels.managed.parallel`): a pinned number, or
+   * `"auto"` to derive it from the context this launch actually gets
+   * (see `worker-slots.ts`). Undefined keeps the historical
+   * `--parallel 2` so an embedder's launch stays byte-identical.
    */
-  parallel?: number;
+  parallel?: number | "auto";
 }
 
 /**
@@ -110,7 +113,21 @@ export function buildLlamaServerArgs(
     "--cache-type-v",
     "turbo3",
     "--parallel",
-    String(opts.parallel ?? 2),
+    // Resolved here rather than at the call sites because this is where
+    // the *effective* context is known — the number of slots is how many
+    // usable shares that context divides into, and the callers pass the
+    // configured `0` (auto-size) straight through.
+    String(
+      opts.parallel === undefined
+        ? 2
+        : resolveConfiguredSlots(opts.parallel, {
+            contextSize:
+              effectiveContextSize && effectiveContextSize > 0
+                ? effectiveContextSize
+                : null,
+            cpuOnly: opts.device === "cpu",
+          }),
+    ),
     "-kvu",
     "-a",
     modelAlias,

@@ -1,3 +1,6 @@
+import type { ApprovalGate } from "../../approval/approval-gate.js";
+import { requireApproval } from "../../approval/dangerous-tool.js";
+import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
@@ -15,6 +18,12 @@ import {
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
 export interface FusionDelegateDeps extends WorkerRunnerDeps {
+  /**
+   * Whether the fan-out asks the operator before it runs. Same seam as
+   * every other dangerous tool: production passes `true`, tests pass
+   * `false` to exercise the fan-out without a gate.
+   */
+  approvalRequired: boolean;
   slotManager: Pick<SlotManager, "poolSize">;
   /** Live read — the operator can leave fusion mid-turn. */
   resolveRunMode: () => ResolvedRunMode;
@@ -75,6 +84,32 @@ function error(
  * the wrong place to decide. The bounds that remain are physical: the
  * task count, and the server's request slots on a slot-affine leg.
  */
+/**
+ * What the operator reads before authorising a fan-out.
+ *
+ * The task titles, not a count: one prompt stands in for every write
+ * these workers make, so the thing being approved has to be legible as
+ * work, not as a number. The scope is stated last because it is the part
+ * the answer actually grants.
+ */
+export function describeFanoutPreview(
+  tasks: readonly { title: string }[],
+  writeScope: readonly string[],
+): string {
+  const lines = tasks.map((task) => `  • ${task.title}`);
+  const scope =
+    writeScope.length > 0
+      ? [
+          `may write files and run commands in:`,
+          ...writeScope.map((dir) => `  ${dir}`),
+        ]
+      : [
+          `no writable directory could be derived from the briefs, so the`,
+          `workers will still have to hand every write back up.`,
+        ];
+  return [...lines, "", ...scope].join("\n");
+}
+
 export function buildFusionDelegateTool(
   deps: FusionDelegateDeps,
 ): ToolDefinition {
@@ -130,10 +165,21 @@ export function buildFusionDelegateTool(
       // on a slot-affine leg you cannot run more than the server has
       // request slots (the rest would queue and evict each other's KV
       // cache rather than run).
-      const requested = parsed.maxWorkers ?? mode.workers;
+      // A call that named no width gets the machine's capacity, not a
+      // number from a config file. The operator is not the party that
+      // knows how divisible this particular job is, and the slot pool is
+      // already the honest ceiling — `runMode.fusion.workers` survives
+      // only as a pin for someone who deliberately wrote one.
+      const requested =
+        parsed.maxWorkers ??
+        (Number.isFinite(poolSize) ? (poolSize as number) : mode.workers);
       const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
       const maxWorkers = Math.max(1, Math.min(wanted, poolSize));
-      const poolIsBinding = maxWorkers < wanted;
+      // The pool held this fan-out down when it ran fewer at a time than
+      // there was work for — whether the orchestrator asked for a wider
+      // number or simply had more tasks than the machine has slots.
+      const poolIsBinding =
+        maxWorkers < wanted || maxWorkers < parsed.tasks.length;
 
       // Labels, never guesses: the resolver's pin when it has one, the
       // provider id when it does not. Both legs are read from the same
@@ -161,6 +207,49 @@ export function buildFusionDelegateTool(
         tool: FUSION_DELEGATE_TOOL,
       });
 
+      // One question for the whole fan-out, asked before a single worker
+      // starts. A worker has no operator to ask — that is what made the
+      // mode unusable below full trust, with every write refused and the
+      // orchestrator left as the only party able to act — so the
+      // operator is asked here instead, once, with the task list and the
+      // directory in front of them.
+      const writeScope = resolveFanoutScope(parsed.tasks, ctx.workingDir);
+      // A turn is one job. An orchestrator that reviews and re-delegates
+      // runs five fan-outs to build one library, and asking the same
+      // question five times is attrition, not consent. The operator's
+      // answer stands for the rest of the turn as long as later fan-outs
+      // stay inside the directories it named; one reaching somewhere new
+      // asks again.
+      const alreadyApproved =
+        deps.approvals.fanoutScopes?.turnGrantCovers(
+          ctx.sessionId,
+          writeScope,
+        ) ?? false;
+      try {
+        if (!alreadyApproved)
+          await requireApproval(
+            {
+              approvals: deps.approvals as ApprovalGate,
+              approvalRequired: deps.approvalRequired,
+            },
+            {
+              sessionId: ctx.sessionId,
+              tool: FUSION_DELEGATE_TOOL,
+              category: "fusion_fanout",
+              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}`,
+              preview: describeFanoutPreview(parsed.tasks, writeScope),
+              affectedResources: [...writeScope],
+            },
+            ctx.signal,
+          );
+        deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
+      } catch (err) {
+        return error(
+          `the fan-out was not approved: ${err instanceof Error ? err.message : String(err)}`,
+          { reason: "fan-out-denied" },
+        );
+      }
+
       let results: WorkerTaskResult[];
       try {
         results = await runWorkerTasks(deps, {
@@ -171,6 +260,7 @@ export function buildFusionDelegateTool(
           workerModel,
           workerMaxSteps: mode.workerMaxSteps,
           workerTimeoutMs: mode.workerTimeoutMs,
+          writeScope,
           signal: ctx.signal,
         });
       } catch (err) {
@@ -202,7 +292,7 @@ export function buildFusionDelegateTool(
       // all three things it needs: what was wanted, what actually ran
       // concurrently, and the config key that changes the second number.
       const hint = poolIsBinding
-        ? `\n\nNote: ${wanted} workers were wanted for this fan-out but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued — raise \`localModels.managed.parallel\` (llama-server \`--parallel\`) to widen it.`
+        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — llama-server divides its context between slots (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
         : "";
       return compressToolResult(
         {

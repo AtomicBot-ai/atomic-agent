@@ -86,6 +86,14 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       )}s`;
     case "parse_failure_recovered":
       return `${head} step=${event.stepIndex} attempt=${event.attempt}/${event.budget} reason=${truncate(event.reason, 120, raw)}`;
+    case "empty_completion_recovered":
+      return `${head} step=${event.stepIndex} attempt=${event.attempt}/${event.budget}`;
+    case "memory_health_warning":
+      return `${head} turn=${event.turnIndex} kind=${event.kind} outcome=${event.outcome} consecutive=${event.consecutive} setting=${event.setting}${
+        event.reason !== undefined
+          ? ` reason=${truncate(event.reason, 120, raw)}`
+          : ""
+      }`;
     case "provider_waiting":
       return `${head} attempt=${event.attempt} waited=${Math.round(
         event.waitedMs / 1000,
@@ -107,10 +115,30 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
           ? ` path=${event.read.path} lines=${event.read.startLine}-${event.read.endLine} fingerprint=${event.read.previousFingerprint}→${event.read.fingerprint}`
           : ""
       }`;
-    case "error":
-      return `${head} message=${event.message}`;
+    case "profile_clipped":
+      return `${head} turn=${event.turnIndex} step=${event.stepIndex} rendered=${event.rendered} dropped=${event.dropped} pinnedDropped=${event.pinnedDropped} maxTokens=${event.maxTokens}`;
+    case "profile_facts_evicted":
+      return `${head} evicted=${event.evicted} maxEntries=${event.maxEntries} activeUnpinned=${event.activeUnpinned} keys=${truncate(event.keys.join(","), 120, raw)}`;
+    case "error": {
+      const after = (event.fallbackFailures ?? []).map(
+        (f) => `"${f.providerId}" failed: ${f.reason}`,
+      );
+      return `${head} message=${event.message}${
+        after.length > 0 ? ` (after ${after.join("; ")})` : ""
+      }`;
+    }
     case "trace_truncated":
-      return `${head} reason=${event.reason}`;
+      // The counts are the point of the row: they tell the reader how
+      // much of the session is missing above this line.
+      return `${head}${
+        event.droppedEvents !== undefined
+          ? ` droppedEvents=${event.droppedEvents}`
+          : ""
+      }${
+        event.droppedBytes !== undefined
+          ? ` droppedBytes=${event.droppedBytes}`
+          : ""
+      } reason=${event.reason}`;
     default:
       return `${head} ${JSON.stringify(event)}`;
   }

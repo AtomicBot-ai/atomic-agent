@@ -123,22 +123,39 @@ function indexOfferedTools(
     if (!fn || typeof fn.name !== "string") continue;
     const parameters = asRecord(fn.parameters);
     const properties = asRecord(parameters?.properties) ?? {};
+    const declared = Array.isArray(parameters?.required)
+      ? parameters.required.filter(
+          (name): name is string => typeof name === "string",
+        )
+      : [];
+    // A `strict: true` function's `required` lists EVERY property: that
+    // is the shape the provider's strict decoder demands, and an
+    // optional argument is spelled there as a `null` union instead of
+    // an absent key (see `strict-tool-schema.ts`). Nothing constrains a
+    // `<tool_call>` decode to it — the model writes prose tags — so
+    // reading that inflated list literally rejects every realistic
+    // tagged call for omitting an optional, `parseSource` returns
+    // `null`, and the step sees text where a tool call should be.
+    // Reading the strict spelling the way strict means it costs only
+    // the check that a genuinely required nullable argument is present,
+    // which the tool's own validator makes again downstream.
+    const required =
+      fn.strict === true
+        ? declared.filter((name) => !admitsNull(asRecord(properties[name])))
+        : declared;
     const entry: OfferedTool = {
       wireName: fn.name,
-      schema: parameters ?? { type: "object", properties: {} },
+      schema:
+        parameters === null
+          ? { type: "object", properties: {} }
+          : { ...parameters, required },
       properties: Object.fromEntries(
         Object.entries(properties).map(([name, schema]) => [
           name,
           asRecord(schema) ?? {},
         ]),
       ),
-      required: new Set(
-        Array.isArray(parameters?.required)
-          ? parameters.required.filter(
-              (name): name is string => typeof name === "string",
-            )
-          : [],
-      ),
+      required: new Set(required),
     };
     offered.set(fn.name, entry);
   }
@@ -241,6 +258,19 @@ function coerceArguments(
   } catch {
     return null;
   }
+}
+
+/** Whether a property schema accepts an explicit `null`. */
+function admitsNull(schema: Record<string, unknown> | null): boolean {
+  if (!schema) return false;
+  const type = schema.type;
+  if (type === "null") return true;
+  if (Array.isArray(type) && type.includes("null")) return true;
+  const anyOf = schema.anyOf;
+  if (Array.isArray(anyOf)) {
+    return anyOf.some((branch) => admitsNull(asRecord(branch)));
+  }
+  return false;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

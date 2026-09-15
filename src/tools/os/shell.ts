@@ -278,7 +278,16 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         });
       }
 
-      if (guardVerdict.action === "approval_required") {
+      // A fan-out the operator authorised may also run commands, but
+      // only in the directory they saw: `cwd` inside the scope, and the
+      // guard's own hardline blocks still fire above this (a `block`
+      // verdict never reaches here). The command line itself is free
+      // text and cannot be scoped, so the directory is the whole of the
+      // promise — which is why the fan-out prompt says "and run commands
+      // in" rather than something broader.
+      const scopedByFanout =
+        options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ?? false;
+      if (guardVerdict.action === "approval_required" && !scopedByFanout) {
         // Shape grant unit: the normalised binary the guard itself keyed
         // on (basename, lowercased), so `[a]` covers exactly the argv[0]
         // that would run: `git`, not `/usr/bin/GIT` or a path. Withheld

@@ -6,6 +6,11 @@ import { dirname } from "node:path";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 
 import { applyMigrations } from "./memory-schema.js";
+import {
+  assertProfileMaxEntries,
+  ProfileEvictor,
+  type ProfileEviction,
+} from "./profile-eviction.js";
 
 // TODO(memory-v2 phase 7a): add `vote_score REAL` column (clamped to
 // `±memory.voting.maxVotePerItem`); expose `applyVote(key, delta)`,
@@ -80,6 +85,17 @@ export interface ProfileStoreOptions {
    * correctly without it; only observability degrades.
    */
   metrics?: AgentMetrics;
+  /**
+   * Issue #407. Cap on active **unpinned** facts
+   * (`memory.profile.maxEntries`). Omitted ⇒ no cap. Pinned facts are
+   * never counted and never evicted — see `ProfileEvictor`.
+   */
+  maxEntries?: number;
+  /**
+   * Called after a `set()` that evicted facts has committed. Fire-safe:
+   * a throwing listener never fails the write that triggered it.
+   */
+  onEvicted?: (eviction: ProfileEviction) => void;
 }
 
 export interface ProfileSetOptions {
@@ -142,6 +158,10 @@ interface ProfileRow {
 export class ProfileStore {
   private readonly db: Database.Database;
   private readonly metrics: AgentMetrics | undefined;
+  private readonly evictor: ProfileEvictor | null;
+  private readonly onEvicted:
+    | ((eviction: ProfileEviction) => void)
+    | undefined;
   private readonly insertStmt: Database.Statement;
   private readonly markSupersededStmt: Database.Statement;
   private readonly preflipParentStmt!: Database.Statement;
@@ -152,12 +172,21 @@ export class ProfileStore {
   private readonly deleteActiveStmt: Database.Statement;
 
   constructor(options: ProfileStoreOptions) {
+    // Before the handle opens, so a bad cap cannot leak a connection.
+    if (options.maxEntries !== undefined) {
+      assertProfileMaxEntries(options.maxEntries);
+    }
     mkdirSync(dirname(options.dbFile), { recursive: true });
     this.db = new DatabaseCtor(options.dbFile);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     applyMigrations(this.db);
     this.metrics = options.metrics;
+    this.evictor =
+      options.maxEntries !== undefined
+        ? new ProfileEvictor(this.db, options.maxEntries)
+        : null;
+    this.onEvicted = options.onEvicted;
     this.insertStmt = this.db.prepare(
       `INSERT INTO profile_facts
          (key, value, pinned, keywords, valid_from, superseded_by,
@@ -255,7 +284,11 @@ export class ProfileStore {
       supersedesKeyRaw !== undefined ? validateKey(supersedesKeyRaw) : null;
 
     const txn = this.db.transaction(
-      (): { id: number; supersedes: number | null } => {
+      (): {
+        id: number;
+        supersedes: number | null;
+        eviction: ProfileEviction | null;
+      } => {
         // Same-key auto-chain: if there is an active row for the
         // incoming key, capture its id so we can flip it after insert.
         const sameKeyActive = this.selectActiveByKeyStmt.get(normalisedKey) as
@@ -319,11 +352,21 @@ export class ProfileStore {
         return {
           id: newId,
           supersedes: directParent ? directParent.id : null,
+          // Same transaction as the insert: the cap is never observed
+          // exceeded, and a write that rolls back evicts nothing.
+          eviction: this.evictor?.evictOverflow(newId) ?? null,
         };
       },
     );
 
-    const { id, supersedes } = txn();
+    const { id, supersedes, eviction } = txn();
+    if (eviction !== null) {
+      try {
+        this.onEvicted?.(eviction);
+      } catch {
+        // Observability only: the write has already committed.
+      }
+    }
 
     if (supersedes !== null) {
       this.metrics?.recordProfileSuperseded({

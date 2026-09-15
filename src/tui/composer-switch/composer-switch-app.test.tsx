@@ -136,6 +136,65 @@ function mountApp() {
   };
 }
 
+/**
+ * The same app on the fusion route: two legs pinned, so the model slot
+ * is drawn as `orchestrator ⇄ worker` and the glyph between them is the
+ * swap button.
+ */
+function mountFusionApp() {
+  const bus = makeTuiEventBus();
+  const mouse = makeMouseSource();
+  const swaps: number[] = [];
+  const { lastFrame, unmount } = render(
+    <TuiApp
+      session={SESSION}
+      bus={bus}
+      callbacks={
+        {
+          onApprovalDecision: () => {},
+          onAbort: () => {},
+          onQuit: () => {},
+          onMessageSubmitted: () => {},
+          onFusionLegsSwapRequested: () => swaps.push(1),
+        } as TuiAppCallbacks
+      }
+      mouse={mouse}
+    />,
+  );
+  bus.emit({
+    type: "providers_refresh",
+    runMode: {
+      stored: "fusion",
+      effective: "fusion",
+      orchestratorProviderId: "openrouter",
+      orchestratorModel: "claude-opus-5",
+      workerProviderId: "local-llama",
+      workerModel: "qwen-3.5-4b",
+      workers: 2,
+      workerMaxSteps: 40,
+      workerTimeoutMs: 600_000,
+      primaryProviderId: "openrouter",
+      degraded: null,
+    },
+    rows: [
+      providerRow({ isActiveText: true }),
+      providerRow({
+        id: "local-llama",
+        kind: "llama-server",
+        hasApiKey: false,
+        chatModel: null,
+        chatModelOptions: [],
+      }),
+    ],
+  });
+  return {
+    frame: () => strip(lastFrame() ?? ""),
+    mouse,
+    swaps: () => swaps.length,
+    unmount,
+  };
+}
+
 describe("the composer's route controls inside the app", () => {
   it("states the route as backend, provider, model", async () => {
     const app = mountApp();
@@ -272,6 +331,47 @@ describe("the composer's route controls inside the app", () => {
     app.stdin.write("hello");
     await waitUntil(() => app.frame().includes("hello"), "the typed buffer");
     expect(app.frame()).not.toContain("zzz");
+    app.unmount();
+  });
+  it("trades the two fusion legs when the ⇄ between them is clicked", async () => {
+    // The operator's move: one click puts the local model in charge and
+    // sends the cloud one to the workers. Before this the glyph was
+    // inert punctuation inside the model label, and the only way across
+    // was two trips through two different switches.
+    const app = mountFusionApp();
+    await waitUntil(
+      () => app.frame().includes("claude-opus-5 ⇄ qwen-3.5-4b"),
+      "the fusion pair",
+    );
+    await clickUntil(
+      app.mouse,
+      () => {
+        const at = locate(app.frame(), "⇄");
+        return { x: at.x, y: at.y };
+      },
+      () => app.swaps() > 0,
+      "click on the swap glyph",
+    );
+    expect(app.swaps()).toBeGreaterThan(0);
+    app.unmount();
+  });
+
+  it("keeps the two halves apart: clicking a leg opens that leg's switch", async () => {
+    const app = mountFusionApp();
+    await waitUntil(
+      () => app.frame().includes("claude-opus-5 ⇄ qwen-3.5-4b"),
+      "the fusion pair",
+    );
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "qwen-3.5-4b"),
+      () => app.frame().includes("WORKERS"),
+      "click on the worker half",
+    );
+    // Not the orchestrator's model switch: the right-hand half names
+    // the worker leg, so that is the list it opens.
+    expect(app.frame()).not.toContain("MODEL");
+    expect(app.swaps()).toBe(0);
     app.unmount();
   });
 });

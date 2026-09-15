@@ -99,7 +99,7 @@ NOTE staging flyway migrations need FLYWAY_BASELINE=1 or deploy fails [tags=stag
   `memory.reflection.maxFactsPerCall`).
 - `NOTE` lines land in the notes store with an implicit `reflection` tag (at
   most 2 per turn, `memory.reflection.maxNotesPerCall`).
-- The call has a hard timeout (`memory.reflection.timeoutMs`, 10 s); on
+- The call has a hard timeout (`memory.reflection.timeoutMs`, 60 s); on
   timeout or parse failure nothing is written and the next turn just tries
   again. At most one reflection is in flight per session.
 

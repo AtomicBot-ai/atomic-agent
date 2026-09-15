@@ -1,3 +1,4 @@
+import { FanoutScopeRegistry } from "./fanout-scope.js";
 import { randomUUID } from "node:crypto";
 import {
   clampApprovalLevel,
@@ -150,6 +151,18 @@ export class ApprovalGate {
   >();
   /** Per-session prompt policies, keyed like the grants. See `SessionApprovalPolicy`. */
   private readonly policiesBySession = new Map<string, SessionApprovalPolicy>();
+
+  /**
+   * Directories a session may write in without asking — see
+   * `fanout-scope.ts`. Lives on the gate because every caller that can
+   * ask for an approval already holds the gate, so nothing new has to be
+   * threaded through the fs tools to reach it.
+   *
+   * Read by `requireFsApproval`, not by `request()`: the scope is about
+   * paths, and paths are known one layer up, where the fs funnel has
+   * already resolved them.
+   */
+  readonly fanoutScopes = new FanoutScopeRegistry();
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;

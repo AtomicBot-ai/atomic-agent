@@ -77,7 +77,22 @@ export const FUSION_WORKERS_MIN = 1;
 export const FUSION_WORKERS_MAX = 8;
 export const DEFAULT_FUSION_WORKERS = 2;
 export const DEFAULT_FUSION_WORKER_MAX_STEPS = 40;
-export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 600_000;
+/**
+ * How long one worker may take before its leg is cancelled.
+ *
+ * 45 minutes, and both earlier figures were guesses that cut real work
+ * in half. At 600s two of three tasks died; at 1200s a worker that had
+ * already written four of its six files was cancelled mid-run, and
+ * another was cut after writing one. Neither was stuck — a 12B model
+ * writing a module and its tests takes the time it takes.
+ *
+ * The asymmetry is the argument. A worker that is genuinely stuck still
+ * ends, and the orchestrator gets a task it can split and re-send; a
+ * worker cut while working loses everything it had not yet written and
+ * teaches the orchestrator that the fan-out does not work, which is how
+ * a turn ends with the cloud model doing the job itself.
+ */
+export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 
@@ -85,7 +100,6 @@ function parseLegProviderId(
   raw: unknown,
   providers: ReadonlyArray<RunModeProviderRef>,
   field: string,
-  leg: "orchestrator" | "worker",
 ): string {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new ConfigValidationError(field, "expected non-empty string");
@@ -97,19 +111,17 @@ function parseLegProviderId(
       `unknown provider id ${JSON.stringify(raw)}`,
     );
   }
-  const isLocal = entry.kind === LOCAL_PROVIDER_KIND;
-  if (leg === "orchestrator" && isLocal) {
-    throw new ConfigValidationError(
-      field,
-      `orchestrator must be a cloud provider, ${JSON.stringify(raw)} is ${LOCAL_PROVIDER_KIND}`,
-    );
-  }
-  if (leg === "worker" && !isLocal) {
-    throw new ConfigValidationError(
-      field,
-      `worker provider must be ${LOCAL_PROVIDER_KIND}, ${JSON.stringify(raw)} is ${entry.kind}`,
-    );
-  }
+  // Neither leg is nailed to a kind. Cloud orchestrator + local workers
+  // is the default pairing and the economics the mode was built for, but
+  // a local model planning for cloud executors is a legitimate setup and
+  // the schema is the wrong place to forbid it — it does not refuse a
+  // file, it refuses to BOOT on one, which is how an operator ends up
+  // hand-editing JSON to start the app again.
+  //
+  // What is still checked is that the id names a configured provider,
+  // above. The one pairing the runtime rejects — both legs on the same
+  // provider — is caught by `resolveRunMode`, which can see both at once
+  // and degrades instead of throwing.
   return raw;
 }
 
@@ -155,7 +167,6 @@ function parseFusion(
       obj.orchestratorProvider,
       providers,
       `${field}.orchestratorProvider`,
-      "orchestrator",
     );
   }
   if (obj.orchestratorModel !== undefined) {
@@ -169,7 +180,6 @@ function parseFusion(
       obj.workerProvider,
       providers,
       `${field}.workerProvider`,
-      "worker",
     );
   }
   if (obj.workerModel !== undefined) {

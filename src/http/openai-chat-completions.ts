@@ -3,6 +3,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
+import { classifyFailure } from "../llm/reliability/index.js";
+import {
+  readFailedAttempts,
+  summarizeFailedAttempts,
+} from "../llm/fallback/index.js";
 import {
   createEmptySessionState,
   type SessionState,
@@ -439,6 +444,23 @@ export function buildStreamEventHook(
       return;
     }
     if (event.type === "loop_failed") {
+      /* The thrown error is the chain's LAST link, kept untouched for
+         classification and the outage wait (runWithFallback). A host that
+         shows one sentence per failed turn is told about the FIRST recorded
+         link instead — the provider the operator picked, its refusal in its
+         own words and its own category — with every earlier link listed
+         beside it. A single-link failure is reported exactly as before. */
+      const first = readFailedAttempts(event.error)[0];
+      if (first) {
+        const primary = first.error;
+        const message = primary instanceof Error && primary.message.trim()
+          ? primary.message
+          : event.error.message;
+        emitStreamError(sse, env, message, classifyFailure(primary), {
+          fallback_failures: summarizeFailedAttempts(event.error),
+        });
+        return;
+      }
       emitStreamError(sse, env, event.error.message, event.category);
     }
   };
@@ -457,11 +479,13 @@ function emitStreamError(
   env: TurnEnv,
   message: string,
   category?: LlmFailureCategory,
+  extra?: Record<string, unknown>,
 ): void {
   if (env.request.extensionsEnabled) {
     sse.writeEvent("error", {
       error: message,
       ...(category ? { category } : {}),
+      ...(extra ?? {}),
     });
     return;
   }

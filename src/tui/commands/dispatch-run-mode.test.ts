@@ -52,4 +52,14 @@ describe("parseRunModeCommand", () => {
     expect(out.error).toContain('"hybrid"');
     expect(out.error).toContain(RUN_MODE_USAGE);
   });
+  it("reads `swap` as the leg trade, not as a mode name", () => {
+    expect(parseRunModeCommand("swap")).toEqual({
+      openSwitch: false,
+      swap: true,
+    });
+    expect(parseRunModeCommand(" SWAP ")).toEqual({
+      openSwitch: false,
+      swap: true,
+    });
+  });
 });

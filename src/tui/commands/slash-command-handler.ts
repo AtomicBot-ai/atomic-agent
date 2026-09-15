@@ -133,7 +133,8 @@ export interface SlashDispatchResult {
    * resolves to. Both need the live state / orchestrator, which only the
    * caller (`submit-handler.ts`) can reach.
    */
-  readonly runModeVerb?: import("../../config/index.js").RunModeName | "status";
+  readonly runModeVerb?:
+    import("../../config/index.js").RunModeName | "status" | "swap";
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
 }
@@ -339,6 +340,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       }
       if (cmd.workers !== undefined)
         return pureActions([], { runModeWorkers: cmd.workers });
+      if (cmd.swap) return pureActions([], { runModeVerb: "swap" });
       return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
     }
     default:
