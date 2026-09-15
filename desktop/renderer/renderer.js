@@ -2513,7 +2513,7 @@ function renderConsole() {
 
 /* ---------------- palette ---------------- */
 const SCOPES = {
-  theme: {label:'Theme', ph:'Choose a theme…', rows:[['gear','System','follow macOS','','theme:system'],['gear','Light','','','theme:light'],['gear','Dark','','','theme:dark']]},
+  theme: {label:'Theme', ph:'Choose a theme…', rows:[['laptop','System','follow macOS','','theme:system'],['sun','Light','','','theme:light'],['moon','Dark','','','theme:dark']]},
   // Item 7: the prototype's Task scope is gone — nothing targeted scope:task, and the Tasks tab is the one surface.
 };
 
@@ -2535,9 +2535,9 @@ function palRows() {
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
   // cross-entity
   SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session'}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task'}));
+    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:'room:skills', badge:'skill'}));
   return hits;
@@ -2550,11 +2550,18 @@ function bold(t, q) {
   return esc(t.slice(0, i)) + '<b>' + esc(t.slice(i, i + q.length)) + '</b>' + esc(t.slice(i + q.length));
 }
 
+/* Soft Tactile: the right slot carries, in order, the current theme's check (Theme
+   scope only), a mono slash alias, the status dot of a matching chat or task (only
+   when it needs you or is running — a read chat carries none), or keycaps. Chats,
+   tasks, skills and scope rows are two-line rows with the context under the title. */
 function palRowHTML(r, i, q) {
-  const shortcut = r.sc && r.sc.startsWith('/')
-    ? '<span class="mono ter">' + esc(r.sc) + '</span>'
+  const current = S.scope === 'theme' && r.act === 'theme:' + S.theme;
+  const shortcut = current ? '<span class="palcheck" title="Current theme">' + ic('check') + '</span>'
+    : r.sc && r.sc.startsWith('/') ? '<span class="mono palslash">' + esc(r.sc) + '</span>'
+    : r.dot && r.dot[0] !== 'empty' ? '<span class="' + ovDotCls(r.dot[0], r.dot[1]) + '" title="' + esc(r.dot[1]) + '"></span>'
     : keycaps(r.sc);
-  return '<button class="palrow' + (i === S.cur ? ' on' : '') + '" data-palrow="' + i + '">'
+  const two = !!(r.badge || S.scope);
+  return '<button class="palrow' + (two ? ' two' : '') + (i === S.cur ? ' on' : '') + '" data-palrow="' + i + '">'
     + '<span class="ic">' + ic(r.ic) + '</span>'
     + '<span class="ti">' + bold(r.t, q) + '</span>'
     + '<span class="cx">' + esc(r.cx || '') + '</span>'
@@ -2567,18 +2574,26 @@ function paletteHTML() {
   let list = '', idx = 0;
   if (flat === null) {
     PAL.forEach(([g, rows]) => {
-      list += '<div class="palgroup micro">' + esc(g) + '</div>';
+      list += '<div class="palgroup">' + esc(g) + '</div>';
       rows.forEach((r) => {
         list += palRowHTML({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}, idx++, '');
       });
     });
   } else if (flat.length === 0) {
-    list = '<div class="palempty"><div style="font-weight:500">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
+    list = '<div class="palempty"><div class="palempty-t">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
       + '<div class="cap">Nothing in the command registry matches.</div>'
-      + '<button class="palrow" data-ask="1"><span class="ic">' + ic('chat') + '</span>'
-      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
+      + '<button class="palrow" data-ask="1"><span class="ic">' + ic('arrowR') + '</span>'
+      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
   } else {
-    list = flat.map((r, i) => palRowHTML(r, i, q)).join('');
+    // Ranked commands first, then a header before the chats, tasks and skills that
+    // match. Headers sit between rows only; data-palrow indexes stay the flat order.
+    const heads = {session:'Chats', task:'Tasks', skill:'Skills'};
+    let last = '';
+    flat.forEach((r, i) => {
+      if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';
+      last = r.badge || '';
+      list += palRowHTML(r, i, q);
+    });
   }
   const sc = S.scope ? SCOPES[S.scope] : null;
   const dial = (sc && sc.dial) ? '<div style="padding:12px 16px;box-shadow:inset 0 1px 0 var(--line-soft)">'
@@ -2586,12 +2601,13 @@ function paletteHTML() {
       + '<span class="mono tnum" style="margin-left:auto">' + S.dialShare + '</span></div>'
       + '<input class="slider" type="range" min="0" max="100" step="5" value="' + S.dialShare + '" id="dial">'
       + '<div class="cap" style="margin-top:4px">' + esc(shareBlurb(S.dialShare)) + '</div></div>' : '';
-  return '<div class="scrim" data-close="1"><div class="pal" role="dialog" aria-label="Command palette">'
+  return '<div class="scrim palscrim" data-close="1"><div class="pal" role="dialog" aria-label="Command palette">'
     + '<div class="palin">' + ic('search')
-      + (sc ? '<span class="palscope">' + esc(sc.label) + ' <span data-popscope="1">×</span></span>' : '')
-      + '<input id="palq" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
+      + (sc ? '<span class="palscope tk-chip tk-chip--blue tk-chip--sm">' + esc(sc.label)
+        + '<span class="palscope-x" data-popscope="1" role="button" title="Back to all commands" aria-label="Back to all commands">' + ic('x') + '</span></span>' : '')
+      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
       + keycaps('esc') + '</div>'
-    + '<div class="pallist" id="pallist">' + list + '</div>' + dial
+    + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>' + dial
     + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'
       + '<span>' + keycaps('↑') + keycaps('↓') + ' Move</span>'
       + (S.scope ? '<span>' + keycaps('⌫') + ' Back</span>' : '')
@@ -2698,7 +2714,8 @@ function renderOverlays() {
   if (keep) {
     const again = o.querySelector('#' + CSS.escape(keep.id));
     if (again) {
-      if (keep.value && !again.value) again.value = keep.value;
+      // Not #palq: its value is always drawn from S.q, and entering a scope clears S.q on purpose.
+      if (keep.value && !again.value && keep.id !== 'palq') again.value = keep.value;
       again.focus();
       // A password input still supports a selection range; a caret past the
       // end of a value the repaint shortened is clamped by the DOM.
@@ -2738,6 +2755,8 @@ function renderOverlays() {
     const first = o.querySelector('#wiz-url') || o.querySelector('#wiz-key');
     if (first) { first.focus(); first.setSelectionRange(first.value.length, first.value.length); }
   }
+  // SH-03: the delete alert arrives with Cancel focused (innerHTML ignores `autofocus`).
+  if (!(document.activeElement && o.contains(document.activeElement))) { const af = o.querySelector('.alertbox [autofocus]'); if (af) af.focus(); }
   // r5 item 7: the intro's canvas is destroyed by the rebuild above.
   obIntroMounted();
 }
@@ -2894,51 +2913,71 @@ function contextHTML() {
     + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
 }
 
+/* The kit dot for a chatDot()/taskDot() pair, in the Tactile status grammar:
+   running pulses brand, waiting for an approval is amber, a failed or stopped
+   turn is red, finished-not-read is filled brand, read is a hollow ring. The
+   state stays whatever chatDot said; only the tip picks the tone. */
+function ovDotCls(state, tip) {
+  if (state === 'running') return 'tk-dot tk-dot--brand tk-dot--pulse';
+  if (state !== 'filled') return 'tk-dot tk-dot--hollow';
+  // Anchored on chatDot/taskDot's own wording, so an error message quoted after "failed: " cannot pick the tone.
+  if (/^(the last turn failed|stopped:|failed:|blocked:)/.test(tip || '')) return 'tk-dot tk-dot--red';
+  if (tip === 'waiting for your approval') return 'tk-dot tk-dot--amber';
+  return 'tk-dot tk-dot--brand';
+}
+
 function sessionSheet() {
   let rows = '';
   // item 6: the "N turns" subtitle is gone everywhere, so this sheet carries
   // the same dot and the same one-word state the sidebar row carries.
   SESSIONS.forEach((s) => {
-    const [state] = chatDot(s);
-    rows += '<button class="row" style="padding:0;height:40px" data-ses="' + esc(s.id) + '">'
-      + '<span class="sdot ' + state + '"></span>'
-      + '<span class="main"><span class="t" style="font-weight:400">' + esc(s.t) + '</span></span>'
+    const [state, tip] = chatDot(s);
+    rows += '<button class="row' + (s.id === S.sessionId ? ' on' : '') + '" data-ses="' + esc(s.id) + '" title="' + esc(s.t + ' · ' + tip) + '">'
+      + '<span class="' + ovDotCls(state, tip) + '"></span>'
+      + '<span class="main"><span class="t">' + esc(s.t) + '</span></span>'
       + '<span class="meta">' + esc(chatStatusWord(s)) + '</span></button>';
   });
-  return sheet('Switch session', '<input class="btn btn-s" style="width:100%;height:32px" placeholder="Filter sessions…">' + rows,
-    '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Open</button>');
+  return sheet('Switch session',
+    '<label class="tk-inpwrap sesfilter">' + ic('search') + '<input placeholder="Filter sessions…" spellcheck="false"></label>'
+    + '<div class="rows sesrows">' + (rows || '<div class="sesempty">No chats in this workspace yet.</div>') + '</div>',
+    '<button class="btn btn-g sm" data-act="close">Cancel</button><button class="btn btn-p sm" data-act="close">Open</button>');
 }
 
 function shortcutsSheet() {
+  /* The third column is the web prototype's Ctrl chord. The sheet no longer
+     draws it ("proto Ctrl K" described a different app). The approval row lost
+     "grant" and its S key: approvals are allow-once or deny, S does nothing. */
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
     ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
-    ['Cycle run mode','⌃ R',''],['Approve / grant / deny / abort','Y S N ⎋',''],
+    ['Cycle run mode','⌃ R',''],['Approve / deny / abort','Y N ⎋',''],
     ['Settings','⌘ ,','Ctrl ,'],['Shortcuts','⌘ /',''],
   ];
   return sheet('Keyboard shortcuts',
-    '<div class="rows">' + rows.map(([t, k, p]) => '<div class="row" style="padding:0;height:32px">'
-      + '<span class="main"><span class="t" style="font-weight:400">' + esc(t) + '</span></span>'
-      + '<span class="hstack">' + keycaps(k) + (p ? '<span class="cap">proto ' + esc(p) + '</span>' : '') + '</span></div>').join('') + '</div>',
-    '<button class="btn btn-p" data-act="close">Done</button>');
+    '<div class="kbgrid">' + rows.map(([t, k]) => '<div class="row kbrow">'
+      + '<span class="main"><span class="t">' + esc(t) + '</span></span>'
+      + '<span class="kbkeys">' + keycaps(k) + '</span></div>').join('') + '</div>',
+    '<button class="btn btn-p sm" data-act="close">Done</button>', 'sheet-kb');
 }
 
 function alertHTML() {
   const a = S.alert;
-  return '<div class="sheetwrap" style="align-items:center;padding:0" data-close="1"><div class="alertbox">'
-    + '<div style="display:flex;justify-content:center">' + MARK_COLOR.replace('width="16" height="16"', 'width="40" height="40"') + '</div>'
-    + '<div class="ttl" style="text-align:center">' + esc(a.title) + '</div>'
-    + '<p class="cap" style="text-align:center;margin:0">' + esc(a.msg) + '</p>'
-    + '<div class="hstack" style="justify-content:center;margin-top:4px">'
+  return '<div class="sheetwrap alertwrap" data-close="1"><div class="alertbox" role="alertdialog" aria-label="' + esc(a.title) + '">'
+    + '<span class="alertmark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<div class="ttl">' + esc(a.title) + '</div>'
+    + '<p class="alertmsg">' + esc(a.msg) + '</p>'
+    + '<div class="alertacts">'
       + '<button class="btn btn-s" data-act="close" autofocus>Cancel</button>'
-      + '<button class="btn btn-danger" data-act="' + a.act + '">' + esc(a.ok) + '</button></div></div></div>';
+      + '<button class="btn btn-df" data-act="' + a.act + '">' + esc(a.ok) + '</button></div></div></div>';
 }
 
-function sheet(title, body, foot) {
-  return '<div class="sheetwrap" data-close="1"><div class="sheet"><div class="sheethead"><div class="ttl">' + esc(title) + '</div></div>'
+function sheet(title, body, foot, cls) {
+  return '<div class="sheetwrap" data-close="1"><div class="sheet' + (cls ? ' ' + cls : '') + '" role="dialog" aria-label="' + esc(title) + '">'
+    + '<div class="sheethead"><div class="ttl">' + esc(title) + '</div>'
+    + '<button class="iconbtn sheetx" data-act="close" title="Close" aria-label="Close">' + ic('x') + '</button></div>'
     + '<div class="sheetbody">' + body + '</div><div class="sheetfoot">' + foot + '</div></div></div>';
 }
 
@@ -3284,10 +3323,11 @@ async function privacySet(enabled) {
 function renderToasts() {
   $('#toasts').innerHTML = S.toasts.map((t) => {
     const bad = t.kind === 'bad';
+    // No whitespace between the text spans: drivers read the toast's textContent.
     return '<div class="toast' + (bad ? ' bad' : '') + '">'
-      + '<span style="color:var(--' + (bad ? 'danger' : 'success') + ');display:flex">' + ic(bad ? 'warn' : 'check') + '</span>'
-      + '<span><span style="font-weight:500">' + esc(t.t) + '</span>'
-      + (t.s ? '<span class="cap" style="display:block">' + esc(t.s) + '</span>' : '') + '</span></div>';
+      + '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
+      + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
+      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span></div>';
   }).join('');
 }
 function toast(t, s, kind) {
@@ -3538,6 +3578,7 @@ function act(a) {
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
+                           try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
                            render(); return; }
   if (k === 'mode')      { S.mode = v; if (S.overlay === 'palette') close(); render(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
@@ -4799,6 +4840,8 @@ document.addEventListener('keydown', (e) => {
   if (!inText && k.length === 1 && !mod && S.room === 'chat') { const en = $('#entry'); if (en) en.focus(); }
 });
 
+// The theme picked in the palette or View › Appearance (act 'theme') survives a relaunch.
+try { const t = localStorage.getItem('atag.theme'); if (t === 'light' || t === 'dark') { S.theme = t; document.documentElement.setAttribute('data-theme', t); } } catch (e) { /* no storage: follow macOS */ }
 render();
 setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
 /* r5 item 2: below 1000px the sidebar collapses to the same 52px rail with no
