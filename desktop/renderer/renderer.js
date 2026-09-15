@@ -3153,6 +3153,9 @@ function renderSettings() {
      clicked. Kept per pane, so switching tabs still starts at the top. */
   const keepScroll = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
     ? ((old.querySelector('.setbody') || {}).scrollTop || 0) : 0;
+  // Soft Tactile: the nav's command list scrolls on its own, and the same
+  // rebuild would throw it back to the top on every poll.
+  const keepNavScroll = old ? ((old.querySelector('.setnav-cmds') || {}).scrollTop || 0) : 0;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
@@ -3165,43 +3168,40 @@ function renderSettings() {
      is what the click handler's new branch tests. Deliberately NOT `data-close`:
      that branch runs act('close'), which does not clear S.settings. */
   el.dataset.setclose = '1';
-  /* B.8 — the strip scrolls, and it used to say so nowhere: "изначально
-     ваще непонятно что эту полосу можно перекрутить". The pipe separators
-     are gone (they were doing a rule's job badly) and the strip is wrapped in
-     a rail that fades at whichever end still has tabs behind it. */
-  const strip = SETTINGS_TABS.map(([id, label]) =>
-      '<button class="settab' + (cur === id ? ' on' : '') + '" data-act="settings:' + id + '">'
-      + esc(label + tabSuffix(id)) + '</button>').join('');
-  el.innerHTML = '<div class="setwin"><div class="settb">'
-    /* B.8 — one close control with a name on it, not three imitation macOS
-       lights of which one happened to be live. Every icon-only control in
-       this window carries a label or a tooltip: with the sidebar collapsed
-       the tester could not tell what any of the crosses did. */
-    + '<span class="setttl">Menu › Manage</span>'
-    + '<span style="flex:1"></span>'
-    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
-    + '</div><div class="setcols">'
-    + '<div class="setmenu">' + menuTreeHTML() + '</div>'
+  /* Soft Tactile (ST-01…33): a two-column window on the well. The nav on the
+     left IS the tab switcher — the eight Manage rows carry `.settab` (+`.on`,
+     `data-act="settings:<id>"`, text "Label (N)") inside the menu rows the
+     TUI tree draws — and the body is a floating card: crumb + close, the
+     pane, and the diagnostics data plate at the foot. Each tab draws its own
+     toolbar at the top of `.setbody`; the frame never repeats the tab title. */
+  const tabLabel = (SETTINGS_TABS.find((t) => t[0] === cur) || [cur, cur])[1];
+  const buildText = BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—';
+  const agentText = S.live.binary || 'not started';
+  const diag = diagLine();
+  el.innerHTML = '<div class="setwin" role="dialog" aria-label="Manage">'
+    + '<nav class="setnav" aria-label="Manage"><div class="setmenu">' + menuTreeHTML() + '</div></nav>'
     + '<div class="setmain">'
-    /* The strip WRAPS rather than scrolling. The brief allows either, and a
-       strip that cannot overflow cannot hide its own navigation — there is no
-       affordance to miss and no gesture to discover. */
-    + '<div class="settabs">' + strip + '</div>'
-    + '<div class="setbody">' + settingsPane() + '</div>'
-    /* B.8 — the diagnostics line becomes a data plate at the BOTTOM, in mono,
-       carrying the agent binary and the build. It used to sit above the pane
-       as a grey sentence competing with the content. */
+    + '<div class="settb"><div class="tk-crumb"><span class="k">Manage ›</span><h3 class="setttl">' + esc(tabLabel) + '</h3></div>'
+    + '<span class="grow"></span>'
+    /* B.8 — one close control with a name on it. Every icon-only control in
+       this window carries a label or a tooltip. */
+    + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
+    + '</div>'
+    + '<div class="setbody" data-pane="' + esc(cur) + '">' + settingsPane() + '</div>'
+    /* B.8 — the diagnostics line is a data plate at the foot, in mono,
+       carrying the build and the agent binary. Sentence-case keys. */
     + '<div class="setplate plate"><dl>'
-      + '<dt>Build</dt><dd>' + esc(BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—') + '</dd>'
-      + '<dt>Agent</dt><dd>' + esc(S.live.binary || 'not started') + '</dd>'
-      + '<dt>State</dt><dd>' + esc(diagLine()) + '</dd>'
+      + '<div class="set-kv"><dt>Build</dt><dd>' + esc(buildText) + '</dd></div>'
+      + '<div class="set-kv set-kv--agent"><dt>Agent</dt><dd title="' + esc(agentText) + '">' + esc(agentText) + '</dd></div>'
+      + '<div class="set-kv set-kv--wide"><dt>State</dt><dd title="' + esc(diag) + '">' + esc(diag) + '</dd></div>'
     + '</dl></div>'
     + '</div>'
-    + '</div></div>';
+    + '</div>';
   $('#window').appendChild(el);
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
+  if (keepNavScroll) { const cmds = el.querySelector('.setnav-cmds'); if (cmds) cmds.scrollTop = keepNavScroll; }
   if (MENUFOCUS.want) { const first = el.querySelector('.setmenu button.menurow'); if (first) first.focus(); }
 }
 
@@ -3226,24 +3226,66 @@ function tabSuffix(id) {
 
 function menuTreeHTML() {
   const cur = settingsPaneId(S.settingsPane);
+  // Soft Tactile nav icons, one per node (function-local: no top-level state).
+  const ICON = {
+    'go.manage.tasks':'tasks', 'go.manage.skills':'skills', 'go.manage.memory':'memory', 'go.manage.mcp':'plug',
+    'go.manage.llm':'cpu', 'go.manage.telegram':'send', 'go.manage.import':'import', 'go.manage.privacy':'lock',
+    'session.new':'plus', 'session.switch':'chat', 'session.clear':'trash', 'session.context':'gauge', 'session.id':'hash',
+    'session.window':'term', 'model.chat':'cpu', 'run.mode':'shield', 'run.abort':'stop', 'run.queue':'list',
+    'run.steer':'arrowR', 'run.expand':'expand', 'run.collapse':'minus', 'setup.theme':'sun', 'setup.mouse':'dots',
+    'setup.sidebar':'sidebar', 'setup.analytics':'lock', 'setup.skill':'skills', 'setup.task':'tasks',
+    'help.commands':'search', 'help.tools':'bolt', 'help.dump':'download', 'help.report':'flag', 'help.quit':'x',
+    'danger.uninstall':'trash',
+  };
+  // The chord is live in the desktop too: ctrl+g then the key (the keydown
+  // handler's CHORD layer). The keycap shows the letter; the `ctrl+g ` prefix
+  // stays in the text at zero size, so the node still reads "ctrl+g t".
+  const chordCap = (n) => n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '"><span class="set-z">ctrl+g </span><span class="kc">' + esc(n.chord) + '</span></span>' : '';
   const row = (n, sub) => {
     const on = n.tab && n.tab === cur;
-    // The chord is live in the desktop too: ctrl+g then the key (the keydown handler's CHORD layer).
-    const chord = n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '">ctrl+g ' + esc(n.chord) + '</span>' : '';
-    if (n.na) return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></div>';
-    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"><span class="lb">' + esc(n.label) + '</span>' + chord + '</button>';
+    const icon = ic(ICON[n.id] || 'dots');
+    if (n.na) {
+      return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop">' + icon
+        + '<span class="lbw"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></span></div>';
+    }
+    if (n.tab) {
+      /* A Manage node is also the tab switcher: `.settab` carries the tab's
+         act, label and count ("Tasks (12)" as text; the brackets are drawn at
+         zero size so the row shows "Tasks 12"). A click on the label lands on
+         `settings:<id>`, anywhere else on the row on `menu:go.manage.<id>` —
+         the same destination. */
+      const suffix = tabSuffix(n.tab);
+      const count = suffix ? '<span class="setcount"><span class="set-z"> (</span>' + esc(suffix.slice(2, -1)) + '<span class="set-z">)</span></span>' : '';
+      return '<button class="menurow setrow' + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + (on ? ' aria-current="page"' : '') + '>' + icon
+        + '<span class="settab' + (on ? ' on' : '') + '" data-act="settings:' + esc(n.tab) + '"><span class="lb">' + esc(n.label) + '</span>' + count + '</span>'
+        + chordCap(n) + '</button>';
+    }
+    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '">' + icon
+      + '<span class="lb">' + esc(n.label) + '</span>' + chordCap(n) + '</button>';
   };
   // r4-ui item 5: no node carries `sub` any more — `Observe` and `Manage` were
   // the only two, and both left. The branch (and `.menurow.sub` / `.parent` in
-  // styles.css) is kept on purpose: MENU_GROUPS is a copy of the TUI registry
+  // the stylesheet) is kept on purpose: MENU_GROUPS is a copy of the TUI registry
   // and the next node pulled across may well be a parent, and it is what
   // __menuSubRows() asserts zero of — delete the branch and that check stops
   // meaning anything.
-  return MENU_GROUPS.map(([label, nodes]) =>
-    '<div class="menuhd">' + esc(label) + '</div>'
-    + nodes.map((n) => n.sub
-        ? '<div class="menurow parent"><span class="lb">' + esc(n.label) + ' →</span></div>' + n.sub.map((c) => row(c, true)).join('')
-        : row(n, false)).join('')).join('');
+  const group = (nodes) => nodes.map((n) => n.sub
+    ? '<div class="menurow parent">' + ic(ICON[n.id] || 'dots') + '<span class="lb">' + esc(n.label) + ' →</span></div>' + n.sub.map((c) => row(c, true)).join('')
+    : row(n, false)).join('');
+  /* Layout: "Manage" and its eight tabs on top; every other group of the
+     real tree under "Commands" in a list that scrolls on its own; the Danger
+     zone (not available) and the chord hint pinned at the foot. */
+  const manage = MENU_GROUPS.filter(([label]) => label === 'Manage');
+  const danger = MENU_GROUPS.filter(([label]) => label === 'Danger zone');
+  const commands = MENU_GROUPS.filter(([label]) => label !== 'Manage' && label !== 'Danger zone');
+  return manage.map(([label, nodes]) => '<div class="menuhd setnav-title">' + esc(label) + '</div>' + group(nodes)).join('')
+    + '<div class="setnav-cmds"><div class="setnav-h">Commands</div>'
+      + commands.map(([label, nodes]) => '<div class="menuhd">' + esc(label) + '</div>' + group(nodes)).join('')
+    + '</div>'
+    + '<div class="setnav-foot">'
+      + danger.map(([, nodes]) => group(nodes)).join('')
+      + '<div class="setnav-hint"><span class="kc">⌃G</span> then a letter</div>'
+    + '</div>';
 }
 
 /* debug-diagnostics-line.tsx: `cwd | llama | llm — · step — | kv — |
@@ -3372,7 +3414,7 @@ function settingsPane() {
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
 function comingNote(label) {
-  return '<div class="tui"><b>' + esc(label) + '</b><div class="ter">coming in the next step of this branch</div></div>';
+  return '<div class="set-pane"><div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('clock') + '</span><h4>' + esc(label) + '</h4><p>coming in the next step of this branch</p></div></div>';
 }
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
    + session grants, no ladder. The desktop's approval path only offers
@@ -3384,21 +3426,40 @@ function privacyPane() {
   const eff = privacyEffective();
   const known = typeof eff === 'boolean';
   const on = known && eff;
-  return '<div class="tui">'
-    + '<b>Analytics</b>'
-    + '<div>   <span class="ter">anonymous usage </span>' + (known ? '<span class="' + (on ? 'tuimsg' : 'ter') + '">' + (on ? 'on' : 'off') + '</span>'
-        : PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError) ? '<span class="ter">…</span>'
-        : '<span class="ter">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</span>')
-      + (PRIV.busy ? '<span class="ter">  …</span>' : '') + '</div>'
-    + '<div class="ter">   Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
-    + '<b style="margin-top:8px">Session grants</b>'
-    + '<div class="ter">   none active — grants you make with [s] / [a] at a prompt appear here for this session</div>'
-    + (PRIV.message ? '<div class="tuimsg" style="margin-top:8px">   ' + esc(PRIV.message)
-        + ' <span class="ter">(the running agent picks it up after Restart Agent Runtime)</span> '
-        + '<button class="btn btn-s" data-act="agent:restart" style="height:22px">Restart Agent Runtime</button></div>' : '')
-    + (PRIV.lastError ? '<div class="tuierr" style="margin-top:8px">   ' + esc(PRIV.lastError) + '</div>' : '')
-    + '<div class="tuihint"><button data-act="privacy:analytics"' + (!known || PRIV.busy ? ' disabled' : '') + '>a: analytics ' + (on ? 'off' : 'on') + '</button>'
-      + '<span>·</span><button data-act="privacy:refresh">r: refresh</button></div>'
+  const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
+  // ST-33: the state word the TUI prints ("anonymous usage on / off / …"), kept as the switch row's accessible text.
+  const stateWord = known ? (on ? 'on' : 'off') : pending ? '…' : '—';
+  const unknownNote = !known && !pending
+    ? '<div class="tk-help tk-help--warn">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</div>' : '';
+  // What is and is not sent — both lists are the TUI sentence below, split into its parts.
+  const sentList = (title, items, icon, tone) => '<div class="set-privcol"><div class="tk-sh">' + esc(title) + '</div><ul class="set-privul">'
+    + items.map((t) => '<li><span class="tk-ico tk-ico--xs ' + tone + '">' + ic(icon) + '</span>' + esc(t) + '</li>').join('') + '</ul></div>';
+  return '<div class="set-pane set-privacy">'
+    // The TUI's own restart sentence for this toggle, in the shared restart-line look.
+    + (PRIV.message ? '<div class="tuimsg tk-notice tk-notice--blue">' + ic('refresh')
+        + '<span class="grow">' + esc(PRIV.message) + ' <span class="sec">(the running agent picks it up after Restart Agent Runtime)</span></span>'
+        + '<button class="btn btn-t sm" data-act="agent:restart">Restart Agent Runtime</button></div>' : '')
+    + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '')
+    + '<div class="tk-list set-setlist">'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t"><span class="set-sr">Analytics · anonymous usage ' + stateWord + '</span><span aria-hidden="true">Anonymous usage analytics</span></div>'
+          + '<div class="d">Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
+          + unknownNote + '</div>'
+        + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : stateWord)) + '</span>'
+        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
+          + (!known || PRIV.busy ? ' disabled' : '') + ' title="a: analytics ' + (on ? 'off' : 'on') + '"></button>'
+      + '</div>'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Session grants</div>'
+          + '<div class="d">The desktop answers each approval once, allow or deny, so a session holds no standing grants.</div></div>'
+        + '<span class="tk-chip tk-chip--sm tk-chip--line">none active</span>'
+      + '</div>'
+    + '</div>'
+    + '<div class="set-privgrid">'
+      + sentList('What is sent', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
+      + sentList('What never leaves this machine', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
+    + '</div>'
+    + tuiHints([['a: analytics ' + (on ? 'off' : 'on'), 'privacy:analytics', {disabled: !known || PRIV.busy}], ['r: refresh', 'privacy:refresh']])
     + '</div>';
 }
 /* The value the TUI shows: the user file's key when set, else the
@@ -12434,13 +12495,15 @@ async function tasksRefresh(quiet) {
 /* The Tasks list's filter bar only (the `refresh: auto (Ns ago)` clock);
    skipped while the `/` search input lives inside it. */
 function tkRefreshBar() {
-  if (TK.mode !== 'list' || TK.searchOpen) return;
+  if (TK.mode !== 'list') return;
   const box = S.settings ? document.querySelector('#settings .setbody') : document.querySelector('#content .tuiwrap');
-  const bar = box && box.querySelector('.tuibar');
-  if (!bar) return;
+  // Soft Tactile: only the readout ticks; the search box and the buttons in
+  // the same toolbar are left alone, so a caret or a focus ring survives.
+  const readout = box && box.querySelector('.tuibar .set-readout');
+  if (!readout || readout.contains(document.activeElement)) return;
   const tmp = document.createElement('div');
-  tmp.innerHTML = tkFilterBar(tkVisibleRows().length);
-  bar.replaceWith(tmp.firstElementChild);
+  tmp.innerHTML = tkReadoutHTML(tkVisibleRows().length);
+  readout.replaceWith(tmp.firstElementChild);
 }
 /* Repaint the Tasks tab in place and keep the focus on the button (by its
    data-act) the user was on. With nothing focused inside the window a full
@@ -12465,35 +12528,69 @@ function tasksTab() {
 function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
 }
+/* Soft Tactile (ST-01): the Tasks toolbar — the filters as a segmented
+   control (every TK_FILTER_ORDER value), then search, the auto-refresh
+   readout, Refresh and New task. `.tuibar` stays on it: tkRefreshBar finds the
+   readout inside. */
 function tkFilterBar(visibleCount) {
-  const now = Date.now();
+  const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
+    + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
+    + '</div>';
+  const search = TK.searchOpen
+    ? '<label class="tk-inpwrap set-search is-open">' + ic('search') + '<input id="tk-search" value="' + esc(TK.search) + '" placeholder="Search tasks" autocomplete="off" spellcheck="false"></label>'
+    : '<button class="tk-inpwrap set-search" data-act="tasks:search" title="Search (/)">' + ic('search')
+      + (TK.search.length ? '<span class="v">' + esc(TK.search) + '</span>' : '<span class="ph">Search tasks</span>') + '<span class="kc">/</span></button>';
+  return '<div class="tuibar tk-bar set-toolbar">'
+    + '<div class="set-tbrow">' + seg + '</div>'
+    + '<div class="set-tbrow">' + search
+      + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
+      + tkReadoutHTML(visibleCount)
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-s sm" data-act="tasks:refresh" title="r refresh">' + ic('refresh') + 'Refresh</button>'
+      + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
+    + '</div></div>';
+}
+/* The readout tkRefreshBar repaints on each poll: `auto · refreshed 4s ago ·
+   7 of 12`. A click is the TUI's `a auto`. */
+function tkReadoutHTML(visibleCount) {
   const mode = TK.auto ? 'auto' : 'manual';
   let refresh;
-  if (TK.lastRefreshedAt === null) refresh = mode + ' (never)';
+  if (TK.lastRefreshedAt === null) refresh = 'never refreshed';
   else {
-    const seconds = Math.floor(Math.max(0, now - TK.lastRefreshedAt) / 1000);
-    refresh = seconds < 1 ? mode + ' (just now)' : seconds < 60 ? mode + ' (' + seconds + 's ago)' : mode + ' (' + Math.floor(seconds / 60) + 'm ago)';
+    const seconds = Math.floor(Math.max(0, Date.now() - TK.lastRefreshedAt) / 1000);
+    refresh = seconds < 1 ? 'refreshed just now' : seconds < 60 ? 'refreshed ' + seconds + 's ago' : 'refreshed ' + Math.floor(seconds / 60) + 'm ago';
   }
-  const search = TK.searchOpen
-    ? '  ·  /<input id="tk-search" value="' + esc(TK.search) + '" placeholder="" autocomplete="off" spellcheck="false">'
-    : TK.search.length ? '  ·  /' + esc(TK.search) : '';
-  return '<div class="tuibar"><b>Tasks</b><span class="ter">  filter: ' + esc(TK.filter) + '  ·  ' + visibleCount + '/' + TK.rows.length
-    + search + '  ·  refresh: ' + esc(refresh) + (TK.loading ? '  ·  loading…' : '') + '</span></div>';
+  return '<button class="set-readout" data-act="tasks:auto" title="Auto-refresh every 5 s — a toggles">'
+    + (TK.loading ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (TK.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
+    + '<span>' + esc(mode + ' · ' + (TK.loading ? 'loading…' : refresh) + ' · ' + visibleCount + ' of ' + TK.rows.length) + '</span></button>';
+}
+/* Status chip: running pulses brand, failed red, blocked amber (waiting on
+   something), completed green words, cancelled an outline. */
+function tkStatusChip(status) {
+  const tone = {running:'tk-chip--blue', completed:'tk-chip--green', failed:'tk-chip--red', blocked:'tk-chip--amber', cancelled:'tk-chip--line'}[status] || '';
+  return '<span class="tk-chip tk-chip--sm ' + tone + '">'
+    + (status === 'running' ? '<span class="tk-dot tk-dot--brand tk-dot--pulse"></span>' : '') + esc(status) + '</span>';
 }
 function tkMessages() {
-  return (TK.msg ? '<div class="tuimsg">' + esc(TK.msg) + '</div>' : '')
-    + (TK.msg && TK.note ? '<div class="ter">' + esc(TK.note) + '</div>' : '')
-    + (TK.err ? '<div class="tuierr">! ' + esc(TK.err) + '</div>' : '');
+  return (TK.msg ? '<div class="tuimsg tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(TK.msg)
+      + (TK.note ? '<span class="set-note">' + esc(TK.note) + '</span>' : '') + '</span></div>' : '')
+    + (TK.err ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TK.err) + '</span>'
+      + '<button class="btn btn-s xs" data-act="tasks:refresh">Try again</button></div>' : '');
 }
+/* ST-04: recurring tasks ask first (one-shot tasks cancel straight away). */
 function tkCancelModal() {
   if (!TK.cancel) return '';
-  return '<div class="tuimodal warn"><b style="color:var(--warn)">cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task?</b>'
-    + '<div><span class="ter">id:</span> ' + esc(TK.cancel.taskId) + '</div>'
-    + '<div class="tuihint" style="margin-top:2px"><span>this stops all future firings.</span>'
-    + '<button data-act="tasks:cancelConfirm">y = confirm</button><span>·</span><button data-act="tasks:cancelKeep">n / Esc = keep</button></div></div>';
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--warn set-modal" role="alertdialog" aria-label="Cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--amber">' + ic('alert') + '</span><h4>Cancel ' + (TK.cancel.isRecurring ? 'recurring ' : '') + 'task?</h4></div>'
+    + '<p class="mono">id: ' + esc(TK.cancel.taskId) + '</p>'
+    + '<p>This stops all future firings.</p>'
+    + '<div class="acts"><button class="btn btn-s sm" data-act="tasks:cancelKeep" title="n / Esc = keep">Keep<span class="kc">N</span></button>'
+      + '<button class="btn btn-df sm" data-act="tasks:cancelConfirm" title="y = confirm">Cancel task<span class="kc">Y</span></button></div>'
+    + '</div></div>';
 }
+/* One keycap hint button: `n new`, `R run-now`… (the Tasks tab's own hint strip). */
 function tkHint(key, label, act) {
-  return '<button data-act="' + act + '">' + esc(key + ' ' + label) + '</button><span>·</span>';
+  return '<button class="tk-hint" data-act="' + act + '"><span class="kc">' + esc(key) + '</span> ' + esc(label) + '</button>';
 }
 function tkListHTML() {
   const rows = tkVisibleRows();
@@ -12501,7 +12598,15 @@ function tkListHTML() {
   const cur = Math.max(0, Math.min(TK.cursor, rows.length - 1));
   let body;
   if (!rows.length) {
-    body = '<div class="ter" style="padding:10px 0">no tasks match the current filter — press `n` to create one, `f` to cycle filter, `r` to refresh.</div>';
+    // The TUI sentence is the pane's accessible text; the same three keys are buttons below it.
+    const what = TK.filter === 'all' ? 'tasks' : TK.filter + ' tasks';
+    body = '<div class="tk-empty set-empty">'
+      + '<span class="set-sr">no tasks match the current filter — press `n` to create one, `f` to cycle filter, `r` to refresh.</span>'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('tasks') + '</span>'
+      + '<h4 aria-hidden="true">' + (TK.rows.length ? 'No ' + esc(what) + (TK.search ? ' match “' + esc(TK.search) + '”' : ' match the current filter') : 'No tasks yet') + '</h4>'
+      + '<p aria-hidden="true">Create one, cycle the filter, or refresh.</p>'
+      + '<div class="tk-hints" aria-hidden="true">' + tkHint('n', 'new task', 'tasks:new') + tkHint('f', 'cycle filter', 'tasks:filter') + tkHint('r', 'refresh', 'tasks:refresh') + '</div>'
+      + '</div>';
   } else {
     // tasks-list.tsx:37-41: window the rows around the cursor (row-window.ts
     // computeWindowStart) and say how many are hidden above / below. The
@@ -12511,88 +12616,125 @@ function tkListHTML() {
     const page = rows.slice(start, start + TK_MAX_ROWS);
     const hiddenBefore = start;
     const hiddenAfter = Math.max(0, rows.length - start - page.length);
-    body = '<div class="tuihead">  status   schedule               next-run       session   message</div>'
-      + (hiddenBefore > 0 ? '<button class="tuimore" data-act="tasks:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
+    const more = (dir, n) => '<tr class="set-morerow"><td colspan="5"><button class="tuimore" data-act="tasks:page:' + dir + '">' + (dir === 'up' ? '↑ ' + n + ' above' : '↓ ' + n + ' below') + '</button></td></tr>';
+    body = '<div class="tk-list set-tblcard"><table class="tk-tbl set-tktbl">'
+      // The TUI's column header, kept as the table's accessible caption.
+      + '<caption class="set-sr">  status   schedule               next-run       session   message</caption>'
+      + '<thead><tr><th>Status</th><th>Schedule</th><th>Next run</th><th>Session</th><th>Message</th></tr></thead><tbody>'
+      + (hiddenBefore > 0 ? more('up', hiddenBefore) : '')
       + page.map((row, idx) => {
         const i = idx + start;
         const sel = i === cur;
-        return '<button class="tuirow' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '">'
-          // TaskRow: `{chevron} {status(9)}{schedule(22)} {next(14)} {session(10)}{message}` — no
-          // separator after the status or session cells, so the columns sit under the header.
-          + (sel ? '▸' : ' ') + ' <span class="' + tkStatusClass(row.status) + '">' + esc(row.status.padEnd(9)) + '</span>'
-          + '<span class="ter">' + esc(tkTrunc(row.scheduleLabel, 22).padEnd(22) + ' ' + formatRelativeMs(row.scheduledFor, now).padEnd(14) + ' '
-            + (row.sessionId ? tkShortId(row.sessionId) : '—').padEnd(10)) + '</span>'
-          + esc(tkTrunc(row.userMessage, 64)) + '</button>';
+        return '<tr class="click' + (sel ? ' on' : '') + '" data-task-row="' + esc(row.id) + '" data-act="tasks:detail:' + esc(row.id) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+          + '<td><button class="set-rowbtn" data-act="tasks:detail:' + esc(row.id) + '" title="Open task ' + esc(row.id) + '">' + tkStatusChip(row.status) + '</button></td>'
+          + '<td class="mono set-sched" title="' + esc(row.scheduleLabel) + '">' + esc(row.scheduleLabel) + '</td>'
+          + '<td class="mono">' + esc(formatRelativeMs(row.scheduledFor, now)) + '</td>'
+          + '<td class="mono" title="' + esc(row.sessionId || '') + '">' + esc(row.sessionId ? tkShortId(row.sessionId) : '—') + '</td>'
+          + '<td class="set-msg" title="' + esc(row.userMessage) + '">' + esc(row.userMessage) + '</td></tr>';
       }).join('')
-      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="tasks:page:down">↓ ' + hiddenAfter + ' below</button>' : '');
+      + (hiddenAfter > 0 ? more('down', hiddenAfter) : '')
+      + '</tbody></table></div>';
   }
-  const hints = '<div class="tuihint"><span>j/k move</span><span>·</span><span>Enter detail</span><span>·</span>'
+  const selRow = rows.length ? rows[cur] : null;
+  const hints = '<div class="tuihint tk-hints set-hints"><span class="tk-hint"><span class="kc">j/k</span> move</span>'
+    + (selRow ? tkHint('Enter', 'detail', 'tasks:detail:' + esc(selRow.id)) : '<span class="tk-hint"><span class="kc">Enter</span> detail</span>')
     + tkHint('n', 'new', 'tasks:new') + tkHint('c', 'cancel', 'tasks:cancel') + tkHint('R', 'run-now', 'tasks:run')
     + tkHint('r', 'refresh', 'tasks:refresh') + tkHint('a', 'auto', 'tasks:auto') + tkHint('f', 'filter', 'tasks:filter')
-    + tkHint('/', 'search', 'tasks:search') + '<button data-act="tasks:clearSearch">Esc clear search</button></div>';
-  return '<div class="tui">' + tkFilterBar(rows.length) + tkMessages() + tkCancelModal() + body + hints + '</div>';
+    + tkHint('/', 'search', 'tasks:search') + tkHint('Esc', 'clear search', 'tasks:clearSearch') + '</div>';
+  return '<div class="set-pane set-tasks">' + tkFilterBar(rows.length) + tkMessages() + body + hints + tkCancelModal() + '</div>';
 }
+/* ST-02: everything the agent exposes about one task, the last error in
+   full, and its three actions. */
 function tkDetailHTML() {
   const row = TK.rows.find((r) => r.id === TK.detailId);
+  const back = '<button class="btn btn-g sm" data-act="tasks:back" title="Esc back">' + ic('chevL') + 'All tasks</button>';
   if (!row) {
-    return '<div class="tui"><div style="color:var(--warn);padding:10px 0">task ' + esc(TK.detailId || '?') + ' not found in the current snapshot. Press Esc to return to the list.</div>'
-      + '<div class="tuihint"><button data-act="tasks:back">Esc back</button></div></div>';
+    return '<div class="set-pane"><div class="tk-bar">' + back + '</div>'
+      + '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">task ' + esc(TK.detailId || '?') + ' not found in the current snapshot. Press Esc to return to the list.</span></div>'
+      + tuiHints([['Esc back', 'tasks:back']]) + '</div>';
   }
   const now = Date.now();
   const id = row.id;
-  return '<div class="tui">' + tkMessages() + tkCancelModal()
-    + '<div><b>' + esc(id) + '</b><span class="ter">  ·  ' + esc(row.origin) + '</span></div>'
-    + '<div><span class="ter">status:</span> ' + esc(row.status) + '  <span class="ter">schedule:</span> ' + esc(row.scheduleLabel) + (row.recurring ? ' (recurring)' : '') + '</div>'
-    + '<div><span class="ter">next-run:</span> ' + esc(formatRelativeMs(row.scheduledFor, now)) + ' <span class="ter">(' + esc(row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')</span></div>'
-    + '<div><span class="ter">attempts:</span> ' + row.attempts + '/' + row.maxAttempts + '  <span class="ter">session:</span> ' + esc(row.sessionId ?? '—') + '</div>'
-    + '<div class="ter">created: ' + esc(formatUnixMs(row.createdAt)) + ' · updated: ' + esc(formatUnixMs(row.updatedAt))
-      + (row.completedAt !== null ? ' · completed: ' + esc(formatUnixMs(row.completedAt)) : '') + '</div>'
-    + '<div class="ter" style="margin-top:8px">message:</div><div>' + esc(row.userMessage) + '</div>'
-    + (row.lastError ? '<div class="tuierr" style="margin-top:8px">last error: ' + esc(row.lastError) + '</div>' : '')
-    + '<div class="ter" style="margin-top:8px">recent firings:</div>'
+  const plate = [
+    ['Task', id + '  ·  ' + row.origin],
+    ['Schedule', row.scheduleLabel + (row.recurring ? ' (recurring)' : '')],
+    ['Next run', formatRelativeMs(row.scheduledFor, now) + ' (' + (row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')'],
+    ['Attempts', row.attempts + '/' + row.maxAttempts],
+    ['Session', row.sessionId ?? '—'],
+    ['Created', formatUnixMs(row.createdAt) + ' · updated ' + formatUnixMs(row.updatedAt) + (row.completedAt !== null ? ' · completed ' + formatUnixMs(row.completedAt) : '')],
+  ];
+  return '<div class="set-pane set-taskdetail">' + tkMessages()
+    + '<div class="tk-bar">' + back + '<span class="grow"></span>'
+      + '<button class="btn btn-s sm" data-act="tasks:open:' + esc(id) + '" title="o open session">' + ic('chat') + 'Open session</button>'
+      + '<button class="btn btn-s sm" data-act="tasks:run:' + esc(id) + '" title="R run-now">' + ic('play') + 'Run now</button>'
+      + '<button class="btn btn-danger sm" data-act="tasks:cancel:' + esc(id) + '" title="c cancel">Cancel task</button></div>'
+    + '<div class="set-wellcard">'
+      + '<h3 class="set-dtitle">' + esc(row.userMessage || id) + '</h3>'
+      + '<div class="set-chips">' + tkStatusChip(row.status) + (row.recurring ? '<span class="tk-chip tk-chip--sm">recurring</span>' : '')
+        + '<span class="mono set-meta">attempts ' + row.attempts + '/' + row.maxAttempts + '</span></div>'
+      + '<dl class="tk-plate set-plate">' + plate.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
+    + '</div>'
+    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>last error:</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
+    + '<div class="set-section"><div class="tk-sh">Recent firings</div>'
     // The TUI builds this feed in-process by diffing records between ticks; the HTTP API has no such surface.
-    + '<div class="ter">(firings are not exposed by the agent\'s HTTP API)</div>'
-    + '<div class="tuihint">' + tkHint('o', 'open session', 'tasks:open:' + esc(id)) + tkHint('R', 'run-now', 'tasks:run:' + esc(id))
-      + tkHint('c', 'cancel', 'tasks:cancel:' + esc(id)) + '<button data-act="tasks:back">Esc back</button></div>'
+    + '<p class="set-cap">(firings are not exposed by the agent\'s HTTP API)</p></div>'
+    + '<div class="tuihint tk-hints set-hints">' + tkHint('o', 'open session', 'tasks:open:' + esc(id)) + tkHint('R', 'run-now', 'tasks:run:' + esc(id))
+      + tkHint('c', 'cancel', 'tasks:cancel:' + esc(id)) + tkHint('Esc', 'back', 'tasks:back') + '</div>'
+    + tkCancelModal()
     + '</div>';
 }
 function tkNewForm() {
   return {kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
           preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
 }
+/* ST-03: kind as a segmented control, labelled fields, the next five
+   firings beside them, and Create task disabled until the schedule parses. */
 function tkFormHTML() {
   const f = TK.form || (TK.form = tkNewForm());
-  const label = (l) => '<span class="mk"></span><span class="lb"> ' + esc(l.padEnd(10)) + ': </span>';
-  const field = (l, name, value, placeholder) =>
-    '<div class="tkrow">' + label(l) + '<input data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"></div>';
-  const expr = f.kind === 'cron' ? field('cron', 'cronExpression', f.cronExpression, '0 * * * * (standard 5-field cron)')
-    : f.kind === 'interval' ? field('every (s)', 'intervalSeconds', f.intervalSeconds, '300')
-    : field('at', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z or Unix-ms');
+  const field = (l, name, value, placeholder, help, mono) =>
+    '<label class="tk-field tkrow"><span class="tk-lbl">' + esc(l) + '</span>'
+    + '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false">'
+    + (help ? '<span class="tk-help">' + esc(help) + '</span>' : '') + '</label>';
+  const expr = f.kind === 'cron' ? field('Cron', 'cronExpression', f.cronExpression, '0 * * * *', 'standard 5-field cron', true)
+    : f.kind === 'interval' ? field('Every (seconds)', 'intervalSeconds', f.intervalSeconds, '300', '', true)
+    : field('At', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z', 'an ISO time or Unix-ms', true);
   const canSubmit = f.preview.ok && !f.submitting;
-  return '<div class="tui"><div class="tuimodal"><b>new task</b>'
-    + '<div class="tkrow">' + label('kind') + ['cron','interval','at'].map((k, i) =>
-        (i ? '<span class="ter"> / </span>' : '') + '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '">' + k + '</button>').join('') + '</div>'
-    + expr
-    + (f.kind === 'cron' ? field('tz', 'tz', f.tz, '(optional, e.g. Europe/Berlin)') : '')
-    + field('message', 'message', f.message, 'what should the agent do when this fires?')
-    + '<div id="tk-preview">' + tkPreviewHTML(f) + '</div>'
-    + '<div class="tuihint"><button data-act="tasks:submit"' + (canSubmit ? ' style="color:var(--success)"' : ' disabled') + '>Ctrl+Enter submit</button>'
-      + '<span>  · Tab next · Shift+Tab back · </span><button data-act="tasks:back">Esc cancel</button>' + (f.submitting ? '<span> · submitting…</span>' : '') + '</div>'
-    + '</div></div>';
+  return '<div class="set-pane set-form">'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="set-formgrid">'
+      + '<div class="set-formcol">'
+        + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
+          + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
+        + '</div></div>'
+        + expr
+        + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
+        + field('Message', 'message', f.message, 'what should the agent do when this fires?', '', false)
+      + '</div>'
+      + '<div class="set-prevcard" id="tk-preview">' + tkPreviewHTML(f) + '</div>'
+    + '</div>'
+    + '<div class="set-formfoot">'
+      + '<span class="set-cap">Tab next · Shift+Tab back' + (f.submitting ? ' · submitting…' : '') + '</span>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-g" data-act="tasks:back">Cancel<span class="kc">Esc</span></button>'
+      + '<button class="btn btn-p set-submit" data-act="tasks:submit"' + (canSubmit ? '' : ' disabled') + ' title="Ctrl+Enter submit">'
+        + (f.submitting ? '<span class="tk-spin on-fill"></span>' : '') + 'Create task<span class="kc">⌃↩</span></button>'
+    + '</div>'
+    + '</div>';
 }
 function tkPreviewHTML(f) {
-  if (f.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.error) + '</div>';
-  if (f.preview.error) return '<div class="tuierr" style="margin-top:8px">error: ' + esc(f.preview.error) + '</div>';
-  if (!f.preview.nextFirings.length) return '<div class="ter" style="margin-top:8px">(preview unavailable)</div>';
-  return '<div class="ter" style="margin-top:8px">next firings:</div>'
-    + f.preview.nextFirings.map((ms) => '<div class="ter">· ' + esc(formatUnixMs(ms)) + '</div>').join('')
+  const head = '<div class="set-prevh"><span class="set-sr">next firings:</span><b aria-hidden="true">Next firings</b></div>';
+  if (f.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
+  if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
+  if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
+  return head
+    + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>'
     // Item 7: honest degradation on 0.5.4 — the desktop cannot reach TaskRunner.create, only the CLI.
     // The desktop submits through `atag task create --at`; on agent 0.5.4 that CLI path writes the
     // one-shot through the bare TaskStore with no next-run (scheduled_for NULL), which the scheduler
     // treats as due now — the row will show next-run "-" and be picked up at the next tick. The TUI
     // creates in-process through TaskRunner.create and keeps the `at`; the desktop says so instead
     // of pretending.
-    + (f.kind === 'at' ? '<div class="ter" style="margin-top:8px">' + esc(tkAtNote('the time above')) + '</div>' : '');
+    + (f.kind === 'at' ? '<div class="tk-help tk-help--warn set-atnote">' + esc(tkAtNote('the time above')) + '</div>' : '');
 }
 /* The same caveat, worded for the preview ("the time above") and for the
    success line/toast after submit ("the `at` time"). */
@@ -12699,7 +12841,7 @@ function tasksAct(what) {
   if (verb === 'refresh') { tasksRefresh(); return; }
   if (verb === 'page') { const n = tkVisibleRows().length; TK.cursor = Math.max(0, Math.min(TK.cursor + (arg === 'up' ? -TK_MAX_ROWS : TK_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'auto') { TK.auto = !TK.auto; render(); return; }
-  if (verb === 'filter') { TK.filter = TK_FILTER_ORDER[(TK_FILTER_ORDER.indexOf(TK.filter) + 1) % TK_FILTER_ORDER.length]; TK.cursor = 0; render(); return; }
+  if (verb === 'filter') { TK.filter = arg && TK_FILTER_ORDER.includes(arg) ? arg : TK_FILTER_ORDER[(TK_FILTER_ORDER.indexOf(TK.filter) + 1) % TK_FILTER_ORDER.length]; TK.cursor = 0; render(); return; } // `filter:<name>` = a segment of the filter control; bare `filter` cycles (the `f` key)
   if (verb === 'search') { TK.searchOpen = true; render(); const n = $('#tk-search'); if (n) n.focus(); return; }
   if (verb === 'clearSearch') { TK.searchOpen = false; TK.search = ''; TK.cursor = 0; render(); return; }
 }
@@ -12860,7 +13002,8 @@ if (typeof window !== 'undefined') {
   window.__privacySet = (on) => privacySet(on).then(() => privacyEffective()); // the slash verbs' write path
   window.__privacyIdle = () => !PRIV.busy && PRIV.pending === 0; // no analytics write queued or in flight
   window.__runSlash = (line) => { runSlash(String(line).replace(/^\//, '').split(/\s+/)); }; // exactly what Enter on a `/…` composer line does
-  window.__settingsStripRows = () => new Set([...document.querySelectorAll('#settings .settab')].map((b) => b.offsetTop)).size; // 1 = the TUI's single-line strip
+  // 1 = one strip that never wraps. Soft Tactile draws the tabs as the nav's single column, so the strip's one line is its one column (offsetLeft).
+  window.__settingsStripRows = () => new Set([...document.querySelectorAll('#settings .settab')].map((b) => b.offsetLeft)).size;
   window.__menuNodes = () => {
     const out = [];
     MENU_GROUPS.forEach(([group, nodes]) => nodes.forEach((n) => {
@@ -12915,10 +13058,24 @@ function tuiBodyLines(lines) {
    hint in Settings is also something a mouse can press. `opts.cls` adds to
    the class, it no longer replaces it. */
 function tuiBtn(label, act, opts) {
-  return '<button class="tk-hint' + (opts && opts.cls ? ' ' + opts.cls : '') + '" data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + esc(label) + '</button>';
+  return '<button class="tk-hint' + (opts && opts.cls ? ' ' + opts.cls : '') + '" data-act="' + esc(act) + '"' + (opts && opts.disabled ? ' disabled' : '') + (opts && opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>' + tuiKeyLabel(label) + '</button>';
 }
 function tuiHints(parts) {
-  return '<div class="tuihint tk-hints">' + parts.map((p) => (typeof p === 'string' ? '<span class="tk-hint">' + esc(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
+  return '<div class="tuihint tk-hints">' + parts.map((p) => (typeof p === 'string' ? '<span class="tk-hint">' + tuiKeyLabel(p) + '</span>' : tuiBtn(p[0], p[1], p[2]))).join('') + '</div>';
+}
+/* The leading key of a hint label drawn as a keycap: `e toggle`, `Esc back`,
+   `[y] delete`, `a: analytics off`, `j/k move`. Only the look changes — the
+   brackets and the colon stay in the text at zero size, so the label reads
+   exactly as the TUI wrote it (copy, screen readers, and the checks that
+   compare it). A label with no recognisable key stays plain text. */
+function tuiKeyLabel(label) {
+  const s = String(label == null ? '' : label);
+  const m = /^(\[([^\]\s]{1,8})\]|(j\/k|Ctrl\+Enter|Shift\+Tab|Enter|enter|Esc|esc|Tab|Space|[A-Za-z]|[\/<>?]))(:?)( .+)$/.exec(s);
+  if (!m) return esc(s);
+  const key = m[2] !== undefined ? m[2] : m[3];
+  const cap = '<span class="kc">' + esc(key) + '</span>';
+  const body = m[2] !== undefined ? '<span class="set-z">[</span>' + cap + '<span class="set-z">]</span>' : cap;
+  return body + (m[4] ? '<span class="set-z">:</span>' : '') + esc(m[5]);
 }
 /* A change that only lands after a runtime restart says so where it was made,
    with the one button that makes it land. */
@@ -12972,35 +13129,57 @@ async function skpReloadRows() {
 
 function skillsTab() {
   ensureSkillsPoll();
-  if (SKP.installConfirm) return '<div class="tui">' + skpInstallConfirmHTML() + '</div>';
-  if (SKP.removeConfirm) return '<div class="tui">' + skpRemoveConfirmHTML() + '</div>';
-  if (SKP.hubCard) return '<div class="tui">' + skpHubCardHTML() + '</div>';
-  if (SKP.mode === 'hub') {
-    if (SKP.hubCardLoading) return '<div class="tui"><div class="ter" style="padding:10px 0">loading skill card…</div></div>';
-    return '<div class="tui">' + skpHubListHTML() + '</div>';
+  // Soft Tactile (ST-08, ST-11): a confirm is a modal over the view it was
+  // raised from instead of replacing it; the same two states win as before.
+  const overlay = SKP.installConfirm ? skpInstallConfirmHTML() : SKP.removeConfirm ? skpRemoveConfirmHTML() : '';
+  let view;
+  if (SKP.hubCard) view = skpHubCardHTML();
+  else if (SKP.mode === 'hub') {
+    view = SKP.hubCardLoading ? '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill card…</p></div>' : skpHubListHTML();
+  } else {
+    const rows = SK.rows || [];
+    const visible = skpVisibleRows();
+    const enabledCount = rows.filter((r) => r.enabled).length;
+    // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools` —
+    // a segmented control, the counts, the auto readout, Built-in tools and the Skills Hub (ST-06).
+    const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
+      + '<div class="tk-seg set-seg" role="group" aria-label="Filter"><span class="set-sr">filter: </span>'
+        + SKP_FILTERS.map((f) => '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + (f === SKP.filter) + '">' + f + '</button>').join('')
+      + '</div>'
+      + '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
+      + '<button class="set-readout" data-act="skills:auto" title="Auto-refresh every 5 s — a toggles">'
+        + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
+        + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-g sm" data-act="menu:help.tools" aria-label="built-in tools: /tools"><span class="set-sr">built-in tools: /tools</span><span aria-hidden="true">Built-in tools</span></button>'
+      + '<button class="btn btn-t sm" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
+      + '</div></div>';
+    view = bar
+      + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
+      + (SK.err ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
+      + skpMessages()
+      + (SKP.mode === 'detail' ? skpDetailHTML() : skpListHTML(visible));
   }
-  const rows = SK.rows || [];
-  const visible = skpVisibleRows();
-  const enabledCount = rows.filter((r) => r.enabled).length;
-  // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools`
-  const bar = '<div class="tuibar"><span class="ter">filter: </span>'
-    + SKP_FILTERS.map((f, i) => (i ? '<span class="ter"> · </span>' : '') + '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '">' + f + '</button>').join('')
-    + '<span class="ter">   ' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled'
-    + (SKP.auto ? ' · auto' : '') + (SK.busy ? ' · …' : '') + '   built-in tools: </span><button class="skpf" data-act="menu:help.tools">/tools</button></div>';
-  return '<div class="tui">' + bar
-    + (SKP.lastError ? '<div class="tuierr">! ' + esc(SKP.lastError) + '</div>' : '')
-    + (SK.err ? '<div class="tuierr">! ' + esc(SK.err) + '</div>' : '')
-    + skpMessages()
-    + (SKP.mode === 'detail' ? skpDetailHTML() : skpListHTML(visible)) + '</div>';
+  return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
 function skpMessages() {
   if (!SKP.msg) return '';
-  return SKP.msg.restart ? restartLine(SKP.msg.text) : '<div class="tuimsg">' + esc(SKP.msg.text) + '</div>';
+  return SKP.msg.restart ? restartLine(SKP.msg.text) : '<div class="tuimsg tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(SKP.msg.text) + '</span></div>';
+}
+/* Source chip: project (this workspace) in blue, bundled as an outline, a `missing` disable-list entry amber. */
+function skpSourceChip(source) {
+  const tone = {project:' tk-chip--blue', bundled:' tk-chip--line', missing:' tk-chip--amber'}[source] || '';
+  return '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(source) + '</span>';
 }
 function skpListHTML(visible) {
-  if (!SK.rows && !SK.err) return '<div class="ter" style="padding:10px 0">loading skill list…</div>';
+  if (!SK.rows && !SK.err) return '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading skill list…</p></div>';
   if (!visible.length) {
-    return '<div class="ter" style="padding:10px 0">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</div>'
+    // The TUI sentence is the accessible text; the visible copy and the hint strip below carry the same three ways out.
+    return '<div class="tk-empty set-empty">'
+      + '<span class="set-sr">no skills match the current filter — install one with `atomic-agent skill install`, or press `f` to cycle filter / `r` to refresh.</span>'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('skills') + '</span>'
+      + '<h4 aria-hidden="true">No skills match the current filter</h4>'
+      + '<p aria-hidden="true">Install one from the Skills Hub, cycle the filter, or refresh.</p></div>'
       + skpHintsHTML() + skpHubCtaHTML();
   }
   const cur = Math.max(0, Math.min(SKP.cursor, visible.length - 1));
@@ -13008,17 +13187,23 @@ function skpListHTML(visible) {
   const page = visible.slice(start, start + SKP_MAX_ROWS);
   const hiddenBefore = start;
   const hiddenAfter = Math.max(0, visible.length - start - page.length);
-  return '<div class="tuihead">  state     source   version  name                       description</div>'
+  // ST-06: one row per skill — switch · name · source · version · description. The switch is the
+  // `e toggle` of that row (a span: the row itself is the button that opens the detail).
+  return '<div class="tk-list set-sklist">'
+    + '<span class="set-sr">  state     source   version  name                       description</span>'
+    + '<div class="set-skcols" aria-hidden="true"><span>Enabled</span><span>Name</span><span>Source</span><span>Version</span><span>Description</span></div>'
     + (hiddenBefore > 0 ? '<button class="tuimore" data-act="skills:page:up">↑ ' + hiddenBefore + ' above</button>' : '')
     + page.map((r, idx) => {
       const i = idx + start, sel = i === cur;
-      // SkillRow: `{chevron} {state(9)}` `{[source](9)} {v(8)}` `{name(26)}` `{description(60)}`
-      return '<button class="tuirow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '">'
-        + (sel ? '▸' : ' ') + ' <span class="' + (r.enabled ? 'sk-on' : 'sk-off') + '">' + (r.enabled ? 'enabled' : 'disabled').padEnd(9) + '</span>'
-        + '<span class="ter">' + esc(('[' + r.source + ']').padEnd(9) + ' ' + ('v' + r.version).padEnd(8)) + '</span>'
-        + esc(tuiTrunc(r.name, 24).padEnd(26)) + '<span class="' + (r.enabled ? '' : 'ter') + '">' + esc(tuiTrunc(r.description, 60)) + '</span></button>';
+      return '<button class="tk-li set-skrow' + (sel ? ' on' : '') + (r.enabled ? '' : ' dim') + '" data-skill-row="' + esc(r.name) + '" data-act="skills:detail:' + esc(r.name) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+        + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="e toggle" data-act="skills:toggle:' + esc(r.name) + '"></span>'
+        + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
+        + '<span class="set-src">' + skpSourceChip(r.source) + '</span>'
+        + '<span class="m">v' + esc(r.version) + '</span>'
+        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + '</span></button>';
     }).join('')
     + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
+    + '</div>'
     + skpHintsHTML() + skpHubCtaHTML();
 }
 function skpHintsHTML() {
@@ -13026,46 +13211,66 @@ function skpHintsHTML() {
     ['r refresh', 'skills:refresh'], ['a auto', 'skills:auto'], ['f filter', 'skills:filter']]);
 }
 function skpHubCtaHTML() {
-  return '<button class="tuimodal skphub" data-act="skills:hub"><b>i</b><span class="skpaccent"> · Skills Hub</span><span class="ter">  browse &amp; install skills from ClawHub</span></button>';
+  return '<div class="tk-list set-hubcta"><button class="tk-li skphub" data-act="skills:hub">'
+    + '<span class="tk-ico tk-ico--blue">' + ic('download') + '</span>'
+    + '<span class="body"><span class="t">Skills Hub</span>'
+      + '<span class="d"><span class="set-sr">browse &amp; install skills from ClawHub</span><span aria-hidden="true">Browse and install skills from ClawHub</span></span></span>'
+    + '<span class="kc">i</span>' + ic('chevR') + '</button></div>';
 }
+/* ST-07: name, state, source and version, then SKILL.md itself. */
 function skpDetailHTML() {
   const name = SKP.detailName;
-  if (!name) return '<div class="ter" style="padding:10px 0">(no skill selected)</div>';
+  const back = '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'All skills</button>';
+  if (!name) return '<div class="tk-bar">' + back + '</div><p class="set-cap">(no skill selected)</p>';
   const row = (SK.rows || []).find((r) => r.name === name);
   const enabled = row ? row.enabled : true;
   let body;
-  if (SKP.detailBody === null) body = '<div class="ter">(loading…)</div>';
+  if (SKP.detailBody === null) body = '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>(loading…)</div>';
   else {
     const lines = SKP.detailBody.split('\n');
     const hidden = lines.length - SKP_DETAIL_LINES;
-    body = tuiBodyLines(lines.slice(0, SKP_DETAIL_LINES))
-      + (hidden > 0 ? '<div class="ter">… (' + hidden + ' more line' + (hidden === 1 ? '' : 's') + ' hidden)</div>' : '');
+    body = '<pre class="tk-out set-skmd">' + esc(lines.slice(0, SKP_DETAIL_LINES).join('\n'))
+      + (hidden > 0 ? '\n\n<span class="set-mdmore">… (' + hidden + ' more line' + (hidden === 1 ? '' : 's') + ' hidden)</span>' : '') + '</pre>';
   }
-  return '<div style="margin-top:6px"><b>' + esc(name) + '</b><span class="ter">  </span><span class="' + (enabled ? 'sk-on' : 'sk-off') + '">' + (enabled ? 'enabled' : 'disabled') + '</span>'
-    + (row ? '<span class="ter">  [' + esc(row.source) + '] v' + esc(row.version) + '</span>' : '') + '</div>'
-    + (row && row.description ? '<div class="ter" style="margin-top:8px">' + esc(row.description) + '</div>' : '')
-    + '<div style="margin-top:8px">' + body + '</div>'
+  // Remove is offered where `d remove` can act: a global skill gets the confirm, a project one the line saying where it lives.
+  const canRemove = row && (row.source === 'global' || row.source === 'project');
+  return '<div class="tk-bar">' + back + '<span class="grow"></span>'
+      + '<button class="tk-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" aria-label="' + (enabled ? 'Disable ' : 'Enable ') + esc(name) + '" title="e toggle" data-act="skills:toggle:' + esc(name) + '"' + (SKP.busy ? ' disabled' : '') + '></button>'
+      + '<span class="set-state' + (enabled ? ' on' : '') + '">' + (enabled ? 'enabled' : 'disabled') + '</span>'
+      + (canRemove ? '<button class="btn btn-danger sm" data-act="skills:remove:' + esc(name) + '">' + ic('trash') + 'Remove</button>' : '')
+    + '</div>'
+    + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(name) + '</h3>' + (row ? skpSourceChip(row.source) + '<span class="mono set-meta">v' + esc(row.version) + '</span>' : '') + '</div>'
+    + (row && row.description ? '<p class="set-desc">' + esc(row.description) + '</p>' : '')
+    + body
     + tuiHints([['Esc back', 'skills:back'], ['e toggle', 'skills:toggle:' + name], ['r refresh', 'skills:refresh']]);
 }
+/* ST-08: the red confirm, over the list. */
 function skpRemoveConfirmHTML() {
   const c = SKP.removeConfirm;
-  return '<div class="tuimodal danger"><b style="color:var(--danger)">Remove skill</b>'
-    + '<div class="ter">delete global skill ' + esc(c.name) + '?</div>'
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal" role="alertdialog" aria-label="Remove skill">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>Remove skill</h4></div>'
+    + '<p>Delete global skill <b class="mono">' + esc(c.name) + '</b>?</p>'
     // skills-remove-confirm.tsx warns when the skill is a bundled starter; listStarterSkillNames is not exposed by the agent, so the check cannot run here.
-    + '<div class="ter" style="margin-top:8px">(bundled-starter check unavailable)</div>'
-    + (c.error ? '<div class="tuierr" style="margin-top:8px">! ' + esc(c.error) + '</div>' : '')
-    + (c.submitting ? '<div class="ter" style="margin-top:8px">removing…</div>'
-        : tuiHints([['[y] delete', 'skills:removeConfirm'], ['[n] cancel', 'skills:removeCancel']])) + '</div>';
+    + '<p class="set-cap">(bundled-starter check unavailable)</p>'
+    + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + '</div>' : '')
+    + (c.submitting ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">removing…</span></div>'
+        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:removeCancel" title="[n] cancel">Cancel<span class="kc">N</span></button>'
+          + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete<span class="kc">Y</span></button></div>')
+    + '</div></div>';
 }
+/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override. */
 function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
-  return '<div class="tuimodal danger"><b style="color:var(--danger)">Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</b>'
-    + '<div class="ter">install ' + esc(c.identifier) + '?</div>'
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
+    + '<p>Install <b class="mono">' + esc(c.identifier) + '</b>?</p>'
     // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
-    + '<div style="margin-top:8px" class="tuierr">' + esc(c.message) + '</div>'
-    + '<div class="ter">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</div>'
-    + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
-        : '<div class="tuihint">' + tuiBtn('[y] install anyway (risk acknowledged)', 'skills:installAck') + '<span>  </span>' + tuiBtn('[n] cancel', 'skills:installCancel') + '</div>') + '</div>';
+    + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
+    + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
+    + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
+        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel<span class="kc">N</span></button>'
+          + '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)<span class="kc">Y</span></button></div>')
+    + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
   // skills-hub-list.tsx formatHubIdentifier: `owner/…/dir` for nested repo paths
@@ -13081,65 +13286,87 @@ function formatDownloads(n) {
   if (n < 1000000) return trim(n / 1000) + 'k';
   return trim(n / 1000000) + 'M';
 }
+/* ST-09: the hub — back to Installed, the search box, the count, and one row per result. */
 function skpHubListHTML() {
   const q = SKP.hubQuery;
-  const search = SKP.hubSearchEditing
-    ? '<input id="skp-hubq" value="' + esc(q) + '" autocomplete="off" spellcheck="false">'
-    : '<span>' + esc(q.length ? q : '(all)') + '</span>';
   const n = SKP.hubRows.length;
+  // Not editing: a button that opens the search (`/`), carrying the TUI's `hub search: <query | (all)>` as its text.
+  const search = SKP.hubSearchEditing
+    ? '<label class="tk-inpwrap set-search set-hubsearch is-open"><span class="set-sr">hub search: </span>' + ic('search')
+      + '<input id="skp-hubq" value="' + esc(q) + '" placeholder="Search ClawHub and GitHub taps" autocomplete="off" spellcheck="false"><span class="kc" aria-hidden="true">↩</span></label>'
+    : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="/ search"><span class="set-sr">hub search: ' + esc(q.length ? q : '(all)') + '</span>' + ic('search')
+      + '<span aria-hidden="true" class="' + (q.length ? 'v' : 'ph') + '">' + esc(q.length ? q : 'Search ClawHub and GitHub taps') + '</span><span class="kc" aria-hidden="true">/</span></button>';
   let body;
-  if (SKP.hubLoading && !n) body = '<div class="ter" style="padding:10px 0">browsing the skill hub…</div>';
-  else if (!n) body = '<div class="ter" style="padding:10px 0">no skills found — press `/` to search, `r` to re-browse, or `Esc` to go back.</div>';
-  else {
+  if (SKP.hubLoading && !n) body = '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>browsing the skill hub…</p></div>';
+  else if (!n) {
+    body = '<div class="tk-empty set-empty"><span class="set-sr">no skills found — press `/` to search, `r` to re-browse, or `Esc` to go back.</span>'
+      + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('search') + '</span><h4 aria-hidden="true">No skills found</h4>'
+      + '<p aria-hidden="true">Search, browse again, or go back to the installed skills.</p></div>';
+  } else {
     const cur = Math.max(0, Math.min(SKP.hubCursor, n - 1));
     const start = computeWindowStart(cur, n, SKP_HUB_ROWS);
     const page = SKP.hubRows.slice(start, start + SKP_HUB_ROWS);
     const hiddenAfter = Math.max(0, n - start - page.length);
-    body = (start > 0 ? '<button class="tuimore" data-act="skills:hubPage:up">↑ ' + start + ' above</button>' : '')
+    body = '<div class="tk-list set-hublist">'
+      + (start > 0 ? '<button class="tuimore" data-act="skills:hubPage:up">↑ ' + start + ' above</button>' : '')
       + page.map((r, idx) => {
         const i = idx + start, sel = i === cur;
-        // HubRow: `{chevron} {claw|gh  } {identifier(32)}{↓dl(9)}{description(48)}`
-        return '<button class="tuirow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '">'
-          + (sel ? '▸' : ' ') + ' <span class="' + (r.source === 'clawhub' ? 'skpaccent' : 'ter') + '">' + (r.source === 'clawhub' ? 'claw' : 'gh  ') + '</span> '
-          + esc(tuiTrunc(skpHubIdLabel(r.identifier), 30).padEnd(32)) + '<span class="ter">' + esc(('↓' + formatDownloads(r.downloads)).padEnd(9)) + '</span>'
-          + '<span class="' + (sel ? '' : 'ter') + '">' + esc(tuiTrunc(r.description, 48)) + '</span></button>';
+        const claw = r.source === 'clawhub';
+        // HubRow: source · identifier · downloads · description.
+        return '<button class="tk-li set-hubrow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+          + '<span class="tk-chip tk-chip--sm set-srcchip' + (claw ? ' tk-chip--blue' : '') + '">' + (claw ? 'claw' : 'gh') + '</span>'
+          + '<span class="body"><span class="t mono" title="' + esc(r.identifier) + '">' + esc(skpHubIdLabel(r.identifier)) + '</span><span class="d">' + esc(r.description) + '</span></span>'
+          + '<span class="m">↓' + esc(formatDownloads(r.downloads)) + '</span></button>';
       }).join('')
-      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:hubPage:down">↓ ' + hiddenAfter + ' below</button>' : '');
+      + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:hubPage:down">↓ ' + hiddenAfter + ' below</button>' : '')
+      + '</div>';
   }
-  return '<div class="tuibar"><span class="ter">hub search: </span>' + search + (SKP.hubSearchEditing ? '<span class="skpaccent">▌</span>' : '')
-    + '<span class="ter">   ' + n + ' result' + (n === 1 ? '' : 's') + (SKP.hubLoading ? ' · …' : '') + '</span></div>'
-    + (SKP.hubError ? '<div class="tuierr">! ' + esc(SKP.hubError) + '</div>' : '')
-    + (SKP.installError ? '<div class="tuierr">! install failed: ' + esc(SKP.installError) + '</div>' : '')
+  return '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
+      + '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'Installed</button>'
+      + search
+      + '<span class="set-counts">' + n + ' result' + (n === 1 ? '' : 's') + '</span>' + (SKP.hubLoading ? '<span class="tk-spin"></span>' : '')
+      + '<button class="btn btn-s sm" data-act="skills:rebrowse" title="r re-browse">' + ic('refresh') + 'Browse again</button>'
+    + '</div></div>'
+    + (SKP.hubError ? '<div class="tuierr tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(SKP.hubError) + '</span></div>' : '')
+    + (SKP.installError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">install failed: ' + esc(SKP.installError) + '</span></div>' : '')
     + skpMessages()
     + body
     + tuiHints(['j/k move', ['Enter open card', 'skills:card'], ['/ search', 'skills:hubSearch'], ['r re-browse', 'skills:rebrowse'], ['Esc back', 'skills:back']]);
 }
+/* ST-10: owner, downloads, version and the SKILL.md preview before installing. */
 function skpHubCardHTML() {
   const c = SKP.hubCard;
-  const badge = c.source === 'clawhub' ? 'claw' : 'gh';
+  const claw = c.source === 'clawhub';
+  const badge = claw ? 'claw' : 'gh';
   let body;
-  if (c.body === null) body = '<div class="ter">' + esc(c.bodyError || 'loading SKILL.md…') + '</div>';
-  else {
+  if (c.body === null) {
+    body = c.bodyError
+      ? '<div class="tk-notice set-softnote">' + ic('info') + '<span class="grow">' + esc(c.bodyError) + '</span></div>'
+      : '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>loading SKILL.md…</div>';
+  } else {
     const lines = c.body.split('\n');
     const start = Math.max(0, Math.min(SKP.cardScroll, Math.max(0, lines.length - SKP_CARD_LINES)));
     const win = lines.slice(start, start + SKP_CARD_LINES);
     const below = Math.max(0, lines.length - (start + win.length));
     body = (start > 0 ? '<button class="tuimore" data-act="skills:cardScroll:up">↑ ' + start + ' more line' + (start === 1 ? '' : 's') + ' above</button>' : '')
-      + tuiBodyLines(win)
+      + '<pre class="tk-out set-skmd">' + esc(win.join('\n')) + '</pre>'
       + (below > 0 ? '<button class="tuimore" data-act="skills:cardScroll:down">↓ ' + below + ' more line' + (below === 1 ? '' : 's') + ' below</button>' : '');
   }
   const canInstall = !!c.installId;
-  return '<div class="tuimodal"><div><span class="' + (c.source === 'clawhub' ? 'skpaccent' : 'ter') + '">[' + badge + '] </span><b>' + esc(c.name) + '</b><span class="ter">  ' + esc(c.identifier) + '</span></div>'
-    + '<div class="ter">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</div>'
-    + (c.version === null ? '<div class="ter">(version is not printed by `atag skill browse`)</div>' : '')
-    + (c.description ? '<div class="ter" style="margin-top:8px">' + esc(c.description) + '</div>' : '')
-    + '<div style="margin-top:8px">' + body + '</div>'
-    + (SKP.installError ? '<div class="tuierr" style="margin-top:8px">! install failed: ' + esc(SKP.installError) + '</div>' : '')
-    + (SKP.installing ? '<div class="ter" style="margin-top:8px">installing…</div>'
-        : tuiHints([['[i] install', 'skills:install', {disabled: !canInstall}], ['[n] cancel', 'skills:back'], 'j/k scroll']))
+  return '<div class="tk-bar"><button class="btn btn-g sm" data-act="skills:back" title="[n] cancel">' + ic('chevL') + 'Results</button><span class="grow"></span>'
+      + (SKP.installing ? '<span class="tk-spin"></span><span class="set-cap">installing…</span>'
+        : '<button class="btn btn-p sm" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="i install">' + ic('download') + 'Install<span class="kc">i</span></button>')
+    + '</div>'
+    + '<div class="set-titlerow"><span class="set-sr">[' + badge + '] </span><span class="tk-chip tk-chip--sm' + (claw ? ' tk-chip--blue' : '') + '" aria-hidden="true">' + badge + '</span>'
+      + '<h3 class="set-dtitle">' + esc(c.name) + '</h3><span class="mono set-meta">' + esc(c.identifier) + '</span></div>'
+    + '<p class="set-meta">owner ' + esc(c.repo) + ' · ↓' + esc(formatDownloads(c.downloads)) + ' · v' + esc(c.version === null ? '—' : c.version) + '</p>'
+    + (c.version === null ? '<p class="set-cap">(version is not printed by `atag skill browse`)</p>' : '')
+    + (c.description ? '<p class="set-desc">' + esc(c.description) + '</p>' : '')
+    + body
+    + (SKP.installError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">install failed: ' + esc(SKP.installError) + '</span></div>' : '')
+    + (SKP.installing ? '' : tuiHints([['[i] install', 'skills:install', {disabled: !canInstall}], ['[n] cancel', 'skills:back'], 'j/k scroll']))
     // `atag skill install` takes `@owner/slug`; a catalog-browse row carries only the slug (ClawHub's browse API prints no owner) and the detail answer carries none either.
-    + (!canInstall && c.source === 'clawhub' ? '<div class="ter">(install needs `@owner/slug` — this browse row has no owner; `/` search lists owner-qualified rows)</div>' : '')
-    + '</div>';
+    + (!canInstall && claw ? '<p class="set-cap">(install needs `@owner/slug` — this browse row has no owner; `/` search lists owner-qualified rows)</p>' : '');
 }
 
 /* Loaders and actions. */
