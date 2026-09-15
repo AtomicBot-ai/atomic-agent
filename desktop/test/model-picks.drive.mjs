@@ -221,6 +221,15 @@ try {
         await app.clickSel('.sb-settings');
         await app.clickText('LLM', { scope: '#settings' });
         await sleep(2000);
+        /* The pane the tab opens on follows the chat route, and the route is
+           only known once the tab's first refresh lands (llmTabEntered arms
+           the sync, llmRefreshRun spends it). Read the strip before that and
+           it still shows the default, Local — then flips to Cloud under the
+           rows this leg is waiting for. Wait for the refresh; looking only. */
+        const early = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
+        await app.waitFor('window.__llmPane && window.__llmPane().refreshed !== null', 'the LLM tab’s first refresh', { timeout: 90000, quiet: true });
+        await sleep(500);
+        say(`  mode strip 2 s after opening: ${JSON.stringify(early.trim())}; after the first refresh: ${JSON.stringify((await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''")).trim())}`);
       }
       pane = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
       /* This state directory routes at a cloud provider, so the LLM tab
