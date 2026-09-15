@@ -1416,7 +1416,8 @@ function renderToolbar() {
     + sidebarToggleHTML()
     + '<div class="tb-title"><b>' + esc(t) + '</b><span>' + esc(sub) + '</span></div>'
     + '<div class="tb-right">'
-      + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘ K') + '</button>'
+      // Soft Tactile: a lifted Search pill with one ⌘K keycap (SH-01).
+      + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘K') + '</button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector" title="Inspector">' + ic('inspector') + '</button>'
       // r5 item 2: converted with the sidebar's tooltip beside it — a toolbar
       // where one chord reads "⌘ 0" and its neighbour "Ctrl+Shift+Y" is worse
@@ -1520,10 +1521,15 @@ function renderSidebar() {
     // lost the chord, and a screen-reader user on the rail would hear less than
     // the sighted user hovering the same pixel. The spec's copy section asks
     // for "Settings (⌘ ,)" on both the tooltip and the label.
+    // Soft Tactile (SH-01): the reference draws the entry as a full-width
+    // neutral button — gear, the word, and the ⌘, keycap on the right. The
+    // rail keeps the gear alone; the keycap is only emitted while the sidebar
+    // is not collapsed by the user (CSS hides it on the responsive rail too).
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
-        + '<span class="sb-settings-lb">Settings</span>'
         + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
+        + '<span class="sb-settings-lb">Settings</span>'
+        + (S.sidebar === 'rail' ? '' : keycaps('⌘,'))
       + '</button></div>'
     ;
   if (keepScroll) {
@@ -1562,10 +1568,12 @@ function chatDot(s) {
   const seen = PREFS.seen[s.id];
   const unread = !(seen >= 0) || (s.updatedAt || 0) > seen;
   for (const sid of RUNNING.values()) if (sid === s.id) return ['running', 'the agent is running here — wait'];
-  if (PENDING_APPROVALS.has(s.id)) return ['filled', 'waiting for your approval'];
-  if (unread && ATTN.has(s.id)) return ['filled', 'the last turn failed'];
+  // The third element is presentation only: the Soft Tactile status grammar
+  // draws waiting-for-you amber and failed red (sidebar dot tone classes).
+  if (PENDING_APPROVALS.has(s.id)) return ['filled', 'waiting for your approval', 'tone-amber'];
+  if (unread && ATTN.has(s.id)) return ['filled', 'the last turn failed', 'tone-red'];
   if (unread && s.status === 'stalled') return ['filled', 'stopped: max steps reached without a reply'];
-  if (unread && s.status === 'failed') return ['filled', 'the last turn failed'];
+  if (unread && s.status === 'failed') return ['filled', 'the last turn failed', 'tone-red'];
   if (unread) return ['filled', 'finished — not read yet'];
   return ['empty', 'read'];
 }
@@ -1580,27 +1588,48 @@ function taskDot(t) {
   const seen = PREFS.seen['task:' + t.id];
   const unread = !(seen >= 0) || (t.updatedAt || 0) > seen;
   if (!unread) return ['empty', 'read'];
-  if (t.status === 'failed') return ['filled', 'failed: ' + (t.lastError || 'no error recorded')];
-  if (t.status === 'blocked') return ['filled', 'blocked: ' + (t.lastError || 'no error recorded')];
+  if (t.status === 'failed') return ['filled', 'failed: ' + (t.lastError || 'no error recorded'), 'tone-red'];
+  if (t.status === 'blocked') return ['filled', 'blocked: ' + (t.lastError || 'no error recorded'), 'tone-amber'];
   return ['filled', 'finished — not read yet'];
+}
+
+/* Soft Tactile (SH-01): a task row's right-hand meta, in mono — the schedule
+   or the status word, both already on the task. Presentation only. It rides
+   the row as `data-m` and is painted by CSS, so the row's children stay the
+   dot and the title (the row-shape check counts them). */
+function taskMeta(t) {
+  if (t.status === 'failed' || t.status === 'blocked' || t.status === 'cancelled') return t.status;
+  const when = String(t.when || '');
+  if (when.indexOf('every ') === 0) return when;
+  if (when.indexOf('cron:') === 0) return 'cron';
+  if (when.indexOf('at ') === 0) {
+    const m = /^at (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})$/.exec(when);
+    if (!m) return when.slice(3);
+    const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+    const today = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    return m[1] === today ? m[2] : m[1].slice(5);
+  }
+  return t.status === 'pending' ? 'queued' : '';
 }
 
 /* The name and the dot's meaning ride on the row, not on the dot: in the
    collapsed rail the dot is the only part of the row still on screen, and it
    has to say which chat or task it stands for. */
 function taskRow(t) {
-  const [state, tip] = taskDot(t);
-  return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '">'
-    + '<span class="sdot ' + state + '"></span>'
+  const [state, tip, tone] = taskDot(t);
+  const meta = taskMeta(t);
+  return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '"'
+    + (meta ? ' data-m="' + esc(meta) + '"' : '') + '>'
+    + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(t.t) + '</span></button>';
 }
 
 function chatRow(s) {
-  const [state, tip] = chatDot(s);
+  const [state, tip, tone] = chatDot(s);
   const pinned = PREFS.pinned.includes(s.id);
   return '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
     + ' title="' + esc(s.t + ' · ' + tip + (pinned ? ' · pinned' : '')) + '">'
-    + '<span class="sdot ' + state + '"></span>'
+    + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
     /* r5 item 3: "a button to mark a session as unread." A span with
        role="button", not a <button> — `.sesrow` is itself a button and the pin
@@ -2453,19 +2482,22 @@ function renderInspector() {
             : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
             : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
             : 'no trace for this call') + '">'
-        + (m.ok === null ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
+        // Soft Tactile (SH-05): a running step shows the spinner where the card shows '\u2026'.
+        + (m.ok === null ? '<span class="tk-spin" aria-label="running"></span>' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span></span></button>').join('')
       : '<p class="cap">No steps yet.</p>';
   } else if (S.inspTab === 'reasoning') {
     const r = S.log.filter((m) => m.k === 'reason');
-    body = r.length ? r.map((m) => '<div style="margin-bottom:12px"><div class="micro sec">step ' + m.steps + '</div>'
-        + '<div class="mono sec" style="white-space:pre-wrap">' + esc(m.text) + '</div></div>').join('')
+    // Soft Tactile (SH-06): a sentence-case label over a mono well per step.
+    body = r.length ? r.map((m) => '<div class="insp-rs"><div class="insp-lbl">Step ' + m.steps + '</div>'
+        + '<pre class="tk-out">' + esc(m.text) + '</pre></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
   } else if (S.inspTab === 'world') {
     const caps = LIVE_CAPS || {};
     const tools = Array.isArray(caps.tools) ? caps.tools.map((t) => t.name).join(' · ') : '';
+    // Soft Tactile (SH-05): a data plate — label over the machine value.
     body = caps.paths
-      ? '<dl class="kvgrid"><dt>cwd</dt><dd class="mono">' + esc(S.live.workingDir || '') + '</dd>'
-        + '<dt>state dir</dt><dd class="mono">' + esc(caps.paths.stateDir || '') + '</dd>'
+      ? '<dl class="tk-plate insp-world"><dt>cwd</dt><dd>' + esc(S.live.workingDir || '') + '</dd>'
+        + '<dt>state dir</dt><dd>' + esc(caps.paths.stateDir || '') + '</dd>'
         + '<dt>skills</dt><dd>' + (SKILLS.length ? SKILLS.map((k) => esc(k.t)).join('<br>') : 'none installed') + '</dd>'
         + '<dt>tools</dt><dd>' + esc(tools) + '</dd></dl>'
       : '<p class="cap">Connect an agent to see what it can reach.</p>';
@@ -2501,14 +2533,20 @@ function renderConsole() {
   el.classList.toggle('hide', !S.consoleOpen);
   if (!S.consoleOpen) return;
   const rows = (S.consoleTab === 'agent' ? LOGS : LLMLOGS);
+  /* Soft Tactile (SH-08/09): a floating drawer — segmented tabs, a neutral
+     Write Debug Bundle button with its keycap, close. An empty tab says what
+     is true: nothing in this build writes to the LLM log. */
+  const empty = S.consoleTab === 'agent'
+    ? '<div class="tk-empty"><h4>Nothing logged yet</h4><p>Agent output and the app’s status lines appear here as they happen.</p></div>'
+    : '<div class="tk-empty"><h4>Nothing in the LLM log</h4><p>This build does not record model requests here. The Agent log shows what the agent printed.</p></div>';
   el.innerHTML = '<div class="conhead">'
     + segControl([['agent','Agent log'],['llm','LLM log']], S.consoleTab, 'console:')
-    + '<span style="flex:1"></span>'
-    + '<button class="btn btn-s" data-act="dump">Write Debug Bundle' + keycaps('⌥ ⌘ D') + '</button>'
-    + '<button class="iconbtn" data-act="toggle:console">' + ic('x') + '</button></div>'
-    + '<div class="conbody">' + rows.map(([t, l, m]) =>
+    + '<span class="grow"></span>'
+    + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Write Debug Bundle' + keycaps('⌥⌘D') + '</button>'
+    + '<button class="iconbtn" data-act="toggle:console" title="Close console" aria-label="Close console">' + ic('x') + '</button></div>'
+    + '<div class="conbody">' + (rows.length ? rows.map(([t, l, m]) =>
         '<div class="logrow"><span class="ter">' + t + '</span><span class="lvl ' + l + '">' + l + '</span>'
-        + '<span class="sec">' + esc(m) + '</span></div>').join('') + '</div>';
+        + '<span class="sec">' + esc(m) + '</span></div>').join('') : empty) + '</div>';
 }
 
 /* ---------------- palette ---------------- */
@@ -6844,9 +6882,10 @@ function renderDlbar() {
   const shape = [job.kind, job.id, dlJobLabel(job), measured ? 'bar' : 'starting', DL.queue.length].join(' ');
   if (el.__dlShape === shape) {
     if (measured) {
-      const bar = el.querySelector('.dl-bar');
-      const bars = dlBarHTML(percent, 10);
-      if (bar && bar.innerHTML !== bars) bar.innerHTML = bars;
+      // Soft Tactile (CH-23): the strip's bar is a `.tk-prog` fill, so only
+      // its width moves between samples. dlBarHTML stays the wizard's.
+      const fill = el.querySelector('.dl-bar > i');
+      if (fill && fill.style.width !== percent + '%') fill.style.width = percent + '%';
       const pct = el.querySelector('.dl-pct');
       if (pct) pct.textContent = percent + '%';
       const left = el.querySelector('.dl-eta');
@@ -6855,15 +6894,17 @@ function renderDlbar() {
     return;
   }
   el.__dlShape = shape;
-  el.innerHTML = '<span class="dl-g">⇣</span>'
+  // Soft Tactile (CH-23): a lifted pill — download icon · mono id · progress
+  // fill · % · ETA · queue · ghost Cancel. Same cells, same classes, same text.
+  el.innerHTML = '<span class="dl-g">' + ic('download') + '</span>'
     + '<span class="dl-l">' + esc(dlJobLabel(job)) + '</span>'
     + (measured
-        ? '<span class="dl-bar">' + dlBarHTML(percent, 10) + '</span>'
+        ? '<span class="dl-bar tk-prog" aria-hidden="true"><i style="width:' + percent + '%"></i></span>'
           + '<span class="dl-pct">' + percent + '%</span>'
           + '<span class="dl-eta">' + esc(dlEta(eta)) + '</span>'
         : '<span class="dl-eta">' + esc(OB_COPY.starting) + '</span>')
     + (DL.queue.length ? '<span class="dl-q">· ' + DL.queue.length + ' more queued</span>' : '')
-    + '<button class="dl-x" data-act="dl:cancel">Cancel</button>';
+    + '<button class="btn btn-g xs dl-x" data-act="dl:cancel">Cancel</button>';
   el.hidden = false;
   /* The overlay layer's top inset, so the wizard starts BELOW the strip.
      Measured rather than assumed: it is the strip's bottom edge inside
