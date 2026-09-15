@@ -2046,7 +2046,10 @@ function composer() {
      drivers and the ticker read is kept — `.statusstrip` (+ gated / waiting /
      appstatus), the waiting strip's `.ann` / `.readout` / `.ob-help`, the busy
      strip's FIRST `.tnum` (the 100 ms ticker writes the elapsed time into it),
-     `data-act="stop"` and `data-act="jump:appr"`. */
+     and `data-act="jump:appr"`.
+     r2 (DMG feedback): no Stop pill on the busy or waiting strip. The one
+     Stop is the composer's own button (sendButton: `.sendbtn.stop` whenever
+     S.busy || S.pending), and ⌘ . still aborts while a steer is drafted. */
   const status = S.pending
     ? '<div class="statusstrip gated">'
       + '<span class="tk-chip tk-chip--sm tk-chip--amber">' + ic('alert') + 'Waiting for your approval</span>'
@@ -2060,15 +2063,13 @@ function composer() {
       + '<span class="ann caution"><span class="ss-dot"></span>Waiting</span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
-      + '<span class="ss-grow"></span>'
-      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
+      + '</div>'
     : S.busy
     ? '<div class="statusstrip busy">'
       + '<span class="tk-chip tk-chip--sm tk-chip--blue ss-phase"><span class="threedot"><i></i><i></i><i></i></span>'
       + '<span class="ss-word">' + S.phase + '</span></span>'
       + '<span class="mono tnum ss-time">' + (S.elapsed / 10).toFixed(1) + 's</span>'
-      + '<span class="ss-grow"></span>'
-      + '<button class="btn btn-s xs" data-act="stop">' + ic('stop') + 'Stop</button></div>'
+      + '</div>'
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.

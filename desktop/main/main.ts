@@ -5276,7 +5276,9 @@ async function hfAndDeltaTest(
     waitStrip.shown && /waiting/i.test(waitStrip.ann ?? "")
       && /attempt 5/.test(waitStrip.readout ?? "")
       && /next try \d+s/.test(waitStrip.readout ?? "")
-      && waitStrip.stop,
+      // r2 (DMG feedback): no Stop pill on the strip — the composer's own
+      // button is the one Stop while a turn runs.
+      && !waitStrip.stop,
     JSON.stringify(waitStrip),
   );
   check(
