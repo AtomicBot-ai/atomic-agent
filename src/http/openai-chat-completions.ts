@@ -325,9 +325,9 @@ async function handleStream(
  * chat client can reasonably render are forwarded:
  *  - `tool_call_parsed` → `event: tool_progress` (extensions opt-in only)
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
- *    When the stream parser already emitted incremental deltas we skip the
- *    terminal `assistant_reply` to avoid duplicating the body in the
- *    client transcript.
+ *    A terminal `assistant_reply` whose text the same step already streamed
+ *    as deltas is skipped (no duplicate body); one that was never streamed
+ *    — a stop message, a non-streamed retry — is sent.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
@@ -343,9 +343,33 @@ export function buildStreamEventHook(
   sse: SseWriter,
   env: TurnEnv,
 ): (event: AgentLoopEvent) => void {
-  let streamedAssistantDelta = false;
+  /* Reply text already streamed as deltas: `turnStreamed` for the whole
+     turn, `stepStreamed` since the current step began. A terminal
+     `assistant_reply` is skipped only when THIS step already streamed it.
+     A turn-wide flag used to skip every later reply once anything had
+     streamed, which dropped, live, every reply that never streams — the
+     max-steps stop message, the loop breaker's answer, a reply from a
+     non-streamed retry — and left the turn looking cut off at whatever
+     preamble had streamed last. */
+  let turnStreamed = false;
+  let stepStreamed = "";
+  const writeContent = (content: string): void => {
+    sse.writeEvent(
+      null,
+      buildStreamChunk({
+        completionId: env.completionId,
+        created: env.created,
+        model: env.request.model,
+        delta: { content },
+      }),
+    );
+  };
   return (event) => {
     if (sse.closed) return;
+    if (event.type === "step_started") {
+      stepStreamed = "";
+      return;
+    }
     if (event.type === "llm_event") {
       const inner = event.event;
       if (inner.type === "tool_call_parsed") {
@@ -363,16 +387,9 @@ export function buildStreamEventHook(
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
-        streamedAssistantDelta = true;
-        sse.writeEvent(
-          null,
-          buildStreamChunk({
-            completionId: env.completionId,
-            created: env.created,
-            model: env.request.model,
-            delta: { content: inner.text },
-          }),
-        );
+        turnStreamed = true;
+        stepStreamed += inner.text;
+        writeContent(inner.text);
       } else if (inner.type === "reasoning_delta") {
         if (!env.request.extensionsEnabled) return;
         if (inner.text.length === 0) return;
@@ -386,16 +403,22 @@ export function buildStreamEventHook(
           text: inner.text,
         });
       } else if (inner.type === "assistant_reply") {
-        if (streamedAssistantDelta) return;
-        sse.writeEvent(
-          null,
-          buildStreamChunk({
-            completionId: env.completionId,
-            created: env.created,
-            model: env.request.model,
-            delta: { content: inner.text },
-          }),
-        );
+        const streamed = stepStreamed;
+        stepStreamed = "";
+        const text = inner.text;
+        if (text.length === 0) return;
+        // Already on the wire in this step, whole: nothing to add.
+        if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
+        // The step streamed the start of it (a retry finished what the
+        // stream began): send the rest, joined without a break.
+        if (streamed.length > 0 && text.startsWith(streamed)) {
+          writeContent(text.slice(streamed.length));
+          return;
+        }
+        // Never streamed: send it whole, set apart from any text this turn
+        // already showed so it does not run on from a preamble.
+        writeContent((turnStreamed ? "\n\n" : "") + text);
+        turnStreamed = true;
       } else if (inner.type === "step_error") {
         emitStreamError(sse, env, inner.error.message, inner.category);
       }
