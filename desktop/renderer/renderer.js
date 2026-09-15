@@ -2253,15 +2253,19 @@ function voiceChipHTML() {
 
 function voiceMenuHTML() {
   if (!VOICE.supported.length) {
-    return '<div class="vsmenu"><div class="vsmempty">' + esc(VOICE.reason || 'No on-device languages were reported') + '</div></div>';
+    return '<div class="vsmenu tk-vmenu"><div class="vsmempty">' + esc(VOICE.reason || 'No on-device languages were reported') + '</div></div>';
   }
   const installed = VOICE.supported.filter((id) => VOICE.installed.indexOf(id) >= 0);
   const rest = VOICE.supported.filter((id) => VOICE.installed.indexOf(id) < 0);
+  /* Soft Tactile (CM-08): a radio for the first language, the name with its
+     mono tag and `first` badge over the note, a bar while a model downloads,
+     and the + / ✓ that adds a second language on the right. */
   const row = (id) => {
     const on = VOICE.locales.indexOf(id) >= 0;
     const primary = VOICE.locales[0] === id;
     const here = VOICE.installed.indexOf(id) >= 0;
     const eng = voiceEngineOf(id);
+    const pct = VOICE.installing === id ? Math.round(VOICE.installFraction * 100) : -1;
     const note = here
       ? (eng === 'dictation' ? 'on this Mac · plain text, no punctuation' : 'on this Mac')
       : (VOICE.installing === id
@@ -2269,20 +2273,26 @@ function voiceMenuHTML() {
           : (eng === 'dictation' ? 'downloads a model · plain text, no punctuation' : 'downloads a model'));
     return '<div class="vsmrow' + (on ? ' on' : '') + '">'
       + '<button class="vsmpick" data-act="voice:pick:' + esc(id) + '">'
+      + '<span class="radio' + (primary ? ' on' : '') + '"></span>'
+      + '<span class="vsmbody"><span class="vsmline">'
       + '<span class="vsmname">' + esc(voiceLangName(id)) + '</span>'
       + '<span class="vsmtag mono ter">' + esc(id) + '</span>'
-      + '<span class="vsmnote ter">' + esc(note) + '</span>'
       + (primary ? '<span class="vsmbadge">first</span>' : '')
+      + '</span><span class="vsmnote ter">' + esc(note) + '</span></span>'
       + '</button>'
+      + (pct >= 0 ? '<span class="tk-prog vsmprog"><i style="width:' + pct + '%"></i></span>' : '')
       + (here && !primary
           ? '<button class="vsmadd' + (on ? ' on' : '') + '" data-act="voice:add:' + esc(id) + '" title="Also listen for this language">'
             + (on ? ic('check') : ic('plus')) + '</button>'
           : '')
       + '</div>';
   };
-  return '<div class="vsmenu">'
+  return '<div class="vsmenu tk-vmenu">'
+    + '<div class="vsmtitle">Dictation language</div>'
+    + '<div class="vsmscroll">'
     + '<div class="vsmhead">On this Mac</div>' + installed.map(row).join('')
     + (rest.length ? '<div class="vsmhead">Downloads a model the first time</div>' + rest.map(row).join('') : '')
+    + '</div>'
     + (VOICE.installErr ? '<div class="vsmerr">' + esc(VOICE.installErr) + '</div>' : '')
     + '<div class="vsmfoot">Transcribed on this Mac. One language is active at a time unless you add a second with +: '
     + 'then both models hear the same audio and the higher-scoring one wins the whole dictation. '
@@ -2801,15 +2811,36 @@ function refreshDlProgress() {
 
 
 
-/** Pin a popover to the control that opened it, clamped inside the window. */
+/** Pin a popover to the control that opened it, clamped inside the window.
+ *
+ *  Soft Tactile: every popover belongs to its own chip. `sel` is a selector or
+ *  the element itself. The popover opens 8px above the composer card that chip
+ *  sits in (above the chip itself anywhere else), lines up with the chip's left
+ *  edge — or its right edge for a chip on the right half of the row — and is
+ *  clamped inside the content column, so a wide one never runs under the
+ *  inspector. Its width (narrowed when the column is narrower) and the height
+ *  the column leaves above the card are part of the returned style, so a
+ *  caller's own `width:` in front of it is only the default. */
 function anchorStyle(sel, width) {
-  const el = document.querySelector(sel);
-  const win = $('#window').getBoundingClientRect();
-  if (!el) return 'right:24px;bottom:96px';
+  const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+  const winEl = $('#window');
+  if (!el || !winEl) return 'right:24px;bottom:96px';
+  const win = winEl.getBoundingClientRect();
+  const colEl = document.querySelector('#content');
+  const colR = colEl ? colEl.getBoundingClientRect() : null;
+  const col = colR && colR.width > 0 ? colR : win;
+  const lo = Math.max(win.left, col.left) + 8;
+  const hi = Math.min(win.right, col.right, window.innerWidth) - 8;
+  const w = Math.round(Math.max(Math.min(width, hi - lo), Math.min(width, 280)));
   const r = el.getBoundingClientRect();
-  const left = Math.max(win.left + 8, Math.min(r.left, win.right - width - 8));
+  const card = el.closest('#composer');
+  const top = card ? card.getBoundingClientRect().top : r.top;
+  const onRight = r.left + r.width / 2 > (lo + hi) / 2;
+  const left = Math.max(lo, Math.min(onRight ? r.right + 6 - w : r.left - 6, hi - w));
+  const room = Math.round(top - 8 - Math.max(win.top, col.top) - 8);
   return 'position:fixed;left:' + Math.round(left) + 'px;bottom:'
-    + Math.round(window.innerHeight - r.top + 8) + 'px;top:auto;right:auto';
+    + Math.round(window.innerHeight - top + 8) + 'px;top:auto;right:auto;width:' + w + 'px'
+    + (room > 160 ? ';max-height:' + room + 'px' : '');
 }
 
 /**
@@ -2835,7 +2866,7 @@ function ctxBoundLine() {
     text = 'older turns are being dropped — the window is the limit, not a configured cap';
   }
   if (u.droppedPairs > 0) text += ' · ' + u.droppedPairs + ' dropped so far';
-  return '<p class="cap ctxbound" style="margin:8px 0 0">' + esc(text) + '</p>';
+  return '<p class="cap ctxbound">' + ic('alert') + '<span>' + esc(text) + '</span></p>';
 }
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
@@ -2875,23 +2906,34 @@ function contextHTML() {
     }
   }
   const rows = CTX.tokens
-    ? '<dl class="kvgrid" style="grid-template-columns:1fr max-content;gap:4px 12px">' + body + '</dl>'
-    : '<p class="cap" style="margin:0">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
+    ? '<dl class="kvgrid">' + body + '</dl>'
+    : '<p class="cap">send a message \u2014 the breakdown comes from the prompt the agent actually builds</p>';
+  /* Soft Tactile (CM-15…17): the breakdown bar under the title — the prompt in
+     brand (amber above 70%, red above 85%, striped while projected) and the
+     reply reserve beside it — then the rows, trimming and basis lines, the
+     tasks-per-turn dial and the footer. */
+  const used = win ? Math.min(100, CTX.tokens / win * 100) : 0;
+  const held = win ? Math.min(100 - used, reserved / win * 100) : 0;
+  const meter = CTX.tokens && win
+    ? '<div class="tk-prog ctxmeter' + (used >= 85 ? ' tk-prog--red' : used >= 70 ? ' tk-prog--amber' : '') + (proj ? ' proj' : '') + '">'
+      + '<i style="width:' + used.toFixed(1) + '%"></i>'
+      + (held > 0 ? '<b style="width:' + held.toFixed(1) + '%"></b>' : '') + '</div>'
+    : '';
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:360px;' + anchorStyle('.ctxbtn', 360) + '">'
-    + '<div style="padding:12px 16px 8px"><div class="hd" style="margin-bottom:8px">' + esc(title) + '</div>' + rows
+    + '<div class="popover ctxpop tk-pop" style="width:380px;' + anchorStyle('.ctxbtn', 380) + '">'
+    + '<div class="ctxin"><div class="hd ctxttl">' + esc(title) + '</div>' + meter + rows
     + ctxBoundLine()
-    + (CTX.tokens ? '<p class="cap ctxbasis" style="margin:8px 0 0">' + esc(ctxBasisLine()) + '</p>' : '')
+    + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
-    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span>tasks per turn</span>'
+    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span class="ctxdt">tasks per turn</span>'
       + '<span class="cap">sent each turn (1-100)</span></span>'
-      + '<span class="hstack">'
-      + '<button class="btn btn-s" data-ctx-step="agent.conversationMaxPairs:-1"' + (pairs <= 1 ? ' disabled' : '') + '>\u2212</button>'
-      + '<span class="mono tnum" style="min-width:40px;text-align:center">' + pairs + '</span>'
-      + '<button class="btn btn-s" data-ctx-step="agent.conversationMaxPairs:1"' + (pairs >= 100 ? ' disabled' : '') + '>+</button>'
+      + '<span class="hstack ctxstep">'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:-1" aria-label="fewer tasks per turn"' + (pairs <= 1 ? ' disabled' : '') + '>' + ic('minus') + '</button>'
+      + '<span class="mono tnum ctxval">' + pairs + '</span>'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= 100 ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
-    + '<div class="popfoot"><button class="btn btn-g" data-act="clear">Clear transcript</button>'
-    + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+    + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
+    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
 }
 
 function sessionSheet() {
@@ -9565,15 +9607,58 @@ function selPull(id) {
   });
 }
 
+/** Soft Tactile — the leading badge of one popover row: the route's own icon on
+ *  a backend row, the real brand mark on a provider or model row (the server /
+ *  CPU badge when there is none), a spinner on a local model that is starting. */
+function selRowLead(r) {
+  if (r.type === 'backend') {
+    return '<span class="tk-ico tk-ico--sm' + (r.active ? ' tk-ico--blue' : '') + '">'
+      + ic(r.id === 'cloud' ? 'cloud' : r.id === 'local' ? 'laptop' : 'server') + '</span>';
+  }
+  if (r.type === 'provider') return providerMark(r.id, 'sm');
+  if (r.type === 'action') return '<span class="tk-ico tk-ico--sm">' + ic(r.id === 'add' ? 'plus' : 'download') + '</span>';
+  if (r.type === 'localModel' && SEL.busy && BSW.line === 'starting ' + r.id + '…') {
+    return '<span class="selspin"><span class="tk-spin"></span></span>';
+  }
+  return modelMark(r.id, 'sm');
+}
+
+/** Soft Tactile (MP-11) — the typed query, marked inside a result. Each query
+ *  token is marked wherever it occurs (modelMatches matches tokens, not the
+ *  whole string); the marks only wrap letters, so `.nm` keeps its text. */
+function selHilite(label, query) {
+  const s = String(label || '');
+  const toks = String(query || '').toLowerCase().split(/[\/\.\-_:\s]+/).filter(Boolean);
+  if (!toks.length) return esc(s);
+  const low = s.toLowerCase();
+  const hit = new Array(s.length).fill(false);
+  toks.forEach((t) => {
+    for (let at = low.indexOf(t); at >= 0; at = low.indexOf(t, at + 1)) {
+      for (let k = 0; k < t.length; k++) hit[at + k] = true;
+    }
+  });
+  let out = '';
+  for (let i = 0; i < s.length;) {
+    let j = i;
+    while (j < s.length && hit[j] === hit[i]) j++;
+    out += hit[i] ? '<mark class="selhit">' + esc(s.slice(i, j)) + '</mark>' : esc(s.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
 function selectorHTML() {
   const rows = selRows();
   SEL.rows = rows;
 
   if (SEL.pulling) {
+    /* The first `.popover .cap` is the line the pull's progress events patch
+       in place (selPull's listener) — keep it first. */
     return selShell('Downloading ' + SEL.pulling,
-      '<div class="selbody"><p class="cap">' + esc(SEL.pullLine) + '</p>'
+      '<div class="selbody selpull"><p class="cap selpullline">' + esc(SEL.pullLine) + '</p>'
       + '<p class="cap">It is selected automatically when it lands.</p></div>',
-      '<button class="btn btn-s" data-act="sel:cancelPull">Cancel</button>');
+      '<span class="grow"></span><button class="btn btn-g xs" data-act="sel:cancelPull">Cancel</button>',
+      '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>');
   }
 
   // Adding a provider is its own screen: the presets you have NOT
@@ -9588,15 +9673,16 @@ function selectorHTML() {
       + (free.length
         ? '<div class="sellist">' + free.map((p, i) =>
             '<button class="modelrow' + (i === SEL.presetCur ? ' on' : '') + '" data-sel-preset="' + i + '">'
-            + '<span class="radio"' + (i === SEL.presetCur ? ' style="border-color:var(--accent);border-width:4px"' : '') + '></span>'
+            + providerMark(p.id, 'sm')
             + '<span class="col"><span class="nm">' + esc(p.label) + '</span>'
-            + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span></button>').join('') + '</div>'
-            + '<div style="padding:10px 16px 0"><input class="field-inp" id="sel-key" type="password" style="width:100%" '
-            + 'placeholder="API key — blank reads ' + esc((free[SEL.presetCur] || free[0]).env) + '"></div>'
-        : '<p class="cap" style="padding:16px">Every preset is already configured.</p>')
+            + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span>'
+            + '<span class="selr"><span class="radio' + (i === SEL.presetCur ? ' on' : '') + '"></span></span></button>').join('') + '</div>'
+            + '<div class="selkey"><label class="tk-inpwrap">' + ic('key') + '<input id="sel-key" type="password" '
+            + 'placeholder="API key — blank reads ' + esc((free[SEL.presetCur] || free[0]).env) + '"></label></div>'
+        : '<p class="selnote cap">Every preset is already configured.</p>')
       + '</div>',
-      '<button class="btn btn-g" data-act="sel:closeAdd">Back</button>'
-      + (free.length ? '<button class="btn btn-p" data-act="sel:savePreset">Add provider</button>' : ''));
+      '<button class="btn btn-g xs" data-act="sel:closeAdd">Back</button><span class="grow"></span>'
+      + (free.length ? '<button class="btn btn-p xs" data-act="sel:savePreset">Add provider</button>' : ''));
   }
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
@@ -9608,43 +9694,61 @@ function selectorHTML() {
   // provider list IS that one row; only the cloud model pane can be bare.
   const real = rows.filter((r) => r.type !== 'action');
   if (!rows.length && !SEL.modelsBusy && !SEL.localBusy && !(SEL.kind === 'model' && SEL.filter)) {
-    return selShell(title, '<div class="selbody"><p class="cap" style="padding:16px">Nothing to show.</p></div>', '');
+    return selShell(title, '<div class="selbody"><p class="selnote cap">Nothing to show.</p></div>', '');
   }
 
   const search = SEL.kind === 'model'
-    ? '<div class="selsearch"><input class="field-inp" id="sel-filter" style="width:100%" '
-      + 'placeholder="search models" value="' + esc(SEL.filter) + '"></div>'
+    ? '<div class="selsearch"><label class="tk-inpwrap">' + ic('search') + '<input id="sel-filter" '
+      + 'placeholder="search models" value="' + esc(SEL.filter) + '" spellcheck="false" autocomplete="off"></label></div>'
     : '';
 
+  /* Soft Tactile rows (MP-01, MP-05, MP-11, MP-14): badge · the id (DM Mono for
+     providers and models, the query marked) over its one-line facts · the right
+     slot. The first `.cap` in a row is its detail — integration.drive reads it. */
   const list = '<div class="sellist">'
-    + (SEL.modelsBusy || SEL.localBusy ? '<div class="pad cap">reading the catalogue…</div>' : '')
-    + (SEL.modelsErr ? '<div class="pad cap" style="color:var(--danger)">' + esc(SEL.modelsErr) + '</div>' : '')
-    + rows.map((r, i) => '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
-        + '<span class="radio' + (r.active ? ' on' : '') + '"></span>'
-        + '<span class="col"><span class="nm' + (r.type === 'cloudModel' || r.type === 'localModel' ? ' mono' : '') + '">'
-        + esc(r.label) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
-        + (r.type === 'localModel' && !r.downloaded ? '<span class="cap">download</span>' : '')
-        /* F1 — an unlit cell, not a lit one: this is a state we could not
-           confirm, not a fault we found. It goes out when a turn succeeds. */
-        + (r.unverified ? '<span class="ann">Unverified</span>' : '')
-        + '</button>').join('')
-    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="pad cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>reading the catalogue…</div>' : '')
+    + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
+    + rows.map((r, i) => {
+        const model = r.type === 'cloudModel' || r.type === 'localModel';
+        const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
+          + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'download</span>' : '')
+          /* F1 — an unlit cell, not a lit one: this is a state we could not
+             confirm, not a fault we found. It goes out when a turn succeeds. */
+          + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
+        return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
+          + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
+          + selRowLead(r)
+          + '<span class="col"><span class="nm' + (model || r.type === 'provider' ? ' mono' : '') + '">'
+          + (model ? selHilite(r.label, SEL.filter) : esc(r.label)) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
+          + (right ? '<span class="selr">' + right + '</span>' : '')
+          + '</button>';
+      }).join('')
+    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
   // Adding a provider is the pane's own trailing row now, as in the TUI.
-  const foot = '<button class="btn btn-s" data-act="close">Done</button>';
+  const foot = '<button class="btn btn-s xs" data-act="close">Done</button>';
 
   return selShell(title, search + list, foot);
 }
 
-/** One popup shell: fixed height, its own scroll, anchored to the chip. */
-function selShell(title, body, foot) {
+/** One popup shell: fixed height, its own scroll, anchored to the chip.
+ *  Soft Tactile: anchored to the chip of the pane it shows (backend, provider or
+ *  model), at that pane's width; `lead` is an optional badge before the title
+ *  (the provider's mark on the wizard's steps). */
+function selShell(title, body, foot, lead) {
+  const chip = (kind) => document.querySelector('#composer .cfoot [data-sel-open="' + kind + '"]');
+  const anchor = chip(SEL.kind) || chip('provider') || chip('backend')
+    || document.querySelector('.modelchip') || document.querySelector('.modechip');
+  const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' ? 520
+    : SEL.kind === 'provider' ? 420 : 440;
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover selpop" style="' + anchorStyle(document.querySelector('.modelchip') ? '.modelchip' : '.modechip', 460) + '">'
-    + '<div class="selhead">' + esc(title)
-    + (SEL.busy ? '<span class="cap" style="margin-left:auto">' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
+    + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
+    + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
+    + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
     + body
-    + (SEL.err ? '<div class="cap" style="padding:6px 16px;color:var(--danger)">' + esc(SEL.err) + '</div>' : '')
+    /* The inline colour is the hook drive-selector reads switch errors by. */
+    + (SEL.err ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.err) + '</span></div>' : '')
     + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
     + '</div></div>';
 }
@@ -10056,44 +10160,50 @@ function codingModeChip() {
 }
 
 function modesHTML() {
+  const off = MODE.supported === false;
+  /* Soft Tactile (CM-12…14): a titled menu of four radio rows whose word takes
+     the chip's colour, the note under them and Done — and, on an agent without
+     the route, the version it needs with Update agent in the footer. */
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
+    + '<div class="popover modepop tk-pop" style="width:360px;' + anchorStyle('.cmodechip', 360) + '">'
+    + '<div class="modehead"><span>Mode</span>'
+    + (off ? '' : '<span class="cap">what the agent may do without asking</span>') + '</div>'
     + CODING_MODES.map((m) => {
-        const off = MODE.supported === false;
         // Nothing is "current" on an agent that has no such state, so no
         // row is marked, and the rows carry no data-mode: the click
         // handler keys off that attribute, so dropping it is what makes
         // them genuinely inert rather than merely grey.
         // ...and nothing is "current" before the route has answered either.
         const on = !off && MODE.known && m.id === currentMode();
-        return '<button class="poprow' + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
+        return '<button class="poprow modetone-' + m.id + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
           + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
           + '<span class="radio' + (on ? ' on' : '') + '"></span>'
-          + '<span><span style="font-weight:500">' + esc(m.label) + '</span>'
-          + '<span class="cap" style="display:block">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
-          + (on ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>';
+          + '<span class="col"><span class="ml">' + esc(m.label) + '</span>'
+          + '<span class="cap">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
+          + (on ? '<span class="cap modecur">current</span>' : '') + '</button>';
       }).join('')
-    + '<div style="padding:10px 16px">'
-    + (MODE.supported === false
+    + '<div class="modenote">'
+    + (off
         /* F4 — this is our packaging problem, and it used to be presented to
            the user as their broken feature: four greyed stances, an internal
            route name, and the path of the binary we happened to spawn. None
            of that is actionable by a person. Say which version is needed and
            offer the one thing that helps. */
-        ? '<p class="ob-help" style="margin:0">' + esc(MODE_NEEDS_NEWER)
-          + ' <button class="sysact" data-act="agent:update">Update agent</button></p>'
-        : '<p class="cap" style="margin:0">'
+        ? '<p class="ob-help">' + esc(MODE_NEEDS_NEWER) + '</p>'
+        : '<p class="cap">'
           + 'A stance for this session. It moves the live approval ladder and plan flag and writes nothing to config.'
           + '</p>'
           // The disclosure that stops a level-5 operator reading a working
           // chip as a broken one: three of the four choices genuinely do
           // not change what the agent does at that base.
           + (MODE.baseLevel === MAX_APPROVAL_LEVEL
-              ? '<p class="cap" style="margin:6px 0 0">Your configured approval level is ' + MAX_APPROVAL_LEVEL
+              ? '<p class="cap modewarn">Your configured approval level is ' + MAX_APPROVAL_LEVEL
                 + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
               : ''))
     + '</div>'
-    + '<div class="popfoot"><button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+    + '<div class="popfoot">'
+    + (off ? '<button class="btn btn-p xs" data-act="agent:update">' + ic('download') + 'Update agent</button><span class="grow"></span>' : '')
+    + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
 }
 
 /* Item 6 review fix: S.level has three writers and the diagnostics line
@@ -10796,17 +10906,30 @@ function wizardHTML() {
     return selShell('Add a provider',
       '<div class="selbody"><div class="sellist">' + KIND_ROWS.map((k, i) =>
         '<button class="modelrow' + (taken.has(k.id) ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
+        + providerMark(k.custom ? '' : k.id, 'sm')
         + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
-        + '<span class="cap">' + esc(k.custom ? 'you supply the URL' : k.baseUrl || k.kind) + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
+        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
+        + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
       + '</div></div>',
-      '<button class="btn btn-g" data-act="wiz:cancel">Cancel</button>');
+      '<button class="btn btn-g xs" data-act="wiz:cancel">Cancel</button>');
   }
   const k = WIZ.row;
+  const lead = providerMark(k.custom ? '' : k.id, 'sm');
+  const verifying = WIZ.phase === 'verifying';
+  const unchecked = WIZ.uncheckedFor;
+  /* Soft Tactile (MP-06…09): the field takes the tone of the line under it —
+     red for an error, amber for a key that could not be checked. */
+  const urlBad = !!(k.custom && WIZ.error && !/^https?:\/\/\S+$/.test(WIZ.baseUrl));
+  const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
   const fields = (k.custom
-      ? '<label class="cap">Base URL</label><input class="field-inp" id="wiz-url" style="width:100%" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">'
+      ? '<label class="tk-lbl" for="wiz-url">Base URL</label>'
+        + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
+        + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="cap">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
-    + '<input class="field-inp" id="wiz-key" type="password" style="width:100%" value="' + esc(WIZ.apiKey) + '">';
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
+    + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" spellcheck="false">'
+    + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>';
   /* The popover is a flex column with a fixed max-height, and `.selbody` is
      the child that scrolls. Handing it a bare `.ob-wiz` meant nothing
      scrolled: with a 37-model catalogue the content ran straight past the
@@ -10814,26 +10937,26 @@ function wizardHTML() {
      was drawn 90px below the last visible pixel. */
   if (WIZ.phase === 'pick_model') {
     return selShell(WIZ.savedLabel || 'Choose a model',
-      '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot());
+      '<div class="selbody">' + wizModelStepHTML(false) + '</div>', wizModelStepFoot(), lead);
   }
-  const verifying = WIZ.phase === 'verifying';
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
      into a `<p class="cap">` with an inline colour, so the error slot the
      rest of the app (and F1's own check) looks for did not exist here at all.
      Same class, same slot, same two buttons when a key could not be checked. */
-  const unchecked = WIZ.uncheckedFor;
   return selShell(k.label,
-    '<div class="selbody" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">' + fields
+    '<div class="selbody selwiz">' + fields
     + (verifying ? '<p class="ob-help">Asking the provider to answer once with this key\u2026</p>' : '')
-    + (WIZ.error ? '<div class="ob-err">' + esc(WIZ.error) + '</div>' : '')
+    + (WIZ.error ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '">' + esc(WIZ.error) + '</div>' : '')
     + '</div>',
     unchecked
-      ? '<button class="btn btn-g" data-act="wiz:back">Back</button>'
-        + '<button class="btn btn-s" data-act="wiz:saveUnchecked">Save unchecked</button>'
-        + '<button class="btn btn-p" data-act="wiz:next">Try again</button>'
-      : '<button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button>'
-        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>' + (verifying ? 'Verifying\u2026' : 'Next') + '</button>');
+      ? '<button class="btn btn-g xs" data-act="wiz:back">Back</button><span class="grow"></span>'
+        + '<button class="btn btn-s xs" data-act="wiz:saveUnchecked">Save unchecked</button>'
+        + '<button class="btn btn-p xs" data-act="wiz:next">Try again</button>'
+      : '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
+        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
+        + (verifying ? '<span class="tk-spin"></span>Verifying\u2026' : 'Next') + '</button>',
+    lead);
 }
 
 /**
