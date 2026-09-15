@@ -89,7 +89,14 @@ export interface CompletionRequest {
    * provider's own ceiling applies.
    */
   maxOutputTokens?: number;
-  /** Reasoning effort for the turn; see `ReasoningEffort`. */
+  /**
+   * How hard a reasoning model should think on this completion (the
+   * turn's `reasoningEffort`). Spelled per vendor by the body builder
+   * (`reasoning: { effort }` on OpenRouter, `reasoning_effort` on
+   * OpenAI-compatible services) and omitted for kinds that document
+   * neither. Ignored by grammar-only providers. Set by the fusion
+   * fan-out for its workers.
+   */
   reasoningEffort?: ReasoningEffort;
   seed?: number;
   repeatPenalty?: number;
@@ -112,14 +119,6 @@ export interface CompletionRequest {
    * they rely on `grammar` instead.
    */
   responseFormat?: ResponseFormatJsonSchema;
-  /**
-   * How hard a reasoning model should think on this completion. Spelled
-   * per vendor by the body builder (`reasoning: { effort }` on
-   * OpenRouter, `reasoning_effort` on OpenAI-compatible services) and
-   * omitted for kinds that document neither. Ignored by grammar-only
-   * providers. Set by the fusion fan-out for its workers.
-   */
-  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**
