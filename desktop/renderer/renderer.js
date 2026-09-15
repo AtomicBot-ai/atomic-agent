@@ -3913,8 +3913,10 @@ async function steerOrQueueRun(text, post) {
     // did take it, and reopening that chat reads it back from the store.
     if (here) {
       STEER.mine.push(text);
+      // Under the steer it explains, inside the turn — appended, it landed
+      // under the reply the turn went on to write (see placeInLiveTurn).
       pushSteerEntry(text);
-      S.log.push({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+      placeInLiveTurn({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
       render();
     }
     return;
@@ -3931,14 +3933,14 @@ async function steerOrQueueRun(text, post) {
       if (e) { e.value = text; autosize(e); }
       ctxDraftChanged();
     }
-    if (here) S.log.push({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
+    if (here) placeInLiveTurn({id:nid(), k:'system', text:'queue: full at ' + MAX_QUEUED + ' — the steer could not be parked (returned to the editor)'});
     render(); return;
   }
   S.queued.splice(STEER.ahead, 0, text);
   STEER.ahead += 1;
   // The queue tray is window-global and shows the parked text either way;
   // the sentence explaining it is only true in the chat it was typed in.
-  if (here) S.log.push({id:nid(), k:'system', text: asked
+  if (here) placeInLiveTurn({id:nid(), k:'system', text: asked
     ? 'steering the running turn — it cannot take this one, so it runs as the next turn'
     : 'the running turn has not reported its session yet — it could not be asked, so this runs as the next turn'});
   render();
@@ -5607,6 +5609,51 @@ function onChatEvent(ev) {
   }
 }
 
+/* Turn order — "end agent results should be the last message within the
+   turn" (operator, 2026-09-15 DMG).
+
+   startLiveTurn pushes the streaming assistant item the moment a turn opens,
+   and every delta lands in THAT item. Tool cards, reasoning and steers were
+   already spliced in ahead of it; the approval card and the notices raised
+   while the turn runs were S.log.push()ed after it, so the finished turn read
+   user → tools → reply → approvals: the reply sat above the approvals it came
+   after, and the transcript ended on a receipt instead of the agent's answer.
+
+   A row raised mid-turn therefore goes into the turn, before the streaming
+   item. `afterTool` puts an approval under the newest card of the call that
+   asked for it (after any receipts already hanging off that card), which is
+   also where a reopened chat puts it (sessionTurnsToLog). Anything that is not
+   this window's live turn — no stream on screen, or a request raised by
+   another session — is appended exactly as before. */
+function placeInLiveTurn(entry, opts) {
+  const o = opts || {};
+  const item = S.streamId ? S.log.find((m) => m.id === S.streamId) : null;
+  const ours = !o.sessionId || !S.agentSession || o.sessionId === S.agentSession;
+  if (!item || !S.turnId || !ours) { S.log.push(entry); return; }
+  let at = S.log.indexOf(item);
+  if (o.afterTool) {
+    for (let i = at - 1; i >= 0; i--) {
+      const c = S.log[i];
+      if (c.k === 'user' && !c.steered) break;   // the turn's own question: stop
+      if (c.k === 'tool' && c.name === o.afterTool) {
+        at = i + 1;
+        while (at < S.log.length && S.log[at] !== item && (S.log[at].k === 'approval' || (S.log[at].k === 'system' && S.log[at].apprNote))) at++;
+        break;
+      }
+    }
+  }
+  S.log.splice(at, 0, entry);
+}
+
+/** A notice about an approval card, directly under that card (or appended when the card is gone). */
+function placeAfterRow(row, entry) {
+  const at = row ? S.log.indexOf(row) : -1;
+  if (at < 0) { placeInLiveTurn(entry); return; }
+  let i = at + 1;
+  while (i < S.log.length && S.log[i].k === 'system' && S.log[i].apprNote) i++;
+  S.log.splice(i, 0, entry);
+}
+
 function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
@@ -5632,7 +5679,7 @@ function onApprovalEvent(payload) {
   };
   if (req.sessionId) PENDING_APPROVALS.set(req.sessionId, req.approvalId);
   S.pending = req;
-  S.log.push(req);
+  placeInLiveTurn(req, {afterTool: req.tool, sessionId: req.sessionId});
   S.apprFocused = false;
   S.busy = false;
   render();
@@ -5685,7 +5732,7 @@ function answerLive(req, key) {
   req.state = approve ? 'approved' : 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
   if (key === 's' || key === 'a') {
-    S.log.push({id:nid(), k:'system',
+    placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
       text:'granted once — session-wide grants are not exposed by the agent\u2019s HTTP API yet, so this behaved as “allow once”.'});
   }
   /* r6 (human-scenario round): the window has to go back to LOOKING busy.
@@ -5710,7 +5757,7 @@ function answerLive(req, key) {
     S.phase = approve ? (req.tool || 'Working') : 'Thinking';
   }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
-    if (res && !res.ok) S.log.push({id:nid(), k:'system', text:'could not resolve the approval: ' + esc(res.error || '')});
+    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text:'could not resolve the approval: ' + esc(res.error || '')});
     render();
   });
   if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
@@ -5770,7 +5817,7 @@ async function denyByProse(req, text, post) {
     S.busy = true;
     S.phase = 'Thinking';
   }
-  S.log.push({id:nid(), k:'system', text: landed
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text: landed
     ? 'that call was denied with your message as the reason'
     : 'could not deny that call with your message: ' + esc(why)});
   render();
@@ -10961,6 +11008,63 @@ async function selChooseBackend(id) {
    Opening a session — the transcript comes from the agent's store
    ============================================================ */
 
+/* GET /api/sessions/{id}.turns → the transcript rows, in stored order.
+
+   Turn order: a `tool_result` row carries `approvals` (agent ≥ desktop/
+   turn-fixes) — every approval the operator answered while that call ran.
+   Each becomes a finished approval receipt directly under the call's card,
+   which is where the live view puts the card (placeInLiveTurn), so a
+   reopened chat and the one watched live read the same: question, tool,
+   approval, …, reply. An older agent writes no `approvals`, and its reopened
+   chats simply show no receipt, as before. */
+function sessionTurnsToLog(turns) {
+  const log = [];
+  (Array.isArray(turns) ? turns : []).forEach((t) => {
+    if (!t || typeof t !== 'object') return;
+    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
+    if (t.kind === 'assistant_tool_call') {
+      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
+      log.push({id:nid(), k:'tool', name:t.tool || 'tool',
+        arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
+        argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
+        where:'local', ok:null, open:false});
+      return;
+    }
+    if (t.kind === 'tool_result') {
+      // Pair it with the call that is still open, so a loaded session
+      // shows what the tool actually returned — which the live stream
+      // does not carry.
+      let card = null;
+      for (let i = log.length - 1; i >= 0; i--) {
+        if (log[i].k === 'tool' && log[i].ok === null) {
+          card = log[i];
+          card.ok = t.status === 'ok';
+          card.out = t.summary || '';
+          card.truncated = !!t.truncated;
+          card.ms = undefined; card.msSource = null;   // item 4: the store carries no duration; the trace does
+          break;
+        }
+      }
+      if (!card) {
+        card = {id:nid(), k:'tool', name:t.tool || 'tool', arg:'', ok:t.status === 'ok', out:t.summary || '', truncated:!!t.truncated, open:false, where:'local'};
+        log.push(card);
+      }
+      const receipts = (Array.isArray(t.approvals) ? t.approvals : [])
+        .filter((a) => a && (a.verdict === 'approved' || a.verdict === 'denied'))
+        .map((a) => ({id:nid(), k:'approval', stored:true, tool:t.tool || 'tool',
+          cat:a.category || 'other', kind:CATEGORY_LABEL[a.category] || a.category || 'action',
+          state:a.verdict, at: Number.isFinite(a.at) ? new Date(a.at).toTimeString().slice(0, 8) : ''}));
+      if (receipts.length) {
+        let at = log.indexOf(card) + 1;
+        while (at < log.length && log[at].k === 'approval') at++;
+        log.splice(at, 0, ...receipts);
+      }
+    }
+  });
+  return log;
+}
+
 async function openSession(id) {
   if (!BR || !id) return;
   // item 6: is a turn of this session streaming into this window right now?
@@ -11003,33 +11107,7 @@ async function openSession(id) {
   }
   const data = res.data;
   const turns = Array.isArray(data.turns) ? data.turns : [];
-  const log = [];
-  turns.forEach((t) => {
-    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
-    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
-    if (t.kind === 'assistant_tool_call') {
-      if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
-      log.push({id:nid(), k:'tool', name:t.tool || 'tool',
-        arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
-        argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
-        where:'local', ok:null, open:false});
-      return;
-    }
-    if (t.kind === 'tool_result') {
-      // Pair it with the call that is still open, so a loaded session
-      // shows what the tool actually returned — which the live stream
-      // does not carry.
-      for (let i = log.length - 1; i >= 0; i--) {
-        if (log[i].k === 'tool' && log[i].ok === null) {
-          log[i].ok = t.status === 'ok';
-          log[i].out = t.summary || '';
-          log[i].ms = undefined; log[i].msSource = null;   // item 4: the store carries no duration; the trace does
-          return;
-        }
-      }
-      log.push({id:nid(), k:'tool', name:t.tool || 'tool', arg:'', ok:t.status === 'ok', out:t.summary || '', open:false, where:'local'});
-    }
-  });
+  const log = sessionTurnsToLog(turns);
   S.log = log.length ? log : [{id:nid(), k:'system', text:'this session has no turns yet'}];
   // Review fix: the streaming item of a turn that is still running elsewhere
   // did not survive this reload, so no frame may position a card against it.
@@ -17468,6 +17546,40 @@ if (typeof window !== 'undefined') {
     render();
     return turnId;
   };
+  /* Turn order (2026-09-15 DMG report): the frames of a gated turn fed
+     through the real onChatEvent / onApprovalEvent, in the order the wire
+     delivers them — two tool calls, an approval for the first, a steer
+     notice, then the reply's deltas. Returns the kinds of the rows the turn
+     produced, read while the turn is still live (the moment the operator saw
+     the approval under the reply), and removes every trace of itself. */
+  window.__turnOrderLive = () => {
+    const at = S.log.length;
+    const sid = S.agentSession || null;
+    const turnId = window.__fakeTurn();
+    onChatEvent({turnId, kind:'tool_progress', payload:{tool:'os.fs.write', label:'{"path":"a.txt"}'}});
+    onChatEvent({turnId, kind:'tool_progress', payload:{tool:'os.shell.run', label:'{"cmd":"ls"}'}});
+    onApprovalEvent({approvalId:'smoke-order-1', tool:'os.fs.write', category:'fs_write_workspace',
+      reason:'smoke fixture', sessionId:sid});
+    const card = S.log.find((m) => m.approvalId === 'smoke-order-1');
+    if (card) { S.pending = null; card.state = 'approved'; card.at = '00:00:00'; }
+    placeInLiveTurn({id:nid(), k:'system', text:'steering the running turn — the agent reads it at the next step'});
+    onChatEvent({turnId, kind:'delta', text:'All done.'});
+    const rows = S.log.slice(at).map((m) => m.k === 'tool' ? 'tool:' + m.name : m.k === 'approval' ? 'approval:' + m.tool : m.k);
+    const lastId = S.log.length ? S.log[S.log.length - 1].id : null;
+    const replyLast = lastId === S.streamId;
+    // leave nothing behind
+    if (sid) PENDING_APPROVALS.delete(sid);
+    RUNNING.delete(turnId);
+    S.pending = null; S.turnId = null; S.busy = false; S.streamId = null; S.reasonId = null;
+    S.log.length = at;
+    clearInterval(ticker);
+    render();
+    return {rows, replyLast};
+  };
+  /* The reopened half: the stored rows of that same turn, as the agent
+     writes them, mapped by the function openSession uses. */
+  window.__turnsToLog = (turns) => sessionTurnsToLog(turns).map((m) => m.k === 'tool' ? 'tool:' + m.name
+    : m.k === 'approval' ? 'approval:' + m.tool + ':' + m.state + ':' + m.kind : m.k);
 }
 
 /* ------------------------------------------------------------------

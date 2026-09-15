@@ -9763,6 +9763,41 @@ async function planHandoffTest(
       check("plan bar session-switch check skipped: the agent has no other session", !other, "sessions=0");
     }
 
+    // ---- turn order: the agent's reply is the last row of its turn ----
+    /* The operator's report on the 2026-09-15 DMG: "end agent results should
+       be the last message within the turn. At this moment approvals are the
+       last ones". The frames of a gated turn go through the real onChatEvent
+       and onApprovalEvent in wire order and are read while the turn is live;
+       the stored rows of the same turn go through openSession's own mapping.
+       Mutation-checked: with onApprovalEvent back on `S.log.push` the first
+       check fails (the approval lands under the reply). */
+    {
+      const live = await js<{ rows: string[]; replyLast: boolean }>("window.__turnOrderLive()");
+      check(
+        "turn order: an approval sits under the call that asked for it, and the reply is the turn's last row",
+        live.replyLast
+          && JSON.stringify(live.rows) === JSON.stringify(["tool:os.fs.write", "approval:os.fs.write", "tool:os.shell.run", "system", "assistant"]),
+        JSON.stringify(live),
+      );
+      const storedTurns = [
+        { kind: "user", text: "write it", at: 1 },
+        { kind: "assistant_tool_call", tool: "os.fs.write", args: { path: "a.txt" }, at: 2 },
+        { kind: "tool_result", tool: "os.fs.write", status: "ok", summary: "wrote", at: 3,
+          approvals: [{ verdict: "approved", category: "fs_write_workspace", at: 3 }] },
+        { kind: "assistant_tool_call", tool: "os.shell.run", args: { cmd: "ls" }, at: 4 },
+        { kind: "tool_result", tool: "os.shell.run", status: "error", summary: "approval denied", at: 5,
+          approvals: [{ verdict: "denied", category: "shell", at: 5 }] },
+        { kind: "assistant_reply", text: "Done.", at: 6 },
+      ];
+      const stored = await js<string[]>(`window.__turnsToLog(${JSON.stringify(storedTurns)})`);
+      check(
+        "turn order: a reopened chat puts each stored approval under its call and ends on the reply",
+        JSON.stringify(stored) === JSON.stringify(["user", "tool:os.fs.write", "approval:os.fs.write:approved:file write · workspace",
+          "tool:os.shell.run", "approval:os.shell.run:denied:shell command", "assistant"]),
+        JSON.stringify(stored),
+      );
+    }
+
     // ---- the chords, and the failed-mode-change path they exercise ----
     await js<unknown>("window.__newSession()");
     await js<unknown>("window.__planRaise({})");
