@@ -35,6 +35,8 @@
  * already done.
  */
 
+import { renderContractInputs } from "./contract-inputs.js";
+
 /** What a `provides` entry can name. `file` uses `name` as the path. */
 export const CONTRACT_PROVIDE_KINDS = [
   "symbol",
@@ -75,6 +77,8 @@ export interface ContractRequire {
 export type ContractCheck = { task?: string } & Record<string, unknown>;
 
 export interface DelegateContract {
+  /** The operator's own files: edited in place by any worker, replaced by none (`contract-inputs.ts`). */
+  inputs?: string[];
   /** Path → task id. Nobody else writes there. */
   owners?: Record<string, string>;
   provides?: ContractProvide[];
@@ -218,6 +222,7 @@ function renderCheck(check: ContractCheck): string {
 export function renderContractBlock(contract: DelegateContract): string {
   const lines = [
     `CONTRACT — the interface between the parts of this fan-out. Every worker sees this same block. Produce exactly what it says you provide, under exactly these names, and reach the other parts only through what they provide.`,
+    ...renderContractInputs(contract.inputs),
   ];
   const owners = Object.entries(contract.owners ?? {});
   if (owners.length > 0) {

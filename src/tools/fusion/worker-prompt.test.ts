@@ -272,3 +272,20 @@ describe("the approval marker", () => {
     );
   });
 });
+
+describe("renderWorkerBrief — declared inputs (F51)", () => {
+  it("lists the contract's inputs in the shared block, ahead of this task's own lines", () => {
+    const brief = renderWorkerBrief(TASK, {
+      workingDir: "/repo",
+      contract: { inputs: ["sales.csv"], owners: { "report.md": "t1" } },
+    });
+    const inputsAt = brief.indexOf(
+      "INPUTS (the operator's own files — read and edit in place, never replace; os.fs.write on one is refused):\n- sales.csv",
+    );
+    expect(inputsAt).toBeGreaterThan(
+      brief.indexOf("CONTRACT — the interface between the parts"),
+    );
+    expect(inputsAt).toBeLessThan(brief.indexOf("For TASK t1:"));
+    expect(brief).toContain("You own: report.md");
+  });
+});

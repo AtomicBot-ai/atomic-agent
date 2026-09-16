@@ -64,6 +64,7 @@ import {
   type ContractTaskFiles,
   type DelegateContract,
 } from "./contract.js";
+import { readContractInputs } from "./contract-inputs.js";
 
 /** One unit of delegated work; becomes exactly one worker turn. */
 export interface DelegateTask {
@@ -247,6 +248,9 @@ function readContract(
     return null;
   };
   const contract: DelegateContract = {};
+
+  const inputs = readContractInputs(value.inputs, problems);
+  if (inputs !== undefined) contract.inputs = inputs;
 
   if (value.owners !== undefined && value.owners !== null) {
     if (!isRecord(value.owners)) {

@@ -6,11 +6,13 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
+import { resolveContractInputs } from "./contract-inputs.js";
 import {
   applyDeclaredFileReport,
   applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
+import type { DeclaredInputsRegistry } from "../os/fs-declared-inputs.js";
 import {
   renderWorkerBrief,
   WORKER_REPLY_CHAR_BUDGET,
@@ -203,6 +205,12 @@ export interface WorkerRunnerDeps {
   createEphemeralSession: (meta: FusionWorkerMeta) => SessionState;
   approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
     Partial<Pick<ApprovalGate, "fanoutScopes">>;
+  /**
+   * Where a worker's declared inputs (the contract's `inputs`, F51) are
+   * registered for its session so `os.fs.write` refuses to replace
+   * them. Absent (tests, embedders) declares nothing.
+   */
+  declaredInputs?: Pick<DeclaredInputsRegistry, "declare" | "clear">;
   /** Progress into the PARENT session's frame. */
   emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
   workingDir: string;
@@ -392,6 +400,14 @@ async function runOneTask(
   if (writeScope.length > 0) {
     deps.approvals.fanoutScopes?.grant(session.id, writeScope);
   }
+  // The contract's inputs (F51), resolved as this worker's tools will
+  // resolve them: `os.fs.write` on one is refused whatever the brief
+  // says, with no `overwrite` exemption — the orchestrator redeclares.
+  const inputs = resolveContractInputs(
+    options.contract?.inputs ?? [],
+    deps.workingDir,
+  );
+  if (inputs.length > 0) deps.declaredInputs?.declare(session.id, inputs);
 
   const brief = renderWorkerBrief(task, {
     workingDir: deps.workingDir,
@@ -576,6 +592,7 @@ async function runOneTask(
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
     deps.approvals.fanoutScopes?.clear(session.id);
+    deps.declaredInputs?.clear(session.id);
   }
 
   // A hand-back is neither a cancellation nor a failure: the worker was

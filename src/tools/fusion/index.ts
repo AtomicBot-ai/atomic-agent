@@ -38,6 +38,12 @@ export type {
   DelegateContract,
 } from "./contract.js";
 export {
+  MAX_CONTRACT_INPUTS,
+  readContractInputs,
+  renderContractInputs,
+  resolveContractInputs,
+} from "./contract-inputs.js";
+export {
   applyCheckOutcomes,
   applyContractFindings,
   contentProvides,

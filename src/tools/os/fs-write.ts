@@ -75,6 +75,7 @@ export function buildOsFsWriteTool(
             prior: existing,
             after: content,
             request: options.resolveOriginalRequest?.(ctx.sessionId),
+            declaredInputs: options.declaredInputs?.inputsOf(ctx.sessionId),
             overwrite,
           });
           if (refused !== null) return refuseInputReplacement("os.fs.write", refused);

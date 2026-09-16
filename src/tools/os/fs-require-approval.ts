@@ -7,6 +7,7 @@ import {
   categorizeFsMutation,
   type FsMutationKind,
 } from "./fs-approval-scope.js";
+import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import type { FileRestoreStore } from "./fs-restore-store.js";
 
 /**
@@ -40,6 +41,12 @@ export interface FsDangerousToolOptions extends DangerousToolOptions {
    * refusal off; the F36 guard is unaffected.
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /**
+   * The files a fan-out's contract declared as inputs for a worker
+   * session (`fs-declared-inputs.ts`), which `os.fs.write` never
+   * replaces. Omitted declares nothing.
+   */
+  declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
 }
 
 /**

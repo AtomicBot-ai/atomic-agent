@@ -62,7 +62,11 @@ import { replyTool } from "../tools/conversation/index.js";
 import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import { registerOsTools, ShellJobRegistry } from "../tools/os/index.js";
+import {
+  DeclaredInputsRegistry,
+  registerOsTools,
+  ShellJobRegistry,
+} from "../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../tools/verify/index.js";
 import { registerGithubTools } from "../tools/github/index.js";
 import { resolveGithubToken } from "../github/index.js";
@@ -1454,6 +1458,10 @@ export async function createAgentRuntime(
   // call a tool on the session (the controller runs one turn per
   // session), so a read always finds its own turn's request.
   const turnRequests = new Map<string, string>();
+  // The files a fan-out's contract declared as inputs, per worker
+  // session: the worker runner declares them, `os.fs.write` refuses to
+  // replace them (`fs-declared-inputs.ts`).
+  const declaredInputs = new DeclaredInputsRegistry();
   registerOsTools(toolRegistry, {
     ...dangerous,
     config: {
@@ -1464,6 +1472,7 @@ export async function createAgentRuntime(
     },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
     resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+    declaredInputs,
     // The trust surface (`config.json` + `.env`) is resolved once, here,
     // and injected into the fs tools — the tools layer must not know
     // where it lives. Pinned by the level-4 `trust_config` case in
@@ -3152,6 +3161,7 @@ export async function createAgentRuntime(
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
       resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+      declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
       resolveWorkerPricing: (providerId, modelId) =>

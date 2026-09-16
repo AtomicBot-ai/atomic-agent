@@ -13,6 +13,7 @@ import {
   MAX_TASK_FILES,
   parseDelegateArgs,
 } from "./delegate-args.js";
+import { MAX_CONTRACT_INPUTS } from "./contract-inputs.js";
 
 function task(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -518,5 +519,72 @@ describe("parseDelegateArgs — contract", () => {
     ]) {
       expect(() => parseDelegateArgs({ tasks: TASKS, contract })).not.toThrow();
     }
+  });
+});
+
+describe("parseDelegateArgs — contract inputs (F51)", () => {
+  const TASKS = [task({ id: "clean" }), task({ id: "report" })];
+
+  it("carries the declared inputs through, trimmed and deduplicated, alone or with the rest of the contract", () => {
+    const alone = parseDelegateArgs({
+      tasks: TASKS,
+      contract: { inputs: [" sales.csv ", "data/projects.json", "sales.csv"] },
+    });
+    expect(alone.ok && alone.contract).toEqual({
+      inputs: ["sales.csv", "data/projects.json"],
+    });
+    const text = parseDelegateArgs({
+      tasks: TASKS,
+      contract: JSON.stringify({
+        inputs: ["sales.csv"],
+        owners: { "report.md": "report" },
+      }),
+    });
+    expect(text.ok && text.contract).toEqual({
+      inputs: ["sales.csv"],
+      owners: { "report.md": "report" },
+    });
+  });
+
+  it("names every bad entry by index, refuses a non-array and the cap, and drops an empty list", () => {
+    expect(
+      expectError(
+        parseDelegateArgs({ tasks: TASKS, contract: { inputs: ["sales.csv", "", 3] } }),
+      ),
+    ).toBe(
+      "validation: contract.inputs[1] must be a non-empty path; contract.inputs[2] must be a non-empty path",
+    );
+    expect(
+      expectError(parseDelegateArgs({ tasks: TASKS, contract: { inputs: "sales.csv" } })),
+    ).toContain("contract.inputs must be an array of paths");
+    expect(
+      expectError(
+        parseDelegateArgs({
+          tasks: TASKS,
+          contract: {
+            inputs: Array.from({ length: MAX_CONTRACT_INPUTS + 1 }, (_, i) => `f${i}`),
+          },
+        }),
+      ),
+    ).toContain(
+      `contract.inputs has ${MAX_CONTRACT_INPUTS + 1} entries; at most ${MAX_CONTRACT_INPUTS}`,
+    );
+    for (const inputs of [null, []]) {
+      const parsed = parseDelegateArgs({ tasks: TASKS, contract: { inputs } });
+      expect(parsed.ok).toBe(true);
+      expect(parsed).not.toHaveProperty("contract");
+    }
+  });
+
+  it("counts the INPUTS lines against the rendered cap", () => {
+    const error = expectError(
+      parseDelegateArgs({
+        tasks: TASKS,
+        contract: {
+          inputs: Array.from({ length: MAX_CONTRACT_INPUTS }, (_, i) => `${"p".repeat(250)}${i}`),
+        },
+      }),
+    );
+    expect(error).toMatch(/contract renders to [\d,]+ chars; the limit is 8,000/);
   });
 });

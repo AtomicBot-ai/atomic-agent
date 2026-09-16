@@ -81,12 +81,19 @@ export interface InputGuardInput {
   after: string;
   /** The turn's pinned request, when the runtime recorded one. */
   request: string | undefined;
+  /**
+   * Absolute paths the fan-out's contract declared as inputs for this
+   * session (`fs-declared-inputs.ts`, workers only). Refused whatever
+   * `overwrite` says: the orchestrator declared them, and it can
+   * redeclare.
+   */
+  declaredInputs?: readonly string[];
   overwrite: boolean;
 }
 
 export interface InputRefusal {
-  /** The file is named by the request. */
-  reason: "request";
+  /** The file is named by the request, or declared by the fan-out's contract. */
+  reason: "request" | "contract";
   text: string;
   details: Record<string, unknown>;
 }
@@ -162,13 +169,17 @@ function isNegated(words: readonly string[], verbAt: number): boolean {
 
 /**
  * The refusal for this write, or `null` when it may go on to the
- * approval prompt and the F36 guard. Nothing is claimed without a store
+ * approval prompt and the F36 guard. A declared input is refused first
+ * and unconditionally. By name, nothing is claimed without a store
  * (nothing could tell the agent's files from the user's), for an empty
  * file (nothing to lose), or without a pinned request (nothing named).
  */
 export async function checkInputReplacement(
   input: InputGuardInput,
 ): Promise<InputRefusal | null> {
+  if (input.declaredInputs?.includes(input.absolute)) {
+    return refusal("contract", input);
+  }
   if (input.overwrite) return null;
   const request = input.request?.trim() ?? "";
   if (
@@ -186,7 +197,7 @@ export async function checkInputReplacement(
   if (await input.store.wasCreated(input.sessionId, input.absolute)) {
     return null;
   }
-  return refusal(input);
+  return refusal("request", input);
 }
 
 /** `2,401 lines → 10`, or `12.3 MB → 10 lines` for a file never read — the write tool's own wording. */
@@ -199,15 +210,27 @@ export function formatReplacementCounts(
     : `${formatLines(prior.lines)} → ${formatNumber(linesAfter)}`;
 }
 
-function refusal(input: InputGuardInput): InputRefusal {
+/**
+ * The same head for both reasons; the tail differs because the way
+ * onward does — a worker told to pass `overwrite: true` for a declared
+ * input would loop on a key that is ignored for it.
+ */
+function refusal(
+  reason: InputRefusal["reason"],
+  input: InputGuardInput,
+): InputRefusal {
   const linesAfter = countLines(input.after);
   const counts = formatReplacementCounts(input.prior, linesAfter);
+  const text =
+    reason === "request"
+      ? `refused: ${input.display} is an input the request names (${counts}); edit it in place (os.fs.edit / os.fs.patch), or pass overwrite: true if replacing it is really what the user asked for`
+      : `refused: ${input.display} is an input this fan-out declared (${counts}); edit it in place (os.fs.edit / os.fs.patch) — a worker cannot replace a declared input; if the task needs it replaced, say so in your reply so the orchestrator can redeclare it`;
   return {
-    reason: "request",
-    text: `refused: ${input.display} is an input the request names (${counts}); edit it in place (os.fs.edit / os.fs.patch), or pass overwrite: true if replacing it is really what the user asked for`,
+    reason,
+    text,
     details: {
       refused: "input",
-      input: "request",
+      input: reason,
       path: input.absolute,
       display: input.display,
       bytesBefore: input.prior.bytes,

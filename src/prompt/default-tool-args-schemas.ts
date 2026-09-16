@@ -735,6 +735,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         // The interface between the parts (`contract.ts`). `checks`
         // items are `verify.run` specs plus a `task`, so they stay open.
         contract: obj({
+          // F51: the operator's own files; workers edit them in place.
+          inputs: { ...stringArraySchema, maxItems: 32 },
           owners: {
             type: "object",
             additionalProperties: { type: "string" },

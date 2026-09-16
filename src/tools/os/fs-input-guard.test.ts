@@ -11,6 +11,7 @@ import { quotedRequestText } from "../../prompt/request-section.js";
 import { findUnknownArguments } from "../unknown-argument-guard.js";
 import { renderWorkerBrief } from "../fusion/worker-prompt.js";
 import type { ToolContext } from "../tool-registry.js";
+import { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import { buildOsFsEditTool } from "./fs-edit.js";
 import {
   REPLACE_VERB_WINDOW_WORDS,
@@ -294,5 +295,46 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
     );
     expect(sales.status).toBe("error");
     expect(sales.summary).toBe(REFUSAL);
+  });
+
+  it("refuses a worker's write to a declared input whatever overwrite says, without a store or a request; edits stay fine", async () => {
+    const registry = new DeclaredInputsRegistry();
+    registry.declare("s-w-1", [join(dir, "sales.csv"), "relative/ignored.csv"]);
+    expect(registry.inputsOf("s-w-1")).toEqual([join(dir, "sales.csv")]);
+    expect(registry.inputsOf("s-other")).toEqual([]);
+    request = undefined;
+    const before = csv(2401);
+    await writeFile(join(dir, "sales.csv"), before, "utf8");
+    const options = { approvals: gate, approvalRequired: true, declaredInputs: registry };
+    const write = buildOsFsWriteTool(options);
+    const refused = await write.run(
+      { path: "sales.csv", content: csv(9, "sku,qty"), overwrite: true },
+      ctx("s-w-1"),
+    );
+    expect(refused.status).toBe("error");
+    expect(refused.summary).toBe(
+      "refused: sales.csv is an input this fan-out declared (2,402 lines → 10); edit it in place (os.fs.edit / os.fs.patch) — a worker cannot replace a declared input; if the task needs it replaced, say so in your reply so the orchestrator can redeclare it",
+    );
+    expect(refused.details).toMatchObject({
+      refused: "input",
+      input: "contract",
+      overwrite: true,
+    });
+    expect(prompts).toHaveLength(0);
+    expect(await readFile(join(dir, "sales.csv"), "utf8")).toBe(before);
+    // An edit in place is the point.
+    const edited = await buildOsFsEditTool(options).run(
+      { path: "sales.csv", oldString: "row 1,", newString: "row one," },
+      ctx("s-w-1"),
+    );
+    expect(edited.status).toBe("ok");
+    // Another session is not bound; after `clear`, neither is the worker.
+    expect(
+      (await write.run({ path: "sales.csv", content: csv(9) }, ctx("s-other"))).status,
+    ).toBe("ok");
+    registry.clear("s-w-1");
+    expect(
+      (await write.run({ path: "sales.csv", content: csv(9) }, ctx("s-w-1"))).status,
+    ).toBe("ok");
   });
 });
