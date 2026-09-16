@@ -155,6 +155,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         path: stringSchema,
         content: stringSchema,
         mode: { type: "string", enum: ["replace", "append"] },
+        // F51: the only way past the input refusal (`fs-input-guard.ts`).
+        overwrite: booleanSchema,
       },
       ["path", "content"],
     ),

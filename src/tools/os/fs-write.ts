@@ -4,6 +4,10 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { categorizeFsMutation } from "./fs-approval-scope.js";
 import { checkChangedFile } from "./fs-content-check.js";
+import {
+  checkInputReplacement,
+  refuseInputReplacement,
+} from "./fs-input-guard.js";
 import { PARSE_CHECK_MAX_CHARS, withParseWarning } from "./fs-parse-check.js";
 import {
   NO_REPLACE_NOTE,
@@ -52,7 +56,30 @@ export function buildOsFsWriteTool(
         typeof rawArgs.mode === "string" && rawArgs.mode === "append"
           ? "append"
           : "replace";
+      const overwrite = rawArgs.overwrite === true;
       const absolute = resolveUserPath(path, ctx.workingDir);
+
+      // A file the request names as an input is not replaced without
+      // `overwrite: true` (F51, `fs-input-guard.ts`). Decided on the
+      // model's own target before the operator is asked, so no prompt is
+      // raised for a write that will not run; a target the operator
+      // moves the write to from the prompt is their choice.
+      if (mode === "replace") {
+        const existing = await readPriorFile(absolute);
+        if (existing !== null) {
+          const refused = await checkInputReplacement({
+            store: options.restore,
+            sessionId: ctx.sessionId,
+            absolute,
+            display: path,
+            prior: existing,
+            after: content,
+            request: options.resolveOriginalRequest?.(ctx.sessionId),
+            overwrite,
+          });
+          if (refused !== null) return refuseInputReplacement("os.fs.write", refused);
+        }
+      }
 
       const preview =
         content.length > 400 ? `${content.slice(0, 400)}…` : content;
@@ -166,6 +193,7 @@ export function buildOsFsWriteTool(
               mode,
               lines: linesAfter,
               existed: prior !== null,
+              ...(overwrite ? { overwrite: true } : {}),
               ...(prior === null ? {} : { previousBytes: prior.bytes }),
               ...(prior?.lines === undefined || prior.lines === null
                 ? {}

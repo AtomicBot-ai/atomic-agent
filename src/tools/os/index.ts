@@ -83,6 +83,16 @@ export { osFsDiffTool } from "./fs-diff.js";
 export { buildOsFsPatchTool } from "./fs-patch.js";
 export { buildOsFsRestoreTool } from "./fs-restore.js";
 export { FileRestoreStore } from "./fs-restore-store.js";
+export {
+  checkInputReplacement,
+  formatReplacementCounts,
+  refuseInputReplacement,
+  requestAsksToReplace,
+  requestNamesFile,
+  REPLACE_VERB_WINDOW_WORDS,
+  REPLACE_VERBS,
+} from "./fs-input-guard.js";
+export type { InputGuardInput, InputRefusal } from "./fs-input-guard.js";
 export { osFsWatchTool } from "./fs-watch.js";
 export {
   osGitStatusTool,
@@ -156,6 +166,13 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    */
   stateDir?: string;
   /**
+   * The operator's request behind the turn running on a session (the
+   * bootstrap's per-turn record, the one the workers' briefs quote),
+   * for `os.fs.write`'s input refusal (`fs-input-guard.ts`). Omitted
+   * (embedders, tests) leaves only the F36 warn-and-save path.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /**
    * Operator policy for the shell guard — today the git remote-sync
    * switch. Predicates rather than values so a toggle flipped live in
    * the Integrations hub is honoured on the next command. Omitted
@@ -197,6 +214,9 @@ export function registerOsTools(
     ...(options.stateDir === undefined
       ? {}
       : { restore: new FileRestoreStore(resolve(options.stateDir, "restore")) }),
+    ...(options.resolveOriginalRequest === undefined
+      ? {}
+      : { resolveOriginalRequest: options.resolveOriginalRequest }),
   };
   registry.register(osFsReadTool);
   registry.register(buildOsFsWriteTool(fsMutation));

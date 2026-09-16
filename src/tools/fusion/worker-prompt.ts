@@ -1,5 +1,9 @@
 import type { ConversationTurn } from "../../session/conversation-turn.js";
-import { REQUEST_FOLLOW_UP_MARKER } from "../../prompt/request-section.js";
+import {
+  ORIGINAL_REQUEST_BEGIN_MARKER,
+  ORIGINAL_REQUEST_END_MARKER,
+  REQUEST_FOLLOW_UP_MARKER,
+} from "../../prompt/request-section.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
   renderContractBlock,
@@ -92,9 +96,9 @@ function quoteOriginalRequest(request: string): string[] {
       : request;
   const lines = [
     `ORIGINAL REQUEST — context only; your task is below. This is the operator's whole job, which the orchestrator split across several workers. Use it for the names, formats, constraints and look your part must agree with, and do only your TASK.`,
-    `----- BEGIN ORIGINAL REQUEST -----`,
+    ORIGINAL_REQUEST_BEGIN_MARKER,
     clipped,
-    `----- END ORIGINAL REQUEST -----`,
+    ORIGINAL_REQUEST_END_MARKER,
   ];
   if (clipped.length < request.length) {
     lines.push(

@@ -32,6 +32,14 @@ export interface FsDangerousToolOptions extends DangerousToolOptions {
    * off and leaves `os.fs.restore` with nothing to restore.
    */
   restore?: FileRestoreStore;
+  /**
+   * The operator's request behind the turn now running on a session —
+   * the record `executeTurn` keeps for the workers' briefs — read by
+   * `os.fs.write` to tell an input the request names from any other
+   * file (`fs-input-guard.ts`). Omitted (embedders, tests) turns that
+   * refusal off; the F36 guard is unaffected.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
 }
 
 /**
