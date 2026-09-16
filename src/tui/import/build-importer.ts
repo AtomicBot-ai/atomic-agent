@@ -5,15 +5,21 @@ import {
   CodexSource,
   HermesImporter,
   HermesSource,
+  OhMyPiImporter,
+  OhMyPiSource,
   OpenclawImporter,
   OpenclawSource,
   OPENCLAW_DEFAULT_AGENT,
+  PiImporter,
+  PiSource,
   type ClaudeCodeOptionId,
   type CodexOptionId,
   type ImportAgentId,
   type ImportOptionId,
   type ImportReport,
+  type OhMyPiOptionId,
   type OpenclawOptionId,
+  type PiOptionId,
 } from "../../import/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 
@@ -29,7 +35,7 @@ export interface ImportRunnerInput {
 /**
  * One importer behind a source-agnostic face, so the Import tab and the
  * first-run flow share a single construction site instead of each
- * repeating the four `new XImporter({...})` blocks.
+ * repeating the per-source `new XImporter({...})` blocks.
  */
 export interface ImportRunner {
   run(input: ImportRunnerInput): Promise<ImportReport>;
@@ -128,6 +134,39 @@ export function buildImportRunner(
         close: () => {},
       };
     }
+    case "pi": {
+      const importer = new PiImporter({
+        source: new PiSource(dir),
+        sessionStore: runtime.sessionStore,
+        globalSkillsDir: config.paths.globalSkillsDir,
+        workingDirFallback,
+      });
+      return {
+        run: (input) =>
+          importer.run({
+            ...input,
+            options: input.options.filter(isPiOption),
+          }),
+        close: () => {},
+      };
+    }
+    case "oh-my-pi": {
+      const importer = new OhMyPiImporter({
+        source: new OhMyPiSource(dir),
+        sessionStore: runtime.sessionStore,
+        userConfigFile: config.paths.userConfigFile,
+        globalSkillsDir: config.paths.globalSkillsDir,
+        workingDirFallback,
+      });
+      return {
+        run: (input) =>
+          importer.run({
+            ...input,
+            options: input.options.filter(isOhMyPiOption),
+          }),
+        close: () => {},
+      };
+    }
   }
 }
 
@@ -156,4 +195,12 @@ function isCodexOption(id: string): id is CodexOptionId {
   return (
     id === "skills" || id === "memory" || id === "sessions" || id === "secrets"
   );
+}
+
+function isPiOption(id: string): id is PiOptionId {
+  return id === "skills" || id === "sessions";
+}
+
+function isOhMyPiOption(id: string): id is OhMyPiOptionId {
+  return id === "skills" || id === "mcp" || id === "sessions";
 }

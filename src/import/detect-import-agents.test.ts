@@ -23,6 +23,8 @@ describe("detectImportAgents", () => {
   it("ignores a bare state dir with no importable artefact", () => {
     mkdirSync(join(home, ".hermes"), { recursive: true });
     mkdirSync(join(home, ".claude"), { recursive: true });
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    mkdirSync(join(home, ".omp", "agent"), { recursive: true });
     expect(detectImportAgents({ home, env: {} })).toEqual([]);
   });
 
@@ -33,6 +35,9 @@ describe("detectImportAgents", () => {
     mkdirSync(join(home, ".claude", "skills"), { recursive: true });
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "auth.json"), "{}");
+    mkdirSync(join(home, ".pi", "agent", "skills"), { recursive: true });
+    mkdirSync(join(home, ".omp", "agent"), { recursive: true });
+    writeFileSync(join(home, ".omp", "agent", "mcp.json"), "{}");
 
     const detected = detectImportAgents({ home, env: {} });
     expect(detected.map((d) => d.id)).toEqual([
@@ -40,14 +45,20 @@ describe("detectImportAgents", () => {
       "openclaw",
       "claude-code",
       "codex",
+      "pi",
+      "oh-my-pi",
     ]);
     expect(detected.map((d) => d.label)).toEqual([
       "Hermes",
       "OpenClaw",
       "Claude Code",
       "Codex",
+      "Pi",
+      "Oh-My-Pi",
     ]);
     expect(detected[0]!.dir).toBe(join(home, ".hermes"));
+    expect(detected[4]!.dir).toBe(join(home, ".pi", "agent"));
+    expect(detected[5]!.dir).toBe(join(home, ".omp", "agent"));
   });
 
   it("honours the *_STATE_DIR env overrides", () => {
@@ -60,6 +71,12 @@ describe("detectImportAgents", () => {
     expect(detected).toEqual([
       { id: "claude-code", label: "Claude Code", dir: custom },
     ]);
+
+    const piCustom = join(home, "pi-elsewhere");
+    mkdirSync(join(piCustom, "sessions"), { recursive: true });
+    expect(detectImportAgents({ home, env: { PI_STATE_DIR: piCustom } })).toEqual(
+      [{ id: "pi", label: "Pi", dir: piCustom }],
+    );
   });
 
   it("resolves default dirs off the injected home", () => {
@@ -69,5 +86,14 @@ describe("detectImportAgents", () => {
     expect(
       importAgentDir("codex", { home, env: { CODEX_STATE_DIR: "/x" } }),
     ).toBe("/x");
+    expect(importAgentDir("pi", { home, env: {} })).toBe(
+      join(home, ".pi", "agent"),
+    );
+    expect(importAgentDir("oh-my-pi", { home, env: {} })).toBe(
+      join(home, ".omp", "agent"),
+    );
+    expect(
+      importAgentDir("oh-my-pi", { home, env: { OMP_STATE_DIR: "/y" } }),
+    ).toBe("/y");
   });
 });

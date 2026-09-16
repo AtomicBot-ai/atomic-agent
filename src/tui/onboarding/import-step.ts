@@ -2,7 +2,9 @@ import {
   CLAUDE_CODE_IMPORT_OPTIONS,
   CODEX_IMPORT_OPTIONS,
   IMPORT_OPTIONS,
+  OH_MY_PI_IMPORT_OPTIONS,
   OPENCLAW_IMPORT_OPTIONS,
+  PI_IMPORT_OPTIONS,
   type DetectedImportAgent,
   type ImportAgentId,
   type ImportReport,
@@ -156,6 +158,10 @@ function optionRegistryFor(id: ImportAgentId): readonly OptionMetaLike[] {
       return CLAUDE_CODE_IMPORT_OPTIONS;
     case "codex":
       return CODEX_IMPORT_OPTIONS;
+    case "pi":
+      return PI_IMPORT_OPTIONS;
+    case "oh-my-pi":
+      return OH_MY_PI_IMPORT_OPTIONS;
   }
 }
 

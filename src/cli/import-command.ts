@@ -31,6 +31,7 @@ import {
   type OpenclawOptionId,
   type ImportReport,
 } from "../import/index.js";
+import { importOhMyPi, importPi } from "./import-pi-family-command.js";
 
 const HELP =
   [
@@ -41,6 +42,8 @@ const HELP =
     "  openclaw [options]        Import conversation history + cron jobs from ~/.openclaw",
     "  claude-code [options]     Import skills, memory, MCP servers + sessions from ~/.claude",
     "  codex [options]           Import skills, instructions + sessions from ~/.codex",
+    "  pi [options]              Import skills + sessions from ~/.pi/agent",
+    "  oh-my-pi [options]        Import skills, MCP servers + sessions from ~/.omp/agent",
     "",
     "Options (import hermes):",
     "  --source <dir>            Hermes state dir (default ~/.hermes, env HERMES_STATE_DIR)",
@@ -83,6 +86,24 @@ const HELP =
     "  --dry-run                 Preview only; never write",
     "  --yes                     Skip the interactive confirmation",
     "",
+    "Options (import pi):",
+    "  --source <dir>            Pi agent dir (default ~/.pi/agent, env PI_STATE_DIR)",
+    "  --include a,b             Add options (skills,sessions)",
+    "  --exclude a,b             Remove options",
+    "  --limit N                 Cap the number of sessions imported (newest first)",
+    "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
+    "  --dry-run                 Preview only; never write",
+    "  --yes                     Skip the interactive confirmation",
+    "",
+    "Options (import oh-my-pi):",
+    "  --source <dir>            Oh-My-Pi agent dir (default ~/.omp/agent, env OMP_STATE_DIR)",
+    "  --include a,b             Add options (skills,mcp,sessions)",
+    "  --exclude a,b             Remove options",
+    "  --limit N                 Cap the number of sessions imported (newest first)",
+    "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
+    "  --dry-run                 Preview only; never write",
+    "  --yes                     Skip the interactive confirmation",
+    "",
     "Examples:",
     "  atomic-agent import hermes --dry-run",
     "  atomic-agent import hermes --yes",
@@ -92,6 +113,8 @@ const HELP =
     "  atomic-agent import claude-code --dry-run",
     "  atomic-agent import claude-code --exclude sessions --yes",
     "  atomic-agent import codex --limit 50 --yes",
+    "  atomic-agent import pi --dry-run",
+    "  atomic-agent import oh-my-pi --exclude mcp --yes",
   ].join("\n") + "\n";
 
 export async function importCommand(args: string[]): Promise<number> {
@@ -111,6 +134,12 @@ export async function importCommand(args: string[]): Promise<number> {
   }
   if (sub === "codex") {
     return importCodex(args.slice(1));
+  }
+  if (sub === "pi") {
+    return importPi(args.slice(1));
+  }
+  if (sub === "oh-my-pi") {
+    return importOhMyPi(args.slice(1));
   }
   process.stderr.write(`unknown import source: ${sub}\n`);
   process.stderr.write(HELP);

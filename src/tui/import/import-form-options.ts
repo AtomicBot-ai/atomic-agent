@@ -1,7 +1,9 @@
 import {
   resolveClaudeCodeOptions,
   resolveCodexOptions,
+  resolveOhMyPiOptions,
   resolveOpenclawOptions,
+  resolvePiOptions,
   resolveSelectedOptions,
 } from "../../import/index.js";
 import type { ImportFormState } from "./import-panel-state.js";
@@ -35,6 +37,10 @@ export function resolveImportFormOptions(form: ImportFormState): string[] {
       });
     case "codex":
       return resolveCodexOptions({ exclude, migrateSecrets: form.secrets });
+    case "pi":
+      return resolvePiOptions({ exclude });
+    case "oh-my-pi":
+      return resolveOhMyPiOptions({ exclude });
   }
 }
 

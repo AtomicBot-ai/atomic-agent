@@ -354,7 +354,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "import",
       description:
-        "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
+        "open the Import tab (Hermes, OpenClaw, Claude Code, Codex, Pi or Oh-My-Pi)",
       rank: 31,
     },
     section: "manage",
