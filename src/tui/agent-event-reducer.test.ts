@@ -1843,3 +1843,37 @@ describe("a fallover away from the primary is said in the chat, not only the fee
     expect(s.feed.some((f) => f.line.includes("recovered primary"))).toBe(true);
   });
 });
+
+describe("reduceTuiState step line under a stalled Fusion review (F41)", () => {
+  it("appends the cut reason to the cut step's line and nothing to a noticed step's", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 6 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "step_finished",
+          stepIndex: 6,
+          summary: "os.fs.read",
+          durationMs: 5,
+          reviewStall: { steps: 6, phase: "notice" },
+        },
+      },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 12 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "step_finished",
+          stepIndex: 12,
+          summary: "os.fs.read[error]",
+          durationMs: 5,
+          reviewStall: { steps: 12, phase: "cut" },
+        },
+      },
+    ]);
+    const lines = state.feed.map((f) => f.line);
+    expect(lines).toContain("[step 6] os.fs.read (5ms)");
+    expect(lines).toContain(
+      "[step 12] os.fs.read[error] (5ms) — review stalled: delegate or reply",
+    );
+  });
+});

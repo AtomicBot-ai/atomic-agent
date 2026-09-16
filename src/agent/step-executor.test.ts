@@ -34,6 +34,8 @@ import {
 } from "../llm/model-profile.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
+import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
+import { reviewStallToolSet } from "./review-stall.js";
 import { resetConfigCache } from "../config/index.js";
 import { buildOpenAiChatBody } from "../llm/provider/openai/openai-build-body.js";
 import type {
@@ -4365,6 +4367,57 @@ describe("executeStep per-request grammar (F17)", () => {
     for (const name of hidden) expect(names).not.toContain(name);
     expect(names).toContain("os.fs.write");
     expect(names).toContain("reply");
+  });
+
+  it("a step tool set (a stalled review's cut) narrows the grammar to its three names and leaves the prompt alone (F41)", async () => {
+    const { params, baseGrammar } = await runStep(
+      { toolSet: reviewStallToolSet(), toolRole: "orchestrator" },
+      { isFusionOrchestrator: () => true },
+    );
+    expect(grammarToolNames(params.grammar)).toEqual([
+      "finish",
+      "fusion.delegate",
+      "reply",
+    ]);
+    expect(params.grammar).not.toBe(baseGrammar);
+    // The catalog is stable-prefix bytes: the cut step's prompt is the
+    // prompt of any other orchestrator step.
+    const plain = await runStep(
+      { toolRole: "orchestrator" },
+      { isFusionOrchestrator: () => true },
+    );
+    expect(params.prompt).toBe(plain.params.prompt);
+    expect(params.prompt).toContain("- os.fs.read —");
+  });
+
+  it("a step tool set narrows the native tools payload to its descriptors (F41)", async () => {
+    const native = {
+      toolTransport: "native_tools" as const,
+      toolCallAdapter: openAiToolCallAdapter,
+      supportsSlotAffinity: false,
+      isFusionOrchestrator: () => true,
+    };
+    const wireNames = (params: LlmStreamParams): string[] =>
+      (params.tools ?? []).map(
+        (t) => (t as { function?: { name?: string } }).function?.name ?? "",
+      );
+    const { params } = await runStep(
+      { toolSet: reviewStallToolSet(), toolRole: "orchestrator" },
+      native,
+    );
+    expect(wireNames(params).sort()).toEqual([
+      "finish",
+      "fusion__delegate",
+      "reply",
+    ]);
+    const full = await runStep({ toolRole: "orchestrator" }, native);
+    expect(wireNames(full.params)).toContain("os__fs__read");
+    // The grammar a fallback llama-server link would get says the same.
+    expect(grammarToolNames(params.grammar)).toEqual([
+      "finish",
+      "fusion.delegate",
+      "reply",
+    ]);
   });
 
   it("the repair retry goes out under the same narrowed grammar", async () => {

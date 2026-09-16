@@ -95,6 +95,12 @@ export interface TraceStepFinished extends TraceEventBase {
   durationMs: number;
   /** The step kept a `reply` batched with work as a progress note. */
   progressNote?: true;
+  /**
+   * The step ran under a stalled Fusion review (F41): `steps` read-only
+   * steps without a fan-out; the step carried the notice, or was cut to
+   * `fusion.delegate` / `reply` / `finish`.
+   */
+  reviewStall?: { steps: number; phase: "notice" | "cut" };
 }
 
 export interface TracePromptTokens {

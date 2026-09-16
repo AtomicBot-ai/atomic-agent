@@ -835,6 +835,35 @@ describe("createTraceRecorder", () => {
     ]);
   });
 
+  it("step_finished carries the stalled-review signal when the loop sends one (F41)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-stall", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 5 });
+    rec.onAgentEvent({
+      type: "step_finished",
+      stepIndex: 5,
+      summary: "os.fs.read",
+      durationMs: 3,
+    });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 12 });
+    rec.onAgentEvent({
+      type: "step_finished",
+      stepIndex: 12,
+      summary: "os.fs.read[error]",
+      durationMs: 4,
+      reviewStall: { steps: 12, phase: "cut" },
+    });
+    const rows = events.filter((e) => e.type === "step_finished");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toHaveProperty("reviewStall");
+    expect(rows[1]).toMatchObject({
+      stepIndex: 12,
+      reviewStall: { steps: 12, phase: "cut" },
+    });
+  });
+
   it("assigns monotonic seq across events", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-9", emit, now });

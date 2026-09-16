@@ -74,6 +74,29 @@ export type {
   ProgressNoteSplit,
   RecordProgressNoteParams,
 } from "./progress-note-reply.js";
+export {
+  REVIEW_STALL_CUT_REASON,
+  REVIEW_STALL_TOOL_NAMES,
+  createReviewStallState,
+  formatReviewStallNotice,
+  looksLikeRepairRequest,
+  observeReviewStep,
+  resolveReviewStallThreshold,
+  reviewStallSignal,
+  reviewStallToolSet,
+  takeReviewStallNotice,
+} from "./review-stall.js";
+export type {
+  ReviewStallPhase,
+  ReviewStallSignal,
+  ReviewStallState,
+} from "./review-stall.js";
+export {
+  narrowDescriptorsToToolSet,
+  toolSetAdmits,
+  toolSetRefusal,
+} from "./step-tool-set.js";
+export type { StepToolSet } from "./step-tool-set.js";
 export { classifyTestCommand } from "./test-command-key.js";
 export type { RecognizedTestCommand } from "./test-command-key.js";
 export {

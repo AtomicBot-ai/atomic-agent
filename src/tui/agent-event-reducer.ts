@@ -472,6 +472,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             stepIndex: event.stepIndex,
             summary: event.summary,
             durationMs: event.durationMs,
+            ...(event.reviewStall !== undefined
+              ? { reviewStall: { phase: event.reviewStall.phase } }
+              : {}),
           }),
           color: "gray",
         }),

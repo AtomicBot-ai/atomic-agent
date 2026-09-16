@@ -4,6 +4,11 @@ import {
   emptyFusionOrchestratorState,
   type FusionOrchestratorState,
 } from "./fusion-orchestrator-mode.js";
+import {
+  toolSetAdmits,
+  toolSetRefusal,
+  type StepToolSet,
+} from "./step-tool-set.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import {
   compressToolResult,
@@ -144,6 +149,13 @@ export interface BatchExecutionContext {
    * which is stable-prefix bytes.
    */
   terminalOnly?: boolean;
+  /**
+   * The only names this step may run (`step-tool-set.ts`): the final
+   * step's restriction with the names supplied. A non-terminal call
+   * outside the set is answered with `toolSetRefusal` in its slot and
+   * never reaches the registry; terminals are exempt as everywhere.
+   */
+  toolSet?: StepToolSet;
   /**
    * Plan mode, read at dispatch time rather than passed as a boolean.
    *
@@ -311,7 +323,8 @@ export async function executeBatch(
       continue;
     }
     // The final step first: nothing but a terminal runs on it, whatever
-    // the other gates would say.
+    // the other gates would say. A per-step tool set is the same
+    // restriction with other names and rides the same gate.
     const final = runFinalStepGate(input, ctx);
     if (!final.proceed && final.vetoResult) {
       ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
@@ -711,29 +724,37 @@ function skillAlreadyLoadedResult(
 export const FINAL_STEP_REFUSAL = "final step: only reply or finish run here";
 
 /**
- * Refuse a non-terminal call on the loop's reserved final step. The
- * prompt's `### notice` already said so; this is what makes it true
- * without narrowing the tool catalog (stable-prefix bytes) for one step.
- * A solo `[reply]` never reaches this gate — terminals are split off
- * before phase 1 — and a `[tool, reply]` batch keeps its reply.
+ * Refuse a non-terminal call on the loop's reserved final step, or one
+ * outside the step's tool set (`step-tool-set.ts`). The prompt's
+ * `### notice` already said so; this is what makes it true without
+ * narrowing the tool catalog (stable-prefix bytes) for one step. A solo
+ * `[reply]` never reaches this gate — terminals are split off before
+ * phase 1 — and a `[tool, reply]` batch keeps its reply.
  */
 function runFinalStepGate(
   input: BatchCallInput,
   ctx: BatchExecutionContext,
 ): { proceed: boolean; vetoResult?: CompressedToolResult } {
-  if (!ctx.terminalOnly || input.resourceClass === "terminal") {
-    return { proceed: true };
+  if (input.resourceClass === "terminal") return { proceed: true };
+  if (ctx.terminalOnly) {
+    return {
+      proceed: false,
+      vetoResult: {
+        tool: input.call.tool,
+        status: "error",
+        summary: FINAL_STEP_REFUSAL,
+        details: { final_step: true, tool: input.call.tool },
+        truncated: false,
+      },
+    };
   }
-  return {
-    proceed: false,
-    vetoResult: {
-      tool: input.call.tool,
-      status: "error",
-      summary: FINAL_STEP_REFUSAL,
-      details: { final_step: true, tool: input.call.tool },
-      truncated: false,
-    },
-  };
+  if (ctx.toolSet !== undefined && !toolSetAdmits(ctx.toolSet, input.call.tool)) {
+    return {
+      proceed: false,
+      vetoResult: toolSetRefusal(input.call.tool, ctx.toolSet),
+    };
+  }
+  return { proceed: true };
 }
 
 /**
