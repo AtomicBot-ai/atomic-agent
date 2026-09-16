@@ -48,7 +48,7 @@ export interface OpenAiProviderOptions {
   id: string;
   baseUrl: string;
   apiKey: string;
-  defaultChatModel: string;
+  defaultChatModel?: string;
   headers?: Record<string, string>;
   /**
    * Header that carries the API key when the service does not accept
@@ -104,7 +104,7 @@ export class OpenAiProvider implements LlmProvider {
   readonly capabilities: ProviderCapabilities;
 
   private readonly http: OpenAiHttpDeps;
-  private readonly defaultChatModel: string;
+  private readonly defaultChatModel: string | undefined;
   private readonly apiPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
   private readonly extraBody: Record<string, unknown> | undefined;
@@ -157,18 +157,24 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
     // Unary only: sub-calls carry `response_format`, streamed turns never do.
     const json = await sendWithStructuredOutputFallback(
       {
         providerId: this.id,
-        model: this.defaultChatModel,
+        model,
         logger: this.http.logger,
       },
       request,
       (req) =>
         buildOpenAiChatBody(
           req,
-          this.defaultChatModel,
+          model,
           false,
           this.extraBody,
           this.maxOutputTokens,
@@ -187,15 +193,21 @@ export class OpenAiProvider implements LlmProvider {
       this.taggedToolCompatibility === "qwen"
         ? adaptQwenTaggedToolResponse(json, request)
         : json;
-    return normaliseOpenAiChatResponse(adapted, this.defaultChatModel);
+    return normaliseOpenAiChatResponse(adapted, model);
   }
 
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
     const body = buildOpenAiChatBody(
       request,
-      this.defaultChatModel,
+      model,
       true,
       this.extraBody,
       this.maxOutputTokens,
@@ -334,7 +346,7 @@ export class OpenAiProvider implements LlmProvider {
     }
     const final = completionFromStreamFinal(
       streamFinal,
-      this.defaultChatModel,
+      model,
       accumulated,
       accumulatedReasoning,
     );
@@ -396,9 +408,15 @@ export class OpenAiProvider implements LlmProvider {
     if (!this.capabilities.vision) {
       throw new VisionUnsupportedError(this.name);
     }
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
     return describeImageViaOpenAi(
       this.http,
-      this.defaultChatModel,
+      model,
       request,
       this.apiPathPrefix,
       this.providerPreferences,
@@ -421,7 +439,7 @@ function normalizeApiPathPrefix(prefix: string): string {
 
 function completionFromStreamFinal(
   streamFinal: StreamFinalResult | void,
-  defaultChatModel: string,
+  defaultChatModel: string | undefined,
   accumulated: string,
   accumulatedReasoning: string,
 ): CompletionResult {
@@ -444,7 +462,7 @@ function completionFromStreamFinal(
     },
     cacheHitTokens: 0,
     slotId: -1,
-    modelId: streamFinal?.modelId ?? defaultChatModel,
+    modelId: streamFinal?.modelId ?? defaultChatModel ?? null,
     usage,
     toolCalls: streamFinal?.toolCalls,
     finishReason,
