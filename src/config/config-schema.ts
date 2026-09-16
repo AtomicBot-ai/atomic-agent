@@ -2410,7 +2410,14 @@ export interface UserConfigFile {
 // `localModels.thinking: "off"` is honoured on the hand-built prompt of a
 // `qwen-think` model (disabled marker at the generation point, plain
 // grammar root) — no new field, the existing switch reaches one more path.
-export const USER_CONFIG_VERSION = 68;
+// v69: `llm.runMode.fusion.reviewStallSteps` (default 6, `0` = off) — the
+// number of consecutive read-only orchestrator steps without a
+// `fusion.delegate` after which the planner is told to delegate or reply,
+// and at twice which the step admits only `fusion.delegate`, `reply` and
+// `finish` (F41, `src/agent/review-stall.ts`). Additive: an older file
+// has no field, the fusion block stays as it was, and the default applies
+// at read time like the other optional fusion fields.
+export const USER_CONFIG_VERSION = 69;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2567,6 +2574,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   65,
   66,
   67,
+  68,
   USER_CONFIG_VERSION,
 ];
 

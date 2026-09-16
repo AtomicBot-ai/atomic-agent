@@ -2287,3 +2287,38 @@ describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
   });
 });
+
+describe("llm.runMode.fusion.reviewStallSteps (F41, config v69)", () => {
+  const llm = {
+    activeTextProvider: "openrouter",
+    providers: [
+      { id: "openrouter", kind: "openrouter", apiKey: "k" },
+      { id: "local-llama", kind: "llama-server", baseUrl: "http://127.0.0.1:8080" },
+    ],
+  };
+
+  it("round-trips the field and leaves it absent when not set", () => {
+    const set = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: { ...llm, runMode: { mode: "fusion", fusion: { reviewStallSteps: 4 } } },
+    });
+    expect(set.llm?.runMode?.fusion?.reviewStallSteps).toBe(4);
+    const unset = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: { ...llm, runMode: { mode: "fusion", fusion: { workers: 2 } } },
+    });
+    expect(unset.llm?.runMode?.fusion).toEqual({ workers: 2 });
+  });
+
+  it("upgrades a v68 file without touching its fusion block", () => {
+    const parsed = parseUserConfigFile({
+      version: 68,
+      llm: { ...llm, runMode: { mode: "fusion", fusion: { workers: 3 } } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.llm?.runMode).toEqual({
+      mode: "fusion",
+      fusion: { workers: 3 },
+    });
+  });
+});

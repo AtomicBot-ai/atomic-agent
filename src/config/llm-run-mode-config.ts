@@ -88,6 +88,15 @@ export type UserLlmFusionConfig = {
   workerMaxSteps?: number;
   /** Wall-clock ceiling per worker turn, in ms. Default 600 000. */
   workerTimeoutMs?: number;
+  /**
+   * How many consecutive read-only orchestrator steps without a
+   * `fusion.delegate` count as a stalled review (F41). At N the model
+   * is told once to delegate or reply; at 2N the step admits only
+   * `fusion.delegate`, `reply` and `finish`. Halved (rounded up) when
+   * the turn's message reads as a repair request. `0` disables both.
+   * Default 6. See `src/agent/review-stall.ts`.
+   */
+  reviewStallSteps?: number;
 };
 
 export type UserLlmRunModeConfig = {
@@ -131,6 +140,14 @@ export const DEFAULT_FUSION_WORKER_MAX_STEPS = 60;
  * a turn ends with the cloud model doing the job itself.
  */
 export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
+/**
+ * Read-only orchestrator steps before a review counts as stalled. Six:
+ * live, two local planners each read for 90 minutes on one failing
+ * check line and never fanned out; a planner that has read for six
+ * steps has what it needs to brief a worker or to say what stands.
+ */
+export const DEFAULT_FUSION_REVIEW_STALL_STEPS = 6;
+export const FUSION_REVIEW_STALL_STEPS_MAX = 1000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 
@@ -277,6 +294,14 @@ function parseFusion(
       `${field}.workerTimeoutMs`,
       1_000,
       86_400_000,
+    );
+  }
+  if (obj.reviewStallSteps !== undefined) {
+    out.reviewStallSteps = parseBoundedInt(
+      obj.reviewStallSteps,
+      `${field}.reviewStallSteps`,
+      0,
+      FUSION_REVIEW_STALL_STEPS_MAX,
     );
   }
   return out;
