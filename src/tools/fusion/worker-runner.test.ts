@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -411,6 +411,30 @@ describe("runWorkerTasks", () => {
     expect(calls[1]!.userMessage).toContain("Do part 1");
   });
 
+  it("renders the fan-out's contract into every worker's brief", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 2,
+      contract: {
+        owners: { "a.js": "t0", "b.js": "t1" },
+        provides: [{ task: "t0", kind: "symbol", name: "A", in: "a.js" }],
+        requires: [{ task: "t1", name: "A" }],
+      },
+      signal: new AbortController().signal,
+    });
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.userMessage).toContain("CONTRACT — the interface between the parts");
+      expect(call.userMessage).toContain("- [t0] symbol A in a.js");
+    }
+    expect(calls[0]!.userMessage).toContain("You own: a.js");
+    expect(calls[0]!.userMessage).toContain("You provide: symbol A in a.js");
+    expect(calls[1]!.userMessage).toContain("You own: b.js");
+    expect(calls[1]!.userMessage).toContain("You may rely on: A (symbol from t0 in a.js)");
+  });
+
   it("reports max_steps, not ok, when the worker replied on its forced final step", async () => {
     const { deps } = harness(async ({ options }) => {
       options.eventHook?.({
@@ -501,6 +525,108 @@ describe("runWorkerTasks", () => {
         phase: "failed",
         summary: "declared file js/scene.js does not exist after the task",
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports no_changes for an ok task that declared files, wrote nothing and changed nothing", async () => {
+    // "js/main.js unchanged by this task / I'm done!" came back `ok`.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      mkdirSync(join(dir, "js"));
+      writeFileSync(join(dir, "js", "main.js"), "old");
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "js", "main.js"), past, past);
+      const { deps, events } = harness(async ({ options }) => {
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: { tool: "os.fs.read", status: "ok", summary: "old", details: {}, truncated: false },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "I'm done!" },
+        });
+        return turnResult({ stepCount: 2 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [
+          { id: "t0", title: "Main", instructions: "Fix main", files: ["js/main.js"] },
+        ],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]).toMatchObject({
+        status: "no_changes",
+        reply: "I'm done!",
+        tools: { writes: 0 },
+        notes: [
+          "js/main.js unchanged by this task",
+          "no write, edit or patch call succeeded and no declared file changed",
+        ],
+      });
+      expect(results[0]).not.toHaveProperty("error");
+      expect(events.at(-1)!.event).toMatchObject({
+        type: "fusion_worker",
+        phase: "finished",
+        summary: "no changes — I'm done!",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never reports no_changes for a task without declared files, or one whose write succeeded", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      writeFileSync(join(dir, "notes.md"), "old");
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "notes.md"), past, past);
+      const research = harness(async ({ options }) => {
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "the answer" },
+        });
+        return turnResult();
+      });
+      research.deps.workingDir = dir;
+      const [plain] = await runWorkerTasks(research.deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Research", instructions: "Read and report" }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(plain!.status).toBe("ok");
+
+      // A successful write call is the evidence, even when the declared
+      // path is a glob the disk check cannot stat.
+      const wrote = harness(async ({ options }) => {
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: { tool: "os.fs.write", status: "ok", summary: "wrote", details: {}, truncated: false },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        return turnResult();
+      });
+      wrote.deps.workingDir = dir;
+      const [written] = await runWorkerTasks(wrote.deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Write", instructions: "x", files: ["js/**/*.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(written).toMatchObject({ status: "ok", tools: { writes: 1 } });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

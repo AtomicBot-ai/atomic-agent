@@ -12,6 +12,39 @@ export {
 } from "./delegate-args.js";
 export type { DelegateTask, ParsedDelegateArgs } from "./delegate-args.js";
 export {
+  CONTRACT_PROVIDE_KINDS,
+  MAX_CONTRACT_CHECKS,
+  MAX_CONTRACT_PROVIDES,
+  MAX_CONTRACT_RENDERED_CHARS,
+  describeProvide,
+  ownedPaths,
+  renderContractBlock,
+  renderContractForTask,
+} from "./contract.js";
+export type {
+  ContractCheck,
+  ContractProvide,
+  ContractProvideKind,
+  ContractRequire,
+  DelegateContract,
+} from "./contract.js";
+export {
+  applyCheckOutcomes,
+  applyContractFindings,
+  contentProvides,
+  describeMissing,
+  inspectContractProvides,
+  renderContractLine,
+  runContractChecks,
+} from "./contract-checks.js";
+export type {
+  ContractCheckOutcome,
+  ContractCheckResult,
+  ContractCheckRunner,
+  ContractFinding,
+  ContractReport,
+} from "./contract-checks.js";
+export {
   renderWorkerBrief,
   pickOriginalRequest,
   WORKER_REPLY_CHAR_BUDGET,
@@ -21,14 +54,19 @@ export {
 export {
   WorkerRunCollector,
   classifyWorkerStatus,
+  delegateOutcome,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
   workerFailureHint,
+  FILE_WRITING_TOOLS,
   WORKER_HINT_CONTEXT,
   WORKER_HINT_SATURATED,
   WORKER_HINT_QUOTA,
+  WORKER_STATUS_ORDER,
 } from "./worker-result.js";
 export type {
+  DelegateOutcome,
+  TaskCheckSummary,
   WorkerStopCause,
   WorkerTaskResult,
   WorkerTaskStatus,
@@ -36,6 +74,7 @@ export type {
 } from "./worker-result.js";
 export {
   applyDeclaredFileReport,
+  applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
 export type { DeclaredFileReport } from "./declared-files.js";

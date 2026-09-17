@@ -17,7 +17,26 @@ import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
  * itself without re-reading a transcript it no longer has.
  */
 export type WorkerTaskStatus =
-  "ok" | "failed" | "cancelled" | "needs_orchestrator" | "max_steps";
+  | "ok"
+  | "no_changes"
+  | "failed"
+  | "cancelled"
+  | "needs_orchestrator"
+  | "max_steps";
+
+/**
+ * The order the head line counts statuses in: what was delivered first,
+ * then what was not and why. Fixed so two fan-outs with the same
+ * outcome read the same, whichever task finished first.
+ */
+export const WORKER_STATUS_ORDER: readonly WorkerTaskStatus[] = [
+  "ok",
+  "no_changes",
+  "needs_orchestrator",
+  "max_steps",
+  "failed",
+  "cancelled",
+];
 
 /** Which ceiling ended a worker's loop — see `RunTurnResult.stopCause`. */
 export type WorkerStopCause = NonNullable<RunTurnResult["stopCause"]>;
@@ -25,7 +44,38 @@ export type WorkerStopCause = NonNullable<RunTurnResult["stopCause"]>;
 export interface WorkerToolStats {
   calls: number;
   errors: number;
+  /**
+   * Successful write / edit / patch calls. A task that declared `files`
+   * and made none is `no_changes` (`declared-files.ts`), whatever its
+   * reply says.
+   */
+  writes: number;
   byTool: Record<string, number>;
+}
+
+/** The calls that change a file. Shell commands can too, but the disk check catches those. */
+export const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set([
+  "os.fs.write",
+  "os.fs.edit",
+  "os.fs.patch",
+]);
+
+/**
+ * How the call as a whole went, for `details.outcome` and the tool
+ * result's own status: `all_ok` when every task is `ok`, `all_failed`
+ * when every task is `failed` or `cancelled` — the one case the result
+ * is `status: "error"` — and `partial` for everything in between.
+ */
+export type DelegateOutcome = "all_ok" | "partial" | "all_failed";
+
+export function delegateOutcome(
+  results: readonly WorkerTaskResult[],
+): DelegateOutcome {
+  if (results.every((r) => r.status === "ok")) return "all_ok";
+  if (results.every((r) => r.status === "failed" || r.status === "cancelled")) {
+    return "all_failed";
+  }
+  return "partial";
 }
 
 export interface WorkerTaskResult {
@@ -51,6 +101,38 @@ export interface WorkerTaskResult {
    * never touched.
    */
   notes?: string[];
+  /**
+   * The contract's `checks` attributed to this task, once they ran
+   * (`contract-checks.ts`). A failure is also the row's `error`.
+   */
+  checks?: TaskCheckSummary;
+}
+
+export interface TaskCheckSummary {
+  total: number;
+  failed: number;
+  /** The failing checks' verdicts, joined; absent when all passed. */
+  detail?: string;
+}
+
+/**
+ * `checks: 1 of 2 failed — …` / `checks: 2 of 2 passed`. The detail is
+ * left off when the row's error already carries it (a task failed BY
+ * its checks has `checks: …` as its error), so the verdict reads once.
+ */
+export function describeChecks(
+  checks: TaskCheckSummary,
+  cap: number,
+  error?: string,
+): string {
+  if (checks.failed === 0) {
+    return `checks: ${checks.total} of ${checks.total} passed`;
+  }
+  const detail =
+    checks.detail === undefined || error?.startsWith("checks: ")
+      ? ""
+      : ` — ${oneLine(checks.detail, cap)}`;
+  return `checks: ${checks.failed} of ${checks.total} failed${detail}`;
 }
 
 /**
@@ -67,6 +149,7 @@ export class WorkerRunCollector {
   private approvalRefused = false;
   private calls = 0;
   private errors = 0;
+  private writes = 0;
   private readonly byTool: Record<string, number> = {};
   private usage: CompletionUsage | undefined;
   private lastLoopError: string | undefined;
@@ -106,6 +189,7 @@ export class WorkerRunCollector {
       this.calls += 1;
       this.byTool[result.tool] = (this.byTool[result.tool] ?? 0) + 1;
       if (result.status === "error") this.errors += 1;
+      else if (FILE_WRITING_TOOLS.has(result.tool)) this.writes += 1;
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
       }
@@ -179,6 +263,7 @@ export class WorkerRunCollector {
       tools: {
         calls: this.calls,
         errors: this.errors,
+        writes: this.writes,
         byTool: { ...this.byTool },
       },
       ...(this.usage ? { usage: this.usage } : {}),
@@ -288,9 +373,10 @@ const ERROR_HEAD_CHARS = 400;
 export function formatDelegateOutput(
   results: readonly WorkerTaskResult[],
   charCap: number,
+  extra: { contractLine?: string } = {},
 ): string {
   if (results.length === 0) return "(no tasks were run)";
-  const table = renderStatusTable(results);
+  const table = renderStatusTable(results, extra.contractLine);
   const room = Math.max(0, charCap - table.length - 4);
   const perTask = Math.max(200, Math.floor(room / results.length));
   const blocks = results.map((r) => renderBlock(r, perTask));
@@ -302,23 +388,34 @@ export function formatDelegateOutput(
 /** How much of an error or a note one status-table line carries. */
 const TABLE_DETAIL_CHARS = 160;
 
-function renderStatusTable(results: readonly WorkerTaskResult[]): string {
-  const counts = new Map<string, number>();
+/**
+ * The head line, the contract's verdict when there is one, then one
+ * line per task. The contract line sits second because it is the one
+ * cross-task fact: a missing provide is a hole between parts, not a
+ * property of any single row.
+ */
+function renderStatusTable(
+  results: readonly WorkerTaskResult[],
+  contractLine: string | undefined,
+): string {
+  const counts = new Map<WorkerTaskStatus, number>();
   for (const r of results) {
     counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
   }
-  const tally = [...counts]
-    .map(([status, n]) => `${n} ${status}`)
+  const tally = WORKER_STATUS_ORDER.filter((status) => counts.has(status))
+    .map((status) => `${counts.get(status)} ${status}`)
     .join(", ");
   const lines = results.map((r) =>
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
       ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
+      ...(r.checks ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)] : []),
       ...(r.notes ?? []).map((note) => oneLine(note, TABLE_DETAIL_CHARS)),
     ].join(" — "),
   );
   return [
     `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}`,
+    ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
   ].join("\n");
 }
@@ -342,6 +439,9 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
     (result.error ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}` : "");
   const diagnosis = [
     ...(result.hint ? [`hint: ${result.hint}`] : []),
+    ...(result.checks
+      ? [describeChecks(result.checks, ERROR_HEAD_CHARS, result.error)]
+      : []),
     ...(result.notes ?? []).map((note) => `note: ${note}`),
   ];
   const used = [head, ...diagnosis].join("\n").length;

@@ -484,7 +484,16 @@ describe("strict-tool conformance over every registered tool", () => {
     // `os.http.request` carries a free-form header map and a free-form
     // JSON body; `mcp.prompt.get` forwards a server-defined argument
     // map. Both are the tool's actual payload, so neither can be closed.
-    expect(refused).toEqual(["os__http__request", "mcp__prompt__get"]);
+    // `fusion.delegate` joined them with its `contract`: `owners` is a
+    // path → task map, and each `checks` entry is a `verify.run` spec
+    // whose keys belong to that tool — closing it would leave the model
+    // unable to write a check at all. `parseDelegateArgs` validates the
+    // shape at run time, as it always did.
+    expect(refused).toEqual([
+      "os__http__request",
+      "mcp__prompt__get",
+      "fusion__delegate",
+    ]);
   });
 
   it("is idempotent across the whole catalog", () => {

@@ -121,6 +121,48 @@ describe("renderWorkerBrief — the original request", () => {
   });
 });
 
+describe("renderWorkerBrief — the contract", () => {
+  const CONTRACT = {
+    owners: { "js/ship.js": "t1", "index.html": "html" },
+    provides: [
+      { task: "t1", kind: "symbol" as const, name: "HD.Ship", in: "js/ship.js" },
+      { task: "html", kind: "id" as const, name: "btn-launch", in: "index.html" },
+    ],
+    requires: [{ task: "t1", name: "btn-launch" }],
+  };
+
+  it("prepends the shared block and this task's three lines, between the request and the TASK", () => {
+    const brief = renderWorkerBrief(TASK, {
+      workingDir: "/repo",
+      originalRequest: "Build the game",
+      contract: CONTRACT,
+    });
+    const requestEnd = brief.indexOf("----- END ORIGINAL REQUEST -----");
+    const contractAt = brief.indexOf("CONTRACT — the interface between the parts");
+    const forTaskAt = brief.indexOf("For TASK t1:");
+    const taskAt = brief.indexOf("TASK t1: Map the auth routes");
+    expect(requestEnd).toBeGreaterThan(0);
+    expect(contractAt).toBeGreaterThan(requestEnd);
+    expect(forTaskAt).toBeGreaterThan(contractAt);
+    expect(taskAt).toBeGreaterThan(forTaskAt);
+    // The whole contract, then what it means for this worker.
+    expect(brief).toContain("- [html] id btn-launch in index.html");
+    expect(brief).toContain("You own: js/ship.js");
+    expect(brief).toContain("You provide: symbol HD.Ship in js/ship.js");
+    expect(brief).toContain("You may rely on: btn-launch (id from html in index.html)");
+    // The frame line is still first.
+    expect(brief.split("\n")[0]).toContain("You are a worker agent");
+  });
+
+  it("adds the PROVIDED rule only when there is a contract", () => {
+    const withContract = renderWorkerBrief(TASK, { workingDir: "/repo", contract: CONTRACT });
+    expect(withContract).toMatch(/- End the reply with a `PROVIDED:` list/);
+    const without = renderWorkerBrief(TASK, { workingDir: "/repo" });
+    expect(without).not.toContain("PROVIDED:");
+    expect(without).not.toContain("CONTRACT");
+  });
+});
+
 describe("pickOriginalRequest", () => {
   const LONG = "Build the thing. ".repeat(30);
 

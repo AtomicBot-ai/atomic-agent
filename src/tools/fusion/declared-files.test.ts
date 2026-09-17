@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import {
   applyDeclaredFileReport,
+  applyNoChangesRule,
   inspectDeclaredFiles,
   MTIME_SLACK_MS,
 } from "./declared-files.js";
@@ -53,6 +54,7 @@ describe("inspectDeclaredFiles", () => {
     expect(report).toEqual({
       missing: ["js/scene.js", absoluteMissing, "spec.md/child.txt"],
       unchanged: ["spec.md"],
+      modified: ["js/main.js"],
     });
   });
 
@@ -64,6 +66,7 @@ describe("inspectDeclaredFiles", () => {
     expect(await inspectDeclaredFiles(["out.js"], dir, startedAt)).toEqual({
       missing: [],
       unchanged: [],
+      modified: ["out.js"],
     });
   });
 });
@@ -76,10 +79,46 @@ function row(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
     reply: "Implemented `js/scene.js`",
     stepCount: 5,
     durationMs: 1000,
-    tools: { calls: 0, errors: 0, byTool: {} },
+    tools: { calls: 0, errors: 0, writes: 0, byTool: {} },
     ...over,
   };
 }
+
+describe("applyNoChangesRule", () => {
+  const untouched = { missing: [], unchanged: ["js/main.js"], modified: [] };
+
+  it("turns an ok task with no write call and no changed file into no_changes, and says why", () => {
+    const result = applyNoChangesRule(
+      row({ reply: "I'm done!", notes: ["js/main.js unchanged by this task"] }),
+      untouched,
+    );
+    expect(result.status).toBe("no_changes");
+    expect(result).not.toHaveProperty("error");
+    expect(result.notes).toEqual([
+      "js/main.js unchanged by this task",
+      "no write, edit or patch call succeeded and no declared file changed",
+    ]);
+  });
+
+  it("leaves the task ok when either a write call succeeded or the disk shows a change", () => {
+    // A successful write whose target is not among the declared files
+    // (or the declared files are globs): the call is the evidence.
+    const wrote = row({ tools: { calls: 1, errors: 0, writes: 1, byTool: { "os.fs.write": 1 } } });
+    expect(applyNoChangesRule(wrote, untouched)).toBe(wrote);
+    // A shell command wrote the file: the disk is the evidence.
+    const shelled = row();
+    expect(
+      applyNoChangesRule(shelled, { missing: [], unchanged: [], modified: ["js/main.js"] }),
+    ).toBe(shelled);
+  });
+
+  it("never touches a status that already says why the work is incomplete", () => {
+    for (const status of ["failed", "cancelled", "max_steps", "needs_orchestrator"] as const) {
+      const original = row({ status });
+      expect(applyNoChangesRule(original, untouched)).toBe(original);
+    }
+  });
+});
 
 describe("applyDeclaredFileReport", () => {
   it("fails an ok row whose declared file is absent — the reply is contradicted", () => {
@@ -87,6 +126,7 @@ describe("applyDeclaredFileReport", () => {
       applyDeclaredFileReport(row(), {
         missing: ["js/scene.js"],
         unchanged: [],
+        modified: [],
       }),
     ).toMatchObject({
       status: "failed",
@@ -96,6 +136,7 @@ describe("applyDeclaredFileReport", () => {
       applyDeclaredFileReport(row(), {
         missing: ["a.js", "b.js"],
         unchanged: [],
+        modified: [],
       }).error,
     ).toBe(
       "declared file a.js does not exist after the task; declared file b.js does not exist after the task",
@@ -106,7 +147,7 @@ describe("applyDeclaredFileReport", () => {
     for (const status of ["max_steps", "needs_orchestrator"] as const) {
       const result = applyDeclaredFileReport(
         row({ status, notes: ["earlier note"] }),
-        { missing: ["js/scene.js"], unchanged: [] },
+        { missing: ["js/scene.js"], unchanged: [], modified: [] },
       );
       expect(result.status).toBe(status);
       expect(result).not.toHaveProperty("error");
@@ -121,6 +162,7 @@ describe("applyDeclaredFileReport", () => {
     const result = applyDeclaredFileReport(row(), {
       missing: [],
       unchanged: ["spec.md", "README.md"],
+      modified: ["js/scene.js"],
     });
     expect(result.status).toBe("ok");
     expect(result.notes).toEqual(["spec.md, README.md unchanged by this task"]);
@@ -129,7 +171,7 @@ describe("applyDeclaredFileReport", () => {
   it("returns the row untouched when there is nothing to report", () => {
     const original = row();
     expect(
-      applyDeclaredFileReport(original, { missing: [], unchanged: [] }),
+      applyDeclaredFileReport(original, { missing: [], unchanged: [], modified: [] }),
     ).toBe(original);
   });
 });

@@ -33,6 +33,20 @@
  * still a validation error.
  */
 
+import {
+  CONTRACT_PROVIDE_KINDS,
+  MAX_CONTRACT_CHECKS,
+  MAX_CONTRACT_PROVIDES,
+  MAX_CONTRACT_RENDERED_CHARS,
+  ownedPaths,
+  renderContractBlock,
+  type ContractCheck,
+  type ContractProvide,
+  type ContractProvideKind,
+  type ContractRequire,
+  type DelegateContract,
+} from "./contract.js";
+
 /** One unit of delegated work; becomes exactly one worker turn. */
 export interface DelegateTask {
   /** Orchestrator-chosen id, unique within the call. Echoed in the output. */
@@ -51,12 +65,20 @@ export interface DelegateTask {
 }
 
 export type ParsedDelegateArgs =
-  | { ok: true; tasks: DelegateTask[]; maxWorkers?: number }
+  | {
+      ok: true;
+      tasks: DelegateTask[];
+      maxWorkers?: number;
+      contract?: DelegateContract;
+    }
   | { ok: false; error: string };
 
 export const MAX_DELEGATE_TASKS = 8;
 export const MAX_INSTRUCTIONS_CHARS = 32_000;
 export const MAX_TASK_FILES = 32;
+
+/** Globs are patterns, not paths — never somewhere a provide can be looked for. */
+const GLOB_CHARS = /[*?[\]{}]/;
 
 /** `8436` → `"8,436"`: the number the orchestrator has to act on, readable. */
 function formatCount(n: number): string {
@@ -130,7 +152,7 @@ function readMaxWorkers(value: unknown): number | null | string {
  * string costs one `JSON.parse`; anything that does not parse falls
  * through unchanged and gets the same error it got before.
  */
-function readTaskList(value: unknown): unknown {
+function readJsonArg(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
     return JSON.parse(value);
@@ -139,10 +161,169 @@ function readTaskList(value: unknown): unknown {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Validate `contract` against the tasks it binds. Every error names the
+ * field, because the orchestrator fixes exactly one thing per retry.
+ *
+ * Two checks go beyond shape. A `requires` name must match a `provides`
+ * name exactly — a require nobody provides is the `launch-btn` /
+ * `btn-launch` mismatch the contract exists to catch, and the cheapest
+ * moment to catch it is before any worker runs. And a non-file provide
+ * needs somewhere to be looked for: `in`, an owned path, or the task's
+ * declared files — otherwise the presence check after the fan-out
+ * would have nothing to open and could only report "unknown".
+ */
+function readContract(
+  raw: unknown,
+  tasks: readonly DelegateTask[],
+): DelegateContract | undefined | string {
+  const value = readJsonArg(raw);
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) return "contract must be an object";
+  const ids = new Set(tasks.map((t) => t.id));
+  const known = (task: unknown, field: string): string | null => {
+    const id = readString(task);
+    if (id === null) return `${field} must be a task id`;
+    if (!ids.has(id)) return `${field} names unknown task "${id}"`;
+    return null;
+  };
+  const contract: DelegateContract = {};
+
+  if (value.owners !== undefined && value.owners !== null) {
+    if (!isRecord(value.owners)) {
+      return "contract.owners must be an object of { path: taskId }";
+    }
+    const owners: Record<string, string> = {};
+    for (const [path, task] of Object.entries(value.owners)) {
+      const key = path.trim();
+      if (key.length === 0) return "contract.owners has an empty path";
+      const bad = known(task, `contract.owners["${key}"]`);
+      if (bad !== null) return bad;
+      owners[key] = (task as string).trim();
+    }
+    if (Object.keys(owners).length > 0) contract.owners = owners;
+  }
+
+  if (value.provides !== undefined && value.provides !== null) {
+    if (!Array.isArray(value.provides)) {
+      return "contract.provides must be an array of { task, kind, name, in? }";
+    }
+    if (value.provides.length > MAX_CONTRACT_PROVIDES) {
+      return `contract.provides has ${value.provides.length} entries; at most ${MAX_CONTRACT_PROVIDES}`;
+    }
+    const provides: ContractProvide[] = [];
+    for (let i = 0; i < value.provides.length; i += 1) {
+      const entry: unknown = value.provides[i];
+      const label = `contract.provides[${i}]`;
+      if (!isRecord(entry)) return `${label} must be an object`;
+      const bad = known(entry.task, `${label}.task`);
+      if (bad !== null) return bad;
+      const kind = readString(entry.kind);
+      if (
+        kind === null ||
+        !(CONTRACT_PROVIDE_KINDS as readonly string[]).includes(kind)
+      ) {
+        return `${label}.kind must be one of ${CONTRACT_PROVIDE_KINDS.join(", ")}`;
+      }
+      const name = readString(entry.name);
+      if (name === null) return `${label}.name must be a non-empty string`;
+      const inPath =
+        entry.in === undefined || entry.in === null
+          ? null
+          : readString(entry.in);
+      if (entry.in !== undefined && entry.in !== null && inPath === null) {
+        return `${label}.in must be a non-empty path`;
+      }
+      provides.push({
+        task: (entry.task as string).trim(),
+        kind: kind as ContractProvideKind,
+        name,
+        ...(inPath === null ? {} : { in: inPath }),
+      });
+    }
+    if (provides.length > 0) contract.provides = provides;
+  }
+
+  // A provide that is not a file must have somewhere to be looked for.
+  for (const [i, p] of (contract.provides ?? []).entries()) {
+    if (p.kind === "file" || p.in !== undefined) continue;
+    const task = tasks.find((t) => t.id === p.task);
+    const declared = (task?.files ?? []).filter((f) => !GLOB_CHARS.test(f));
+    if (ownedPaths(contract, p.task).length === 0 && declared.length === 0) {
+      return `contract.provides[${i}].in is required: task "${p.task}" owns no path and declares no files to look in`;
+    }
+  }
+
+  if (value.requires !== undefined && value.requires !== null) {
+    if (!Array.isArray(value.requires)) {
+      return "contract.requires must be an array of { task, name }";
+    }
+    const provided = new Set((contract.provides ?? []).map((p) => p.name));
+    const requires: ContractRequire[] = [];
+    for (let i = 0; i < value.requires.length; i += 1) {
+      const entry: unknown = value.requires[i];
+      const label = `contract.requires[${i}]`;
+      if (!isRecord(entry)) return `${label} must be an object`;
+      const bad = known(entry.task, `${label}.task`);
+      if (bad !== null) return bad;
+      const name = readString(entry.name);
+      if (name === null) return `${label}.name must be a non-empty string`;
+      if (!provided.has(name)) {
+        const names = [...provided].slice(0, 10).join(", ");
+        return (
+          `${label}.name "${name}" matches no provides entry` +
+          (names.length > 0 ? ` (provided: ${names})` : "")
+        );
+      }
+      requires.push({ task: (entry.task as string).trim(), name });
+    }
+    if (requires.length > 0) contract.requires = requires;
+  }
+
+  if (value.checks !== undefined && value.checks !== null) {
+    if (!Array.isArray(value.checks)) {
+      return "contract.checks must be an array of verify.run specs";
+    }
+    if (value.checks.length > MAX_CONTRACT_CHECKS) {
+      return `contract.checks has ${value.checks.length} entries; at most ${MAX_CONTRACT_CHECKS}`;
+    }
+    const checks: ContractCheck[] = [];
+    for (let i = 0; i < value.checks.length; i += 1) {
+      const entry: unknown = value.checks[i];
+      const label = `contract.checks[${i}]`;
+      if (!isRecord(entry)) return `${label} must be an object`;
+      const { task, ...spec } = entry;
+      if (Object.keys(spec).length === 0) {
+        return `${label} carries no verify.run arguments`;
+      }
+      if (task === undefined || task === null) {
+        checks.push(spec);
+        continue;
+      }
+      const bad = known(task, `${label}.task`);
+      if (bad !== null) return bad;
+      checks.push({ task: (task as string).trim(), ...spec });
+    }
+    if (checks.length > 0) contract.checks = checks;
+  }
+
+  if (Object.keys(contract).length === 0) return undefined;
+  const rendered = renderContractBlock(contract).length;
+  if (rendered > MAX_CONTRACT_RENDERED_CHARS) {
+    const over = rendered - MAX_CONTRACT_RENDERED_CHARS;
+    return `contract renders to ${formatCount(rendered)} chars; the limit is ${formatCount(MAX_CONTRACT_RENDERED_CHARS)} — shorten it by at least ${formatCount(over)} chars`;
+  }
+  return contract;
+}
+
 export function parseDelegateArgs(
   raw: Record<string, unknown>,
 ): ParsedDelegateArgs {
-  const rawTasks = readTaskList(raw.tasks);
+  const rawTasks = readJsonArg(raw.tasks);
   if (!Array.isArray(rawTasks)) {
     return fail("tasks must be an array of { id, title, instructions }");
   }
@@ -198,9 +379,12 @@ export function parseDelegateArgs(
 
   const maxWorkers = readMaxWorkers(raw.maxWorkers);
   if (typeof maxWorkers === "string") return fail(maxWorkers);
+  const contract = readContract(raw.contract, tasks);
+  if (typeof contract === "string") return fail(contract);
   return {
     ok: true,
     tasks,
     ...(maxWorkers === null ? {} : { maxWorkers }),
+    ...(contract === undefined ? {} : { contract }),
   };
 }
