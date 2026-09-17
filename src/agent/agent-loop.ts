@@ -39,7 +39,16 @@ import type {
 } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
 import { incrementTurnCount, recordTurn } from "../session/session-state.js";
-import { assistantReplyTurn, userTurn } from "../session/conversation-turn.js";
+import {
+  assistantReplyTurn,
+  isFinalReplyTurn,
+  userTurn,
+} from "../session/conversation-turn.js";
+import {
+  createProgressNoteNoticeState,
+  formatProgressNoteStepSummary,
+  isProgressNoteResult,
+} from "./progress-note-reply.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -796,6 +805,11 @@ export type AgentLoopEvent =
       stepIndex: number;
       summary: string;
       durationMs: number;
+      /**
+       * The step kept a `reply` batched with work tools as a progress
+       * note and the turn went on (`progress-note-reply.ts`).
+       */
+      progressNote?: true;
     }
   | { type: "llm_event"; event: StepEvent }
   | {
@@ -1064,6 +1078,10 @@ export class AgentLoop {
         claimNoticeGiven = true;
       },
     };
+    // Same shape for the progress-note notice: a `reply` batched with
+    // work is kept as a note and the turn goes on; the model is told
+    // why once per turn (`progress-note-reply.ts`).
+    const progressNotes = createProgressNoteNoticeState();
 
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
@@ -1444,6 +1462,7 @@ export class AgentLoop {
                 }
               : {}),
             claimEvidence,
+            progressNotes,
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
@@ -1566,18 +1585,27 @@ export class AgentLoop {
         // succeeded moved the task forward. What it excludes is a leg
         // whose every call failed — a dead tool, a dead network, a
         // rejected approval loop — which is the case worth stopping on.
-        if (outcome.toolResults.some((r) => r.status === "ok")) {
+        // A progress note is a kept reply, not a tool that ran, so it
+        // is not the evidence this check is after.
+        if (
+          outcome.toolResults.some(
+            (r) => r.status === "ok" && !isProgressNoteResult(r),
+          )
+        ) {
           legMadeProgress = true;
         }
         // Feed summary mirrors the legacy single-call shape for solo
         // steps; for a batch we render `N tools: t1, t2, …` so the TUI
-        // and trace consumer see at a glance that this was a batch.
+        // and trace consumer see at a glance that this was a batch. A
+        // step that kept a progress note says so.
         const summary =
-          outcome.toolResults.length === 1
-            ? outcome.toolResults[0]!.summary
-            : `${outcome.toolResults.length} tools: ${outcome.toolResults
-                .map((r) => `${r.tool}[${r.status}]`)
-                .join(", ")}`;
+          outcome.progressNote !== undefined
+            ? formatProgressNoteStepSummary(outcome.toolResults)
+            : outcome.toolResults.length === 1
+              ? outcome.toolResults[0]!.summary
+              : `${outcome.toolResults.length} tools: ${outcome.toolResults
+                  .map((r) => `${r.tool}[${r.status}]`)
+                  .join(", ")}`;
         this.deps.metrics?.recordStep({
           sessionId: state.id,
           stepIndex: i,
@@ -1590,6 +1618,7 @@ export class AgentLoop {
           stepIndex: i,
           summary,
           durationMs,
+          ...(outcome.progressNote !== undefined ? { progressNote: true } : {}),
         });
         if (outcome.terminal === "session") {
           reason = "finish";
@@ -2590,7 +2619,7 @@ function invokeLessonLifecycle(
 function findLastAssistantReply(state: SessionState): string | null {
   for (let i = state.turns.length - 1; i >= 0; i -= 1) {
     const turn = state.turns[i];
-    if (turn?.kind === "assistant_reply") return turn.text;
+    if (isFinalReplyTurn(turn)) return turn.text;
   }
   return null;
 }
@@ -2712,7 +2741,7 @@ function collectLastUserAssistantPairs(
       // correction alone. Join them in order instead.
       pendingUser =
         pendingUser === null ? turn.text : `${pendingUser}\n\n${turn.text}`;
-    } else if (turn.kind === "assistant_reply" && pendingUser !== null) {
+    } else if (isFinalReplyTurn(turn) && pendingUser !== null) {
       pairs.push({ user: pendingUser, assistant: turn.text });
       pendingUser = null;
     }
@@ -2744,7 +2773,7 @@ function collectRecentUserAssistantTurns(
         continue;
       }
       rows.push({ role: "user", text: turn.text });
-    } else if (turn.kind === "assistant_reply") {
+    } else if (isFinalReplyTurn(turn)) {
       rows.push({ role: "assistant", text: turn.text });
     }
   }

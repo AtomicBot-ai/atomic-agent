@@ -29,6 +29,13 @@ export interface ModelProfileManagerOptions {
    */
   browserEnabled?: boolean;
   /**
+   * Mirrors `config.localModels.reasoningBudgetTokens`. Threaded into
+   * every grammar rebuild on hot-swap so the think prelude of the new
+   * model is bounded the way the first one was (F49). Omitted = the
+   * config default.
+   */
+  reasoningBudgetTokens?: number;
+  /**
    * Invoked with `/props.total_slots` after every successful probe.
    * Managed mode defers the boot health check (the daemon may not be
    * running yet), so bootstrap builds the `SlotManager` on a conservative
@@ -103,6 +110,7 @@ export class ModelProfileManager {
   private readonly llama: LlamaServerClient;
   private readonly grammarsDir: string | undefined;
   private readonly browserEnabled: boolean;
+  private readonly reasoningBudgetTokens: number | undefined;
   private readonly onTotalSlots: ((totalSlots: number) => void) | undefined;
   private readonly readThroughput: (() => number | null) | undefined;
   private readonly readPrefixReuse: NonNullable<
@@ -118,6 +126,7 @@ export class ModelProfileManager {
     this.llama = options.llama;
     this.grammarsDir = options.grammarsDir;
     this.browserEnabled = options.browserEnabled ?? true;
+    this.reasoningBudgetTokens = options.reasoningBudgetTokens;
     this.onTotalSlots = options.onTotalSlots;
     this.readThroughput = options.readThroughput;
     this.readPrefixReuse = options.readPrefixReuse ?? readModelPrefixReuse;
@@ -261,6 +270,9 @@ export class ModelProfileManager {
       if (profileChanged) {
         const nextGrammar = await buildGrammar(nextProfile, this.grammarsDir, {
           browserEnabled: this.browserEnabled,
+          ...(this.reasoningBudgetTokens !== undefined
+            ? { reasoningBudgetTokens: this.reasoningBudgetTokens }
+            : {}),
         });
         const violations = checkProfileGrammarAligned(nextProfile, nextGrammar);
         if (violations.length > 0) {

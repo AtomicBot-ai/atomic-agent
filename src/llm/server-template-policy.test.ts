@@ -7,6 +7,7 @@ import {
 import {
   NO_SERVER_TEMPLATE,
   resolveServerTemplatePolicy,
+  thinkingDisabledOnBuiltPrompt,
 } from "./server-template-policy.js";
 
 describe("resolveServerTemplatePolicy", () => {
@@ -61,5 +62,33 @@ describe("resolveServerTemplatePolicy", () => {
         supportsThinkingSwitch: true,
       }).enableThinking,
     ).toBe(false);
+  });
+});
+
+describe("thinkingDisabledOnBuiltPrompt (F49)", () => {
+  it("is true only for off on a profile with a prompt-side disabled marker — qwen-think", () => {
+    expect(thinkingDisabledOnBuiltPrompt("off", QWEN_THINK_PROFILE)).toBe(true);
+    expect(QWEN_THINK_PROFILE.promptThinkingDisabledMarker).toBe(
+      "<think>\n\n</think>\n\n",
+    );
+  });
+
+  it("leaves on / auto alone", () => {
+    expect(thinkingDisabledOnBuiltPrompt("on", QWEN_THINK_PROFILE)).toBe(false);
+    expect(thinkingDisabledOnBuiltPrompt("auto", QWEN_THINK_PROFILE)).toBe(
+      false,
+    );
+  });
+
+  it("leaves gemma's turn framing and the plain profile as they are", () => {
+    // Gemma 4's disabled marker is the prefilled channel, which the turn
+    // framing exists to avoid: no marker, so `off` changes nothing.
+    expect(GEMMA4_THINK_PROFILE.promptThinkingDisabledMarker).toBeUndefined();
+    expect(thinkingDisabledOnBuiltPrompt("off", GEMMA4_THINK_PROFILE)).toBe(
+      false,
+    );
+    expect(thinkingDisabledOnBuiltPrompt("off", PLAIN_INSTRUCT_PROFILE)).toBe(
+      false,
+    );
   });
 });

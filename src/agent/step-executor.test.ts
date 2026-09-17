@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeStep } from "./step-executor.js";
 import { ToolRegistry } from "../tools/tool-registry.js";
@@ -256,48 +258,51 @@ describe("executeStep batch handling", () => {
   });
 
   it("rejects a batch with a terminal verb NOT at the last position", async () => {
-    // `reply` at index 0 of a 2-call batch is invalid: the runtime
-    // cannot keep firing tools after the turn has been closed. Same
+    // `finish` at index 0 of a 2-call batch is invalid: the runtime
+    // cannot keep firing tools after the session has been closed. Same
     // body returned twice — both attempts fail validation, so the
     // executor surfaces the error as a GrammarError after the
-    // one-shot retry.
+    // one-shot retry. (A misplaced `reply` is no longer this case: it
+    // is taken out as a progress note — see `progress-note-reply.ts`.)
     const body = JSON.stringify([
-      { tool: "reply", args: { text: "done" } },
+      { tool: "finish", args: { summary: "done" } },
       { tool: "os.fs.read", args: { path: "a" } },
     ]);
     await expect(runWithBody(body)).rejects.toThrow(
-      /terminal verb 'reply' must be the last call in a batch/,
+      /terminal verb 'finish' must be the last call in a batch/,
     );
   });
 
-  it("executes a [tool, reply] tail-terminal batch in one inference", async () => {
-    // Validator allows `reply` as the last call of a batch; executor
-    // runs the read first, then the reply solo (terminal-tail
-    // barrier). Outcome is identical to a `reply`-only solo step:
-    // `terminal === "turn"` so the agent loop closes the turn.
+  it("keeps a [tool, reply] batch's reply as a progress note and leaves the turn open", async () => {
+    // F50: a `reply` batched with work is a note about the work, not
+    // the end of the turn. The read runs; the reply never does — its
+    // text is kept as an `ok` `reply` result flagged `progressNote`,
+    // and `terminal` stays `null` so the loop takes another step.
     const body = JSON.stringify([
       { tool: "os.fs.read", args: { path: "a" } },
-      { tool: "reply", args: { text: "all done" } },
+      { tool: "reply", args: { text: "reading first" } },
     ]);
     const outcome = await runWithBody(body);
-    expect(outcome.toolCalls).toHaveLength(2);
     expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
       "os.fs.read",
       "reply",
     ]);
-    expect(outcome.toolResults).toHaveLength(2);
     expect(outcome.toolResults[0]!.summary).toBe("read a");
-    expect(outcome.toolResults[1]!.status).toBe("ok");
-    expect(outcome.terminal).toBe("turn");
-    // Transcript: read's tool_call + tool_result pair, then a single
-    // assistant_reply that collapses the terminal call.
-    const turns = outcome.nextSession.turns;
-    const tail = turns.slice(-3);
+    expect(outcome.toolResults[1]).toMatchObject({
+      tool: "reply",
+      status: "ok",
+      details: { progressNote: true },
+    });
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.progressNote).toBe("reading first");
+    // Transcript: the read's pair, then the note as a flagged reply row.
+    const tail = outcome.nextSession.turns.slice(-3);
     expect(tail.map((t) => t.kind)).toEqual([
       "assistant_tool_call",
       "tool_result",
       "assistant_reply",
     ]);
+    expect(tail[2]).toMatchObject({ text: "reading first", progressNote: true });
   });
 
   it("native_tools: unparseable reasoning-only completion routes through parse_retry, never leaks CoT as a reply", async () => {
@@ -994,11 +999,11 @@ describe("executeStep batch handling", () => {
       workingDir: "/w",
     });
     const prompts: string[] = [];
-    // Mid-batch terminal: invalid (`reply` must be last); the model is
+    // Mid-batch terminal: invalid (`finish` must be last); the model is
     // asked to re-emit. The repair attempt returns a clean solo reply.
     const bodies = [
       JSON.stringify([
-        { tool: "reply", args: { text: "done" } },
+        { tool: "finish", args: { summary: "done" } },
         { tool: "os.fs.read", args: { path: "a" } },
       ]),
       JSON.stringify({ tool: "reply", args: { text: "done" } }),
@@ -1045,7 +1050,7 @@ describe("executeStep batch handling", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("### tool-call-repair");
     expect(prompts[1]).toContain(
-      "terminal verb 'reply' must be the last call in a batch",
+      "terminal verb 'finish' must be the last call in a batch",
     );
     expect(prompts[1]).toContain("Use a length-1 array");
   });
@@ -1068,11 +1073,11 @@ describe("executeStep batch handling", () => {
       // emit the JSON body. The repair attempt has the same shape:
       // prompt ends with `<think>` (re-appended after strip), model
       // closes it and emits JSON.
-      // Mid-batch terminal: invalid (`reply` must be last); the model
+      // Mid-batch terminal: invalid (`finish` must be last); the model
       // recovers with a clean solo reply on the repair attempt.
       const bodies = [
         `</think>${JSON.stringify([
-          { tool: "reply", args: { text: "done" } },
+          { tool: "finish", args: { summary: "done" } },
           { tool: "os.fs.read", args: { path: "a" } },
         ])}`,
         `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
@@ -1252,17 +1257,17 @@ describe("executeStep batch handling", () => {
     "still routes a batch with a mid-position terminal verb through the " +
       "LLM repair path (mid-batch terminals are not trim-eligible)",
     async () => {
-      // `[reply, read]` puts the terminal verb at index 0 — invalid by
-      // the new tail-only rule. The trim shortcut only fires for
+      // `[finish, read]` puts the terminal verb at index 0 — invalid by
+      // the tail-only rule. The trim shortcut only fires for
       // approval-gated-only failures; a misplaced terminal goes
       // through repair. Both attempts return the same offending body,
       // surfacing the legacy GrammarError after the one-shot repair.
       const body = JSON.stringify([
-        { tool: "reply", args: { text: "done" } },
+        { tool: "finish", args: { summary: "done" } },
         { tool: "os.fs.read", args: { path: "a" } },
       ]);
       await expect(runWithBody(body)).rejects.toThrow(
-        /terminal verb 'reply' must be the last call in a batch/,
+        /terminal verb 'finish' must be the last call in a batch/,
       );
     },
   );
@@ -1631,7 +1636,10 @@ describe("executeStep pure-read wave splitting (#111)", () => {
   });
 
   it.each([
-    ["terminal mid-batch", [{ tool: "reply", args: { text: "hi" } }], 13],
+    // `finish`, not `reply`: a reply batched with work is taken out as a
+    // progress note before validation (F50), and `[reply, 13 reads]`
+    // then legitimately wave-splits.
+    ["terminal mid-batch", [{ tool: "finish", args: { summary: "hi" } }], 13],
     ["unknown class", [{ tool: "mystery.tool", args: {} }], 13],
   ] as const)(
     "routes an oversized batch containing %s to repair (no wave split, no trim)",
@@ -1800,22 +1808,25 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     ]);
   });
 
-  it("closes the turn when the in-order batch ends in reply", async () => {
+  it("runs the in-order batch whole and keeps its reply as a progress note", async () => {
+    // F50: the reply batched with the writes is a note, not the end of
+    // the turn — the writes still run in order, the reply never runs,
+    // and the interim reply the UI gets is flagged.
     const body = JSON.stringify([
       { tool: "os.fs.write", args: { path: "a", content: "1" } },
       { tool: "os.fs.write", args: { path: "b", content: "2" } },
       { tool: "reply", args: { text: "wrote a and b" } },
     ]);
     const { outcome, log, events } = await run(body, LEVEL_5);
-    expect(outcome.terminal).toBe("turn");
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.progressNote).toBe("wrote a and b");
     expect(log.filter((l) => l.startsWith("start"))).toEqual([
       "start os.fs.write a",
       "start os.fs.write b",
-      "start reply wrote a and b",
     ]);
-    expect(
-      events.filter((e) => e.type === "assistant_reply").map((e) => e.type),
-    ).toEqual(["assistant_reply"]);
+    expect(events.filter((e) => e.type === "assistant_reply")).toEqual([
+      { type: "assistant_reply", text: "wrote a and b", progressNote: true },
+    ]);
   });
 
   it("still trims when a gated call could prompt (fs write below level 5)", async () => {
@@ -5355,5 +5366,178 @@ describe("executeStep slot pinning (F13)", () => {
     );
     expect(seen).toEqual([{ slotId: -1, cachePrompt: undefined }]);
     expect(slotManager.pinnedSlot("s-cloud")).toBeNull();
+  });
+});
+
+describe("executeStep reasoning budget and thinking: off (F49)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+  const CALL = JSON.stringify([{ tool: "reply", args: { text: "done" } }]);
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["reply", true],
+      ["finish", true],
+    ] as const) {
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.text ?? "")}`,
+          });
+        },
+      });
+    }
+    return registry;
+  }
+
+  /** Run one step on a qwen grammar; `bodies` are the raw completions in order. */
+  async function runQwen(
+    bodies: string[],
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]> = {},
+    budgetTokens?: number,
+  ) {
+    const grammar = await buildGrammar(
+      QWEN_THINK_PROFILE,
+      grammarsDir,
+      budgetTokens === undefined ? {} : { reasoningBudgetTokens: budgetTokens },
+    );
+    const session = createEmptySessionState({ id: "s-f49", workingDir: "/w" });
+    const seen: LlmStreamParams[] = [];
+    const events: StepEvent[] = [];
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry: makeRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          const content = bodies[calls] ?? bodies[bodies.length - 1]!;
+          calls += 1;
+          return {
+            content,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    return { outcome, seen, events, baseGrammar: grammar };
+  }
+
+  /** Point the config at a temp state dir holding `localModels`; returns the restore. */
+  function withLocalModelsConfig(localModels: Record<string, unknown>): () => void {
+    const previous = process.env.ATOMIC_AGENT_STATE_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "f49-"));
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ localModels }));
+    process.env.ATOMIC_AGENT_STATE_DIR = dir;
+    resetConfigCache();
+    return () => {
+      if (previous === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
+      else process.env.ATOMIC_AGENT_STATE_DIR = previous;
+      resetConfigCache();
+    };
+  }
+
+  it("an ordinary step sends the bounded prelude byte-identical to the base grammar", async () => {
+    const { seen, baseGrammar } = await runQwen([`thinking</think>\n${CALL}`], {}, 2);
+    expect(seen[0]!.grammar).toBe(baseGrammar);
+    expect(seen[0]!.grammar).toContain("think-body ::= think-char{0,8}");
+  });
+
+  it("the forced final step lifts the bound: a reply or finish is never cut mid-thought", async () => {
+    const { seen, baseGrammar } = await runQwen(
+      [`thinking</think>\n${CALL}`],
+      { terminalOnly: true },
+      2,
+    );
+    expect(seen[0]!.grammar).not.toBe(baseGrammar);
+    expect(seen[0]!.grammar).toContain("think-body ::= think-char*");
+    expect(seen[0]!.grammar).not.toContain("think-char{0,8}");
+    expect(grammarToolNames(seen[0]!.grammar)).toEqual(["finish", "reply"]);
+    expect(seen[0]!.grammar).toMatch(/^root ::= think-prelude tool-call-array$/m);
+  });
+
+  it("llm_raw_completion carries the reasoning estimate in budget units, so a cut reads as >= budget", async () => {
+    const reasoning = "x".repeat(8);
+    const { events } = await runQwen([`${reasoning}</think>\n${CALL}`], {}, 2);
+    const raw = events.find((e) => e.type === "llm_raw_completion");
+    expect(raw).toMatchObject({ type: "llm_raw_completion", attempt: 1, reasoningTokens: 2 });
+    const reasoningEvent = events.find((e) => e.type === "reasoning");
+    expect(reasoningEvent).toMatchObject({ type: "reasoning", text: reasoning });
+  });
+
+  it("thinking: off — the prompt ends with the disabled marker, the grammar has the plain root, the call parses with no reasoning", async () => {
+    const restore = withLocalModelsConfig({ thinking: "off" });
+    try {
+      const { outcome, seen, events, baseGrammar } = await runQwen([CALL]);
+      expect(seen[0]!.prompt.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      expect(seen[0]!.grammar).not.toBe(baseGrammar);
+      expect(seen[0]!.grammar).toMatch(/^root ::= tool-call-array$/m);
+      expect(seen[0]!.grammar).not.toMatch(/^root ::= think-prelude/m);
+      expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
+      expect(events.find((e) => e.type === "reasoning")).toBeUndefined();
+      expect(events.find((e) => e.type === "llm_raw_completion")).toMatchObject({
+        reasoningTokens: 0,
+      });
+      expect(events.find((e) => e.type === "parse_retry")).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("thinking: off — the repair prompt strips and re-appends the disabled marker, never an open tag", async () => {
+    const restore = withLocalModelsConfig({ thinking: "off" });
+    try {
+      const { seen, outcome } = await runQwen(["not json at all", CALL]);
+      expect(seen).toHaveLength(2);
+      const repair = seen[1]!.prompt;
+      expect(repair).toContain("### tool-call-repair");
+      expect(repair.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      // One marker at the end; the original one was stripped before the notice.
+      expect(repair.match(/<think>/g)).toHaveLength(1);
+      expect(repair.indexOf("### tool-call-repair")).toBeLessThan(repair.indexOf("<think>"));
+      expect(seen[1]!.grammar).toMatch(/^root ::= tool-call-array$/m);
+      expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("thinking: on keeps the prefill, the prelude and the open-tag parse", async () => {
+    const restore = withLocalModelsConfig({ thinking: "on" });
+    try {
+      const { seen, events, baseGrammar } = await runQwen([`why</think>\n${CALL}`]);
+      expect(seen[0]!.prompt.endsWith("<think>\n")).toBe(true);
+      expect(seen[0]!.grammar).toBe(baseGrammar);
+      expect(events.find((e) => e.type === "reasoning")).toMatchObject({ text: "why" });
+    } finally {
+      restore();
+    }
   });
 });

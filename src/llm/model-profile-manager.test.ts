@@ -35,6 +35,34 @@ function makeLlamaStub(responses: Record<string, unknown>[]): {
   } as { client: Pick<LlamaServerClient, "fetchProps">; calls: number };
 }
 
+describe("ModelProfileManager reasoning budget (F49)", () => {
+  it("threads reasoningBudgetTokens into the grammar a hot-swap rebuilds", async () => {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      reasoningBudgetTokens: 2,
+    });
+    await mgr.refresh();
+    expect(mgr.getProfile().id).toBe("qwen-think");
+    expect(mgr.getGrammar()).toContain("think-body ::= think-char{0,8}");
+  });
+
+  it("falls back to the default budget when none is given", async () => {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+    });
+    await mgr.refresh();
+    expect(mgr.getGrammar()).toContain("think-body ::= think-char{0,6000}");
+  });
+});
+
 describe("ModelProfileManager slot discovery", () => {
   // Managed mode defers the boot health check, so bootstrap builds the
   // SlotManager on a one-slot default. This refresh hook is the only path

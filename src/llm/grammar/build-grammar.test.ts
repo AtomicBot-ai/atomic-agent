@@ -15,6 +15,10 @@ import {
   grammarToolNames,
 } from "./build-grammar.js";
 import { gbnfAccepts } from "./gbnf-test-helpers.js";
+import {
+  withoutReasoningPrelude,
+  withUnboundedReasoningPrelude,
+} from "./reasoning-prelude.js";
 
 const GRAMMAR_FILE = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -131,7 +135,9 @@ describe("buildGrammar", () => {
     expect(grammar).toContain(
       'think-prelude ::= think-body "</think>" prelude-trail-ws',
     );
-    expect(grammar).toContain('think-fragment ::= [^<]+ | "<" [^/]');
+    // Single-width units under the reasoning budget (F49): one character
+    // per repetition, so `{0,N}` on the body is a bound in characters.
+    expect(grammar).toContain('think-char ::= [^<] | "<" [^/]');
   });
 
   it("builds a gemma 4 grammar with a channel prelude that forces the model-emitted open tag", async () => {
@@ -142,7 +148,7 @@ describe("buildGrammar", () => {
     expect(grammar).toContain(
       'channel-prelude ::= "<|channel>thought\\n" channel-body "<channel|>" prelude-trail-ws',
     );
-    expect(grammar).toContain('channel-fragment ::= [^<]+ | "<" [^c]');
+    expect(grammar).toContain('channel-char ::= [^<] | "<" [^c]');
   });
 
   it("bounds the whitespace between the reasoning-close sentinel and the tool-call array", async () => {
@@ -186,6 +192,135 @@ describe("buildGrammar", () => {
     expect(toolNameLine).toContain("os-tool");
     expect(toolNameLine).not.toMatch(/\|\s*\|/);
     expect(toolNameLine).not.toMatch(/::=\s*\|/);
+  });
+});
+
+describe("the reasoning budget (F49)", () => {
+  const CALL = '[{"tool":"os.fs.list","args":{"path":"."}}]';
+  const QWEN = (body: string): string => `${body}</think>\n${CALL}`;
+  const GEMMA = (body: string): string =>
+    `<|channel>thought\n${body}<channel|>\n${CALL}`;
+
+  it("bounds the think prelude at the default budget: 6,000 single-width units, then only the close sentinel", async () => {
+    const qwen = await buildGrammar(QWEN_THINK_PROFILE);
+    expect(qwen).toContain("think-body ::= think-char{0,6000}");
+    expect(qwen).toContain(
+      'think-char ::= [^<] | "<" [^/] | "</" [^t] | "</t" [^h] | "</th" [^i] | "</thi" [^n] | "</thin" [^k] | "</think" [^>]',
+    );
+    expect(qwen).toContain(
+      'think-prelude ::= think-body "</think>" prelude-trail-ws',
+    );
+    expect(qwen).not.toContain("think-fragment");
+    // Gemma's channel prelude is bounded the same way.
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE);
+    expect(gemma).toContain("channel-body ::= channel-char{0,6000}");
+    expect(gemma).toContain('channel-char ::= [^<] | "<" [^c]');
+    expect(gemma).not.toContain("channel-fragment");
+  });
+
+  it("admits a body up to the bound and refuses one past it — the only way out is the sentinel", async () => {
+    // Two tokens = eight characters, small enough to read.
+    const qwen = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 2,
+    });
+    expect(qwen).toContain("think-body ::= think-char{0,8}");
+    expect(gbnfAccepts(qwen, "root", QWEN(""))).toBe(true);
+    expect(gbnfAccepts(qwen, "root", QWEN("12345678"))).toBe(true);
+    expect(gbnfAccepts(qwen, "root", QWEN("123456789"))).toBe(false);
+    // A `<`-led unit spans its whole prefix: `<b` is one unit, `</t` one.
+    expect(gbnfAccepts(qwen, "root", QWEN("a<b</tc<d"))).toBe(true);
+    // Reasoning text that merely resembles the sentinel is still body.
+    expect(gbnfAccepts(qwen, "root", QWEN("</thinx"))).toBe(true);
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 2,
+    });
+    expect(gbnfAccepts(gemma, "root", GEMMA("12345678"))).toBe(true);
+    expect(gbnfAccepts(gemma, "root", GEMMA("123456789"))).toBe(false);
+  });
+
+  it("keeps the unbounded form when the budget is 0", async () => {
+    const qwen = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 0,
+    });
+    expect(qwen).toContain("think-body ::= think-fragment*");
+    expect(qwen).toContain('think-fragment ::= [^<]+ | "<" [^/]');
+    expect(qwen).not.toMatch(/think-char\{0,\d+\}/);
+    // Longer than any small bound the tests above use; the test matcher
+    // is quadratic in the body, so this stays short.
+    expect(gbnfAccepts(qwen, "root", QWEN("x".repeat(300)))).toBe(true);
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 0,
+    });
+    expect(gemma).toContain("channel-body ::= channel-fragment*");
+  });
+
+  it("keeps the string small — llama.cpp expands {0,N} server-side, the request does not carry it", async () => {
+    const bounded = await buildGrammar(QWEN_THINK_PROFILE);
+    const unbounded = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 0,
+    });
+    expect(Math.abs(bounded.length - unbounded.length)).toBeLessThan(64);
+    expect(bounded.length).toBeLessThan(16 * 1024);
+  });
+
+  it("withUnboundedReasoningPrelude lifts the bound for the final step and touches nothing else", async () => {
+    const base = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 2,
+    });
+    const lifted = withUnboundedReasoningPrelude(base);
+    expect(lifted).toContain("think-body ::= think-char*");
+    expect(lifted).not.toContain("think-char{0,8}");
+    expect(gbnfAccepts(lifted, "root", QWEN("123456789"))).toBe(true);
+    const baseLines = base.split("\n");
+    const liftedLines = lifted.split("\n");
+    expect(liftedLines.length).toBe(baseLines.length);
+    for (let i = 0; i < baseLines.length; i += 1) {
+      if (!baseLines[i]!.startsWith("think-body ::=")) {
+        expect(liftedLines[i]).toBe(baseLines[i]);
+      }
+    }
+    // Same for gemma; a `reply`/`finish` step is never cut mid-thought.
+    const gemma = await buildGrammar(GEMMA4_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 2,
+    });
+    expect(withUnboundedReasoningPrelude(gemma)).toContain(
+      "channel-body ::= channel-char*",
+    );
+  });
+
+  it("withUnboundedReasoningPrelude and withoutReasoningPrelude are the identity where there is nothing to change", async () => {
+    const plain = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(withUnboundedReasoningPrelude(plain)).toBe(plain);
+    expect(withoutReasoningPrelude(plain)).toBe(plain);
+    const unbounded = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 0,
+    });
+    expect(withUnboundedReasoningPrelude(unbounded)).toBe(unbounded);
+  });
+
+  it("withoutReasoningPrelude gives thinking: off the plain root — the completion starts on the call", async () => {
+    const base = await buildGrammar(QWEN_THINK_PROFILE);
+    const plainRoot = withoutReasoningPrelude(base);
+    expect(plainRoot).toMatch(/^root ::= tool-call-array$/m);
+    expect(plainRoot).not.toMatch(/^root ::= think-prelude/m);
+    expect(gbnfAccepts(plainRoot, "root", CALL)).toBe(true);
+    expect(gbnfAccepts(plainRoot, "root", QWEN("thoughts"))).toBe(false);
+    // The F37 string hardening of the reasoning profile survives.
+    expect(plainRoot).toContain("chars ::= str-neutral");
+  });
+
+  it("the per-request tool-name rewrite works on both variants", async () => {
+    const base = await buildGrammar(QWEN_THINK_PROFILE);
+    for (const variant of [
+      withUnboundedReasoningPrelude(base),
+      withoutReasoningPrelude(base),
+    ]) {
+      const narrowed = buildGrammarForTools(variant, ["finish"]);
+      expect(grammarToolNames(narrowed)).toEqual(["finish", "reply"]);
+      expect(narrowed.replace(/^tool-name ::= .*$/m, "")).toBe(
+        variant.replace(/^tool-name ::= .*$/m, ""),
+      );
+    }
   });
 });
 

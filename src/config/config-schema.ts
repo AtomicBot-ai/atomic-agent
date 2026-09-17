@@ -242,6 +242,8 @@ export interface AtomicAgentConfig {
     useServerTemplate: LocalTemplateSetting;
     /** Mirrors `UserConfigFile.localModels.thinking`. */
     thinking: LocalTemplateSetting;
+    /** Mirrors `UserConfigFile.localModels.reasoningBudgetTokens`. */
+    reasoningBudgetTokens: number;
     managed: UserManagedLocalLlmConfig;
     /**
      * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
@@ -1553,9 +1555,22 @@ export interface UserConfigFile {
      * The template's thinking switch (`chat_template_kwargs:
      * {enable_thinking}`) on server-templated prompts, for families
      * whose template reads it. `auto` (default) leaves the template's
-     * own default; `on` / `off` set it. Added in config v66.
+     * own default; `on` / `off` set it. Added in config v66. Since v68
+     * `off` also reaches the hand-built prompt of a `qwen-think` model:
+     * the prompt ends with the template's own disabled marker and the
+     * grammar drops the reasoning prelude.
      */
     thinking: LocalTemplateSetting;
+    /**
+     * How many tokens a local reasoning model may spend thinking before
+     * a tool call, on the grammar path. The GBNF prelude bounds the
+     * think block at `reasoningBudgetTokens × 4` characters; past that
+     * the sampler admits only the close sentinel, so the model is forced
+     * to close the block and emit the call. `0` leaves the prelude
+     * unbounded. The forced final step (`reply` / `finish`) is never
+     * cut. Range `0` or [64, 32768]. Added in config v68.
+     */
+    reasoningBudgetTokens: number;
     managed: UserManagedLocalLlmConfig;
     /**
      * Memory-v2 phase 1B. Optional second managed daemon for
@@ -2387,7 +2402,15 @@ export interface UserConfigFile {
 // named in the conversation (`src/tools/read-scope/`). A DEFAULT-BEHAVIOUR
 // CHANGE: an older file has no field and takes `"working-dir"`; the
 // pre-v67 behaviour is one line away (`agent.readScope: "unrestricted"`).
-export const USER_CONFIG_VERSION = 67;
+// v68: `localModels.reasoningBudgetTokens` (default 1500, `0` =
+// unbounded) — the GBNF prelude of a local reasoning model is bounded at
+// `budget × 4` characters, after which only the close sentinel is
+// admitted; the forced final step keeps an unbounded prelude. Additive:
+// an older file has no field and takes the default. In the same step
+// `localModels.thinking: "off"` is honoured on the hand-built prompt of a
+// `qwen-think` model (disabled marker at the generation point, plain
+// grammar root) — no new field, the existing switch reaches one more path.
+export const USER_CONFIG_VERSION = 68;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2543,6 +2566,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   64,
   65,
   66,
+  67,
   USER_CONFIG_VERSION,
 ];
 
@@ -2554,6 +2578,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     completionMaxTokens: 16384,
     useServerTemplate: "auto",
     thinking: "auto",
+    reasoningBudgetTokens: 1500,
     managed: {
       modelId: null,
       port: 19091,
@@ -3257,6 +3282,19 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
   const value = coerceIntLike(raw);
   if (value === 0) return 0;
   return parseBoundedPositiveInt(raw, field, 64, 131_072);
+}
+
+/**
+ * `localModels.reasoningBudgetTokens` — the think-block bound of a local
+ * reasoning model, in tokens. `0` means unbounded; anything else is an
+ * integer in [64, 32768]. The upper bound keeps the grammar llama.cpp
+ * expands server-side (`{0,N}` becomes N nested optional rules, four
+ * per token) at a size it parses in milliseconds.
+ */
+export function parseReasoningBudgetTokens(raw: unknown, field: string): number {
+  const value = coerceIntLike(raw);
+  if (value === 0) return 0;
+  return parseBoundedPositiveInt(raw, field, 64, 32_768);
 }
 
 export function parseBoundedPositiveInt(
@@ -4568,6 +4606,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       thinking: parseLocalTemplateSetting(
         localModels.thinking ?? USER_CONFIG_DEFAULTS.localModels.thinking,
         "localModels.thinking",
+      ),
+      reasoningBudgetTokens: parseReasoningBudgetTokens(
+        localModels.reasoningBudgetTokens ??
+          USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens,
+        "localModels.reasoningBudgetTokens",
       ),
       managed,
       embeddings: embeddingsDaemon,

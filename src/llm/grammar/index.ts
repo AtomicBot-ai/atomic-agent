@@ -1,4 +1,9 @@
-export { buildGrammar } from "./build-grammar.js";
+export { buildGrammar, buildGrammarForTools } from "./build-grammar.js";
+export type { BuildGrammarOptions } from "./build-grammar.js";
+export {
+  withoutReasoningPrelude,
+  withUnboundedReasoningPrelude,
+} from "./reasoning-prelude.js";
 export {
   loadToolCallGrammar,
   parseToolCall,

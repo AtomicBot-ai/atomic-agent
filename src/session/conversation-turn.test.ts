@@ -4,6 +4,8 @@ import {
   assistantReplyTurn,
   assistantToolCallTurn,
   findCurrentMacroTurnStart,
+  isFinalReplyTurn,
+  macroTurnBoundaries,
   packConversation,
   renderTurnForPrompt,
   toolResultTurn,
@@ -551,5 +553,41 @@ describe("packConversation memoisation (issue #121)", () => {
     expect(out.droppedCount).toBeGreaterThan(0);
     expect(out.droppedSummary).toMatch(/^summary: \d+ older turns dropped/);
     expect(out.visibleTurns.length).toBeGreaterThan(0);
+  });
+});
+
+describe("a progress note is a reply row that did not end the macro-turn", () => {
+  const note = assistantReplyTurn("(reading first)", { at: 2, progressNote: true });
+
+  it("carries the flag only when asked for", () => {
+    expect(note).toEqual({
+      kind: "assistant_reply",
+      text: "(reading first)",
+      at: 2,
+      progressNote: true,
+    });
+    expect(assistantReplyTurn("done", 3)).not.toHaveProperty("progressNote");
+    expect(isFinalReplyTurn(note)).toBe(false);
+    expect(isFinalReplyTurn(assistantReplyTurn("done", 3))).toBe(true);
+    expect(isFinalReplyTurn(userTurn("hi", 1))).toBe(false);
+    expect(isFinalReplyTurn(undefined)).toBe(false);
+  });
+
+  it("renders like any reply and is skipped by the macro-turn scans", () => {
+    expect(renderTurnForPrompt(note)).toBe("assistant: (reading first)");
+    const turns: ConversationTurn[] = [
+      userTurn("build it", 1),
+      note,
+      assistantToolCallTurn({ tool: "os.fs.read", args: { path: "a" }, at: 3 }),
+      toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "x", at: 4 }),
+      userTurn("also check b", 5),
+      assistantReplyTurn("done", 6),
+    ];
+    // The current macro-turn still opens at the user row, not after the note…
+    expect(findCurrentMacroTurnStart(turns.slice(0, 5))).toBe(0);
+    // …a reply that closed the turn is what the scan stops on…
+    expect(findCurrentMacroTurnStart(turns)).toBe(6);
+    // …and a steer after a note does not open a task of its own.
+    expect(macroTurnBoundaries(turns)).toEqual([0]);
   });
 });

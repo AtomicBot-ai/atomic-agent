@@ -560,6 +560,78 @@ describe("buildPrompt", () => {
     expect(prompt.tail.endsWith("<think>\n")).toBe(false);
   });
 
+  describe("thinking: off on the built prompt (F49)", () => {
+    it("ends a qwen prompt with the template's own disabled marker instead of the open tag", () => {
+      const prompt = buildPrompt({
+        session: mkSession(),
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        profile: QWEN_THINK_PROFILE,
+        thinking: "off",
+      });
+      expect(prompt.tail.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      expect(prompt.tail.endsWith("Respond now.\n\n<think>\n\n</think>\n\n")).toBe(
+        true,
+      );
+      // Exactly one think block, the closed one: no open prefill after it.
+      expect(prompt.tail.match(/<think>/g)).toHaveLength(1);
+      // The stable prefix is untouched — the switch is tail bytes only.
+      const on = buildPrompt({
+        session: mkSession(),
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        profile: QWEN_THINK_PROFILE,
+        thinking: "on",
+      });
+      expect(on.stablePrefix).toBe(prompt.stablePrefix);
+    });
+
+    it("on and auto keep the open-tag prefill", () => {
+      for (const thinking of ["on", "auto"] as const) {
+        const prompt = buildPrompt({
+          session: mkSession(),
+          toolDescriptors: TOOLS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          profile: QWEN_THINK_PROFILE,
+          thinking,
+        });
+        expect(prompt.tail.endsWith("<think>\n"), thinking).toBe(true);
+        expect(prompt.tail, thinking).not.toContain("</think>");
+      }
+    });
+
+    it("leaves gemma's turn framing as it is — its disabled marker is the prefilled channel", () => {
+      const prompt = buildPrompt({
+        session: mkSession(),
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        profile: GEMMA4_THINK_PROFILE,
+        thinking: "off",
+      });
+      expect(prompt.tail.endsWith("<turn|>\n<|turn>model\n")).toBe(true);
+      expect(prompt.tail).not.toContain("<|channel>thought");
+      expect(prompt.tail).not.toContain("<think>");
+    });
+
+    it("is ignored where the prefill is suppressed — a chat endpoint gets no marker either", () => {
+      const prompt = buildPrompt({
+        session: mkSession(),
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        profile: QWEN_THINK_PROFILE,
+        thinking: "off",
+        suppressReasoningPrefill: true,
+      });
+      expect(prompt.tail).not.toContain("<think>");
+      expect(prompt.tail.trimEnd().endsWith("Respond now.")).toBe(true);
+    });
+  });
+
   it("shows (no messages yet) when there are no turns", () => {
     const session = createEmptySessionState({
       id: "empty",

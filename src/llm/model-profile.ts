@@ -118,6 +118,17 @@ export interface TaggedReasoningModelProfile extends BaseModelProfile {
    * reasoning-open prefill.
    */
   turnFraming?: ReasoningTurnFraming;
+  /**
+   * What the model's own chat template puts at the generation point
+   * when thinking is switched off — for Qwen, `<think>\n\n</think>\n\n`,
+   * an empty block the model reads as "do not reason". Present only
+   * where a prefilled marker really disables reasoning. Gemma 4 carries
+   * none: its disabled marker is the prefilled channel, which the turn
+   * framing above exists to avoid. `localModels.thinking: "off"` on the
+   * hand-built prompt path ends the prompt with this instead of the open
+   * tag and drops the grammar prelude (F49, `thinkingDisabledOnBuiltPrompt`).
+   */
+  promptThinkingDisabledMarker?: string;
 }
 
 export type ModelProfile = PlainModelProfile | TaggedReasoningModelProfile;
@@ -160,6 +171,9 @@ export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
   requiresPromptThinkPrefix: true,
   allowThinkPrelude: true,
   supportsThinkingSwitch: true,
+  // The Qwen template's `enable_thinking: false` rendering: an empty,
+  // closed think block at the generation point.
+  promptThinkingDisabledMarker: "<think>\n\n</think>\n\n",
   vision: VISION_ABSENT,
 };
 

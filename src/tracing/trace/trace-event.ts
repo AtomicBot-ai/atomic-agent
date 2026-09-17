@@ -93,6 +93,8 @@ export interface TraceStepFinished extends TraceEventBase {
   stepIndex: number;
   summary: string;
   durationMs: number;
+  /** The step kept a `reply` batched with work as a progress note. */
+  progressNote?: true;
 }
 
 export interface TracePromptTokens {
@@ -134,6 +136,13 @@ export interface TraceLlmCompletion extends TraceEventBase {
   content: string;
   reasoningContent?: string;
   timing?: TraceLlmTiming;
+  /**
+   * Reasoning the completion carried, in `localModels.reasoningBudgetTokens`
+   * units (four characters per token — an estimate from the text, not
+   * the server's count). A step cut by the budget shows `>= budget`.
+   * Absent on traces recorded before F49.
+   */
+  reasoningTokens?: number;
   cacheHitTokens: number;
   modelId: string | null;
   stop: boolean;

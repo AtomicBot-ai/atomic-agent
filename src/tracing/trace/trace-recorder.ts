@@ -191,6 +191,9 @@ export function createTraceRecorder(
           attempt: inner.attempt,
           content: completion.content,
           ...(reasoning !== undefined ? { reasoningContent: reasoning } : {}),
+          ...(inner.reasoningTokens !== undefined
+            ? { reasoningTokens: inner.reasoningTokens }
+            : {}),
           ...(completion.timing
             ? {
                 timing: {
@@ -429,6 +432,7 @@ export function createTraceRecorder(
             stepIndex: event.stepIndex,
             summary: event.summary,
             durationMs: event.durationMs,
+            ...(event.progressNote === true ? { progressNote: true } : {}),
           });
           currentStepIndex = null;
           pendingCalls = new Map();

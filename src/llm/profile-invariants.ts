@@ -53,6 +53,13 @@ export interface PromptAlignmentOptions {
    * reasoning prelude. Defaults to `true` (grammar-transport legacy).
    */
   promptCarriesPrefill?: boolean;
+  /**
+   * `localModels.thinking: "off"` honoured on the built prompt (F49): a
+   * profile with a prompt-side disabled marker (`qwen-think`) must end
+   * with that marker, not the open tag. Profiles without one (Gemma 4
+   * turn framing) keep their ordinary invariant. Defaults to `false`.
+   */
+  thinkingDisabled?: boolean;
 }
 
 export function checkProfilePromptAligned(
@@ -93,6 +100,16 @@ export function checkProfilePromptAligned(
     if (leakedFraming) {
       violations.push(
         "prefill-suppressed prompt must not end with a model-turn opener",
+      );
+    }
+    return violations;
+  }
+
+  const disabledMarker = profile.promptThinkingDisabledMarker;
+  if (options.thinkingDisabled === true && disabledMarker !== undefined) {
+    if (!trimmed.endsWith(disabledMarker.trimEnd())) {
+      violations.push(
+        "thinking-off reasoning profile prompt must end with the template's disabled marker",
       );
     }
     return violations;

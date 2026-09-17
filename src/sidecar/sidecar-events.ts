@@ -219,6 +219,12 @@ export interface AssistantReplyPayload {
   text: string;
   /** Absolute paths of files the reply delivered (`reply.attachments`); absent when none. */
   attachments?: readonly string[];
+  /**
+   * An interim message: the model batched this reply with work tools and
+   * the turn went on. Another `assistant_reply` follows; hosts that show
+   * the turn's answer should not take this one for it. Absent otherwise.
+   */
+  progressNote?: true;
 }
 
 /**
