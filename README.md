@@ -391,9 +391,9 @@ The LLM tab in the TUI has an External pane for this setup. Saving a URL runs an
 </details>
 
 <details>
-<summary><b>Ollama and LM Studio (local)</b></summary>
+<summary><b>Ollama, LM Studio and Atomic Chat (local)</b></summary>
 
-Running models under [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai)? Both are OpenAI-compatible servers, and both are presets in the provider wizard, so there is no base URL to type.
+Running models under [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai) or Atomic Chat? All three are OpenAI-compatible servers, and all three are presets in the provider wizard, so there is no base URL to type.
 
 ```bash
 ollama serve
@@ -402,7 +402,7 @@ ollama pull qwen2.5:0.5b
 atomic-agent tui --cwd /path/to/work
 ```
 
-In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **LM Studio (local)**). A local server has no API key, so the wizard skips the key screen and goes straight to the model choice: two screens, service then model.
+In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **LM Studio (local)**, **Atomic Chat (local)**). A local server has no API key, so the wizard skips the key screen and goes straight to the model choice: two screens, service then model.
 
 Model ids are the tags the server reports, `qwen2.5:0.5b` or `llama3.2:latest` for Ollama, so use the same name you passed to `ollama pull`. The list comes from the server's own `/v1/models`, which means anything you have pulled shows up without a restart.
 
@@ -412,6 +412,9 @@ The preset is a fixed `http://localhost:11434` endpoint — it does not probe fo
 | --- | --- |
 | Ollama (local) | `http://localhost:11434` |
 | LM Studio (local) | `http://localhost:1234` |
+| Atomic Chat (local) | `http://127.0.0.1:1337` |
+
+For Atomic Chat, the endpoint is the desktop app's Local API Server (Settings › Local API Server). The app only raises it while a model is loaded, so start a model first or the model list will not load. It needs no key unless you set one in those settings; if you did, put the same value in `ATOMIC_CHAT_API_KEY` in the state dir's `.env`. An External llama.cpp URL on `:1337` is recognized and offered this preset, the same way `:11434` is offered Ollama.
 
 Two things to know. Ollama's OpenAI-compatible surface lives under `/v1`, but the base URL is stored without it, since every call site appends `/v1/...` itself. And **Ollama (local)** is a different entry from **Ollama Cloud**: the first is the server on your machine and needs no key, the second is the hosted endpoint.
 

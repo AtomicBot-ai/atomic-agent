@@ -23,6 +23,19 @@ describe("wizardForOpenAiCompatUrl", () => {
     expect(wizard.baseUrlLine).toBe("http://192.168.1.50:11434");
   });
 
+  it("lands an Atomic Chat URL on its preset, skipping the key screen", () => {
+    // Atomic Chat's Local API Server 404s /health and lists models on
+    // /v1/models, so it reaches the steer exactly like Ollama does.
+    const wizard = wizardForOpenAiCompatUrl("http://127.0.0.1:1337");
+    expect(wizard).toMatchObject({
+      mode: "add",
+      kind: "openai-compatible",
+      presetId: "atomic-chat",
+      baseUrlLine: "http://127.0.0.1:1337",
+      phase: "chat_model_line",
+    });
+  });
+
   it("opens the manual compat row prefilled for a non-Ollama server", () => {
     // LM Studio / vLLM / KoboldCpp: same verdict, no preset identity to
     // assume, so the add flow starts on the URL screen with the probed
