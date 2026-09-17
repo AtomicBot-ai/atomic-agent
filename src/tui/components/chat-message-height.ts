@@ -28,7 +28,7 @@ const ASSISTANT_FOOTER_ROWS = 1;
 /**
  * `FinalisedMessage` hangs a button footer under every finalised bubble,
  * whatever the role: `[copy]` everywhere, `[try again]` beside it on
- * user messages, and up to three `[open <host>]` chips when the message
+ * user messages that opened a turn (not on a steer), and up to three `[open <host>]` chips when the message
  * carries URLs. They all share a row, so this stays one row and
  * unconditional — the day a role earns a second footer line this
  * estimate has to learn about roles, and an under-count is not cosmetic:

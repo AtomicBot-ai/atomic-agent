@@ -146,10 +146,18 @@ export function appendUserMessage(
   };
 }
 
-export function lastUserMessage(state: TuiState): string {
+/**
+ * The request the latest turn was opened with: the newest user message
+ * that is not a steer. Both callers name the turn by it — the stopped
+ * notice's `retryText` and the run-history entry — and a steer is a
+ * correction folded into that turn, not what it was asked to do.
+ * Re-sending only the steer (`Test`) as a fresh turn would drop the
+ * request it corrected.
+ */
+export function lastTurnRequest(state: TuiState): string {
   for (let i = state.messages.length - 1; i >= 0; i -= 1) {
     const msg = state.messages[i];
-    if (msg?.role === "user") return msg.text;
+    if (msg?.role === "user" && msg.steered !== true) return msg.text;
   }
   return "";
 }
@@ -281,7 +289,7 @@ function withRunHistoryEntry(
   },
 ): TuiState {
   const entry: RunHistoryEntry = {
-    message: lastUserMessage(state),
+    message: lastTurnRequest(state),
     outcome: params.outcome,
     reason: params.reason,
     stepCount: params.stepCount,

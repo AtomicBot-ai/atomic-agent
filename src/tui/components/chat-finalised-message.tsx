@@ -45,16 +45,19 @@ export function FinalisedMessage({
   fusion = false,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
+    const steered = message.steered === true;
     return (
       <Box flexDirection="column">
-        <UserBubble
-          text={message.text}
-          fusion={fusion}
-          steered={message.steered === true}
-        />
+        <UserBubble text={message.text} fusion={fusion} steered={steered} />
         <Box flexDirection="row">
           <ChatCopyButton text={message.text} />
-          <ChatTryAgainButton text={message.text} />
+          {/*
+            No `[try again]` on a steer. It was a correction to the turn
+            it joined, and re-sending it alone opens a new turn on the
+            correction without the request it corrected. That turn's
+            opening message carries its own `[try again]`.
+          */}
+          {steered ? null : <ChatTryAgainButton text={message.text} />}
           <ChatLinkButtons text={message.text} />
         </Box>
       </Box>

@@ -25,7 +25,7 @@ import {
   finishRun,
   finishRunWithoutHistory,
   finishTurn,
-  lastUserMessage,
+  lastTurnRequest,
   pushRing,
   startNewRun,
   upsertReasoning,
@@ -588,7 +588,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // the window is exactly the abort the operator asked for.
       if (event.category === "cancelled" || state.aborting) {
         const lastRunStatus = "stopped by user";
-        const prompt = lastUserMessage(state);
+        const prompt = lastTurnRequest(state);
         return finishRun(
           appendChatMessage(
             appendFeed(state, {

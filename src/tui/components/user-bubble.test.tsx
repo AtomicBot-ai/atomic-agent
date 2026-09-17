@@ -45,4 +45,26 @@ describe("UserBubble", () => {
     );
     expect(plain).not.toContain(STEERED_LABEL_SUFFIX.trim());
   });
+
+  it("offers [try again] on the opening request but not on a steer", () => {
+    // Re-sent alone, a steer opens a new turn on the correction without
+    // the request it corrected: the confusion the label is there to end.
+    const steered = frame(
+      <FinalisedMessage
+        message={userMessage({ steered: true })}
+        toolsExpandedById={{}}
+        planHandoff={null}
+      />,
+    );
+    expect(steered).toContain("[copy]");
+    expect(steered).not.toContain("[try again]");
+    const plain = frame(
+      <FinalisedMessage
+        message={userMessage()}
+        toolsExpandedById={{}}
+        planHandoff={null}
+      />,
+    );
+    expect(plain).toContain("[try again]");
+  });
 });

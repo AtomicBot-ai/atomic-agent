@@ -635,6 +635,50 @@ describe("reduceTuiState", () => {
     );
   });
 
+  it("names a steered turn by its opening request, not by the steer", () => {
+    // `Test` was folded into the running `count the stars` turn. Stopping
+    // that turn must offer to re-run `count the stars`; re-sending `Test`
+    // alone would open a turn on the correction without the request.
+    const steered = (extra: TuiAction[]): TuiState =>
+      apply(createInitialTuiState(fakeSession()), [
+        {
+          type: "agent_event",
+          event: { type: "user_message", text: "count the stars" },
+        },
+        { type: "message_submitted" },
+        { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+        {
+          type: "agent_event",
+          event: { type: "steer_applied", text: "Test", stepIndex: 0 },
+        },
+        ...extra,
+      ]);
+
+    const stopped = steered([
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = stopped.messages.find((m) => m.role === "system");
+    expect(notice?.text).toBe("Agent stopped by user.");
+    expect(notice?.retryText).toBe("count the stars");
+    expect(stopped.runHistory[0]?.message).toBe("count the stars");
+
+    const completed = steered([
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
+    ]);
+    expect(completed.runHistory[0]?.outcome).toBe("completed");
+    expect(completed.runHistory[0]?.message).toBe("count the stars");
+  });
+
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
