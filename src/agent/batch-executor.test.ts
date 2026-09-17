@@ -7,7 +7,12 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
-import { executeBatch, planBatch, toBatchInputs } from "./batch-executor.js";
+import {
+  FINAL_STEP_REFUSAL,
+  executeBatch,
+  planBatch,
+  toBatchInputs,
+} from "./batch-executor.js";
 import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
 
 function ctx(signal: AbortSignal) {
@@ -848,6 +853,86 @@ describe("executeBatch — skill.view short-circuit", () => {
  * Plan mode at the seam that matters: not "does the predicate say no",
  * which `plan-mode.test.ts` covers, but "did the tool actually not run".
  */
+describe("executeBatch on the loop's final step (terminalOnly)", () => {
+  it("refuses every non-terminal call with a tool result and never dispatches it", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": read });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      terminalOnly: true,
+    });
+    expect(read).not.toHaveBeenCalled();
+    for (const slot of out.results) {
+      expect(slot.compressed?.status).toBe("error");
+      expect(slot.compressed?.summary).toBe(FINAL_STEP_REFUSAL);
+      expect(slot.compressed?.details).toMatchObject({ final_step: true });
+    }
+  });
+
+  it("still runs the tail terminal of a [tool, reply] batch", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply", "sent"));
+    const registry = buildRegistry({ "os.fs.read": read, reply });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "reply", args: { text: "done" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      terminalOnly: true,
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.summary).toBe(FINAL_STEP_REFUSAL);
+    expect(out.results[1]!.compressed?.status).toBe("ok");
+  });
+
+  it("outranks the other gates and leaves the loop tracker untouched", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const tracker = new ToolLoopTracker();
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a", content: "x" } }]),
+      registry,
+      {
+        ...ctx(new AbortController().signal),
+        terminalOnly: true,
+        isPlanMode: () => true,
+        tracker,
+      },
+    );
+    expect(write).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.summary).toBe(FINAL_STEP_REFUSAL);
+    expect(out.loopSignals).toEqual([]);
+    // Nothing was recorded: a refused call is not a repeat.
+    expect(
+      tracker.check("os.fs.write", { path: "a", content: "x" }).count,
+    ).toBe(0);
+  });
+
+  it("is inert off the final step", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": read });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+});
+
 describe("executeBatch under plan mode", () => {
   it("never dispatches a mutating tool", async () => {
     const write = vi.fn(async () => okResult("os.fs.write"));

@@ -63,7 +63,9 @@ export type {
 /**
  * Assembles the prompt with the stable prefix at the top (persona + tools +
  * capabilities + skill catalog) and the variable tail at the bottom
- * (`### loaded-skills` / `### session-facts` / memory / world / conversation).
+ * (memory / `### session-facts` / world / conversation, then the sections
+ * a step can change: `### profile`, lessons, procedures,
+ * `### loaded-skills`, `### loaded-tools`).
  *
  * Budgeting:
  *  - `tokenBudget` caps `### loaded-skills` + `### session-facts` (shared) via
@@ -91,6 +93,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const conversationCapAuto = conversationMaxTokens <= CONVERSATION_CAP_AUTO;
   const conversationMaxPairs =
     input.conversationMaxPairs ?? config.agent.conversationMaxPairs;
+  // A model with no partial prefix reuse re-reads the whole prompt at
+  // every cut, so it cuts deeper and less often; an operator who set the
+  // share lower still keeps their own number.
+  const configuredLowWater =
+    input.conversationLowWater ?? config.agent.conversationLowWater;
+  const conversationLowWater =
+    input.profile?.prefixReuse === "none"
+      ? Math.min(configuredLowWater, 0.5)
+      : configuredLowWater;
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
   const completionMaxTokens =
@@ -270,8 +281,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversationCapEffective,
     {
       maxPairs: conversationMaxPairs,
+      lowWater: conversationLowWater,
       ...(input.session.macroTurnStarts
         ? { macroTurnStarts: input.session.macroTurnStarts }
+        : {}),
+      ...(input.session.conversationPackStart
+        ? { packStart: input.session.conversationPackStart }
         : {}),
     },
   );
@@ -283,22 +298,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const taskPolicyTokens =
     taskPolicy === null ? 0 : estimateTokens(taskPolicy.body);
 
+  // Tail order is by what can change WITHIN a turn. Everything ahead of
+  // `### conversation` is fixed for the turn (the memory sections are
+  // refreshed once, before the first step); everything that a step can
+  // change — a `tool.view` adds to loaded-tools, a `skill.view` to
+  // loaded-skills, a `memory.profile.set` to the profile — sits after
+  // it, so a change lands in the part of the prompt that is re-read
+  // anyway rather than ahead of a transcript the model would otherwise
+  // have reused from its KV cache.
   const tailParts: string[] = [];
-  if (loadedForTail !== null) {
-    tailParts.push("### loaded-skills", loadedForTail, ``);
-  }
-  if (loadedToolsRendered.body !== null) {
-    tailParts.push("### loaded-tools", loadedToolsRendered.body, ``);
-  }
-  if (profile !== null) {
-    tailParts.push("### profile", profile, ``);
-  }
-  if (lessons !== null) {
-    tailParts.push("### lessons", lessons, ``);
-  }
-  if (procedures !== null) {
-    tailParts.push("### procedures", procedures, ``);
-  }
   if (memoryIndex !== null) {
     tailParts.push("### memory-index", memoryIndex, ``);
   }
@@ -316,6 +324,21 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversation,
     ``,
   );
+  if (profile !== null) {
+    tailParts.push("### profile", profile, ``);
+  }
+  if (lessons !== null) {
+    tailParts.push("### lessons", lessons, ``);
+  }
+  if (procedures !== null) {
+    tailParts.push("### procedures", procedures, ``);
+  }
+  if (loadedForTail !== null) {
+    tailParts.push("### loaded-skills", loadedForTail, ``);
+  }
+  if (loadedToolsRendered.body !== null) {
+    tailParts.push("### loaded-tools", loadedToolsRendered.body, ``);
+  }
   if (taskPolicy !== null) {
     tailParts.push(`### task-policy`, taskPolicy.body, ``);
   }
@@ -428,6 +451,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     droppedPairs: packed.droppedPairs,
     conversationPairsCap: conversationMaxPairs,
     conversationBoundBy: packed.boundBy,
+    conversationPackStart: packed.packStart,
     pairCosts: pairTokenCosts(
       input.session.turns,
       input.session.macroTurnStarts,

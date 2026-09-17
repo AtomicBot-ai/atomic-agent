@@ -115,7 +115,9 @@ describe("where the window comes from", () => {
 
 describe("what the prompt reports about pairs", () => {
   it("counts the tasks it carried and the cap in force", () => {
-    const built = build({ conversationMaxPairs: 2 });
+    // `conversationLowWater: 1` cuts to the cap itself; the shipped
+    // default cuts below it so the cut can hold (see below).
+    const built = build({ conversationMaxPairs: 2, conversationLowWater: 1 });
     expect(built.conversationPairsCap).toBe(2);
     expect(built.conversationPairs).toBe(2);
     expect(built.droppedPairs).toBe(1);
@@ -136,7 +138,7 @@ describe("what the prompt reports about pairs", () => {
 describe("the shipped default", () => {
   it("carries twenty tasks and no more", () => {
     const many: ConversationTurn[] = [];
-    for (let i = 0; i < 30; i += 1) many.push(...task(i));
+    for (let i = 0; i < 20; i += 1) many.push(...task(i));
     const built = buildPrompt({
       session: sessionWith(many),
       toolDescriptors: TOOLS,
@@ -147,8 +149,28 @@ describe("the shipped default", () => {
       USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
     );
     expect(built.conversationPairs).toBe(20);
-    expect(built.droppedPairs).toBe(10);
-    expect(built.text).not.toContain("ask 0");
+    expect(built.droppedPairs).toBe(0);
+    expect(built.text).toContain("ask 0");
+    expect(built.text).toContain("ask 19");
+  });
+
+  it("past twenty, drops to thirteen — 65 % of the cap — and holds there", () => {
+    // The cut is chunked so it can hold: dropping exactly one task per
+    // new task would move the transcript's first line on every task and
+    // re-read the prompt on a model with no partial prefix reuse.
+    const many: ConversationTurn[] = [];
+    for (let i = 0; i < 30; i += 1) many.push(...task(i));
+    const built = buildPrompt({
+      session: sessionWith(many),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(USER_CONFIG_DEFAULTS.agent.conversationLowWater).toBe(0.65);
+    expect(built.conversationPairs).toBe(13);
+    expect(built.droppedPairs).toBe(17);
+    expect(built.text).not.toContain("ask 16");
+    expect(built.text).toContain("ask 17");
     expect(built.text).toContain("ask 29");
   });
 });

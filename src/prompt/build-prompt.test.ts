@@ -62,7 +62,7 @@ const SKILLS: SkillCatalogEntry[] = [
 ];
 
 describe("buildPrompt", () => {
-  it("renders `### lessons` between `### profile` and `### memory-index` (phase 5)", () => {
+  it("renders `### lessons` after `### conversation`, with `### profile` (phase 5)", () => {
     const session = mkSession({
       profileFacts: [],
       recalledLessons: [
@@ -93,12 +93,15 @@ describe("buildPrompt", () => {
     });
     expect(text).toMatch(/\n### lessons\n/);
     expect(text).toContain("*42 [tool] When asked about pnpm packages");
-    // Section order: lessons tail header must precede the
-    // memory-index tail header, both must follow the stable prefix.
+    // Section order: memory-index is fixed for the turn and sits ahead
+    // of the conversation; lessons can change within a turn and follow
+    // it. Both must follow the stable prefix.
     const lessonsIdx = text.indexOf("\n### lessons\n");
     const indexIdx = text.indexOf("\n### memory-index\n");
-    expect(lessonsIdx).toBeGreaterThan(0);
-    expect(indexIdx).toBeGreaterThan(lessonsIdx);
+    const conversationIdx = text.indexOf("\n### conversation\n");
+    expect(indexIdx).toBeGreaterThan(0);
+    expect(conversationIdx).toBeGreaterThan(indexIdx);
+    expect(lessonsIdx).toBeGreaterThan(conversationIdx);
   });
 
   it("omits the `### lessons` tail block when `recalledLessons` is undefined or empty (phase 5)", () => {
@@ -959,7 +962,112 @@ describe("buildPrompt", () => {
     expect(grownPrompt.stablePrefix).toBe(emptyPrompt.stablePrefix);
   });
 
-  it("orders tail from stable to hot: loaded-skills, profile, memory-index, session-facts, recalled, world, conversation", () => {
+  describe("the transcript cut is remembered on the session", () => {
+    /** A finished task with `steps` tool round-trips of about 60 tokens. */
+    function longTask(label: string, steps: number, from: number) {
+      const turns: SessionState["turns"] = [
+        { kind: "user", text: `ask ${label}`, at: from },
+      ];
+      for (let i = 0; i < steps; i += 1) {
+        turns.push(
+          {
+            kind: "assistant_tool_call",
+            tool: "fs.read",
+            args: { path: `/${label}/${i}` },
+            at: from + 1 + i * 2,
+          },
+          {
+            kind: "tool_result",
+            tool: "fs.read",
+            status: "ok",
+            summary: `${label}-${i} ${"x".repeat(240)}`,
+            truncated: false,
+            at: from + 2 + i * 2,
+          },
+        );
+      }
+      turns.push({
+        kind: "assistant_reply",
+        text: `answer ${label}`,
+        at: from + 100,
+      });
+      return turns;
+    }
+    const history = [
+      ...longTask("a", 6, 1_000),
+      ...longTask("b", 6, 2_000),
+      { kind: "user" as const, text: "ask c", at: 3_000 },
+    ];
+    const build = (session: SessionState, extra: Record<string, unknown> = {}) =>
+      buildPrompt({
+        session,
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        conversationMaxTokens: 800,
+        ...extra,
+      });
+
+    it("publishes the cut and holds it on the next build while the tail fits", () => {
+      const first = build(mkSession({ turns: history }));
+      expect(first.droppedTurns).toBeGreaterThan(0);
+      const start = first.conversationPackStart;
+      expect(start).not.toBeNull();
+      expect(start!.index).toBe(first.droppedTurns);
+
+      const grown = mkSession({
+        turns: [
+          ...history,
+          {
+            kind: "assistant_tool_call",
+            tool: "fs.read",
+            args: { path: "/c/0" },
+            at: 3_001,
+          },
+          {
+            kind: "tool_result",
+            tool: "fs.read",
+            status: "ok",
+            summary: `c-0 ${"x".repeat(240)}`,
+            truncated: false,
+            at: 3_002,
+          },
+        ],
+        conversationPackStart: start!,
+      });
+      const held = build(grown);
+      expect(held.conversationPackStart).toEqual(start);
+      expect(held.droppedTurns).toBe(first.droppedTurns);
+      // The section only grew at its end: the first build's rendering is
+      // a prefix of the second's, summary line included.
+      const section = (t: string) => {
+        const from = t.indexOf("### conversation\n");
+        return t.slice(from, t.indexOf("\n\n###", from));
+      };
+      expect(section(held.tail).startsWith(section(first.tail))).toBe(true);
+      // Without the memory the cut would have moved.
+      const forgotten = build({ ...grown, conversationPackStart: undefined });
+      expect(forgotten.droppedTurns).toBeGreaterThan(held.droppedTurns);
+    });
+
+    it("cuts to half the budget for a model with no partial prefix reuse", () => {
+      const partial = build(mkSession({ turns: history }), {
+        profile: PLAIN_INSTRUCT_PROFILE,
+      });
+      const none = build(mkSession({ turns: history }), {
+        profile: { ...PLAIN_INSTRUCT_PROFILE, prefixReuse: "none" },
+      });
+      expect(none.droppedTurns).toBeGreaterThan(partial.droppedTurns);
+      // An operator's own lower share still wins.
+      const lower = build(mkSession({ turns: history }), {
+        profile: { ...PLAIN_INSTRUCT_PROFILE, prefixReuse: "none" },
+        conversationLowWater: 0.3,
+      });
+      expect(lower.droppedTurns).toBeGreaterThan(none.droppedTurns);
+    });
+  });
+
+  it("orders the tail by what can change within a turn: memory-index, session-facts, recalled, world, conversation, then profile, lessons, procedures, loaded-skills, loaded-tools", () => {
     const session = mkSession({
       knownFacts: [{ text: "pinned context" }],
       loadedSkills: [
@@ -981,6 +1089,21 @@ describe("buildPrompt", () => {
         },
       ],
       memoryIndex: [{ id: 2, preview: "p", tags: [], updatedAt: 1 }],
+      recalledLessons: [
+        { id: 3, activation: "when", tags: [], workingDir: null, updatedAt: 1 },
+      ],
+      recalledProcedures: [
+        { id: 4, activation: "how", tags: [], workingDir: null, updatedAt: 1 },
+      ],
+      loadedTools: [
+        {
+          name: "os.git.show",
+          summary: "Show a commit.",
+          argsSchema: "{ repo?: string }",
+          loadedAt: 1,
+          source: "explicit",
+        },
+      ],
     });
     const prompt = buildPrompt({
       session,
@@ -992,12 +1115,22 @@ describe("buildPrompt", () => {
       ],
     });
     const idx = (h: string) => prompt.tail.indexOf(h);
-    expect(idx("### loaded-skills")).toBeLessThan(idx("### profile"));
-    expect(idx("### profile")).toBeLessThan(idx("### memory-index"));
+    // Fixed for the turn, ahead of the transcript…
+    expect(idx("### memory-index")).toBeGreaterThanOrEqual(0);
     expect(idx("### memory-index")).toBeLessThan(idx("### session-facts"));
     expect(idx("### session-facts")).toBeLessThan(idx("### recalled"));
     expect(idx("### recalled")).toBeLessThan(idx("### world"));
     expect(idx("### world")).toBeLessThan(idx("### conversation"));
+    // …then what a step can change, so a `tool.view`, a `skill.view` or a
+    // profile write lands behind the transcript the model already read
+    // instead of ahead of it (a change there re-reads the whole prompt
+    // on a model with no partial prefix reuse).
+    expect(idx("### conversation")).toBeLessThan(idx("### profile"));
+    expect(idx("### profile")).toBeLessThan(idx("### lessons"));
+    expect(idx("### lessons")).toBeLessThan(idx("### procedures"));
+    expect(idx("### procedures")).toBeLessThan(idx("### loaded-skills"));
+    expect(idx("### loaded-skills")).toBeLessThan(idx("### loaded-tools"));
+    expect(idx("### loaded-tools")).toBeLessThan(idx("### respond"));
   });
 
   it("leaves loaded-skills and profile blocks byte-identical when only knownFacts change", () => {
@@ -1101,7 +1234,7 @@ describe("buildPrompt profile section", () => {
     expect(prompt.tail).toContain("(no profile)");
   });
 
-  it("places ### profile after optional loaded-skills and before ### world", () => {
+  it("places ### profile after ### conversation and before optional loaded-skills", () => {
     const prompt = buildPrompt({
       session: mkSession(),
       toolDescriptors: TOOLS,
@@ -1119,11 +1252,11 @@ describe("buildPrompt profile section", () => {
     });
     const loadedIdx = prompt.tail.indexOf("### loaded-skills");
     const profileIdx = prompt.tail.indexOf("### profile");
-    const worldIdx = prompt.tail.indexOf("### world");
+    const conversationIdx = prompt.tail.indexOf("### conversation");
     if (loadedIdx >= 0) {
-      expect(loadedIdx).toBeLessThan(profileIdx);
+      expect(profileIdx).toBeLessThan(loadedIdx);
     }
-    expect(profileIdx).toBeLessThan(worldIdx);
+    expect(profileIdx).toBeGreaterThan(conversationIdx);
     expect(prompt.tail).toContain("- language: ru");
   });
 

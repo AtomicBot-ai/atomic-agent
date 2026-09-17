@@ -1,8 +1,22 @@
 export type ReasoningStyle = "none" | "think-tags" | "channel-tags";
 
+/**
+ * How much of a prompt the serving model can reuse from its KV cache
+ * when the prompt changes somewhere in the middle.
+ *  - `"partial"` (default): everything before the first changed token is
+ *    reused — dense attention, the ordinary llama-server case.
+ *  - `"none"`: a change anywhere re-reads the whole prompt — sliding-
+ *    window or hybrid/recurrent architectures (Gemma 4, Mamba-based),
+ *    whose layers cannot roll back. Set by the daemon from the GGUF
+ *    metadata; the packer then cuts history deeper and less often.
+ */
+export type PrefixReuse = "partial" | "none";
+
 interface BaseModelProfile {
   requiresPromptThinkPrefix: boolean;
   allowThinkPrelude: boolean;
+  /** Prefix reuse of the serving model; absent reads as `"partial"`. */
+  prefixReuse?: PrefixReuse;
   /**
    * Physical context window in tokens, read from `llama-server /props`
    * (`default_generation_settings.n_ctx`, with a root `n_ctx` fallback).

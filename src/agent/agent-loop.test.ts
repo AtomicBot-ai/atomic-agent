@@ -262,11 +262,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("max_steps");
     // Six steps spent, of which the last is the reserved summary the
-    // model refused to write — so five tool steps landed in the session.
+    // model refused to write: its tool call was not run — it landed as
+    // a refusal in the transcript — so five tool calls ran.
     expect(result.session.lastError).toMatch(
       /task_stopped:step_ceiling: 6 steps/,
     );
-    expect(result.session.stepCount).toBe(5);
+    expect(result.session.stepCount).toBe(6);
+    const results = result.session.turns.filter(
+      (turn) => turn.kind === "tool_result",
+    );
+    expect(results).toHaveLength(6);
+    expect(results.slice(0, 5).every((turn) => turn.status === "ok")).toBe(
+      true,
+    );
+    expect(results.at(-1)).toMatchObject({
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
   });
 
   it("stops when a whole leg produced nothing usable", async () => {
@@ -1526,7 +1538,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.lastError ?? "").not.toMatch(/max_steps/);
   });
 
-  it("gives the finalization step one repair attempt, then preserves the stalled outcome", async () => {
+  it("refuses a non-terminal call on the final step with a tool result, then preserves the stalled outcome", async () => {
     const registry = buildDefaultToolRegistry();
     let noopRuns = 0;
     registry.register({
@@ -1551,7 +1563,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       // The model insists on a non-terminal tool even on the reserved
-      // final step and its repair attempt.
+      // final step.
       llmComplete: async () => {
         calls += 1;
         return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
@@ -1574,20 +1586,144 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     );
 
-    // Step 0 executes the tool; the finalization step burns its first
-    // completion plus exactly one repair round-trip, and neither may
-    // execute the non-terminal call.
-    expect(calls).toBe(3);
+    // Step 0 executes the tool; the finalization step's call is answered
+    // with a refusal instead of running — no repair round-trip, no
+    // second inference — and the turn stops at the ceiling.
+    expect(calls).toBe(2);
     expect(noopRuns).toBe(1);
-    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(1);
+    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(0);
     expect(result.reason).toBe("max_steps");
     expect(result.session.status).toBe("stalled");
     expect(result.session.lastError).toMatch(
       /task_stopped:step_ceiling: 2 steps/,
     );
+    expect(result.session.turns.at(-2)).toMatchObject({
+      kind: "tool_result",
+      tool: "noop",
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
       text: expect.stringContaining("step ceiling"),
+    });
+  });
+
+  it("keeps the full tool catalog and the same stable prefix on the final step", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
+      },
+      toolDescriptors: [
+        ...TOOLS,
+        { name: "noop", summary: "No-op.", argsSchema: "{}" },
+      ],
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-prefix", workingDir }),
+      {
+        userMessage: "verify",
+        maxSteps: 2,
+        taskMaxSteps: 2,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(prompts).toHaveLength(2);
+    // The stable prefix — everything ahead of the first tail section —
+    // is byte-identical between the ordinary step and the final one; a
+    // catalog narrowed to reply/finish used to change it and move the
+    // session to a cold slot for its last step.
+    const prefix = (p: string) => p.slice(0, p.indexOf("### world"));
+    expect(prefix(prompts[1]!)).toBe(prefix(prompts[0]!));
+    expect(prompts[1]).toContain("noop");
+    expect(prompts[1]).toContain("final allowed step");
+  });
+
+  it("lets a [tool, reply] batch on the final step keep its reply and refuse the tool", async () => {
+    // A real pure-read name, so the batch validator lets `[read, reply]`
+    // through to the dispatch gate (an unregistered name would be
+    // rejected as a batch member before any gate ran).
+    const registry = buildDefaultToolRegistry();
+    let readRuns = 0;
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      async run() {
+        readRuns += 1;
+        return {
+          tool: "os.fs.read",
+          status: "ok",
+          summary: "hello",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(
+          JSON.stringify([
+            { tool: "os.fs.read", args: { path: "notes.txt" } },
+            { tool: "reply", args: { text: "here is the summary" } },
+          ]),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-tail", workingDir }),
+      {
+        userMessage: "verify",
+        maxSteps: 1,
+        taskMaxSteps: 1,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(readRuns).toBe(0);
+    expect(result.reason).toBe("reply");
+    expect(result.stopCause).toBe("step_ceiling");
+    expect(result.session.turns.at(-2)).toMatchObject({
+      kind: "tool_result",
+      tool: "os.fs.read",
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "here is the summary",
     });
   });
 
@@ -1639,16 +1775,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
 
     // With a budget of one, the single step IS the finalization step:
-    // the tool call is rejected before execution and the repair pass
-    // must produce the terminal reply.
+    // the tool call is refused at dispatch — it never runs, there is no
+    // repair pass — and the turn stops at the ceiling with the refusal
+    // on record.
     expect(prompts[0]).toContain("final allowed step");
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
     expect(noopRuns).toBe(0);
-    expect(result.reason).toBe("reply");
-    expect(result.session.status).toBe("pending");
+    expect(result.reason).toBe("max_steps");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.turns.at(-2)).toMatchObject({
+      kind: "tool_result",
+      tool: "noop",
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: "summary only",
+      text: expect.stringContaining("step ceiling"),
     });
   });
 

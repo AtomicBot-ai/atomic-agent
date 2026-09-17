@@ -124,6 +124,14 @@ export interface BatchExecutionContext {
    */
   tracker?: ToolLoopTracker;
   /**
+   * The loop's reserved final step: only `reply` / `finish` may run. A
+   * non-terminal call is answered with {@link FINAL_STEP_REFUSAL} in its
+   * slot and never reaches the registry; a tail terminal still runs.
+   * Enforced here rather than by narrowing the prompt's tool catalog,
+   * which is stable-prefix bytes.
+   */
+  terminalOnly?: boolean;
+  /**
    * Plan mode, read at dispatch time rather than passed as a boolean.
    *
    * A getter for the same reason `dangerous.approvalRequired` is one
@@ -287,7 +295,25 @@ export async function executeBatch(
       };
       continue;
     }
-    // Plan mode first: a call that is not going to run should not spend
+    // The final step first: nothing but a terminal runs on it, whatever
+    // the other gates would say.
+    const final = runFinalStepGate(input, ctx);
+    if (!final.proceed && final.vetoResult) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: final.vetoResult,
+        durationMs: 0,
+      };
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: final.vetoResult,
+        durationMs: 0,
+      });
+      continue;
+    }
+    // Plan mode next: a call that is not going to run should not spend
     // a slot in the loop tracker's history either. Recording it would
     // let a refused-and-retried tool trip the loop breaker, and end the
     // turn over an argument the model was never allowed to try.
@@ -568,6 +594,35 @@ function skillAlreadyLoadedResult(
  * no-progress streak (the streak then plateaus at `criticalThreshold`).
  * Terminal verbs and tracker-less steps always proceed unchanged.
  */
+/** The tool result a non-terminal call gets on the loop's final step. */
+export const FINAL_STEP_REFUSAL = "final step: only reply or finish run here";
+
+/**
+ * Refuse a non-terminal call on the loop's reserved final step. The
+ * prompt's `### notice` already said so; this is what makes it true
+ * without narrowing the tool catalog (stable-prefix bytes) for one step.
+ * A solo `[reply]` never reaches this gate — terminals are split off
+ * before phase 1 — and a `[tool, reply]` batch keeps its reply.
+ */
+function runFinalStepGate(
+  input: BatchCallInput,
+  ctx: BatchExecutionContext,
+): { proceed: boolean; vetoResult?: CompressedToolResult } {
+  if (!ctx.terminalOnly || input.resourceClass === "terminal") {
+    return { proceed: true };
+  }
+  return {
+    proceed: false,
+    vetoResult: {
+      tool: input.call.tool,
+      status: "error",
+      summary: FINAL_STEP_REFUSAL,
+      details: { final_step: true, tool: input.call.tool },
+      truncated: false,
+    },
+  };
+}
+
 /**
  * Refuse a mutating call while plan mode is on.
  *

@@ -14,6 +14,7 @@ export {
   recordLoadedTool,
   recordWorldSnapshot,
   recordTurn,
+  rememberConversationPackStart,
   incrementTurnCount,
   stripEphemeral,
 } from "./session-state.js";
@@ -37,6 +38,7 @@ export {
   appendTurn,
 } from "./conversation-turn.js";
 export type {
+  ConversationPackStart,
   ConversationTurn,
   PackedConversation,
 } from "./conversation-turn.js";

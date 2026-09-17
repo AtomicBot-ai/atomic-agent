@@ -227,6 +227,7 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
       conversationMaxTokens: user.agent.conversationMaxTokens,
       conversationMaxPairs: user.agent.conversationMaxPairs,
+      conversationLowWater: user.agent.conversationLowWater,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
