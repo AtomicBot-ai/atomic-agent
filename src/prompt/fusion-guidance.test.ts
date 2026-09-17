@@ -6,7 +6,10 @@ import {
   FUSION_GUIDANCE,
   isFusionActive,
 } from "./fusion-guidance.js";
-import type { FusionMachineFacts } from "./fusion-machine-facts.js";
+import {
+  NO_FUSION_MACHINE_FACTS,
+  type FusionMachineFacts,
+} from "./fusion-machine-facts.js";
 import { COMPOSIO_SEARCH_TOOL } from "./composio-guidance.js";
 import { buildStablePrefix, type ToolDescriptor } from "./stable-prefix.js";
 import type { CapabilitiesSummary } from "./capabilities.js";
@@ -19,7 +22,16 @@ const CAPS: CapabilitiesSummary = {
   platform: "linux",
 } as unknown as CapabilitiesSummary;
 
-const FACTS: FusionMachineFacts = { workerSlots: 4, workerModel: "qwen3-4b" };
+const FACTS: FusionMachineFacts = {
+  workerLeg: "local",
+  workerSlots: 4,
+  workerTokenBudget: 24_192,
+  workerModel: "qwen3-4b",
+};
+
+function facts(over: Partial<FusionMachineFacts>): FusionMachineFacts {
+  return { ...NO_FUSION_MACHINE_FACTS, ...over };
+}
 
 function prefixWith(
   descriptors: readonly ToolDescriptor[],
@@ -51,6 +63,7 @@ describe("the ### fusion prefix section", () => {
     expect(prefix).not.toContain("worker agents");
     expect(prefix).not.toContain("qwen3-4b");
     expect(prefix).not.toContain("request slot");
+    expect(prefix).not.toContain("shared context");
   });
 
   it("appears once the delegate tool is mounted", () => {
@@ -98,7 +111,7 @@ describe("the ### fusion prefix section", () => {
 
   it("says a worker brief must stand alone", () => {
     expect(FUSION_GUIDANCE).toMatch(/stand alone|self-contained/i);
-    expect(FUSION_GUIDANCE).toContain("no memory of this conversation");
+    expect(FUSION_GUIDANCE).toContain("see the operator's request, not this chat");
   });
 
   it("says the call is solo and that results must be verified", () => {
@@ -107,44 +120,75 @@ describe("the ### fusion prefix section", () => {
   });
 
   it("stays short enough to live in every turn's prefix", () => {
-    // Every byte here is paid on every step of every fusion turn.
+    // Every byte here is paid on every step of every fusion turn. The
+    // machine lines carry capacity as well as a count — slots, a
+    // worker's share of the shared context, the shared GPU — which is
+    // what the orchestrator needed and could not see when a four-worker
+    // fan-out overflowed its server; ~100 tokens is what that costs.
     expect(FUSION_GUIDANCE.length).toBeLessThan(1400);
-    expect(buildFusionGuidance(FACTS).length).toBeLessThan(1600);
+    expect(buildFusionGuidance(FACTS).length).toBeLessThan(1900);
   });
 });
 
 describe("the machine facts in the ### fusion block", () => {
   it("names the slot count, the local model and the resulting width", () => {
     // The orchestrator picks `maxWorkers` itself now. Choosing over
-    // hardware it cannot see is guessing, so these are the three facts
-    // that actually decide the number.
+    // hardware it cannot see is guessing, so these are the facts that
+    // actually decide the number.
     const prefix = prefixWith([descriptor(FUSION_DELEGATE_TOOL)], FACTS);
     expect(prefix).toContain("4 request slots");
     expect(prefix).toContain("`qwen3-4b`");
     expect(prefix).toContain("up to 4 run at once");
+    expect(prefix).toContain("`maxWorkers` at most 4");
+  });
+
+  it("states a local worker's share of the context and the shared GPU", () => {
+    const block = buildFusionGuidance(FACTS);
+    expect(block).toContain("~24K tokens");
+    expect(block).toContain("one shared context");
+    expect(block).toMatch(/overflow it together all fail/);
+    expect(block).toContain("share one GPU");
+    expect(block).toMatch(/N times slower/);
+    expect(block).toContain("timeouts");
+    expect(block).toContain("keep briefs short");
   });
 
   it("says nothing about a fact it does not have", () => {
     // An external llama-server's `--parallel` is nobody's business but
     // the operator's; a guessed slot count is worse than none, because
     // it is a number the model will plan against.
-    const noSlots = buildFusionGuidance({
-      workerSlots: null,
-      workerModel: "qwen3-4b",
-    });
+    const noSlots = buildFusionGuidance(
+      facts({ workerLeg: "local", workerTokenBudget: 24_192, workerModel: "qwen3-4b" }),
+    );
     expect(noSlots).toContain("`qwen3-4b`");
     expect(noSlots).not.toContain("request slot");
+    expect(noSlots).not.toContain("at most");
+    expect(noSlots).toContain("the fan-out narrow");
+    expect(noSlots).toContain("share one GPU");
+    // No budget known: no budget sentence.
+    expect(
+      buildFusionGuidance(facts({ workerLeg: "local", workerSlots: 2 })),
+    ).not.toContain("tokens of");
     // Nothing known at all: the behavioural lines and not a word more.
-    expect(buildFusionGuidance({ workerSlots: null, workerModel: null })).toBe(
-      FUSION_GUIDANCE,
-    );
+    expect(buildFusionGuidance(NO_FUSION_MACHINE_FACTS)).toBe(FUSION_GUIDANCE);
     expect(buildFusionGuidance()).toBe(FUSION_GUIDANCE);
   });
 
   it("singularises the one-slot case", () => {
     expect(
-      buildFusionGuidance({ workerSlots: 1, workerModel: null }),
+      buildFusionGuidance(facts({ workerLeg: "local", workerSlots: 1 })),
     ).toContain("1 request slot,");
+  });
+
+  it("tells a cloud leg it has no slot limit but pays per step", () => {
+    const block = buildFusionGuidance(
+      facts({ workerLeg: "cloud", workerModel: "gpt-x" }),
+    );
+    expect(block).toContain("`gpt-x` on a cloud provider");
+    expect(block).toContain("no slot limit");
+    expect(block).toContain("every worker step is billed");
+    expect(block).not.toContain("request slot");
+    expect(block).not.toContain("GPU");
   });
 
   it("is byte-identical across two builds with the same machine state", () => {

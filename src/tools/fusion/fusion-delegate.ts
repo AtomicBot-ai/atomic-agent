@@ -34,6 +34,13 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   /** Budget for the rendered result block. */
   outputCharCap: number;
   logger: StructuredLogger;
+  /**
+   * The operator's request behind the turn now running on `sessionId`
+   * (the orchestrator's session), quoted into every worker brief. The
+   * runtime records it when the turn starts; absent, the briefs carry
+   * only the orchestrator's instructions, as they did before.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
 }
 
 function error(
@@ -250,9 +257,15 @@ export function buildFusionDelegateTool(
         );
       }
 
+      // The orchestrator's brief is a summary, and summaries were thin
+      // enough that workers built the wrong thing or scavenged the disk
+      // for the missing spec. Every worker also gets what was asked.
+      const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
+
       let results: WorkerTaskResult[];
       try {
         results = await runWorkerTasks(deps, {
+          ...(originalRequest === undefined ? {} : { originalRequest }),
           parentSessionId: ctx.sessionId,
           tasks: parsed.tasks,
           maxWorkers,
@@ -292,7 +305,7 @@ export function buildFusionDelegateTool(
       // all three things it needs: what was wanted, what actually ran
       // concurrently, and the config key that changes the second number.
       const hint = poolIsBinding
-        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — llama-server divides its context between slots (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
+        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — every slot draws on one shared llama-server context pool (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
         : "";
       return compressToolResult(
         {

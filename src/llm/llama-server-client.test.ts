@@ -31,8 +31,12 @@ describe("LlamaServerClient.complete", () => {
               predicted_ms: 20,
               prompt_n: 40,
               predicted_n: 8,
+              cache_n: 30,
             },
-            tokens_cached: 30,
+            // The whole prompt, and the slot's occupancy after the
+            // request (prompt 70 + reply 8) — neither is the reused part.
+            tokens_evaluated: 70,
+            tokens_cached: 78,
             slot_id: 2,
             model: "qwen-test",
           }),
@@ -98,6 +102,90 @@ describe("LlamaServerClient.complete", () => {
 
     expect(result.timing.promptTokens).toBe(40);
     expect(result.cacheHitTokens).toBe(0);
+  });
+
+  /** One unary completion whose response carries `payload`'s usage fields. */
+  async function completeWith(payload: Record<string, unknown>) {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            JSON.stringify({ content: "ok", stop: true, slot_id: 0, ...payload }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    });
+    return client.complete({ prompt: "hello", maxTokens: 16 });
+  }
+
+  it("counts a warm-cache prompt once, from the timings split", async () => {
+    // A typical worker step: most of the prompt reused, a little
+    // evaluated, and `tokens_cached` reporting occupancy after the reply.
+    // The old sum (`prompt_n + tokens_cached`) made this 13,600.
+    const result = await completeWith({
+      timings: { prompt_n: 1_200, cache_n: 10_800, predicted_n: 400 },
+      tokens_evaluated: 12_000,
+      tokens_cached: 12_400,
+    });
+    expect(result.timing.promptTokens).toBe(12_000);
+    expect(result.cacheHitTokens).toBe(10_800);
+    expect(result.timing.predictedTokens).toBe(400);
+  });
+
+  it("matches the metering proxy's prompt count on the benchmark totals", async () => {
+    // Ground truth from a metering proxy: 433,110 prompt tokens, of
+    // which 35,635 evaluated and 397,475 reused. The old formula read the
+    // same fields as 499,542.
+    const result = await completeWith({
+      timings: { prompt_n: 35_635, cache_n: 397_475, predicted_n: 30_797 },
+      tokens_cached: 463_907,
+    });
+    expect(result.timing.promptTokens).toBe(433_110);
+    expect(result.cacheHitTokens).toBe(397_475);
+    expect(35_635 + 463_907).toBe(499_542);
+  });
+
+  it("reads tokens_evaluated as the whole prompt when timings are absent", async () => {
+    const result = await completeWith({
+      tokens_evaluated: 70,
+      tokens_cached: 78,
+      tokens_predicted: 8,
+    });
+    expect(result.timing.promptTokens).toBe(70);
+    // `tokens_cached` is occupancy, not reuse, so no reuse is claimed.
+    expect(result.cacheHitTokens).toBe(0);
+    expect(result.timing.predictedTokens).toBe(8);
+  });
+
+  it("derives the reused part when an older server sends prompt_n but no cache_n", async () => {
+    const result = await completeWith({
+      timings: { prompt_n: 40, predicted_n: 8 },
+      tokens_evaluated: 70,
+      tokens_cached: 78,
+    });
+    expect(result.timing.promptTokens).toBe(70);
+    expect(result.cacheHitTokens).toBe(30);
+  });
+
+  it("reads the same split from a stream's final event", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            'data: {"content":"ok","stop":false}\n\n' +
+              'data: {"content":"","stop":true,"timings":{"prompt_n":5,"cache_n":95,"predicted_n":1},"tokens_evaluated":100,"tokens_cached":101}\n\n',
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    let next = await iterator.next();
+    while (!next.done) next = await iterator.next();
+    if (!next.done) throw new Error("stream did not finish");
+    expect(next.value.timing.promptTokens).toBe(100);
+    expect(next.value.cacheHitTokens).toBe(95);
   });
 
   it("forwards explicit repeatPenalty / repeatLastN overrides", async () => {
@@ -584,7 +672,12 @@ describe("LlamaServerClient.completeStream deadlines", () => {
 
   function streamingClient(
     requestTimeoutMs: number,
-    options: { streamTotalTimeoutMs?: number; errorOnAbort?: boolean } = {},
+    options: {
+      streamTotalTimeoutMs?: number;
+      errorOnAbort?: boolean;
+      /** Defaults to `requestTimeoutMs`, so one number drives both deadlines. */
+      firstTokenTimeoutMs?: number;
+    } = {},
   ): {
     client: LlamaServerClient;
     opened: () => PushableStream;
@@ -593,6 +686,7 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
       requestTimeoutMs,
+      firstTokenTimeoutMs: options.firstTokenTimeoutMs ?? requestTimeoutMs,
       ...(options.streamTotalTimeoutMs === undefined
         ? {}
         : { streamTotalTimeoutMs: options.streamTotalTimeoutMs }),
@@ -774,9 +868,9 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     // that user the server "stopped responding after starting the reply"
     // would just be a different piece of wrong advice.
     //
-    // This is also the test that covers the `keepAlive()` call at
-    // headers: delete it and the deadline is still the connect-phase
-    // `total` budget, so the error comes back with the unary wording.
+    // It also pins that a stream is on the `first-token` deadline from
+    // the moment it is sent: were it still on the connect-phase `total`
+    // budget, the error would come back with the unary wording.
     vi.useFakeTimers();
     const { client } = streamingClient(1_000);
     const iterator = client.completeStream({ prompt: "hi" });
@@ -805,6 +899,128 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     expect(err.message).not.toContain("stopped responding");
     expect(err.message).not.toContain("after starting the reply");
     expect(err.message).not.toContain("exceeded requestTimeoutMs");
+  });
+
+  /** Drain a stream; `failure` resolves to the error it ended with, or `null`. */
+  function drain(
+    iterator: ReturnType<LlamaServerClient["completeStream"]>,
+    deltas: string[] = [],
+  ): { failure: Promise<unknown>; settled: () => boolean } {
+    let done = false;
+    const failure = (async (): Promise<unknown> => {
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) return null;
+          if (next.value.delta) deltas.push(next.value.delta);
+        }
+      } catch (err) {
+        return err;
+      } finally {
+        done = true;
+      }
+    })();
+    return { failure, settled: () => done };
+  }
+
+  it("waits out a queued or prompt-evaluating stream on the first-token budget", async () => {
+    // Fusion on one GPU: a worker's request waits behind the other slots'
+    // prompt evals and sends nothing for minutes. On the idle budget it
+    // was cancelled at exactly 300 s, its slot never having evaluated a
+    // token. Scaled down here: idle 1 s, first token 10 s.
+    vi.useFakeTimers();
+    const { client, opened } = streamingClient(1_000, {
+      firstTokenTimeoutMs: 10_000,
+    });
+    const deltas: string[] = [];
+    const { failure, settled } = drain(
+      client.completeStream({ prompt: "hi" }),
+      deltas,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    // Nine silent seconds: nine idle budgets, inside the first-token one.
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(settled()).toBe(false);
+    opened().push('data: {"content":"late start","stop":false}\n\n');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deltas.join("")).toBe("late start");
+    // Once the reply has started, silence is the idle budget's again.
+    await vi.advanceTimersByTimeAsync(1_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("sent no data for 1000ms");
+  });
+
+  it("names the first-token budget, and how to raise it, when that deadline fires", async () => {
+    vi.useFakeTimers();
+    const { client } = streamingClient(1_000, { firstTokenTimeoutMs: 10_000 });
+    const { failure, settled } = drain(client.completeStream({ prompt: "hi" }));
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(9_990);
+    expect(settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(20);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("sent no first token within 10000ms");
+    expect(err.message).toContain("queued behind other requests");
+    expect(err.message).toContain("ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS");
+    expect(err.message).not.toContain("raise localModels.requestTimeoutMs");
+  });
+
+  it("bounds the wait for response headers by the first-token budget as well", async () => {
+    // Some llama.cpp builds hold the headers back until the first result,
+    // which puts the queue and the prompt eval in front of them.
+    vi.useFakeTimers();
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 1_000,
+      firstTokenTimeoutMs: 10_000,
+      fetchImpl: createMockFetch(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" }),
+              );
+            });
+          }),
+      ),
+      completionRetries: 1,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    const { failure, settled } = drain(client.completeStream({ prompt: "hi" }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("sent no first token within 10000ms");
+  });
+
+  it("never gives the first token less time than the idle budget", async () => {
+    // Before the budgets were split, "raise requestTimeoutMs" was the
+    // advice for a slow prompt eval; an operator who took it keeps it.
+    vi.useFakeTimers();
+    const { client } = streamingClient(5_000, { firstTokenTimeoutMs: 1_000 });
+    const { failure, settled } = drain(client.completeStream({ prompt: "hi" }));
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err.message).toContain("sent no first token within 5000ms");
   });
 
   it("caps one streaming response with streamTotalTimeoutMs even while chunks keep arriving", async () => {

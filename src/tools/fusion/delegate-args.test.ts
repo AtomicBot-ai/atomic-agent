@@ -102,12 +102,40 @@ describe("parseDelegateArgs", () => {
         tasks: [task({ instructions: "x".repeat(MAX_INSTRUCTIONS_CHARS + 1) })],
       }),
     );
-    expect(error).toContain(`at most ${MAX_INSTRUCTIONS_CHARS}`);
+    expect(error).toContain(
+      `the limit is ${MAX_INSTRUCTIONS_CHARS.toLocaleString("en-US")}`,
+    );
     expect(
       parseDelegateArgs({
         tasks: [task({ instructions: "x".repeat(MAX_INSTRUCTIONS_CHARS) })],
       }).ok,
     ).toBe(true);
+  });
+
+  it("names the limit AND the exact overage, so one retry can fix it", () => {
+    // An orchestrator told only "at most N" cannot count its own output:
+    // in the run that motivated this it resent a brief just as long.
+    const length = MAX_INSTRUCTIONS_CHARS + 436;
+    const error = expectError(
+      parseDelegateArgs({
+        tasks: [task({ instructions: "x".repeat(length) })],
+      }),
+    );
+    expect(error).toContain(
+      `tasks[0].instructions is ${length.toLocaleString("en-US")} chars`,
+    );
+    expect(error).toContain("shorten it by at least 436 chars");
+  });
+
+  it("accepts the brief sizes the old 8,000-char cap rejected", () => {
+    for (const length of [8436, 8489, 8833, 8916, 8810]) {
+      expect(
+        parseDelegateArgs({
+          tasks: [task({ instructions: "x".repeat(length) })],
+        }).ok,
+        String(length),
+      ).toBe(true);
+    }
   });
 
   it(`rejects more than ${MAX_TASK_FILES} files and non-string entries`, () => {

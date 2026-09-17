@@ -25,11 +25,41 @@ const COMPUTE_OVERHEAD_MIB = 768;
 /**
  * Conservative KV-cache cost per token, expressed per GB of model file
  * size so it scales with model depth/width (bigger models have deeper,
- * wider KV). Calibrated (with margin) against an observed 9B / ~5.3 GB
- * model whose KV at 4096 tokens fit in ~1 GB of VRAM. Deliberately on
- * the high side so the fit estimate under-allocates rather than OOMs.
+ * wider KV).
+ *
+ * Measured, then padded. Gemma 4 31B QAT UD-Q4_K_XL (17.29 GB) under the
+ * managed launch flags (`-ngl -1 --flash-attn auto --cache-type-k turbo3
+ * --cache-type-v turbo3 -kvu`, no mmproj) on a 64 GB M1 Max: process
+ * phys_footprint 1,315 MB at `--ctx-size 32768` and 2,657 MB at
+ * `--ctx-size 131072` — +1,342 MB for +98,304 tokens, ≈ 13.7 KB per
+ * token (a ~3-bit cache on a mostly sliding-window model). 3,200 B/GB
+ * costs that model ~55 KB per token: about 4× the measurement, on
+ * purpose, because one model is one data point.
+ *
+ * The margin is not arbitrary either. A dense 32B-class model with full
+ * attention on every layer (64 layers × 8 KV heads × 128 dims, ~19.8 GB
+ * at Q4) needs ~63 KB per token at 3.5 bits, and 3,200 × 19.8 GB just
+ * covers it — so this is about as low as the scale can go without a
+ * measurement on such a model.
+ *
+ * It was 32,000, calibrated against a 9B model whose KV "fit in ~1 GB at
+ * 4096 tokens": ~40× what the 31B really costs, which held a 64 GB Mac to
+ * a context that could serve one worker.
  */
-const KV_BYTES_PER_TOKEN_PER_GB = 32_000;
+export const KV_BYTES_PER_TOKEN_PER_GB = 3_200;
+
+/**
+ * Floor on the per-token estimate, whatever the file size.
+ *
+ * Scaling by file size flatters small *dense* models, which have the
+ * deepest cache per GB: an 8B-class model with full attention on every
+ * layer (36 layers × 8 KV heads × 128 dims, ~5 GB at Q4) holds ~35 KB per
+ * token at 3.5 bits, where 3,200 B/GB alone would credit it with 16 KB —
+ * gigabytes short on an 8 GB card once the auto ceiling is 131k. 48 KB
+ * clears that shape with room and never binds on a file of 15 GB or more,
+ * which includes the model the scale was measured on.
+ */
+export const KV_MIN_BYTES_PER_TOKEN = 48_000;
 
 /**
  * Lower bound for the auto-sized context. On small GPUs this makes
@@ -49,12 +79,19 @@ const KV_BYTES_PER_TOKEN_PER_GB = 32_000;
 export const MIN_AUTO_CONTEXT = 16_384;
 
 /**
- * Upper bound for the auto-sized context. Caps KV growth on large GPUs
- * so auto-sizing never allocates an absurd cache the agent will never
- * fill; operators who want more set `localModels.managed.contextSize`
- * explicitly.
+ * Upper bound for the auto-sized context. Below it the memory fit
+ * decides; the bound only keeps auto-sizing from reserving a cache far
+ * beyond what a fan-out can use. 131,072 is five ~24k worker footprints
+ * (see `worker-slots.ts`) with room to spare — what lets a big
+ * unified-memory machine serve several local workers at once.
+ *
+ * It was 32,768 regardless of free memory. With honest worker footprints
+ * that held even a 64 GB Mac running Gemma 4 31B (whose measured KV cost
+ * would fit a 131k cache in ~1.8 GB) to exactly one slot. The model's
+ * trained ceiling still clamps it, and operators who want a different
+ * number pin `localModels.managed.contextSize`.
  */
-export const MAX_AUTO_CONTEXT = 32_768;
+export const MAX_AUTO_CONTEXT = 131_072;
 
 /**
  * Default context when no VRAM figure is available (CPU-only offload or
@@ -123,7 +160,10 @@ export function estimateContextSize(input: EstimateContextSizeInput): number {
   const weightsMiB = (modelSizeGb + mmprojSizeGb) * MIB_PER_GB;
   const kvBudgetMiB = usableMiB - weightsMiB - COMPUTE_OVERHEAD_MIB;
 
-  const kvBytesPerToken = Math.max(1, modelSizeGb * KV_BYTES_PER_TOKEN_PER_GB);
+  const kvBytesPerToken = Math.max(
+    KV_MIN_BYTES_PER_TOKEN,
+    modelSizeGb * KV_BYTES_PER_TOKEN_PER_GB,
+  );
   const fitTokens =
     kvBudgetMiB > 0 ? (kvBudgetMiB * 1024 * 1024) / kvBytesPerToken : 0;
 

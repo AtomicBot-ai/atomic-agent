@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-loop.js";
+import {
+  WORKER_HINT_CONTEXT,
+  WORKER_HINT_SATURATED,
+} from "./worker-result.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import type { SessionState } from "../../session/session-state.js";
 import {
@@ -380,5 +387,205 @@ describe("runWorkerTasks", () => {
       signal: new AbortController().signal,
     });
     expect(results.map((r) => r.status)).toEqual(["failed", "ok"]);
+  });
+
+  it("quotes the parent turn's original request in every worker's brief", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 2,
+      originalRequest: "Build a snake game with a dark theme",
+      signal: new AbortController().signal,
+    });
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.userMessage).toContain(
+        "ORIGINAL REQUEST — context only; your task is below.",
+      );
+      expect(call.userMessage).toContain("Build a snake game with a dark theme");
+    }
+    expect(calls[0]!.userMessage).toContain("Do part 0");
+    expect(calls[1]!.userMessage).toContain("Do part 1");
+  });
+
+  it("reports max_steps, not ok, when the worker replied on its forced final step", async () => {
+    const { deps } = harness(async ({ options }) => {
+      options.eventHook?.({
+        type: "llm_event",
+        event: {
+          type: "assistant_reply",
+          text: "the step limit was reached before the file write could be executed",
+        },
+      });
+      return turnResult({
+        reason: "reply",
+        stepCount: 7,
+        stopCause: "step_ceiling",
+      });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({ status: "max_steps", stepCount: 7 });
+    expect(results[0]!.notes?.[0]).toMatch(/step limit \(7 steps\)/);
+  });
+
+  it("reports the worker's own time limit as max_steps, not as a cancellation", async () => {
+    const { deps } = harness(
+      ({ options }) =>
+        new Promise<RunTurnResult>((resolve) => {
+          options.signal!.addEventListener(
+            "abort",
+            () => resolve(turnResult({ reason: "cancelled", stepCount: 2 })),
+            { once: true },
+          );
+        }),
+    );
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      workerTimeoutMs: 30,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({ status: "max_steps", stepCount: 2 });
+    expect(results[0]!.notes?.[0]).toMatch(/time limit/);
+  });
+
+  it("fails an ok task whose declared file does not exist, and notes untouched inputs", async () => {
+    // Three times a worker replied "Implemented `js/scene.js`" — once
+    // with invented tool results — and the file was not on disk.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      writeFileSync(join(dir, "spec.md"), "the spec");
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "spec.md"), past, past);
+      const { deps, events } = harness(async ({ options }) => {
+        writeFileSync(join(dir, "index.html"), "<html></html>");
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "Implemented `js/scene.js` and index.html",
+          },
+        });
+        return turnResult({ stepCount: 5 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [
+          {
+            id: "t0",
+            title: "Scene",
+            instructions: "Write the scene",
+            files: ["index.html", "js/scene.js", "spec.md", "js/**/*.js"],
+          },
+        ],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]).toMatchObject({
+        status: "failed",
+        error: "declared file js/scene.js does not exist after the task",
+        notes: ["spec.md unchanged by this task"],
+      });
+      expect(events.at(-1)!.event).toMatchObject({
+        type: "fusion_worker",
+        phase: "failed",
+        summary: "declared file js/scene.js does not exist after the task",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves an ok task ok when every declared file was written", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      const { deps } = harness(async () => {
+        writeFileSync(join(dir, "index.html"), "<html></html>");
+        return turnResult({ stepCount: 2 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [
+          {
+            id: "t0",
+            title: "Page",
+            instructions: "Write it",
+            files: ["index.html"],
+          },
+        ],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]!.status).toBe("ok");
+      expect(results[0]).not.toHaveProperty("error");
+      expect(results[0]).not.toHaveProperty("notes");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries the worker's provider failure and a remediation hint to the orchestrator", async () => {
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      options.eventHook?.({
+        type: "loop_failed",
+        error: new Error(
+          'llama-server HTTP 500: {"error":{"message":"Context size has been exceeded."}}',
+        ),
+        category: "transport",
+      });
+      return turnResult({ reason: "failed", stepCount: 0 });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      hint: WORKER_HINT_CONTEXT,
+    });
+    expect(results[0]!.error).toContain("Context size has been exceeded");
+    const last = events.at(-1)!.event;
+    expect(last).toMatchObject({ type: "fusion_worker", phase: "failed" });
+    expect(last.type === "fusion_worker" ? last.summary : "").toContain(
+      "Context size has been exceeded",
+    );
+  });
+
+  it("falls back to the session's stored error when the hook saw no loop failure", async () => {
+    const lastError =
+      "llama-server accepted the request but sent no first token within 120000ms — it may still be evaluating the prompt";
+    const { deps } = harness(async () =>
+      turnResult({
+        reason: "failed",
+        stepCount: 0,
+        session: {
+          ...createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+          lastError,
+        },
+      }),
+    );
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      error: lastError,
+      hint: WORKER_HINT_SATURATED,
+    });
   });
 });

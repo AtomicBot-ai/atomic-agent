@@ -2,6 +2,7 @@ import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import type {
   AgentLoopEvent,
   AgentLoopReason,
+  RunTurnResult,
 } from "../../agent/agent-loop.js";
 import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
 
@@ -18,6 +19,9 @@ import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
 export type WorkerTaskStatus =
   "ok" | "failed" | "cancelled" | "needs_orchestrator" | "max_steps";
 
+/** Which ceiling ended a worker's loop — see `RunTurnResult.stopCause`. */
+export type WorkerStopCause = NonNullable<RunTurnResult["stopCause"]>;
+
 export interface WorkerToolStats {
   calls: number;
   errors: number;
@@ -33,16 +37,30 @@ export interface WorkerTaskResult {
   durationMs: number;
   tools: WorkerToolStats;
   usage?: CompletionUsage;
+  /**
+   * What went wrong, in the failing layer's own words: the thrown turn,
+   * the worker loop's last provider/loop error, or the declared-file
+   * check. Rendered on the task's head line.
+   */
   error?: string;
+  /** What to do about `error`, for a recognised class — `workerFailureHint`. */
+  hint?: string;
+  /**
+   * Non-fatal facts the orchestrator should weigh before merging: a
+   * reply written on the forced final step, a declared file the task
+   * never touched.
+   */
+  notes?: string[];
 }
 
 /**
  * Accumulates one worker turn's observable output from its event hook.
  *
  * The hook is the only channel: `RunTurnResult` gives the reason and
- * the step count but not the reply text, the tool tally, or the token
- * usage, and re-deriving them from the returned session would mean
- * walking a transcript that exists purely to be discarded.
+ * the step count but not the reply text, the tool tally, the token
+ * usage, or the provider error that killed the turn, and re-deriving
+ * them from the returned session would mean walking a transcript that
+ * exists purely to be discarded.
  */
 export class WorkerRunCollector {
   private replyText = "";
@@ -51,9 +69,30 @@ export class WorkerRunCollector {
   private errors = 0;
   private readonly byTool: Record<string, number> = {};
   private usage: CompletionUsage | undefined;
+  private lastLoopError: string | undefined;
+  private lastWaitReason: string | undefined;
 
   /** Feed one `AgentLoopEvent` from the worker turn's hook. */
   observe(event: AgentLoopEvent): void {
+    if (event.type === "loop_failed") {
+      // A cancelled turn reports its abort through the same event; that
+      // is not a cause, and the status already says `cancelled`.
+      if (event.category !== "cancelled") {
+        this.lastLoopError = event.error.message;
+      }
+      return;
+    }
+    if (event.type === "provider_waiting") {
+      // A worker that parks on a dead server and is then cut off by its
+      // time limit never reaches `loop_failed`: this is the only record
+      // of why its 590 seconds produced nothing.
+      this.lastWaitReason = event.reason;
+      return;
+    }
+    if (event.type === "provider_recovered") {
+      this.lastWaitReason = undefined;
+      return;
+    }
     if (event.type !== "llm_event") return;
     const inner = event.event;
     if (inner.type === "assistant_reply") {
@@ -86,6 +125,15 @@ export class WorkerRunCollector {
     }
   }
 
+  /** The worker loop's own account of why it stopped working, if any. */
+  private failureMessage(): string | undefined {
+    if (this.lastLoopError !== undefined) return this.lastLoopError;
+    if (this.lastWaitReason !== undefined) {
+      return `the provider stopped answering: ${this.lastWaitReason}`;
+    }
+    return undefined;
+  }
+
   /**
    * Fold the loop's own outcome in and produce the result row.
    *
@@ -93,6 +141,10 @@ export class WorkerRunCollector {
    * finished by handing an action back, and the orchestrator must not
    * read that as done. It does NOT outrank `failed` / `cancelled` —
    * those say the reply is not even complete.
+   *
+   * `error` from the caller (a thrown turn, the session's stored error)
+   * wins over the collected one; either way a recognised failure class
+   * gets its remediation `hint`.
    */
   finish(input: {
     id: string;
@@ -101,8 +153,22 @@ export class WorkerRunCollector {
     stepCount: number;
     durationMs: number;
     error?: string;
+    stopCause?: WorkerStopCause;
   }): WorkerTaskResult {
-    const status = classifyWorkerStatus(input.reason, this.approvalRefused);
+    const status = classifyWorkerStatus(
+      input.reason,
+      this.approvalRefused,
+      input.stopCause,
+    );
+    const error =
+      input.error ?? (status === "ok" ? undefined : this.failureMessage());
+    const hint = error === undefined ? undefined : workerFailureHint(error);
+    const notes =
+      input.stopCause !== undefined &&
+      status !== "failed" &&
+      status !== "cancelled"
+        ? [stopCauseNote(input.stopCause, input.stepCount)]
+        : [];
     return {
       id: input.id,
       title: input.title,
@@ -116,9 +182,21 @@ export class WorkerRunCollector {
         byTool: { ...this.byTool },
       },
       ...(this.usage ? { usage: this.usage } : {}),
-      ...(input.error === undefined ? {} : { error: input.error }),
+      ...(error === undefined ? {} : { error }),
+      ...(hint === undefined ? {} : { hint }),
+      ...(notes.length === 0 ? {} : { notes }),
     };
   }
+}
+
+function stopCauseNote(cause: WorkerStopCause, stepCount: number): string {
+  if (cause === "time_ceiling") {
+    return "stopped at its time limit; any reply was written on the forced final step and may describe work that was not done";
+  }
+  if (cause === "no_progress") {
+    return "stopped after a whole leg of steps made no progress";
+  }
+  return `stopped at its step limit (${stepCount} steps); the reply was written on the forced final step and may describe work that was not done`;
 }
 
 /** Whether a tool result is the worker approval refusal. */
@@ -133,19 +211,62 @@ export function resultCarriesApprovalRefusal(
   );
 }
 
-/** Map a loop reason (or a thrown turn) onto a worker status. */
+/**
+ * Map a loop reason (or a thrown turn) onto a worker status.
+ *
+ * `stopCause` is the loop saying a ceiling ended the task. A `reply` on
+ * the forced final step is exactly how a worker at 40/40 steps wrote
+ * "the step limit was reached before the file write could be executed"
+ * and was reported `ok`: the model closed the turn, but only because it
+ * was offered nothing else.
+ */
 export function classifyWorkerStatus(
   reason: AgentLoopReason | null,
   approvalRefused: boolean,
+  stopCause?: WorkerStopCause,
 ): WorkerTaskStatus {
   if (reason === null || reason === "failed") return "failed";
   if (reason === "cancelled") return "cancelled";
   if (approvalRefused) return "needs_orchestrator";
-  if (reason === "max_steps") return "max_steps";
+  if (reason === "max_steps" || stopCause !== undefined) return "max_steps";
   return "ok";
 }
 
+export const WORKER_HINT_CONTEXT =
+  "the local server ran out of context: use fewer workers at once or shorter briefs";
+export const WORKER_HINT_SATURATED =
+  "the local server was saturated: fewer parallel workers";
+export const WORKER_HINT_QUOTA =
+  "provider credit/quota exhausted — retrying will not help";
+
+const CONTEXT_EXCEEDED =
+  /context size has been exceeded|ran out of context|exceeds? the (?:available )?context|context (?:size|length|window) (?:exceeded|was exceeded)/i;
+const SERVER_SATURATED =
+  /no first token|first[- ]token timeout|sent no data for \d+\s*ms|idle timeout/i;
+const CREDIT_OR_QUOTA =
+  /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of credits?|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
+
+/**
+ * A short remediation for a worker failure the orchestrator (or the
+ * operator reading its reply) can act on, or `undefined` when the
+ * message is not one of the recognised classes.
+ *
+ * Matched on the message text because that is what survives: the
+ * llama-server body (`Context size has been exceeded`), atag's own
+ * transport deadlines (`sent no first token within …`), and a cloud
+ * gateway's 402 / 429.
+ */
+export function workerFailureHint(message: string): string | undefined {
+  if (SERVER_SATURATED.test(message)) return WORKER_HINT_SATURATED;
+  if (CONTEXT_EXCEEDED.test(message)) return WORKER_HINT_CONTEXT;
+  if (CREDIT_OR_QUOTA.test(message)) return WORKER_HINT_QUOTA;
+  return undefined;
+}
+
 const NO_REPLY = "(the worker produced no reply)";
+
+/** How much of an error the head line carries; the rest is noise. */
+const ERROR_HEAD_CHARS = 400;
 
 /**
  * Render the results as the tool's `summary`.
@@ -169,17 +290,33 @@ export function formatDelegateOutput(
   return `${joined.slice(0, Math.max(0, charCap - 15))}\n… [truncated]`;
 }
 
+function oneLine(text: string, cap: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > cap ? `${flat.slice(0, cap)}…` : flat;
+}
+
+/**
+ * The diagnosis goes ABOVE the reply: the error on the head line, then
+ * the hint and notes. A worker that died on its provider has no reply
+ * worth the space, and one that claimed work it did not do has a reply
+ * that must not be read first.
+ */
 function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
   const head =
     `[${result.id}] ${result.status} — ${result.title} ` +
     `(${result.stepCount} steps, ${Math.round(result.durationMs / 1000)}s, ` +
-    `${result.tools.calls} tool calls, ${result.tools.errors} errors)`;
+    `${result.tools.calls} tool calls, ${result.tools.errors} errors)` +
+    (result.error ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}` : "");
+  const diagnosis = [
+    ...(result.hint ? [`hint: ${result.hint}`] : []),
+    ...(result.notes ?? []).map((note) => `note: ${note}`),
+  ];
+  const used = [head, ...diagnosis].join("\n").length;
+  const bodyCap = Math.max(100, perTaskCap - used);
   const body = result.reply.length > 0 ? result.reply : NO_REPLY;
   const clipped =
-    body.length > perTaskCap
-      ? `${body.slice(0, Math.max(0, perTaskCap - 15))}\n… [truncated]`
+    body.length > bodyCap
+      ? `${body.slice(0, Math.max(0, bodyCap - 15))}\n… [truncated]`
       : body;
-  return result.error
-    ? `${head}\n${clipped}\nerror: ${result.error}`
-    : `${head}\n${clipped}`;
+  return [head, ...diagnosis, clipped].join("\n");
 }

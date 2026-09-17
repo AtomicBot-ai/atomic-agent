@@ -233,7 +233,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // are paid by exactly the runs that use it.
     name: "fusion.delegate",
     summary:
-      "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn with no memory of this conversation, so `instructions` must be self-contained (paths, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. You choose `maxWorkers`; it is bounded only by the task count and the machine. Call it on its own, never alongside other tool calls.",
+      "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn that sees the operator's original request and your `instructions`, but nothing else from this conversation, so `instructions` must carry what the request does not (exact paths, the contract between parts, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. You choose `maxWorkers`; it is bounded only by the task count and the machine. Call it on its own, never alongside other tool calls.",
     argsSchema:
       "{ tasks: [{ id: string, title: string, instructions: string, deliverable?: string, files?: string[] }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */ }",
     examples: [

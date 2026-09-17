@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import {
+  WORKER_HINT_CONTEXT,
+  WORKER_HINT_QUOTA,
+  WORKER_HINT_SATURATED,
   WorkerRunCollector,
   classifyWorkerStatus,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
+  workerFailureHint,
   type WorkerTaskResult,
 } from "./worker-result.js";
 import { FUSION_WORKER_APPROVAL_REFUSED } from "./worker-tool-policy.js";
@@ -254,5 +258,208 @@ describe("formatDelegateOutput", () => {
 
   it("says so when nothing ran", () => {
     expect(formatDelegateOutput([], 4000)).toBe("(no tasks were run)");
+  });
+
+  it("puts the error on the head line and the hint and notes above the reply", () => {
+    const out = formatDelegateOutput(
+      [
+        row({
+          status: "max_steps",
+          reply: "z".repeat(5000),
+          error: "boom",
+          hint: "do less",
+          notes: ["stopped at its step limit"],
+        }),
+      ],
+      600,
+    );
+    const lines = out.split("\n");
+    expect(lines[0]).toBe(
+      "[t1] max_steps — Map (2 steps, 3s, 1 tool calls, 0 errors) — error: boom",
+    );
+    // Above the body, so clipping a verbose reply can never hide them.
+    expect(lines[1]).toBe("hint: do less");
+    expect(lines[2]).toBe("note: stopped at its step limit");
+    expect(out).toContain("[truncated]");
+    expect(out.length).toBeLessThanOrEqual(600);
+  });
+
+  it("flattens and bounds a long error on the head line", () => {
+    const out = formatDelegateOutput(
+      [row({ status: "failed", error: `line one\n  line two ${"e".repeat(2000)}` })],
+      8000,
+    );
+    const head = out.split("\n")[0]!;
+    expect(head).toContain("error: line one line two e");
+    expect(head.length).toBeLessThan(600);
+  });
+});
+
+describe("classifyWorkerStatus — a ceiling that ended the task", () => {
+  it("reports max_steps for a reply written on the forced final step", () => {
+    // A worker at 40/40 replied "the step limit was reached before the
+    // file write could be executed" and came back `ok`.
+    expect(classifyWorkerStatus("reply", false, "step_ceiling")).toBe(
+      "max_steps",
+    );
+    expect(classifyWorkerStatus("finish", false, "time_ceiling")).toBe(
+      "max_steps",
+    );
+    expect(classifyWorkerStatus("reply", false, undefined)).toBe("ok");
+  });
+
+  it("keeps the more urgent statuses ahead of it", () => {
+    expect(classifyWorkerStatus("reply", true, "step_ceiling")).toBe(
+      "needs_orchestrator",
+    );
+    expect(classifyWorkerStatus("failed", false, "step_ceiling")).toBe(
+      "failed",
+    );
+    expect(classifyWorkerStatus("cancelled", false, "time_ceiling")).toBe(
+      "cancelled",
+    );
+  });
+});
+
+describe("WorkerRunCollector — why a worker stopped", () => {
+  const base = { id: "t", title: "T", stepCount: 0, durationMs: 590_000 };
+  const waiting = (reason: string): AgentLoopEvent => ({
+    type: "provider_waiting",
+    attempt: 3,
+    waitedMs: 580_000,
+    maxWaitMs: 600_000,
+    nextRetryMs: 10_000,
+    reason,
+  });
+
+  it("carries the loop's last error and a remediation hint onto a failed row", () => {
+    // The orchestrator used to read only "(the worker produced no reply)".
+    const c = new WorkerRunCollector();
+    c.observe({
+      type: "loop_failed",
+      error: new Error(
+        'llama-server HTTP 500: {"error":{"code":500,"message":"Context size has been exceeded."}}',
+      ),
+      category: "transport",
+    });
+    const result = c.finish({ ...base, reason: "failed" });
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("Context size has been exceeded");
+    expect(result.hint).toBe(WORKER_HINT_CONTEXT);
+    const out = formatDelegateOutput([result], 4000);
+    expect(out).toContain(
+      "[t] failed — T (0 steps, 590s, 0 tool calls, 0 errors) — error: llama-server HTTP 500:",
+    );
+    expect(out).toContain(`hint: ${WORKER_HINT_CONTEXT}`);
+  });
+
+  it("prefers the caller's error, and never reports a cancellation's abort as a cause", () => {
+    const cancelled = new WorkerRunCollector();
+    cancelled.observe({
+      type: "loop_failed",
+      error: new Error("This operation was aborted"),
+      category: "cancelled",
+    });
+    expect(cancelled.finish({ ...base, reason: "cancelled" })).not.toHaveProperty(
+      "error",
+    );
+    const both = new WorkerRunCollector();
+    both.observe({
+      type: "loop_failed",
+      error: new Error("the loop's words"),
+      category: "model",
+    });
+    expect(
+      both.finish({ ...base, reason: "failed", error: "the caller's words" })
+        .error,
+    ).toBe("the caller's words");
+  });
+
+  it("falls back to the provider-wait reason when the turn never reached loop_failed", () => {
+    const c = new WorkerRunCollector();
+    c.observe(
+      waiting(
+        "llama-server accepted the request but sent no first token within 120000ms",
+      ),
+    );
+    const result = c.finish({
+      ...base,
+      reason: "max_steps",
+      stopCause: "time_ceiling",
+    });
+    expect(result.status).toBe("max_steps");
+    expect(result.error).toBe(
+      "the provider stopped answering: llama-server accepted the request but sent no first token within 120000ms",
+    );
+    expect(result.hint).toBe(WORKER_HINT_SATURATED);
+    expect(result.notes?.[0]).toMatch(/time limit/);
+  });
+
+  it("forgets a wait the provider recovered from, and never puts an error on an ok row", () => {
+    const recovered = new WorkerRunCollector();
+    recovered.observe(waiting("fetch failed"));
+    recovered.observe({ type: "provider_recovered", waitedMs: 5 });
+    expect(
+      recovered.finish({ ...base, reason: "max_steps" }),
+    ).not.toHaveProperty("error");
+    const ok = new WorkerRunCollector();
+    ok.observe(waiting("fetch failed"));
+    const row = ok.finish({ ...base, reason: "reply" });
+    expect(row.status).toBe("ok");
+    expect(row).not.toHaveProperty("error");
+    expect(row).not.toHaveProperty("hint");
+  });
+
+  it("notes that a reply on the forced final step may describe undone work", () => {
+    const c = new WorkerRunCollector();
+    c.observe(
+      reply(
+        "the step limit was reached before the file write could be executed",
+      ),
+    );
+    const result = c.finish({
+      ...base,
+      stepCount: 40,
+      reason: "reply",
+      stopCause: "step_ceiling",
+    });
+    expect(result.status).toBe("max_steps");
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes![0]).toMatch(/step limit \(40 steps\)/);
+    expect(result).not.toHaveProperty("error");
+  });
+});
+
+describe("workerFailureHint", () => {
+  it.each([
+    ["Context size has been exceeded.", WORKER_HINT_CONTEXT],
+    [
+      "the request exceeds the available context size, try increasing it",
+      WORKER_HINT_CONTEXT,
+    ],
+    [
+      "model response truncated at step 3: the model server ran out of context before the reply finished",
+      WORKER_HINT_CONTEXT,
+    ],
+    [
+      // Mentions "prompt/context", but it is the deadline, not the window.
+      "llama-server accepted the request but sent no first token within 120000ms — it may still be evaluating the prompt; raise localModels.requestTimeoutMs, or shorten the prompt/context if it is too large for this machine to evaluate in time",
+      WORKER_HINT_SATURATED,
+    ],
+    [
+      "llama-server sent no data for 120000ms mid-stream — the server stopped responding",
+      WORKER_HINT_SATURATED,
+    ],
+    ["openrouter HTTP 402: Payment Required", WORKER_HINT_QUOTA],
+    ["HTTP 429: Too Many Requests", WORKER_HINT_QUOTA],
+    ["insufficient credits on this API key", WORKER_HINT_QUOTA],
+  ])("recognises %s", (message, hint) => {
+    expect(workerFailureHint(message)).toBe(hint);
+  });
+
+  it("stays silent on failures it has no remedy for", () => {
+    expect(workerFailureHint("provider exploded")).toBeUndefined();
+    expect(workerFailureHint("ENOENT: no such file")).toBeUndefined();
+    expect(workerFailureHint("waited 4290ms")).toBeUndefined();
   });
 });

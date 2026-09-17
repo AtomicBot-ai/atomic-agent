@@ -11,6 +11,18 @@
  * bounds how many local turns one call can start, `instructions` bounds
  * the worker's prompt, and `files` bounds the paths pasted into it.
  *
+ * The `instructions` bound is a ceiling on one prompt section, not an
+ * estimate of what fits: the worker's real limit is the context its
+ * llama-server slot has, which this parser cannot see. It used to be
+ * 8,000 chars, and briefs of 8,436–8,916 chars were rejected in a real
+ * run — an orchestrator cannot count characters, so it looped, and every
+ * rejected ~9K-token call stayed in its transcript. The worker brief now
+ * carries the operator's original request on its own (`worker-prompt.ts`),
+ * so an honest brief no longer has to restate the spec, and the bound is
+ * set where it only stops a runaway. A brief that is legal here but too
+ * big for the slot fails the worker with a "ran out of context" hint
+ * (`worker-result.ts`) rather than silently.
+ *
  * `maxWorkers` is deliberately NOT one of them. The orchestrator sizes
  * its own fan-out (see `fusion-delegate.ts`), and the width it asks for
  * is bounded downstream by things that physically exist — the task
@@ -27,7 +39,10 @@ export interface DelegateTask {
   id: string;
   /** One-line label. Shown to the operator in the progress feed. */
   title: string;
-  /** The self-contained brief. The worker has no other context. */
+  /**
+   * The task's brief. Besides this the worker sees only the operator's
+   * original request (quoted as context by `worker-prompt.ts`).
+   */
   instructions: string;
   /** What the worker should hand back (format, shape, acceptance). */
   deliverable?: string;
@@ -40,8 +55,13 @@ export type ParsedDelegateArgs =
   | { ok: false; error: string };
 
 export const MAX_DELEGATE_TASKS = 8;
-export const MAX_INSTRUCTIONS_CHARS = 8000;
+export const MAX_INSTRUCTIONS_CHARS = 32_000;
 export const MAX_TASK_FILES = 32;
+
+/** `8436` → `"8,436"`: the number the orchestrator has to act on, readable. */
+function formatCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
 
 function fail(error: string): ParsedDelegateArgs {
   return { ok: false, error: `validation: ${error}` };
@@ -155,8 +175,13 @@ export function parseDelegateArgs(
       return fail(`${label}.instructions must be a non-empty string`);
     }
     if (instructions.length > MAX_INSTRUCTIONS_CHARS) {
+      // The limit AND the overage: a model told only "at most N" cannot
+      // count its own output, so it resends something just as long.
+      const over = instructions.length - MAX_INSTRUCTIONS_CHARS;
       return fail(
-        `${label}.instructions is ${instructions.length} chars; at most ${MAX_INSTRUCTIONS_CHARS}`,
+        `${label}.instructions is ${formatCount(instructions.length)} chars; ` +
+          `the limit is ${formatCount(MAX_INSTRUCTIONS_CHARS)} — shorten it by at least ${formatCount(over)} chars. ` +
+          `The workers already receive the operator's original request, so do not restate it in the brief.`,
       );
     }
     const files = readFiles(record.files, label);

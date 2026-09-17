@@ -4,9 +4,11 @@
  * The orchestrator now sizes its own fan-out (see AGENTS.md §"Run modes"),
  * and a model asked to choose a number over hardware it cannot see will
  * either pick the same timid two every time or ask for eight against a
- * one-slot server. So the prefix carries the two facts that actually
- * decide the answer: how many llama-server request slots exist, and
- * which local model the workers run on.
+ * one-slot server. So the prefix carries the facts that actually decide
+ * the answer: where the workers run (a local llama-server or a cloud
+ * provider), how many llama-server request slots exist, how much of that
+ * server's shared context one worker needs, and which model the workers
+ * run on.
  *
  * Two rules govern what may go in here.
  *
@@ -28,22 +30,44 @@
  */
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
-import { resolveWorkerSlots } from "../local-llm/worker-slots.js";
+import {
+  resolveWorkerSlots,
+  workerSlotFootprint,
+} from "../local-llm/worker-slots.js";
+
+/** Where fusion's workers run. */
+export type FusionWorkerLeg = "local" | "cloud";
 
 export interface FusionMachineFacts {
   /**
+   * `local` when the worker leg is a llama-server, `cloud` when it is any
+   * other provider, `null` when the pinned worker provider is not in the
+   * config (so nothing about it can be stated).
+   */
+  workerLeg: FusionWorkerLeg | null;
+  /**
    * llama-server request slots (`--parallel`) the worker daemon serves —
    * i.e. how many workers run at once before the rest queue. `null` when
-   * the runtime does not own the server and therefore does not know.
+   * the runtime does not own the server and therefore does not know, and
+   * always for a cloud leg.
    */
   workerSlots: number | null;
-  /** The local model serving workers, or `null` when nothing names it. */
+  /**
+   * Tokens one local worker occupies in the server's shared context — its
+   * prompt, what it reads and its reply (`workerSlotFootprint` at
+   * `localModels.completionMaxTokens`). `null` for a cloud leg, which has
+   * no shared pool to overflow.
+   */
+  workerTokenBudget: number | null;
+  /** The model serving workers, or `null` when nothing names it. */
   workerModel: string | null;
 }
 
 /** Nothing known — the block renders its behavioural lines only. */
 export const NO_FUSION_MACHINE_FACTS: FusionMachineFacts = {
+  workerLeg: null,
   workerSlots: null,
+  workerTokenBudget: null,
   workerModel: null,
 };
 
@@ -65,49 +89,73 @@ export function resolveFusionMachineFacts(
   const local = config.localModels;
   const fusion = config.llm?.runMode?.fusion;
   const providers = config.llm?.providers ?? [];
+  // An unpinned worker leg is the managed/local daemon — the pairing the
+  // mode exists for. A pinned one is whatever kind its entry is: with
+  // cloud workers there is no slot pool to speak of — the width is
+  // whatever the provider will take concurrently — and stating a number
+  // from the idle daemon would be stating a number about the wrong
+  // machine.
+  const pinnedWorker =
+    fusion?.workerProvider === undefined
+      ? undefined
+      : providers.find((p) => p.id === fusion.workerProvider);
+  const workerLeg: FusionWorkerLeg | null =
+    fusion?.workerProvider === undefined
+      ? "local"
+      : pinnedWorker === undefined
+        ? null
+        : pinnedWorker.kind === "llama-server"
+          ? "local"
+          : "cloud";
+  const workersAreLocal = workerLeg === "local";
+
   // `--parallel` is only ours to state in managed mode: that is where
   // the runtime itself launches the daemon with `managed.parallel`. An
   // external server was started by the operator with flags this process
   // never saw.
   // `"auto"` is the default now, and it resolves against the context the
   // daemon is launched with — which this process only knows when the
-  // operator pinned one (`contextSize: 0` means llama.cpp sizes it from
-  // VRAM at start-up, well after the prefix is built). Unknown stays
-  // unknown: a guessed slot count is a number the model would plan
+  // operator pinned one (`contextSize: 0` means the context is sized from
+  // free memory at start-up, well after the prefix is built). Unknown
+  // stays unknown: a guessed slot count is a number the model would plan
   // against, which is the one thing this module refuses to produce.
-  // Slots are a fact about the LOCAL daemon, so they only describe this
-  // fan-out when the local leg is the one running the workers. With
-  // cloud workers there is no slot pool to speak of — the width is
-  // whatever the provider will take concurrently — and stating a number
-  // from the idle daemon would be stating a number about the wrong
-  // machine.
-  const workersAreLocal =
-    fusion?.workerProvider === undefined ||
-    providers.find((p) => p.id === fusion.workerProvider)?.kind ===
-      "llama-server";
   const configured =
     workersAreLocal && local.mode === "managed" ? local.managed.parallel : null;
   const pinnedContext = local.mode === "managed" ? local.managed.contextSize : 0;
+  // Same inputs `buildLlamaServerArgs` counts slots from, so the number
+  // stated here is the number the daemon launches with.
   const workerSlots =
     configured === null
       ? null
       : configured === "auto"
         ? pinnedContext > 0
-          ? resolveWorkerSlots({ contextSize: pinnedContext, cpuOnly: false })
+          ? resolveWorkerSlots({
+              contextSize: pinnedContext,
+              cpuOnly: local.managed.device === "cpu",
+              completionMaxTokens: local.completionMaxTokens,
+            })
           : null
         : configured;
 
+  // What one worker needs from the pool is a fact about the worker, not
+  // the server, so it holds for an external llama-server too.
+  const workerTokenBudget = workersAreLocal
+    ? workerSlotFootprint(local.completionMaxTokens)
+    : null;
+
   // Same chain `resolveRunMode` uses for its worker label, minus the
-  // resolver: the explicit pin, then the managed daemon's model, then
-  // the `model` field of the llama-server provider entry the worker leg
-  // names. Never an invented string.
-  const workerEntry =
-    providers.find((p) => p.id === fusion?.workerProvider) ??
-    providers.find((p) => p.kind === "llama-server");
+  // resolver: the explicit pin, then — for a local leg — the managed
+  // daemon's model and the llama-server entry's `model`, or — for a
+  // cloud leg — the entry's own chat model. Never an invented string.
+  const localEntry =
+    pinnedWorker ?? providers.find((p) => p.kind === "llama-server");
   const workerModel =
     nonEmpty(fusion?.workerModel) ??
-    (local.mode === "managed" ? nonEmpty(local.managed.modelId) : null) ??
-    nonEmpty(workerEntry?.model);
+    (workerLeg === "cloud"
+      ? (nonEmpty(pinnedWorker?.defaultChatModel) ??
+        nonEmpty(pinnedWorker?.model))
+      : ((local.mode === "managed" ? nonEmpty(local.managed.modelId) : null) ??
+        nonEmpty(localEntry?.model)));
 
-  return { workerSlots, workerModel };
+  return { workerLeg, workerSlots, workerTokenBudget, workerModel };
 }

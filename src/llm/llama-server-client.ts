@@ -1,3 +1,4 @@
+import { ENV_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
@@ -46,10 +47,12 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *
  *  - `total` — the whole request was given `requestTimeoutMs` and never
  *    produced a response. The only signal a unary request has.
- *  - `first-token` — a *stream*'s headers arrived and then nothing did,
- *    for `requestTimeoutMs`. llama.cpp answers with headers immediately
- *    and only then evaluates the prompt, so this usually means the
- *    prompt eval is still running, **not** that the server is broken.
+ *  - `first-token` — a *stream* produced no body byte within
+ *    `firstTokenTimeoutMs` of being sent. That wait is queueing behind
+ *    busy slots plus prompt evaluation — llama.cpp may send headers
+ *    before either or only after both, depending on the build — so this
+ *    usually means the server is still busy, **not** that it is broken,
+ *    and it has a budget of its own, far longer than the idle one.
  *  - `idle` — a *stream* that had already sent at least one byte went
  *    `requestTimeoutMs` without sending another. A healthy generation
  *    refreshes this budget on every chunk, so it means the server went
@@ -176,6 +179,13 @@ export interface LlamaServerClientOptions {
    * request is already bounded by `requestTimeoutMs`.
    */
   streamTotalTimeoutMs?: number;
+  /**
+   * Overrides `config.localModels.firstTokenTimeoutMs`: how long a stream
+   * may wait for its first byte — queueing behind busy slots plus prompt
+   * evaluation. Streaming only, and never shorter than `requestTimeoutMs`
+   * in effect.
+   */
+  firstTokenTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   /**
    * Overrides the retry budget for `complete()` and the initial fetch
@@ -205,6 +215,7 @@ export class LlamaServerClient {
   private readonly baseUrlOverride: string | undefined;
   private readonly apiKey: string | null;
   private readonly requestTimeoutMs: number;
+  private readonly firstTokenTimeoutMs: number;
   private readonly streamTotalTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly completionRetriesOverride: number | undefined;
@@ -217,6 +228,19 @@ export class LlamaServerClient {
     this.apiKey = options.apiKey ?? config.localModels.apiKey;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? config.localModels.requestTimeoutMs;
+    // Floored at the idle budget: before the two were split, "raise
+    // localModels.requestTimeoutMs" was this client's advice for a slow
+    // prompt eval, and an operator who took it must not be silently cut
+    // back. A missing figure (a hand-built config) gets the default, never
+    // `NaN` — a `NaN` timer fires at once.
+    const firstToken =
+      options.firstTokenTimeoutMs ?? config.localModels.firstTokenTimeoutMs;
+    this.firstTokenTimeoutMs = Math.max(
+      typeof firstToken === "number" && Number.isFinite(firstToken)
+        ? firstToken
+        : ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS,
+      this.requestTimeoutMs,
+    );
     this.streamTotalTimeoutMs =
       options.streamTotalTimeoutMs ?? config.localModels.streamTotalTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -314,7 +338,7 @@ export class LlamaServerClient {
             timedOut,
             keepAlive,
             startStreamDeadline,
-          } = this.createRequestController(request.signal);
+          } = this.createRequestController(request.signal, "first-token");
           try {
             const response = await this.fetchImpl(url, {
               method: "POST",
@@ -382,16 +406,15 @@ export class LlamaServerClient {
       const reader = response.body
         .pipeThrough(new TextDecoderStream())
         .getReader();
-      // Headers are in; from here the deadline bounds *silence*, not the
-      // length of the answer. Re-arming once here also hands the body a
-      // full budget rather than whatever the connect phase left over —
-      // llama.cpp answers with headers immediately and only then evaluates
-      // the prompt, so the first token can legitimately be minutes away.
-      // Until a byte actually arrives the deadline reports `first-token`:
-      // a silence *before* the reply starts is most likely a long prompt
-      // eval, and telling that user their server "stopped responding" is
-      // the same bad advice this change exists to remove.
-      keepAlive("first-token");
+      // Headers are in, and the first token may still be minutes away: the
+      // request can be queued behind busy slots with its prompt not yet
+      // evaluated. The deadline has been the `first-token` one since the
+      // request was sent and deliberately keeps counting from then, so
+      // `firstTokenTimeoutMs` bounds the whole wait for the first byte
+      // whether this server sends its headers before that work or after
+      // it. A silence *before* the reply starts is a busy server, and
+      // telling that user their server "stopped responding" is the same
+      // bad advice this deadline exists to remove.
       // And an idle budget alone is not an upper bound — arm the absolute
       // cap so a server dribbling one byte per (budget - 1)ms cannot pin
       // this slot, session and process forever.
@@ -457,12 +480,14 @@ export class LlamaServerClient {
    * the listener.
    *
    * The deadline starts as a **total** budget, which is all a unary
-   * request can be given: it has exactly one event to wait for. A
-   * streaming caller converts it into an **idle** budget by calling
-   * `keepAlive()` on every byte it receives — see `completeStream`.
-   * Without that, `requestTimeoutMs` was a wall-clock cap on the whole
-   * generation and killed healthy long answers at exactly the budget,
-   * discarding every token already produced.
+   * request can be given: it has exactly one event to wait for. A stream
+   * starts on its **first-token** budget instead (`initialKind`), which
+   * covers everything before its first byte — the connect, any queueing
+   * behind busy slots, the prompt eval — and converts it into an **idle**
+   * budget by calling `keepAlive()` on every byte it receives — see
+   * `completeStream`. Without that, `requestTimeoutMs` was a wall-clock
+   * cap on the whole generation and killed healthy long answers at
+   * exactly the budget, discarding every token already produced.
    *
    * An idle budget alone is not an upper bound: a server emitting one
    * byte just under it streams forever. `startStreamDeadline()` arms the
@@ -470,7 +495,10 @@ export class LlamaServerClient {
    * `streamTotalTimeoutMs`. So a live stream holds two pending timers,
    * and `cleanup` clears both.
    */
-  private createRequestController(externalSignal?: AbortSignal): {
+  private createRequestController(
+    externalSignal?: AbortSignal,
+    initialKind: "total" | "first-token" = "total",
+  ): {
     controller: AbortController;
     cleanup: () => void;
     /**
@@ -479,9 +507,9 @@ export class LlamaServerClient {
      */
     timedOut: () => LlamaTimeoutKind | null;
     /**
-     * Restart the deadline and record what a subsequent expiry means:
-     * `first-token` once headers are in, `idle` once the body has
-     * actually produced something. A no-op once the request is already
+     * Restart the deadline on `next`'s budget and record what a
+     * subsequent expiry means — `idle` once the body has actually
+     * produced something. A no-op once the request is already
      * aborted or a deadline has already fired, so a byte that was still
      * in the decode pipe when the abort landed cannot re-arm the timer
      * or rewrite which deadline gets reported.
@@ -496,12 +524,12 @@ export class LlamaServerClient {
   } {
     const controller = new AbortController();
     let expired: LlamaTimeoutKind | null = null;
-    let kind: LlamaTimeoutKind = "total";
+    let kind: LlamaTimeoutKind = initialKind;
     const arm = (): ReturnType<typeof setTimeout> =>
       setTimeout(() => {
         expired = kind;
         controller.abort();
-      }, this.requestTimeoutMs);
+      }, this.budgetFor(kind));
     let timer = arm();
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
@@ -556,6 +584,13 @@ export class LlamaServerClient {
     };
   }
 
+  /** The budget each deadline kind is armed with — see `LlamaTimeoutKind`. */
+  private budgetFor(kind: LlamaTimeoutKind): number {
+    if (kind === "first-token") return this.firstTokenTimeoutMs;
+    if (kind === "stream-total") return this.streamTotalTimeoutMs;
+    return this.requestTimeoutMs;
+  }
+
   /**
    * Normalise a caught transport failure into a `LlamaServerError`,
    * preserving whether it was our own request-timeout so the retry policy
@@ -574,9 +609,10 @@ export class LlamaServerClient {
     // is the ordinary look of a long prompt eval.
     if (timedOut === "first-token") {
       return new LlamaServerError(
-        `llama-server accepted the request but sent no first token within ${this.requestTimeoutMs}ms — ` +
-          `it may still be evaluating the prompt; raise localModels.requestTimeoutMs, ` +
-          `or shorten the prompt/context if it is too large for this machine to evaluate in time`,
+        `llama-server sent no first token within ${this.firstTokenTimeoutMs}ms — ` +
+          `it may still be evaluating the prompt or queued behind other requests; ` +
+          `raise ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS (localModels.firstTokenTimeoutMs), ` +
+          `run fewer local workers at once, or shorten the prompt/context if it is too large for this machine to evaluate in time`,
         null,
         url,
         true,
@@ -752,19 +788,10 @@ function normaliseCompletionResponse(
   payload: Record<string, unknown>,
 ): CompletionResult {
   const timings = (payload.timings ?? {}) as Record<string, unknown>;
-  // `prompt_n` / `tokens_evaluated` count only the tokens llama-server
-  // actually evaluated this request — the prefix reused from the KV
-  // cache (`tokens_cached`) is excluded. Every consumer of
-  // `timing.promptTokens` treats it as "how big was the prompt" (their
-  // fallback is `prompt.tokens.total`, and the TUI shows it as occupied
-  // context), so report the whole prompt: evaluated + cached. On a warm
-  // cache the raw `prompt_n` is a small fraction of the prompt and the
-  // context readout collapsed to it, then leapt back to the estimator's
-  // full figure the moment anything reprojected it.
-  const evaluatedTokens = toNumber(
-    timings.prompt_n ?? payload.tokens_evaluated,
+  const { promptTokens, cacheHitTokens } = resolvePromptUsage(
+    payload,
+    timings,
   );
-  const cachedTokens = toNumber(payload.tokens_cached);
   return {
     content: typeof payload.content === "string" ? payload.content : "",
     reasoningContent:
@@ -776,15 +803,69 @@ function normaliseCompletionResponse(
     timing: {
       promptMs: toNumber(timings.prompt_ms),
       predictedMs: toNumber(timings.predicted_ms),
-      promptTokens: evaluatedTokens + cachedTokens,
+      promptTokens,
       predictedTokens: toNumber(
         timings.predicted_n ?? payload.tokens_predicted,
       ),
     },
-    cacheHitTokens: cachedTokens,
+    cacheHitTokens,
     slotId: toNumber(payload.slot_id ?? payload.id_slot, -1),
     modelId: typeof payload.model === "string" ? payload.model : null,
   };
+}
+
+/**
+ * How big the prompt was, and how much of it came out of the KV cache.
+ *
+ * Every consumer of `timing.promptTokens` reads it as "how big was the
+ * prompt" (their fallback is `prompt.tokens.total`, and the TUI shows it
+ * as occupied context), so the whole prompt is reported: the part
+ * evaluated this request plus the part reused. On a warm cache the
+ * evaluated part alone is a small fraction of the prompt.
+ *
+ * llama.cpp states exactly that split in `timings`: `prompt_n` evaluated,
+ * `cache_n` reused. The top-level fields are a different pair and must
+ * never be mixed into it. `tokens_evaluated` is the whole prompt, and
+ * `tokens_cached` is the slot's occupancy AFTER the request — prompt plus
+ * every generated token — not the reused prefix. Reading `prompt_n +
+ * tokens_cached` as the prompt counted the new tokens twice and the reply
+ * on top: on a fusion benchmark a metering proxy saw 433,110 prompt
+ * tokens (prompt_n 35,635 + cache_n 397,475) where this reported 499,542.
+ */
+function resolvePromptUsage(
+  payload: Record<string, unknown>,
+  timings: Record<string, unknown>,
+): { promptTokens: number; cacheHitTokens: number } {
+  const evaluated = toCount(timings.prompt_n);
+  const reused = toCount(timings.cache_n);
+  if (evaluated !== null && reused !== null) {
+    return { promptTokens: evaluated + reused, cacheHitTokens: reused };
+  }
+  // No complete `timings` split — an older server, or no timings at all.
+  // `tokens_evaluated` is still the whole prompt, so whatever part of it
+  // `prompt_n` did not have to evaluate was reused.
+  const whole = toCount(payload.tokens_evaluated);
+  if (whole !== null) {
+    return {
+      promptTokens: Math.max(whole, evaluated ?? 0),
+      cacheHitTokens:
+        evaluated !== null
+          ? Math.max(0, whole - evaluated)
+          : Math.min(reused ?? 0, whole),
+    };
+  }
+  // Nothing says how big the whole prompt was: report what is known and
+  // claim no reuse that was not stated. `tokens_cached` stays unread.
+  return {
+    promptTokens: (evaluated ?? 0) + (reused ?? 0),
+    cacheHitTokens: reused ?? 0,
+  };
+}
+
+/** A non-negative token count, or `null` when the field is absent or not a number. */
+function toCount(value: unknown): number | null {
+  const n = toNumber(value, Number.NaN);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function toNumber(value: unknown, fallback = 0): number {

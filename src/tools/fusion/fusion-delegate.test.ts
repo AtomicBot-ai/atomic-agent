@@ -371,6 +371,31 @@ describe("fusion.delegate", () => {
     expect(pair.summary).toContain("1 request slot,");
   });
 
+  it("hands the parent turn's original request to every worker brief", async () => {
+    const briefs: string[] = [];
+    const asked: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        resolveOriginalRequest: (sessionId) => {
+          asked.push(sessionId);
+          return "Build the whole snake game";
+        },
+        runTurn: async (_session, userMessage) => {
+          briefs.push(userMessage);
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(asked).toEqual(["s-parent"]);
+    expect(briefs).toHaveLength(2);
+    for (const brief of briefs) {
+      expect(brief).toContain("ORIGINAL REQUEST — context only");
+      expect(brief).toContain("Build the whole snake game");
+    }
+  });
+
   it("stays status:ok with partial results when workers fail", async () => {
     // An orchestrator handed a bare error learns nothing about which
     // parts survived, and partial results are the value of a fan-out.
