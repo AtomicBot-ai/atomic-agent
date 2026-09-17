@@ -1179,10 +1179,27 @@ export function formatWanderingRedirect(tool: string, spread: number): string {
 
 /**
  * Synthetic assistant reply emitted when the breaker fires (the model
- * ignored repeated vetoes). Reused by the agent loop's forced graceful
- * termination path.
+ * ignored repeated vetoes, or a wandering spread crossed the escalation
+ * cap). Reused by the agent loop's forced graceful termination path.
+ *
+ * `detector` decides the wording, the same way it does for the veto. A
+ * wandering escalation's `count` is a spread of DISTINCT arguments, and
+ * most of those calls ran and may well have returned what the model
+ * needed, so "no-progress loop", "blocked attempts" and "the repeated
+ * tool call" would all be false. Only one call was blocked: the one that
+ * reached the cap.
  */
-export function formatForcedLoopReply(tool: string, count: number): string {
+export function formatForcedLoopReply(
+  tool: string,
+  count: number,
+  detector?: LoopCheckVerdict["detector"],
+): string {
+  if (detector === "wandering") {
+    return [
+      `(stopped: \`${tool}\` reached ${count} different arguments this turn, the cap for one tool in a single turn, so that last call was not run).`,
+      "Here is my best answer with the information gathered so far — the task may be incomplete.",
+    ].join(" ");
+  }
   return [
     `(stopped: stuck in a no-progress loop on \`${tool}\` after ${count} blocked attempts).`,
     "I could not make further progress with the repeated tool call.",

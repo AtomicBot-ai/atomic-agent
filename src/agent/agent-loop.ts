@@ -1760,7 +1760,11 @@ export class AgentLoop {
         // turn ends with a best-effort answer, the session stays usable).
         const breaker = loopSignals.find((s) => s.kind === "breaker");
         if (breaker) {
-          const replyText = formatForcedLoopReply(breaker.tool, breaker.count);
+          const replyText = formatForcedLoopReply(
+            breaker.tool,
+            breaker.count,
+            breaker.detector,
+          );
           state = recordTurn(state, assistantReplyTurn(replyText));
           this.deps.onEvent?.({
             type: "llm_event",
