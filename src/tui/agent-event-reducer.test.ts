@@ -1162,6 +1162,41 @@ describe("truncated completion", () => {
     expect(line).not.toContain("undefined");
   });
 
+  it("explains a size-rejection repack in the operator's terms (F30)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "prompt_repacked",
+        stepIndex: 2,
+        contextWindow: 8_192,
+        source: "provider",
+        promptTokens: 9_100,
+      },
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("rejected the request as too large");
+    expect(line).toContain("~8192 tokens (from its reply)");
+    expect(line).toContain("retrying step 3");
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
+  it("names the provider that ran out of credit (F29)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "credit_exhausted",
+        provider: "openrouter",
+        code: "credit_balance_exhausted",
+        message: "Your credit balance is too low",
+      },
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toBe(
+      '» "openrouter" is out of credit (credit_balance_exhausted) — task paused; top up, then say continue',
+    );
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
   it("explains a window retry in the operator's terms", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",

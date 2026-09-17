@@ -7,6 +7,11 @@ import {
   type CreditLimitLogger,
   type CreditLimitRetryPlan,
 } from "./plan-credit-limit-retry.js";
+import {
+  parseProviderErrorBody,
+  readProviderErrorReason,
+  type ProviderErrorBody,
+} from "./parse-provider-error-body.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -64,14 +69,36 @@ export class OpenAiHttpError extends Error {
      * apart in a postmortem.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown },
+    options?: {
+      cause?: unknown;
+      body?: ProviderErrorBody;
+      generationId?: string;
+    },
   ) {
     super(message);
     this.name = "OpenAiHttpError";
     if (options?.cause !== undefined) {
       (this as { cause?: unknown }).cause = options.cause;
     }
+    if (options?.body !== undefined) this.body = options.body;
+    if (options?.generationId !== undefined) {
+      this.generationId = options.generationId;
+    }
   }
+
+  /**
+   * The error body read for its reason (`parseProviderErrorBody`):
+   * exhausted credit and cooldown hints live there, not in the status.
+   * Absent on network failures and on errors built without a body.
+   */
+  readonly body?: ProviderErrorBody;
+
+  /**
+   * The SSE generation id (`id` on the chunks) of a stream that failed
+   * after it had started — a 504 after 10,000 streamed tokens is still
+   * billed, and the id is what recovers the cost from the provider.
+   */
+  readonly generationId?: string;
 }
 
 /**
@@ -511,6 +538,8 @@ async function httpErrorFromResponse(
     false,
     retryAfterMs,
     deps.label,
+    undefined,
+    { body: parseProviderErrorBody(text) },
   );
 }
 
@@ -525,7 +554,23 @@ function isRetryableOpenAiError(err: unknown): boolean {
   if (!(err instanceof OpenAiHttpError)) return false;
   if (err.timedOut) return false;
   if (err.status === null) return true;
+  // A 429 whose body says the account is out of credit is not
+  // throttling: the same request fails the same way until someone tops
+  // up, and three fast retries only multiply the refusals (42 per
+  // worker, once).
+  if (isCreditExhausted(err)) return false;
   return err.status >= 500 || err.status === 429 || err.status === 408;
+}
+
+function isCreditExhausted(err: OpenAiHttpError): boolean {
+  return (
+    readProviderErrorReason({
+      status: err.status,
+      body: err.body,
+      message: err.message,
+      retryAfterMs: err.retryAfterMs,
+    })?.kind === "credit_exhausted"
+  );
 }
 
 /**

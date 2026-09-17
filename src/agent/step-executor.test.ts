@@ -26,6 +26,10 @@ import {
   grammarToolNames,
 } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
+import {
+  PLAIN_INSTRUCT_PROFILE as PLAIN_PROFILE_F31,
+  QWEN_THINK_PROFILE as QWEN_PROFILE_F31,
+} from "../llm/model-profile.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
 import { resetConfigCache } from "../config/index.js";
@@ -5062,5 +5066,81 @@ describe("the turn's reasoning effort and output ceiling reach the request (F20)
       { maxOutputTokens: 12_000, maxTokens: 32_000 },
       {},
     ]);
+  });
+});
+
+describe("executeStep — server chat template parts (F31)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function registryWithReply(): ToolRegistry {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args: Record<string, unknown>) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  async function runWith(profile: typeof PLAIN_PROFILE_F31 | typeof QWEN_PROFILE_F31) {
+    const grammar = await buildGrammar(profile, grammarsDir);
+    const seen: Array<Record<string, unknown>> = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-f31", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hello",
+      },
+      {
+        registry: registryWithReply(),
+        slotManager: new SlotManager(2),
+        toolTransport: "grammar",
+        llmComplete: async (params) => {
+          seen.push(params as unknown as Record<string, unknown>);
+          return {
+            content: JSON.stringify({ tool: "reply", args: { text: "hi" } }),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile,
+      },
+    );
+    return seen[0]!;
+  }
+
+  it("hands a plain-instruct link the prefix and a framing-free tail as chat parts (auto)", async () => {
+    const params = await runWith(PLAIN_PROFILE_F31);
+    const chat = params.chat as { system: string; user: string; prefixHash: string };
+    expect(chat).toBeDefined();
+    expect(chat.system.startsWith("### system")).toBe(true);
+    expect(chat.user).toContain("### respond");
+    expect(chat.prefixHash).toMatch(/^[0-9a-f]+$/);
+    // The raw text still travels for a link that cannot render.
+    expect(params.prompt).toBe(`${chat.system}\n${chat.user}`);
+    expect(params.grammar).toContain("root");
+  });
+
+  it("keeps the hand-built framing and sends no chat parts for a qwen link (auto)", async () => {
+    const params = await runWith(QWEN_PROFILE_F31);
+    expect(params.chat).toBeUndefined();
+    expect((params.prompt as string).trimEnd().endsWith("<think>")).toBe(true);
   });
 });

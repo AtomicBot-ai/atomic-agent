@@ -2080,3 +2080,33 @@ describe("localModels.completionMaxTokens (config v60)", () => {
     ).toBe(8192);
   });
 });
+
+describe("localModels.useServerTemplate / thinking (F31)", () => {
+  it("defaults both to auto", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.useServerTemplate).toBe("auto");
+    expect(parsed.localModels.thinking).toBe("auto");
+    expect(USER_CONFIG_DEFAULTS.localModels.useServerTemplate).toBe("auto");
+  });
+
+  it("reads on/off and rejects anything else, naming the field", () => {
+    const set = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { useServerTemplate: "on", thinking: "off" },
+    });
+    expect(set.localModels.useServerTemplate).toBe("on");
+    expect(set.localModels.thinking).toBe("off");
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { thinking: "maybe" },
+      }),
+    ).toThrow(/localModels\.thinking/);
+  });
+
+  it("fills an older file that lacks the fields", () => {
+    const parsed = parseUserConfigFile({ version: 60 });
+    expect(parsed.localModels.useServerTemplate).toBe("auto");
+    expect(parsed.localModels.thinking).toBe("auto");
+  });
+});

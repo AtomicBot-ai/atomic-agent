@@ -27,6 +27,11 @@ import {
   classifyFailure,
   isRequestSizeRejection,
 } from "../llm/index.js";
+import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
+import {
+  composeSizeRejectionNotice,
+  planSizeRejectionRepack,
+} from "./size-rejection-recovery.js";
 import type {
   LlmFailureCategory,
   TruncationCause,
@@ -481,14 +486,39 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Why a task stopped without the model closing it. The three ceilings
+ * are the loop's own; `credit_exhausted` is the provider's — the account
+ * cannot pay for the next request, so the turn parks where it is and
+ * resumes after a top-up, the same way as after a ceiling.
+ */
+export type TaskStopCause =
+  | "step_ceiling"
+  | "time_ceiling"
+  | "no_progress"
+  | "credit_exhausted";
+
 export function formatTaskStoppedReply(input: {
-  cause: "step_ceiling" | "time_ceiling" | "no_progress";
+  cause: TaskStopCause;
   stepsTaken: number;
   stepCeiling: number;
   elapsedMs: number;
+  /** For `credit_exhausted`: who said so, and what they said. */
+  credit?: { provider: string; detail: string };
 }): string {
   const minutes = Math.max(1, Math.round(input.elapsedMs / 60_000));
   const spent = `${input.stepsTaken} steps over ~${minutes} min`;
+  if (input.cause === "credit_exhausted") {
+    const who = input.credit?.provider ?? "the provider";
+    const said =
+      input.credit?.detail !== undefined && input.credit.detail.length > 0
+        ? ` (${input.credit.detail})`
+        : "";
+    return (
+      `(paused: "${who}" reports the account is out of credit${said}, after ${spent}.) ` +
+      "Here is where I got to — the work so far is kept in this session. Top up the account, then say `continue` to pick up from here."
+    );
+  }
   const head =
     input.cause === "time_ceiling"
       ? `(paused: this task hit its time limit after ${spent}.)`
@@ -631,6 +661,35 @@ export type AgentLoopEvent =
       /** The provider answered again; the parked turn is running on. */
       type: "provider_recovered";
       waitedMs: number;
+    }
+  | {
+      /**
+       * The provider's error body says the account cannot pay
+       * (`credit_balance_exhausted`, `insufficient_credits`, a 402
+       * naming credit). The turn stops where it is, resumable after a
+       * top-up — `loop_completed` follows with `max_steps` and the
+       * session records `task_stopped:credit_exhausted`. `provider` is
+       * the link that said so.
+       */
+      type: "credit_exhausted";
+      provider: string;
+      code: string;
+      message: string;
+    }
+  | {
+      /**
+       * The provider refused the request for step `stepIndex` as too
+       * large for its context window; the window was learned
+       * (`source: "provider"` from the body's own number, `"estimate"`
+       * from the prompt estimate) and the same step is being retried
+       * with the conversation packed to it. Fired once per step; a
+       * second refusal fails the turn with the provider's sentence.
+       */
+      type: "prompt_repacked";
+      stepIndex: number;
+      contextWindow: number;
+      source: "provider" | "estimate";
+      promptTokens: number;
     }
   | {
       /**
@@ -820,7 +879,7 @@ export interface RunTurnResult {
    * `max_steps` rather than `ok` for a worker that ran out of steps and
    * said so in its reply.
    */
-  stopCause?: "step_ceiling" | "time_ceiling" | "no_progress";
+  stopCause?: TaskStopCause;
   /**
    * Steering messages that were pushed but never reached a step — the
    * turn ended (or was cancelled) before the loop could drain them.
@@ -1028,8 +1087,9 @@ export class AgentLoop {
      * and "made no progress for a whole leg" are different things to
      * tell someone, and the old single `max_steps` string said neither.
      */
-    let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" =
-      "step_ceiling";
+    let stopCause: TaskStopCause = "step_ceiling";
+    /** Set with `stopCause = "credit_exhausted"`: who refused, and what they said. */
+    let creditStop: { provider: string; detail: string } | null = null;
     /**
      * The model's `reply` / `finish` came on the forced finalization
      * step, so a ceiling ended the task even though the model closed it.
@@ -1069,6 +1129,10 @@ export class AgentLoop {
       /** The truncation that started the retry, for the message if the retry is refused. */
       original: Error;
     } | null;
+    /** The step index already retried after a request-size refusal. */
+    let sizeRepackRetry: { stepIndex: number } | null = null;
+    /** The loop's own estimate of the last prompt built, for the repack fallback. */
+    let lastPromptTokens = 0;
     /**
      * The step index whose leg boundary already ran. A retried step
      * (outage or truncation) re-enters the loop at the same index; the
@@ -1265,6 +1329,8 @@ export class AgentLoop {
       const outOfTime = Date.now() - taskStartedAt >= durationCeilingMs;
       if (outOfTime) stopCause = "time_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime;
+      const effectiveTransport: ToolCallTransport =
+        pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
       const finalizationNotice =
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
@@ -1358,10 +1424,7 @@ export class AgentLoop {
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
-            toolTransport:
-              pinnedSlice?.toolTransport ??
-              this.deps.toolTransport ??
-              "grammar",
+            toolTransport: effectiveTransport,
             toolCallAdapter:
               pinnedSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
             supportsSlotAffinity:
@@ -1391,6 +1454,9 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              if (event.type === "prompt_built") {
+                lastPromptTokens = event.prompt.tokens.total;
+              }
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,
               // which already warned, and would repeat it per worker.
@@ -1940,21 +2006,106 @@ export class AgentLoop {
         if (repeatedEmptyAfterAnnouncedRetry) {
           runError = repeatedEmptyCompletionError(err);
         }
+        // The provider refused the request for its size. The window it
+        // named (or, failing that, most of the prompt just estimated)
+        // becomes the learned window, the conversation is packed to it,
+        // and the step runs again with a notice. Once per step: a second
+        // refusal ends the turn with the provider's own sentence.
+        const repack = cancelled
+          ? null
+          : planSizeRejectionRepack({
+              error: err,
+              alreadyRetried: sizeRepackRetry?.stepIndex === i,
+              raisedCapRefused:
+                truncationRetry?.stepIndex === i &&
+                truncationRetry.maxTokens !== undefined,
+              transport: effectiveTransport,
+              promptTokens: lastPromptTokens,
+              contextWindow: this.deps.contextWindow?.() ?? null,
+              canFitWindow: this.deps.onContextWindowObserved !== undefined,
+            });
+        if (repack !== null) {
+          sizeRepackRetry = { stepIndex: i };
+          this.deps.onContextWindowObserved?.(repack.contextWindow);
+          pendingNotice = composeSizeRejectionNotice(noticeForThisStep);
+          this.deps.onEvent?.({
+            type: "prompt_repacked",
+            stepIndex: i,
+            contextWindow: repack.contextWindow,
+            source: repack.source,
+            promptTokens: lastPromptTokens,
+          });
+          this.deps.logger?.warn(
+            "provider refused the request as too large; repacking to its window and retrying the step",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              contextWindow: repack.contextWindow,
+              source: repack.source,
+              promptTokens: lastPromptTokens,
+              rejection: runError.message,
+            },
+          );
+          runError = null;
+          i -= 1;
+          continue;
+        }
+        // What the provider's error body says, as opposed to its
+        // status: exhausted credit is neither an outage to wait out nor
+        // a request to fall over — nothing changes until someone tops
+        // up. The turn stops where it is, resumable, and the operator
+        // is told which provider refused. (A fallback link, when the
+        // chain has one, has already been tried by the time the error
+        // reaches here.)
+        const verdict = cancelled ? null : readProviderErrorVerdict(err);
+        if (verdict?.kind === "credit_exhausted") {
+          stopCause = "credit_exhausted";
+          creditStop = { provider: verdict.provider, detail: verdict.detail };
+          reason = "max_steps";
+          this.deps.onEvent?.({
+            type: "credit_exhausted",
+            provider: verdict.provider,
+            code: verdict.code,
+            message: verdict.detail,
+          });
+          this.deps.logger?.warn(
+            "provider reports exhausted credit; pausing the task",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              provider: verdict.provider,
+              code: verdict.code,
+              error: verdict.detail,
+            },
+          );
+          runError = null;
+          break;
+        }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a
         // completion failure throws before any tool is dispatched —
         // tool failures come back as results, not throws), so retrying
         // the same index replays nothing and duplicates no side effect.
+        // A provider that asked for a cooldown (`retry-after`, "retry in
+        // 120 s", OpenRouter's `in_flight_budget_exhausted` — a 402 the
+        // outage predicate would otherwise refuse) is waited for as
+        // long as it asked, within the same budget.
+        const retryHint =
+          verdict?.kind === "retry_after" ? verdict : null;
         if (
           category === "transport" &&
           !cancelled &&
           providerWaitCfg.enabled &&
-          isWaitableOutage(err) &&
+          (isWaitableOutage(err) || retryHint !== null) &&
           outageWaitedMs < providerWaitCfg.maxWaitMs
         ) {
           const nextRetryMs = Math.min(
-            PROVIDER_WAIT_MAX_BACKOFF_MS,
-            PROVIDER_WAIT_BASE_MS * 2 ** outageAttempts,
+            retryHint !== null
+              ? Math.max(1, retryHint.delayMs)
+              : Math.min(
+                  PROVIDER_WAIT_MAX_BACKOFF_MS,
+                  PROVIDER_WAIT_BASE_MS * 2 ** outageAttempts,
+                ),
             // Never sleep past the budget: the last wait ends exactly at
             // it, so the operator's configured ceiling is the truth.
             Math.max(1, providerWaitCfg.maxWaitMs - outageWaitedMs),
@@ -2120,6 +2271,7 @@ export class AgentLoop {
         stepsTaken,
         stepCeiling,
         elapsedMs: Date.now() - taskStartedAt,
+        ...(creditStop !== null ? { credit: creditStop } : {}),
       });
       state = recordTurn(state, assistantReplyTurn(synthetic));
       this.deps.onEvent?.({
@@ -2135,7 +2287,10 @@ export class AgentLoop {
         state = {
           ...state,
           status: "stalled",
-          lastError: `task_stopped:${stopCause}: ${stepsTaken} steps without reply`,
+          lastError:
+            creditStop !== null
+              ? `task_stopped:${stopCause}: "${creditStop.provider}" is out of credit after ${stepsTaken} steps`
+              : `task_stopped:${stopCause}: ${stepsTaken} steps without reply`,
         };
       }
     } else if (reason === "reply") {

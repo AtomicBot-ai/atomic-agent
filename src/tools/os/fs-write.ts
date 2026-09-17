@@ -3,14 +3,8 @@ import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { categorizeFsMutation } from "./fs-approval-scope.js";
-import {
-  checkFileParses,
-  displayPath,
-  formatParseWarning,
-  isParseCheckedPath,
-  PARSE_CHECK_MAX_CHARS,
-  withParseWarning,
-} from "./fs-parse-check.js";
+import { checkChangedFile } from "./fs-content-check.js";
+import { PARSE_CHECK_MAX_CHARS, withParseWarning } from "./fs-parse-check.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
@@ -145,9 +139,10 @@ export function buildOsFsWriteTool(
 }
 
 /**
- * Parse-check what now sits at `target` (see `fs-parse-check.ts`). An
- * append is judged on the whole file, not the chunk. Any failure to
- * check is silence: the write already succeeded and is reported as such.
+ * Check what now sits at `target` (see `fs-parse-check.ts` and
+ * `fs-content-check.ts`). An append is judged on the whole file, not the
+ * chunk. Any failure to check is silence: the write already succeeded
+ * and is reported as such.
  */
 async function parseWarningAfterWrite(
   target: string,
@@ -155,17 +150,17 @@ async function parseWarningAfterWrite(
   content: string,
   workingDir: string,
 ): Promise<string | null> {
-  if (!isParseCheckedPath(target)) return null;
   try {
     let written = content;
     if (mode === "append") {
       if ((await stat(target)).size > PARSE_CHECK_MAX_CHARS) return null;
       written = await readFile(target, "utf8");
     }
-    return formatParseWarning({
-      path: displayPath(target, workingDir),
+    return checkChangedFile({
+      absolute: target,
+      workingDir,
       change: "write",
-      after: checkFileParses(target, written),
+      after: written,
     });
   } catch {
     return null;

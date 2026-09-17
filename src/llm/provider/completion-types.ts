@@ -66,6 +66,21 @@ export interface PromptMessages {
   tail: string;
 }
 
+/**
+ * The prompt as two messages, for a local provider that renders through
+ * the model's own chat template (`/apply-template`): the stable prefix
+ * as the system message, the tail as the user message. `prompt` stays
+ * the raw text for providers and paths that do not render.
+ */
+export interface ChatPromptParts {
+  system: string;
+  user: string;
+  /** Salted hash of `system`; the rendered prefix is cached by it. */
+  prefixHash: string;
+  /** `chat_template_kwargs.enable_thinking`; absent leaves the template's default. */
+  enableThinking?: boolean;
+}
+
 export interface CompletionRequest {
   prompt: string;
   /**
@@ -74,6 +89,8 @@ export interface CompletionRequest {
    * messages read it, everything else ignores it and sends `prompt`.
    */
   messages?: PromptMessages;
+  /** See `ChatPromptParts`. Only grammar (llama-server) links receive it. */
+  chat?: ChatPromptParts;
   grammar?: string;
   slotId?: number;
   cachePrompt?: boolean;
@@ -201,6 +218,12 @@ export interface CompletionResult {
    * authoritative.
    */
   servedTransport?: ToolCallTransport;
+  /**
+   * The provider's generation id (`id` on the response / SSE chunks),
+   * when it sends one. Recorded in the trace so a billed completion
+   * can be looked up at the provider.
+   */
+  generationId?: string;
 }
 
 export interface OpenAiToolCall {
@@ -236,6 +259,8 @@ export interface StreamFinalResult {
   finishReason?: string | null;
   usage?: CompletionUsage;
   modelId?: string | null;
+  /** See `CompletionResult.generationId`. */
+  generationId?: string;
   /**
    * Whether the underlying transport actually delivered a trustworthy
    * terminal signal — an explicit provider `finish_reason` on any chunk,

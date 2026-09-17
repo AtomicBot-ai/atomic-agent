@@ -9,6 +9,8 @@ import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
+import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -817,7 +819,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(prompts[1]).toContain("cut off after 8192 tokens");
   });
 
-  it("forgets a learned window the server just proved too small", async () => {
+  it("reports a completion that exceeded the learned window, so bootstrap can raise it", async () => {
     const registry = buildDefaultToolRegistry();
     const exceeded: number[] = [];
     const loop = new AgentLoop({
@@ -961,6 +963,127 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(calls).toBe(2);
   });
 
+  it("learns the window a native-tool provider names in its 400, repacks and retries once (F30)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    const repacks: Array<{ contextWindow: number; source: string }> = [];
+    const prompts: string[] = [];
+    let learned: number | null = null;
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async ({ prompt }) => {
+        calls += 1;
+        prompts.push(prompt);
+        if (calls === 1) {
+          throw new TransportError(
+            '"vendor" rejected the request (400).',
+            400,
+            "https://x/v1",
+            {
+              cause: new OpenAiHttpError(
+                "openai provider 400: This model's maximum context length is 8192 tokens. However, you requested 9134 tokens (7134 in the messages, 2000 in the completion).",
+                400,
+                "u",
+              ),
+            },
+          );
+        }
+        return makeNativeCompletion([
+          { name: "reply", arguments: JSON.stringify({ text: "fits now" }) },
+        ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => learned,
+      onContextWindowObserved: (contextWindow) => {
+        observed.push(contextWindow);
+        learned = contextWindow;
+      },
+      onEvent: (event) => {
+        if (event.type === "prompt_repacked") repacks.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-size-400", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(observed).toEqual([8_192]);
+    expect(repacks).toEqual([
+      expect.objectContaining({ contextWindow: 8_192, source: "provider", stepIndex: 0 }),
+    ]);
+    expect(prompts[1]).toContain("trimmed to fit this model's window");
+    // The same step, not a new one.
+    expect(result.session.stepCount).toBe(1);
+  });
+
+  it("packs to most of the prompt estimate when the 413 names no window, and fails on a second refusal (F30)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    const failures: string[] = [];
+    let promptTokens = 0;
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        calls += 1;
+        throw new TransportError(
+          '"vendor" rejected the request (413).',
+          413,
+          "https://x/v1",
+          {
+            cause: new OpenAiHttpError(
+              "openai provider 413: the request exceeds the available context size",
+              413,
+              "u",
+            ),
+          },
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => null,
+      onContextWindowObserved: (contextWindow) => observed.push(contextWindow),
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "prompt_built") {
+          promptTokens = event.event.prompt.tokens.total;
+        }
+        if (event.type === "loop_failed") failures.push(event.error.message);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-size-413", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(calls).toBe(2);
+    expect(promptTokens).toBeGreaterThan(0);
+    expect(observed).toEqual([Math.floor(promptTokens * 0.8)]);
+    expect(failures[0]).toContain("rejected the request (413)");
+  });
+
   it("fails with the truncation, not the 400, when the provider refuses the raised cap", async () => {
     const registry = buildDefaultToolRegistry();
     const failures: string[] = [];
@@ -1091,6 +1214,154 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
+  });
+
+  it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
+    // The Codex attempt: a 429 carrying `credit_balance_exhausted` was
+    // parked and retried as rate limiting, 42 times per worker.
+    const registry = buildDefaultToolRegistry();
+    const events: string[] = [];
+    let calls = 0;
+    const body = JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        code: 429,
+        metadata: {
+          raw: '{"error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low"}}',
+        },
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        throw new TransportError(
+          '"openrouter" is rate-limiting this key (429).',
+          429,
+          "https://openrouter.ai/api/v1",
+          {
+            cause: new OpenAiHttpError(
+              `openai provider 429: ${body}`,
+              429,
+              "https://openrouter.ai/api/v1/chat/completions",
+              false,
+              null,
+              "openrouter",
+              undefined,
+              { body: parseProviderErrorBody(body) },
+            ),
+          },
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "provider_waiting" ||
+          event.type === "credit_exhausted" ||
+          event.type === "loop_failed" ||
+          event.type === "loop_completed"
+        ) {
+          events.push(event.type);
+        }
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-credit", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    // One request, no park, no failure: paused where it stood.
+    expect(calls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(events).toEqual(["credit_exhausted", "loop_completed"]);
+    expect(result.reason).toBe("max_steps");
+    expect(result.stopCause).toBe("credit_exhausted");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.lastError).toBe(
+      'task_stopped:credit_exhausted: "openrouter" is out of credit after 0 steps',
+    );
+    const last = result.session.turns.at(-1);
+    expect(last?.kind).toBe("assistant_reply");
+    expect((last as { text: string }).text).toContain(
+      '"openrouter" reports the account is out of credit',
+    );
+    expect((last as { text: string }).text).toContain("say `continue`");
+  });
+
+  it("waits as long as the provider asked, on a 402 the outage wait would otherwise refuse (F29)", async () => {
+    // OpenRouter's `in_flight_budget_exhausted` with a retry hint ended
+    // a cloud-only run at 2m19s as final. The hint is honoured instead.
+    const registry = buildDefaultToolRegistry();
+    const waits: Array<{ nextRetryMs: number }> = [];
+    let calls = 0;
+    const body = JSON.stringify({
+      error: {
+        code: "in_flight_budget_exhausted",
+        message: "Too many requests in flight for your balance; retry in 1 s",
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new TransportError(
+            '"openrouter" refused the request for lack of credit (402).',
+            402,
+            "https://openrouter.ai/api/v1",
+            {
+              cause: new OpenAiHttpError(
+                `openai provider 402: ${body}`,
+                402,
+                "https://openrouter.ai/api/v1/chat/completions",
+                false,
+                null,
+                "openrouter",
+                undefined,
+                { body: parseProviderErrorBody(body) },
+              ),
+            },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "budget freed" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-inflight", workingDir }),
+      {
+        userMessage: "busy balance",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(waits).toHaveLength(1);
+    // The hint (1 s), not the 2 s backoff.
+    expect(waits[0]!.nextRetryMs).toBe(1_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(950);
+    expect(Date.now() - started).toBeLessThan(1_900);
   });
 
   it("gives up after the wait budget and fails the turn once", async () => {

@@ -14,6 +14,23 @@ import {
   type OpenAiToolCallDelta,
 } from "./parse-sse-chunk.js";
 import { extractPartialReplyTextFromToolArguments } from "./tool-arguments-stream-parser.js";
+import { attachGenerationId } from "./generation-id.js";
+
+/**
+ * A provider reported an error inside the SSE stream itself. Thrown by
+ * the consumer; the provider turns it into an `OpenAiHttpError` with
+ * the request's url and label, keeping the generation id.
+ */
+export class OpenAiSseError extends Error {
+  constructor(
+    readonly status: number | null,
+    message: string,
+    readonly generationId: string | null,
+  ) {
+    super(message);
+    this.name = "OpenAiSseError";
+  }
+}
 
 type MutableToolCall = {
   /** Position in the final array. See `orderFor`. */
@@ -68,6 +85,7 @@ export function createOpenAiStreamConsumer(
       let finishReason: string | null = null;
       let modelId: string | null = null;
       let usage: CompletionUsage | undefined;
+      let generationId: string | null = null;
       // A trustworthy terminal signal: an explicit provider finish_reason
       // on any chunk, or a parser-recognized terminal event (`[DONE]`).
       // Some OpenAI-compatible providers send a final finish_reason and
@@ -105,6 +123,16 @@ export function createOpenAiStreamConsumer(
               reasoning,
               toolArgsBuffer,
             );
+            generationId = chunk.id ?? generationId;
+            if (chunk.error !== null) {
+              // Whatever streamed before this is billed under the id;
+              // the error carries it so the trace can say so.
+              throw new OpenAiSseError(
+                chunk.error.status,
+                chunk.error.message,
+                generationId,
+              );
+            }
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
             if (chunk.finishReason !== null) terminalObserved = true;
@@ -120,6 +148,7 @@ export function createOpenAiStreamConsumer(
                 finishReason,
                 modelId,
                 usage,
+                generationId,
                 toolCalls,
                 terminalObserved: true,
               });
@@ -174,6 +203,11 @@ export function createOpenAiStreamConsumer(
           }
           if (done) break;
         }
+      } catch (err) {
+        // A body that died after output (`Error: terminated`, a 504 in
+        // the stream) still cost the tokens it streamed. The id travels
+        // on the error so the trace row can name the generation.
+        throw attachGenerationId(err, generationId);
       } finally {
         reader.releaseLock();
       }
@@ -184,6 +218,7 @@ export function createOpenAiStreamConsumer(
         finishReason,
         modelId,
         usage,
+        generationId,
         toolCalls,
         terminalObserved,
         ...(earlyStop !== undefined ? { earlyStop } : {}),
@@ -318,6 +353,7 @@ function buildFinalResult(args: {
   finishReason: string | null;
   modelId: string | null;
   usage?: CompletionUsage;
+  generationId: string | null;
   toolCalls: ToolCallAccumulator;
   terminalObserved: boolean;
   earlyStop?: CompletionEarlyStop;
@@ -342,6 +378,7 @@ function buildFinalResult(args: {
     modelId: args.modelId,
     terminalObserved: args.terminalObserved,
     ...(args.usage ? { usage: args.usage } : {}),
+    ...(args.generationId !== null ? { generationId: args.generationId } : {}),
     ...(sortedToolCalls.length > 0 ? { toolCalls: sortedToolCalls } : {}),
     ...(args.earlyStop !== undefined ? { earlyStop: args.earlyStop } : {}),
   };

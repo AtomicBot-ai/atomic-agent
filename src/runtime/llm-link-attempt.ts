@@ -68,6 +68,16 @@ function grammarRequestFields(params: LlmStreamParams) {
     grammar: params.grammar,
     slotId: params.slotId,
     cachePrompt: params.slotId >= 0,
+    // A grammar link that can honour a Structured Outputs envelope
+    // (the subscription CLIs stage it as `--json-schema`) still gets
+    // it; llama-server ignores it in favour of the grammar.
+    ...(params.responseFormat
+      ? { responseFormat: params.responseFormat }
+      : {}),
+    // The prefix/tail split for a link that renders through the model's
+    // own template (F31). Built by the step executor only when the
+    // primary is a grammar link, so it always matches `params.prompt`.
+    ...(params.chat ? { chat: params.chat } : {}),
   };
 }
 

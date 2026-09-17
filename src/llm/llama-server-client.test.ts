@@ -1250,3 +1250,65 @@ describe("extractLlamaErrorDetail", () => {
     expect(out.endsWith("…")).toBe(true);
   });
 });
+
+describe("LlamaServerClient.applyTemplate (F31)", () => {
+  it("posts the messages and template kwargs to /apply-template and returns the prompt", async () => {
+    let captured: { url: string; body: Record<string, unknown> } | null = null;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (url, init) => {
+        captured = {
+          url,
+          body: JSON.parse(String(init.body)) as Record<string, unknown>,
+        };
+        return new Response(
+          JSON.stringify({
+            prompt: "<|im_start|>system\nS<|im_end|>\n<|im_start|>user\nU<|im_end|>\n<|im_start|>assistant\n",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    });
+    const prompt = await client.applyTemplate(
+      [
+        { role: "system", content: "S" },
+        { role: "user", content: "U" },
+      ],
+      { enable_thinking: false },
+    );
+    expect(prompt).toContain("<|im_start|>assistant\n");
+    expect(captured!.url).toBe("http://127.0.0.1:9999/apply-template");
+    expect(captured!.body).toEqual({
+      messages: [
+        { role: "system", content: "S" },
+        { role: "user", content: "U" },
+      ],
+      chat_template_kwargs: { enable_thinking: false },
+    });
+  });
+
+  it("omits chat_template_kwargs when none are given, and types a missing endpoint", async () => {
+    let body: Record<string, unknown> | null = null;
+    const ok = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ prompt: "p" }), { status: 200 });
+      }),
+    });
+    await ok.applyTemplate([{ role: "user", content: "U" }]);
+    expect(body).not.toHaveProperty("chat_template_kwargs");
+
+    const missing = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () => new Response("not found", { status: 404 }),
+      ),
+    });
+    const err = await missing
+      .applyTemplate([{ role: "user", content: "U" }])
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect((err as LlamaServerError).status).toBe(404);
+  });
+});

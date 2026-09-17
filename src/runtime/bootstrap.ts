@@ -97,6 +97,7 @@ import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
+import { LearnedContextWindows } from "./learned-context-windows.js";
 import {
   ProviderFallbackChain,
   resolveFallbackChain,
@@ -1529,6 +1530,7 @@ export async function createAgentRuntime(
     : undefined;
 
   const getLiveProfile = () => profileManager?.getProfile() ?? profile;
+  const getLiveModelId = () => profileManager?.getModelId() ?? modelAlias;
 
   // Issue #112. The manager above is built either way — construction is
   // pure field assignment, no I/O — because deleting it on a cloud boot
@@ -1570,6 +1572,7 @@ export async function createAgentRuntime(
     config,
     llamaClient: llama,
     getProfile: getLiveProfile,
+    getModelId: getLiveModelId,
     logger,
   });
 
@@ -1676,32 +1679,25 @@ export async function createAgentRuntime(
    * mid-session is picked up by the next prompt.
    */
   /**
-   * Context windows the model server revealed by cutting a reply short
-   * — `completion_truncated` with cause `context_window`, where prompt +
-   * reply tokens is the window. Keyed by provider and model, kept for the
-   * life of the process: the same server keeps the same window, and a
+   * Context windows the model server revealed — by cutting a reply short
+   * (`completion_truncated` with cause `context_window`, where prompt +
+   * reply tokens is the window) or by refusing a request as too large
+   * (`prompt_repacked`). Keyed by provider and model, kept for the life
+   * of the process: the same server keeps the same window, and a
    * restart may well change it (llama.cpp `-c`, Lemonade's auto-sizing).
    * A demonstrated window overrides the catalogue's nominal 128k default
    * and clamps a real catalogue entry, since a server can run a model
-   * with less context than the model supports.
+   * with less context than the model supports. A window only moves
+   * towards what the server demonstrated — see `LearnedContextWindows`.
    */
-  const observedContextWindows = new Map<string, number>();
+  const observedContextWindows = new LearnedContextWindows();
   const activeModelKey = (): string =>
     `${resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName()}`;
   const observeContextWindow = (contextWindow: number): void => {
-    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return;
-    const key = activeModelKey();
-    const known = observedContextWindows.get(key);
-    observedContextWindows.set(
-      key,
-      known === undefined ? contextWindow : Math.min(known, contextWindow),
-    );
+    observedContextWindows.observe(activeModelKey(), contextWindow);
   };
-  const forgetContextWindowBelow = (tokens: number): void => {
-    const key = activeModelKey();
-    const known = observedContextWindows.get(key);
-    if (known !== undefined && tokens > known)
-      observedContextWindows.delete(key);
+  const raiseContextWindowTo = (tokens: number): void => {
+    observedContextWindows.raise(activeModelKey(), tokens);
   };
   const resolveCatalogContextWindow = (): number | null => {
     const observed = observedContextWindows.get(activeModelKey());
@@ -2383,7 +2379,7 @@ export async function createAgentRuntime(
     // `### fusion` facts state for an external server.
     liveWorkerSlots: () => slotManager.observedPoolSize(),
     onContextWindowObserved: observeContextWindow,
-    onContextWindowExceeded: forgetContextWindowBelow,
+    onContextWindowExceeded: raiseContextWindowTo,
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
@@ -2672,6 +2668,7 @@ export async function createAgentRuntime(
     config: getConfig(),
     llamaClient: llama,
     getProfile: getLiveProfile,
+    getModelId: getLiveModelId,
     logger,
   };
 
@@ -2683,6 +2680,7 @@ export async function createAgentRuntime(
       config: fresh,
       llamaClient: llama,
       getProfile: getLiveProfile,
+      getModelId: getLiveModelId,
       logger,
     });
     if (added.length > 0) {
@@ -2698,6 +2696,7 @@ export async function createAgentRuntime(
       config: fresh,
       llamaClient: llama,
       getProfile: getLiveProfile,
+      getModelId: getLiveModelId,
       logger,
     });
     logger.info("llm: provider refreshed", { id });

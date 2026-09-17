@@ -33,6 +33,7 @@ export type TraceEvent =
   | TraceProviderWaiting
   | TraceProviderRecovered
   | TraceCompletionTruncated
+  | TracePromptRepacked
   | TraceParseFailureRecovered
   | TraceEmptyCompletionRecovered
   | TraceLessonDeprecated
@@ -137,6 +138,8 @@ export interface TraceLlmCompletion extends TraceEventBase {
   modelId: string | null;
   stop: boolean;
   truncated: boolean;
+  /** The provider's generation id, when it sent one. */
+  generationId?: string;
 }
 
 export interface TraceToolInvocation extends TraceEventBase {
@@ -276,6 +279,19 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   requestedMaxTokens?: number;
   retry: "raise_cap" | "fit_window";
   retryValue: number;
+}
+
+/**
+ * The provider refused the request for its size; the window was learned
+ * and the step is being retried with the conversation packed to it.
+ */
+export interface TracePromptRepacked extends TraceEventBase {
+  type: "prompt_repacked";
+  turnIndex: number;
+  stepIndex: number;
+  contextWindow: number;
+  source: "provider" | "estimate";
+  promptTokens: number;
 }
 
 export interface TraceLoopDetected extends TraceEventBase {
@@ -521,6 +537,12 @@ export interface TraceError extends TraceEventBase {
   stepIndex?: number;
   message: string;
   stack?: string;
+  /**
+   * The provider's generation id when the failure came from a stream
+   * that had already produced output — the tokens are billed, and the
+   * id is what recovers the cost.
+   */
+  generationId?: string;
   /**
    * Canonical LLM failure taxonomy tag
    * (`transport` / `grammar` / `model` / `tool` / `cancelled`). Missing

@@ -290,6 +290,56 @@ export class LlamaServerClient {
     }
   }
 
+  /**
+   * Render `messages` through the server's chat template
+   * (`POST /apply-template`, present in the bundled build). Returns the
+   * rendered prompt text, generation prompt included. `chatTemplateKwargs`
+   * reaches the template as `chat_template_kwargs` (`enable_thinking`).
+   */
+  async applyTemplate(
+    messages: ReadonlyArray<{ role: string; content: string }>,
+    chatTemplateKwargs?: Record<string, unknown>,
+  ): Promise<string> {
+    const config = getConfig();
+    const base = this.baseUrlOverride ?? config.localModels.url;
+    const url = llamaEndpointUrl(base, "/apply-template");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      const response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: this.buildHeaders(false),
+        body: JSON.stringify({
+          messages,
+          ...(chatTemplateKwargs !== undefined
+            ? { chat_template_kwargs: chatTemplateKwargs }
+            : {}),
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw await buildHttpError(response, url);
+      }
+      const json = (await response.json()) as { prompt?: unknown };
+      if (typeof json.prompt !== "string") {
+        throw new LlamaServerError(
+          "apply-template answered without a prompt string",
+          response.status,
+          url,
+        );
+      }
+      return json.prompt;
+    } catch (err) {
+      if (err instanceof LlamaServerError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
+        cause: err,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async fetchProps(): Promise<LlamaServerProps> {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;

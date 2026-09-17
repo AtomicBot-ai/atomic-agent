@@ -320,6 +320,60 @@ describe("executeBatch", () => {
     expect(out.cancelled).toBe(false);
   });
 
+  it("appends the received and expected keys to a thrown argument error (F33)", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "r",
+      readonly: true,
+      run: async () => {
+        throw new Error("os.fs.read: `path` must be a non-empty string");
+      },
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { patth: "secret-value.txt" } },
+    ]);
+    const out = await executeBatch(
+      inputs,
+      registry,
+      ctx(new AbortController().signal),
+    );
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain(
+      "os.fs.read: `path` must be a non-empty string — received keys: patth; expected: path, maxBytes, offset, limit, lineNumbers; did you mean `path` instead of `patth`?",
+    );
+    expect(result.summary).not.toContain("secret-value");
+    expect(result.details.receivedKeys).toEqual(["patth"]);
+    expect(result.details.expectedKeys).toEqual([
+      "path",
+      "maxBytes",
+      "offset",
+      "limit",
+      "lineNumbers",
+    ]);
+  });
+
+  it("leaves a thrown runtime error without a key report", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "r",
+      readonly: true,
+      run: async () => {
+        throw new Error("ENOENT: no such file or directory, open 'a'");
+      },
+    });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    const result = out.results[0]!.compressed!;
+    expect(result.summary).toBe("ENOENT: no such file or directory, open 'a'");
+    expect(result.details.receivedKeys).toBeUndefined();
+  });
+
   it("preserves batch-index order in the returned slots", async () => {
     const registry = new ToolRegistry();
     registry.register({

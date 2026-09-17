@@ -4,13 +4,8 @@ import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
-import {
-  checkFileParses,
-  displayPath,
-  formatParseWarning,
-  isParseCheckedPath,
-  withParseWarning,
-} from "./fs-parse-check.js";
+import { checkChangedFile } from "./fs-content-check.js";
+import { withParseWarning } from "./fs-parse-check.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
@@ -127,26 +122,24 @@ export function buildOsFsPatchTool(
 }
 
 /**
- * The parse warning for one applied file (see `fs-parse-check.ts`), or
- * null. A file the patch emptied is a unified-diff deletion, not a
- * broken file, and a file the patch created has no "before" to compare.
+ * The warnings for one applied file (see `fs-parse-check.ts` and
+ * `fs-content-check.ts`), or null. A file the patch emptied is a
+ * unified-diff deletion, not a broken file, and a file the patch created
+ * has no "before" to compare.
  */
 function parseWarningAfterPatch(
   outcome: PreviewOutcome,
   patched: string,
   workingDir: string,
 ): string | null {
-  if (patched.length === 0 || !isParseCheckedPath(outcome.absolute)) {
-    return null;
-  }
+  if (patched.length === 0) return null;
   const original = outcome.originalContent ?? "";
-  return formatParseWarning({
-    path: displayPath(outcome.absolute, workingDir),
+  return checkChangedFile({
+    absolute: outcome.absolute,
+    workingDir,
     change: "patch",
-    after: checkFileParses(outcome.absolute, patched),
-    ...(original.length > 0
-      ? { before: checkFileParses(outcome.absolute, original) }
-      : {}),
+    after: patched,
+    ...(original.length > 0 ? { before: original } : {}),
   });
 }
 

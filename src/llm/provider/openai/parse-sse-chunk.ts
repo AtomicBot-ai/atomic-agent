@@ -33,6 +33,14 @@ export function parseOpenAiSseEvent(
   modelId: string | null;
   usage: Record<string, unknown> | null;
   toolCallDeltas: OpenAiToolCallDelta[];
+  /** The provider's generation id (`id` on the chunk), when it sends one. */
+  id: string | null;
+  /**
+   * A mid-stream error event (`{"error": {"code": 504, "message": …}}`,
+   * how OpenRouter reports an upstream that died after output started).
+   * The consumer throws on it; a chunk carrying one has no delta.
+   */
+  error: { status: number | null; message: string } | null;
 } {
   const dataLines: string[] = [];
   for (const line of rawEvent.split("\n")) {
@@ -52,6 +60,8 @@ export function parseOpenAiSseEvent(
       modelId: null,
       usage: null,
       toolCallDeltas: [],
+      id: null,
+      error: null,
     };
   }
   const joined = dataLines.join("\n");
@@ -67,6 +77,8 @@ export function parseOpenAiSseEvent(
       modelId: null,
       usage: null,
       toolCallDeltas: [],
+      id: null,
+      error: null,
     };
   }
   try {
@@ -80,6 +92,8 @@ export function parseOpenAiSseEvent(
     const finishReason =
       typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
     const modelId = typeof payload.model === "string" ? payload.model : null;
+    const id = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
+    const error = readStreamError(payload.error);
     const usage =
       payload.usage && typeof payload.usage === "object"
         ? (payload.usage as Record<string, unknown>)
@@ -110,6 +124,8 @@ export function parseOpenAiSseEvent(
         finishReason,
         modelId,
         usage,
+        id,
+        error,
         toolCallDeltas: toolCalls.map((toolCall) => ({
           ...(typeof toolCall.index === "number"
             ? { index: toolCall.index }
@@ -143,6 +159,8 @@ export function parseOpenAiSseEvent(
       finishReason,
       modelId,
       usage,
+      id,
+      error,
       toolCallDeltas: [],
     };
   } catch {
@@ -157,6 +175,28 @@ export function parseOpenAiSseEvent(
       modelId: null,
       usage: null,
       toolCallDeltas: [],
+      id: null,
+      error: null,
     };
   }
+}
+
+function readStreamError(
+  value: unknown,
+): { status: number | null; message: string } | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const error = value as { code?: unknown; message?: unknown };
+  const code =
+    typeof error.code === "number"
+      ? error.code
+      : typeof error.code === "string" && /^\d{3}$/.test(error.code)
+        ? Number(error.code)
+        : null;
+  const message =
+    typeof error.message === "string" && error.message.length > 0
+      ? error.message
+      : "stream error";
+  return { status: code, message };
 }

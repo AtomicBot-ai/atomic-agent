@@ -18,8 +18,9 @@ const NO_VISION_PROFILE: ModelProfile = {
 
 function fakeClient(
   complete: LlamaServerClient["complete"],
+  applyTemplate?: LlamaServerClient["applyTemplate"],
 ): LlamaServerClient {
-  return { complete } as unknown as LlamaServerClient;
+  return { complete, applyTemplate } as unknown as LlamaServerClient;
 }
 
 describe("LlamaServerProvider", () => {
@@ -261,5 +262,63 @@ describe("LlamaServerProvider", () => {
         ],
       }),
     ).rejects.toThrow(/http 500/);
+  });
+});
+
+describe("LlamaServerProvider — server chat template (F31)", () => {
+  const request = {
+    prompt: "RAW system\nRAW tail",
+    grammar: 'root ::= "ok"',
+    slotId: 0,
+    chat: { system: "SYS", user: "TAIL", prefixHash: "h" },
+  };
+
+  it("renders a request carrying chat parts through /apply-template and keeps the grammar", async () => {
+    const complete = vi.fn(async (req: { prompt: string }) => ({
+      content: req.prompt,
+    })) as unknown as LlamaServerClient["complete"];
+    const applyTemplate = vi.fn(
+      async (messages: ReadonlyArray<{ role: string; content: string }>) =>
+        `<s>${messages.map((m) => `[${m.role}]${m.content}`).join("")}[assistant]`,
+    ) as unknown as LlamaServerClient["applyTemplate"];
+    const provider = new LlamaServerProvider(fakeClient(complete, applyTemplate), {
+      getProfile: () => NO_VISION_PROFILE,
+      getModelId: () => "llama-3.1-8b",
+      visionEnabledByConfig: false,
+      visionAutoDetect: false,
+      maxImageBytes: 1024,
+      maxImagesPerCall: 1,
+    });
+    await provider.complete(request);
+    await provider.complete({ ...request, chat: { ...request.chat, user: "TAIL2" } });
+    const sent = vi.mocked(complete).mock.calls.map((c) => c[0]);
+    expect(sent[0]).toMatchObject({
+      prompt: "<s>[system]SYS[user]TAIL[assistant]",
+      grammar: 'root ::= "ok"',
+    });
+    expect(sent[1]!.prompt).toBe("<s>[system]SYS[user]TAIL2[assistant]");
+    // One render per prefix, whatever the tail does.
+    expect(applyTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the raw prompt when there are no chat parts or the render fails", async () => {
+    const complete = vi.fn(async () => ({})) as unknown as LlamaServerClient["complete"];
+    const applyTemplate = vi.fn(async () => {
+      throw new Error("boom");
+    }) as unknown as LlamaServerClient["applyTemplate"];
+    const provider = new LlamaServerProvider(fakeClient(complete, applyTemplate), {
+      getProfile: () => NO_VISION_PROFILE,
+      visionEnabledByConfig: false,
+      visionAutoDetect: false,
+      maxImageBytes: 1024,
+      maxImagesPerCall: 1,
+    });
+    const { chat: _chat, ...plain } = request;
+    await provider.complete(plain);
+    await provider.complete(request);
+    const sent = vi.mocked(complete).mock.calls.map((c) => c[0]);
+    expect(sent[0]!.prompt).toBe("RAW system\nRAW tail");
+    expect(sent[1]!.prompt).toBe("RAW system\nRAW tail");
+    expect(applyTemplate).toHaveBeenCalledTimes(1);
   });
 });

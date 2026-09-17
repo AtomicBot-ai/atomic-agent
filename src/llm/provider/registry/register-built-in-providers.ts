@@ -69,6 +69,8 @@ export function registerBuiltInProviderKinds(): void {
       maxImageBytes: config.vision.maxImageBytes,
       maxImagesPerCall: config.vision.maxImagesPerCall,
       baseUrlOverride: ctx.entry.url,
+      ...(ctx.getModelId ? { getModelId: ctx.getModelId } : {}),
+      logger: ctx.logger,
     });
   });
 

@@ -125,6 +125,37 @@ describe("openAiPostJson", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it("does not retry a 429 whose body says the credit is exhausted, and keeps the body", async () => {
+    // Retried 42 times per worker in the field, as if it were throttling.
+    const body = JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        code: 429,
+        metadata: {
+          raw: '{"error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low"}}',
+        },
+      },
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(errorResponse(429, body, { "retry-after": "0" }));
+    const err = await openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      {},
+      {},
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenAiHttpError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect((err as OpenAiHttpError).body).toMatchObject({
+      message: "Provider returned error",
+      code: "429",
+    });
+    expect((err as OpenAiHttpError).body?.text).toContain(
+      "credit_balance_exhausted",
+    );
+  });
+
   describe("structured RetryInfo metadata", () => {
     // Gemini's OpenAI-compatible endpoint sends its cooldown only in
     // the error JSON — google.rpc.RetryInfo with a protobuf Duration
