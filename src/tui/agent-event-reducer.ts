@@ -25,7 +25,7 @@ import {
   finishRun,
   finishRunWithoutHistory,
   finishTurn,
-  lastUserMessage,
+  lastTurnRequest,
   pushRing,
   startNewRun,
   upsertReasoning,
@@ -404,6 +404,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: "yellow",
         }),
         event.text,
+        { steered: true },
       );
     case "turn_started":
       return {
@@ -587,7 +588,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // the window is exactly the abort the operator asked for.
       if (event.category === "cancelled" || state.aborting) {
         const lastRunStatus = "stopped by user";
-        const prompt = lastUserMessage(state);
+        const prompt = lastTurnRequest(state);
         return finishRun(
           appendChatMessage(
             appendFeed(state, {
@@ -975,6 +976,7 @@ function reduceStepEvent(
       const withMessage = appendChatMessage(state, {
         role: "assistant",
         text: event.text,
+        ...(event.progressNote === true ? { progressNote: true } : {}),
         toolSteps: state.currentTurnToolSteps,
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
         ...(reasoningForTurn.length > 0

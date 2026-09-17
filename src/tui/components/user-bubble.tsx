@@ -12,6 +12,11 @@ interface UserBubbleProps {
    * the mode the message is answered under did.
    */
   fusion?: boolean;
+  /**
+   * The message was folded into a turn already running. The label says
+   * so, because the reply under it answers that turn's opening request.
+   */
+  steered?: boolean;
 }
 
 /**
@@ -30,11 +35,12 @@ interface UserBubbleProps {
 export function UserBubble({
   text,
   fusion = false,
+  steered = false,
 }: UserBubbleProps): ReactElement {
   return (
     <Box marginTop={1} flexDirection="column">
       <Text color={theme.colors.user} bold>
-        {"  YOU"}
+        {steered ? `  YOU${STEERED_LABEL_SUFFIX}` : "  YOU"}
       </Text>
       <Box
         borderStyle="single"
@@ -57,6 +63,9 @@ export function UserBubble({
     </Box>
   );
 }
+
+/** Label tail on a message folded into the running turn. */
+export const STEERED_LABEL_SUFFIX = " · steered into the running turn";
 
 function splitLines(text: string): string[] {
   if (text.length === 0) return [""];

@@ -1,4 +1,5 @@
 import { downloadAttempt } from "./download-attempt.js";
+import { DEFAULT_SLOW_CHECK_MS } from "./download-slow-segment.js";
 import {
   classifyDownloadError,
   DownloadGaveUpError,
@@ -98,6 +99,13 @@ export interface DownloadFileOptions {
    * the watchdog.
    */
   stallTimeoutMs?: number;
+  /**
+   * Window of the pace check on each connection of a parallel download
+   * (`download-slow-segment.ts`): a connection far slower than the best
+   * one is dropped and its remainder re-requested. Default 30s. `0`
+   * disables it.
+   */
+  slowCheckMs?: number;
   /**
    * Parallel connections for one file. Defaults to the value pushed in
    * from config (`localModels.download.connections`, 16 out of the box),
@@ -211,6 +219,7 @@ export async function downloadFile(
         retryDelayMs: baseDelay,
         maxRetryDelayMs: maxDelay,
         stallTimeoutMs: opts?.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS,
+        slowCheckMs: opts?.slowCheckMs ?? DEFAULT_SLOW_CHECK_MS,
         connections: opts?.connections,
         minSegmentBytes: opts?.minSegmentBytes ?? DEFAULT_MIN_SEGMENT_BYTES,
         singleStream,

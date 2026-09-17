@@ -606,6 +606,21 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.onboarding",
+    label: "Run first-time setup again…",
+    group: "setup",
+    // No chord: every free key is worth more to a verb used daily, and
+    // this one is used once in a while — the palette finds it by name.
+    slash: {
+      name: "onboarding",
+      description:
+        "run first-time setup again from the start — keeps your providers, keys, sessions and memory",
+      aliases: ["setup"],
+      rank: 43,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.mouse",
     label: "Mouse…",
     group: "setup",

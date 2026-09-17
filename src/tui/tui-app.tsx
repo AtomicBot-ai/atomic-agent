@@ -215,6 +215,11 @@ export interface TuiAppCallbacks {
   onSessionDeleteConfirmed?(sessionId: string): void;
   /** `/uninstall` or the menu's last entry: measure the install. */
   onUninstallPlanRequested?(): void;
+  /**
+   * `/onboarding` or Setup → "Run first-time setup again…": clear the
+   * first-run stamps and open the flow. Only called on an idle session.
+   */
+  onOnboardingRerunRequested?(): void;
   /** The word was typed and Enter pressed. */
   onUninstallConfirmed?(): void;
   onAbort(): void;

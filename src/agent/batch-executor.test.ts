@@ -695,6 +695,83 @@ describe("executeBatch", () => {
     expect(out.loopSignals[0]!.detector).toBe("wandering");
   });
 
+  // Issue #458: a parallel batch is gated before any of its calls record,
+  // so the spread can pass the cap with nothing refused. A verbatim repeat
+  // after that is still vetoed by the escalation, but what ended the turn
+  // is the wandering cap: the breaker signal must say so with the spread,
+  // not hand the forced reply a repeat verdict with a count of 0.
+  it("reports the wandering cap, not a 0-count repeat, when a repeat is stopped past the cap", async () => {
+    const fn = vi.fn(async () => okResult("os.web.fetch"));
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 3,
+    });
+    // Four distinct fetches recorded: one past the cap of 3.
+    for (const url of ["u1", "u2", "u3", "u4"]) {
+      tracker.check("os.web.fetch", { url });
+      tracker.recordCall("os.web.fetch", { url });
+      tracker.recordOutcome(
+        "os.web.fetch",
+        { url },
+        okResult("os.web.fetch", url),
+      );
+    }
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args: { url: "u1" } }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    expect(fn).not.toHaveBeenCalled();
+    expect(out.loopSignals[0]).toMatchObject({
+      kind: "breaker",
+      detector: "wandering",
+      count: 4,
+    });
+    // The veto body still describes the call as the repeat it is.
+    expect(out.results[0]!.compressed!.summary).not.toContain(
+      "different attempts",
+    );
+  });
+
+  it("quotes the spread, not the cap, when a batch carried the spread past the cap", async () => {
+    const fn = vi.fn(async (args: unknown) =>
+      okResult("os.web.fetch", (args as { url: string }).url),
+    );
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 3,
+    });
+    tracker.check("os.web.fetch", { url: "u1" });
+    tracker.recordCall("os.web.fetch", { url: "u1" });
+    tracker.recordOutcome(
+      "os.web.fetch",
+      { url: "u1" },
+      okResult("os.web.fetch", "u1"),
+    );
+    const run = (urls: string[]) =>
+      executeBatch(
+        toBatchInputs(
+          urls.map((url) => ({ tool: "os.web.fetch", args: { url } })),
+        ),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+    // Every call in the batch is gated against the same recorded history,
+    // so all three run and the spread ends at 4, past the cap of 3.
+    await run(["u2", "u3", "u4"]);
+    expect(fn).toHaveBeenCalledTimes(3);
+    const out = await run(["u5"]);
+    expect(fn).toHaveBeenCalledTimes(3);
+    // The signal quotes the spread (5, counting u5), not the cap, which
+    // is why the forced reply does not call its count "the cap".
+    expect(out.loopSignals.find((s) => s.kind === "breaker")).toMatchObject({
+      detector: "wandering",
+      count: 5,
+    });
+  });
+
   // Issue #186: the veto body must name the invariant that held across
   // the blocked attempts and offer a concrete alternative.
   it("veto body names the repeated host and offers the search-first alternative", async () => {

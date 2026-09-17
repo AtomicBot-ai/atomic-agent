@@ -2422,6 +2422,83 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(runCount).toBeLessThan(12);
   });
 
+  // Issue #458: a wandering escalation rides the breaker path, and the
+  // forced reply used to call a turn of distinct, successful fetches a
+  // "no-progress loop" with "blocked attempts".
+  it("words the forced reply for a wandering stop as a spread cap, not a repeat", async () => {
+    const registry = buildDefaultToolRegistry();
+    let runCount = 0;
+    registry.register({
+      name: "os.web.fetch",
+      description: "fetch",
+      readonly: true,
+      async run(args) {
+        runCount += 1;
+        const url = (args as { url?: string }).url ?? "";
+        return {
+          tool: "os.web.fetch",
+          status: "ok",
+          summary: `content of ${url}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const detected: Array<{ level?: string; detector?: string; count: number }> =
+      [];
+    let step = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        step += 1;
+        return makeCompletion(
+          JSON.stringify({
+            tool: "os.web.fetch",
+            args: { url: `https://example.com/file-${step}.ts` },
+          }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") {
+          detected.push({
+            level: event.level,
+            detector: event.detector,
+            count: event.count,
+          });
+        }
+      },
+    });
+    const session = createEmptySessionState({
+      id: "s-wandering-breaker",
+      workingDir,
+    });
+    // Default escalation is 12: eleven distinct fetches run, the twelfth
+    // reaches the cap and is vetoed, and the turn ends gracefully.
+    const result = await loop.runTurn(session, {
+      userMessage: "read these files",
+      maxSteps: 20,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(runCount).toBe(11);
+    expect(detected.at(-1)).toMatchObject({
+      level: "breaker",
+      detector: "wandering",
+      count: 12,
+    });
+    const last = result.session.turns.at(-1);
+    expect(last).toMatchObject({ kind: "assistant_reply" });
+    const text = (last as { text: string }).text;
+    expect(text).toContain("hit the limit on different arguments");
+    expect(text).toContain("12, counting the last call");
+    expect(text).not.toMatch(/no-progress|blocked attempts|repeated/i);
+  });
+
   it("refreshes memory context between non-terminal tool steps", async () => {
     const registry = buildDefaultToolRegistry();
     registry.register({

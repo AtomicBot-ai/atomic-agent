@@ -200,13 +200,18 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
   const contextualKeywordGate =
     input.contextualKeywordGate ?? config.memory.profile.contextualKeywordGate;
+  const profileFilterThreshold =
+    input.profileFilterThreshold ??
+    config.memory.voting.profileFilterThreshold;
   // Whole fact lines, pinned first; `clip` carries the counts whenever a
-  // fact was left out, so the loop can warn (issue #407).
+  // fact was left out, so the loop can warn (issue #407). The vote
+  // filter runs before the clip, so a downvoted fact never takes a line.
   const profileSection =
     input.profileFacts !== undefined
       ? clipProfileSection(input.profileFacts, {
           userMessage: input.userMessage ?? null,
           contextualKeywordGate,
+          profileFilterThreshold,
           maxTokens: profileMaxTokens,
         })
       : null;

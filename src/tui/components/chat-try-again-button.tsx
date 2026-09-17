@@ -73,9 +73,14 @@ export function resubmitChatMessage(
  * make, not this component's — but the reasoning belongs next to the
  * code it explains. A user message is a command someone gave the agent,
  * so re-running it is a real intent: the model wandered off, a file
- * changed, a tool was down. An assistant message is the agent's own
- * prose; sending it back would open a turn whose prompt is the previous
- * answer, which is not "try again" in any sense an operator means. A
+ * changed, a tool was down. A steered message is the exception: it was
+ * a correction to the turn it joined, and re-sent alone it would open a
+ * turn on the correction without the request it corrected (that
+ * request's own message keeps the button, and so does the stopped
+ * notice, which resends the request, never the steer). An assistant
+ * message is the agent's own prose; sending it back would open a turn
+ * whose prompt is the previous answer, which is not "try again" in any
+ * sense an operator means. A
  * system message is TUI runtime output — queue listings, turn-failed
  * lines — and re-sending one as a prompt is worse than nonsense. The
  * one system notice that carries the button — "Agent stopped by user",

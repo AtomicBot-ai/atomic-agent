@@ -53,6 +53,7 @@ import { incrementTurnCount, recordTurn } from "../session/session-state.js";
 import {
   assistantReplyTurn,
   isFinalReplyTurn,
+  steeredUserTurn,
   userTurn,
 } from "../session/conversation-turn.js";
 import {
@@ -1352,7 +1353,8 @@ export class AgentLoop {
       const started = Date.now();
       // Mid-turn steering: anything the user sent since the previous
       // step boundary joins this step's prompt. It is recorded as a
-      // real `user` turn (the transcript must reflect what was said,
+      // real `user` turn, marked `steered` (the transcript must reflect
+      // what was said, and that it joined a turn already under way,
       // and `packConversation` always keeps the last user turn visible)
       // AND repeated in `### notice`, which is the tail-most block the
       // model reads before `### respond`. `composeSteerNotice` appends
@@ -1360,7 +1362,7 @@ export class AgentLoop {
       // rather than overwriting it — both nudges matter.
       const steered = this.deps.steeringInbox?.drain(state.id) ?? [];
       for (const text of steered) {
-        state = recordTurn(state, userTurn(text));
+        state = recordTurn(state, steeredUserTurn(text));
         this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
       }
       if (steered.length > 0) {
@@ -1755,12 +1757,17 @@ export class AgentLoop {
           }
         }
 
-        // Breaker: the model ignored repeated vetoes of the same call.
+        // Breaker: the model ignored repeated vetoes of the same call, or
+        // a wandering spread crossed the escalation cap.
         // Force a graceful synthetic reply (NOT a `loop_failed` — the
         // turn ends with a best-effort answer, the session stays usable).
         const breaker = loopSignals.find((s) => s.kind === "breaker");
         if (breaker) {
-          const replyText = formatForcedLoopReply(breaker.tool, breaker.count);
+          const replyText = formatForcedLoopReply(
+            breaker.tool,
+            breaker.count,
+            breaker.detector,
+          );
           state = recordTurn(state, assistantReplyTurn(replyText));
           this.deps.onEvent?.({
             type: "llm_event",
@@ -1775,12 +1782,13 @@ export class AgentLoop {
             detector: breaker.detector,
           });
           this.deps.logger?.warn(
-            "no-progress loop breaker tripped; forcing graceful reply",
+            "loop breaker tripped; forcing graceful reply",
             {
               sessionId: state.id,
               stepIndex: i,
               tool: breaker.tool,
               count: breaker.count,
+              detector: breaker.detector,
             },
           );
           reason = "reply";
