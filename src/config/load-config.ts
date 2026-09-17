@@ -223,6 +223,7 @@ export function loadConfig(): AtomicAgentConfig {
       providerWait: user.agent.providerWait,
       task: user.agent.task,
       toolTimeoutMs: user.agent.toolTimeoutMs,
+      readScope: user.agent.readScope,
       approvalLevel: user.agent.approvalLevel,
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
@@ -341,6 +342,13 @@ export function loadConfig(): AtomicAgentConfig {
     },
     projects: {
       roots: [...user.projects.roots],
+    },
+    tools: {
+      shell: {
+        defaultTimeoutMs: user.tools.shell.defaultTimeoutMs,
+        jobMaxMs: user.tools.shell.jobMaxMs,
+        maxJobs: user.tools.shell.maxJobs,
+      },
     },
     log: { level: logLevel },
     tasks: {

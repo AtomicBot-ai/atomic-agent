@@ -6,6 +6,7 @@ export type {
   LocalLlmMode,
   LogLevel,
   OnboardingState,
+  ReadScope,
   SessionRailConfig,
   TelegramConfig,
   NotificationsConfig,
@@ -22,9 +23,11 @@ export type {
 } from "./config-schema.js";
 export {
   ConfigValidationError,
+  READ_SCOPES,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
   parseOnboardingState,
+  parseReadScope,
   parseSessionRailConfig,
   parseUserConfigFile,
   parseWhileBusySubmit,

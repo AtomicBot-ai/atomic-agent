@@ -13,13 +13,13 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
 import { ToolRegistry, type ToolContext } from "../tool-registry.js";
+import { FUSION_WORKER_APPROVAL_MARKER } from "../fusion/worker-tool-policy.js";
 import {
   checkWorkerRead,
   confineWorkerReads,
   WORKER_READ_REFUSAL_REASON,
   WORKER_READ_TOOL_TARGETS,
-} from "./worker-read-scope.js";
-import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
+} from "./index.js";
 
 const WORKER = `${FUSION_WORKER_ID_PREFIX}1`;
 

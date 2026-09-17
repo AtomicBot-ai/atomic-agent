@@ -101,6 +101,7 @@ import {
   toolResultTurn,
 } from "../session/conversation-turn.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import { userNamedPaths } from "../tools/read-scope/index.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import {
   NO_SERVER_TEMPLATE,
@@ -1487,12 +1488,17 @@ async function executeStepInner(
   // these is short-circuited inside `executeBatch` with a terse pointer
   // instead of re-reading and re-dumping the body.
   const loadedSkillNames = new Set(ctx.session.loadedSkills.map((s) => s.name));
+  // The paths the user named so far, for the read scope: re-read from the
+  // transcript every step so a path named mid-turn (steering) counts on
+  // the next call, and nothing the model wrote ever widens it.
+  const readRoots = userNamedPaths(ctx.session.turns);
   const runBatch = runInOrder ? executeCallsInOrder : executeBatch;
   const batchOutcome = await runBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
+    ...(readRoots.length > 0 ? { readRoots } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),

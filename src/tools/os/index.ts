@@ -4,6 +4,7 @@ import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { buildOsShellTool } from "./shell.js";
 import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
+import type { ShellJobRegistry } from "./shell-jobs.js";
 import { osFsReadTool } from "./fs-read.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
@@ -103,9 +104,32 @@ export {
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
 export type { ShellGuardPolicy } from "./shell-command-guard/index.js";
+export {
+  describeShellTimeoutDefault,
+  formatShellDetachNotice,
+  formatShellDuration,
+  formatShellElapsed,
+  formatShellTimeoutNotice,
+  resolveShellTimeout,
+} from "./shell-timeout.js";
+export type {
+  ResolvedShellTimeout,
+  ShellTimeoutSource,
+} from "./shell-timeout.js";
+export {
+  DEFAULT_SHELL_JOB_MAX_MS,
+  DEFAULT_SHELL_MAX_JOBS,
+  ShellJobRegistry,
+} from "./shell-jobs.js";
+export type {
+  ShellJobRecord,
+  ShellJobRegistryOptions,
+  ShellJobState,
+  ShellJobStopReason,
+} from "./shell-jobs.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
-  config: Pick<AtomicAgentConfig, "http" | "web" | "projects">;
+  config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;
   /**
    * Column-only recent-session projection for `os.fs.locate_project`
    * (`SessionStore.listRecentWorkingDirs`). A closure so the caller
@@ -138,6 +162,13 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * disables the policy layer (embedders, tests).
    */
   shellPolicy?: ShellGuardPolicy;
+  /**
+   * The registry of commands `os.shell.run` detached at the default
+   * timeout (F47). The bootstrap owns it so the turn-end, session-end
+   * and shutdown paths can stop the jobs; omitted (embedders, tests)
+   * the tool keeps a private one whose jobs die only at the ceiling.
+   */
+  shellJobs?: ShellJobRegistry;
 }
 
 export function registerOsTools(
@@ -148,9 +179,11 @@ export function registerOsTools(
     buildOsShellTool({
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
+      defaultTimeoutMs: options.config.tools.shell.defaultTimeoutMs,
       ...(options.shellPolicy === undefined
         ? {}
         : { shellPolicy: options.shellPolicy }),
+      ...(options.shellJobs === undefined ? {} : { jobs: options.shellJobs }),
     }),
   );
   // One option bag for every tool that replaces file content, so the

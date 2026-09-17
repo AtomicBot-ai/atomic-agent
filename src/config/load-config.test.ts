@@ -151,6 +151,9 @@ describe("loadConfig", () => {
         toolTimeoutMs: 12_000,
         approvalLevel: 5,
       },
+      tools: {
+        shell: { defaultTimeoutMs: 1_800_000, jobMaxMs: 7_200_000, maxJobs: 5 },
+      },
     });
     const config = loadConfig();
     expect(config.localModels.url).toBe("http://llama.internal:4444");
@@ -158,6 +161,11 @@ describe("loadConfig", () => {
     expect(config.agent.maxSteps).toBe(42);
     expect(config.agent.toolTimeoutMs).toBe(12_000);
     expect(config.agent.approvalLevel).toBe(5);
+    expect(config.tools.shell).toEqual({
+      defaultTimeoutMs: 1_800_000,
+      jobMaxMs: 7_200_000,
+      maxJobs: 5,
+    });
   });
 
   it("maps llm.runMode from the file onto the runtime config", () => {

@@ -15,6 +15,14 @@ export interface ToolContext {
    * (load it). Absent ⇒ `full`.
    */
   toolRole?: ToolRole;
+  /**
+   * Absolute paths the user named in this session's own messages
+   * (`userNamedPaths`, `src/tools/read-scope/`), recomputed by the step
+   * from the transcript. Under `agent.readScope: "working-dir"` a read
+   * may go under any of these as well as under `workingDir`. Absent ⇒
+   * nothing named.
+   */
+  readRoots?: readonly string[];
 }
 
 export interface ToolDefinition {

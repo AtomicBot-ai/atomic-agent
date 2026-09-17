@@ -62,7 +62,7 @@ import { replyTool } from "../tools/conversation/index.js";
 import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import { registerOsTools } from "../tools/os/index.js";
+import { registerOsTools, ShellJobRegistry } from "../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../tools/verify/index.js";
 import { registerGithubTools } from "../tools/github/index.js";
 import { resolveGithubToken } from "../github/index.js";
@@ -72,9 +72,9 @@ import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
 import {
   buildFusionDelegateTool,
-  confineWorkerReads,
   pickOriginalRequest,
 } from "../tools/fusion/index.js";
+import { confineReads } from "../tools/read-scope/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
@@ -1417,13 +1417,23 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
-  // Drop a session's trace recorder when the session itself is deleted, so
-  // the map shrinks on teardown instead of relying on the cap to push
-  // entries out. Wrapped here rather than at each call site (the TUI and the
+  // The commands `os.shell.run` detached at the default timeout (F47).
+  // One registry for the runtime, so the turn-end (`executeTurn`),
+  // session-delete and shutdown paths below can stop what a session
+  // left running.
+  const shellJobs = new ShellJobRegistry({
+    jobMaxMs: config.tools.shell.jobMaxMs,
+    maxJobs: config.tools.shell.maxJobs,
+  });
+  // Drop a session's trace recorder — and stop its detached shell jobs,
+  // kept ones included — when the session itself is deleted, so the map
+  // shrinks on teardown instead of relying on the cap to push entries
+  // out. Wrapped here rather than at each call site (the TUI and the
   // HTTP route both delete sessions) so every caller gets it.
   const deleteSession = sessionStore.delete.bind(sessionStore);
   sessionStore.delete = (id: string): void => {
     dropRecorder(id);
+    shellJobs.endSession(id);
     deleteSession(id);
   };
 
@@ -1437,7 +1447,12 @@ export async function createAgentRuntime(
   }
   registerOsTools(toolRegistry, {
     ...dangerous,
-    config: { http: config.http, web: config.web, projects: config.projects },
+    config: {
+      http: config.http,
+      web: config.web,
+      projects: config.projects,
+      tools: config.tools,
+    },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
     // The trust surface (`config.json` + `.env`) is resolved once, here,
     // and injected into the fs tools — the tools layer must not know
@@ -1456,6 +1471,7 @@ export async function createAgentRuntime(
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
     },
+    shellJobs,
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
@@ -2531,6 +2547,9 @@ export async function createAgentRuntime(
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
+    // Every detached shell job, kept or not: nothing will wait on it
+    // once this process is gone, and its ceiling timer dies with us.
+    shellJobs.endAll();
     // Cancel any in-flight reflection before tearing down the profile
     // store — otherwise a late-arriving completion could try to write
     // into a closed SQLite connection.
@@ -2870,6 +2889,8 @@ export async function createAgentRuntime(
           // The prompt_captured hook still records the worker's window
           // occupancy under its id; nothing persists it, so drop it.
           lastTurnContextUsage.delete(session.id);
+          // A worker's turn is its whole life: nothing waits on its jobs.
+          shellJobs.endSession(session.id);
         }
       });
     }
@@ -2931,8 +2952,15 @@ export async function createAgentRuntime(
           },
         };
         sessionStore.save(finished);
+        // `finish` ended the whole session: its kept jobs go with it.
+        if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };
       } finally {
+        // The turn is over, however it ended: the shell jobs it started
+        // and did not `keep` are stopped here — the one choke point
+        // every turn passes through (§"A turn is a task, not a step
+        // budget").
+        shellJobs.endTurn(session.id);
         lastTurnContextUsage.delete(session.id);
         turnRequests.delete(session.id);
         activeTraceSessions.delete(session.id);
@@ -3149,12 +3177,21 @@ export async function createAgentRuntime(
       logger,
     }),
   );
-  // A fusion worker reads inside its working directory and its fan-out's
-  // write scope, never the rest of the disk (`worker-read-scope.ts`).
-  // Installed here, after every native filesystem tool is registered;
-  // other sessions' reads are untouched.
-  confineWorkerReads(toolRegistry, {
+  // Every session reads inside its working directory and the paths the
+  // user named unasked, by default (`agent.readScope`,
+  // `src/tools/read-scope/`); a read outside that asks through the
+  // ladder as `fs_read_outside` — the same gate and surfaces as every
+  // other gated action — and a `y` widens the session's roots. A fusion
+  // worker is confined more narrowly still — its working directory and
+  // its fan-out's write scope, never the brief's — and refused, since
+  // nobody is at the other end of its prompt. The shell gets the same
+  // scope as a token check. Installed here, after every native
+  // filesystem tool and the shell are registered. The scope is re-read
+  // per call, so `agent.readScope: "unrestricted"` needs no restart.
+  confineReads(toolRegistry, {
     grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
+    readScope: () => getConfig().agent.readScope,
+    approvals: dangerous,
   });
 
   const scheduler =

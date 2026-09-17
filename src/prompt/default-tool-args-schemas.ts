@@ -117,15 +117,21 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── os.shell ─────────────────────────────────────────────────────────────
   [
     "os.shell.run",
-    obj(
-      {
-        cmd: stringSchema,
-        args: stringArraySchema,
-        cwd: stringSchema,
-        timeoutMs: numberSchema,
-      },
-      ["cmd", "args"],
-    ),
+    // Four forms share one schema: `{cmd, args, …}` runs a command;
+    // `{wait}`, `{kill}` and `{jobs}` act on a job the default timeout
+    // detached (F47). Nothing is required at the schema level because
+    // each form requires a different key; the tool refuses a call that
+    // mixes them or names none.
+    obj({
+      cmd: stringSchema,
+      args: stringArraySchema,
+      cwd: stringSchema,
+      timeoutMs: numberSchema,
+      keep: booleanSchema,
+      wait: integerSchema,
+      kill: integerSchema,
+      jobs: booleanSchema,
+    }),
   ],
 
   // ── os.fs ────────────────────────────────────────────────────────────────

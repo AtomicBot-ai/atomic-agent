@@ -27,6 +27,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "browser_nonweb",
   "trust_config",
   "email",
+  "fs_read_outside",
   "other",
 ];
 
@@ -66,6 +67,9 @@ describe("approval ladder", () => {
       browser_nonweb: 5,
       trust_config: 5,
       email: 5,
+      // Reads outside the working directory ask until full trust: a
+      // wandering read is what the read scope exists to stop.
+      fs_read_outside: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -94,6 +98,9 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
     expect(formatApprovalCategory("shell")).toBe("shell command");
     expect(formatApprovalCategory("git_remote")).toBe("git · remote");
+    expect(formatApprovalCategory("fs_read_outside")).toBe(
+      "read outside the working directory",
+    );
   });
 
   it("level 1 asks for every category and level 5 for none (cumulative ladder)", () => {
@@ -109,6 +116,7 @@ describe("approval ladder", () => {
       "browser_nonweb",
       "trust_config",
       "email",
+      "fs_read_outside",
       "other",
     ];
     for (const category of categories) {

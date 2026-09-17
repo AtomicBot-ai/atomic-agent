@@ -97,13 +97,15 @@ export {
   inspectDeclaredFiles,
 } from "./declared-files.js";
 export type { DeclaredFileReport } from "./declared-files.js";
+// The worker read scope lives with the session one now
+// (`src/tools/read-scope/`); the worker names are kept here as aliases.
 export {
   checkWorkerRead,
   confineWorkerReads,
   isOutsideReadRoots,
   WORKER_READ_REFUSAL_REASON,
   WORKER_READ_TOOL_TARGETS,
-} from "./worker-read-scope.js";
+} from "../read-scope/index.js";
 export { runWorkerTasks } from "./worker-runner.js";
 export type {
   WorkerRunnerDeps,

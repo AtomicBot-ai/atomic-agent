@@ -108,6 +108,12 @@ export interface BatchExecutionContext {
   stepIndex: number;
   signal: AbortSignal;
   /**
+   * The paths the user named in this session's messages, for the read
+   * scope (`ToolContext.readRoots`). Computed by the step from the
+   * transcript and handed to every call of the batch unchanged.
+   */
+  readRoots?: readonly string[];
+  /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
    * serialised group that is batch-index order; across concurrent
@@ -421,6 +427,7 @@ export async function executeBatch(
         stepIndex: ctx.stepIndex,
         signal: ctx.signal,
         ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
+        ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {
