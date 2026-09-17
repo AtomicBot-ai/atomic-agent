@@ -10,6 +10,7 @@ import {
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 import { CancelledError } from "../llm/index.js";
 import {
   isParallelWithinGroup,
@@ -151,6 +152,8 @@ export interface BatchExecutionContext {
   fusionState?: () => FusionOrchestratorState;
   /** Called with a `fusion.delegate` result so the turn's ledger can fold it in. */
   onDelegated?: (result: CompressedToolResult) => void;
+  /** The turn's tool role, forwarded to every `ToolContext` (see `tool-roles.ts`). */
+  toolRole?: ToolRole;
   /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
@@ -418,6 +421,7 @@ export async function executeBatch(
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,
         signal: ctx.signal,
+        ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {
@@ -454,7 +458,24 @@ export async function executeBatch(
     // Record the real outcome so the next step's gate sees a completed
     // (args + result) entry. Terminal verbs are not tracked.
     if (ctx.tracker && input.resourceClass !== "terminal") {
-      ctx.tracker.recordOutcome(input.call.tool, input.call.args, compressed);
+      const outcome = ctx.tracker.recordOutcome(
+        input.call.tool,
+        input.call.args,
+        compressed,
+      );
+      // Outcome-repeat detector (F25): the same result for the Nth time,
+      // whatever the arguments were. Post-hoc and warn-only like the
+      // read-coverage detector below — the call has already run, and a
+      // legitimate poll or re-test looks exactly like this.
+      if (outcome.repeat) {
+        loopSignals.push({
+          kind: "warn",
+          tool: input.call.tool,
+          count: outcome.count,
+          detector: "outcome_repeat",
+          warningKey: `outcome_repeat:${outcome.fingerprint}`,
+        });
+      }
       observeReadCoverage(input, compressed, ctx.tracker, loopSignals);
     }
     ctx.onCallFinished?.({

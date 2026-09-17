@@ -12,6 +12,7 @@ import {
   executeBatch,
   planBatch,
   toBatchInputs,
+  type BatchLoopSignal,
 } from "./batch-executor.js";
 import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
 
@@ -1348,5 +1349,38 @@ describe("the fusion orchestrator gate in the executor", () => {
       { ...ctx(ctrl.signal), isFusionOrchestrator: () => false },
     );
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("executeBatch outcome-repeat detector (F25)", () => {
+  it("warns on the third identical result across differently-argued calls and never vetoes", async () => {
+    const calls = vi.fn(
+      async (_args: Record<string, unknown>): Promise<CompressedToolResult> =>
+        okResult("os.fs.glob", "src/a.ts src/b.ts"),
+    );
+    const registry = buildRegistry({ "os.fs.glob": calls });
+    const tracker = new ToolLoopTracker();
+    const signals: BatchLoopSignal[] = [];
+    for (const pattern of ["src/*.ts", "src/**/*.ts", "./src/*.ts"]) {
+      const out = await executeBatch(
+        toBatchInputs([{ tool: "os.fs.glob", args: { pattern } }]),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+      signals.push(...out.loopSignals);
+      // Never a veto: the call ran every time.
+      expect(out.results[0]!.compressed?.status).toBe("ok");
+    }
+    expect(calls).toHaveBeenCalledTimes(3);
+    const outcome = signals.filter((s) => s.detector === "outcome_repeat");
+    expect(outcome).toHaveLength(1);
+    expect(outcome[0]).toMatchObject({
+      kind: "warn",
+      tool: "os.fs.glob",
+      count: 3,
+    });
+    expect(outcome[0]!.warningKey.startsWith("outcome_repeat:os.fs.glob|ok|")).toBe(
+      true,
+    );
   });
 });

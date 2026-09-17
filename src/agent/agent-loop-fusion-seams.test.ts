@@ -13,6 +13,11 @@ import type { LlmStreamParams } from "./step-executor.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
+import {
+  buildGrammar,
+  grammarToolNames,
+} from "../llm/grammar/build-grammar.js";
+import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import type { ReflectionRunner } from "../memory/reflection/reflection-runner.js";
@@ -281,5 +286,144 @@ describe("AgentLoop fusion seams", () => {
     // The prompt's tool catalog is built from the same descriptors.
     expect(seen[0]!.prompt).not.toContain("Read a file.");
     expect(seen[0]!.prompt).toContain("Reply to the user.");
+    // ...and so is the per-request grammar a local fallback link would
+    // get: the hidden tool is not merely undescribed but unemittable.
+    const admitted = grammarToolNames(seen[0]!.grammar);
+    expect(admitted).not.toBeNull();
+    expect(admitted).not.toContain("os.fs.read");
+    expect(admitted).toContain("reply");
+  });
+
+  it("an orchestrator turn drops the gate's refusals from the request grammar and keeps their descriptors in the prompt", async () => {
+    // D2 end to end: a LOCAL orchestrator (grammar transport) must not
+    // be able to generate the write the gate would refuse — Gemma spent
+    // 22 minutes on exactly that — while the prefix bytes stay those of
+    // any other turn, so the session's KV cache survives.
+    const seen: LlmStreamParams[] = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const tools: ToolDescriptor[] = [
+      ...TOOLS,
+      {
+        name: "os.fs.write",
+        summary: "Write a file.",
+        argsSchema: '{"path": string, "content": string}',
+      },
+      {
+        name: "fusion.delegate",
+        summary: "Fan out.",
+        argsSchema: '{"tasks": array}',
+      },
+    ];
+    // The gate reads mutability off the REGISTRY (an unregistered name
+    // passes through), so the tools it must refuse have to be registered.
+    const registry = buildDefaultToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["os.fs.write", false],
+      ["fusion.delegate", false],
+    ] as const) {
+      if (registry.has(name)) continue;
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run() {
+          return {
+            tool: name,
+            status: "ok",
+            summary: name,
+            details: {},
+            truncated: false,
+          };
+        },
+      });
+    }
+    const makeLoop = (isFusionMode: boolean) =>
+      new AgentLoop({
+        registry,
+        slotManager: new SlotManager(2),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        llmComplete: async (params) => {
+          seen.push(params);
+          return makeCompletion(
+            JSON.stringify([{ tool: "reply", args: { text: "done" } }]),
+          );
+        },
+        toolDescriptors: tools,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        isFusionMode: () => isFusionMode,
+      });
+    await makeLoop(true).runTurn(
+      createEmptySessionState({ id: "s-orch", workingDir }),
+      turnOptions(),
+    );
+    await makeLoop(false).runTurn(
+      createEmptySessionState({ id: "s-plain", workingDir }),
+      turnOptions(),
+    );
+    const [orchestrator, plain] = seen;
+    const names = grammarToolNames(orchestrator!.grammar);
+    expect(names).not.toBeNull();
+    expect(names).not.toContain("os.fs.write");
+    expect(names).toContain("os.fs.read");
+    expect(names).toContain("fusion.delegate");
+    expect(names).toContain("reply");
+    expect(names).toContain("finish");
+    // The plain turn gets the base grammar untouched.
+    expect(plain!.grammar).toBe(grammar);
+    // The orchestrator ROLE shapes the prefix (per role, stable within
+    // the turn): the write tool is listed by name, not described in
+    // full, and nothing about the gate's per-call refusals touches it.
+    expect(orchestrator!.prompt).toContain("# also available via `tool.view`:");
+    expect(orchestrator!.prompt).toContain("os.fs.write");
+    expect(orchestrator!.prompt).not.toContain("- os.fs.write —");
+    expect(orchestrator!.prompt).toContain("- fusion.delegate —");
+    // The plain turn is `full`: everything in full, no names line.
+    expect(plain!.prompt).toContain("- os.fs.write —");
+    expect(plain!.prompt).not.toContain("# also available via `tool.view`:");
+  });
+
+  it("a worker's builder role reaches the step and its request", async () => {
+    const seen: LlmStreamParams[] = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const tools: ToolDescriptor[] = [
+      ...TOOLS,
+      {
+        name: "os.fs.write",
+        summary: "Write a file.",
+        argsSchema: '{"path": string, "content": string}',
+      },
+      {
+        name: "tasks.cron",
+        summary: "Cron a task.",
+        argsSchema: '{"cron": string}',
+      },
+    ];
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      llmComplete: async (params) => {
+        seen.push(params);
+        return makeCompletion(
+          JSON.stringify([{ tool: "reply", args: { text: "done" } }]),
+        );
+      },
+      toolDescriptors: tools,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    await loop.runTurn(
+      createEmptySessionState({ id: "s-builder", workingDir }),
+      turnOptions({ toolRole: "builder", ephemeral: true }),
+    );
+    const names = grammarToolNames(seen[0]!.grammar);
+    expect(names).toEqual(["os.fs.read", "os.fs.write", "reply"]);
+    expect(seen[0]!.prompt).toContain("- os.fs.write —");
+    expect(seen[0]!.prompt).not.toContain("- tasks.cron —");
+    expect(seen[0]!.prompt).toContain("# also available via `tool.view`: finish, tasks.cron");
   });
 });

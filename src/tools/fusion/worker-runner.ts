@@ -15,8 +15,10 @@ import {
 import { WorkerRunCollector, type WorkerTaskResult } from "./worker-result.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
+  WORKER_TOOL_ROLE,
   isWorkerVisibleTool,
 } from "./worker-tool-policy.js";
+import type { ToolRole } from "../tool-roles.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -38,6 +40,7 @@ export interface WorkerRunnerDeps {
       maxSteps?: number;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
       signal?: AbortSignal;
       eventHook?: (event: AgentLoopEvent) => void;
     },
@@ -239,6 +242,7 @@ async function runOneTask(
         maxSteps: options.workerMaxSteps,
         taskMaxDurationMs: options.workerTimeoutMs,
         toolFilter: isWorkerVisibleTool,
+        toolRole: WORKER_TOOL_ROLE,
         signal: AbortSignal.any([options.signal, timeLimit]),
         eventHook: (event) => {
           if (event.type === "turn_started") announceStart();

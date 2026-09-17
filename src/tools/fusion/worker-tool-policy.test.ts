@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_EXCLUDED_TOOLS,
+  WORKER_TOOL_ROLE,
   isWorkerVisibleTool,
 } from "./worker-tool-policy.js";
+import { roleAdmits } from "../tool-roles.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 
 describe("worker tool policy", () => {
@@ -54,6 +56,17 @@ describe("worker tool policy", () => {
       "mcp.resource.read",
     ]) {
       expect(isWorkerVisibleTool(name), name).toBe(true);
+    }
+  });
+
+  it("a worker builds: its role is `builder`, and nothing it is refused is in that role", () => {
+    expect(WORKER_TOOL_ROLE).toBe("builder");
+    for (const name of WORKER_EXCLUDED_TOOLS) {
+      expect(roleAdmits(WORKER_TOOL_ROLE, name), name).toBe(false);
+    }
+    // What a builder is for stays in full: files, shell, checks, reply.
+    for (const name of ["os.fs.write", "os.shell.run", "verify.run", "reply"]) {
+      expect(roleAdmits(WORKER_TOOL_ROLE, name), name).toBe(true);
     }
   });
 

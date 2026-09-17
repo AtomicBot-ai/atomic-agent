@@ -4,6 +4,8 @@ import {
   emptyFusionOrchestratorState,
   recordDelegation,
   refusalFor,
+  refusedToolNames,
+  wouldRefuse,
 } from "./fusion-orchestrator-mode.js";
 
 /** The two facts the gate reads off a tool: does it exist, does it mutate. */
@@ -134,5 +136,51 @@ describe("recordDelegation", () => {
     expect(
       checkFusionOrchestrator("os.fs.write", REGISTRY, state).allowed,
     ).toBe(false);
+  });
+});
+
+describe("wouldRefuse / refusedToolNames — the gate's verdict ahead of dispatch", () => {
+  const CTX = { registry: REGISTRY };
+
+  it("answers exactly what checkFusionOrchestrator would, before anything is emitted", () => {
+    for (const tool of Object.keys({
+      "mcp.notion.search": 1,
+      "os.fs.read": 1,
+      "os.fs.write": 1,
+      "os.shell.run": 1,
+      "fusion.delegate": 1,
+      reply: 1,
+      finish: 1,
+      "os.fs.wirte": 1,
+    })) {
+      expect(wouldRefuse(tool, CTX), tool).toBe(
+        !checkFusionOrchestrator(tool, REGISTRY, BEFORE).allowed,
+      );
+      // The ledger shapes the refusal text only, never the verdict.
+      expect(wouldRefuse(tool, CTX), tool).toBe(
+        !checkFusionOrchestrator(tool, REGISTRY, AFTER).allowed,
+      );
+    }
+  });
+
+  it("refuses the mutating tools and every MCP tool; keeps reads, the fan-out, the terminals and unknown names", () => {
+    const refused = refusedToolNames(
+      [
+        "os.fs.read",
+        "os.fs.write",
+        "os.shell.run",
+        "mcp.notion.search",
+        "fusion.delegate",
+        "reply",
+        "finish",
+        "os.fs.wirte",
+      ],
+      CTX,
+    );
+    expect([...refused].sort()).toEqual([
+      "mcp.notion.search",
+      "os.fs.write",
+      "os.shell.run",
+    ]);
   });
 });
