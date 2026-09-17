@@ -271,7 +271,14 @@ const ERROR_HEAD_CHARS = 400;
 /**
  * Render the results as the tool's `summary`.
  *
- * Two caps, not one. The per-task cap keeps a single verbose worker
+ * A status table first: one line per task with its status, error head
+ * and notes. A reader that sees only the start of this result — a prompt
+ * renders tool results through a character cap — still sees every task's
+ * outcome and warnings. Without it a seven-task fan-out showed its first
+ * blocks, and the one task that had changed nothing (its note said so, at
+ * the end) passed for `ok`.
+ *
+ * Then two caps, not one. The per-task cap keeps a single verbose worker
  * from crowding its siblings out of the orchestrator's view — the
  * whole point of the fan-out is that it sees all the parts — and the
  * total cap keeps the block inside the step's tool-result budget.
@@ -283,11 +290,37 @@ export function formatDelegateOutput(
   charCap: number,
 ): string {
   if (results.length === 0) return "(no tasks were run)";
-  const perTask = Math.max(200, Math.floor(charCap / results.length));
+  const table = renderStatusTable(results);
+  const room = Math.max(0, charCap - table.length - 4);
+  const perTask = Math.max(200, Math.floor(room / results.length));
   const blocks = results.map((r) => renderBlock(r, perTask));
-  const joined = blocks.join("\n\n");
+  const joined = [table, ...blocks].join("\n\n");
   if (joined.length <= charCap) return joined;
   return `${joined.slice(0, Math.max(0, charCap - 15))}\n… [truncated]`;
+}
+
+/** How much of an error or a note one status-table line carries. */
+const TABLE_DETAIL_CHARS = 160;
+
+function renderStatusTable(results: readonly WorkerTaskResult[]): string {
+  const counts = new Map<string, number>();
+  for (const r of results) {
+    counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+  }
+  const tally = [...counts]
+    .map(([status, n]) => `${n} ${status}`)
+    .join(", ");
+  const lines = results.map((r) =>
+    [
+      `- [${r.id}] ${r.status} — ${r.title}`,
+      ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
+      ...(r.notes ?? []).map((note) => oneLine(note, TABLE_DETAIL_CHARS)),
+    ].join(" — "),
+  );
+  return [
+    `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}`,
+    ...lines,
+  ].join("\n");
 }
 
 function oneLine(text: string, cap: number): string {

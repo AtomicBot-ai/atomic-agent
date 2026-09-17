@@ -145,6 +145,13 @@ export interface RenderTurnOptions {
    * — applies the standard render cap).
    */
   inCurrentMacroTurn?: boolean;
+  /**
+   * File line an `os.fs.read` result starts at — its call's `offset`, or 1
+   * when the call had none. Lets a read that is cut at render time name the
+   * exact `offset` of the rest. Left unset when unknown (a negative offset,
+   * or the call is out of view), and the hint then carries no number.
+   */
+  readStartLine?: number;
 }
 
 /**
@@ -188,6 +195,21 @@ function renderToolResultBody(
     if (options.inCurrentMacroTurn === true) return turn.summary;
     return capSummary(turn.summary, TOOL_RESULT_HISTORY_CAP_CHARS);
   }
+  // The orchestrator's review input. A fan-out report runs past the generic
+  // cap as soon as a few workers answer at length, and a clipped one hid the
+  // task whose declared file was left unchanged — so it is whole for the
+  // turn that reviews it (bounded by the delegate's own output cap) and
+  // keeps the generic cap in history rather than the short one above.
+  if (turn.tool === "fusion.delegate" && options.inCurrentMacroTurn === true) {
+    return turn.summary;
+  }
+  if (turn.tool === "os.fs.read") {
+    return capReadSummary(
+      turn.summary,
+      TOOL_RESULT_RENDER_CAP_CHARS,
+      options.readStartLine,
+    );
+  }
   return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
 }
 
@@ -206,6 +228,58 @@ function capSummary(summary: string, capChars: number): string {
   if (summary.length <= capChars) return summary;
   const keep = Math.max(1, capChars - 40);
   return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
+}
+
+/**
+ * First file line an `os.fs.read` call returns, mirroring the tool's own
+ * argument handling: no numeric `offset` (or `0`) reads from line 1. A
+ * negative offset counts from the end of a file whose length is not known
+ * here, so it yields `undefined`.
+ */
+export function readStartLineOf(
+  args: Record<string, unknown>,
+): number | undefined {
+  const offset = args.offset;
+  if (typeof offset !== "number" || !Number.isFinite(offset)) return 1;
+  const whole = Math.trunc(offset);
+  if (whole < 0) return undefined;
+  return Math.max(1, whole);
+}
+
+/** Room left under the cap for `capReadSummary`'s paging hint. */
+const READ_PAGING_HINT_RESERVE_CHARS = 260;
+
+/**
+ * `capSummary` for file reads, used at prompt render time and when a
+ * batched step's results share one budget (`agent/batch-summary-cap.ts`).
+ * A read cut mid-line with only a char count sends the model back to read
+ * the same file again, which renders the same cut again — a fusion
+ * reviewer re-read a 4.5 KB `main.js` five times and never saw its last
+ * 486 chars. Cut on a line boundary instead and name the range to ask for
+ * next. A result with no usable line break keeps the plain character cut.
+ */
+export function capReadSummary(
+  summary: string,
+  capChars: number,
+  startLine: number | undefined,
+): string {
+  if (summary.length <= capChars) return summary;
+  const budget = Math.max(1, capChars - READ_PAGING_HINT_RESERVE_CHARS);
+  const lastBreak = summary.lastIndexOf("\n", budget);
+  if (lastBreak < budget / 2) return capSummary(summary, capChars);
+  const shown = summary.slice(0, lastBreak);
+  const rest = summary.slice(lastBreak + 1).replace(/\r?\n$/, "");
+  const shownLines = shown.split("\n").length;
+  const hiddenLines = rest.split("\n").length;
+  const next =
+    startLine === undefined
+      ? "the line after the last one shown as `offset`"
+      : `offset: ${startLine + shownLines}`;
+  return (
+    `${shown}\n… [prompt shows the first ${shownLines} lines of this read; ` +
+    `${hiddenLines} more lines are not shown, and reading the same range again shows the same cut. ` +
+    `To see them, call os.fs.read with ${next} and limit: ${shownLines}]`
+  );
 }
 
 /**
