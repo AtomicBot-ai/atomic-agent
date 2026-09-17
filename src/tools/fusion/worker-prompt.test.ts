@@ -4,6 +4,7 @@ import {
   assistantReplyTurn,
   userTurn,
 } from "../../session/conversation-turn.js";
+import { parseDelegateArgs } from "./delegate-args.js";
 import {
   FOLLOW_UP_MAX_CHARS,
   ORIGINAL_REQUEST_CHAR_BUDGET,
@@ -35,6 +36,15 @@ describe("renderWorkerBrief", () => {
     const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
     expect(brief).toContain("TASK t1: Map the auth routes");
     expect(brief).toContain(TASK.instructions);
+  });
+
+  it("labels a task that named no title with its humanised id", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [{ id: "fix_main_sync", instructions: "Fix it." }],
+    });
+    if (!parsed.ok) throw new Error(parsed.error);
+    const brief = renderWorkerBrief(parsed.tasks[0]!, { workingDir: "/repo" });
+    expect(brief).toContain("TASK fix_main_sync: fix main sync");
   });
 
   it("renders deliverable and files only when present", () => {
@@ -152,6 +162,44 @@ describe("renderWorkerBrief — the contract", () => {
     expect(brief).toContain("You may rely on: btn-launch (id from html in index.html)");
     // The frame line is still first.
     expect(brief.split("\n")[0]).toContain("You are a worker agent");
+  });
+
+  it("tells every worker what the contract declares but nothing can honour", () => {
+    // A require nothing provides and a provide nothing can check used
+    // to refuse the call; now they are notes at the end of the block a
+    // worker reads, so it neither waits for the one nor is judged on
+    // the other.
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "t1", instructions: "x" },
+        { id: "organize", instructions: "y" },
+      ],
+      contract: {
+        provides: [
+          { task: "t1", kind: "file", name: "manifest.json" },
+          { task: "organize", kind: "other", name: "done" },
+        ],
+        requires: [{ task: "t1", name: "organized_files" }],
+      },
+    });
+    if (!parsed.ok) throw new Error(parsed.error);
+    const brief = renderWorkerBrief(parsed.tasks[0]!, {
+      workingDir: "/repo",
+      contract: parsed.contract,
+    });
+    const provideNote =
+      'contract: provides "done" (task organize) cannot be checked: no `in`, no owned path, no declared files';
+    const requireNote =
+      'contract: requires "organized_files" (task t1) has no provider — nothing produces it';
+    expect(brief).toContain(provideNote);
+    expect(brief).toContain(requireNote);
+    expect(brief).toContain("- [organize] other done");
+    expect(brief).toContain("You may rely on: nothing from the other parts");
+    // Inside the CONTRACT block, ahead of this task's own three lines.
+    expect(brief.indexOf(provideNote)).toBeGreaterThan(
+      brief.indexOf("CONTRACT — the interface between the parts"),
+    );
+    expect(brief.indexOf(requireNote)).toBeLessThan(brief.indexOf("For TASK t1:"));
   });
 
   it("adds the PROVIDED rule only when there is a contract", () => {

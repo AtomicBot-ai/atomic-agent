@@ -131,6 +131,7 @@ export function buildOsFsWriteTool(
             ? await guardReplacedFile({
                 store: options.restore,
                 sessionId: ctx.sessionId,
+                workingDir: ctx.workingDir,
                 absolute: target,
                 display: target === absolute ? path : target,
                 tool: "os.fs.write",

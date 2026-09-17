@@ -1,9 +1,23 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  emptyManifest,
+  normalizeManifest,
+  normalizeSession,
+  restoreKey,
+  safeSegment,
+  writeCopyExclusively,
+  writeJsonAtomically,
+  type CopiesManifest,
+  type RestoreCopy,
+  type SessionRecord,
+} from "./fs-restore-manifest.js";
+
+export { restoreKey, type RestoreCopy } from "./fs-restore-manifest.js";
 
 /**
- * Where a replaced user file's previous content goes, and which files the
- * agent itself created this session.
+ * Where a replaced user file's previous content goes, and which files
+ * the agent itself created this session.
  *
  * Two live failures motivate this (Gemma 4 31B, 2026-09-15): the model's
  * first step wrote `projects.json` over the user's data file without
@@ -14,118 +28,134 @@ import { basename, join } from "node:path";
  * still lands, but its previous content is saved first and the result
  * says so, loudly when the replacement looks like a loss.
  *
- * Everything lives under `<stateDir>/restore/<sessionId>/`: the copies
- * as `<n>-<basename>` and a small `manifest.json` carrying the copy
- * index and the created-path set. On disk rather than in `SessionState`
- * because the tools consult it BEFORE a write, and a tool sees only its
- * `ToolContext` (working dir, session id) — threading session state into
- * every fs tool would be the invasive change. Keyed by session id, so a
- * resumed session (same id, new process) still knows what it created.
+ * Two keys, because the two facts have different owners (F43):
+ *
+ *  - The COPIES are keyed by WORKING DIRECTORY. `<root>/<key>/` holds
+ *    them as `<n>-<basename>` plus a `manifest.json` (the copy index,
+ *    and the directory's path for a human reading the folder), where
+ *    `key` is the first 32 hex chars of the sha256 of the absolute
+ *    working directory (`restoreKey`). F36 keyed them by session id, and
+ *    a fusion worker is its own ephemeral session: the worker that
+ *    overwrote `sales.csv` saved the original under ITS session, and the
+ *    later worker sent to restore it — a different session — found
+ *    nothing. Any session on the same working directory (the
+ *    orchestrator, a worker of any fan-out, a resumed session) now
+ *    restores it.
+ *  - The CREATED set stays per session, at `<root>/sessions/<id>.json`:
+ *    "the agent made this file" is a fact about the session that made
+ *    it, so another session's replacement of that file is still
+ *    announced.
+ *
+ * On disk rather than in `SessionState` because the tools consult it
+ * BEFORE a write, and a tool sees only its `ToolContext` (working dir,
+ * session id). F36's per-session directories are simply not consulted
+ * any more; nothing is migrated.
+ *
+ * Concurrent writers are the normal case now — the workers of one
+ * fan-out share a manifest — so every read-modify-write of one index is
+ * serialised in-process, and a copy file is created exclusively (`wx`),
+ * its number bumped past anything another process left. A manifest two
+ * processes write at the same instant is last-writer-wins: the loser's
+ * copy file survives on disk, only its index entry is lost.
  */
 
-/** Copies kept per session; the oldest is dropped when a new one lands. */
+/** Copies kept per working directory; the oldest is dropped when a new one lands. */
 export const RESTORE_COPY_CAP = 20;
 /** Largest previous content a copy is taken of. Bigger is announced, not saved. */
 export const RESTORE_MAX_BYTES = 5 * 1024 * 1024;
-/** Paths remembered as created by the agent; the oldest are forgotten past this. */
+/** Paths remembered as created by a session; the oldest are forgotten past this. */
 const CREATED_PATHS_CAP = 5000;
 const MANIFEST_FILE = "manifest.json";
-/** Keeps `<n>-<basename>` under every filesystem's name limit. */
-const COPY_BASENAME_MAX = 200;
-
-export interface RestoreCopy {
-  /** Monotonic per session; the copy's file is `<n>-<basename>`. */
-  n: number;
-  /** Absolute path of the file whose previous content this is. */
-  path: string;
-  /** File name of the copy inside the session's restore directory. */
-  file: string;
-  bytes: number;
-  lines: number;
-  savedAt: number;
-  /** The tool whose call replaced the file. */
-  tool: string;
-}
-
-interface RestoreManifest {
-  version: 1;
-  next: number;
-  created: string[];
-  copies: RestoreCopy[];
-}
+const SESSIONS_DIR = "sessions";
 
 export class FileRestoreStore {
+  /** One in-flight read-modify-write per index (see `serialised`). */
+  private readonly chains = new Map<string, Promise<void>>();
+
   constructor(private readonly root: string) {}
 
-  /** `<root>/<sessionId>` — the session's copies and manifest. */
-  sessionDir(sessionId: string): string {
-    return join(this.root, safeSegment(sessionId));
+  /** `<root>/<restoreKey(workingDir)>` — the working directory's copies and manifest. */
+  copiesDir(workingDir: string): string {
+    return join(this.root, restoreKey(workingDir));
+  }
+
+  /** `<root>/sessions/<sessionId>.json` — the paths this session created. */
+  sessionFile(sessionId: string): string {
+    return join(this.root, SESSIONS_DIR, `${safeSegment(sessionId)}.json`);
   }
 
   /** Did a tool of this session create `absolute` (write to a path that did not exist)? */
   async wasCreated(sessionId: string, absolute: string): Promise<boolean> {
-    const manifest = await this.read(sessionId);
-    return manifest.created.includes(absolute);
+    return (await this.readSession(sessionId)).created.includes(absolute);
   }
 
   async recordCreated(sessionId: string, absolute: string): Promise<void> {
-    const manifest = await this.read(sessionId);
-    if (manifest.created.includes(absolute)) return;
-    manifest.created.push(absolute);
-    if (manifest.created.length > CREATED_PATHS_CAP) {
-      manifest.created.splice(0, manifest.created.length - CREATED_PATHS_CAP);
-    }
-    await this.write(sessionId, manifest);
+    await this.serialised(`session:${sessionId}`, async () => {
+      const record = await this.readSession(sessionId);
+      if (record.created.includes(absolute)) return;
+      record.created.push(absolute);
+      if (record.created.length > CREATED_PATHS_CAP) {
+        record.created.splice(0, record.created.length - CREATED_PATHS_CAP);
+      }
+      await writeJsonAtomically(this.sessionFile(sessionId), record);
+    });
   }
 
   /**
-   * Save `content` as the previous content of `absolute`. The caller has
-   * checked the size cap; the bytes are stored as given so a restore puts
-   * back exactly what was there. Past `RESTORE_COPY_CAP` the oldest copy
-   * of the session — whichever path it belonged to — is removed.
+   * Save `content` as the previous content of `absolute`, a file under
+   * (or reached from) `workingDir`. The caller has checked the size cap;
+   * the bytes are stored as given so a restore puts back exactly what
+   * was there. Past `RESTORE_COPY_CAP` the oldest copy of the working
+   * directory — whichever path or session it belonged to — is removed.
    */
   async saveCopy(
-    sessionId: string,
+    workingDir: string,
     absolute: string,
     content: Uint8Array | string,
-    meta: { tool: string; lines: number },
+    meta: { tool: string; lines: number; sessionId: string },
   ): Promise<RestoreCopy> {
-    const dir = this.sessionDir(sessionId);
-    await mkdir(dir, { recursive: true });
-    const manifest = await this.read(sessionId);
-    const n = manifest.next;
-    const file = `${n}-${basename(absolute).slice(0, COPY_BASENAME_MAX)}`;
-    await writeFile(join(dir, file), content);
-    const copy: RestoreCopy = {
-      n,
-      path: absolute,
-      file,
-      bytes:
-        typeof content === "string"
-          ? Buffer.byteLength(content, "utf8")
-          : content.byteLength,
-      lines: meta.lines,
-      savedAt: Date.now(),
-      tool: meta.tool,
-    };
-    manifest.next = n + 1;
-    manifest.copies.push(copy);
-    while (manifest.copies.length > RESTORE_COPY_CAP) {
-      const dropped = manifest.copies.shift();
-      if (dropped !== undefined) {
-        await rm(join(dir, dropped.file), { force: true });
+    const dir = this.copiesDir(workingDir);
+    return this.serialised(`copies:${dir}`, async () => {
+      await mkdir(dir, { recursive: true });
+      const manifest = await this.readManifest(workingDir);
+      const { n, file } = await writeCopyExclusively(
+        dir,
+        manifest.next,
+        absolute,
+        content,
+      );
+      const copy: RestoreCopy = {
+        n,
+        path: absolute,
+        file,
+        bytes:
+          typeof content === "string"
+            ? Buffer.byteLength(content, "utf8")
+            : content.byteLength,
+        lines: meta.lines,
+        savedAt: Date.now(),
+        tool: meta.tool,
+        sessionId: meta.sessionId,
+      };
+      manifest.next = n + 1;
+      manifest.copies.push(copy);
+      while (manifest.copies.length > RESTORE_COPY_CAP) {
+        const dropped = manifest.copies.shift();
+        if (dropped !== undefined) {
+          await rm(join(dir, dropped.file), { force: true });
+        }
       }
-    }
-    await this.write(sessionId, manifest);
-    return copy;
+      await writeJsonAtomically(join(dir, MANIFEST_FILE), manifest);
+      return copy;
+    });
   }
 
   /** The newest saved copy for `absolute`, or null when none was ever taken (or it aged out). */
   async latestCopy(
-    sessionId: string,
+    workingDir: string,
     absolute: string,
   ): Promise<RestoreCopy | null> {
-    const manifest = await this.read(sessionId);
+    const manifest = await this.readManifest(workingDir);
     for (let i = manifest.copies.length - 1; i >= 0; i--) {
       const copy = manifest.copies[i];
       if (copy !== undefined && copy.path === absolute) return copy;
@@ -133,77 +163,54 @@ export class FileRestoreStore {
     return null;
   }
 
-  async readCopy(sessionId: string, copy: RestoreCopy): Promise<Buffer> {
-    return readFile(join(this.sessionDir(sessionId), copy.file));
+  async readCopy(workingDir: string, copy: RestoreCopy): Promise<Buffer> {
+    return readFile(join(this.copiesDir(workingDir), copy.file));
   }
 
-  /** Every copy the session still holds, oldest first. */
-  async listCopies(sessionId: string): Promise<readonly RestoreCopy[]> {
-    return (await this.read(sessionId)).copies;
+  /** Every copy the working directory still holds, oldest first. */
+  async listCopies(workingDir: string): Promise<readonly RestoreCopy[]> {
+    return (await this.readManifest(workingDir)).copies;
   }
 
-  private async read(sessionId: string): Promise<RestoreManifest> {
+  private async readManifest(workingDir: string): Promise<CopiesManifest> {
     try {
       const raw = await readFile(
-        join(this.sessionDir(sessionId), MANIFEST_FILE),
+        join(this.copiesDir(workingDir), MANIFEST_FILE),
         "utf8",
       );
-      return normalizeManifest(JSON.parse(raw));
+      return normalizeManifest(JSON.parse(raw), workingDir);
     } catch {
-      return emptyManifest();
+      return emptyManifest(workingDir);
     }
   }
 
-  private async write(
-    sessionId: string,
-    manifest: RestoreManifest,
-  ): Promise<void> {
-    const dir = this.sessionDir(sessionId);
-    await mkdir(dir, { recursive: true });
-    const temp = join(dir, `${MANIFEST_FILE}.${process.pid}.tmp`);
-    await writeFile(temp, JSON.stringify(manifest), "utf8");
-    await rename(temp, join(dir, MANIFEST_FILE));
+  private async readSession(sessionId: string): Promise<SessionRecord> {
+    try {
+      const raw = await readFile(this.sessionFile(sessionId), "utf8");
+      return normalizeSession(JSON.parse(raw));
+    } catch {
+      return { version: 1, created: [] };
+    }
   }
-}
 
-function emptyManifest(): RestoreManifest {
-  return { version: 1, next: 1, created: [], copies: [] };
-}
-
-/** A manifest a previous build wrote, or a damaged one, never throws — it just remembers less. */
-function normalizeManifest(raw: unknown): RestoreManifest {
-  if (typeof raw !== "object" || raw === null) return emptyManifest();
-  const record = raw as Partial<RestoreManifest>;
-  const created = Array.isArray(record.created)
-    ? record.created.filter((p): p is string => typeof p === "string")
-    : [];
-  const copies = Array.isArray(record.copies)
-    ? record.copies.filter(isRestoreCopy)
-    : [];
-  const highest = copies.reduce((max, copy) => Math.max(max, copy.n), 0);
-  const next =
-    typeof record.next === "number" && Number.isInteger(record.next)
-      ? Math.max(record.next, highest + 1)
-      : highest + 1;
-  return { version: 1, next, created, copies };
-}
-
-function isRestoreCopy(value: unknown): value is RestoreCopy {
-  if (typeof value !== "object" || value === null) return false;
-  const copy = value as Partial<RestoreCopy>;
-  return (
-    typeof copy.n === "number" &&
-    typeof copy.path === "string" &&
-    typeof copy.file === "string" &&
-    typeof copy.bytes === "number" &&
-    typeof copy.lines === "number" &&
-    typeof copy.savedAt === "number" &&
-    typeof copy.tool === "string"
-  );
-}
-
-/** A session id is `s-<uuid>` today; anything else is made a safe directory name. */
-function safeSegment(id: string): string {
-  const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
-  return safe.length === 0 ? "_" : safe;
+  /**
+   * Run `fn` after every earlier call made under `key` has settled. The
+   * workers of one fan-out replace files at the same time into the same
+   * manifest; two unserialised read-modify-writes would each see `next`
+   * = 5 and one would lose its entry.
+   */
+  private async serialised<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.chains.get(key) ?? Promise.resolve();
+    const run = previous.then(fn);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.chains.set(key, settled);
+    try {
+      return await run;
+    } finally {
+      if (this.chains.get(key) === settled) this.chains.delete(key);
+    }
+  }
 }

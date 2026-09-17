@@ -22,6 +22,7 @@ import {
   isWorkerVisibleTool,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
+import { fingerprintToolOutcome } from "../../agent/loop-detector.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -79,6 +80,90 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.edit",
   "os.fs.patch",
 ]);
+
+/**
+ * How many steps must have COMPLETED, none of them a successful write,
+ * before a task with declared files can be handed back early (F42).
+ *
+ * One completed step without a write is a worker that read the spec.
+ * Two is a worker that is still not writing after it has seen what it
+ * read — the pattern the hand-back exists for (two workers once spent
+ * 40 steps each that way). The rule is evaluated only when a step
+ * finishes, so nothing is ever in flight when it fires: F19 checked it
+ * on a timer at half the time limit, and on a 6 tok/s local worker
+ * that fired 1,350 s into the worker's FIRST completion — 7,293 tokens
+ * of the file it was about to write, discarded for a re-brief from
+ * scratch, with zero completed steps to show for 22 minutes.
+ */
+export const HAND_BACK_MIN_COMPLETED_STEPS = 2;
+
+/**
+ * Tools whose success is not progress on a task that declared files
+ * (F46): a read, a listing, a glob, a grep, a watch, a process list. A
+ * step whose only successful results are these looked at the tree; a
+ * step that ran a shell command, wrote or edited did something to it.
+ */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  "os.fs.read",
+  "os.fs.read_document",
+  "os.fs.list",
+  "os.fs.glob",
+  "os.fs.grep",
+  "os.fs.watch",
+  "os.fs.locate_project",
+  "os.fs.archive.list",
+  "os.fs.archive.read_entry",
+  "os.proc.list",
+  "os.window.list",
+  "tool.view",
+]);
+
+/**
+ * The step half of the hand-back fires only on a STALLED worker (F46):
+ * either its last `HAND_BACK_SAME_RESULT_STEPS` completed steps came
+ * back with the same outcome fingerprint (F25's `fingerprintToolOutcome`
+ * — a worker re-checking for a file that does not exist yet, whatever
+ * the arguments), or its last `HAND_BACK_READ_ONLY_STEPS` steps had no
+ * successful non-read result at all. A worker making distinct,
+ * successful shell calls each step — hashing one file per call — is
+ * busy, and runs to its budget: three of those were handed back at
+ * half their steps in one live fan-out, and the one that was working
+ * never reached its write. The time half is unchanged.
+ */
+export const HAND_BACK_SAME_RESULT_STEPS = 3;
+export const HAND_BACK_READ_ONLY_STEPS = 6;
+
+/** What one completed worker step produced, for the stall check. */
+export interface WorkerStepOutcome {
+  /** The step's tool results' fingerprints, in order; empty for a step with none. */
+  fingerprint: string;
+  /** True when some result was a success from a tool outside `READ_ONLY_TOOLS`. */
+  busy: boolean;
+}
+
+/**
+ * Why the worker's recent steps look stalled, or `undefined` while it is
+ * still doing something: `same result 3×`, `read-only for 6 steps`, or
+ * both joined with ` / `.
+ */
+export function detectStall(
+  steps: readonly WorkerStepOutcome[],
+): string | undefined {
+  const reasons: string[] = [];
+  if (steps.length >= HAND_BACK_SAME_RESULT_STEPS) {
+    const tail = steps.slice(-HAND_BACK_SAME_RESULT_STEPS);
+    if (tail.every((s) => s.fingerprint === tail[0]!.fingerprint)) {
+      reasons.push(`same result ${HAND_BACK_SAME_RESULT_STEPS}×`);
+    }
+  }
+  if (steps.length >= HAND_BACK_READ_ONLY_STEPS) {
+    const tail = steps.slice(-HAND_BACK_READ_ONLY_STEPS);
+    if (tail.every((s) => !s.busy)) {
+      reasons.push(`read-only for ${HAND_BACK_READ_ONLY_STEPS} steps`);
+    }
+  }
+  return reasons.length === 0 ? undefined : reasons.join(" / ");
+}
 
 /** The forced summary a handed-back task replies with. */
 export function formatEarlyHandBack(input: {
@@ -328,28 +413,67 @@ async function runOneTask(
   // The worker's own clock, kept apart from the operator's signal: when
   // it is the one that fired, the worker ran out of time — a ceiling,
   // reported as `max_steps` — rather than being cancelled by anybody.
-  const timeLimit = AbortSignal.timeout(timeoutMs);
+  // This is the hard bound: it fires mid-generation by design, because
+  // a worker stuck in one endless step has nothing else to end it. A
+  // plain timer rather than `AbortSignal.timeout` so a test clock can
+  // drive it; the reason is the `TimeoutError` Node would have raised.
+  const timeLimitController = new AbortController();
+  const timeLimit = timeLimitController.signal;
+  const wallTimer = setTimeout(() => {
+    timeLimitController.abort(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    );
+  }, timeoutMs);
+  wallTimer.unref?.();
   const hitTimeLimit = (): boolean =>
     timeLimit.aborted && !options.signal.aborted;
 
-  // D4: a task that declared output files and has written none by half
-  // its step budget or half its time is handed back with what it found,
-  // instead of spending the other half the same way (two workers once
-  // used 40 steps each and wrote nothing). Only for tasks with declared
+  // D4 / F42 / F46: a task that declared output files and has written
+  // none by half its step budget (and is stalled — `detectStall`) or by
+  // half its time is handed back with what it found, instead of
+  // spending the other half the same way — but only at a step boundary,
+  // and only once `HAND_BACK_MIN_COMPLETED_STEPS` steps have completed.
+  // The check runs when a step finishes, never on
+  // a timer: at that moment the step's completion and its tool calls
+  // are done and the next completion has not been requested, so the
+  // abort costs nothing that was generated. Only for tasks with declared
   // files: a task that legitimately reads before it reports has no
   // half-way mark to miss.
   const handBack = new AbortController();
-  const halfSteps = Math.max(1, Math.floor(options.workerMaxSteps / 2));
-  let stepsStarted = 0;
+  const stepThreshold = Math.max(
+    HAND_BACK_MIN_COMPLETED_STEPS,
+    Math.floor(options.workerMaxSteps / 2),
+  );
+  const halfTimeMs = Math.floor(timeoutMs / 2);
+  let stepsFinished = 0;
   let wroteSomething = false;
+  // What each completed step produced (F46): the current step's results
+  // accumulate here and are folded into `steps` when it finishes.
+  const steps: WorkerStepOutcome[] = [];
+  let currentFingerprints: string[] = [];
+  let currentBusy = false;
+  // Why the step half fired, when it did; carried onto the note so the
+  // orchestrator re-briefs against the cause, not just the count.
+  let stall: string | undefined;
   const maybeHandBack = (): void => {
     if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted) return;
+    if (stepsFinished < HAND_BACK_MIN_COMPLETED_STEPS) return;
+    const pastHalfTime = Date.now() - startedAt >= halfTimeMs;
+    // The step half needs a stalled worker, not merely a busy one at
+    // half its budget; the time half fires as before.
+    const stalled = detectStall(steps);
+    const pastHalfSteps = stepsFinished >= stepThreshold && stalled !== undefined;
+    if (!pastHalfSteps && !pastHalfTime) return;
+    stall = stalled;
     handBack.abort(new Error("handed back early: no file written by half the budget"));
   };
-  const halfTimer = setTimeout(maybeHandBack, Math.floor(timeoutMs / 2));
-  halfTimer.unref?.();
   const handedBack = (): boolean =>
     handBack.signal.aborted && !options.signal.aborted && !timeLimit.aborted;
+  // Whether the hand-back is what ended the turn. The rule can also
+  // trip on the step that closed the turn by itself (a `reply` at the
+  // threshold); that worker finished, and its reply stands — the
+  // ground-truth check below classifies it, not the hand-back.
+  let stoppedByHandBack = false;
 
   let result: WorkerTaskResult;
   try {
@@ -369,9 +493,18 @@ async function runOneTask(
       signal: AbortSignal.any([options.signal, timeLimit, handBack.signal]),
       eventHook: (event) => {
         if (event.type === "turn_started") announceStart();
-        if (event.type === "step_started") {
-          stepsStarted += 1;
-          if (stepsStarted > halfSteps) maybeHandBack();
+        if (event.type === "step_finished") {
+          // `step_finished`, not `step_started`: a started step is a
+          // request in flight, and F19's count of those is how a
+          // worker was stopped mid-file.
+          steps.push({
+            fingerprint: currentFingerprints.join("\n"),
+            busy: currentBusy,
+          });
+          currentFingerprints = [];
+          currentBusy = false;
+          stepsFinished += 1;
+          maybeHandBack();
         }
         if (
           event.type === "llm_event" &&
@@ -385,16 +518,22 @@ async function runOneTask(
         }
         if (
           event.type === "llm_event" &&
-          event.event.type === "tool_call_executed" &&
-          event.event.result.status === "ok" &&
-          WRITE_TOOLS.has(event.event.result.tool)
+          event.event.type === "tool_call_executed"
         ) {
-          wroteSomething = true;
+          const result = event.event.result;
+          if (result.status === "ok" && WRITE_TOOLS.has(result.tool)) {
+            wroteSomething = true;
+          }
+          currentFingerprints.push(fingerprintToolOutcome(result.tool, result));
+          if (result.status === "ok" && !READ_ONLY_TOOLS.has(result.tool)) {
+            currentBusy = true;
+          }
         }
         collector.observe(event);
       },
     });
     const timedOut = turn.reason === "cancelled" && hitTimeLimit();
+    stoppedByHandBack = turn.reason === "cancelled" && handedBack();
     const stopCause = timedOut ? "time_ceiling" : turn.stopCause;
     result = collector.finish({
       id: task.id,
@@ -412,14 +551,17 @@ async function runOneTask(
     });
   } catch (error) {
     const timedOut = hitTimeLimit();
+    stoppedByHandBack = !timedOut && handedBack();
     const aborted =
       !timedOut &&
-      (options.signal.aborted || handedBack() || isAbortError(error));
+      (options.signal.aborted || stoppedByHandBack || isAbortError(error));
     result = collector.finish({
       id: task.id,
       title: task.title,
       reason: timedOut ? "max_steps" : aborted ? "cancelled" : null,
-      stepCount: 0,
+      // A thrown turn reported no count; the steps the hook saw finish
+      // are the ones that happened.
+      stepCount: stoppedByHandBack ? stepsFinished : 0,
       durationMs: Date.now() - startedAt,
       ...(timedOut
         ? // The abort's own message ("aborted due to timeout") says
@@ -429,7 +571,7 @@ async function runOneTask(
         : { error: error instanceof Error ? error.message : String(error) }),
     });
   } finally {
-    clearTimeout(halfTimer);
+    clearTimeout(wallTimer);
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
@@ -439,12 +581,14 @@ async function runOneTask(
   // A hand-back is neither a cancellation nor a failure: the worker was
   // stopped by its own half-way rule and reports what it found, as a
   // task the orchestrator must re-brief.
-  if (handedBack()) {
+  if (stoppedByHandBack) {
     const { error: _dropped, ...rest } = result;
+    // The loop's own count when it reported one; the hook's count of
+    // finished steps otherwise. Both count completed steps — the rule
+    // only fires at a step boundary, so nothing was cut short.
+    const completed = result.stepCount > 0 ? result.stepCount : stepsFinished;
     const summary = formatEarlyHandBack({
-      // Steps completed when the loop reported them; the started count
-      // only when the turn threw before it could.
-      stepsTaken: result.stepCount > 0 ? result.stepCount : stepsStarted,
+      stepsTaken: completed,
       stepBudget: options.workerMaxSteps,
       elapsedMs: result.durationMs,
       timeoutMs,
@@ -454,9 +598,10 @@ async function runOneTask(
       ...rest,
       status: "needs_orchestrator",
       reply: summary,
+      stepCount: completed,
       notes: [
         ...(result.notes ?? []),
-        "handed back early: declared files but wrote none by half the budget — re-brief with a narrower task or the exact content to write",
+        `handed back early: declared files but wrote none by half the budget (${completed} steps completed, none a successful write)${stall === undefined ? "" : ` (stalled: ${stall})`} — re-brief with a narrower task or the exact content to write`,
       ],
     };
   }

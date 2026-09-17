@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { resolveUserPath } from "../os/expand-home.js";
 import {
   describeProvide,
-  ownedPaths,
+  provideSearchPaths,
   type ContractCheck,
   type ContractProvide,
   type DelegateContract,
@@ -65,6 +65,12 @@ export interface ContractReport {
   checks: ContractCheckOutcome[];
   /** Why the checks did not run, when they did not. */
   checksSkipped?: string;
+  /**
+   * What the contract declared that could not be honoured and was run
+   * anyway — a `requires` no task provides (`contractWarnings`). The
+   * workers were told; this is the orchestrator's copy.
+   */
+  warnings?: string[];
 }
 
 /** Files above this are not searched; a provide is not that big. */
@@ -73,8 +79,6 @@ const MAX_SEARCHED_FILE_BYTES = 8 * 1024 * 1024;
 const CHECK_DETAIL_CHARS = 400;
 /** Bound on the `contract:` line of the status table. */
 const CONTRACT_LINE_CHARS = 1200;
-
-const GLOB_CHARS = /[*?[\]{}]/;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -100,24 +104,13 @@ export function contentProvides(
   return content.includes(provide.name);
 }
 
-/** Where a non-file provide is looked for: `in`, else owned paths, else declared files. */
-function searchPaths(
-  provide: ContractProvide,
-  contract: DelegateContract,
-  task: DelegateTask | undefined,
-): string[] {
-  if (provide.in !== undefined) return [provide.in];
-  const owned = ownedPaths(contract, provide.task).filter(
-    (p) => !GLOB_CHARS.test(p),
-  );
-  if (owned.length > 0) return owned;
-  return (task?.files ?? []).filter((f) => !GLOB_CHARS.test(f));
-}
-
 /**
  * Check every provide against the working directory. Never throws: a
  * path that cannot be read counts as not providing, with the reason on
- * the finding.
+ * the finding. A non-file provide with nowhere to be looked for gets no
+ * finding at all — it is the parser's warning (`contractWarnings`), on
+ * the `contract:` line already, and a "missing" verdict over a search
+ * that never happened would read as the worker's failure.
  */
 export async function inspectContractProvides(
   contract: DelegateContract,
@@ -159,16 +152,8 @@ export async function inspectContractProvides(
       continue;
     }
     const task = tasks.find((t) => t.id === provide.task);
-    const where = searchPaths(provide, contract, task);
-    if (where.length === 0) {
-      findings.push({
-        ...base,
-        where,
-        present: false,
-        detail: "no file to look in (give `in` or an owners entry)",
-      });
-      continue;
-    }
+    const where = provideSearchPaths(provide, contract, task);
+    if (where.length === 0) continue;
     let present = false;
     let unreadable = 0;
     for (const path of where) {
@@ -318,8 +303,11 @@ export function applyCheckOutcomes(
 
 /**
  * The `contract:` line of the status table — presence first, then the
- * checks that belong to no task, then why the checks did not run.
- * Nothing when the contract declared nothing checkable.
+ * checks that belong to no task, then why the checks did not run, then
+ * the warnings the call was run with (an unprovided require, so the
+ * orchestrator fixes the contract on its next call instead of wondering
+ * why a worker never found it). Nothing when the contract declared
+ * nothing checkable and raised no warning.
  */
 export function renderContractLine(report: ContractReport): string | undefined {
   const parts: string[] = [];
@@ -348,6 +336,7 @@ export function renderContractLine(report: ContractReport): string | undefined {
     );
   }
   if (report.checksSkipped !== undefined) parts.push(report.checksSkipped);
+  parts.push(...(report.warnings ?? []));
   if (parts.length === 0) return undefined;
   return `contract: ${head(parts.join("; "), CONTRACT_LINE_CHARS)}`;
 }

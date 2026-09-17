@@ -63,7 +63,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.fs.restore",
     summary:
-      "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank this session — the result of that call said it was saved (may require approval).",
+      "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).",
     argsSchema: "{ path: string }",
     tier: "rare",
   },

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  contractWarnings,
   MAX_CONTRACT_RENDERED_CHARS,
   ownedPaths,
+  provideSearchPaths,
   renderContractBlock,
   renderContractForTask,
+  uncheckableProvides,
+  unprovidedRequires,
   type DelegateContract,
 } from "./contract.js";
 
@@ -91,5 +95,66 @@ describe("renderContractForTask", () => {
     expect(
       ownedPaths({ owners: { b: "t", a: "t", c: "u" } }, "t"),
     ).toEqual(["b", "a"]);
+  });
+});
+
+describe("contract warnings", () => {
+  // What a live Gemma 4 31B orchestrator wrote: a require nothing
+  // provides, and a provide with nowhere to be looked for. Each was a
+  // refusal costing minutes; both are notes now.
+  const LOOSE: DelegateContract = {
+    provides: [
+      { task: "html", kind: "id", name: "btn-launch", in: "index.html" },
+      { task: "organize", kind: "other", name: "done" },
+    ],
+    requires: [
+      { task: "main", name: "btn-launch" },
+      { task: "index", name: "organized_files" },
+    ],
+  };
+  const TASKS = [{ id: "html" }, { id: "organize" }, { id: "main" }, { id: "index" }];
+  const PROVIDE_NOTE =
+    'provides "done" (task organize) cannot be checked: no `in`, no owned path, no declared files';
+  const REQUIRE_NOTE =
+    'requires "organized_files" (task index) has no provider — nothing produces it';
+
+  it("names the uncheckable provide and the unprovided require, in that order", () => {
+    expect(uncheckableProvides(LOOSE, TASKS)).toEqual([LOOSE.provides![1]]);
+    expect(unprovidedRequires(LOOSE)).toEqual([LOOSE.requires![1]]);
+    expect(contractWarnings(LOOSE, TASKS)).toEqual([PROVIDE_NOTE, REQUIRE_NOTE]);
+    expect(contractWarnings(CONTRACT, [])).toEqual([]);
+  });
+
+  it("looks for a provide in `in`, else the owned paths, else the declared files — never a glob", () => {
+    const provide = { task: "t", kind: "symbol" as const, name: "X" };
+    expect(provideSearchPaths({ ...provide, in: "a.js" }, { owners: { "b.js": "t" } }, { id: "t", files: ["c.js"] })).toEqual(["a.js"]);
+    expect(provideSearchPaths(provide, { owners: { "b.js": "t", "js/**": "t" } }, { id: "t", files: ["c.js"] })).toEqual(["b.js"]);
+    expect(provideSearchPaths(provide, {}, { id: "t", files: ["c.js", "d/*.js"] })).toEqual(["c.js"]);
+    expect(provideSearchPaths(provide, { owners: { "js/**": "t" } }, { id: "t", files: ["d/*.js"] })).toEqual([]);
+    expect(provideSearchPaths(provide, {}, undefined)).toEqual([]);
+    // A file provide is its own path and is never uncheckable.
+    expect(uncheckableProvides({ provides: [{ task: "t", kind: "file", name: "x.txt" }] }, [])).toEqual([]);
+  });
+
+  it("the block keeps the uncheckable provide as declared, drops the unprovided require from REQUIRES and appends both notes", () => {
+    const block = renderContractBlock({ ...LOOSE, warnings: contractWarnings(LOOSE, TASKS) });
+    expect(block).toContain("- [organize] other done");
+    expect(block).toContain("REQUIRES:\n- [main] btn-launch\n");
+    expect(block).not.toContain("- [index] organized_files");
+    expect(block.split("\n").slice(-2)).toEqual([
+      `contract: ${PROVIDE_NOTE}`,
+      `contract: ${REQUIRE_NOTE}`,
+    ]);
+    // Without stored warnings the block says nothing — the parser is the one that stores them.
+    expect(renderContractBlock(LOOSE)).not.toContain("contract: ");
+  });
+
+  it("a task's own line drops a require nobody provides", () => {
+    expect(renderContractForTask(LOOSE, "index")).toContain(
+      "You may rely on: nothing from the other parts",
+    );
+    expect(renderContractForTask(LOOSE, "main")).toContain(
+      "You may rely on: btn-launch (id from html in index.html)",
+    );
   });
 });

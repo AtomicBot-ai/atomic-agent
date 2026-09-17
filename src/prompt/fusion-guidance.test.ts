@@ -120,12 +120,24 @@ describe("the ### fusion prefix section", () => {
     expect(FUSION_GUIDANCE).toContain("needs_orchestrator");
   });
 
+  it("says a task that replaced a user's file is not done until it is restored or the replacement was wanted (F43)", () => {
+    // The status table carries `replaced the user's file sales.csv
+    // (2,401 → 9 lines)` on the row; without this line the orchestrator
+    // read the fact and merged anyway. The restore is a worker's call,
+    // because the orchestrator's own writes are refused.
+    expect(FUSION_GUIDANCE).toContain(
+      "A task that replaced a pre-existing file is not done until the file is restored (`os.fs.restore` in a worker) or the replacement was asked for.",
+    );
+  });
+
   it("stays short enough to live in every turn's prefix", () => {
     // Every byte here is paid on every step of every fusion turn. The
     // machine lines carry capacity as well as a count — slots, a
     // worker's share of the shared context, the shared GPU — which is
     // what the orchestrator needed and could not see when a four-worker
     // fan-out overflowed its server; ~100 tokens is what that costs.
+    // F43's restore line was paid for by shortening the others — the
+    // budget is the budget.
     expect(FUSION_GUIDANCE.length).toBeLessThan(1400);
     expect(buildFusionGuidance(FACTS).length).toBeLessThan(1900);
     expect(

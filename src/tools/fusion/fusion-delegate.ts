@@ -19,6 +19,11 @@ import {
   type ContractCheckRunner,
   type ContractReport,
 } from "./contract-checks.js";
+import {
+  contractForWave,
+  dependencyWarnings,
+  planWaves,
+} from "./contract-waves.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
 import {
   delegateOutcome,
@@ -112,7 +117,9 @@ function error(
  *     Manage → LLM leaves fusion on the next read (§"Run modes"), and a
  *     tool that kept fanning out would be spending on a leg the operator
  *     just walked away from.
- *  3. **Only on valid args.** See `parseDelegateArgs`.
+ *  3. **Only on valid args.** See `parseDelegateArgs`: the refusal
+ *     names every problem of the call at once, so a slow local
+ *     orchestrator regenerates once, not once per field.
  *
  * Once the call runs, its status summarises its tasks
  * (`details.outcome`): `ok` while any task delivered anything — partial
@@ -161,7 +168,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers?, contract? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, instructions, title?, deliverable?, files? }], maxWorkers?, contract? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -318,27 +325,56 @@ export function buildFusionDelegateTool(
         ? (deps.localTokensPerSecond?.() ?? null)
         : null;
 
+      // The order the contract imposes (F45): a task that requires what
+      // a sibling provides runs in a later wave than that sibling, so it
+      // is not sent to wait for a file that does not exist yet. Without
+      // a contract, or without a satisfiable `requires`, the plan is one
+      // wave holding every task — the fan-out as it always ran.
+      const plan = planWaves(
+        parsed.tasks.map((t) => t.id),
+        parsed.contract,
+      );
+      const ordered = plan.dependencies.size > 0;
+      // What the waves add to the contract's own warnings: a cycle, and
+      // every provider that had not delivered when its dependent ran.
+      // Each wave's block carries everything known so far; the result's
+      // `contract:` line carries all of it.
+      const waveWarnings: string[] = plan.cycle === undefined ? [] : [plan.cycle];
+
       let results: WorkerTaskResult[];
       try {
-        results = await runWorkerTasks(deps, {
-          ...(originalRequest === undefined ? {} : { originalRequest }),
-          ...(parsed.contract === undefined ? {} : { contract: parsed.contract }),
-          parentSessionId: ctx.sessionId,
-          tasks: parsed.tasks,
-          maxWorkers,
-          providerId: workerProviderId,
-          workerModel,
-          workerMaxSteps: mode.workerMaxSteps,
-          workerTimeoutMs: mode.workerTimeoutMs,
-          localTokensPerSecond,
-          ...(mode.workerReasoning === undefined
-            ? {}
-            : { workerReasoning: mode.workerReasoning }),
-          ...(mode.workerMaxOutputTokens === undefined
-            ? {}
-            : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
-          writeScope,
-          signal: ctx.signal,
+        const finished = new Map<string, WorkerTaskResult>();
+        for (const wave of plan.waves) {
+          waveWarnings.push(
+            ...dependencyWarnings(wave, plan.dependencies, finished),
+          );
+          const contract = contractForWave(parsed.contract, waveWarnings);
+          const waveResults = await runWorkerTasks(deps, {
+            ...(originalRequest === undefined ? {} : { originalRequest }),
+            ...(contract === undefined ? {} : { contract }),
+            parentSessionId: ctx.sessionId,
+            tasks: parsed.tasks.filter((t) => wave.includes(t.id)),
+            maxWorkers,
+            providerId: workerProviderId,
+            workerModel,
+            workerMaxSteps: mode.workerMaxSteps,
+            workerTimeoutMs: mode.workerTimeoutMs,
+            localTokensPerSecond,
+            ...(mode.workerReasoning === undefined
+              ? {}
+              : { workerReasoning: mode.workerReasoning }),
+            ...(mode.workerMaxOutputTokens === undefined
+              ? {}
+              : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
+            writeScope,
+            signal: ctx.signal,
+          });
+          for (const result of waveResults) finished.set(result.id, result);
+        }
+        // In the caller's task order, whatever wave each ran in.
+        results = parsed.tasks.flatMap((t) => {
+          const result = finished.get(t.id);
+          return result === undefined ? [] : [result];
         });
       } catch (err) {
         // `runWorkerTasks` is written not to throw; if it ever does, the
@@ -367,12 +403,19 @@ export function buildFusionDelegateTool(
           { workingDir: ctx.workingDir, signal: ctx.signal },
         );
         results = applyCheckOutcomes(results, checks.outcomes);
+        // What the call was run with despite the contract — a require
+        // nobody provides, a provide nothing can check, a cycle in the
+        // requires, a provider that had not delivered when its dependent
+        // ran. The workers read it in their block; the orchestrator
+        // reads it here, on the line and in the details.
+        const warnings = [...(parsed.contract.warnings ?? []), ...waveWarnings];
         contract = {
           findings,
           checks: checks.outcomes,
           ...(checks.checksSkipped === undefined
             ? {}
             : { checksSkipped: checks.checksSkipped }),
+          ...(warnings.length === 0 ? {} : { warnings }),
         };
       }
       const contractLine =
@@ -419,6 +462,7 @@ export function buildFusionDelegateTool(
           output: `${formatDelegateOutput(results, deps.outputCharCap, {
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
+            ...(ordered ? { waves: plan.waves } : {}),
           })}${hint}`,
           details: {
             tasks: results,
@@ -426,6 +470,9 @@ export function buildFusionDelegateTool(
             maxWorkers,
             requestedWorkers: requested,
             ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),
+            // The wave plan, for the orchestrator and the trace's tool
+            // row alike — only when the contract ordered anything.
+            ...(ordered ? { waves: plan.waves } : {}),
             ...(contract === undefined ? {} : { contract }),
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
           },

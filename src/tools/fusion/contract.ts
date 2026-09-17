@@ -17,6 +17,22 @@
  * Presence is all this module can promise. A grep sees that `HD.Ship`
  * appears in `js/ship.js`; whether it is a class or an object is what
  * `checks` — a runtime — is for.
+ *
+ * Two things the contract can declare are *warnings*, not refusals
+ * (F44): a `requires` entry that names nothing any task provides, and a
+ * non-file `provides` entry with nowhere to be looked for (no `in`, no
+ * owned path, no declared file). Each used to reject the whole call,
+ * and a local orchestrator at ~5 tok/s paid four minutes of generation
+ * per refusal to learn about one name — the third and fourth
+ * consecutive refusals of one afternoon. Nothing about either stops the
+ * fan-out from running: `contractWarnings` names them, the parser
+ * stores them on the contract, `renderContractBlock` appends them to
+ * the block every worker reads (the per-task "You may rely on" line
+ * drops an unprovided require; an uncheckable provide stays listed as
+ * declared), the presence check skips what it cannot check, and the
+ * same notes come back on the result's `contract:` line so the
+ * orchestrator can fix the contract on its next call, with the work
+ * already done.
  */
 
 /** What a `provides` entry can name. `file` uses `name` as the path. */
@@ -45,7 +61,10 @@ export interface ContractProvide {
 export interface ContractRequire {
   /** The task that relies on it. */
   task: string;
-  /** Matches a `provides[].name` exactly. */
+  /**
+   * Should match a `provides[].name` exactly. One that matches none is
+   * carried through as written and reported by `contractWarnings`.
+   */
   name: string;
 }
 
@@ -61,6 +80,15 @@ export interface DelegateContract {
   provides?: ContractProvide[];
   requires?: ContractRequire[];
   checks?: ContractCheck[];
+  /**
+   * What the contract declares that cannot be honoured, and the call
+   * ran with anyway — `contractWarnings`, computed once by
+   * `parseDelegateArgs` because one of them needs the tasks' declared
+   * files. Rendered at the end of every worker's block and carried to
+   * the result's `contract:` line and `details.contract.warnings`. A
+   * contract built by hand carries none unless it says so.
+   */
+  warnings?: string[];
 }
 
 export const MAX_CONTRACT_PROVIDES = 64;
@@ -87,6 +115,89 @@ export function ownedPaths(
     .map(([path]) => path);
 }
 
+/** Globs are patterns, not paths — never somewhere a provide can be looked for. */
+const GLOB_CHARS = /[*?[\]{}]/;
+
+/** The one thing a task contributes to where its provides are looked for. */
+export interface ContractTaskFiles {
+  id: string;
+  files?: readonly string[];
+}
+
+/**
+ * Where a non-file provide is looked for: `in`, else the paths its task
+ * owns, else the files its task declared — globs excluded at every
+ * step. Empty means it cannot be checked at all; the parser warns about
+ * that and the presence check skips it, both through this one rule.
+ */
+export function provideSearchPaths(
+  provide: ContractProvide,
+  contract: DelegateContract,
+  task: ContractTaskFiles | undefined,
+): string[] {
+  if (provide.in !== undefined) return [provide.in];
+  const owned = ownedPaths(contract, provide.task).filter(
+    (p) => !GLOB_CHARS.test(p),
+  );
+  if (owned.length > 0) return owned;
+  return (task?.files ?? []).filter((f) => !GLOB_CHARS.test(f));
+}
+
+/** The non-file `provides` entries with nowhere to be looked for, in declaration order. */
+export function uncheckableProvides(
+  contract: DelegateContract,
+  tasks: readonly ContractTaskFiles[],
+): ContractProvide[] {
+  return (contract.provides ?? []).filter(
+    (p) =>
+      p.kind !== "file" &&
+      provideSearchPaths(
+        p,
+        contract,
+        tasks.find((t) => t.id === p.task),
+      ).length === 0,
+  );
+}
+
+/** `provides "done" (task organize) cannot be checked: no \`in\`, no owned path, no declared files` */
+export function describeUncheckableProvide(provide: ContractProvide): string {
+  return `provides "${provide.name}" (task ${provide.task}) cannot be checked: no \`in\`, no owned path, no declared files`;
+}
+
+function isProvided(contract: DelegateContract, require: ContractRequire): boolean {
+  return (contract.provides ?? []).some((p) => p.name === require.name);
+}
+
+/** The `requires` entries no `provides` entry satisfies, in declaration order. */
+export function unprovidedRequires(
+  contract: DelegateContract,
+): ContractRequire[] {
+  return (contract.requires ?? []).filter((r) => !isProvided(contract, r));
+}
+
+/** `requires "organized_files" (task index) has no provider — nothing produces it` */
+export function describeUnprovidedRequire(require: ContractRequire): string {
+  return `requires "${require.name}" (task ${require.task}) has no provider — nothing produces it`;
+}
+
+/**
+ * What the contract declares that cannot be honoured, one line each,
+ * without the `contract:` prefix — the result's `contract:` line and
+ * `details.contract.warnings` carry them as they are; the worker's
+ * block prefixes them itself. Provides first, then requires, each in
+ * declaration order. Empty for a contract with nothing to warn about,
+ * so a caller can test the length.
+ */
+export function contractWarnings(
+  contract: DelegateContract,
+  tasks: readonly ContractTaskFiles[],
+): string[] {
+  return [
+    ...uncheckableProvides(contract, tasks).map(describeUncheckableProvide),
+    ...unprovidedRequires(contract).map(describeUnprovidedRequire),
+  ];
+}
+
 function renderCheck(check: ContractCheck): string {
   const { task, ...spec } = check;
   const json = JSON.stringify(spec);
@@ -99,7 +210,10 @@ function renderCheck(check: ContractCheck): string {
 
 /**
  * The block shared by every worker: all owners, provides, requires and
- * checks. Measured against `MAX_CONTRACT_RENDERED_CHARS` at parse time.
+ * checks, then the contract's `warnings`, one `contract: …` line each,
+ * so no worker waits for or goes looking for something no sibling was
+ * asked to make. Measured against `MAX_CONTRACT_RENDERED_CHARS` at
+ * parse time, warnings included.
  */
 export function renderContractBlock(contract: DelegateContract): string {
   const lines = [
@@ -119,7 +233,12 @@ export function renderContractBlock(contract: DelegateContract): string {
       ...provides.map((p) => `- [${p.task}] ${describeProvide(p)}`),
     );
   }
-  const requires = contract.requires ?? [];
+  // Only the requires somebody provides are listed as requirements; an
+  // unmatched one is the note at the end, not a dependency a worker
+  // could wait on.
+  const requires = (contract.requires ?? []).filter((r) =>
+    isProvided(contract, r),
+  );
   if (requires.length > 0) {
     const byTask = new Map<string, string[]>();
     for (const r of requires) {
@@ -137,13 +256,17 @@ export function renderContractBlock(contract: DelegateContract): string {
       ...checks.map(renderCheck),
     );
   }
+  lines.push(...(contract.warnings ?? []).map((w) => `contract: ${w}`));
   return lines.join("\n");
 }
 
 /**
  * The three lines that turn the shared block into this worker's own
  * obligations. A require is resolved to the provide it names so the
- * worker knows who produces it and where to find it.
+ * worker knows who produces it and where to find it; one that resolves
+ * to nothing is left off the line (the block's note covers it), because
+ * "you may rely on X" over an X nobody makes is a promise to a worker
+ * that cannot ask.
  */
 export function renderContractForTask(
   contract: DelegateContract,
@@ -153,11 +276,13 @@ export function renderContractForTask(
   const provides = (contract.provides ?? []).filter((p) => p.task === taskId);
   const relies = (contract.requires ?? [])
     .filter((r) => r.task === taskId)
-    .map((r) => {
+    .flatMap((r) => {
       const source = (contract.provides ?? []).find((p) => p.name === r.name);
       return source === undefined
-        ? r.name
-        : `${r.name} (${source.kind} from ${source.task}${source.in === undefined ? "" : ` in ${source.in}`})`;
+        ? []
+        : [
+            `${r.name} (${source.kind} from ${source.task}${source.in === undefined ? "" : ` in ${source.in}`})`,
+          ];
     });
   return [
     `You own: ${owned.length > 0 ? owned.join(", ") : "no path in this contract — write only the files your TASK names"}`,

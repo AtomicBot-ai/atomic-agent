@@ -4,6 +4,12 @@ import type {
   AgentLoopReason,
   RunTurnResult,
 } from "../../agent/agent-loop.js";
+import {
+  countReplacedInputs,
+  describeReplacedInput,
+  replacedInputsOf,
+  type ReplacedInput,
+} from "./replaced-inputs.js";
 import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
 
 /**
@@ -107,6 +113,12 @@ export interface WorkerTaskResult {
    * (`contract-checks.ts`). A failure is also the row's `error`.
    */
   checks?: TaskCheckSummary;
+  /**
+   * Every pre-existing file this task's writes replaced or shrank (the
+   * replace guard's hits, `replaced-inputs.ts`), in call order. The
+   * status stands; the row and the head line carry the fact.
+   */
+  replacedInputs?: ReplacedInput[];
 }
 
 export interface TaskCheckSummary {
@@ -157,6 +169,7 @@ export class WorkerRunCollector {
   private lastWaitReason: string | undefined;
   /** The last few tool results, one line each — what a hand-back reports. */
   private readonly recent: string[] = [];
+  private readonly replaced: ReplacedInput[] = [];
 
   /** Feed one `AgentLoopEvent` from the worker turn's hook. */
   observe(event: AgentLoopEvent): void {
@@ -203,6 +216,9 @@ export class WorkerRunCollector {
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
       }
+      // The guard's hit is in the result's details whatever its status:
+      // the write landed before the guard spoke.
+      this.replaced.push(...replacedInputsOf(result.tool, result.details));
       this.recent.push(
         `${result.tool} ${result.status}: ${oneLine(result.summary, FINDING_CHARS)}`,
       );
@@ -303,6 +319,9 @@ export class WorkerRunCollector {
       ...(error === undefined ? {} : { error }),
       ...(hint === undefined ? {} : { hint }),
       ...(notes.length === 0 ? {} : { notes }),
+      ...(this.replaced.length === 0
+        ? {}
+        : { replacedInputs: [...this.replaced] }),
     };
   }
 }
@@ -478,13 +497,29 @@ export interface DelegateOutputExtras {
   contractLine?: string;
   /** The fan-out's priced worker spend, when the worker model is priced. */
   spend?: FanoutSpend | null;
+  /**
+   * The wave plan the contract's requires imposed (`contract-waves.ts`),
+   * task ids wave by wave. Absent when the contract ordered nothing —
+   * the head line then reads exactly as before.
+   */
+  waves?: readonly (readonly string[])[];
+}
+
+/** `analyze → organize, index` — waves in order, each wave's tasks together. */
+export function describeWaves(
+  waves: readonly (readonly string[])[],
+): string {
+  return waves.map((wave) => wave.join(", ")).join(" → ");
 }
 
 /**
- * The head line (with the bill, when there is one), the contract's
- * verdict when there is one, then one line per task. The contract line
- * sits second because it is the one cross-task fact: a missing provide
- * is a hole between parts, not a property of any single row.
+ * The head line (with the replaced-input count and the bill, when there
+ * are any), the contract's verdict when there is one, then one line per
+ * task. The contract line sits second because it is the one cross-task
+ * fact: a missing provide is a hole between parts, not a property of
+ * any single row. A replaced input is first on its row, ahead of the
+ * error and the notes: the status stands, but a user's file is gone
+ * until someone restores it, and that outranks why the task stopped.
  */
 function renderStatusTable(
   results: readonly WorkerTaskResult[],
@@ -505,16 +540,28 @@ function renderStatusTable(
     spend === null
       ? ""
       : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in / ${spend.completionTokens.toLocaleString("en-US")} out)`;
+  const replacedCount = countReplacedInputs(results);
+  const replaced = replacedCount === null ? "" : ` — ${replacedCount}`;
+  // The order the contract imposed, on the head line: which tasks
+  // waited for which, so a report of "no_changes" on a later wave reads
+  // against what its provider delivered.
+  const waves =
+    extra.waves === undefined
+      ? ""
+      : ` in ${extra.waves.length} wave${extra.waves.length === 1 ? "" : "s"} (${describeWaves(extra.waves)})`;
   const lines = results.map((r) =>
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
+      ...(r.replacedInputs ?? []).map((input) =>
+        oneLine(describeReplacedInput(input), TABLE_DETAIL_CHARS),
+      ),
       ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
       ...(r.checks ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)] : []),
       ...(r.notes ?? []).map((note) => oneLine(note, TABLE_DETAIL_CHARS)),
     ].join(" — "),
   );
   return [
-    `${results.length} task${results.length === 1 ? "" : "s"}: ${tally}${cost}`,
+    `${results.length} task${results.length === 1 ? "" : "s"}${waves}: ${tally}${replaced}${cost}`,
     ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
   ].join("\n");
@@ -527,9 +574,9 @@ function oneLine(text: string, cap: number): string {
 
 /**
  * The diagnosis goes ABOVE the reply: the error on the head line, then
- * the hint and notes. A worker that died on its provider has no reply
- * worth the space, and one that claimed work it did not do has a reply
- * that must not be read first.
+ * the replaced inputs, the hint and notes. A worker that died on its
+ * provider has no reply worth the space, and one that claimed work it
+ * did not do has a reply that must not be read first.
  */
 function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
   const head =
@@ -538,6 +585,7 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
     `${result.tools.calls} tool calls, ${result.tools.errors} errors)` +
     (result.error ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}` : "");
   const diagnosis = [
+    ...(result.replacedInputs ?? []).map(describeReplacedInput),
     ...(result.hint ? [`hint: ${result.hint}`] : []),
     ...(result.checks
       ? [describeChecks(result.checks, ERROR_HEAD_CHARS, result.error)]
