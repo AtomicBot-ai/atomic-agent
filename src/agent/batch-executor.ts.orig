@@ -811,7 +811,6 @@ function runSyncLoopGate(
   // turn gracefully (the redirect notice did not land). It rides the same
   // breaker path as the consecutive-veto streak.
   const wanderingEscalated = ctx.tracker.isWanderingEscalated(tool, args);
-  const spreadAtGate = ctx.tracker.wanderingSpread(tool, args);
   const verdict = ctx.tracker.check(tool, args);
   ctx.tracker.recordCall(tool, args);
 
@@ -848,20 +847,11 @@ function runSyncLoopGate(
       },
     });
     ctx.tracker.recordOutcome(tool, args, vetoResult);
-    // The signal names what ended the turn. When the escalation alone
-    // forced the breaker, that is the wandering cap even if THIS call is a
-    // verbatim repeat (a parallel batch can carry the spread past the cap
-    // before anything is refused, and the window keeps it there). Taking
-    // the repeat verdict here would end the turn on "a no-progress loop
-    // after 0 blocked attempts". The veto body above keeps the repeat
-    // wording: it describes the call, this describes the stop.
-    const stoppedByWandering =
-      wanderingEscalated && !breakerTripped && verdict.level !== "critical";
     loopSignals.push({
       kind: forceBreaker ? "breaker" : "critical",
       tool,
-      count: stoppedByWandering ? spreadAtGate : count,
-      detector: stoppedByWandering ? "wandering" : detector,
+      count,
+      detector,
       warningKey: verdict.warningKey,
     });
     return { proceed: false, vetoResult };

@@ -333,8 +333,9 @@ describe("loop notice formatters", () => {
   it("formatForcedLoopReply words a wandering stop as a spread cap, not a repeat", () => {
     const reply = formatForcedLoopReply("os.web.fetch", 12, "wandering");
     expect(reply).toContain("`os.web.fetch`");
-    expect(reply).toContain("12 different arguments");
-    expect(reply).toContain("last call was not run");
+    expect(reply).toContain("hit the limit on different arguments");
+    expect(reply).toContain("12, counting the last call, which was not run");
+    expect(reply).not.toMatch(/this turn|single turn/i);
     expect(reply.toLowerCase()).toContain("best answer");
     expect(reply).not.toMatch(/no-progress/i);
     expect(reply).not.toMatch(/blocked attempts/i);

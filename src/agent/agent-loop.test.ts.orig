@@ -2494,8 +2494,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     const last = result.session.turns.at(-1);
     expect(last).toMatchObject({ kind: "assistant_reply" });
     const text = (last as { text: string }).text;
-    expect(text).toContain("hit the limit on different arguments");
-    expect(text).toContain("12, counting the last call");
+    expect(text).toContain("12 different arguments");
     expect(text).not.toMatch(/no-progress|blocked attempts|repeated/i);
   });
 
