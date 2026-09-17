@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it, expect } from "vitest";
+import { resetConfigCache } from "../config/index.js";
 import {
   GEMMA4_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
@@ -2036,5 +2040,75 @@ describe("### request pins the operator's request once its carrier is dropped (F
     expect(requestInView("   ", turns)).toBe(true);
     expect(requestInView(`hello\n\n${REQUEST_FOLLOW_UP_MARKER}\ncontinue`, turns)).toBe(true);
     expect(requestInView(`other\n\n${REQUEST_FOLLOW_UP_MARKER}\nhello`, turns)).toBe(false);
+  });
+});
+
+describe("buildPrompt profile vote filter", () => {
+  const stateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+  afterEach(() => {
+    if (stateDir === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
+    else process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+  });
+
+  const facts = [
+    {
+      key: "language",
+      value: "ru",
+      updatedAt: 1,
+      pinned: true,
+      keywords: [],
+      voteScore: 0,
+    },
+    {
+      key: "stale_rule",
+      value: "always answer in French",
+      updatedAt: 2,
+      pinned: true,
+      keywords: [],
+      voteScore: -3,
+    },
+  ];
+
+  function build(profileFilterThreshold?: number) {
+    return buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+      ...(profileFilterThreshold !== undefined
+        ? { profileFilterThreshold }
+        : {}),
+    });
+  }
+
+  function useConfig(threshold: number): void {
+    const dir = mkdtempSync(join(tmpdir(), "profile-vote-filter-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        memory: { voting: { profileFilterThreshold: threshold } },
+      }),
+    );
+    process.env.ATOMIC_AGENT_STATE_DIR = dir;
+    resetConfigCache();
+  }
+
+  it("hides a downvoted pinned fact at the configured threshold", () => {
+    useConfig(3);
+    const prompt = build();
+    expect(prompt.tail).toContain("- language: ru");
+    expect(prompt.tail).not.toContain("stale_rule");
+  });
+
+  it("keeps a fact whose score has not reached the configured threshold", () => {
+    useConfig(5);
+    expect(build().tail).toContain("- stale_rule: always answer in French");
+  });
+
+  it("an explicit threshold of 0 disables the filter", () => {
+    useConfig(3);
+    expect(build(0).tail).toContain("- stale_rule: always answer in French");
   });
 });
