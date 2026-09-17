@@ -175,4 +175,137 @@ describe("os.fs.edit", () => {
       remaining.filter((name) => name.endsWith(".atomic-agent.tmp")),
     ).toEqual([]);
   });
+
+  describe("parse check on code files", () => {
+    /**
+     * `HD.Scene = { m0() {…}, m1() {…}, … }` — the shape a local model
+     * wrote. Unclosed, the file ends on the last method's `},` with no
+     * trailing newline, exactly as the model left it.
+     */
+    function sceneSource(methods: number, closed: boolean): string {
+      const lines = ["HD.Scene = {"];
+      for (let i = 0; i < methods; i += 1) {
+        lines.push(`  m${i}() {`, `    return ${i};`, "  },");
+      }
+      return closed ? `${lines.join("\n")}\n};\n` : lines.join("\n");
+    }
+
+    it("warns with the count when replaceAll breaks a file that parsed", async () => {
+      const file = join(dir, "scene.js");
+      await writeFile(file, sceneSource(4, true), "utf8");
+      const tool = buildOsFsEditTool({
+        approvals: approveAll(),
+        approvalRequired: true,
+      });
+      const result = await tool.run(
+        {
+          path: "scene.js",
+          oldString: "},\n",
+          newString: "};\n",
+          replaceAll: true,
+        },
+        makeCtx(dir),
+      );
+      // Never blocks: the edit lands and the call still succeeds.
+      expect(result.status).toBe("ok");
+      expect(await readFile(file, "utf8")).toContain("  };\n  m1() {");
+      expect(result.details.replacedOccurrences).toBe(4);
+      expect(result.summary.split("\n")[0]).toBe(
+        "⚠ scene.js does not parse after this edit: SyntaxError: Unexpected token ';' (line 4). " +
+          "It parsed before the edit, which replaced 4 occurrences — undo it, or re-read the file and rewrite it, instead of stacking more edits.",
+      );
+      expect(result.details.parseWarning).toBe(result.summary.split("\n")[0]);
+    });
+
+    it("says a blind replaceAll left a broken file broken, and what broke it before", async () => {
+      // The benchmark sequence: the file was already unclosed at EOF, and
+      // the `},\n` → `};\n` sweep broke every method separator instead
+      // while missing the last `},`, which has no newline after it.
+      const file = join(dir, "scene.js");
+      await writeFile(file, sceneSource(5, false), "utf8");
+      const tool = buildOsFsEditTool({
+        approvals: approveAll(),
+        approvalRequired: true,
+      });
+      const result = await tool.run(
+        {
+          path: "scene.js",
+          oldString: "},\n",
+          newString: "};\n",
+          replaceAll: true,
+        },
+        makeCtx(dir),
+      );
+      expect(result.status).toBe("ok");
+      const warning = result.summary.split("\n")[0]!;
+      expect(warning).toContain(
+        "⚠ scene.js still does not parse: SyntaxError: Unexpected token ';' (line 4)",
+      );
+      expect(warning).toContain("replaced 4 occurrences without fixing it");
+      expect(warning).toContain(
+        "before it: SyntaxError: Unexpected end of input (line 16)",
+      );
+      expect(warning).toContain("instead of stacking more edits");
+    });
+
+    it("stays silent for an edit that keeps the file parsing", async () => {
+      const file = join(dir, "scene.js");
+      await writeFile(file, sceneSource(3, true), "utf8");
+      const tool = buildOsFsEditTool({
+        approvals: approveAll(),
+        approvalRequired: true,
+      });
+      const result = await tool.run(
+        { path: "scene.js", oldString: "return 1;", newString: "return 10;" },
+        makeCtx(dir),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.summary).not.toContain("⚠");
+      expect(result.details.parseWarning).toBeUndefined();
+    });
+
+    it("stays silent once an edit repairs a broken file", async () => {
+      const file = join(dir, "scene.js");
+      await writeFile(file, sceneSource(2, false), "utf8");
+      const tool = buildOsFsEditTool({
+        approvals: approveAll(),
+        approvalRequired: true,
+      });
+      const result = await tool.run(
+        {
+          path: "scene.js",
+          oldString: "return 1;\n  },",
+          newString: "return 1;\n  },\n};\n",
+        },
+        makeCtx(dir),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.details.parseWarning).toBeUndefined();
+    });
+
+    it("does not check files it cannot judge", async () => {
+      // `.ts` is not parse-checked; neither is an ES module whose syntax
+      // a plain script parse would reject.
+      await writeFile(join(dir, "types.ts"), "export const a = {\n", "utf8");
+      await writeFile(
+        join(dir, "esm.js"),
+        'import x from "./x.js";\nexport const a = { b: 1 };\n',
+        "utf8",
+      );
+      const tool = buildOsFsEditTool({
+        approvals: approveAll(),
+        approvalRequired: true,
+      });
+      const ts = await tool.run(
+        { path: "types.ts", oldString: "a = {", newString: "b = {" },
+        makeCtx(dir),
+      );
+      const esm = await tool.run(
+        { path: "esm.js", oldString: "b: 1 };", newString: "b: 1" },
+        makeCtx(dir),
+      );
+      expect(ts.details.parseWarning).toBeUndefined();
+      expect(esm.details.parseWarning).toBeUndefined();
+    });
+  });
 });

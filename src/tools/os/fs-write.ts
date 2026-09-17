@@ -1,8 +1,16 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { categorizeFsMutation } from "./fs-approval-scope.js";
+import {
+  checkFileParses,
+  displayPath,
+  formatParseWarning,
+  isParseCheckedPath,
+  PARSE_CHECK_MAX_CHARS,
+  withParseWarning,
+} from "./fs-parse-check.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
@@ -106,23 +114,60 @@ export function buildOsFsWriteTool(
       } else {
         await writeFile(target, content, "utf8");
       }
+      const parseWarning = await parseWarningAfterWrite(
+        target,
+        mode,
+        content,
+        ctx.workingDir,
+      );
       // The path is echoed in `output` (not just `details`) so a model
       // that had its target moved reads where the file actually landed
       // and keeps working against the right path.
-      return compressToolResult({
-        tool: "os.fs.write",
-        status: "ok",
-        output:
-          target === absolute
-            ? `wrote ${content.length} bytes to ${target} (${mode})`
-            : `wrote ${content.length} bytes to ${target} (${mode}); the operator moved this write from ${absolute}`,
-        details: {
-          path: target,
-          bytes: content.length,
-          mode,
-          ...(target === absolute ? {} : { requestedPath: absolute }),
-        },
-      });
+      return withParseWarning(
+        compressToolResult({
+          tool: "os.fs.write",
+          status: "ok",
+          output:
+            target === absolute
+              ? `wrote ${content.length} bytes to ${target} (${mode})`
+              : `wrote ${content.length} bytes to ${target} (${mode}); the operator moved this write from ${absolute}`,
+          details: {
+            path: target,
+            bytes: content.length,
+            mode,
+            ...(target === absolute ? {} : { requestedPath: absolute }),
+          },
+        }),
+        parseWarning,
+      );
     },
   };
+}
+
+/**
+ * Parse-check what now sits at `target` (see `fs-parse-check.ts`). An
+ * append is judged on the whole file, not the chunk. Any failure to
+ * check is silence: the write already succeeded and is reported as such.
+ */
+async function parseWarningAfterWrite(
+  target: string,
+  mode: "append" | "replace",
+  content: string,
+  workingDir: string,
+): Promise<string | null> {
+  if (!isParseCheckedPath(target)) return null;
+  try {
+    let written = content;
+    if (mode === "append") {
+      if ((await stat(target)).size > PARSE_CHECK_MAX_CHARS) return null;
+      written = await readFile(target, "utf8");
+    }
+    return formatParseWarning({
+      path: displayPath(target, workingDir),
+      change: "write",
+      after: checkFileParses(target, written),
+    });
+  } catch {
+    return null;
+  }
 }

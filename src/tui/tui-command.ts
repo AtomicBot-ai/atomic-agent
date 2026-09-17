@@ -171,7 +171,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
     parsed.noApproval,
     config.agent.approvalLevel,
   );
-  const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
+  // `--max-steps` is the operator's ceiling for a whole task. Without it
+  // nothing is passed on, so the runtime applies its own defaults:
+  // `agent.maxSteps` is the leg length and `agent.task.maxSteps` the
+  // ceiling. Filling the config value in here turned the leg into a hard
+  // ceiling and quietly stopped every TUI turn at 25 steps.
+  const maxSteps = parsed.maxSteps ?? undefined;
   const bus = makeTuiEventBus();
   // Set when the user presses a key on the post-self-update restart prompt.
   // Honoured after the Ink app unmounts and the runtime shuts down: we
@@ -235,7 +240,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     browserChannel: config.browser.channel,
     browserHeadless: config.browser.headless,
     approvalLevel,
-    maxSteps,
+    // Shown in the session facts: the operator's ceiling when given,
+    // otherwise the leg length the runtime will use.
+    maxSteps: maxSteps ?? config.agent.maxSteps,
     completionMaxTokens: config.localModels.completionMaxTokens,
     skillCount: runtime.skillCatalog.length,
     // Read after the startup gate, so a local model picked in the wizard

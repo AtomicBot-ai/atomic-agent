@@ -240,6 +240,20 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
+      case "batch_trimmed":
+        push({
+          type: "batch_trimmed",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          originalSize: inner.originalSize,
+          kept: inner.kept,
+          dropped: [...inner.dropped],
+          reason: inner.reason,
+        });
+        return;
       case "step_error":
         push({
           type: "error",
@@ -482,7 +496,9 @@ export function createTraceRecorder(
             cause: event.cause,
             completionTokens: event.completionTokens,
             promptTokens: event.promptTokens,
-            requestedMaxTokens: event.requestedMaxTokens,
+            ...(event.requestedMaxTokens !== undefined
+              ? { requestedMaxTokens: event.requestedMaxTokens }
+              : {}),
             retry: event.retry.kind,
             retryValue:
               event.retry.kind === "raise_cap"

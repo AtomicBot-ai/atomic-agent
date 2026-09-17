@@ -102,6 +102,9 @@ describe("formatLlamaUnreachableHint", () => {
 /** Raw model output the stubbed llama-server replays on every step. */
 const model = vi.hoisted(() => ({ emits: "" }));
 
+/** The options `runAgentCommand` handed `runtime.runTurn`, per turn. */
+const turnOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+
 // `runAgentCommand` boots the real runtime and takes no injection seam of
 // its own, so the bootstrap module is wrapped to supply the same
 // `overrides` the HTTP harness uses. Everything else — tool registry,
@@ -139,10 +142,10 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
   };
   return {
     ...actual,
-    createAgentRuntime: (
+    createAgentRuntime: async (
       options: Parameters<typeof actual.createAgentRuntime>[0],
-    ) =>
-      actual.createAgentRuntime({
+    ) => {
+      const runtime = await actual.createAgentRuntime({
         ...options,
         // No browser override: `PlaywrightBackend` launches lazily and
         // these turns never touch a browser tool, so nothing spawns.
@@ -151,7 +154,17 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
           disableStreaming: true,
           llamaComplete: complete,
         },
-      }),
+      });
+      // Record what the command asks of each turn; the turn itself still
+      // runs on the production path.
+      const runTurn = runtime.runTurn;
+      return Object.assign(runtime, {
+        runTurn: (...args: Parameters<typeof runTurn>) => {
+          turnOptions.push({ ...(args[2] ?? {}) });
+          return runTurn(...args);
+        },
+      });
+    },
   };
 });
 
@@ -254,5 +267,33 @@ describe("runAgentCommand exit codes", () => {
     ]);
     expect(stderr).not.toContain('"status": "stalled"');
     expect(code).toBe(0);
+  }, 60_000);
+
+  it("leaves the step ceiling to the runtime without --max-steps", async () => {
+    // An explicit `maxSteps` is a hard ceiling in the runtime; filling in
+    // `agent.maxSteps` (the leg length) stopped every task at the first leg.
+    turnOptions.length = 0;
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "hi" } });
+    feedStdin(["hello\n"]);
+    const code = await runAgentCommand(["--cwd", workingDir, "--no-approval"]);
+    expect(code).toBe(0);
+    expect(turnOptions).toHaveLength(1);
+    expect("maxSteps" in turnOptions[0]!).toBe(false);
+  }, 60_000);
+
+  it("passes --max-steps through as the task ceiling", async () => {
+    turnOptions.length = 0;
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "hi" } });
+    feedStdin(["hello\n"]);
+    const code = await runAgentCommand([
+      "--cwd",
+      workingDir,
+      "--max-steps",
+      "7",
+      "--no-approval",
+    ]);
+    expect(code).toBe(0);
+    expect(turnOptions).toHaveLength(1);
+    expect(turnOptions[0]!.maxSteps).toBe(7);
   }, 60_000);
 });

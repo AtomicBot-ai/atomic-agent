@@ -49,13 +49,16 @@ export {
   TransportError,
   classifyFailure,
   classifyTruncation,
+  detectFabricatedToolTranscript,
   detectModelFailure,
+  FABRICATED_TRANSCRIPT_MIN_LINES,
   formatTruncatedMessage,
   isRequestSizeRejection,
 } from "./reliability/index.js";
 export type {
   DetectModelFailureOptions,
   DetectedModelFailure,
+  FabricatedToolTranscript,
   LlmFailureCategory,
   LlmFailureOptions,
   ModelErrorOptions,

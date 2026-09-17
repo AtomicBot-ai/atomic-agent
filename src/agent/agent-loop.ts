@@ -43,7 +43,11 @@ import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
-import type { LlmStreamParams, StepEvent } from "./step-executor.js";
+import type {
+  LlmStreamParams,
+  StepApprovalPostureSource,
+  StepEvent,
+} from "./step-executor.js";
 import {
   ToolLoopTracker,
   READ_REPEAT_WARNING_THRESHOLD,
@@ -92,6 +96,14 @@ export interface AgentLoopDependencies {
    * gate uses for `approvalRequired`.
    */
   isPlanMode?: () => boolean;
+  /**
+   * The live approval gate, read by the step when a batch of
+   * approval-gated calls arrives: if nothing in it would ask a human
+   * (e.g. `--no-approval`), the batch runs in emitted order instead of
+   * being trimmed to its first call. Absent (embedders, tests) keeps the
+   * trim.
+   */
+  approvalPosture?: StepApprovalPostureSource;
   /**
    * Whether the run mode resolves to fusion right now. Read per turn,
    * for the reason `isPlanMode` is read per call: the operator can flip
@@ -589,7 +601,8 @@ export type AgentLoopEvent =
       cause: TruncationCause;
       completionTokens: number;
       promptTokens: number;
-      requestedMaxTokens: number;
+      /** The cap the cut request carried; absent when it carried none. */
+      requestedMaxTokens?: number;
       retry: TruncationRetry;
     }
   | {
@@ -1250,6 +1263,9 @@ export class AgentLoop {
             ...(this.deps.isPlanMode
               ? { isPlanMode: this.deps.isPlanMode }
               : {}),
+            ...(this.deps.approvalPosture
+              ? { approvalPosture: this.deps.approvalPosture }
+              : {}),
             ...(fusionOrchestratorTurn
               ? {
                   isFusionOrchestrator: () => true,
@@ -1648,7 +1664,9 @@ export class AgentLoop {
             cause: detail.cause,
             completionTokens: detail.completionTokens,
             promptTokens: detail.promptTokens,
-            requestedMaxTokens: detail.requestedMaxTokens,
+            ...(detail.requestedMaxTokens !== undefined
+              ? { requestedMaxTokens: detail.requestedMaxTokens }
+              : {}),
             retry,
           });
           this.deps.logger?.warn("completion truncated; retrying the step", {
@@ -1657,7 +1675,8 @@ export class AgentLoop {
             cause: detail.cause,
             completionTokens: detail.completionTokens,
             promptTokens: detail.promptTokens,
-            requestedMaxTokens: detail.requestedMaxTokens,
+            // `null` in the log: the request carried no cap at all.
+            requestedMaxTokens: detail.requestedMaxTokens ?? null,
             retry: retry.kind,
             ...(retry.kind === "raise_cap"
               ? { maxTokens: retry.maxTokens }

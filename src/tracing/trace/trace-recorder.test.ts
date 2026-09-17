@@ -347,6 +347,36 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a batch trim with the calls that never ran", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trim", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 3 } as AgentLoopEvent);
+    rec.onAgentEvent({ type: "step_started", stepIndex: 4 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "batch_trimmed",
+        stepIndex: 4,
+        originalSize: 5,
+        kept: "os.fs.write",
+        dropped: ["os.fs.write", "os.fs.write", "os.fs.edit", "reply"],
+        reason: "approval-gated-batched",
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "batch_trimmed",
+      seq: 2,
+      sessionId: "s-trim",
+      ts: 1000,
+      turnIndex: 3,
+      stepIndex: 4,
+      originalSize: 5,
+      kept: "os.fs.write",
+      dropped: ["os.fs.write", "os.fs.write", "os.fs.edit", "reply"],
+      reason: "approval-gated-batched",
+    });
+  });
+
   it("emits parse_retry and error events", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-6", emit, now });
@@ -425,6 +455,30 @@ describe("createTraceRecorder", () => {
         },
       ],
     });
+  });
+
+  it("records a truncation with no cap on the wire without inventing one", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc-nocap", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 1,
+      cause: "provider_limit",
+      completionTokens: 33_678,
+      promptTokens: 21_000,
+      retry: { kind: "raise_cap", maxTokens: 32_768 },
+    });
+    const recorded = events.filter((e) => e.type === "completion_truncated");
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        retry: "raise_cap",
+        retryValue: 32_768,
+      }),
+    ]);
+    expect(recorded[0]).not.toHaveProperty("requestedMaxTokens");
   });
 
   it("records a truncation retry with its cause, counts and the retry taken", () => {

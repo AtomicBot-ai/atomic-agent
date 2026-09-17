@@ -482,6 +482,80 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.stepCount).toBe(1);
   });
 
+  it("retries a cut the provider made with no cap on the wire, without claiming a cap was spent", async () => {
+    // Request cloud-00312: no `max_tokens`, cut at 33,678 tokens, logged
+    // as "spent the reply cap … of 8192" with `requestedMaxTokens: 8192`.
+    // The retry that sent 32,768 then succeeded — so it stays.
+    const registry = buildDefaultToolRegistry();
+    const events: Array<{ type: string } & Record<string, unknown>> = [];
+    const capsSeen: Array<number | undefined> = [];
+    const prompts: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ maxTokens, prompt }) => {
+        calls += 1;
+        capsSeen.push(maxTokens);
+        prompts.push(prompt);
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            reasoningContent: "Let me write every file out first",
+            stop: false,
+            truncated: true,
+            sentMaxTokens: null,
+            usage: {
+              promptTokens: 21_000,
+              completionTokens: 33_678,
+              totalTokens: 54_678,
+            },
+          };
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "short answer" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "completion_truncated" ||
+          event.type === "loop_failed"
+        ) {
+          events.push(event as { type: string } & Record<string, unknown>);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-nocap", workingDir }),
+      {
+        userMessage: "write the module",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(capsSeen).toEqual([undefined, 32_768]);
+    expect(prompts[1]).toContain("cut off after 33678 tokens");
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        promptTokens: 21_000,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      }),
+    ]);
+    expect(events[0]).not.toHaveProperty("requestedMaxTokens");
+  });
+
   it("retries a cut on a leg boundary instead of calling the leg unproductive", async () => {
     // A retry re-enters the loop at the same index. If that index is a
     // leg boundary, the boundary check must not run a second time: its

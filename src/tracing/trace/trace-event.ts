@@ -27,6 +27,7 @@ export type TraceEvent =
   | TraceLlmCompletion
   | TraceToolInvocation
   | TraceParseRetry
+  | TraceBatchTrimmed
   | TraceLoopDetected
   | TraceTaskContinued
   | TraceProviderWaiting
@@ -172,6 +173,26 @@ export interface TraceParseRetry extends TraceEventBase {
 }
 
 /**
+ * The model emitted several calls in one completion and the runtime ran
+ * only `kept`: the batch held approval-gated tools that would have asked
+ * someone, so it was cut to the first of them. Everything in `dropped`
+ * was generated and never executed — without this row a post-mortem sees
+ * one `tool_invocation` and no trace of the rest of the output.
+ */
+export interface TraceBatchTrimmed extends TraceEventBase {
+  type: "batch_trimmed";
+  turnIndex: number;
+  stepIndex: number;
+  /** Calls the model emitted. Always >= 2. */
+  originalSize: number;
+  /** The one tool that ran. */
+  kept: string;
+  /** Tools that never ran, in emitted order. */
+  dropped: string[];
+  reason: "approval-gated-batched";
+}
+
+/**
  * A leg of the task finished and the work carried on. The trace is
  * where "did it stop, or is it still going?" gets answered after the
  * fact, so the two numbers that decide it are both here.
@@ -241,10 +262,16 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   type: "completion_truncated";
   turnIndex: number;
   stepIndex: number;
-  cause: "reply_cap" | "context_window" | "output_limit" | "unknown";
+  cause:
+    | "reply_cap"
+    | "context_window"
+    | "output_limit"
+    | "provider_limit"
+    | "unknown";
   completionTokens: number;
   promptTokens: number;
-  requestedMaxTokens: number;
+  /** The cap the cut request carried; absent when it carried none. */
+  requestedMaxTokens?: number;
   retry: "raise_cap" | "fit_window";
   retryValue: number;
 }

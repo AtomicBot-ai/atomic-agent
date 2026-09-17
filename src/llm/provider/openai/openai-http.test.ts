@@ -475,6 +475,32 @@ describe("credit-limit (402) recovery", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the caller which body each attempt went out with", async () => {
+    // A truncation is judged against the cap the response ran under, and
+    // after a 402 that is the lowered one, not the one the caller built.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const sent: Array<Record<string, unknown>> = [];
+    await openAiPostJson(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger: collectingLogger() },
+      "/x",
+      { max_tokens: 65536 },
+      {},
+      (body) => sent.push(body),
+    );
+    // Exactly the bodies that went on the wire, in order — the second one
+    // carrying the lowered cap the retry chose.
+    const onTheWire = fetchImpl.mock.calls.map(
+      (call) => JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>,
+    );
+    expect(sent).toEqual(onTheWire);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.max_tokens).toBe(65536);
+    expect(sent[1]!.max_tokens).toBeLessThan(65536);
+  });
+
   it("announces the retry with the provider and both ceilings", async () => {
     const fetchImpl = vi
       .fn()
