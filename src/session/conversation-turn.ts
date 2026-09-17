@@ -8,7 +8,19 @@ import { estimateTokens } from "../prompt/token-budget.js";
  * contiguous slice of this list.
  */
 export type ConversationTurn =
-  | { kind: "user"; text: string; at: number }
+  | {
+      kind: "user";
+      text: string;
+      /**
+       * Sent while a turn was already running and folded into it at a
+       * step boundary (mid-turn steering), rather than opening a turn of
+       * its own. The model keeps working on the request that opened the
+       * turn, so a transcript that drew this row like an ordinary prompt
+       * would present that request's answer as the reply to it.
+       */
+      steered?: true;
+      at: number;
+    }
   | {
       kind: "assistant_tool_call";
       tool: string;
@@ -53,6 +65,14 @@ export function isFinalReplyTurn(
 
 export function userTurn(text: string, at = Date.now()): ConversationTurn {
   return { kind: "user", text, at };
+}
+
+/** A user message folded into the running turn (see `steered`). */
+export function steeredUserTurn(
+  text: string,
+  at = Date.now(),
+): ConversationTurn {
+  return { kind: "user", text, steered: true, at };
 }
 
 export function assistantToolCallTurn(params: {

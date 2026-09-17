@@ -404,6 +404,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: "yellow",
         }),
         event.text,
+        { steered: true },
       );
     case "turn_started":
       return {

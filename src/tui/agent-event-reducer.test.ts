@@ -1064,6 +1064,12 @@ describe("reduceTuiState", () => {
     const last = next.messages[next.messages.length - 1];
     expect(last?.role).toBe("user");
     expect(last?.text).toBe("use the staging db");
+    // ...marked as folded into the turn, so the reply that follows is
+    // not drawn as its answer. The prompt that opened the turn is not.
+    expect(last?.steered).toBe(true);
+    expect(
+      next.messages.find((m) => m.text === "deploy")?.steered,
+    ).toBeUndefined();
     // ...with a feed line tying it to the step it reached.
     expect(next.feed.length).toBe(feedBefore + 1);
     expect(next.feed[next.feed.length - 1]?.line).toContain("step 1");

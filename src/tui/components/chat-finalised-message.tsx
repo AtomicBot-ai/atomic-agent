@@ -47,7 +47,11 @@ export function FinalisedMessage({
   if (message.role === "user") {
     return (
       <Box flexDirection="column">
-        <UserBubble text={message.text} fusion={fusion} />
+        <UserBubble
+          text={message.text}
+          fusion={fusion}
+          steered={message.steered === true}
+        />
         <Box flexDirection="row">
           <ChatCopyButton text={message.text} />
           <ChatTryAgainButton text={message.text} />

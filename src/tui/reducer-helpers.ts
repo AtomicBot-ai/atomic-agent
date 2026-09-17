@@ -121,8 +121,16 @@ export function appendChatMessage(
 }
 
 /** Append a user chat message and mirror it into `inputHistory`. */
-export function appendUserMessage(state: TuiState, text: string): TuiState {
-  const withMessage = appendChatMessage(state, { role: "user", text });
+export function appendUserMessage(
+  state: TuiState,
+  text: string,
+  options: { steered?: boolean } = {},
+): TuiState {
+  const withMessage = appendChatMessage(state, {
+    role: "user",
+    text,
+    ...(options.steered ? { steered: true } : {}),
+  });
   const history = pushRing(state.inputHistory, text, state.ringBufferSize);
   // History-navigation state is deliberately left alone: this event also
   // fires in the BACKGROUND when a parked queue message drains into a
