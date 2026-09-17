@@ -635,6 +635,135 @@ describe("reduceTuiState", () => {
     );
   });
 
+  it("names a steered turn by its opening request, not by the steer", () => {
+    // `Test` was folded into the running `count the stars` turn. Stopping
+    // that turn must offer to re-run `count the stars`; re-sending `Test`
+    // alone would open a turn on the correction without the request.
+    const steered = (extra: TuiAction[]): TuiState =>
+      apply(createInitialTuiState(fakeSession()), [
+        {
+          type: "agent_event",
+          event: { type: "user_message", text: "count the stars" },
+        },
+        { type: "message_submitted" },
+        { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+        {
+          type: "agent_event",
+          event: { type: "steer_applied", text: "Test", stepIndex: 0 },
+        },
+        ...extra,
+      ]);
+
+    const stopped = steered([
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = stopped.messages.find((m) => m.role === "system");
+    expect(notice?.text).toBe("Agent stopped by user.");
+    expect(notice?.retryText).toBe("count the stars");
+    expect(stopped.runHistory[0]?.message).toBe("count the stars");
+
+    const completed = steered([
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
+    ]);
+    expect(completed.runHistory[0]?.outcome).toBe("completed");
+    expect(completed.runHistory[0]?.message).toBe("count the stars");
+  });
+
+  it("does not reach past a finished turn for the request of a steered one", () => {
+    // The running turn was opened outside this chat list (Telegram, HTTP,
+    // or a replay that dropped its oldest events); only its steer is
+    // here. `OLD` belongs to a turn that already finished and must not be
+    // offered as this turn's retry.
+    const stopped = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "OLD" } },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "old answer" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 1 } },
+      {
+        type: "agent_event",
+        event: { type: "steer_applied", text: "Test", stepIndex: 1 },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = stopped.messages.find(
+      (m) => m.role === "system" && m.text === "Agent stopped by user.",
+    );
+    expect(stopped.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "system",
+    ]);
+    expect(notice?.retryText).toBeUndefined();
+    expect(stopped.runHistory.at(-1)?.message).toBe("");
+  });
+
+  it("walks past an interim progress note to the steered turn's request", () => {
+    const stopped = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "counting…",
+            progressNote: true,
+          },
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "steer_applied", text: "Test", stepIndex: 1 },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    expect(
+      stopped.messages.some((m) => m.role === "assistant" && m.progressNote),
+    ).toBe(true);
+    const notice = stopped.messages.find((m) => m.role === "system");
+    expect(notice?.retryText).toBe("count the stars");
+    expect(stopped.runHistory[0]?.message).toBe("count the stars");
+  });
+
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
@@ -1064,6 +1193,12 @@ describe("reduceTuiState", () => {
     const last = next.messages[next.messages.length - 1];
     expect(last?.role).toBe("user");
     expect(last?.text).toBe("use the staging db");
+    // ...marked as folded into the turn, so the reply that follows is
+    // not drawn as its answer. The prompt that opened the turn is not.
+    expect(last?.steered).toBe(true);
+    expect(
+      next.messages.find((m) => m.text === "deploy")?.steered,
+    ).toBeUndefined();
     // ...with a feed line tying it to the step it reached.
     expect(next.feed.length).toBe(feedBefore + 1);
     expect(next.feed[next.feed.length - 1]?.line).toContain("step 1");

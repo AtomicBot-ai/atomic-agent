@@ -141,6 +141,19 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
+  /**
+   * A user message folded into the turn already running (mid-turn
+   * steering), not one that opened a turn. The bubble says so: the
+   * reply that follows answers the turn's opening request, and drawn
+   * as a plain prompt it reads as the answer to this message.
+   */
+  steered?: boolean;
+  /**
+   * An interim assistant message (`assistant_reply.progressNote`): the
+   * turn it belongs to was still running when it landed, so it does not
+   * mark where that turn ended.
+   */
+  progressNote?: boolean;
   /** `warn` — failure / runtime error styling in {@link SystemBubble}. */
   variant?: ChatMessageVariant;
   /**

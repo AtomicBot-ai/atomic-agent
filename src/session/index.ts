@@ -29,6 +29,7 @@ export type {
 } from "./session-state.js";
 export {
   userTurn,
+  steeredUserTurn,
   assistantToolCallTurn,
   toolResultTurn,
   assistantReplyTurn,
