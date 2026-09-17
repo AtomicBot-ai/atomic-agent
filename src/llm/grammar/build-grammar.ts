@@ -64,7 +64,9 @@ export async function buildGrammar(
   // This avoids the GBNF first-token bias toward `{` that small models
   // exhibit even when their `<think>` block reasoned about parallelism.
   const rootRule = `root ::= ${ruleStem}-prelude tool-call-array`;
-  const withPreludeRoot = withMcp.replace(/^root ::= .*$/m, rootRule);
+  const withPreludeRoot = hardenStringRule(
+    withMcp.replace(/^root ::= .*$/m, rootRule),
+  );
   // When the model emits its own reasoning open tag (Gemma 4 turn-framing),
   // the prelude must force that opener — the prompt no longer prefills it.
   const openSentinel = reasoningOpenEmittedByModel(profile)
@@ -111,6 +113,43 @@ function buildUntilSentinelRules(
     `${fragmentRule} ::= ${fragments.join(" | ")}`,
     `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,
   ].join("\n");
+}
+
+/** The base grammar's string-body rule, `string ::= "\"" chars "\""`. */
+const CHARS_RULE_RE = /^chars ::= char\*$/m;
+
+/**
+ * The string body for a reasoning profile: valid JSON with the
+ * two-character sequences `<|` and `|>` excluded (F37). The model's own
+ * control markers open with one and close with the other (`<|channel>`,
+ * `<channel|>`, `<|turn>`, `<turn|>`, `<|im_start|>`), and the grammar
+ * admits those bytes nowhere but inside a JSON string — so a thought
+ * block that opens mid-call lands in an argument value, and the tool
+ * runs on it. With the sequences gone from the sampler's vocabulary the
+ * marker cannot be emitted there at all; `control-marker-guard.ts`
+ * still refuses whatever arrives another way (an escaped `<|`, a
+ * provider without grammars).
+ *
+ * A three-state automaton over the last character — neutral, after
+ * `<`, after `|` — rather than the tempting `"<" [^|] | "|" [^>]`
+ * alternatives: those let `<<|` and `||>` through (the first `<` pairs
+ * with the second, freeing the `|`). Every alternative is decided by
+ * one character, so the sampler carries one stack per string, and the
+ * right recursion is the same shape llama.cpp expands `char*` into.
+ * Only the reasoning profiles get it; the plain profile's grammar stays
+ * byte-identical to `grammars/tool-call.gbnf`.
+ */
+const HARDENED_STRING_RULES = [
+  "chars ::= str-neutral",
+  'str-neutral ::= ( str-plain str-neutral | "<" str-after-lt | "|" str-after-bar )?',
+  'str-after-lt ::= ( str-plain str-neutral | "<" str-after-lt )?',
+  'str-after-bar ::= ( str-plain-not-gt str-neutral | "<" str-after-lt | "|" str-after-bar )?',
+  'str-plain ::= [^"\\\\\\x00-\\x1f<|] | "\\\\" escape',
+  'str-plain-not-gt ::= [^"\\\\\\x00-\\x1f<|>] | "\\\\" escape',
+].join("\n");
+
+function hardenStringRule(grammar: string): string {
+  return grammar.replace(CHARS_RULE_RE, HARDENED_STRING_RULES);
 }
 
 /** The one rule a per-request grammar rewrites. */

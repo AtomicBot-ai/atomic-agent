@@ -751,6 +751,7 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.write",
   "os.fs.edit",
   "os.fs.patch",
+  "os.fs.restore",
 ]);
 
 /** A write, edit or patch that landed — the reset event for the outcome-repeat detector. */

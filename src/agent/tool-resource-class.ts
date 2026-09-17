@@ -91,6 +91,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.fs.edit": "approval_gated",
   "os.fs.trash": "approval_gated",
   "os.fs.patch": "approval_gated",
+  "os.fs.restore": "approval_gated",
   "os.fs.archive.extract": "approval_gated",
 
   // os.git.* — read-only shell-outs
@@ -297,6 +298,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.fs.write": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
     "os.fs.patch": FS_WRITE_CATEGORIES,
+    // Puts a saved copy back: a write in every sense.
+    "os.fs.restore": FS_WRITE_CATEGORIES,
     "os.fs.trash": ["fs_trash", "trust_config", "other"],
     "os.fs.archive.extract": ["fs_write_home", "other"],
     // Local git writes ride the fs funnel against the repository root.

@@ -7,6 +7,7 @@ import {
   categorizeFsMutation,
   type FsMutationKind,
 } from "./fs-approval-scope.js";
+import type { FileRestoreStore } from "./fs-restore-store.js";
 
 /**
  * `DangerousToolOptions` plus the injected trust-config surface every
@@ -23,6 +24,14 @@ export interface FsDangerousToolOptions extends DangerousToolOptions {
    * derived inside the tools layer.
    */
   trustConfigPaths?: readonly string[];
+  /**
+   * Where a replaced user file's previous content is kept and which
+   * files this session created (`fs-replace-guard.ts`). Built by
+   * `registerOsTools` from `stateDir`; omitted (embedders, tests) turns
+   * the replace guard off and leaves `os.fs.restore` with nothing to
+   * restore.
+   */
+  restore?: FileRestoreStore;
 }
 
 /**

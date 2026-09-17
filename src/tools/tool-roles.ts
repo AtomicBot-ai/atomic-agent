@@ -60,6 +60,9 @@ const FS_WRITE_TOOLS: readonly string[] = [
   "os.fs.write",
   "os.fs.edit",
   "os.fs.patch",
+  // Undoes one of the three; a worker that shrank a user file must be
+  // able to put it back.
+  "os.fs.restore",
 ];
 
 /** Long-term memory READS: the orchestrator plans against what is known. */

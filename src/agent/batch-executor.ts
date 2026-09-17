@@ -12,6 +12,11 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import { describeArgumentError } from "../tools/argument-error-hint.js";
+import {
+  describeCorruptedCall,
+  findControlMarkers,
+} from "../tools/control-marker-guard.js";
+import { findUnknownArguments } from "../tools/unknown-argument-guard.js";
 import { CancelledError } from "../llm/index.js";
 import {
   isParallelWithinGroup,
@@ -405,19 +410,12 @@ export async function executeBatch(
 
   const groups = planBatch(toInvoke);
 
-  const invokeOne = async (input: BatchCallInput): Promise<void> => {
-    if (ctx.signal.aborted) {
-      slots[input.batchIndex] = {
-        ...slots[input.batchIndex]!,
-        cancelled: true,
-      };
-      return;
-    }
-    ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
-    const startedAt = Date.now();
-    let compressed: CompressedToolResult;
+  /** The registry call itself; a thrown error becomes an error result. */
+  const invokeRegistry = async (
+    input: BatchCallInput,
+  ): Promise<CompressedToolResult> => {
     try {
-      compressed = await registry.invoke(input.call.tool, input.call.args, {
+      return await registry.invoke(input.call.tool, input.call.args, {
         workingDir: ctx.workingDir,
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,
@@ -446,7 +444,7 @@ export async function executeBatch(
         args: input.call.args,
         message: cause.message,
       });
-      compressed = compressToolResult({
+      return compressToolResult({
         tool: input.call.tool,
         status: "error",
         output: hint?.message ?? cause.message,
@@ -461,6 +459,28 @@ export async function executeBatch(
         },
       });
     }
+  };
+
+  const invokeOne = async (input: BatchCallInput): Promise<void> => {
+    if (ctx.signal.aborted) {
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        cancelled: true,
+      };
+      return;
+    }
+    ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+    const startedAt = Date.now();
+    let compressed: CompressedToolResult;
+    // A call that is not what the model meant never reaches the
+    // registry — see `refuseBeforeDispatch`. Terminals are exempt for
+    // the reason every gate exempts them: a reply's text is shown, not
+    // run, and the turn must be able to close.
+    const refusal =
+      input.resourceClass === "terminal"
+        ? null
+        : refuseBeforeDispatch(input.call);
+    compressed = refusal ?? (await invokeRegistry(input));
     const durationMs = Date.now() - startedAt;
     slots[input.batchIndex] = {
       ...slots[input.batchIndex]!,
@@ -599,6 +619,53 @@ export async function executeBatch(
     cancelled: cancelled || ctx.signal.aborted,
     loopSignals,
   };
+}
+
+/**
+ * The error result a call gets instead of running when its arguments
+ * are not what the model meant, or `null` when the call is clean.
+ *
+ * Two checks, in this order. A value carrying the model's own control
+ * markup (F37): a `path` holding `<|channel>` is a thought block that
+ * fell into the call, and the tool would run on the garbage (it listed
+ * an ENAMETOOLONG path as "empty" once, and the model overwrote the
+ * input file on that reading). Then a top-level key the tool's schema
+ * does not know (F40): `os.shell.run {"cmd":"python3","-e":"<script>"}`
+ * used to run a bare `python3` — exit 0, nothing done — with the script
+ * silently dropped, and the worker reported the work as done; a tool
+ * with no schema is exempt, and F33's key normalisation runs first so a
+ * quoted or fused key that means a schema key is not refused.
+ *
+ * Either refusal is an ordinary error result — recorded in the loop
+ * tracker like any other, on the trace row via `details.corrupted` /
+ * `details.unknownKeys` — that the model reads on its next step; no
+ * parse-recovery budget is spent.
+ */
+function refuseBeforeDispatch(
+  call: ToolCallPayload,
+): CompressedToolResult | null {
+  const markers = findControlMarkers(call.args, call.tool);
+  if (markers.length > 0) {
+    return compressToolResult({
+      tool: call.tool,
+      status: "error",
+      output: describeCorruptedCall(markers),
+      details: { corrupted: true, markers },
+    });
+  }
+  const unknown = findUnknownArguments(call.tool, call.args);
+  if (unknown !== null) {
+    return compressToolResult({
+      tool: call.tool,
+      status: "error",
+      output: unknown.message,
+      details: {
+        unknownKeys: unknown.unknownKeys,
+        expectedKeys: unknown.expectedKeys,
+      },
+    });
+  }
+  return null;
 }
 
 /**

@@ -56,8 +56,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.write",
-    summary: "Write or append to a file (may require approval).",
+    summary:
+      "Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore.",
     argsSchema: `{ path: string, content: string, mode?: "replace" | "append" }`,
+  },
+  {
+    name: "os.fs.restore",
+    summary:
+      "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank this session — the result of that call said it was saved (may require approval).",
+    argsSchema: "{ path: string }",
+    tier: "rare",
   },
   {
     name: "os.fs.trash",
