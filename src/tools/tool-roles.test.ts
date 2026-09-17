@@ -102,6 +102,10 @@ describe("tool roles", () => {
     for (const d of DEFAULT_TOOL_DESCRIPTORS) {
       if (!roleAdmits("orchestrator", d.name)) continue;
       if (d.name === "fusion.delegate") continue;
+      // `verify.run` executes a command, so it is approval-gated below
+      // level 4 — but it runs against a throwaway copy of the workspace,
+      // which is why the fusion gate admits it as a read (`readonly`).
+      if (d.name === "verify.run") continue;
       expect(resourceClassFor(d.name), d.name).toMatch(/^(pure_read|terminal)$/);
     }
   });

@@ -140,6 +140,25 @@ describe("fusion.delegate in the local-model grammar", () => {
   });
 });
 
+describe("verify.* in the local-model grammar", () => {
+  it("admits both verification tools, so a local orchestrator can review a fan-out", async () => {
+    for (const profile of [
+      PLAIN_INSTRUCT_PROFILE,
+      QWEN_THINK_PROFILE,
+      GEMMA4_THINK_PROFILE,
+    ]) {
+      const grammar = await buildGrammar(profile);
+      const toolName =
+        grammar.split("\n").find((l) => l.startsWith("tool-name ::=")) ?? "";
+      expect(toolName, profile.id).toContain("verify-tool");
+      const rule =
+        grammar.split("\n").find((l) => l.startsWith("verify-tool ::=")) ?? "";
+      expect(rule, profile.id).toContain('"syntax"');
+      expect(rule, profile.id).toContain('"run"');
+    }
+  });
+});
+
 describe("os-tool names the local-model grammar admits", () => {
   it("includes the agent's e-mail tools — a descriptor the grammar cannot emit is a tool local models cannot call", () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");

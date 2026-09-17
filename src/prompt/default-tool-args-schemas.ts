@@ -769,6 +769,58 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["tasks"],
     ),
   ],
+  ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],
+  [
+    "verify.run",
+    obj(
+      {
+        kind: { type: "string", enum: ["command", "service", "page"] },
+        cwd: stringSchema,
+        // A map of arbitrary keys, like `os.http.request.headers`; the
+        // strict converter refuses it, knowingly.
+        env: { type: "object", additionalProperties: { type: "string" } },
+        timeoutMs: numberSchema,
+        network: booleanSchema,
+        cmd: stringSchema,
+        args: stringArraySchema,
+        start: obj({ cmd: stringSchema, args: stringArraySchema }, ["cmd"]),
+        ready: obj({ port: integerSchema, url: stringSchema, timeoutMs: numberSchema }),
+        requests: {
+          type: "array",
+          items: obj({
+            method: stringSchema,
+            path: stringSchema,
+            url: stringSchema,
+            body: stringSchema,
+            expectStatus: integerSchema,
+            expectBody: stringSchema,
+          }),
+        },
+        path: stringSchema,
+        url: stringSchema,
+        script: {
+          type: "array",
+          items: obj(
+            {
+              action: { type: "string", enum: ["click", "key", "type", "wait"] },
+              selector: stringSchema,
+              key: stringSchema,
+              text: stringSchema,
+              ms: numberSchema,
+            },
+            ["action"],
+          ),
+        },
+        seconds: numberSchema,
+        probes: {
+          type: "array",
+          items: obj({ name: stringSchema, expr: stringSchema }, ["name", "expr"]),
+        },
+        checks: stringArraySchema,
+      },
+      ["kind"],
+    ),
+  ],
 
   // ── terminal verbs ───────────────────────────────────────────────────────
   // The OpenAI adapter overrides these with hand-tuned schemas (see

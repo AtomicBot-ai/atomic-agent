@@ -226,6 +226,31 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // Frequent tier: the review step of a fan-out reaches for it, and a
+    // reviewer that has to `tool.view` first reviews less. Read-only, so
+    // the fusion orchestrator gate lets it through (decision D1).
+    name: "verify.syntax",
+    summary:
+      "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.",
+    argsSchema: "{ files: string[] }",
+  },
+  {
+    // Frequent tier for the same reason, and with an example: the
+    // runtime failures no syntax check sees (a throw on load, a dead
+    // button, a probe that never moves) are what this catches, and a
+    // page run with two probes is not something a model first-shots
+    // from a one-line manifest.
+    name: "verify.run",
+    summary:
+      "Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).",
+    argsSchema:
+      "{ kind: 'command' | 'service' | 'page', cmd?: string, args?: string[], start?: { cmd: string, args?: string[] }, ready?: { port?: number, url?: string, timeoutMs?: number }, requests?: [{ method?: string, path?: string, url?: string, body?: string, expectStatus?: number, expectBody?: string }], path?: string, url?: string, script?: [{ action: 'click' | 'key' | 'type' | 'wait', selector?: string, key?: string, text?: string, ms?: number }], seconds?: number /* page runtime, default 5 */, probes?: [{ name: string, expr: string /* JS expression */ }], checks?: string[] /* 'exit 0' | 'exit != 0' | 'stdout contains \"x\"' | 'stderr not contains \"x\"' | 'status 200' | 'no errors' | 'missing selectors 0' | 'probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>' */, cwd?: string, env?: Record<string,string>, timeoutMs?: number, network?: boolean }",
+    examples: [
+      '{"kind":"page","path":"index.html","script":[{"action":"click","selector":"#launch"},{"action":"key","key":"ArrowLeft"}],"seconds":6,"probes":[{"name":"lives","expr":"window.game.lives"},{"name":"score","expr":"window.game.score"}],"checks":["no errors","missing selectors 0","probe score increases"]}',
+      '{"kind":"command","cmd":"npm","args":["test"],"checks":["exit 0","stdout not contains \\"failed\\""]}',
+    ],
+  },
+  {
     // `frequent` tier and a full example: the whole point of the tool is
     // that a cloud orchestrator reaches for it instead of doing the bulk
     // itself, and a one-line manifest is not enough to first-shot a

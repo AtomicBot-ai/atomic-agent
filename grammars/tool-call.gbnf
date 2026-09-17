@@ -5,7 +5,7 @@
 root ::= tool-call-array
 tool-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | fusion-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | fusion-tool | verify-tool | mcp-native-tool | mcp-server-tool | "\"reply\"" | "\"finish\""
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
 os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
 discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
@@ -23,6 +23,10 @@ vision-tool ::= "\"vision.describe\""
 # also grammar-constrained) is refused by `fusion.delegate` itself when
 # it tries to fan out again.
 fusion-tool ::= "\"fusion.delegate\""
+# Read-only verification (syntax per file; a command, service or page
+# run against a throwaway copy). A local orchestrator reviewing a fan-out
+# needs these in its vocabulary for the same reason it needs the fan-out.
+verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
 # Native MCP discovery / resource / prompt tools — always available.
 mcp-native-tool ::= "\"mcp." ( "resource.list" | "resource.read" | "prompt.list" | "prompt.get" ) "\""
 # Per-server MCP tool branch. The static fallback (`mcp.<any>.<any>`)
