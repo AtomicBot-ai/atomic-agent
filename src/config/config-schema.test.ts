@@ -723,6 +723,29 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/agent.conversationMaxTokens/);
   });
 
+  it("ships the transcript on auto and two hundred pairs, bounded to [1, 1000]", () => {
+    // The shipped caps: the window decides the token cap (`0` = auto),
+    // and the pair cap is high enough that the token cap binds first on
+    // any real hardware. Pinned as literals so neither can drift silently.
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.agent.conversationMaxTokens).toBe(0);
+    expect(parsed.agent.conversationMaxPairs).toBe(200);
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { conversationMaxPairs: 1000 },
+      }).agent.conversationMaxPairs,
+    ).toBe(1000);
+    for (const bad of [0, 1001, -5]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { conversationMaxPairs: bad },
+        }),
+      ).toThrow(/agent.conversationMaxPairs/);
+    }
+  });
+
   it("rejects non-object root", () => {
     expect(() => parseUserConfigFile([])).toThrow(ConfigValidationError);
     expect(() => parseUserConfigFile(null)).toThrow(ConfigValidationError);
@@ -2099,7 +2122,7 @@ describe("localModels.completionMaxTokens (config v60)", () => {
   it("leaves an older file on its positive default", () => {
     expect(
       parseUserConfigFile({ version: 51 }).localModels.completionMaxTokens,
-    ).toBe(8192);
+    ).toBe(16_384);
   });
 });
 

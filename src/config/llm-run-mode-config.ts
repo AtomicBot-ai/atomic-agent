@@ -114,7 +114,7 @@ export const FUSION_CLOUD_WORKERS_MAX = 32;
  * cap exists to stop a runaway forty, not to slow an ordinary fan-out.
  */
 export const DEFAULT_FUSION_CLOUD_WORKERS = 4;
-export const DEFAULT_FUSION_WORKER_MAX_STEPS = 40;
+export const DEFAULT_FUSION_WORKER_MAX_STEPS = 60;
 /**
  * How long one worker may take before its leg is cancelled.
  *

@@ -67,13 +67,16 @@ describe("resolveWorkerSlots", () => {
   });
 
   it("gives fewer slots to a bigger reply cap", () => {
-    expect(
-      resolveWorkerSlots({ contextSize: 131_072, cpuOnly: false, completionMaxTokens: 16_384 }),
-    ).toBe(4);
-    // Uncapped replies are sized at the default, not at zero.
-    expect(
-      resolveWorkerSlots({ contextSize: 131_072, cpuOnly: false, completionMaxTokens: 0 }),
-    ).toBe(5);
+    const at = (completionMaxTokens: number): number =>
+      resolveWorkerSlots({ contextSize: 131_072, cpuOnly: false, completionMaxTokens });
+    expect(at(8_192)).toBe(5);
+    expect(at(16_384)).toBe(4);
+    expect(at(32_768)).toBe(2);
+    // Uncapped replies are sized at the default, not at zero — zero would
+    // hand out the ceiling on a pool that holds four whole workers.
+    expect(at(0)).toBe(at(DEFAULT_CAP));
+    expect(at(0)).toBe(4);
+    expect(at(0)).toBeLessThan(MAX_AUTO_SLOTS);
   });
 
   it("falls to one, not two, when a context holds a single worker", () => {

@@ -2440,7 +2440,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   localModels: {
     url: "http://127.0.0.1:8080",
     mode: "external",
-    completionMaxTokens: 8192,
+    completionMaxTokens: 16384,
     useServerTemplate: "auto",
     thinking: "auto",
     managed: {
@@ -2491,8 +2491,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     },
     toolTimeoutMs: 60_000,
     approvalLevel: 1,
-    conversationMaxTokens: 32_000,
-    conversationMaxPairs: 20,
+    // `0` = let the model's context window decide (CONVERSATION_CAP_AUTO);
+    // the fixed 32K fallback applies only when no window is known.
+    conversationMaxTokens: 0,
+    conversationMaxPairs: 200,
     conversationLowWater: 0.65,
     worldSnapshotMaxTokens: 8_000,
   },
@@ -2854,7 +2856,7 @@ export const ENV_DEFAULTS = {
   /** Soft cap on tool calls per inference step. Hard upper bound is 16 (grammar). */
   MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
-  BATCH_TOOL_RESULT_CHAR_CAP: 16_000,
+  BATCH_TOOL_RESULT_CHAR_CAP: 32_000,
   /** Args-only repeat count that injects a no-progress `### notice`. */
   LOOP_WARNING_THRESHOLD: 3,
   /** Identical args+result streak that vetoes a call before dispatch. */
@@ -4486,7 +4488,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
         "agent.conversationMaxPairs",
         1,
-        100,
+        1000,
       ),
       // `(0, 1]`: `1` is a real setting (cut just enough, every step),
       // `0` would drop the whole transcript at the first overflow.

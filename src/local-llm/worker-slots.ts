@@ -54,11 +54,11 @@ export const WORKER_READS_ALLOWANCE_TOKENS = 6_000;
  * is the number the rest of the local path already plans against, and
  * `worker-slots.test.ts` pins that the two stay equal.
  */
-export const DEFAULT_WORKER_COMPLETION_TOKENS = 8_192;
+export const DEFAULT_WORKER_COMPLETION_TOKENS = 16_384;
 
 /**
  * Tokens one worker occupies in the shared pool at its peak: its prompt,
- * what it reads, and its reply — ~24k at the default reply cap.
+ * what it reads, and its reply — ~32k at the default reply cap.
  */
 export function workerSlotFootprint(completionMaxTokens?: number): number {
   const reply =

@@ -107,19 +107,26 @@ describe("resolveFusionMachineFacts", () => {
   });
 
   it("counts auto slots from a pinned context the way the daemon does", () => {
+    // No cap in the file: the default 16K reply, a ~32K footprint, four
+    // whole workers in 128K.
     expect(
       resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 131_072 }))
         .workerSlots,
-    ).toBe(5);
+    ).toBe(4);
     expect(
       resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 32_768 }))
         .workerSlots,
     ).toBe(1);
     expect(
       resolveFusionMachineFacts(
-        config({ parallel: "auto", contextSize: 131_072, completionMaxTokens: 16_384 }),
+        config({ parallel: "auto", contextSize: 131_072, completionMaxTokens: 8_192 }),
       ).workerSlots,
-    ).toBe(4);
+    ).toBe(5);
+    expect(
+      resolveFusionMachineFacts(
+        config({ parallel: "auto", contextSize: 131_072, completionMaxTokens: 32_768 }),
+      ).workerSlots,
+    ).toBe(2);
     expect(
       resolveFusionMachineFacts(
         config({ parallel: "auto", contextSize: 131_072, device: "cpu" }),
@@ -259,7 +266,8 @@ describe("the facts reaching the prompt", () => {
     expect(prompt.stablePrefix).toContain("### fusion");
     expect(prompt.stablePrefix).toContain("5 request slots");
     expect(prompt.stablePrefix).toContain("`qwen-3.5-4b`");
-    expect(prompt.stablePrefix).toContain("~24K tokens");
+    // `workerSlotFootprint(16_384)` = 32,384 at the default reply cap.
+    expect(prompt.stablePrefix).toContain("~32K tokens");
     expect(prompt.stablePrefix).toContain("`maxWorkers` at most 5");
     expect(prompt.stablePrefix).not.toContain("tok/s");
 

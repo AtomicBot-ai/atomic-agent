@@ -191,7 +191,7 @@ describe("resolveRunMode", () => {
         workers: 2,
         cloudWorkers: 4,
         workersPinned: false,
-        workerMaxSteps: 40,
+        workerMaxSteps: 60,
         workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
       },
     );
