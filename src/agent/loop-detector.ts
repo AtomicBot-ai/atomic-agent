@@ -375,6 +375,16 @@ export class ToolLoopTracker {
   }
 
   /**
+   * The wandering spread for a prospective `(tool, args)` — what
+   * `isWanderingEscalated` compares against the cap. `0` for a tool that
+   * is not wandering-prone. Pure; call BEFORE `recordCall`.
+   */
+  wanderingSpread(tool: string, args: unknown): number {
+    if (!isWanderingProneTool(tool)) return 0;
+    return this.effectiveSpread(tool, hashToolCall(tool, args));
+  }
+
+  /**
    * Distinct count of completed (non-veto) `argsHash`es seen for `tool` in
    * the window, plus one when the prospective call introduces a new
    * signature (the current call is not yet in history at `check` time).
@@ -1179,10 +1189,30 @@ export function formatWanderingRedirect(tool: string, spread: number): string {
 
 /**
  * Synthetic assistant reply emitted when the breaker fires (the model
- * ignored repeated vetoes). Reused by the agent loop's forced graceful
- * termination path.
+ * ignored repeated vetoes, or a wandering spread crossed the escalation
+ * cap). Reused by the agent loop's forced graceful termination path.
+ *
+ * `detector` decides the wording, the same way it does for the veto. A
+ * wandering stop's `count` is the spread of DISTINCT arguments in the
+ * history window, counting the call that was blocked, and most of those
+ * calls ran and may well have returned what the model needed, so
+ * "no-progress loop", "blocked attempts" and "the repeated tool call"
+ * would all be false. The count is not quoted as the cap: a parallel
+ * batch is gated before any of its calls record, so the spread can pass
+ * the cap before a call is refused. Nor is it "this turn": the window
+ * holds the recent calls, not the whole turn.
  */
-export function formatForcedLoopReply(tool: string, count: number): string {
+export function formatForcedLoopReply(
+  tool: string,
+  count: number,
+  detector?: LoopCheckVerdict["detector"],
+): string {
+  if (detector === "wandering") {
+    return [
+      `(stopped: \`${tool}\` hit the limit on different arguments within recent tool calls — ${count}, counting the last call, which was not run).`,
+      "Here is my best answer with the information gathered so far — the task may be incomplete.",
+    ].join(" ");
+  }
   return [
     `(stopped: stuck in a no-progress loop on \`${tool}\` after ${count} blocked attempts).`,
     "I could not make further progress with the repeated tool call.",

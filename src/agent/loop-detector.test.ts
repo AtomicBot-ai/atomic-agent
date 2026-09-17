@@ -313,6 +313,35 @@ describe("loop notice formatters", () => {
     expect(reply.toLowerCase()).toContain("best answer");
   });
 
+  it("formatForcedLoopReply keeps the repeat wording for every non-wandering detector", () => {
+    for (const detector of [
+      undefined,
+      "generic_repeat",
+      "no_progress",
+      "read_repeat",
+      "outcome_repeat",
+    ] as const) {
+      const reply = formatForcedLoopReply("os.shell.run", 3, detector);
+      expect(reply).toContain("no-progress loop");
+      expect(reply).toContain("3 blocked attempts");
+    }
+  });
+
+  // Issue #458: a wandering escalation ended a turn of 11 successful,
+  // distinct fetches with "stuck in a no-progress loop … after 12 blocked
+  // attempts" — only one call was blocked and nothing was repeated.
+  it("formatForcedLoopReply words a wandering stop as a spread cap, not a repeat", () => {
+    const reply = formatForcedLoopReply("os.web.fetch", 12, "wandering");
+    expect(reply).toContain("`os.web.fetch`");
+    expect(reply).toContain("hit the limit on different arguments");
+    expect(reply).toContain("12, counting the last call, which was not run");
+    expect(reply).not.toMatch(/this turn|single turn/i);
+    expect(reply.toLowerCase()).toContain("best answer");
+    expect(reply).not.toMatch(/no-progress/i);
+    expect(reply).not.toMatch(/blocked attempts/i);
+    expect(reply).not.toMatch(/repeated/i);
+  });
+
   it("formatWanderingRedirect is an actionable redirect", () => {
     const note = formatWanderingRedirect("os.web.fetch", 7);
     expect(note).toContain("os.web.fetch");

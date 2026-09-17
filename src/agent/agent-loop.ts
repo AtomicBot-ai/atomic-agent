@@ -1755,12 +1755,17 @@ export class AgentLoop {
           }
         }
 
-        // Breaker: the model ignored repeated vetoes of the same call.
+        // Breaker: the model ignored repeated vetoes of the same call, or
+        // a wandering spread crossed the escalation cap.
         // Force a graceful synthetic reply (NOT a `loop_failed` — the
         // turn ends with a best-effort answer, the session stays usable).
         const breaker = loopSignals.find((s) => s.kind === "breaker");
         if (breaker) {
-          const replyText = formatForcedLoopReply(breaker.tool, breaker.count);
+          const replyText = formatForcedLoopReply(
+            breaker.tool,
+            breaker.count,
+            breaker.detector,
+          );
           state = recordTurn(state, assistantReplyTurn(replyText));
           this.deps.onEvent?.({
             type: "llm_event",
@@ -1775,12 +1780,13 @@ export class AgentLoop {
             detector: breaker.detector,
           });
           this.deps.logger?.warn(
-            "no-progress loop breaker tripped; forcing graceful reply",
+            "loop breaker tripped; forcing graceful reply",
             {
               sessionId: state.id,
               stepIndex: i,
               tool: breaker.tool,
               count: breaker.count,
+              detector: breaker.detector,
             },
           );
           reason = "reply";
