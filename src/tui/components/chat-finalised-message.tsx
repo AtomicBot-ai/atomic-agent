@@ -55,7 +55,8 @@ export function FinalisedMessage({
             No `[try again]` on a steer. It was a correction to the turn
             it joined, and re-sending it alone opens a new turn on the
             correction without the request it corrected. That turn's
-            opening message carries its own `[try again]`.
+            opening message, when it is in the chat, carries its own
+            `[try again]`.
           */}
           {steered ? null : <ChatTryAgainButton text={message.text} />}
           <ChatLinkButtons text={message.text} />

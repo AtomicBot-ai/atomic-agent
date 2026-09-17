@@ -148,6 +148,12 @@ export interface ChatMessage {
    * as a plain prompt it reads as the answer to this message.
    */
   steered?: boolean;
+  /**
+   * An interim assistant message (`assistant_reply.progressNote`): the
+   * turn it belongs to was still running when it landed, so it does not
+   * mark where that turn ended.
+   */
+  progressNote?: boolean;
   /** `warn` — failure / runtime error styling in {@link SystemBubble}. */
   variant?: ChatMessageVariant;
   /**

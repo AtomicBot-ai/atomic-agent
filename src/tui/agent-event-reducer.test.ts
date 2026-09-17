@@ -679,6 +679,91 @@ describe("reduceTuiState", () => {
     expect(completed.runHistory[0]?.message).toBe("count the stars");
   });
 
+  it("does not reach past a finished turn for the request of a steered one", () => {
+    // The running turn was opened outside this chat list (Telegram, HTTP,
+    // or a replay that dropped its oldest events); only its steer is
+    // here. `OLD` belongs to a turn that already finished and must not be
+    // offered as this turn's retry.
+    const stopped = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "OLD" } },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "old answer" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 1 } },
+      {
+        type: "agent_event",
+        event: { type: "steer_applied", text: "Test", stepIndex: 1 },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = stopped.messages.find(
+      (m) => m.role === "system" && m.text === "Agent stopped by user.",
+    );
+    expect(stopped.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "system",
+    ]);
+    expect(notice?.retryText).toBeUndefined();
+    expect(stopped.runHistory.at(-1)?.message).toBe("");
+  });
+
+  it("walks past an interim progress note to the steered turn's request", () => {
+    const stopped = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "counting…",
+            progressNote: true,
+          },
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "steer_applied", text: "Test", stepIndex: 1 },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    expect(
+      stopped.messages.some((m) => m.role === "assistant" && m.progressNote),
+    ).toBe(true);
+    const notice = stopped.messages.find((m) => m.role === "system");
+    expect(notice?.retryText).toBe("count the stars");
+    expect(stopped.runHistory[0]?.message).toBe("count the stars");
+  });
+
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [

@@ -153,11 +153,29 @@ export function appendUserMessage(
  * correction folded into that turn, not what it was asked to do.
  * Re-sending only the steer (`Test`) as a fresh turn would drop the
  * request it corrected.
+ *
+ * Walking back past a steer stops at the previous turn's final reply:
+ * when the running turn's opening message is not in the list (a turn
+ * opened over Telegram or HTTP, or a switch-back replay that dropped its
+ * oldest events), the request above that reply belongs to a finished
+ * turn, and offering to re-run it would be wrong. Interim progress
+ * notes are not a boundary. The result is then "" and no retry is
+ * offered.
  */
 export function lastTurnRequest(state: TuiState): string {
+  let passedSteer = false;
   for (let i = state.messages.length - 1; i >= 0; i -= 1) {
     const msg = state.messages[i];
-    if (msg?.role === "user" && msg.steered !== true) return msg.text;
+    if (msg?.role === "user") {
+      if (msg.steered !== true) return msg.text;
+      passedSteer = true;
+    } else if (
+      passedSteer &&
+      msg?.role === "assistant" &&
+      msg.progressNote !== true
+    ) {
+      return "";
+    }
   }
   return "";
 }

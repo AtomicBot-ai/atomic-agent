@@ -976,6 +976,7 @@ function reduceStepEvent(
       const withMessage = appendChatMessage(state, {
         role: "assistant",
         text: event.text,
+        ...(event.progressNote === true ? { progressNote: true } : {}),
         toolSteps: state.currentTurnToolSteps,
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
         ...(reasoningForTurn.length > 0
