@@ -1315,3 +1315,55 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
     }
   });
 });
+
+describe("runWorkerTasks — declared inputs (F51)", () => {
+  function registry(log: string[]) {
+    return {
+      declare: (sessionId: string, paths: readonly string[]) =>
+        log.push(`declare ${sessionId} ${paths.join(",")}`),
+      clear: (sessionId: string) => log.push(`clear ${sessionId}`),
+    };
+  }
+
+  it("declares the contract's inputs, resolved and without globs, for the worker's session before its turn and clears them after", async () => {
+    const log: string[] = [];
+    const { deps } = harness(async ({ session }) => {
+      log.push(`turn ${session.id}`);
+      return turnResult();
+    });
+    await runWorkerTasks(
+      { ...deps, declaredInputs: registry(log) },
+      {
+        ...BASE,
+        tasks: tasks(1),
+        maxWorkers: 1,
+        contract: { inputs: ["sales.csv", "data/*.csv", "/abs/x.json"] },
+        signal: new AbortController().signal,
+      },
+    );
+    expect(log).toEqual([
+      `declare s-w-1 ${join("/repo", "sales.csv")},/abs/x.json`,
+      "turn s-w-1",
+      "clear s-w-1",
+    ]);
+  });
+
+  it("declares nothing when the contract names no input, and still clears in the same finally", async () => {
+    const log: string[] = [];
+    const { deps } = harness(async ({ session }) => {
+      log.push(`turn ${session.id}`);
+      return turnResult();
+    });
+    await runWorkerTasks(
+      { ...deps, declaredInputs: registry(log) },
+      {
+        ...BASE,
+        tasks: tasks(1),
+        maxWorkers: 1,
+        contract: { inputs: ["js/*.js"], owners: { "a.js": "t0" } },
+        signal: new AbortController().signal,
+      },
+    );
+    expect(log).toEqual(["turn s-w-1", "clear s-w-1"]);
+  });
+});

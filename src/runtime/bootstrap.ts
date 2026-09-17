@@ -62,7 +62,11 @@ import { replyTool } from "../tools/conversation/index.js";
 import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import { registerOsTools, ShellJobRegistry } from "../tools/os/index.js";
+import {
+  DeclaredInputsRegistry,
+  registerOsTools,
+  ShellJobRegistry,
+} from "../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../tools/verify/index.js";
 import { registerGithubTools } from "../tools/github/index.js";
 import { resolveGithubToken } from "../github/index.js";
@@ -1445,6 +1449,19 @@ export async function createAgentRuntime(
       toolRegistry.register(tool);
     }
   }
+  // What the operator asked for, per session, for the turn now running
+  // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
+  // and read by `os.fs.write` to tell an input the request names from
+  // any other file (`fs-input-guard.ts`). Set and cleared by
+  // `executeTurn` around the loop; a worker's record is its brief, whose
+  // ORIGINAL REQUEST block is the operator's words. Only that turn can
+  // call a tool on the session (the controller runs one turn per
+  // session), so a read always finds its own turn's request.
+  const turnRequests = new Map<string, string>();
+  // The files a fan-out's contract declared as inputs, per worker
+  // session: the worker runner declares them, `os.fs.write` refuses to
+  // replace them (`fs-declared-inputs.ts`).
+  const declaredInputs = new DeclaredInputsRegistry();
   registerOsTools(toolRegistry, {
     ...dangerous,
     config: {
@@ -1454,6 +1471,8 @@ export async function createAgentRuntime(
       tools: config.tools,
     },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
+    resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+    declaredInputs,
     // The trust surface (`config.json` + `.env`) is resolved once, here,
     // and injected into the fs tools — the tools layer must not know
     // where it lives. Pinned by the level-4 `trust_config` case in
@@ -2791,13 +2810,6 @@ export async function createAgentRuntime(
   const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
     createFusionWorkerSession({ workingDir, meta });
 
-  // What the operator asked for, per session, for the turn now running
-  // on it — quoted into every fusion worker's brief (`worker-prompt.ts`).
-  // Set and cleared by `executeTurn` around the loop. Only that turn can
-  // call `fusion.delegate` on the session (the controller runs one turn
-  // per session), so a read always finds its own turn's request.
-  const turnRequests = new Map<string, string>();
-
   /**
    * The loop-side budget for one turn. An explicit `maxSteps` from a
    * caller (a durable task that pins its own budget, `run --max-steps`)
@@ -2882,12 +2894,17 @@ export async function createAgentRuntime(
     if (worker) {
       return turnContext.run({ sessionId: session.id }, async () => {
         try {
+          // The worker's request is its brief: the operator's words sit
+          // in its ORIGINAL REQUEST block, which is what the input guard
+          // reads (`quotedRequestText`).
+          turnRequests.set(session.id, userMessage);
           return await loop.runTurn(session, {
             userMessage,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
           });
         } finally {
+          turnRequests.delete(session.id);
           // The prompt_captured hook still records the worker's window
           // occupancy under its id; nothing persists it, so drop it.
           lastTurnContextUsage.delete(session.id);
@@ -3144,6 +3161,7 @@ export async function createAgentRuntime(
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
       resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+      declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
       resolveWorkerPricing: (providerId, modelId) =>

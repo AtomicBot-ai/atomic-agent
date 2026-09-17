@@ -1245,3 +1245,39 @@ describe("fusion.delegate", () => {
     expect(asked).toHaveLength(2);
   });
 });
+
+describe("fusion.delegate — contract inputs (F51)", () => {
+  it("declares the contract's inputs to every worker session before its turn and clears them after", async () => {
+    const log: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        declaredInputs: {
+          declare: (sessionId, paths) =>
+            log.push(`declare ${sessionId} ${paths.join(",")}`),
+          clear: (sessionId) => log.push(`clear ${sessionId}`),
+        },
+        runTurn: async (session, userMessage) => {
+          log.push(
+            `turn ${session.id} ${userMessage.includes("never replace; os.fs.write on one is refused):\n- sales.csv") ? "briefed" : "unbriefed"}`,
+          );
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run(
+      { tasks: TASKS, contract: { inputs: ["sales.csv", "js/*.js"] } },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    const input = join("/repo", "sales.csv");
+    for (const id of ["s-w-1", "s-w-2"]) {
+      const declared = log.indexOf(`declare ${id} ${input}`);
+      const turned = log.indexOf(`turn ${id} briefed`);
+      const cleared = log.indexOf(`clear ${id}`);
+      expect(declared).toBeGreaterThanOrEqual(0);
+      expect(turned).toBeGreaterThan(declared);
+      expect(cleared).toBeGreaterThan(turned);
+    }
+    expect(log).toHaveLength(6);
+  });
+});

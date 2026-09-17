@@ -11,6 +11,8 @@ import type {
 } from "./agent-loop.js";
 import type { LlmStreamParams } from "./step-executor.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
+import { ToolRegistry } from "../tools/tool-registry.js";
+import type { AgentLoopEvent } from "./agent-loop.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import {
@@ -425,5 +427,187 @@ describe("AgentLoop fusion seams", () => {
     expect(seen[0]!.prompt).toContain("- os.fs.write —");
     expect(seen[0]!.prompt).not.toContain("- tasks.cron —");
     expect(seen[0]!.prompt).toContain("# also available via `tool.view`: finish, tasks.cron");
+  });
+});
+
+/**
+ * A review that only reads is made to choose (F41), end to end: the
+ * count lives in the loop, the notice rides `### notice`, the cut rides
+ * the step's grammar, and `step_finished` says which phase a step ran
+ * under. `N` is the config default (6) — the test state dir carries no
+ * override — so the notice lands on step 6 and the cut on step 12.
+ */
+describe("AgentLoop stalled Fusion review (F41)", () => {
+  let workingDir: string;
+
+  beforeEach(() => {
+    workingDir = mkdtempSync(join(tmpdir(), "atomic-review-stall-"));
+  });
+
+  afterEach(() => {
+    rmSync(workingDir, { recursive: true, force: true });
+  });
+
+  const tools: ToolDescriptor[] = [
+    ...TOOLS,
+    {
+      name: "fusion.delegate",
+      summary: "Fan out.",
+      argsSchema: '{"tasks": array}',
+    },
+  ];
+
+  /** Fakes only: a real `fusion.delegate` would refuse outside fusion mode. */
+  function makeRegistry(): ToolRegistry {
+    const registry = new ToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["fusion.delegate", false],
+      ["reply", true],
+      ["finish", true],
+    ] as const) {
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run() {
+          return {
+            tool: name,
+            status: "ok",
+            summary: name,
+            details: {},
+            truncated: false,
+          };
+        },
+      });
+    }
+    return registry;
+  }
+
+  type Stalls = Array<{ stepIndex: number; reviewStall?: unknown }>;
+
+  /**
+   * Run an orchestrator turn whose model emits `script(step)` on each
+   * step; a step past the script replies. Returns every request the
+   * model saw and every `step_finished` event.
+   */
+  async function runScripted(
+    script: (step: number) => string | null,
+    userMessage = "do the thing",
+  ): Promise<{ seen: LlmStreamParams[]; finished: Stalls }> {
+    const seen: LlmStreamParams[] = [];
+    const finished: Stalls = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const loop = new AgentLoop({
+      registry: makeRegistry(),
+      slotManager: new SlotManager(2),
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      llmComplete: async (params) => {
+        const step = seen.length;
+        seen.push(params);
+        return makeCompletion(
+          script(step) ??
+            JSON.stringify([{ tool: "reply", args: { text: "done" } }]),
+        );
+      },
+      toolDescriptors: tools,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      isFusionMode: () => true,
+      onEvent: (event: AgentLoopEvent) => {
+        if (event.type === "step_finished") {
+          finished.push({
+            stepIndex: event.stepIndex,
+            ...(event.reviewStall !== undefined
+              ? { reviewStall: event.reviewStall }
+              : {}),
+          });
+        }
+      },
+    });
+    await loop.runTurn(
+      createEmptySessionState({ id: "s-stall", workingDir }),
+      turnOptions({ userMessage, maxSteps: 40, autoContinue: false }),
+    );
+    return { seen, finished };
+  }
+
+  const read = (step: number): string =>
+    JSON.stringify([{ tool: "os.fs.read", args: { path: `f${step}` } }]);
+  const delegate = JSON.stringify([
+    { tool: "fusion.delegate", args: { tasks: [{ id: "t1", instructions: "fix" }] } },
+  ]);
+
+  it("notices once at N, cuts the tool set at 2N, and restores it after a fan-out", async () => {
+    // Twelve steps of distinct reads, a fan-out on the cut step, one
+    // more read, then a reply.
+    const { seen, finished } = await runScripted((step) =>
+      step < 12 ? read(step) : step === 12 ? delegate : step === 13 ? read(step) : null,
+    );
+    expect(seen).toHaveLength(15);
+    const notice = "6 steps of reading and no fan-out";
+    for (let step = 0; step < 12; step += 1) {
+      expect(seen[step]!.prompt.includes(notice), `notice at ${step}`).toBe(
+        step === 6,
+      );
+      expect(grammarToolNames(seen[step]!.grammar), `grammar at ${step}`).toContain(
+        "os.fs.read",
+      );
+    }
+    expect(seen[6]!.prompt).toContain(
+      "In Fusion you cannot edit; a fix means `fusion.delegate` with the change spelled out, or `reply` with what stands. Next step: delegate or reply.",
+    );
+    // The cut step: the notice again, and a grammar of the three names.
+    expect(seen[12]!.prompt).toContain("12 steps of reading and no fan-out");
+    expect(seen[12]!.prompt).toContain(
+      "This step runs only `fusion.delegate`, `reply` or `finish`",
+    );
+    expect(grammarToolNames(seen[12]!.grammar)).toEqual([
+      "finish",
+      "fusion.delegate",
+      "reply",
+    ]);
+    // The catalog never moved: same prompt prefix bytes on every step.
+    const prefixOf = (prompt: string): string => prompt.split("### conversation")[0]!;
+    expect(prefixOf(seen[12]!.prompt)).toBe(prefixOf(seen[0]!.prompt));
+    // After the fan-out the full set is back and the count starts over.
+    expect(grammarToolNames(seen[13]!.grammar)).toContain("os.fs.read");
+    expect(seen[13]!.prompt).not.toContain("steps of reading and no fan-out");
+    // The trace says which phase each step ran under.
+    const byStep = new Map(finished.map((f) => [f.stepIndex, f.reviewStall]));
+    expect(byStep.get(5)).toBeUndefined();
+    expect(byStep.get(6)).toEqual({ steps: 6, phase: "notice" });
+    expect(byStep.get(11)).toEqual({ steps: 11, phase: "notice" });
+    expect(byStep.get(12)).toEqual({ steps: 12, phase: "cut" });
+    expect(byStep.get(13)).toBeUndefined();
+  });
+
+  it("a repair request halves N: the notice at 3, the cut at 6", async () => {
+    const { seen } = await runScripted(
+      (step) => (step < 6 ? read(step) : step === 6 ? delegate : null),
+      "checker output:\nFAIL test_login — expected 200, got 500",
+    );
+    expect(seen[2]!.prompt).not.toContain("steps of reading and no fan-out");
+    expect(seen[3]!.prompt).toContain("3 steps of reading and no fan-out");
+    expect(seen[4]!.prompt).not.toContain("steps of reading and no fan-out");
+    expect(grammarToolNames(seen[5]!.grammar)).toContain("os.fs.read");
+    expect(grammarToolNames(seen[6]!.grammar)).toEqual([
+      "finish",
+      "fusion.delegate",
+      "reply",
+    ]);
+  });
+
+  it("a turn that delegates on step 2 never sees the notice or the cut", async () => {
+    const { seen, finished } = await runScripted((step) =>
+      step < 2 ? read(step) : step === 2 ? delegate : step < 8 ? read(step) : null,
+    );
+    expect(seen).toHaveLength(9);
+    for (const params of seen) {
+      expect(params.prompt).not.toContain("steps of reading and no fan-out");
+      expect(grammarToolNames(params.grammar)).toContain("os.fs.read");
+    }
+    expect(finished.every((f) => f.reviewStall === undefined)).toBe(true);
   });
 });

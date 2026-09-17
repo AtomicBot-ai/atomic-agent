@@ -32,6 +32,7 @@ import { osFsDiffTool } from "./fs-diff.js";
 import { buildOsFsPatchTool } from "./fs-patch.js";
 import { buildOsFsRestoreTool } from "./fs-restore.js";
 import { FileRestoreStore } from "./fs-restore-store.js";
+import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs-watch.js";
 import {
   osGitStatusTool,
@@ -83,6 +84,9 @@ export { osFsDiffTool } from "./fs-diff.js";
 export { buildOsFsPatchTool } from "./fs-patch.js";
 export { buildOsFsRestoreTool } from "./fs-restore.js";
 export { FileRestoreStore } from "./fs-restore-store.js";
+export { checkInputReplacement, refuseInputReplacement } from "./fs-input-guard.js";
+export type { InputGuardInput, InputRefusal } from "./fs-input-guard.js";
+export { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 export { osFsWatchTool } from "./fs-watch.js";
 export {
   osGitStatusTool,
@@ -156,6 +160,15 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    */
   stateDir?: string;
   /**
+   * The operator's request behind the turn running on a session (the
+   * bootstrap's per-turn record the workers' briefs quote), for the
+   * input refusal of `os.fs.write` (`fs-input-guard.ts`). Omitted
+   * (embedders, tests) leaves only the F36 warn-and-save path.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /** A fan-out's declared inputs per worker session (`fs-declared-inputs.ts`); omitted declares nothing. */
+  declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
+  /**
    * Operator policy for the shell guard — today the git remote-sync
    * switch. Predicates rather than values so a toggle flipped live in
    * the Integrations hub is honoured on the next command. Omitted
@@ -197,6 +210,12 @@ export function registerOsTools(
     ...(options.stateDir === undefined
       ? {}
       : { restore: new FileRestoreStore(resolve(options.stateDir, "restore")) }),
+    ...(options.resolveOriginalRequest === undefined
+      ? {}
+      : { resolveOriginalRequest: options.resolveOriginalRequest }),
+    ...(options.declaredInputs === undefined
+      ? {}
+      : { declaredInputs: options.declaredInputs }),
   };
   registry.register(osFsReadTool);
   registry.register(buildOsFsWriteTool(fsMutation));

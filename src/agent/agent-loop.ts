@@ -1,7 +1,18 @@
 import {
   emptyFusionOrchestratorState,
   recordDelegation,
+  wouldRefuse as fusionGateWouldRefuse,
 } from "./fusion-orchestrator-mode.js";
+import {
+  createReviewStallState,
+  observeReviewStep,
+  reviewStallSignal,
+  reviewStallToolSet,
+  takeReviewStallNotice,
+  type ReviewStallSignal,
+  type ReviewStallState,
+} from "./review-stall.js";
+import { DEFAULT_FUSION_REVIEW_STALL_STEPS } from "../config/llm-run-mode-config.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type {
   CompletionResult,
@@ -810,6 +821,13 @@ export type AgentLoopEvent =
        * note and the turn went on (`progress-note-reply.ts`).
        */
       progressNote?: true;
+      /**
+       * The step ran under a stalled Fusion review (`review-stall.ts`):
+       * `steps` read-only steps had passed without a fan-out, and the
+       * step carried the notice (`notice`) or admitted only
+       * `fusion.delegate` / `reply` / `finish` (`cut`).
+       */
+      reviewStall?: ReviewStallSignal;
     }
   | { type: "llm_event"; event: StepEvent }
   | {
@@ -1056,6 +1074,18 @@ export class AgentLoop {
     const fusionOrchestratorTurn =
       (this.deps.isFusionMode?.() ?? false) && options.ephemeral !== true;
     let fusionState = emptyFusionOrchestratorState();
+    // A review that only reads is made to choose (F41): consecutive
+    // read-only steps without a fan-out are counted per turn, the
+    // planner is told once at N to delegate or reply, and at 2N the
+    // step admits only those exits. `null` off an orchestrator turn.
+    // Read from the config per turn, like the task ceilings.
+    let reviewStall: ReviewStallState | null = fusionOrchestratorTurn
+      ? createReviewStallState(
+          getConfig().llm?.runMode?.fusion?.reviewStallSteps ??
+            DEFAULT_FUSION_REVIEW_STALL_STEPS,
+          options.userMessage,
+        )
+      : null;
     // A fan-out approval stands for the turn that asked for it and no
     // longer. Cleared here rather than when the turn ends so an aborted
     // or crashed turn cannot leave authority behind for the next one.
@@ -1341,7 +1371,7 @@ export class AgentLoop {
           count: steered.length,
         });
       }
-      const noticeForThisStep = pendingNotice;
+      let noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
       // On the final allowed step only the two terminal tools may run, so
       // a long coding session ends with a summary of what was changed
@@ -1359,6 +1389,32 @@ export class AgentLoop {
         ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
       if (outOfTime) stopCause = "time_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime;
+      // The stalled-review phase this step runs under, read before the
+      // prompt is built (`review-stall.ts`): the notice joins the step's
+      // `### notice` — inside `noticeForThisStep`, so a retry of the
+      // step carries it like every other notice — and the cut narrows
+      // the step's tool set. Not on the reserved final step, which is
+      // narrower already.
+      let stallSignal: ReviewStallSignal | null = null;
+      if (reviewStall !== null && !finalizationStep) {
+        stallSignal = reviewStallSignal(reviewStall);
+        if (stallSignal !== null) {
+          const taken = takeReviewStallNotice(reviewStall, stallSignal);
+          reviewStall = taken.state;
+          if (taken.notice !== null) {
+            noticeForThisStep =
+              noticeForThisStep === undefined
+                ? taken.notice
+                : `${noticeForThisStep}\n\n${taken.notice}`;
+            this.deps.logger?.info("fusion review stalled", {
+              sessionId: state.id,
+              stepIndex: i,
+              readOnlySteps: stallSignal.steps,
+              phase: stallSignal.phase,
+            });
+          }
+        }
+      }
       const effectiveTransport: ToolCallTransport =
         pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
       const finalizationNotice =
@@ -1424,6 +1480,9 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
+            ...(stallSignal?.phase === "cut"
+              ? { toolSet: reviewStallToolSet() }
+              : {}),
             ...(options.toolFilter ? { toolFilter: options.toolFilter } : {}),
             toolRole,
             ...(truncationRetry?.stepIndex === i &&
@@ -1549,6 +1608,16 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         stepsTaken += 1;
+        // A completed step is what the review-stall count observes: a
+        // fan-out resets it, a step of reading (or of refusals) adds
+        // one. The mutation predicate is the orchestrator gate's own.
+        if (reviewStall !== null) {
+          reviewStall = observeReviewStep(reviewStall, {
+            results: outcome.toolResults,
+            mutates: (tool) =>
+              fusionGateWouldRefuse(tool, { registry: this.deps.registry }),
+          });
+        }
         // A completion the step could act on. Whatever run of empty
         // completions was in progress is over: the link has just proved
         // it answers, so an empty one later in this turn is a fresh
@@ -1619,6 +1688,7 @@ export class AgentLoop {
           summary,
           durationMs,
           ...(outcome.progressNote !== undefined ? { progressNote: true } : {}),
+          ...(stallSignal !== null ? { reviewStall: stallSignal } : {}),
         });
         if (outcome.terminal === "session") {
           reason = "finish";

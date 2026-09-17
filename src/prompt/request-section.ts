@@ -26,6 +26,29 @@ export const REQUEST_FOLLOW_UP_MARKER =
   "[the operator's latest message, which started this turn]";
 
 /**
+ * The lines a worker's brief quotes the operator's request between
+ * (`worker-prompt.ts`). A worker's own pinned request is its whole brief
+ * — the brief is the message that started its turn — so the block
+ * between these is where the operator's words are in it.
+ */
+export const ORIGINAL_REQUEST_BEGIN_MARKER = "----- BEGIN ORIGINAL REQUEST -----";
+export const ORIGINAL_REQUEST_END_MARKER = "----- END ORIGINAL REQUEST -----";
+
+/**
+ * The operator's words in a pinned request: the quoted block when the
+ * text is a worker's brief, the text itself otherwise. What the input
+ * guard (`fs-input-guard.ts`) reads, so a file a task's instructions
+ * name as an output is not mistaken for one the operator provided.
+ */
+export function quotedRequestText(request: string): string {
+  const begin = request.indexOf(ORIGINAL_REQUEST_BEGIN_MARKER);
+  if (begin === -1) return request;
+  const start = begin + ORIGINAL_REQUEST_BEGIN_MARKER.length;
+  const end = request.indexOf(ORIGINAL_REQUEST_END_MARKER, start);
+  return end === -1 ? request.slice(start) : request.slice(start, end);
+}
+
+/**
  * The user-turn text the request was taken from: the message before a
  * short follow-up when the record combines two, else the record itself.
  */

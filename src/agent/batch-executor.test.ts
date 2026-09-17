@@ -15,6 +15,8 @@ import {
   type BatchLoopSignal,
 } from "./batch-executor.js";
 import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
+import { reviewStallToolSet } from "./review-stall.js";
+import { toolSetRefusal } from "./step-tool-set.js";
 import { createTraceRecorder } from "../tracing/trace/trace-recorder.js";
 import type { TraceEvent } from "../tracing/trace/trace-event.js";
 
@@ -1797,5 +1799,64 @@ describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
     expect(out.results[1]!.compressed!.summary).toContain(
       "unknown argument `Path` for os.fs.list",
     );
+  });
+});
+
+/**
+ * A per-step tool set at the seam that matters (F41): a call outside
+ * the set never reaches the registry, a call inside runs as usual.
+ */
+describe("executeBatch under a step tool set", () => {
+  it("refuses a call outside the set with the set's refusal and never dispatches it; a call inside runs", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const delegate = vi.fn(async () => okResult("fusion.delegate", "fanned out"));
+    const registry = buildRegistry({
+      "os.fs.read": read,
+      "fusion.delegate": delegate,
+    });
+    const set = reviewStallToolSet();
+    const signal = new AbortController().signal;
+    const refused = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      { ...ctx(signal), toolSet: set },
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(refused.results[0]!.compressed?.status).toBe("error");
+    expect(refused.results[0]!.compressed?.summary).toBe(
+      toolSetRefusal("os.fs.read", set).summary,
+    );
+    expect(refused.results[0]!.compressed?.details).toMatchObject({
+      tool_set: true,
+      admitted: ["fusion.delegate", "reply", "finish"],
+    });
+    const ran = await executeBatch(
+      toBatchInputs([{ tool: "fusion.delegate", args: { tasks: [] } }]),
+      registry,
+      { ...ctx(signal), toolSet: set },
+    );
+    expect(delegate).toHaveBeenCalledTimes(1);
+    expect(ran.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("keeps the tail reply of a [read, reply] batch and leaves the loop tracker untouched", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply", "sent"));
+    const registry = buildRegistry({ "os.fs.read": read, reply });
+    const tracker = new ToolLoopTracker();
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.fs.read", args: { path: "a" } },
+        { tool: "reply", args: { text: "done" } },
+      ]),
+      registry,
+      { ...ctx(new AbortController().signal), toolSet: reviewStallToolSet(), tracker },
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.details).toMatchObject({ tool_set: true });
+    expect(out.results[1]!.compressed?.status).toBe("ok");
+    expect(out.loopSignals).toEqual([]);
+    expect(tracker.check("os.fs.read", { path: "a" }).count).toBe(0);
   });
 });

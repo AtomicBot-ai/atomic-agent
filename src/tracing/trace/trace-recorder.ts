@@ -433,6 +433,9 @@ export function createTraceRecorder(
             summary: event.summary,
             durationMs: event.durationMs,
             ...(event.progressNote === true ? { progressNote: true } : {}),
+            ...(event.reviewStall !== undefined
+              ? { reviewStall: event.reviewStall }
+              : {}),
           });
           currentStepIndex = null;
           pendingCalls = new Map();

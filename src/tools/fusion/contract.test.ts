@@ -1,5 +1,10 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  renderContractInputs,
+  resolveContractInputs,
+} from "./contract-inputs.js";
 import {
   contractWarnings,
   MAX_CONTRACT_RENDERED_CHARS,
@@ -156,5 +161,33 @@ describe("contract warnings", () => {
     expect(renderContractForTask(LOOSE, "main")).toContain(
       "You may rely on: btn-launch (id from html in index.html)",
     );
+  });
+});
+
+describe("contract inputs (F51)", () => {
+  it("renders INPUTS first after the header, as edit-in-place files, and nothing when none are declared", () => {
+    const block = renderContractBlock({
+      inputs: ["sales.csv", "data/projects.json"],
+      owners: { "report.md": "report" },
+    });
+    expect(block.split("\n").slice(1, 5)).toEqual([
+      "INPUTS (the operator's own files — read and edit in place, never replace; os.fs.write on one is refused):",
+      "- sales.csv",
+      "- data/projects.json",
+      "OWNERS (path → task; write only in paths you own):",
+    ]);
+    expect(renderContractBlock(CONTRACT)).not.toContain("INPUTS");
+    expect(renderContractInputs(undefined)).toEqual([]);
+    expect(renderContractInputs([])).toEqual([]);
+  });
+
+  it("resolves the declared inputs as the worker's tools would, skipping globs and repeats", () => {
+    expect(
+      resolveContractInputs(
+        ["sales.csv", "data/*.csv", "/abs/x.json", "sales.csv"],
+        "/repo",
+      ),
+    ).toEqual([resolve("/repo", "sales.csv"), resolve("/abs/x.json")]);
+    expect(resolveContractInputs([], "/repo")).toEqual([]);
   });
 });

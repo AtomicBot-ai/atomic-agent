@@ -45,6 +45,11 @@ import {
 } from "../llm/grammar/reasoning-prelude.js";
 import { estimateReasoningTokens } from "../llm/reasoning-budget.js";
 import { refusedToolNames } from "./fusion-orchestrator-mode.js";
+import {
+  narrowDescriptorsToToolSet,
+  toolSetAdmits,
+  type StepToolSet,
+} from "./step-tool-set.js";
 import { descriptorsForRole, type ToolRole } from "../tools/tool-roles.js";
 import type {
   StreamParseEvent,
@@ -420,6 +425,15 @@ export interface StepContext {
    */
   terminalOnly?: boolean;
   /**
+   * The only tool names this step may emit or run (`step-tool-set.ts`)
+   * — `terminalOnly` with the names supplied. Narrows the per-request
+   * grammar and the native tools payload below the role's list, and the
+   * batch executor refuses a call outside it; the prompt's catalog is
+   * untouched. The loop sets it for a stalled Fusion review's cut step
+   * (`review-stall.ts`).
+   */
+  toolSet?: StepToolSet;
+  /**
    * The turn's `RunTurnOptions.toolFilter`, when one is set. The loop has
    * already applied it to `toolDescriptors`; the step applies it once
    * more to the per-request grammar, so a hidden tool is not merely
@@ -611,6 +625,14 @@ async function executeStepInner(
     stepToolDescriptors,
     loadedToolNames,
   );
+  // A per-step tool set narrows what goes on the native wire and into
+  // the grammar below the role's list. One array feeds the request AND
+  // the parser (the adapter memoises on identity), and the batch gate
+  // gets the same names — see `step-tool-set.ts`.
+  const stepDescriptors =
+    ctx.toolSet !== undefined
+      ? narrowDescriptorsToToolSet(roleToolDescriptors, ctx.toolSet)
+      : roleToolDescriptors;
   const promptInput: BuildPromptInput = {
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
@@ -737,7 +759,7 @@ async function executeStepInner(
   const stepGrammar = resolveStepGrammar(
     ctx,
     deps,
-    roleToolDescriptors,
+    stepDescriptors,
     thinkingOff,
   );
   const llmParams: LlmStreamParams = {
@@ -748,7 +770,7 @@ async function executeStepInner(
       grammar: stepGrammar,
       slotId: slot.slotId,
       sessionId: ctx.session.id,
-      toolDescriptors: roleToolDescriptors,
+      toolDescriptors: stepDescriptors,
       // The request's own signal: the user's abort composed with the
       // task's remaining time (F15). Tools keep running on `ctx.signal`
       // alone — the ceiling ends the request, the loop ends the task.
@@ -1163,7 +1185,7 @@ async function executeStepInner(
     parseDepsFor(completion, deps),
     // The list the REQUEST was built from — the strict-widened map must
     // come from the same array the wire payload did.
-    roleToolDescriptors,
+    stepDescriptors,
     thinkingOff,
   );
   if (parsed.ok) {
@@ -1608,6 +1630,7 @@ async function executeStepInner(
     ...(readRoots.length > 0 ? { readRoots } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
+    ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
     ...(deps.isFusionOrchestrator
       ? {
@@ -2320,6 +2343,9 @@ const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
  *
  * Narrowing, in order of precedence:
  *  - the final step (`terminalOnly`) admits `reply` and `finish` only;
+ *  - a per-step tool set (`toolSet`) admits its names only — the
+ *    descriptors handed in are already narrowed to them, so the filter
+ *    is a guard; what matters is that the grammar is rebuilt;
  *  - a fusion ORCHESTRATOR turn drops every name the gate would refuse
  *    (`wouldRefuse`) — the model keeps the descriptors and loses the
  *    ability to spend a step on a call that ends in a refusal;
@@ -2332,7 +2358,7 @@ const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
  * pin, and a step that narrows nothing has no reason to rewrite them.
  */
 function stepGrammarToolNames(
-  ctx: Pick<StepContext, "terminalOnly" | "toolFilter" | "toolRole">,
+  ctx: Pick<StepContext, "terminalOnly" | "toolSet" | "toolFilter" | "toolRole">,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator">,
   descriptors: readonly ToolDescriptor[],
 ): readonly string[] | null {
@@ -2343,6 +2369,11 @@ function stepGrammarToolNames(
   // must follow, or the sampler could still emit what the prompt no
   // longer describes in full.
   let restricted = ctx.toolRole !== undefined && ctx.toolRole !== "full";
+  if (ctx.toolSet !== undefined) {
+    const set = ctx.toolSet;
+    names = names.filter((name) => toolSetAdmits(set, name));
+    restricted = true;
+  }
   if (deps.isFusionOrchestrator?.()) {
     const refused = refusedToolNames(names, { registry: deps.registry });
     if (refused.size > 0) {
@@ -2369,7 +2400,7 @@ function stepGrammarToolNames(
  * grammar byte-identical.
  */
 function resolveStepGrammar(
-  ctx: Pick<StepContext, "terminalOnly" | "toolFilter" | "toolRole">,
+  ctx: Pick<StepContext, "terminalOnly" | "toolSet" | "toolFilter" | "toolRole">,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
   thinkingOff: boolean,

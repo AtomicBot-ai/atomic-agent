@@ -123,12 +123,23 @@ export const ALSO_AVAILABLE_VIA_TOOL_VIEW = "# also available via `tool.view`:";
 /**
  * Persona lines shared verbatim between the grammar and native-tools
  * variants. Only the emission mandate (line 1), the bias-toward-action
- * phrasing (line 2), and the reply-discipline line (line 4, see
+ * phrasing (line 2), and the reply-discipline line (line 5, see
  * `REPLY_DISCIPLINE_LINE_*`) differ per transport; everything else is
  * transport-neutral. Extracted so the two personas cannot drift apart.
  */
 const SYSTEM_PERSONA_TERMINALS_LINE =
   "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.";
+
+/**
+ * Right after the bias-toward-action line in both personas (F51). Live,
+ * five first attempts across two local models rewrote the file the
+ * request named as the input from memory; `os.fs.write` now refuses that
+ * without `overwrite: true` (`fs-input-guard.ts`), and this is the model
+ * told the rule before it reaches for the tool. Pinned by
+ * `stable-prefix.test.ts`.
+ */
+export const SYSTEM_PERSONA_INPUTS_LINE =
+  "Files that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. If the user asked for a rewrite, say so and pass overwrite: true.";
 
 /** Byte-identical to the pre-#285 line (KV-cache safe). */
 const REPLY_DISCIPLINE_LINE_GRAMMAR =
@@ -160,6 +171,7 @@ const SYSTEM_PERSONA_SHARED_LINES = [
 export const DEFAULT_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step emits exactly one JSON array matching the tool grammar — no other prose.",
   "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool-call array quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the array.",
+  SYSTEM_PERSONA_INPUTS_LINE,
   SYSTEM_PERSONA_TERMINALS_LINE,
   REPLY_DISCIPLINE_LINE_GRAMMAR,
   ...SYSTEM_PERSONA_SHARED_LINES,
@@ -178,6 +190,7 @@ export const DEFAULT_SYSTEM_PERSONA = [
 export const NATIVE_TOOLS_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step calls tools through the native function-calling interface — never write tool-call JSON into the text of your answer, and never put your answer in the reasoning channel.",
   "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool call quickly instead of long deliberation. Keep any reasoning or thinking to a few words (or effectively empty), then make the call.",
+  SYSTEM_PERSONA_INPUTS_LINE,
   SYSTEM_PERSONA_TERMINALS_LINE,
   REPLY_DISCIPLINE_LINE_NATIVE,
   ...SYSTEM_PERSONA_SHARED_LINES,
