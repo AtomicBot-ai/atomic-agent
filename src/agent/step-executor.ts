@@ -163,6 +163,14 @@ export interface LlmStreamParams {
   chat?: ChatPromptParts;
   grammar: string;
   slotId: number;
+  /**
+   * `cache_prompt` for a llama-server request. Defaults to "when
+   * `slotId >= 0`". The main loop sets it `true` even on a pending
+   * `slotId: -1` — that pairing asks llama-server to pick the slot by
+   * prefix similarity and keep the prompt there — while a side call on
+   * `-1` (no pin, no reuse wanted) leaves it unset.
+   */
+  cachePrompt?: boolean;
   sessionId: string;
   /**
    * Optional `n_predict` cap for this completion. Falls through to
@@ -273,6 +281,12 @@ export interface StepDependencies {
   /** When false, completions use slotId -1 (cloud providers). */
   supportsSlotAffinity: boolean;
   /**
+   * The local daemon's measured decode speed for the `### fusion` machine
+   * facts (`ModelProfileManager.getTokensPerSecond`). Read per step;
+   * absent or `null` states nothing.
+   */
+  fusionTokensPerSecond?: () => number | null;
+  /**
    * Provider capability: whether the active native-tools provider can
    * generate parallel tool calls in one response. When false (or the
    * configured `agent.maxParallelToolCalls` is 1), the executor asks
@@ -337,6 +351,14 @@ export interface StepContext {
   skillCatalog: readonly SkillCatalogEntry[];
   stepIndex: number;
   signal: AbortSignal;
+  /**
+   * Signal for the step's completion request(s) only: the user's
+   * `signal` composed with the task's remaining wall-clock time (see
+   * `request-deadline.ts`). Absent, the request runs on `signal`. Tool
+   * execution never sees it — the loop decides what a fired deadline
+   * means, and it means `time_ceiling`, not a cancelled tool.
+   */
+  requestSignal?: AbortSignal;
   /**
    * Optional one-shot notice to render in the prompt's `### notice`
    * section for this step only. The agent loop uses this to warn the
@@ -555,6 +577,7 @@ async function executeStepInner(
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
+    fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
     // The prefix must match the request shape: a native-tools link gets
     // native function-calling guidance instead of the text-JSON array
     // mandate (issue #285). Configured transport, not `servedTransport`:
@@ -617,6 +640,7 @@ async function executeStepInner(
         prefixHash: hashPrefix(prompt.stablePrefix),
         firstSeenAt: Date.now(),
         cacheReused: false,
+        pending: false,
       };
   if (ctx.stepIndex === 0) {
     const promptViolations = checkProfilePromptAligned(
@@ -676,8 +700,15 @@ async function executeStepInner(
       slotId: slot.slotId,
       sessionId: ctx.session.id,
       toolDescriptors: roleToolDescriptors,
-      signal: ctx.signal,
+      // The request's own signal: the user's abort composed with the
+      // task's remaining time (F15). Tools keep running on `ctx.signal`
+      // alone — the ceiling ends the request, the loop ends the task.
+      signal: ctx.requestSignal ?? ctx.signal,
     }),
+    // On a slot-affine link the prompt is always worth caching — a
+    // pending `-1` with `cache_prompt: true` is what lets llama-server
+    // pick the slot by prefix similarity and keep the prompt there.
+    ...(deps.supportsSlotAffinity ? { cachePrompt: true } : {}),
     ...(grammarPrompt ? { grammarPrompt } : {}),
     ...(serverTemplate.useServerTemplate
       ? {
@@ -710,6 +741,25 @@ async function executeStepInner(
     slot,
     llmParams,
   });
+  // The server named the slot it put a pending session's prompt in: pin
+  // it so every later request of the session — the repair retry below
+  // included — lands on the cache instead of asking again.
+  if (
+    slot.pending &&
+    deps.supportsSlotAffinity &&
+    firstAttempt.completion.slotId >= 0
+  ) {
+    deps.slotManager.pin(
+      ctx.session.id,
+      firstAttempt.completion.slotId,
+      slot.prefixHash,
+    );
+    llmParams.slotId = firstAttempt.completion.slotId;
+    deps.logger?.debug("slot pinned from completion", {
+      sessionId: ctx.session.id,
+      slotId: firstAttempt.completion.slotId,
+    });
+  }
   let completion = firstAttempt.completion;
 
   // Parse-side prefill assumption for a given completion: keyed off the

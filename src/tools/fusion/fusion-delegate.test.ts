@@ -27,6 +27,7 @@ function fusionMode(over: Partial<ResolvedRunMode> = {}): ResolvedRunMode {
     workerProviderId: "local-llama",
     workerModel: "small",
     workers: 3,
+    workersPinned: true,
     workerMaxSteps: 7,
     workerTimeoutMs: 60_000,
     primaryProviderId: "openrouter",
@@ -284,16 +285,60 @@ describe("fusion.delegate", () => {
     expect(result.summary).not.toContain("localModels.managed.parallel");
   });
 
-  it("falls back to what the machine serves when the call names no width", async () => {
-    // Not to `runMode.fusion.workers`: the operator is not the party
-    // that knows how divisible this job is, and the slot pool is already
-    // the honest ceiling. A call that named nothing gets the capacity.
+  it("runs one local worker at a time when the call names no width and nothing is pinned", async () => {
+    // Slots share one GPU: the benchmark measured two local workers at
+    // 2.6-2.9 tok/s each against 6.4 for one, and a fan-out that
+    // overflows the shared context loses every worker at once. So a
+    // call that named nothing on a slot-affine leg gets one worker
+    // unless the operator pinned `runMode.fusion.workers`.
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 8 },
+        resolveRunMode: () => fusionMode({ workers: 2, workersPinned: false }),
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(result.details.maxWorkers).toBe(1);
+    expect(result.details.requestedWorkers).toBe(1);
+  });
+
+  it("takes a pinned `runMode.fusion.workers` as the default width on a local leg", async () => {
+    // `workers: 3` is pinned in this fixture; six tasks on eight slots
+    // run three at a time.
     const tool = buildFusionDelegateTool(
       deps({ slotManager: { poolSize: () => 8 } }),
     );
     const result = await tool.run({ tasks: sixTasks() }, ctx());
-    expect(result.details.maxWorkers).toBe(6);
-    expect(result.details.requestedWorkers).toBe(8);
+    expect(result.details.maxWorkers).toBe(3);
+    expect(result.details.requestedWorkers).toBe(3);
+  });
+
+  it("takes the configured default on a cloud leg, pinned or not", async () => {
+    const tool = buildFusionDelegateTool(
+      deps({
+        workerSupportsSlotAffinity: () => false,
+        resolveRunMode: () => fusionMode({ workers: 4, workersPinned: false }),
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(result.details.maxWorkers).toBe(4);
+  });
+
+  it("honours an explicit maxWorkers on a local leg up to the pool", async () => {
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 4 },
+        resolveRunMode: () => fusionMode({ workers: 2, workersPinned: false }),
+      }),
+    );
+    expect(
+      (await tool.run({ tasks: sixTasks(), maxWorkers: 3 }, ctx())).details
+        .maxWorkers,
+    ).toBe(3);
+    expect(
+      (await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx())).details
+        .maxWorkers,
+    ).toBe(4);
   });
 
   it("never runs more workers than there are tasks", async () => {

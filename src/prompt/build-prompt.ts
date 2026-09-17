@@ -149,9 +149,13 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     // Only read when the `### fusion` block actually renders. Config
     // values, so they move only when the operator writes the config
     // file — the same event that already flips the fusion descriptor
-    // gate and drops the KV cache once.
+    // gate and drops the KV cache once. The observed slot count moves
+    // once, when first observed; the measured decode speed is per daemon
+    // instance and moves only on a restart, which drops the local cache
+    // anyway.
     fusion: resolveFusionMachineFacts(config, {
       workerSlots: input.liveWorkerSlots ?? null,
+      tokensPerSecond: input.fusionTokensPerSecond ?? null,
     }),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }

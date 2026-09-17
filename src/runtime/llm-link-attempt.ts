@@ -67,7 +67,11 @@ function grammarRequestFields(params: LlmStreamParams) {
   return {
     grammar: params.grammar,
     slotId: params.slotId,
-    cachePrompt: params.slotId >= 0,
+    // An explicit flag wins: the main loop's first request is a pending
+    // `-1` that still wants `cache_prompt` (llama-server then picks the
+    // slot by prefix similarity and keeps the prompt). A side call on
+    // `-1` says nothing and gets no caching, as before (F13).
+    cachePrompt: params.cachePrompt ?? params.slotId >= 0,
     // A grammar link that can honour a Structured Outputs envelope
     // (the subscription CLIs stage it as `--json-schema`) still gets
     // it; llama-server ignores it in favour of the grammar.

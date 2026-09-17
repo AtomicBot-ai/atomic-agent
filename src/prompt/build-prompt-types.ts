@@ -22,6 +22,13 @@ export interface BuildPromptInput {
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
   /**
+   * Single-stream decode speed of the local worker daemon (tokens per
+   * second), measured once at daemon start and held on the model profile
+   * manager. Rendered into the `### fusion` machine facts as "~N tok/s";
+   * `null` / absent says nothing. Read only when that block renders.
+   */
+  fusionTokensPerSecond?: number | null;
+  /**
    * Transport the serving link uses for tool calls. Forwarded into
    * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
    * emission mandate for native function-calling guidance (issue #285).

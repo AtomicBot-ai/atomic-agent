@@ -27,6 +27,11 @@ import {
 } from "../local-llm/huggingface-endpoint.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
+  isSwaFullPreference,
+  SWA_FULL_PREFERENCES,
+  type SwaFullPreference,
+} from "../local-llm/swa-full.js";
+import {
   PRE_V65_SUBCALL_TIMEOUT_DEFAULTS,
   resolveSubcallTimeoutMs,
 } from "./subcall-timeout-migration.js";
@@ -1385,6 +1390,18 @@ export interface UserManagedLocalLlmConfig {
    */
   parallel: number | "auto";
   /**
+   * `--swa-full` for a sliding-window model (Gemma 4 and kin): keep the
+   * whole context in the sliding layers so a partially matching prompt
+   * reuses its matching prefix instead of re-reading everything — at a
+   * several-fold KV cost for those layers.
+   *   - `"auto"` (default) — on when the full-SWA KV estimate fits the
+   *     launch's memory budget (see `swa-full.ts`), else off.
+   *   - `"on"` / `"off"` — always / never.
+   * Models without sliding-window layers ignore it. Applied on the next
+   * daemon start.
+   */
+  swaFull: SwaFullPreference;
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see
@@ -2254,6 +2271,12 @@ export interface UserConfigFile {
 // the model's own chat template (llama-server `/apply-template`) for
 // families without a hand-built profile, and set the template's
 // thinking switch. Additive: an older file inherits `auto` for both.
+// v66: `localModels.managed.swaFull` (`"auto"` | `"on"` | `"off"`, default
+// `"auto"`) — whether a sliding-window model (Gemma 4 and kin) is
+// launched with `--swa-full` so a partially matching prompt reuses its
+// matching prefix (see `swa-full.ts`). Additive: an older file has no
+// field and gets `"auto"`, which is off unless the full-SWA KV estimate
+// fits the launch's memory budget.
 export const USER_CONFIG_VERSION = 66;
 
 /**
@@ -2431,6 +2454,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       contextSize: 0,
       tensorSplit: [],
       parallel: "auto",
+      swaFull: "auto",
     },
     embeddings: {
       enabled: false,
@@ -2874,6 +2898,17 @@ export function parseBackendVariant(
   throw new ConfigValidationError(
     field,
     `expected ${BACKEND_VARIANT_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseSwaFullPreference(
+  raw: unknown,
+  field: string,
+): SwaFullPreference {
+  if (isSwaFullPreference(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected ${SWA_FULL_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -4310,6 +4345,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       "localModels.managed.tensorSplit",
     ),
     parallel: resolveManagedParallel(version, rawManaged.parallel),
+    swaFull: parseSwaFullPreference(
+      rawManaged.swaFull ?? USER_CONFIG_DEFAULTS.localModels.managed.swaFull,
+      "localModels.managed.swaFull",
+    ),
   };
 
   const rawEmbeddings =

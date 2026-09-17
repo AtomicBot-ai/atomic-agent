@@ -224,3 +224,148 @@ describe("ModelProfileManager", () => {
     expect(manager.getGrammar()).not.toContain("think-prelude");
   });
 });
+
+describe("ModelProfileManager throughput (F16)", () => {
+  async function manager(readThroughput?: () => number | null) {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    return new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      ...(readThroughput ? { readThroughput } : {}),
+    });
+  }
+
+  it("knows no speed until something measured it", async () => {
+    const mgr = await manager();
+    expect(mgr.getTokensPerSecond()).toBeNull();
+  });
+
+  it("keeps an observed reading and ignores nonsense", async () => {
+    const mgr = await manager();
+    mgr.observeThroughput(6.4);
+    expect(mgr.getTokensPerSecond()).toBe(6.4);
+    for (const bad of [0, -3, Number.NaN, null]) mgr.observeThroughput(bad);
+    expect(mgr.getTokensPerSecond()).toBe(6.4);
+  });
+
+  it("reads the daemon's record lazily when it holds nothing", async () => {
+    // `models start` in another process wrote the record; the runtime
+    // that connects later reads it the first time the prompt asks.
+    let recorded: number | null = null;
+    const mgr = await manager(() => recorded);
+    expect(mgr.getTokensPerSecond()).toBeNull();
+    recorded = 3.2;
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+    // Held from then on, not re-read per step.
+    recorded = null;
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+  });
+
+  it("re-reads the record on a /props refresh so a restarted daemon's speed replaces the old", async () => {
+    let recorded: number | null = 3.2;
+    const mgr = await manager(() => recorded);
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+    recorded = 9.9;
+    await mgr.refresh();
+    expect(mgr.getTokensPerSecond()).toBe(9.9);
+  });
+
+  it("drops a speed that no record backs once the profile changed", async () => {
+    // A different model behind the same URL: the old figure describes a
+    // model that is gone.
+    let recorded: number | null = 3.2;
+    const stub = makeLlamaStub([GEMMA4_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      readThroughput: () => recorded,
+    });
+    expect(mgr.getTokensPerSecond()).toBe(3.2);
+    recorded = null;
+    const result = await mgr.refresh();
+    expect(result.profileChanged).toBe(true);
+    expect(mgr.getTokensPerSecond()).toBeNull();
+  });
+});
+
+
+describe("ModelProfileManager prefix reuse (F12)", () => {
+  async function managerWith(opts: {
+    props: Record<string, unknown>;
+    verdict: { prefixReuse: "partial" | "none"; reasons: string[] } | null;
+    swaFullActive?: () => boolean;
+  }) {
+    const stub = makeLlamaStub([opts.props]);
+    const asked: string[] = [];
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      readPrefixReuse: async (path) => {
+        asked.push(path);
+        return opts.verdict;
+      },
+      ...(opts.swaFullActive ? { swaFullActive: opts.swaFullActive } : {}),
+    });
+    return { mgr, asked };
+  }
+
+  it("stamps prefixReuse none from the header of /props.model_path", async () => {
+    const { mgr, asked } = await managerWith({
+      props: { ...GEMMA4_PROPS, model_path: "/models/gemma-4-31b.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["50 of 60 layers use a sliding window of 1024"] },
+    });
+    await mgr.refresh();
+    expect(asked).toEqual(["/models/gemma-4-31b.gguf"]);
+    expect(mgr.getProfile().id).toBe("gemma4-think");
+    expect(mgr.getProfile().prefixReuse).toBe("none");
+  });
+
+  it("leaves the default when /props names no model path or the header is unreadable", async () => {
+    const { mgr, asked } = await managerWith({ props: QWEN3_PROPS, verdict: { prefixReuse: "none", reasons: [] } });
+    await mgr.refresh();
+    expect(asked).toEqual([]);
+    expect(mgr.getProfile().prefixReuse).toBeUndefined();
+    const { mgr: unreadable } = await managerWith({
+      props: { ...QWEN3_PROPS, model_path: "/models/x.gguf" },
+      verdict: null,
+    });
+    await unreadable.refresh();
+    expect(unreadable.getProfile().prefixReuse).toBeUndefined();
+  });
+
+  it("turns a sliding-window model's reuse back to partial when the daemon runs --swa-full, never a hybrid's", async () => {
+    const { mgr } = await managerWith({
+      props: { ...GEMMA4_PROPS, model_path: "/models/gemma.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["50 of 60 layers use a sliding window of 1024"] },
+      swaFullActive: () => true,
+    });
+    await mgr.refresh();
+    expect(mgr.getProfile().prefixReuse).toBe("partial");
+    const { mgr: hybrid } = await managerWith({
+      props: { ...QWEN3_PROPS, model_path: "/models/qwen35.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["hybrid/recurrent architecture (qwen35)"] },
+      swaFullActive: () => true,
+    });
+    await hybrid.refresh();
+    expect(hybrid.getProfile().prefixReuse).toBe("none");
+  });
+
+  it("updates prefixReuse on a refresh that keeps the profile id", async () => {
+    // The initial profile is plain-instruct and /props says plain too:
+    // no grammar rebuild, but the header's verdict must still land.
+    const { mgr } = await managerWith({
+      props: { ...LLAMA3_PROPS, model_path: "/models/hybrid.gguf" },
+      verdict: { prefixReuse: "none", reasons: ["hybrid/recurrent architecture (nemotron_h)"] },
+    });
+    const result = await mgr.refresh();
+    expect(result.profileChanged).toBe(false);
+    expect(mgr.getProfile().id).toBe("plain-instruct");
+    expect(mgr.getProfile().prefixReuse).toBe("none");
+  });
+});

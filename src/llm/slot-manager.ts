@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 import { getConfig } from "../config/index.js";
 
 export interface SlotAssignment {
+  /**
+   * The llama-server slot this session's prompt lives in, or `-1` while
+   * the session has none yet (`pending`). A `-1` sent WITH
+   * `cache_prompt: true` asks llama-server to pick the slot itself — by
+   * longest-common-prefix similarity first, least-recently-used second —
+   * which is how a resumed session finds the slot that still holds its
+   * prompt after a TUI restart. The server names the slot it chose in
+   * the completion (`id_slot`), and the caller pins it with `pin()`.
+   */
   slotId: number;
   prefixHash: string;
   firstSeenAt: number;
@@ -10,28 +19,59 @@ export interface SlotAssignment {
    * which on the llama-server side implies the KV-cache can be reused.
    */
   cacheReused: boolean;
+  /**
+   * No slot has been pinned for this session yet: send `id_slot: -1`
+   * with `cache_prompt: true` and pin whatever the server answers with.
+   * A pending assignment is not stored — a request that fails before the
+   * server names a slot leaves the next attempt free to ask again.
+   */
+  pending: boolean;
 }
 
 /**
- * Maps a (session, stable-prefix) pair to a slot_id on the external
- * llama-server. Reusing the same slot_id with cache_prompt=true is what
- * makes KV-cache hit on llama.cpp — if the prefix changes we rotate.
+ * A slot id, or a thunk that resolves one at call time. Side-call
+ * runners (reflection, link generation, voting, distillation, the query
+ * rewriter) are built at boot, when a managed daemon's slot count is not
+ * known yet; a thunk lets them reserve the reflection slot on their
+ * first call instead of capturing `-1` forever.
+ */
+export type SlotIdSource = number | (() => number);
+
+export function resolveSlotId(source: SlotIdSource): number {
+  return typeof source === "function" ? source() : source;
+}
+
+/**
+ * Maps a session to a slot on the llama-server. Reusing the same
+ * `id_slot` with `cache_prompt=true` is what makes the KV cache hit on
+ * llama.cpp.
  *
- * We keep the mapping purely in-process; the server itself owns the cache.
- * On restart every session simply starts cold — that is acceptable because
- * prefix recomputation is a single LLM pass at sub-second latency.
+ * **Who picks the slot.** Not this class. A session's first request (and
+ * its first after `resize()`) carries `id_slot: -1` and `cache_prompt:
+ * true`, so llama-server selects the slot by prefix similarity and falls
+ * back to the least-recently-used one — never worse than a cold slot,
+ * and warm after a restart when the server still holds the prompt. The
+ * step executor reads the chosen `id_slot` off the completion and pins
+ * it here; from then on every request of the session, retries included,
+ * names that slot. A stable-prefix change does NOT move the session: the
+ * server re-evaluates from the point of divergence in the same slot,
+ * which is cheaper than a cold slot and keeps the conversation's cache
+ * where it is.
+ *
+ * We keep the mapping purely in-process; the server itself owns the
+ * cache. On restart every session simply starts pending, and the `-1`
+ * request finds its old slot when the server still has it.
  *
  * **Concurrency contract (single-active-turn-per-session).** `acquire`
- * does no internal locking; it relies on the runtime invariant that at
- * most one `runTurn` is in flight per `sessionId`. That invariant is
- * enforced by `TurnController` in [src/runtime/turn-controller.ts] —
- * every entry point (CLI, TUI, HTTP, sidecar, scheduler) funnels
- * through it. Concurrent `acquire(sessionId, …)` from different
- * sessions is safe because each session has its own assignment slot
- * in the map and the round-robin pointer is integer-mutating;
- * concurrent `acquire(sessionId, …)` for the *same* session is a
- * controller-contract violation and would race the prefix swap. Do
- * not call `acquire` outside an `AgentLoop.runTurn` frame.
+ * and `pin` do no internal locking; they rely on the runtime invariant
+ * that at most one `runTurn` is in flight per `sessionId`. That
+ * invariant is enforced by `TurnController` in
+ * [src/runtime/turn-controller.ts] — every entry point (CLI, TUI, HTTP,
+ * sidecar, scheduler) funnels through it. Concurrent calls from
+ * different sessions are safe because each session has its own entry in
+ * the map; concurrent calls for the *same* session are a
+ * controller-contract violation. Do not call `acquire` outside an
+ * `AgentLoop.runTurn` frame.
  */
 /**
  * Slot count used when the `/props` probe has not answered yet. Every
@@ -50,7 +90,6 @@ export class SlotManager {
   private readonly assignments = new Map<string, SlotAssignment>();
   private slotCount: number;
   private slotPool: number[];
-  private nextRoundRobin = 0;
   private reservedReflectionSlot: number | null = null;
   /** Whether a `/props` answer has ever sized the pool — see `observedPoolSize`. */
   private observed = false;
@@ -69,10 +108,10 @@ export class SlotManager {
   }
 
   /**
-   * Slots `acquire()` can actually hand out: the configured count minus
-   * the reflection reservation. This — not `getSlotCount()` — is how many
-   * turns can run against the local server without two of them sharing a
-   * slot and evicting each other's KV cache; the fusion fan-out sizes its
+   * Slots sessions can run on: the configured count minus the reflection
+   * reservation. This — not `getSlotCount()` — is how many turns can run
+   * against the local server without two of them sharing a slot and
+   * evicting each other's KV cache; the fusion fan-out sizes its
    * concurrent worker count from it.
    */
   poolSize(): number {
@@ -98,9 +137,9 @@ export class SlotManager {
    *
    * On a real change every existing assignment is dropped: a session's
    * slot id may no longer exist, and the server-side KV for it is not
-   * where we think it is either way. The next `acquire` re-assigns with
-   * `cacheReused: false`, which is honest — one cold prefix rebuild beats
-   * silently pointing at a stranger's cache.
+   * where we think it is either way. The next `acquire` comes back
+   * pending, so the session's next request lets the server pick by
+   * prefix similarity — which finds the old slot when it still exists.
    *
    * A reflection reservation that is still in range is preserved; one that
    * fell outside is released back so `reserveReflectionSlot()` can re-take
@@ -122,7 +161,6 @@ export class SlotManager {
         : null;
     this.slotCount = slotCount;
     this.assignments.clear();
-    this.nextRoundRobin = 0;
     this.reservedReflectionSlot = reserved;
     this.slotPool = Array.from({ length: slotCount }, (_, i) => i).filter(
       (id) => id !== reserved,
@@ -134,21 +172,61 @@ export class SlotManager {
     }
   }
 
+  /**
+   * The assignment a request should carry. A pinned session gets its slot
+   * back whatever the prefix did — `cacheReused` says whether the prefix
+   * is the one the slot was pinned under, and the stored hash follows the
+   * prefix so the next step reports reuse again. A session without a pin
+   * gets a pending assignment (`slotId: -1`); see `pin()`.
+   */
   acquire(sessionId: string, stablePrefix: string): SlotAssignment {
     const prefixHash = hashPrefix(stablePrefix);
     const existing = this.assignments.get(sessionId);
-    if (existing && existing.prefixHash === prefixHash) {
-      return { ...existing, cacheReused: true };
+    if (existing) {
+      const cacheReused = existing.prefixHash === prefixHash;
+      if (!cacheReused) {
+        this.assignments.set(sessionId, { ...existing, prefixHash });
+      }
+      return { ...existing, prefixHash, cacheReused };
     }
-    const slotId = this.pickSlot();
-    const assignment: SlotAssignment = {
+    return {
+      slotId: -1,
+      prefixHash,
+      firstSeenAt: Date.now(),
+      cacheReused: false,
+      pending: true,
+    };
+  }
+
+  /**
+   * Record the slot llama-server chose for a session's pending request.
+   * The server's answer is the truth even when it names the reserved
+   * reflection slot or an id above the pool the probe reported — the
+   * prompt is in that slot now, and pointing anywhere else would be the
+   * cold rebuild this exists to avoid. Negative ids (a server that did
+   * not say) leave the session pending.
+   */
+  pin(sessionId: string, slotId: number, prefixHash: string): void {
+    if (!Number.isInteger(slotId) || slotId < 0) return;
+    const existing = this.assignments.get(sessionId);
+    if (existing && existing.slotId === slotId) {
+      if (existing.prefixHash !== prefixHash) {
+        this.assignments.set(sessionId, { ...existing, prefixHash });
+      }
+      return;
+    }
+    this.assignments.set(sessionId, {
       slotId,
       prefixHash,
       firstSeenAt: Date.now(),
       cacheReused: false,
-    };
-    this.assignments.set(sessionId, assignment);
-    return assignment;
+      pending: false,
+    });
+  }
+
+  /** The pinned slot for a session, or `null` while it has none. */
+  pinnedSlot(sessionId: string): number | null {
+    return this.assignments.get(sessionId)?.slotId ?? null;
   }
 
   release(sessionId: string): void {
@@ -157,22 +235,23 @@ export class SlotManager {
 
   reset(): void {
     this.assignments.clear();
-    this.nextRoundRobin = 0;
     this.slotPool = Array.from({ length: this.slotCount }, (_, i) => i);
     this.reservedReflectionSlot = null;
   }
 
   /**
-   * Carve out a slot for the async reflection runner. The reserved slot
-   * is removed from the round-robin pool used by `acquire()`, so it
-   * will never be handed to a session — guaranteeing the main agent's
-   * KV cache is never evicted by a reflection call.
+   * Carve out a slot for the async reflection runner and the other side
+   * calls (link generation, voting, distillation, the query rewriter).
+   * The reserved slot leaves the pool `poolSize()` reports, so the fusion
+   * fan-out never plans a worker onto it. It prefers a slot no session is
+   * pinned to, so reserving late — after the pool was widened by the
+   * first `/props` — does not take a slot a session's prompt is in.
    *
-   * Returns `null` when only one slot is configured: reserving the sole
+   * Returns `null` when only one slot is available: reserving the sole
    * slot would starve the agent loop, so the caller should fall back to
-   * `slotId: -1` (no cache affinity) for reflection in that case.
-   * Idempotent — subsequent calls return the slot reserved on the first
-   * call.
+   * `slotId: -1` (no cache affinity) for the side call in that case —
+   * `sideCallSlotId()` does exactly that. Idempotent — subsequent calls
+   * return the slot reserved on the first call.
    */
   reserveReflectionSlot(): number | null {
     if (this.reservedReflectionSlot !== null) {
@@ -181,15 +260,29 @@ export class SlotManager {
     if (this.slotPool.length <= 1) {
       return null;
     }
-    const reserved = this.slotPool.pop()!;
-    this.reservedReflectionSlot = reserved;
-    return reserved;
+    const pinned = new Set(
+      [...this.assignments.values()].map((assignment) => assignment.slotId),
+    );
+    let index = this.slotPool.length - 1;
+    for (let i = this.slotPool.length - 1; i >= 0; i -= 1) {
+      if (!pinned.has(this.slotPool[i]!)) {
+        index = i;
+        break;
+      }
+    }
+    const [reserved] = this.slotPool.splice(index, 1);
+    this.reservedReflectionSlot = reserved!;
+    return reserved!;
   }
 
-  private pickSlot(): number {
-    const slot = this.slotPool[this.nextRoundRobin % this.slotPool.length]!;
-    this.nextRoundRobin += 1;
-    return slot;
+  /**
+   * Where a side call runs: the reserved reflection slot when the pool
+   * has room for one, else `-1`. Resolved at call time so a runner built
+   * before the managed daemon's `/props` widened the pool still lands on
+   * the reservation once there is one.
+   */
+  sideCallSlotId(): number {
+    return this.reserveReflectionSlot() ?? -1;
   }
 }
 

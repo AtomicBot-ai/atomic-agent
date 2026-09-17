@@ -5144,3 +5144,211 @@ describe("executeStep — server chat template parts (F31)", () => {
     expect((params.prompt as string).trimEnd().endsWith("<think>")).toBe(true);
   });
 });
+
+describe("executeStep slot pinning (F13)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function replyRegistry(): ToolRegistry {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args: Record<string, unknown>) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  const replyBody = JSON.stringify([{ tool: "reply", args: { text: "ok" } }]);
+
+  it("sends a pending session's first request as id_slot -1 WITH cache_prompt, then pins the server's answer", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> = [];
+    const deps = {
+      registry,
+      slotManager,
+      llmComplete: async (params: { slotId: number; cachePrompt?: boolean }) => {
+        seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt });
+        // llama-server picked slot 2 by prefix similarity.
+        return mockCompletion(replyBody, { slotId: 2 });
+      },
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      supportsSlotAffinity: true,
+    };
+    let session = createEmptySessionState({ id: "s-pin", workingDir: "/w" });
+    const first = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      deps,
+    );
+    session = first.nextSession;
+    expect(seen[0]).toEqual({ slotId: -1, cachePrompt: true });
+    expect(slotManager.pinnedSlot("s-pin")).toBe(2);
+
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 1,
+        signal: new AbortController().signal,
+      },
+      deps,
+    );
+    // The retry of a later step names the pinned slot.
+    expect(seen[1]).toEqual({ slotId: 2, cachePrompt: true });
+  });
+
+  it("stays pending when the server did not name a slot, and asks again next step", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const slots: number[] = [];
+    const deps = {
+      registry,
+      slotManager,
+      llmComplete: async (params: { slotId: number }) => {
+        slots.push(params.slotId);
+        return mockCompletion(replyBody, { slotId: -1 });
+      },
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      supportsSlotAffinity: true,
+    };
+    const ctx = {
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      signal: new AbortController().signal,
+    };
+    let session = createEmptySessionState({ id: "s-nopin", workingDir: "/w" });
+    session = (
+      await executeStep({ ...ctx, session, stepIndex: 0, userMessage: "x" }, deps)
+    ).nextSession;
+    await executeStep({ ...ctx, session, stepIndex: 1 }, deps);
+    expect(slots).toEqual([-1, -1]);
+    expect(slotManager.pinnedSlot("s-nopin")).toBeNull();
+  });
+
+  it("runs the in-step repair on the slot the first completion was pinned to", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const slots: number[] = [];
+    const deps = {
+      registry,
+      slotManager,
+      llmComplete: async (params: { slotId: number }) => {
+        slots.push(params.slotId);
+        return slots.length === 1
+          ? // Unparseable, so the executor issues its one-shot repair.
+            mockCompletion("this is not a tool call", { slotId: 3 })
+          : mockCompletion(replyBody, { slotId: 3 });
+      },
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      supportsSlotAffinity: true,
+    };
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-repair", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      deps,
+    );
+    expect(outcome.toolResults[0]!.tool).toBe("reply");
+    expect(slots).toEqual([-1, 3]);
+    expect(slotManager.pinnedSlot("s-repair")).toBe(3);
+  });
+
+  it("keeps the pinned slot across a stable-prefix change instead of rotating", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    slotManager.pin("s-prefix", 1, "stale-hash");
+    const slots: number[] = [];
+    const cacheReused: boolean[] = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-prefix", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager,
+        llmComplete: async (params: { slotId: number }) => {
+          slots.push(params.slotId);
+          return mockCompletion(replyBody, { slotId: 1 });
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        supportsSlotAffinity: true,
+        onEvent: (event: StepEvent) => {
+          if (event.type === "prompt_captured") cacheReused.push(event.cacheReused);
+        },
+      },
+    );
+    expect(slots).toEqual([1]);
+    // Honest about the changed prefix, but the slot did not move.
+    expect(cacheReused).toEqual([false]);
+    expect(slotManager.pinnedSlot("s-prefix")).toBe(1);
+  });
+
+  it("never sets cache_prompt or pins on a link without slot affinity", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-cloud", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager,
+        llmComplete: async (params: { slotId: number; cachePrompt?: boolean }) => {
+          seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt });
+          return mockCompletion(replyBody, { slotId: 5 });
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        supportsSlotAffinity: false,
+      },
+    );
+    expect(seen).toEqual([{ slotId: -1, cachePrompt: undefined }]);
+    expect(slotManager.pinnedSlot("s-cloud")).toBeNull();
+  });
+});

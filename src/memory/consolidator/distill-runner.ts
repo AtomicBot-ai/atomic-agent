@@ -2,6 +2,7 @@ import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { MemoryEntry } from "../memory-store.js";
 import type { ReflectionLlmComplete } from "../reflection/reflection-runner.js";
+import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 
 import {
   DISTILL_GRAMMAR,
@@ -76,8 +77,9 @@ export interface DistillRunnerDeps {
    * `ReflectionRunner` and `LinkGenerator`). The distill call is
    * cold-path and infrequent so it is safe to share the reflection
    * slot — different reflection sub-calls already alternate on it.
+   * Resolved per call.
    */
-  slotId: number;
+  slotId: SlotIdSource;
   /** Per-cluster wall-clock budget. */
   timeoutMs: number;
   /**
@@ -162,7 +164,7 @@ export class DistillRunner {
         prompt,
         grammar,
         responseFormat,
-        slotId: this.deps.slotId,
+        slotId: resolveSlotId(this.deps.slotId),
         sessionId: request.sessionId,
         signal: innerCtrl.signal,
       });

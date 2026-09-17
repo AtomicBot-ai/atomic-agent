@@ -8,6 +8,7 @@ import {
   readFileSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 
 import {
@@ -17,12 +18,29 @@ import {
   resolveModelFilePath,
   resolvePidFilePath,
   resolveServerBinPath,
+  resolveLaunchFilePath,
+  resolveThroughputFilePath,
 } from "./backend-paths.js";
 import {
+  buildKvLayout,
   estimateContextSize,
+  MANAGED_KV_CACHE_TYPE,
   resolveDeviceFreeVramMiB,
+  resolveKvBudgetMiB,
+  type KvLayoutSource,
 } from "./context-size.js";
+import {
+  classifyPrefixReuse,
+  kvLayoutSourceFromMetadata,
+  readGgufMetadataSync,
+  type GgufMetadata,
+} from "./gguf-metadata.js";
 import { listVulkanDevices, resolveManagedDevice } from "./gpu-devices.js";
+import {
+  resolveSwaFullDecision,
+  type SwaFullDecision,
+  type SwaFullPreference,
+} from "./swa-full.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -88,6 +106,229 @@ export interface DaemonStartOptions {
    * daemon launches with is the one the `### fusion` prompt block states.
    */
   completionMaxTokens?: number;
+  /**
+   * `localModels.managed.swaFull`: whether a sliding-window model gets
+   * `--swa-full` (see `swa-full.ts`). Undefined keeps the flag off, so a
+   * launch that passes nothing stays byte-identical.
+   */
+  swaFull?: SwaFullPreference;
+  /**
+   * Resolved by `startDaemon` from the model header and the memory
+   * budget; a caller passing it directly forces the flag. Internal —
+   * `buildLlamaServerArgs` appends `--swa-full` when `true`.
+   */
+  swaFullFlag?: boolean;
+  /**
+   * Run the throughput probe once the server is healthy (default
+   * `true`): one 64-token completion whose `timings.predicted_per_second`
+   * is written next to the pid file and shown to the fusion orchestrator
+   * as "~N tok/s single stream". Costs a few seconds of readiness — a
+   * 31B model at 3 tok/s spends ~20 s on it. `false` skips it.
+   */
+  throughputProbe?: boolean;
+}
+
+/** What `probeThroughput` measured on one short completion. */
+export interface ThroughputSample {
+  /** `timings.predicted_per_second` — single-stream decode speed. */
+  tokensPerSecond: number;
+  /** Tokens the probe generated (`timings.predicted_n`). */
+  predictedTokens: number;
+  /** Prompt-evaluation speed, when the server reported it. */
+  promptTokensPerSecond: number | null;
+}
+
+/** The record `startDaemon` leaves at `resolveThroughputFilePath`. */
+export interface ThroughputRecord extends ThroughputSample {
+  /** Pid of the daemon instance the sample belongs to. */
+  pid: number;
+  modelId: string;
+  /** Epoch ms of the measurement. */
+  measuredAt: number;
+}
+
+/** Tokens the probe asks for: enough to average out the first-token cost. */
+export const THROUGHPUT_PROBE_TOKENS = 64;
+
+/** A prompt long enough to decode from, short enough to evaluate in ms. */
+const THROUGHPUT_PROBE_PROMPT =
+  "Count upward from one, one number per line, and keep going:\n1\n2\n3\n";
+
+export interface ProbeThroughputOptions {
+  port: number;
+  host?: string;
+  apiKey?: string | null;
+  fetchImpl?: typeof fetch;
+  /** Whole-probe deadline. Default 120 s — 64 tokens at 0.6 tok/s. */
+  timeoutMs?: number;
+  nPredict?: number;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * One short greedy completion against a healthy server, read for the
+ * decode speed llama-server itself reports. Sent with `id_slot: -1` and
+ * `cache_prompt: false`, so it neither pins nor pollutes a slot a session
+ * will later be given. Never throws: a server that refuses or times out
+ * simply leaves the speed unknown.
+ */
+export async function probeThroughput(
+  opts: ProbeThroughputOptions,
+): Promise<ThroughputSample | null> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = `http://${opts.host ?? "127.0.0.1"}:${opts.port}/completion`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 120_000);
+  try {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json",
+    };
+    if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        prompt: THROUGHPUT_PROBE_PROMPT,
+        n_predict: opts.nPredict ?? THROUGHPUT_PROBE_TOKENS,
+        temperature: 0,
+        stream: false,
+        cache_prompt: false,
+        id_slot: -1,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as Record<string, unknown>;
+    const timings = (body.timings ?? {}) as Record<string, unknown>;
+    const tokensPerSecond = toFiniteNumber(timings.predicted_per_second);
+    const predictedTokens =
+      toFiniteNumber(timings.predicted_n) ??
+      toFiniteNumber(body.tokens_predicted) ??
+      0;
+    if (tokensPerSecond === null || tokensPerSecond <= 0 || predictedTokens <= 0) {
+      return null;
+    }
+    return {
+      tokensPerSecond,
+      predictedTokens,
+      promptTokensPerSecond: toFiniteNumber(timings.prompt_per_second),
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The launch decisions of the running chat daemon, next to its pid file.
+ * A runtime that did not start the daemon (the TUI after `models start`)
+ * reads `swaFull` from here to know whether the model's cache is
+ * partially reusable.
+ */
+export interface LaunchRecord {
+  pid: number;
+  modelId: string;
+  contextSize: number;
+  swaFull: boolean;
+  prefixReuse: "partial" | "none" | null;
+  launchedAt: number;
+}
+
+export function writeLaunchRecord(dataDir: string, record: LaunchRecord): void {
+  try {
+    writeFileSync(resolveLaunchFilePath(dataDir), JSON.stringify(record), "utf-8");
+  } catch {
+    // Best-effort, like the throughput record.
+  }
+}
+
+/** The launch record for the live daemon, or `null` (none, unreadable, other pid). */
+export function readLaunchRecord(
+  dataDir: string,
+  livePid: number | null,
+): LaunchRecord | null {
+  if (livePid === null) return null;
+  try {
+    const parsed = JSON.parse(
+      readFileSync(resolveLaunchFilePath(dataDir), "utf-8"),
+    ) as Partial<LaunchRecord>;
+    if (parsed.pid !== livePid || typeof parsed.modelId !== "string") return null;
+    return {
+      pid: livePid,
+      modelId: parsed.modelId,
+      contextSize: toFiniteNumber(parsed.contextSize) ?? 0,
+      swaFull: parsed.swaFull === true,
+      prefixReuse:
+        parsed.prefixReuse === "partial" || parsed.prefixReuse === "none"
+          ? parsed.prefixReuse
+          : null,
+      launchedAt: toFiniteNumber(parsed.launchedAt) ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeThroughputRecord(
+  dataDir: string,
+  record: ThroughputRecord,
+): void {
+  try {
+    writeFileSync(
+      resolveThroughputFilePath(dataDir),
+      JSON.stringify(record),
+      "utf-8",
+    );
+  } catch {
+    // Best-effort: a record that cannot be written leaves the speed
+    // unknown, which is where it was.
+  }
+}
+
+/**
+ * The throughput measured for the daemon instance now running — `null`
+ * when nothing was recorded, the record is unreadable, or it belongs to
+ * another pid (a previous daemon, possibly another model). Pass the pid
+ * from `readRunningPid` so a stale record never describes a live server.
+ */
+export function readThroughputRecord(
+  dataDir: string,
+  livePid: number | null,
+): ThroughputRecord | null {
+  if (livePid === null) return null;
+  let raw: string;
+  try {
+    raw = readFileSync(resolveThroughputFilePath(dataDir), "utf-8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<ThroughputRecord>;
+    const tokensPerSecond = toFiniteNumber(parsed.tokensPerSecond);
+    if (
+      parsed.pid !== livePid ||
+      tokensPerSecond === null ||
+      tokensPerSecond <= 0 ||
+      typeof parsed.modelId !== "string"
+    ) {
+      return null;
+    }
+    return {
+      pid: livePid,
+      modelId: parsed.modelId,
+      tokensPerSecond,
+      predictedTokens: toFiniteNumber(parsed.predictedTokens) ?? 0,
+      promptTokensPerSecond: toFiniteNumber(parsed.promptTokensPerSecond),
+      measuredAt: toFiniteNumber(parsed.measuredAt) ?? 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -164,6 +405,9 @@ export function buildLlamaServerArgs(
   if (opts.chatTemplateFile) {
     args.push("--chat-template-file", opts.chatTemplateFile);
   }
+  if (opts.swaFullFlag === true) {
+    args.push("--swa-full");
+  }
   if (opts.mmprojFile) {
     args.push("--mmproj", opts.mmprojFile);
     // Vision-capable models (notably Gemma-4 with `gemma4v` projector and
@@ -206,20 +450,57 @@ async function resolveEffectiveContextSize(
     maxContextLength: number;
     mmprojFileSizeGb?: number;
   },
-  opts: { configured: number; hasMmproj: boolean },
-): Promise<number> {
+  opts: {
+    configured: number;
+    hasMmproj: boolean;
+    /** The model's attention layout from its header, when readable. */
+    kvLayout?: KvLayoutSource | null;
+  },
+): Promise<{ contextSize: number; kvBudgetBytes: number | null }> {
   let freeVramMiB: number | null = null;
   if (opts.configured <= 0 && device && device !== "cpu") {
     const devices = await listVulkanDevices(binPath);
     freeVramMiB = resolveDeviceFreeVramMiB(devices, device);
   }
-  return estimateContextSize({
+  const mmprojSizeGb = opts.hasMmproj ? (model.mmprojFileSizeGb ?? 0) : 0;
+  const contextSize = estimateContextSize({
     freeVramMiB,
     modelSizeGb: model.fileSizeGb,
-    mmprojSizeGb: opts.hasMmproj ? (model.mmprojFileSizeGb ?? 0) : 0,
+    mmprojSizeGb,
     maxContextLength: model.maxContextLength,
     configuredContextSize: opts.configured,
+    kvLayout: opts.kvLayout ? buildKvLayout(opts.kvLayout) : null,
+    cacheType: MANAGED_KV_CACHE_TYPE,
   });
+  const kvBudgetBytes =
+    freeVramMiB !== null && freeVramMiB > 0
+      ? Math.max(
+          0,
+          resolveKvBudgetMiB({
+            freeVramMiB,
+            modelSizeGb: model.fileSizeGb,
+            mmprojSizeGb,
+          }),
+        ) *
+        1024 *
+        1024
+      : null;
+  return { contextSize, kvBudgetBytes };
+}
+
+/**
+ * The model's header, read before launch. Best-effort: a file that is
+ * not GGUF, or one whose header cannot be read, leaves the layout unknown
+ * and the launch on the file-size fallback — never a failed start.
+ * Synchronous on purpose: the health wait that follows is timer-driven,
+ * and a start must reach it without yielding to real I/O in between.
+ */
+function readModelHeader(modelPath: string): GgufMetadata | null {
+  try {
+    return readGgufMetadataSync(modelPath);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -376,9 +657,25 @@ async function waitForHealthOkWithLog(
   );
 }
 
+export interface DaemonStartResult {
+  pid: number;
+  /**
+   * Single-stream decode speed from the start-time probe, or `null` when
+   * the probe was skipped or did not answer. Also written next to the
+   * pid file (`readThroughputRecord`) for a runtime that connects later.
+   */
+  tokensPerSecond: number | null;
+  /** The `--ctx-size` the daemon launched with (`0`: left to llama.cpp). */
+  contextSize: number;
+  /** The `--swa-full` decision and its reason (also in the daemon log). */
+  swaFull: SwaFullDecision;
+  /** Whether the model's prompt cache is reusable partially or only whole. */
+  prefixReuse: "partial" | "none" | null;
+}
+
 export async function startDaemon(
   opts: DaemonStartOptions,
-): Promise<{ pid: number }> {
+): Promise<DaemonStartResult> {
   const pidPath = resolvePidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir);
   if (existing !== null) {
@@ -411,21 +708,52 @@ export async function startDaemon(
   const device = await resolveManagedDevice(binPath, opts.device, {
     multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
   });
-  const contextSize = await resolveEffectiveContextSize(
+  // The header says what the KV cache really costs and whether the
+  // model's cache can be reused partially — both decide flags below.
+  const header = readModelHeader(modelPath);
+  const kvLayout = header ? kvLayoutSourceFromMetadata(header) : null;
+  const prefixReuse = header ? classifyPrefixReuse(header) : null;
+  const { contextSize, kvBudgetBytes } = await resolveEffectiveContextSize(
     binPath,
     device,
     model,
     {
       configured: opts.contextSize ?? 0,
       hasMmproj: Boolean(opts.mmprojFile),
+      kvLayout,
     },
   );
+  const swaFull =
+    opts.swaFullFlag !== undefined
+      ? {
+          enabled: opts.swaFullFlag,
+          reason: `swa-full: ${opts.swaFullFlag ? "on" : "off"} (forced by caller)`,
+          estimate: null,
+          slidingLayers: prefixReuse?.slidingWindowLayers ?? 0,
+        }
+      : resolveSwaFullDecision({
+          preference: opts.swaFull ?? "auto",
+          layout: kvLayout,
+          contextSize,
+          kvBudgetBytes,
+          cacheType: MANAGED_KV_CACHE_TYPE,
+        });
+  // `--swa-full` makes the sliding layers' cache whole-context, so the
+  // prefix becomes partially reusable again; a hybrid stays reusable
+  // only whole either way.
+  const effectivePrefixReuse: "partial" | "none" | null =
+    prefixReuse === null
+      ? null
+      : swaFull.enabled && !prefixReuse.hybrid
+        ? "partial"
+        : prefixReuse.prefixReuse;
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
   const args = buildLlamaServerArgs(
     {
       ...opts,
       device,
+      swaFullFlag: swaFull.enabled,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
     },
     modelPath,
@@ -435,6 +763,29 @@ export async function startDaemon(
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {
+    // The launch decisions, in the daemon's own log where a reader
+    // looking at the flags will look for them.
+    const reuseWhy =
+      prefixReuse && prefixReuse.reasons.length > 0
+        ? ` — ${prefixReuse.reasons.join("; ")}` +
+          (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
+            ? " (--swa-full restores partial reuse)"
+            : "")
+        : "";
+    writeSync(
+      logFd,
+      [
+        `[atomic-agent] launch: model ${model.id}` +
+          (header
+            ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
+            : " (header unreadable)"),
+        `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
+          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback"),
+        `[atomic-agent] launch: ${swaFull.reason}`,
+        `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
+        "",
+      ].join("\n"),
+    );
     const child = spawn(binPath, args, {
       stdio: ["ignore", logFd, logFd],
       detached: true,
@@ -447,9 +798,57 @@ export async function startDaemon(
     }
     writeFileSync(pidPath, String(child.pid), "utf-8");
     await waitForHealthOkWithLog(opts.dataDir, opts.port, 30_000);
-    return { pid: child.pid };
+    // A stale record must never outlive the daemon it described: drop
+    // it before the probe so a skipped or failed probe leaves nothing
+    // behind that `readThroughputRecord` could mistake (it also checks
+    // the pid, but the file is cheap to clear).
+    try {
+      unlinkSync(resolveThroughputFilePath(opts.dataDir));
+    } catch {
+      /* none recorded */
+    }
+    let tokensPerSecond: number | null = null;
+    if (opts.throughputProbe !== false) {
+      const sample = await probeThroughput({
+        port: opts.port,
+        apiKey: readConfiguredApiKey(),
+      });
+      if (sample) {
+        tokensPerSecond = sample.tokensPerSecond;
+        writeThroughputRecord(opts.dataDir, {
+          ...sample,
+          pid: child.pid,
+          modelId: model.id,
+          measuredAt: Date.now(),
+        });
+      }
+    }
+    writeLaunchRecord(opts.dataDir, {
+      pid: child.pid,
+      modelId: model.id,
+      contextSize,
+      swaFull: swaFull.enabled,
+      prefixReuse: effectivePrefixReuse,
+      launchedAt: Date.now(),
+    });
+    return {
+      pid: child.pid,
+      tokensPerSecond,
+      contextSize,
+      swaFull,
+      prefixReuse: effectivePrefixReuse,
+    };
   } finally {
     closeSync(logFd);
+  }
+}
+
+/** `localModels.apiKey` for the probe; a config that cannot be read sends none. */
+function readConfiguredApiKey(): string | null {
+  try {
+    return getConfig().localModels.apiKey ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -788,7 +1187,7 @@ export async function getEmbeddingDaemonStatus(
  * is recoverable with a single `atomic-agent models stop`.
  */
 export interface StartBothResult {
-  chat: { pid: number };
+  chat: DaemonStartResult;
   embedding: { pid: number } | { error: string } | { skipped: true };
 }
 

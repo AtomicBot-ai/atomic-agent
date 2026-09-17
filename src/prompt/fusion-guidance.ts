@@ -88,7 +88,8 @@ export const FUSION_GUIDANCE = [
 export function formatFusionMachineLine(
   facts: FusionMachineFacts,
 ): string | null {
-  const { workerLeg, workerSlots, workerTokenBudget, workerModel } = facts;
+  const { workerLeg, workerSlots, workerTokenBudget, workerModel, tokensPerSecond } =
+    facts;
   const on = workerModel === null ? "" : ` \`${workerModel}\``;
   if (workerLeg === "cloud") {
     return `This machine: workers run${on} on a cloud provider — no slot limit, but every worker step is billed, so send only as many workers as the work needs.`;
@@ -114,8 +115,12 @@ export function formatFusionMachineLine(
     workerSlots === null
       ? "the fan-out narrow"
       : `\`maxWorkers\` at most ${workerSlots}`;
+  // Measured at daemon start; the number that turns "N times slower"
+  // into minutes per file for the model choosing a width.
+  const speed =
+    tokensPerSecond === null ? "" : ` This server generates ~${tokensPerSecond} tok/s single stream.`;
   lines.push(
-    `Local workers share one GPU: N at once run about N times slower each and can hit timeouts, so keep briefs short and ${width}.`,
+    `Local workers share one GPU: N at once run about N times slower each and can hit timeouts, so keep briefs short and ${width}.${speed}`,
   );
   return lines.join("\n");
 }

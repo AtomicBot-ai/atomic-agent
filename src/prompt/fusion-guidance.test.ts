@@ -27,6 +27,7 @@ const FACTS: FusionMachineFacts = {
   workerSlots: 4,
   workerTokenBudget: 24_192,
   workerModel: "qwen3-4b",
+  tokensPerSecond: null,
 };
 
 function facts(over: Partial<FusionMachineFacts>): FusionMachineFacts {
@@ -127,10 +128,27 @@ describe("the ### fusion prefix section", () => {
     // fan-out overflowed its server; ~100 tokens is what that costs.
     expect(FUSION_GUIDANCE.length).toBeLessThan(1400);
     expect(buildFusionGuidance(FACTS).length).toBeLessThan(1900);
+    expect(
+      buildFusionGuidance({ ...FACTS, tokensPerSecond: 6.4 }).length,
+    ).toBeLessThan(1900);
   });
 });
 
 describe("the machine facts in the ### fusion block", () => {
+  it("states the measured single-stream speed of a local server when known", () => {
+    // The number that turns "N times slower" into minutes per file for
+    // the model choosing a width. Absent, nothing about speed is said.
+    const withSpeed = buildFusionGuidance({ ...FACTS, tokensPerSecond: 6.4 });
+    expect(withSpeed).toContain("~6.4 tok/s single stream");
+    expect(buildFusionGuidance(FACTS)).not.toContain("tok/s");
+    // A cloud leg never carries one, whatever the facts say.
+    expect(
+      buildFusionGuidance(
+        facts({ workerLeg: "cloud", workerModel: "gpt-x", tokensPerSecond: 40 }),
+      ),
+    ).not.toContain("tok/s");
+  });
+
   it("names the slot count, the local model and the resulting width", () => {
     // The orchestrator picks `maxWorkers` itself now. Choosing over
     // hardware it cannot see is guessing, so these are the facts that

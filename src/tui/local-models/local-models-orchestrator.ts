@@ -91,6 +91,7 @@ import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
 import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
+import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -1635,6 +1636,7 @@ export class LocalModelsOrchestrator {
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
           parallel: cfg.localModels.managed.parallel,
+          swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),
         },
@@ -1645,7 +1647,11 @@ export class LocalModelsOrchestrator {
       this.daemonSupervised = true;
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${cfg.localModels.managed.port}`,
+        line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${cfg.localModels.managed.port}${
+          result.chat.tokensPerSecond === null
+            ? ""
+            : ` · ~${roundTokensPerSecond(result.chat.tokensPerSecond)} tok/s`
+        }`,
       });
       if (def.supportsVision) {
         this.bus.emit({

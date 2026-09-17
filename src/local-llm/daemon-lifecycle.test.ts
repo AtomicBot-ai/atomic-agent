@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -21,23 +22,32 @@ vi.mock("node:child_process", () => ({
 
 import {
   resolveEmbeddingPidFilePath,
+  resolveLogFilePath,
   resolveModelFilePath,
   resolvePidFilePath,
   resolveServerBinPath,
+  resolveThroughputFilePath,
 } from "./backend-paths.js";
 import {
   buildEmbeddingServerArgs,
   buildLlamaServerArgs,
   DaemonHealthError,
   ForeignDaemonError,
+  probeThroughput,
+  readLaunchRecord,
   readRunningPid,
+  readThroughputRecord,
   startDaemon,
+  THROUGHPUT_PROBE_TOKENS,
+  writeLaunchRecord,
+  writeThroughputRecord,
   stopDaemon,
   stopEmbeddingDaemon,
   type DaemonStartOptions,
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
 import { getLocalModelDef } from "./models-catalog.js";
+import { encodeSyntheticGguf, gemma4Pairs } from "./gguf-metadata.fixtures.js";
 
 const baseOpts: DaemonStartOptions = {
   dataDir: "/tmp/data",
@@ -533,6 +543,341 @@ describe("startDaemon health-wait failure", () => {
       const rejects = expect(started).rejects.toBeInstanceOf(DaemonHealthError);
       await vi.advanceTimersByTimeAsync(31_000);
       await rejects;
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("probeThroughput (F16)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("posts one short greedy completion on no slot and reads the decode speed", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return jsonResponse({
+        content: "4\n5\n",
+        timings: {
+          predicted_n: 64,
+          predicted_per_second: 6.43,
+          prompt_per_second: 120.5,
+        },
+      });
+    }) as unknown as typeof fetch;
+    const sample = await probeThroughput({ port: 19091, fetchImpl });
+    expect(sample).toEqual({
+      tokensPerSecond: 6.43,
+      predictedTokens: 64,
+      promptTokensPerSecond: 120.5,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("http://127.0.0.1:19091/completion");
+    expect(calls[0]!.body).toMatchObject({
+      n_predict: THROUGHPUT_PROBE_TOKENS,
+      temperature: 0,
+      stream: false,
+      // Neither pins nor pollutes a slot a session will be given.
+      cache_prompt: false,
+      id_slot: -1,
+    });
+  });
+
+  it("answers null on a refusal, on missing timings, and on a transport failure", async () => {
+    const refused = (async () => jsonResponse({ error: "loading" }, 503)) as unknown as typeof fetch;
+    expect(await probeThroughput({ port: 1, fetchImpl: refused })).toBeNull();
+    const noTimings = (async () => jsonResponse({ content: "x" })) as unknown as typeof fetch;
+    expect(await probeThroughput({ port: 1, fetchImpl: noTimings })).toBeNull();
+    const zero = (async () =>
+      jsonResponse({ timings: { predicted_n: 0, predicted_per_second: 0 } })) as unknown as typeof fetch;
+    expect(await probeThroughput({ port: 1, fetchImpl: zero })).toBeNull();
+    const dead = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch;
+    expect(await probeThroughput({ port: 1, fetchImpl: dead })).toBeNull();
+  });
+
+  it("round-trips a record through the data dir and refuses one from another pid", () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-throughput-`);
+    try {
+      expect(readThroughputRecord(dataDir, 100)).toBeNull();
+      writeThroughputRecord(dataDir, {
+        pid: 100,
+        modelId: "gemma-4-31b",
+        tokensPerSecond: 6.4,
+        predictedTokens: 64,
+        promptTokensPerSecond: null,
+        measuredAt: 1_700_000_000_000,
+      });
+      expect(readThroughputRecord(dataDir, 100)).toEqual({
+        pid: 100,
+        modelId: "gemma-4-31b",
+        tokensPerSecond: 6.4,
+        predictedTokens: 64,
+        promptTokensPerSecond: null,
+        measuredAt: 1_700_000_000_000,
+      });
+      // A previous daemon's figure never describes the live one.
+      expect(readThroughputRecord(dataDir, 101)).toBeNull();
+      expect(readThroughputRecord(dataDir, null)).toBeNull();
+      writeFileSync(resolveThroughputFilePath(dataDir), "{not json", "utf-8");
+      expect(readThroughputRecord(dataDir, 100)).toBeNull();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("startDaemon throughput probe (F16)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+  });
+
+  function stageBackend(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    const model = getLocalModelDef("qwen-3.5-4b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, "gguf", "utf-8");
+  }
+
+  it("probes once the server is healthy, returns the speed and records it next to the pid", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-probe-`);
+    try {
+      stageBackend(dataDir);
+      spawnMock.mockReturnValue({ pid: 4243, unref: () => {} });
+      const posts: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (String(url).endsWith("/health")) {
+            return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+          }
+          posts.push(String(url));
+          void init;
+          return new Response(
+            JSON.stringify({
+              timings: { predicted_n: 64, predicted_per_second: 12.6 },
+            }),
+            { status: 200 },
+          );
+        }),
+      );
+      const result = await startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19098,
+        device: "cpu",
+      });
+      expect(result.pid).toBe(4243);
+      expect(result.tokensPerSecond).toBe(12.6);
+      expect(posts).toEqual(["http://127.0.0.1:19098/completion"]);
+      const record = readThroughputRecord(dataDir, 4243);
+      expect(record?.tokensPerSecond).toBe(12.6);
+      expect(record?.modelId).toBe("qwen-3.5-4b");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips the probe when asked and leaves no stale record behind", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-noprobe-`);
+    try {
+      stageBackend(dataDir);
+      writeThroughputRecord(dataDir, {
+        pid: 1,
+        modelId: "old",
+        tokensPerSecond: 1,
+        predictedTokens: 1,
+        promptTokensPerSecond: null,
+        measuredAt: 0,
+      });
+      spawnMock.mockReturnValue({ pid: 4244, unref: () => {} });
+      const fetchMock = vi.fn(async () =>
+        new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19097,
+        device: "cpu",
+        throughputProbe: false,
+      });
+      expect(result.tokensPerSecond).toBeNull();
+      expect(existsSync(resolveThroughputFilePath(dataDir))).toBe(false);
+      expect(
+        fetchMock.mock.calls.every(([url]) => String(url).endsWith("/health")),
+      ).toBe(true);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("--swa-full (F12)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+  });
+
+  it("appends --swa-full only when the resolved flag is set", () => {
+    const withFlag = buildLlamaServerArgs(
+      { ...baseOpts, swaFullFlag: true },
+      "/m.gguf",
+      "alias",
+      16_384,
+    );
+    expect(withFlag).toContain("--swa-full");
+    const without = buildLlamaServerArgs(baseOpts, "/m.gguf", "alias", 16_384);
+    expect(without).not.toContain("--swa-full");
+    // A preference alone changes nothing at the arg layer — the decision
+    // is `startDaemon`'s, from the header and the budget.
+    expect(
+      buildLlamaServerArgs({ ...baseOpts, swaFull: "on" }, "/m.gguf", "alias", 16_384),
+    ).not.toContain("--swa-full");
+  });
+
+  function stageGemma(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    const model = getLocalModelDef("gemma-4-31b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, encodeSyntheticGguf(gemma4Pairs()));
+  }
+
+  function healthyFetch(): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).endsWith("/health")
+          ? new Response(JSON.stringify({ status: "ok" }), { status: 200 })
+          : new Response(
+              JSON.stringify({ timings: { predicted_n: 64, predicted_per_second: 5 } }),
+              { status: 200 },
+            ),
+      ),
+    );
+  }
+
+  it("reads the header at start: swaFull 'on' launches --swa-full and makes reuse partial", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-swa-on-`);
+    try {
+      stageGemma(dataDir);
+      spawnMock.mockReturnValue({ pid: 5001, unref: () => {} });
+      healthyFetch();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19096,
+        device: "cpu",
+        swaFull: "on",
+        throughputProbe: false,
+      });
+      const args = spawnMock.mock.calls[0]![1] as string[];
+      expect(args).toContain("--swa-full");
+      expect(result.swaFull.enabled).toBe(true);
+      expect(result.swaFull.slidingLayers).toBe(50);
+      expect(result.prefixReuse).toBe("partial");
+      const launch = readLaunchRecord(dataDir, 5001);
+      expect(launch).toMatchObject({ swaFull: true, prefixReuse: "partial", modelId: "gemma-4-31b" });
+      const log = readFileSync(resolveLogFilePath(dataDir), "utf-8");
+      expect(log).toContain("[atomic-agent] launch: model gemma-4-31b (gemma4, 60 layers, trained context 262144)");
+      expect(log).toContain("[atomic-agent] launch: swa-full: on (configured)");
+      expect(log).toContain("[atomic-agent] launch: prefix reuse partial");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto with no memory budget (CPU) keeps the flag off and reports reuse none", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-swa-auto-`);
+    try {
+      stageGemma(dataDir);
+      spawnMock.mockReturnValue({ pid: 5002, unref: () => {} });
+      healthyFetch();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19095,
+        device: "cpu",
+        throughputProbe: false,
+      });
+      const args = spawnMock.mock.calls[0]![1] as string[];
+      expect(args).not.toContain("--swa-full");
+      expect(result.swaFull.enabled).toBe(false);
+      expect(result.swaFull.reason).toContain("no memory budget");
+      expect(result.prefixReuse).toBe("none");
+      expect(readLaunchRecord(dataDir, 5002)).toMatchObject({ swaFull: false, prefixReuse: "none" });
+      const log = readFileSync(resolveLogFilePath(dataDir), "utf-8");
+      expect(log).toContain("prefix reuse none — 50 of 60 layers use a sliding window of 1024");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("starts on the file-size fallback when the model file is not GGUF", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-nogguf-`);
+    try {
+      const binPath = resolveServerBinPath(dataDir, "llama-server");
+      mkdirSync(dirname(binPath), { recursive: true });
+      writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+      const model = getLocalModelDef("qwen-3.5-4b");
+      const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+      mkdirSync(dirname(modelPath), { recursive: true });
+      writeFileSync(modelPath, "gguf", "utf-8");
+      spawnMock.mockReturnValue({ pid: 5003, unref: () => {} });
+      healthyFetch();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19094,
+        device: "cpu",
+        swaFull: "on",
+        throughputProbe: false,
+      });
+      expect(result.swaFull.enabled).toBe(false);
+      expect(result.swaFull.reason).toContain("header unreadable");
+      expect(result.prefixReuse).toBeNull();
+      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).toContain("(header unreadable)");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("launch records belong to one pid", () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-launch-record-`);
+    try {
+      writeLaunchRecord(dataDir, {
+        pid: 7,
+        modelId: "gemma-4-31b",
+        contextSize: 131_072,
+        swaFull: true,
+        prefixReuse: "partial",
+        launchedAt: 1,
+      });
+      expect(readLaunchRecord(dataDir, 7)?.swaFull).toBe(true);
+      expect(readLaunchRecord(dataDir, 8)).toBeNull();
+      expect(readLaunchRecord(dataDir, null)).toBeNull();
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
