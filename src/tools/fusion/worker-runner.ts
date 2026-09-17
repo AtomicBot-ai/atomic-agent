@@ -1,4 +1,5 @@
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-loop.js";
+import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
@@ -31,6 +32,70 @@ import type { ToolRole } from "../tool-roles.js";
  */
 export const WORKER_TOOL_LINES_PER_TASK = 5;
 
+/**
+ * A local worker's time limit, sized from what it has to produce and how
+ * fast this machine produces it (D4 / F19). The estimate is the brief
+ * (≈ chars / 4 tokens) plus 2,000 tokens per declared output file, at
+ * the measured generation speed, times three for reads, reasoning and
+ * retries; clamped to [10 min, ceiling], where the ceiling is the
+ * configured `workerTimeoutMs` (45 min by default). Two local workers
+ * once ran the full 45 minutes, one in a read loop; a 4B model writing
+ * a module is done in far less, and a stuck one should end sooner.
+ *
+ * Without a measured speed (nothing has completed yet, or the leg is a
+ * cloud one) the ceiling is the limit, as before.
+ */
+export const WORKER_TIMEOUT_FLOOR_MS = 600_000;
+export const WORKER_TOKENS_PER_DECLARED_FILE = 2_000;
+export const WORKER_TIMEOUT_SAFETY_FACTOR = 3;
+
+export function estimateWorkerTimeoutMs(input: {
+  briefChars: number;
+  declaredFiles: number;
+  tokensPerSecond: number | null | undefined;
+  ceilingMs: number;
+}): number {
+  const { tokensPerSecond, ceilingMs } = input;
+  if (
+    tokensPerSecond === null ||
+    tokensPerSecond === undefined ||
+    !Number.isFinite(tokensPerSecond) ||
+    tokensPerSecond <= 0
+  ) {
+    return ceilingMs;
+  }
+  const tokens =
+    input.briefChars / 4 +
+    WORKER_TOKENS_PER_DECLARED_FILE * Math.max(0, input.declaredFiles);
+  const estimateMs =
+    (tokens / tokensPerSecond) * WORKER_TIMEOUT_SAFETY_FACTOR * 1000;
+  const floor = Math.min(WORKER_TIMEOUT_FLOOR_MS, ceilingMs);
+  return Math.round(Math.max(floor, Math.min(ceilingMs, estimateMs)));
+}
+
+/** Tools whose success counts as "the worker wrote something". */
+const WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "os.fs.write",
+  "os.fs.edit",
+  "os.fs.patch",
+]);
+
+/** The forced summary a handed-back task replies with. */
+export function formatEarlyHandBack(input: {
+  stepsTaken: number;
+  stepBudget: number;
+  elapsedMs: number;
+  timeoutMs: number;
+  findings: string;
+}): string {
+  const minutes = (ms: number): string => `${Math.round(ms / 60_000)} min`;
+  return (
+    `handed back early: no file written by half the budget ` +
+    `(${input.stepsTaken} of ${input.stepBudget} steps, ${minutes(input.elapsedMs)} of ${minutes(input.timeoutMs)}); ` +
+    `what I found: ${input.findings}`
+  );
+}
+
 export interface WorkerRunnerDeps {
   /** `runtime.runTurn`, unchanged. */
   runTurn: (
@@ -43,6 +108,8 @@ export interface WorkerRunnerDeps {
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
       signal?: AbortSignal;
       eventHook?: (event: AgentLoopEvent) => void;
     },
@@ -71,7 +138,22 @@ export interface RunWorkerTasksOptions {
    */
   workerModel: string;
   workerMaxSteps: number;
+  /**
+   * Wall-clock ceiling per worker turn. With `localTokensPerSecond` it
+   * is the ceiling of a per-task estimate (`estimateWorkerTimeoutMs`);
+   * without, it is the limit itself.
+   */
   workerTimeoutMs: number;
+  /**
+   * The local leg's measured generation speed
+   * (`LlamaServerClient.measuredTokensPerSecond`), `null` when nothing
+   * has completed yet. Absent for a cloud leg, which keeps the ceiling.
+   */
+  localTokensPerSecond?: number | null;
+  /** `runMode.fusion.workerReasoning`, sent with every worker completion. */
+  workerReasoning?: ReasoningEffort;
+  /** `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. */
+  workerMaxOutputTokens?: number;
   /**
    * Directories these workers may write in without asking, as approved
    * by the operator on this fan-out's own prompt. Empty means nothing
@@ -226,48 +308,92 @@ async function runOneTask(
     deps.approvals.fanoutScopes?.grant(session.id, writeScope);
   }
 
+  const brief = renderWorkerBrief(task, {
+    workingDir: deps.workingDir,
+    ...(options.originalRequest === undefined
+      ? {}
+      : { originalRequest: options.originalRequest }),
+    ...(options.contract === undefined ? {} : { contract: options.contract }),
+  });
+  const declaredFiles = task.files?.length ?? 0;
+  // Sized from the work and the machine when the leg is local and has
+  // been measured; the configured ceiling otherwise.
+  const timeoutMs = estimateWorkerTimeoutMs({
+    briefChars: brief.length,
+    declaredFiles,
+    tokensPerSecond: options.localTokensPerSecond,
+    ceilingMs: options.workerTimeoutMs,
+  });
+
   // The worker's own clock, kept apart from the operator's signal: when
   // it is the one that fired, the worker ran out of time — a ceiling,
   // reported as `max_steps` — rather than being cancelled by anybody.
-  const timeLimit = AbortSignal.timeout(options.workerTimeoutMs);
+  const timeLimit = AbortSignal.timeout(timeoutMs);
   const hitTimeLimit = (): boolean =>
     timeLimit.aborted && !options.signal.aborted;
 
+  // D4: a task that declared output files and has written none by half
+  // its step budget or half its time is handed back with what it found,
+  // instead of spending the other half the same way (two workers once
+  // used 40 steps each and wrote nothing). Only for tasks with declared
+  // files: a task that legitimately reads before it reports has no
+  // half-way mark to miss.
+  const handBack = new AbortController();
+  const halfSteps = Math.max(1, Math.floor(options.workerMaxSteps / 2));
+  let stepsStarted = 0;
+  let wroteSomething = false;
+  const maybeHandBack = (): void => {
+    if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted) return;
+    handBack.abort(new Error("handed back early: no file written by half the budget"));
+  };
+  const halfTimer = setTimeout(maybeHandBack, Math.floor(timeoutMs / 2));
+  halfTimer.unref?.();
+  const handedBack = (): boolean =>
+    handBack.signal.aborted && !options.signal.aborted && !timeLimit.aborted;
+
   let result: WorkerTaskResult;
   try {
-    const turn = await deps.runTurn(
-      session,
-      renderWorkerBrief(task, {
-        workingDir: deps.workingDir,
-        ...(options.originalRequest === undefined
-          ? {}
-          : { originalRequest: options.originalRequest }),
-        ...(options.contract === undefined ? {} : { contract: options.contract }),
-      }),
-      {
-        origin: "fusion",
-        providerId: options.providerId,
-        maxSteps: options.workerMaxSteps,
-        taskMaxDurationMs: options.workerTimeoutMs,
-        toolFilter: isWorkerVisibleTool,
-        toolRole: WORKER_TOOL_ROLE,
-        signal: AbortSignal.any([options.signal, timeLimit]),
-        eventHook: (event) => {
-          if (event.type === "turn_started") announceStart();
-          if (
-            event.type === "llm_event" &&
-            event.event.type === "tool_call_parsed"
-          ) {
-            // `tool_call_parsed` fires before execution, which is what
-            // "is being triggered" means — and it fires once per call in
-            // a batched step, so the dedupe above earns its keep.
-            announceStart();
-            announceTool(event.event.call.tool);
-          }
-          collector.observe(event);
-        },
+    const turn = await deps.runTurn(session, brief, {
+      origin: "fusion",
+      providerId: options.providerId,
+      maxSteps: options.workerMaxSteps,
+      taskMaxDurationMs: timeoutMs,
+      toolFilter: isWorkerVisibleTool,
+      toolRole: WORKER_TOOL_ROLE,
+      ...(options.workerReasoning === undefined
+        ? {}
+        : { reasoningEffort: options.workerReasoning }),
+      ...(options.workerMaxOutputTokens === undefined
+        ? {}
+        : { maxOutputTokens: options.workerMaxOutputTokens }),
+      signal: AbortSignal.any([options.signal, timeLimit, handBack.signal]),
+      eventHook: (event) => {
+        if (event.type === "turn_started") announceStart();
+        if (event.type === "step_started") {
+          stepsStarted += 1;
+          if (stepsStarted > halfSteps) maybeHandBack();
+        }
+        if (
+          event.type === "llm_event" &&
+          event.event.type === "tool_call_parsed"
+        ) {
+          // `tool_call_parsed` fires before execution, which is what
+          // "is being triggered" means — and it fires once per call in
+          // a batched step, so the dedupe above earns its keep.
+          announceStart();
+          announceTool(event.event.call.tool);
+        }
+        if (
+          event.type === "llm_event" &&
+          event.event.type === "tool_call_executed" &&
+          event.event.result.status === "ok" &&
+          WRITE_TOOLS.has(event.event.result.tool)
+        ) {
+          wroteSomething = true;
+        }
+        collector.observe(event);
       },
-    );
+    });
     const timedOut = turn.reason === "cancelled" && hitTimeLimit();
     const stopCause = timedOut ? "time_ceiling" : turn.stopCause;
     result = collector.finish({
@@ -287,7 +413,8 @@ async function runOneTask(
   } catch (error) {
     const timedOut = hitTimeLimit();
     const aborted =
-      !timedOut && (options.signal.aborted || isAbortError(error));
+      !timedOut &&
+      (options.signal.aborted || handedBack() || isAbortError(error));
     result = collector.finish({
       id: task.id,
       title: task.title,
@@ -302,10 +429,36 @@ async function runOneTask(
         : { error: error instanceof Error ? error.message : String(error) }),
     });
   } finally {
+    clearTimeout(halfTimer);
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
     deps.approvals.fanoutScopes?.clear(session.id);
+  }
+
+  // A hand-back is neither a cancellation nor a failure: the worker was
+  // stopped by its own half-way rule and reports what it found, as a
+  // task the orchestrator must re-brief.
+  if (handedBack()) {
+    const { error: _dropped, ...rest } = result;
+    const summary = formatEarlyHandBack({
+      // Steps completed when the loop reported them; the started count
+      // only when the turn threw before it could.
+      stepsTaken: result.stepCount > 0 ? result.stepCount : stepsStarted,
+      stepBudget: options.workerMaxSteps,
+      elapsedMs: result.durationMs,
+      timeoutMs,
+      findings: collector.findings(),
+    });
+    result = {
+      ...rest,
+      status: "needs_orchestrator",
+      reply: summary,
+      notes: [
+        ...(result.notes ?? []),
+        "handed back early: declared files but wrote none by half the budget — re-brief with a narrower task or the exact content to write",
+      ],
+    };
   }
 
   // Ground truth before the orchestrator reads the reply: a worker that

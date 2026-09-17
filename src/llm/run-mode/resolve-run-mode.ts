@@ -1,5 +1,9 @@
-import type { RunModeName } from "../../config/llm-run-mode-config.js";
+import type {
+  FusionWorkerReasoning,
+  RunModeName,
+} from "../../config/llm-run-mode-config.js";
 import {
+  DEFAULT_FUSION_CLOUD_WORKERS,
   DEFAULT_FUSION_WORKER_MAX_STEPS,
   DEFAULT_FUSION_WORKER_TIMEOUT_MS,
   DEFAULT_FUSION_WORKERS,
@@ -37,6 +41,16 @@ export type ResolvedRunMode = {
    * `maxWorkers`. Not a ceiling — see `UserLlmFusionConfig.workers`.
    */
   workers: number;
+  /**
+   * Cap on the fan-out width when the worker leg is a cloud provider —
+   * `llm.runMode.fusion.cloudWorkers`, default 4. Always set by the
+   * resolver; optional only so hand-built fixtures elsewhere stay valid.
+   */
+  cloudWorkers?: number;
+  /** `llm.runMode.fusion.workerReasoning`, present only when configured. */
+  workerReasoning?: FusionWorkerReasoning;
+  /** `llm.runMode.fusion.workerMaxOutputTokens`, present only when configured. */
+  workerMaxOutputTokens?: number;
   workerMaxSteps: number;
   workerTimeoutMs: number;
   /**
@@ -162,6 +176,13 @@ export function resolveRunMode(
         ? (opts.managedModelId ?? worker.model ?? null)
         : (worker?.defaultChatModel ?? worker?.model ?? null)),
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
+    cloudWorkers: fusion?.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
+    ...(fusion?.workerReasoning === undefined
+      ? {}
+      : { workerReasoning: fusion.workerReasoning }),
+    ...(fusion?.workerMaxOutputTokens === undefined
+      ? {}
+      : { workerMaxOutputTokens: fusion.workerMaxOutputTokens }),
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs:
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,

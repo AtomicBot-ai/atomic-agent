@@ -61,6 +61,9 @@ export class OpenRouterProvider extends OpenAiProvider {
     const defaultChatModel = options.defaultChatModel ?? "openrouter/auto";
     super({
       ...options,
+      // This subclass is the OpenRouter kind by construction; the body
+      // builder spells `reasoningEffort` per kind (`model-params.ts`).
+      providerKind: "openrouter",
       id: options.id,
       // OpenAiProvider normalizes the base URL.
       baseUrl: options.baseUrl ?? DEFAULT_OPENROUTER_BASE,

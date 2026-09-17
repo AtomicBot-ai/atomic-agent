@@ -66,6 +66,20 @@ export interface BuildPromptInput {
    * UI can still tell a probed window from a catalogued one.
    */
   contextWindow?: number | null;
+  /**
+   * The local worker leg's request-slot count as the llama-server
+   * reported it, `null` (or absent) until observed. The `### fusion`
+   * machine facts state it for an external server, whose `--parallel`
+   * the config cannot know. See `resolveFusionMachineFacts`.
+   */
+  liveWorkerSlots?: number | null;
+  /**
+   * The operator's request behind the running turn, as the runtime
+   * recorded it (`pickOriginalRequest`). Rendered as `### request`
+   * before `### conversation` only when the packer has dropped the user
+   * turn that carried it — see `request-section.ts`.
+   */
+  originalRequest?: string;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;

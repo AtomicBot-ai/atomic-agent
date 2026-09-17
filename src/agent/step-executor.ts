@@ -21,6 +21,15 @@ import {
   resourceClassFor,
   type BatchApprovalPosture,
 } from "./tool-resource-class.js";
+import { wouldRefuse as planModeWouldRefuse } from "./plan-mode.js";
+import { wouldRefuse as fusionGateWouldRefuse } from "./fusion-orchestrator-mode.js";
+import {
+  formatUnverifiedClaimNotice,
+  formatUnverifiedClaimRefusal,
+  turnToolCalls,
+  unverifiedClaims,
+  type CheckClaim,
+} from "./claim-evidence.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
 import { refusedToolNames } from "./fusion-orchestrator-mode.js";
@@ -100,6 +109,7 @@ import {
 } from "../llm/model-profile.js";
 import type {
   PromptMessages,
+  ReasoningEffort,
   ResponseFormatJsonSchema,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
@@ -149,6 +159,14 @@ export interface LlmStreamParams {
    * failure mode (see `REPAIR_MAX_TOKENS` and the call-site comment).
    */
   maxTokens?: number;
+  /**
+   * The turn's output ceiling (`RunTurnOptions.maxOutputTokens`), below
+   * the per-step `maxTokens` above and above the provider's own. A
+   * fusion worker's `workerMaxOutputTokens` rides here.
+   */
+  maxOutputTokens?: number;
+  /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
+  reasoningEffort?: ReasoningEffort;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
@@ -201,6 +219,12 @@ export interface StepDependencies {
   isFusionOrchestrator?: () => boolean;
   fusionState?: () => import("./fusion-orchestrator-mode.js").FusionOrchestratorState;
   onDelegated?: (result: CompressedToolResult) => void;
+  /**
+   * Claims need evidence (`claim-evidence.ts`). Per-turn state held by
+   * the loop: whether this turn has already been told once that a reply
+   * claimed a check that never ran. Absent ⇒ replies are never held.
+   */
+  claimEvidence?: { noticed: () => boolean; markNoticed: () => void };
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -224,6 +248,12 @@ export interface StepDependencies {
    * guessed window is worse than one that admits it has none.
    */
   contextWindow?: number | null;
+  /**
+   * The local worker leg's request-slot count as the server reported
+   * it, `null` until observed — forwarded to `buildPrompt` for the
+   * `### fusion` machine facts. See `AgentLoopDeps.liveWorkerSlots`.
+   */
+  liveWorkerSlots?: () => number | null;
   /** Effective transport for this runtime (grammar vs native OpenAI tools). */
   toolTransport: ToolCallTransport;
   /** Adapter for native_tools; null when grammar-only. */
@@ -315,6 +345,16 @@ export interface StepContext {
    * continuation) — contextual facts stay suppressed.
    */
   userMessage?: string | null;
+  /**
+   * The operator's request behind this turn (`RunTurnOptions.originalRequest`),
+   * pinned into the prompt as `### request` once the packer has dropped
+   * the turn that carried it. See `request-section.ts`.
+   */
+  originalRequest?: string;
+  /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
+  reasoningEffort?: ReasoningEffort;
+  /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
+  maxOutputTokens?: number;
   /**
    * Only the terminal `reply`/`finish` tools may run this step (the
    * loop's reserved final step). The prompt's tool catalog is left as it
@@ -510,6 +550,9 @@ async function executeStepInner(
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
       : {}),
+    ...(deps.liveWorkerSlots !== undefined
+      ? { liveWorkerSlots: deps.liveWorkerSlots() }
+      : {}),
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
       : {}),
@@ -517,6 +560,9 @@ async function executeStepInner(
       ? { profileFacts: ctx.profileFacts }
       : {}),
     ...(ctx.userMessage !== undefined ? { userMessage: ctx.userMessage } : {}),
+    ...(ctx.originalRequest !== undefined
+      ? { originalRequest: ctx.originalRequest }
+      : {}),
   };
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -589,7 +635,10 @@ async function executeStepInner(
 
   // The cap every completion of this step runs under. Named here so the
   // failure detector can say which wall a cut-off reply hit.
-  const replyCap = ctx.maxTokens ?? getConfig().localModels.completionMaxTokens;
+  const replyCap =
+    ctx.maxTokens ??
+    ctx.maxOutputTokens ??
+    getConfig().localModels.completionMaxTokens;
   // The grammar for THIS request. Narrowed below the base grammar only
   // when the step has fewer tools than the catalog (the final step, an
   // orchestrator turn, a filtered worker); otherwise the base grammar
@@ -609,6 +658,15 @@ async function executeStepInner(
     }),
     ...(grammarPrompt ? { grammarPrompt } : {}),
     ...(ctx.maxTokens !== undefined ? { maxTokens: ctx.maxTokens } : {}),
+    // The turn's own settings ride on every completion of the step; the
+    // repair retry spreads `llmParams`, so they inherit without a second
+    // wiring point.
+    ...(ctx.maxOutputTokens !== undefined
+      ? { maxOutputTokens: ctx.maxOutputTokens }
+      : {}),
+    ...(ctx.reasoningEffort !== undefined
+      ? { reasoningEffort: ctx.reasoningEffort }
+      : {}),
   };
 
   const firstAttempt = await runInitialCompletion({
@@ -826,7 +884,7 @@ async function executeStepInner(
     if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
       return null;
     }
-    const trim = trimBatchToFirstApprovalGated(batch);
+    const trim = trimBatchToFirstApprovalGated(batch, turnPolicyForTrim(deps));
     if (trim === null) return null;
     trimmedBatchNotice = formatBatchTrimNotice(trim);
     deps.onEvent?.({
@@ -835,20 +893,24 @@ async function executeStepInner(
       originalSize: trim.originalSize,
       kept: trim.kept.tool,
       dropped: trim.dropped.map((call) => call.tool),
+      ...(trim.refused.length > 0
+        ? { refused: trim.refused.map(({ call }) => call.tool) }
+        : {}),
       reason: "approval-gated-batched",
     });
     deps.metrics?.recordBatchTrimmed({
       sessionId: ctx.session.id,
       reason: "approval-gated-batched",
       originalSize: trim.originalSize,
-      droppedCount: trim.dropped.length,
+      droppedCount: trim.dropped.length + trim.refused.length,
     });
-    deps.logger?.info("batch trimmed to first approval-gated call", {
+    deps.logger?.info("batch trimmed to the first approval-gated call that can run", {
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
       originalSize: trim.originalSize,
       kept: trim.kept.tool,
       dropped: trim.dropped.map((call) => call.tool),
+      refused: trim.refused.map(({ call, reason }) => `${call.tool}: ${reason}`),
     });
     return {
       ok: true,
@@ -1229,6 +1291,45 @@ async function executeStepInner(
       streamAborted: completion.earlyStop?.reason === "fabricated_transcript",
     });
   }
+  // A `reply` that claims a check ran — "node --check", "tests pass",
+  // "verified" — with no matching call this turn is held back once, the
+  // same way an invented transcript is: the model gets a notice and one
+  // more step to run the check or drop the claim. The forced final step
+  // is exempt (it exists so a turn is never cut off without a summary),
+  // and the second time the claim is delivered and marked in the trace.
+  let unverified: CheckClaim[] = [];
+  let claimRefusal: string | null = null;
+  const tail = calls[calls.length - 1];
+  if (
+    deps.claimEvidence !== undefined &&
+    suppressedTerminal === null &&
+    tail !== undefined &&
+    tail.tool === "reply" &&
+    typeof tail.args?.text === "string"
+  ) {
+    unverified = unverifiedClaims(tail.args.text, [
+      ...turnToolCalls(ctx.session.turns),
+      ...calls.slice(0, -1).map((call) => ({ tool: call.tool, args: call.args ?? {} })),
+    ]);
+    if (unverified.length > 0 && ctx.terminalOnly !== true) {
+      if (!deps.claimEvidence.noticed()) {
+        deps.claimEvidence.markNoticed();
+        const notice = formatUnverifiedClaimNotice(unverified);
+        trimmedBatchNotice =
+          trimmedBatchNotice === undefined
+            ? notice
+            : `${trimmedBatchNotice}\n\n${notice}`;
+        claimRefusal = formatUnverifiedClaimRefusal(unverified);
+        suppressedTerminal = tail;
+        calls = calls.slice(0, -1);
+        deps.logger?.warn("reply claims a check that did not run; held once", {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          claims: unverified.map((claim) => claim.text),
+        });
+      }
+    }
+  }
   const batchSize = calls.length + (suppressedTerminal !== null ? 1 : 0);
 
   // Registry membership: surfaces as `ToolExecutionError` (category
@@ -1273,7 +1374,20 @@ async function executeStepInner(
   const suppressed =
     suppressedTerminal !== null && fabricated !== null
       ? suppressedTerminalRecord(suppressedTerminal, fabricated)
-      : null;
+      : suppressedTerminal !== null && claimRefusal !== null
+        ? {
+            call: suppressedTerminal,
+            result: compressToolResult({
+              tool: suppressedTerminal.tool,
+              status: "error",
+              output: claimRefusal,
+              details: {
+                notDelivered: true,
+                unverifiedClaims: unverified.map((claim) => claim.text),
+              },
+            }),
+          }
+        : null;
   if (suppressed !== null) {
     deps.onEvent?.({
       type: "tool_call_parsed",
@@ -1350,6 +1464,22 @@ async function executeStepInner(
       });
     },
   );
+  // A reply delivered with claims nothing backs (the turn was already
+  // told once, or this is the forced final step) is marked, so the trace
+  // and the transcript say the check was never seen to run.
+  if (unverified.length > 0 && suppressed === null) {
+    const last = toolResults.length - 1;
+    const reply = toolResults[last];
+    if (reply !== undefined && reply.tool === "reply") {
+      toolResults[last] = {
+        ...reply,
+        details: {
+          ...reply.details,
+          unverifiedClaims: unverified.map((claim) => claim.text),
+        },
+      };
+    }
+  }
 
   // The transcript cut this step's prompt was built on travels with the
   // session so the next step holds it (`packConversation`).
@@ -2211,22 +2341,119 @@ export function isApprovalGatedOnlyFailure(
  */
 export interface BatchTrimResult {
   kept: ToolCallPayload;
+  /** Calls dropped for the model to retry, in batch-index order. */
   dropped: ToolCallPayload[];
+  /**
+   * Calls dropped because the turn's policy (plan mode, the fusion
+   * orchestrator gate) would have refused them anyway, each with the
+   * gate that would have refused it. Not to be retried: re-emitting
+   * them earns the same refusal.
+   */
+  refused: Array<{ call: ToolCallPayload; reason: string }>;
   /** Original batch size before trimming. Always >= 2. */
   originalSize: number;
 }
 
+/**
+ * The turn policy the trim consults before it picks a survivor.
+ *
+ * `refusedBy` runs the same predicates the batch executor's gates run
+ * at dispatch (`wouldRefuse` in `plan-mode.ts` /
+ * `fusion-orchestrator-mode.ts`) and names the gate, so the trim and
+ * the gate cannot disagree about a call. `preferTool` names the call
+ * that wins over emit order when it is present — on an orchestrator
+ * turn, `fusion.delegate`: the fan-out is what the turn exists to do,
+ * and a `mkdir` emitted ahead of it must not be the one that survives
+ * only to be refused (run 14: nine minutes of generation redone).
+ */
+export interface BatchTrimPolicy {
+  /** The gate that would refuse `tool`, or `null` when it may run. */
+  refusedBy?: (tool: string) => string | null;
+  preferTool?: string;
+}
+
+/** The fan-out tool an orchestrator turn prefers to keep. */
+const ORCHESTRATOR_PREFERRED_TOOL = "fusion.delegate";
+
+export const TRIM_REFUSED_BY_PLAN_MODE = "refused by plan mode";
+export const TRIM_REFUSED_BY_FUSION_GATE = "refused by the fusion gate";
+
+/**
+ * Build the trim policy from the step's dependencies — the same
+ * getters the batch context carries (`isPlanMode`, `isFusionOrchestrator`
+ * and the registry), read at trim time so a mode flipped mid-turn is
+ * honoured the way the gates honour it. Plan mode is named first when
+ * both would refuse, in the order the gates run.
+ */
+export function turnPolicyForTrim(
+  deps: Pick<StepDependencies, "registry" | "isPlanMode" | "isFusionOrchestrator">,
+): BatchTrimPolicy {
+  const planMode = deps.isPlanMode?.() ?? false;
+  const orchestrator = deps.isFusionOrchestrator?.() ?? false;
+  if (!planMode && !orchestrator) return {};
+  const ctx = { registry: deps.registry };
+  return {
+    refusedBy: (tool) =>
+      planMode && planModeWouldRefuse(tool, ctx)
+        ? TRIM_REFUSED_BY_PLAN_MODE
+        : orchestrator && fusionGateWouldRefuse(tool, ctx)
+          ? TRIM_REFUSED_BY_FUSION_GATE
+          : null,
+    ...(orchestrator ? { preferTool: ORCHESTRATOR_PREFERRED_TOOL } : {}),
+  };
+}
+
+/**
+ * Pick the survivor. Calls the turn policy would refuse are set aside
+ * first, so the kept call is one that can actually run; among the rest,
+ * `policy.preferTool` wins when present, else the first approval-gated
+ * call in emit order (writes typically precede the edits that depend on
+ * them). When every approval-gated call would be refused, the first one
+ * is kept anyway: it earns the gate's own refusal, which is the text
+ * that tells the model what to do instead.
+ */
 export function trimBatchToFirstApprovalGated(
   batch: ToolCallBatch,
+  policy: BatchTrimPolicy = {},
 ): BatchTrimResult | null {
   const calls = batch.calls;
-  const firstApprovalIdx = calls.findIndex(
-    (call) => resourceClassFor(call.tool) === "approval_gated",
-  );
-  if (firstApprovalIdx === -1) return null;
-  const kept = calls[firstApprovalIdx]!;
-  const dropped = calls.filter((_, idx) => idx !== firstApprovalIdx);
-  return { kept, dropped, originalSize: calls.length };
+  const isGated = (call: ToolCallPayload): boolean =>
+    resourceClassFor(call.tool) === "approval_gated";
+  if (!calls.some(isGated)) return null;
+  const refusedIdx = new Map<number, string>();
+  if (policy.refusedBy) {
+    calls.forEach((call, idx) => {
+      const reason = policy.refusedBy!(call.tool);
+      if (reason !== null) refusedIdx.set(idx, reason);
+    });
+  }
+  const runnable = (idx: number): boolean => !refusedIdx.has(idx);
+  let keptIdx = -1;
+  if (policy.preferTool !== undefined) {
+    keptIdx = calls.findIndex(
+      (call, idx) => call.tool === policy.preferTool && runnable(idx),
+    );
+  }
+  if (keptIdx === -1) {
+    keptIdx = calls.findIndex((call, idx) => isGated(call) && runnable(idx));
+  }
+  if (keptIdx === -1) {
+    // Every gated call is refused: keep the first and let the gate
+    // speak — its refusal is the instruction, and the notice names the
+    // rest as refused so the model does not retry them one by one.
+    keptIdx = calls.findIndex(isGated);
+    refusedIdx.delete(keptIdx);
+  }
+  const kept = calls[keptIdx]!;
+  const dropped: ToolCallPayload[] = [];
+  const refused: BatchTrimResult["refused"] = [];
+  calls.forEach((call, idx) => {
+    if (idx === keptIdx) return;
+    const reason = refusedIdx.get(idx);
+    if (reason === undefined) dropped.push(call);
+    else refused.push({ call, reason });
+  });
+  return { kept, dropped, refused, originalSize: calls.length };
 }
 
 /**
@@ -2240,13 +2467,31 @@ export function trimBatchToFirstApprovalGated(
  * stable prefix).
  */
 export function formatBatchTrimNotice(trim: BatchTrimResult): string {
-  const droppedNames = trim.dropped
-    .map((call) => `\`${call.tool}\``)
-    .join(", ");
-  return [
-    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\` and dropped the rest: ${droppedNames}.`,
-    "Retry the dropped calls now, one per step, each as a length-1 array. Do not re-batch them.",
-  ].join(" ");
+  const names = (calls: readonly ToolCallPayload[]): string =>
+    calls.map((call) => `\`${call.tool}\``).join(", ");
+  const parts = [
+    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\`.`,
+  ];
+  if (trim.dropped.length > 0) {
+    parts.push(
+      `Dropped from the batch — retry: ${names(trim.dropped)}. Retry them now, one per step, each as a length-1 array. Do not re-batch them.`,
+    );
+  }
+  if (trim.refused.length > 0) {
+    // Grouped by gate, so the model reads the same rule the gate's own
+    // refusal states — and does not retry a call that earns it again.
+    const byReason = new Map<string, ToolCallPayload[]>();
+    for (const { call, reason } of trim.refused) {
+      byReason.set(reason, [...(byReason.get(reason) ?? []), call]);
+    }
+    const groups = [...byReason]
+      .map(([reason, calls]) => `${names(calls)} (${reason})`)
+      .join("; ");
+    parts.push(
+      `Dropped because this turn's policy would refuse them — do not retry: ${groups}.`,
+    );
+  }
+  return parts.join(" ");
 }
 
 /**

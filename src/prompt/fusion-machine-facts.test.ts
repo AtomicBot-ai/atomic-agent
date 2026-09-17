@@ -78,6 +78,30 @@ describe("resolveFusionMachineFacts", () => {
     expect(facts.workerTokenBudget).toBe(workerSlotFootprint());
   });
 
+  it("states the observed pool for an external server, and only then (F21)", () => {
+    // The server's own `/props` answer is an observation, not a guess:
+    // run 13's orchestrator planned with no slot count because the
+    // daemon ran in external mode, next to a server that had five.
+    const external = config({ mode: "external", parallel: 6 });
+    expect(resolveFusionMachineFacts(external, { workerSlots: 5 }).workerSlots).toBe(5);
+    expect(resolveFusionMachineFacts(external, { workerSlots: null }).workerSlots).toBeNull();
+    expect(resolveFusionMachineFacts(external, {}).workerSlots).toBeNull();
+    // The config's own number wins where it has one; a cloud leg has none.
+    expect(
+      resolveFusionMachineFacts(config({ parallel: 3 }), { workerSlots: 5 }).workerSlots,
+    ).toBe(3);
+    expect(
+      resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 0 }), {
+        workerSlots: 5,
+      }).workerSlots,
+    ).toBe(5);
+    const cloud = config({
+      workerProvider: "openrouter",
+      providers: [{ id: "openrouter", kind: "openrouter" }] as unknown as Providers,
+    });
+    expect(resolveFusionMachineFacts(cloud, { workerSlots: 5 }).workerSlots).toBeNull();
+  });
+
   it("counts auto slots from a pinned context the way the daemon does", () => {
     expect(
       resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 131_072 }))
@@ -198,5 +222,31 @@ describe("the facts reaching the prompt", () => {
     expect(prompt.stablePrefix).toContain("`qwen-3.5-4b`");
     expect(prompt.stablePrefix).toContain("~24K tokens");
     expect(prompt.stablePrefix).toContain("`maxWorkers` at most 5");
+  });
+
+  it("threads the observed slot count into the block for an external server (F21)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-facts-live-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        localModels: { mode: "external", managed: { modelId: "qwen-3.5-4b" } },
+      }),
+    );
+    process.env.ATOMIC_AGENT_STATE_DIR = dir;
+    resetConfigCache();
+    const input = {
+      session: createEmptySessionState({ id: "s", workingDir: "/work" }),
+      toolDescriptors: [
+        { name: "fusion.delegate", summary: "fan out", argsSchema: "{}" },
+      ] satisfies ToolDescriptor[],
+      capabilities: { platform: "linux" } as unknown as CapabilitiesSummary,
+      skillCatalog: [],
+    };
+    const before = buildPrompt(input);
+    expect(before.stablePrefix).toContain("### fusion");
+    expect(before.stablePrefix).not.toContain("request slot");
+    const after = buildPrompt({ ...input, liveWorkerSlots: 5 });
+    expect(after.stablePrefix).toContain("5 request slots");
+    expect(after.stablePrefix).toContain("`maxWorkers` at most 5");
   });
 });

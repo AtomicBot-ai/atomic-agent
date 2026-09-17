@@ -189,6 +189,8 @@ export interface TraceBatchTrimmed extends TraceEventBase {
   kept: string;
   /** Tools that never ran, in emitted order. */
   dropped: string[];
+  /** Tools the turn's policy would have refused anyway; omitted when none. */
+  refused?: string[];
   reason: "approval-gated-batched";
 }
 

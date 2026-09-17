@@ -102,6 +102,28 @@ function mutates(tool: string, registry: Pick<ToolRegistry, "get">): boolean {
   return !registry.get(tool).readonly;
 }
 
+/** What the gate needs to answer "would this call be refused". */
+export interface FusionGateContext {
+  registry: Pick<ToolRegistry, "get" | "has">;
+}
+
+/**
+ * The one predicate behind the gate: would an ORCHESTRATOR turn refuse
+ * `toolName`? Shared by `checkFusionOrchestrator` (the refusal at
+ * dispatch), the step executor's batch trim (which must not keep a call
+ * the gate is about to refuse) and the per-request grammar (which must
+ * not let a local orchestrator generate one). One predicate, so the
+ * three can never disagree about which call survives.
+ *
+ * The verdict does not depend on turn state — `delegations` only shapes
+ * the refusal text — so the context is the registry alone.
+ */
+export function wouldRefuse(toolName: string, ctx: FusionGateContext): boolean {
+  if (TERMINAL_TOOLS.has(toolName) || toolName === DELEGATE_TOOL) return false;
+  if (!ctx.registry.has(toolName)) return false;
+  return mutates(toolName, ctx.registry);
+}
+
 /**
  * Decide whether `tool` may run on the orchestrator's own turn.
  *
@@ -115,38 +137,16 @@ export function checkFusionOrchestrator(
   registry: Pick<ToolRegistry, "get" | "has">,
   state: FusionOrchestratorState,
 ): FusionOrchestratorVerdict {
-  if (TERMINAL_TOOLS.has(tool) || tool === DELEGATE_TOOL) {
-    return { allowed: true };
-  }
-  if (!registry.has(tool)) return { allowed: true };
-  if (!mutates(tool, registry)) return { allowed: true };
+  if (!wouldRefuse(tool, { registry })) return { allowed: true };
   return { allowed: false, refusal: refusalFor(tool, state) };
 }
 
-/** What `wouldRefuse` needs: the registry the gate reads mutability off. */
-export interface FusionGateContext {
-  registry: Pick<ToolRegistry, "get" | "has">;
-}
-
 /**
- * Would the orchestrator gate refuse `tool` on this turn, regardless of
- * what has been delegated? The verdict does not depend on the turn's
- * ledger — the count only shapes the refusal text — so this is the same
- * answer `checkFusionOrchestrator` gives at dispatch, computable before
- * the model has emitted anything. That is what lets a local
- * orchestrator's per-request grammar drop the tools the gate would
- * refuse (the descriptors stay in the prompt; only the sampler's
- * vocabulary shrinks), and a batch trim skip calls that would never run.
+ * The subset of `names` the gate would refuse — see `wouldRefuse`. What
+ * lets a local orchestrator's per-request grammar drop the tools the
+ * gate would refuse (the descriptors stay in the prompt; only the
+ * sampler's vocabulary shrinks).
  */
-export function wouldRefuse(tool: string, ctx: FusionGateContext): boolean {
-  return !checkFusionOrchestrator(
-    tool,
-    ctx.registry,
-    emptyFusionOrchestratorState(),
-  ).allowed;
-}
-
-/** The subset of `names` the gate would refuse — see `wouldRefuse`. */
 export function refusedToolNames(
   names: Iterable<string>,
   ctx: FusionGateContext,

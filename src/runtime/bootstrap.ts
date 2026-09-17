@@ -96,6 +96,7 @@ import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
+import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import {
   ProviderFallbackChain,
   resolveFallbackChain,
@@ -533,6 +534,10 @@ export interface AgentRuntime {
       toolFilter?: (name: string) => boolean;
       /** The turn's tool role (see `RunTurnOptions.toolRole`); a worker is a `builder`. */
       toolRole?: ToolRole;
+      /** See `RunTurnOptions.reasoningEffort` — a fusion worker's setting. */
+      reasoningEffort?: ReasoningEffort;
+      /** See `RunTurnOptions.maxOutputTokens` — a fusion worker's cap. */
+      maxOutputTokens?: number;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -558,6 +563,8 @@ export interface AgentRuntime {
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -2372,6 +2379,9 @@ export async function createAgentRuntime(
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
+    // The local leg's slot count once `/props` has answered — what the
+    // `### fusion` facts state for an external server.
+    liveWorkerSlots: () => slotManager.observedPoolSize(),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: forgetContextWindowBelow,
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
@@ -2755,7 +2765,15 @@ export async function createAgentRuntime(
     taskMaxDurationMs?: number;
     toolFilter?: (name: string) => boolean;
     toolRole?: ToolRole;
+    reasoningEffort?: ReasoningEffort;
+    maxOutputTokens?: number;
   }) => ({
+    ...(runOptions.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: runOptions.reasoningEffort }),
+    ...(runOptions.maxOutputTokens === undefined
+      ? {}
+      : { maxOutputTokens: runOptions.maxOutputTokens }),
     maxSteps: Math.min(
       config.agent.maxSteps,
       runOptions.maxSteps ?? config.agent.maxSteps,
@@ -2803,6 +2821,8 @@ export async function createAgentRuntime(
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -2862,6 +2882,9 @@ export async function createAgentRuntime(
         // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
+          // The same record the workers' briefs quote, pinned into the
+          // orchestrator's own prompt once the packer drops its carrier.
+          ...(turnRequest !== undefined ? { originalRequest: turnRequest } : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
@@ -2931,6 +2954,8 @@ export async function createAgentRuntime(
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after
@@ -3061,6 +3086,15 @@ export async function createAgentRuntime(
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
       resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+      // The worker leg's pricing, when the catalogue or a hand-priced
+      // entry knows it — the status table's spend line.
+      resolveWorkerPricing: (providerId, modelId) =>
+        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)
+          ?.pricing,
+      // The same client the llama-server provider serves workers with,
+      // so the speed a worker's time limit is sized from is the speed
+      // its own completions run at.
+      localTokensPerSecond: () => llama.measuredTokensPerSecond(),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

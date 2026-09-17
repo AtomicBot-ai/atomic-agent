@@ -7,6 +7,7 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
 import type { StructuredLogger } from "../../tracing/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
+import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
 import {
@@ -21,7 +22,9 @@ import {
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
 import {
   delegateOutcome,
+  fanoutSpend,
   formatDelegateOutput,
+  type WorkerPricing,
   type WorkerTaskResult,
 } from "./worker-result.js";
 
@@ -58,6 +61,23 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * have passed.
    */
   runChecks?: ContractCheckRunner;
+  /**
+   * Pricing for the worker model on the worker leg, when any is known
+   * (`resolveModelPricingFor`). Present, the status table header states
+   * the fan-out's spend; a local leg resolves to nothing.
+   */
+  resolveWorkerPricing?: (
+    providerId: string,
+    modelId: string,
+  ) => WorkerPricing | undefined;
+  /**
+   * The local leg's measured generation speed
+   * (`LlamaServerClient.measuredTokensPerSecond`), read per fan-out so a
+   * worker's time limit follows the machine's current load. Only
+   * consulted for a slot-affine (local) leg; `null` before any
+   * completion has been measured.
+   */
+  localTokensPerSecond?: () => number | null;
 }
 
 function error(
@@ -199,12 +219,21 @@ export function buildFusionDelegateTool(
         parsed.maxWorkers ??
         (Number.isFinite(poolSize) ? (poolSize as number) : mode.workers);
       const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
-      const maxWorkers = Math.max(1, Math.min(wanted, poolSize));
+      // A cloud leg has no slot pool, so nothing physical bounds the
+      // width — only the bill. `cloudWorkers` is that bound: a
+      // `maxWorkers` above it is clamped, and the result says so, since
+      // the orchestrator is the party that can re-plan around it.
+      const cloudCap = Number.isFinite(poolSize)
+        ? Number.POSITIVE_INFINITY
+        : (mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS);
+      const maxWorkers = Math.max(1, Math.min(wanted, poolSize, cloudCap));
+      const cloudCapIsBinding = maxWorkers < wanted && maxWorkers === cloudCap;
       // The pool held this fan-out down when it ran fewer at a time than
       // there was work for — whether the orchestrator asked for a wider
       // number or simply had more tasks than the machine has slots.
       const poolIsBinding =
-        maxWorkers < wanted || maxWorkers < parsed.tasks.length;
+        !cloudCapIsBinding &&
+        (maxWorkers < wanted || maxWorkers < parsed.tasks.length);
 
       // Labels, never guesses: the resolver's pin when it has one, the
       // provider id when it does not. Both legs are read from the same
@@ -279,6 +308,12 @@ export function buildFusionDelegateTool(
       // enough that workers built the wrong thing or scavenged the disk
       // for the missing spec. Every worker also gets what was asked.
       const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
+      // A local worker's time limit is sized from the machine's measured
+      // speed (F19); a cloud leg has no such measurement and keeps the
+      // configured ceiling.
+      const localTokensPerSecond = Number.isFinite(poolSize)
+        ? (deps.localTokensPerSecond?.() ?? null)
+        : null;
 
       let results: WorkerTaskResult[];
       try {
@@ -292,6 +327,13 @@ export function buildFusionDelegateTool(
           workerModel,
           workerMaxSteps: mode.workerMaxSteps,
           workerTimeoutMs: mode.workerTimeoutMs,
+          localTokensPerSecond,
+          ...(mode.workerReasoning === undefined
+            ? {}
+            : { workerReasoning: mode.workerReasoning }),
+          ...(mode.workerMaxOutputTokens === undefined
+            ? {}
+            : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
           writeScope,
           signal: ctx.signal,
         });
@@ -354,17 +396,26 @@ export function buildFusionDelegateTool(
       // concurrently, and the config key that changes the second number.
       const hint = poolIsBinding
         ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — every slot draws on one shared llama-server context pool (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
-        : "";
+        : cloudCapIsBinding
+          ? `\n\nNote: maxWorkers ${wanted} was clamped to ${maxWorkers}, the cloud worker cap (\`llm.runMode.fusion.cloudWorkers\`); the rest queued behind them.`
+          : "";
       // The call's own status is the tasks' summary: a fan-out where
       // every worker failed used to come back `ok`, and an orchestrator
       // reading only the status merged nothing as if it were something.
       const outcome = delegateOutcome(results);
+      // What the fan-out cost on the worker leg, when its model is priced
+      // (a cloud leg with a catalogue entry); a local leg resolves to no
+      // pricing and the header says nothing.
+      const pricing = deps.resolveWorkerPricing?.(workerProviderId, workerModel);
+      const spend =
+        pricing === undefined ? null : fanoutSpend(results, pricing, workerModel);
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
           status: outcome === "all_failed" ? "error" : "ok",
           output: `${formatDelegateOutput(results, deps.outputCharCap, {
             ...(contractLine === undefined ? {} : { contractLine }),
+            spend,
           })}${hint}`,
           details: {
             tasks: results,
@@ -373,6 +424,7 @@ export function buildFusionDelegateTool(
             requestedWorkers: requested,
             ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),
             ...(contract === undefined ? {} : { contract }),
+            ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
           },
         },
         { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },

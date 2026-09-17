@@ -52,6 +52,8 @@ export class SlotManager {
   private slotPool: number[];
   private nextRoundRobin = 0;
   private reservedReflectionSlot: number | null = null;
+  /** Whether a `/props` answer has ever sized the pool — see `observedPoolSize`. */
+  private observed = false;
 
   constructor(slotCount = DEFAULT_SLOT_COUNT) {
     if (slotCount <= 0) {
@@ -78,6 +80,18 @@ export class SlotManager {
   }
 
   /**
+   * `poolSize()` once the server has been asked, `null` before. The
+   * constructor's count is a guess (one slot, or the configured
+   * `--parallel`); `resize()` is called from a `/props` answer, and only
+   * a number the server itself reported is one the `### fusion` machine
+   * facts may state — a guessed slot count is a number the model plans
+   * against.
+   */
+  observedPoolSize(): number | null {
+    return this.observed ? this.poolSize() : null;
+  }
+
+  /**
    * Re-size the pool to the server's actual slot count, discovered from a
    * later `/props` probe. No-op when the count is unchanged, so the common
    * refresh path costs nothing and never disturbs live cache affinity.
@@ -97,6 +111,9 @@ export class SlotManager {
     if (slotCount <= 0) {
       throw new Error("slotCount must be positive");
     }
+    // An unchanged count is still an observation: the server confirmed
+    // the number the pool was built with.
+    this.observed = true;
     if (slotCount === this.slotCount) return;
     const reserved =
       this.reservedReflectionSlot !== null &&

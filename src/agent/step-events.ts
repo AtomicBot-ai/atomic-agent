@@ -148,6 +148,12 @@ export type StepEvent =
       kept: string;
       /** Tool names of dropped calls in original batch-index order. */
       dropped: string[];
+      /**
+       * Tool names dropped because the turn's policy (plan mode, the
+       * fusion orchestrator gate) would have refused them — not to be
+       * retried. Omitted when none. Disjoint from `dropped`.
+       */
+      refused?: string[];
       /** Canonical trim cause. New reasons may be added over time. */
       reason: "approval-gated-batched";
     }

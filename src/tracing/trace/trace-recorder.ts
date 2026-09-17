@@ -251,6 +251,7 @@ export function createTraceRecorder(
           originalSize: inner.originalSize,
           kept: inner.kept,
           dropped: [...inner.dropped],
+          ...(inner.refused !== undefined ? { refused: [...inner.refused] } : {}),
           reason: inner.reason,
         });
         return;

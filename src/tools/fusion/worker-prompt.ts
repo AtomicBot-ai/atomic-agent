@@ -1,4 +1,5 @@
 import type { ConversationTurn } from "../../session/conversation-turn.js";
+import { REQUEST_FOLLOW_UP_MARKER } from "../../prompt/request-section.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
   renderContractBlock,
@@ -81,7 +82,7 @@ export function pickOriginalRequest(input: {
   if (current.length >= FOLLOW_UP_MAX_CHARS || previous === undefined) {
     return current;
   }
-  return `${previous}\n\n[the operator's latest message, which started this turn]\n${current}`;
+  return `${previous}\n\n${REQUEST_FOLLOW_UP_MARKER}\n${current}`;
 }
 
 function quoteOriginalRequest(request: string): string[] {

@@ -16,6 +16,11 @@ import type {
 } from "./stable-prefix.js";
 import { estimateTokens, truncateToTokens } from "./token-budget.js";
 import { ALSO_AVAILABLE_VIA_TOOL_VIEW } from "./stable-prefix.js";
+import {
+  REQUEST_FOLLOW_UP_MARKER,
+  REQUEST_SECTION_CHAR_BUDGET,
+  requestInView,
+} from "./request-section.js";
 
 function mkSession(overrides: Partial<SessionState> = {}): SessionState {
   const base = createEmptySessionState({
@@ -1855,5 +1860,109 @@ describe("buildPrompt structured form (`messages`)", () => {
       prompt.tail.slice(prompt.tail.indexOf("### conversation\n") + "### conversation\n".length).split("\n")[0],
     );
     expect(prompt.messages.turns.length).toBe(turns.length - prompt.droppedTurns);
+  });
+});
+
+describe("### request pins the operator's request once its carrier is dropped (F22)", () => {
+  const SPEC = `Build the asteroids game: ${"spec ".repeat(600)}`.trim();
+
+  function repairSession(): SessionState {
+    // A long first turn (the spec), a wall of tool traffic, then the
+    // repair message that starts the current turn. Under a small cap the
+    // packer keeps the last user turn and drops the spec's.
+    const turns: SessionState["turns"] = [{ kind: "user", text: SPEC, at: 1 }];
+    for (let i = 0; i < 60; i += 1) {
+      turns.push({ kind: "assistant_tool_call", tool: "os.fs.read", args: { path: `f${i}` }, at: 2 + i });
+      turns.push({ kind: "tool_result", tool: "os.fs.read", status: "ok", summary: `${"x".repeat(120)} ${i}`, at: 2 + i });
+    }
+    turns.push({ kind: "assistant_reply", text: "built", at: 100 });
+    turns.push({ kind: "user", text: "fix these bugs", at: 101 });
+    return { ...mkSession(), turns };
+  }
+
+  const base = {
+    toolDescriptors: TOOLS,
+    capabilities: CAPS,
+    skillCatalog: SKILLS,
+  };
+
+  it("renders the section immediately before ### conversation only when the carrier was dropped", () => {
+    const dropped = buildPrompt({
+      ...base,
+      session: repairSession(),
+      conversationMaxTokens: 600,
+      originalRequest: SPEC,
+    });
+    expect(dropped.droppedTurns).toBeGreaterThan(0);
+    const tail = dropped.tail;
+    const world = tail.indexOf("### world");
+    const request = tail.indexOf("### request");
+    const conversation = tail.indexOf("### conversation");
+    expect(request).toBeGreaterThan(world);
+    expect(conversation).toBeGreaterThan(request);
+    expect(tail.slice(request, conversation)).toContain("Build the asteroids game");
+    expect(tail.slice(request, conversation)).toContain("has been dropped from the conversation below");
+    // Its room came out of the conversation cap: the tail still fits.
+    expect(dropped.tokens.conversation).toBeLessThanOrEqual(dropped.conversationCapEffective);
+
+    const inView = buildPrompt({
+      ...base,
+      session: repairSession(),
+      conversationMaxTokens: 32_000,
+      originalRequest: SPEC,
+    });
+    expect(inView.droppedTurns).toBe(0);
+    expect(inView.tail).not.toContain("### request");
+    // The section is rendered from the record, not from the transcript,
+    // so a dropped carrier and no record costs nothing either.
+    expect(
+      buildPrompt({ ...base, session: repairSession(), conversationMaxTokens: 600 }).tail,
+    ).not.toContain("### request");
+  });
+
+  it("reads a follow-up record by the turn it was taken from", () => {
+    // `pickOriginalRequest` combines the previous message with a short
+    // follow-up; the carrier to look for is the previous message.
+    const combined = `${SPEC}\n\n${REQUEST_FOLLOW_UP_MARKER}\nfix these bugs`;
+    const dropped = buildPrompt({
+      ...base,
+      session: repairSession(),
+      conversationMaxTokens: 600,
+      originalRequest: combined,
+    });
+    expect(dropped.tail).toContain("### request");
+    const inView = buildPrompt({
+      ...base,
+      session: repairSession(),
+      conversationMaxTokens: 32_000,
+      originalRequest: combined,
+    });
+    expect(inView.tail).not.toContain("### request");
+  });
+
+  it("clips the section at 16,000 chars and says so", () => {
+    const long = "L".repeat(REQUEST_SECTION_CHAR_BUDGET + 500);
+    const prompt = buildPrompt({
+      ...base,
+      session: repairSession(),
+      conversationMaxTokens: 600,
+      originalRequest: long,
+    });
+    const section = prompt.tail.slice(
+      prompt.tail.indexOf("### request"),
+      prompt.tail.indexOf("### conversation"),
+    );
+    expect(section).toContain("L".repeat(REQUEST_SECTION_CHAR_BUDGET));
+    expect(section).not.toContain("L".repeat(REQUEST_SECTION_CHAR_BUDGET + 1));
+    expect(section).toContain("truncated: the request is 16,500 chars");
+  });
+
+  it("requestInView matches the carrier by its trimmed text", () => {
+    const turns: SessionState["turns"] = [{ kind: "user", text: "  hello  ", at: 1 }];
+    expect(requestInView("hello", turns)).toBe(true);
+    expect(requestInView("other", turns)).toBe(false);
+    expect(requestInView("   ", turns)).toBe(true);
+    expect(requestInView(`hello\n\n${REQUEST_FOLLOW_UP_MARKER}\ncontinue`, turns)).toBe(true);
+    expect(requestInView(`other\n\n${REQUEST_FOLLOW_UP_MARKER}\nhello`, turns)).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ import {
 } from "../../approval/dangerous-tool.js";
 import { resolveUserPath } from "./expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
+import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
 import {
   basenameCommand,
   checkShellCommandGuard,
@@ -344,11 +345,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       const body = [result.stdout, result.stderr]
         .filter((s) => s.trim().length > 0)
         .join("\n---\n");
+      // `node --check a b c` exits 0 having read only `a`. Said here,
+      // first, because nothing in node's own output says it — and a
+      // reply built on that exit code claims a check that never ran.
+      const checkNotice = nodeCheckMultiFileNotice(commandLine, cwd);
       return compressToolResult(
         {
           tool: "os.shell.run",
           status,
-          output: `${header}\n${body}`,
+          output: `${checkNotice === null ? "" : `${checkNotice}\n`}${header}\n${body}`,
           details: {
             cmd,
             args: execArgs,

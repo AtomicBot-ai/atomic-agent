@@ -189,10 +189,29 @@ describe("resolveRunMode", () => {
     expect(resolveRunMode(llm("openrouter", { mode: "fusion" }))).toMatchObject(
       {
         workers: 2,
+        cloudWorkers: 4,
         workerMaxSteps: 40,
         workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
       },
     );
+    expect(
+      resolveRunMode(
+        llm("openrouter", { mode: "fusion", fusion: { cloudWorkers: 9 } }),
+      ).cloudWorkers,
+    ).toBe(9);
+    // F20: the worker settings are present only when configured — an
+    // absent one must reach the provider as "its default", not as a value.
+    const plain = resolveRunMode(llm("openrouter", { mode: "fusion" }));
+    expect(plain).not.toHaveProperty("workerReasoning");
+    expect(plain).not.toHaveProperty("workerMaxOutputTokens");
+    expect(
+      resolveRunMode(
+        llm("openrouter", {
+          mode: "fusion",
+          fusion: { workerReasoning: "high", workerMaxOutputTokens: 20_000 },
+        }),
+      ),
+    ).toMatchObject({ workerReasoning: "high", workerMaxOutputTokens: 20_000 });
     expect(
       resolveRunMode(
         llm("openrouter", {

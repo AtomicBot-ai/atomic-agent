@@ -127,12 +127,17 @@ export function buildOpenAiChatBody(
   // the field, or a deployment that wants a hard ceiling, sets it
   // through the entry's `extraBody` — `max_tokens` is deliberately not
   // in `RESERVED_BODY_KEYS`, so that passthrough wins.
-  // Order: what this call asked for, else the provider's configured
-  // ceiling, else nothing at all. The field is the model family's own:
-  // OpenAI's reasoning models answer `max_tokens` with "'max_tokens' is
-  // not supported with this model. Use 'max_completion_tokens' instead."
-  const cap = filtered.maxTokens ?? maxOutputTokens;
+  // Order: what this call asked for, else the turn's own ceiling (a
+  // fusion worker's `workerMaxOutputTokens`), else the provider's
+  // configured ceiling, else nothing at all. The field is the model
+  // family's own: OpenAI's reasoning models answer `max_tokens` with
+  // "'max_tokens' is not supported with this model. Use
+  // 'max_completion_tokens' instead."
+  const cap =
+    filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
   if (typeof cap === "number") body[profile.capField] = cap;
+  // Reasoning effort, in the field this kind reads (`model-params.ts`);
+  // omitted for a kind without a known one rather than guessed.
   if (filtered.reasoningEffort !== undefined) {
     Object.assign(
       body,

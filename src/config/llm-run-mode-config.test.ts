@@ -51,6 +51,7 @@ describe("parseLlmRunModeConfig", () => {
       workerProvider: "local-llama",
       workerModel: "qwen-3.5-4b",
       workers: 4,
+      cloudWorkers: 6,
       workerMaxSteps: 25,
       workerTimeoutMs: 120_000,
     };
@@ -198,5 +199,59 @@ describe("scrubRunModeProviderPins", () => {
       mode: "fusion",
       fusion: { orchestratorProvider: "openrouter", workers: 3 },
     });
+  });
+});
+
+describe("cloudWorkers (F21)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("is optional and bounded 1..32", () => {
+    expect(
+      parseLlmRunModeConfig({ fusion: { cloudWorkers: 8 } }, providers, "llm.runMode")
+        .fusion?.cloudWorkers,
+    ).toBe(8);
+    expect(
+      parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion
+        ?.cloudWorkers,
+    ).toBeUndefined();
+    for (const bad of [0, 33, 2.5, "4"]) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { cloudWorkers: bad } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(/llm\.runMode\.fusion\.cloudWorkers/);
+    }
+  });
+});
+
+describe("workerReasoning / workerMaxOutputTokens (F20)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("are optional, and validated when present", () => {
+    const parsed = parseLlmRunModeConfig(
+      { fusion: { workerReasoning: "low", workerMaxOutputTokens: 12_000 } },
+      providers,
+      "llm.runMode",
+    );
+    expect(parsed.fusion).toEqual({ workerReasoning: "low", workerMaxOutputTokens: 12_000 });
+    expect(parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion).toEqual({});
+    expect(() =>
+      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode"),
+    ).toThrow(/llm\.runMode\.fusion\.workerReasoning/);
+    for (const bad of [0, -1, 2.5, "8192", 1_000_001]) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { workerMaxOutputTokens: bad } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(/llm\.runMode\.fusion\.workerMaxOutputTokens/);
+    }
   });
 });

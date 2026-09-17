@@ -335,12 +335,117 @@ describe("fusion.delegate", () => {
       deps({
         slotManager: { poolSize: () => 1 },
         workerSupportsSlotAffinity: () => false,
+        resolveRunMode: () => fusionMode({ cloudWorkers: 8 }),
       }),
     );
     const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
     expect(result.details.maxWorkers).toBe(6);
     expect(result.details.slotPoolSize).toBeUndefined();
     expect(result.summary).not.toContain("localModels.managed.parallel");
+    expect(result.summary).not.toContain("cloudWorkers");
+  });
+
+  it("hands the worker reasoning and cap to every worker turn, and prices the fan-out (F20)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (_session, _message, options) => {
+          seen.push({ ...options });
+          options.eventHook?.({
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                content: "",
+                reasoningContent: "",
+                stop: true,
+                truncated: false,
+                timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+                cacheHitTokens: 0,
+                slotId: 0,
+                modelId: "small",
+                usage: { promptTokens: 1_000_000, completionTokens: 250_000, totalTokens: 1_250_000 },
+              },
+            },
+          });
+          return turnResult();
+        },
+        resolveRunMode: () =>
+          fusionMode({ workerReasoning: "low", workerMaxOutputTokens: 12_000 }),
+        resolveWorkerPricing: (providerId, modelId) =>
+          providerId === "local-llama" && modelId === "small"
+            ? { input: 1, output: 4 }
+            : undefined,
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ reasoningEffort: "low", maxOutputTokens: 12_000 });
+    expect(result.summary).toContain("cloud spend $4.00 on small (2,000,000 in / 500,000 out)");
+    expect(result.details.workerSpendUsd).toBeCloseTo(4);
+  });
+
+  it("sends no reasoning or cap and no spend line when nothing is configured or priced (F20)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (_session, _message, options) => {
+          seen.push({ ...options });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(seen[0]).not.toHaveProperty("reasoningEffort");
+    expect(seen[0]).not.toHaveProperty("maxOutputTokens");
+    expect(result.summary).not.toContain("cloud spend");
+    expect(result.details).not.toHaveProperty("workerSpendUsd");
+  });
+
+  it("sizes a local worker's time limit from the measured speed, a cloud one from the ceiling (F19)", async () => {
+    const limits: Array<number | undefined> = [];
+    const capture = (over: Partial<FusionDelegateDeps>) =>
+      buildFusionDelegateTool(
+        deps({
+          runTurn: async (_s, _m, options) => {
+            limits.push(options.taskMaxDurationMs);
+            return turnResult();
+          },
+          resolveRunMode: () => fusionMode({ workerTimeoutMs: 2_700_000 }),
+          localTokensPerSecond: () => 10,
+          ...over,
+        }),
+      );
+    const task = { id: "t1", title: "One", instructions: "Do one", files: ["a.js", "b.js"] };
+    await capture({}).run({ tasks: [task] }, ctx());
+    expect(limits[0]).toBeGreaterThanOrEqual(600_000);
+    expect(limits[0]).toBeLessThan(2_700_000);
+    await capture({ workerSupportsSlotAffinity: () => false }).run({ tasks: [task] }, ctx());
+    expect(limits[1]).toBe(2_700_000);
+    await capture({ localTokensPerSecond: () => null }).run({ tasks: [task] }, ctx());
+    expect(limits[2]).toBe(2_700_000);
+  });
+
+  it("clamps a cloud fan-out to cloudWorkers and says so (F21)", async () => {
+    // A cloud leg has no slot pool, so before this the width was whatever
+    // the model asked for — three workers from a one-worker config, and
+    // no ceiling on forty. Default cap 4; the note names the knob.
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 1 },
+        workerSupportsSlotAffinity: () => false,
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.details.maxWorkers).toBe(4);
+    expect(result.details.requestedWorkers).toBe(6);
+    expect(result.summary).toContain(
+      "maxWorkers 6 was clamped to 4, the cloud worker cap (`llm.runMode.fusion.cloudWorkers`)",
+    );
+    // A call that names nothing keeps `workers` as its default, under the cap.
+    const quiet = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(quiet.details.maxWorkers).toBe(3);
+    expect(quiet.summary).not.toContain("cloudWorkers");
   });
 
   it("names both numbers and the knob when the pool is the binding constraint", async () => {

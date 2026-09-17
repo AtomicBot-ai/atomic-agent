@@ -78,13 +78,30 @@ function nonEmpty(value: string | null | undefined): string | null {
 }
 
 /**
- * Read the facts from an already-loaded config.
+ * What the runtime has observed, as opposed to what the config says.
  *
- * Pure over its argument so it is testable without touching the config
+ * `workerSlots` is the local llama-server's request-slot count as the
+ * server itself reported it (`SlotManager.observedPoolSize`), `null`
+ * until a `/props` answer has sized the pool. It fills the one gap the
+ * config leaves — an external server, whose `--parallel` the operator
+ * chose out of band — and it is observed, never guessed, so it may be
+ * stated. It moves once, when first observed, and the prefix moves with
+ * it: the same one-time cost as a config write.
+ */
+export interface FusionLiveFacts {
+  workerSlots?: number | null;
+}
+
+/**
+ * Read the facts from an already-loaded config, plus what the runtime
+ * has observed where the config is silent.
+ *
+ * Pure over its arguments so it is testable without touching the config
  * cache; `buildPrompt` passes the `getConfig()` it already holds.
  */
 export function resolveFusionMachineFacts(
   config: AtomicAgentConfig,
+  live: FusionLiveFacts = {},
 ): FusionMachineFacts {
   const local = config.localModels;
   const fusion = config.llm?.runMode?.fusion;
@@ -124,7 +141,7 @@ export function resolveFusionMachineFacts(
   const pinnedContext = local.mode === "managed" ? local.managed.contextSize : 0;
   // Same inputs `buildLlamaServerArgs` counts slots from, so the number
   // stated here is the number the daemon launches with.
-  const workerSlots =
+  const configuredSlots =
     configured === null
       ? null
       : configured === "auto"
@@ -136,6 +153,17 @@ export function resolveFusionMachineFacts(
             })
           : null
         : configured;
+  // Where the config cannot say (external mode; managed `"auto"` with the
+  // context sized at start-up), the server's own answer may — that is an
+  // observation, not a guess. `null` only when nothing at all is known.
+  const observedSlots =
+    workersAreLocal &&
+    typeof live.workerSlots === "number" &&
+    Number.isFinite(live.workerSlots) &&
+    live.workerSlots > 0
+      ? live.workerSlots
+      : null;
+  const workerSlots = configuredSlots ?? observedSlots;
 
   // What one worker needs from the pool is a fact about the worker, not
   // the server, so it holds for an external llama-server too.
