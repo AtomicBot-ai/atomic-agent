@@ -50,6 +50,9 @@ function promptFor(
 
 function nativeRequestFields(params: LlmStreamParams) {
   return {
+    // The structured prompt goes to a native link only: a grammar link
+    // renders the flat text through its own template and GBNF prelude.
+    ...(params.messages ? { messages: params.messages } : {}),
     ...(params.tools ? { tools: params.tools } : {}),
     ...(params.toolChoice !== undefined
       ? { toolChoice: params.toolChoice }

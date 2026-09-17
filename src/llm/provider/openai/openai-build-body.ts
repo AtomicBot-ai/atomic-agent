@@ -2,7 +2,11 @@ import type { CompletionRequest } from "../completion-types.js";
 import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
+import { modelParamProfile, reasoningEffortField } from "./model-params.js";
+import { buildNativeMessages } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
+import { nameEscape } from "./openai-tool-call-adapter.js";
+import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -12,6 +16,51 @@ import { toStrictOpenAiTools } from "./openai-strict-tools.js";
  */
 const RESERVED_BODY_KEYS = ["model", "messages", "stream", "tools"] as const;
 
+/**
+ * What the builder knows about the provider and model beyond the request
+ * itself. Every field is optional and absent leaves the body exactly as
+ * it was before the field existed.
+ */
+export interface OpenAiBodyOptions {
+  /**
+   * Per-model wire parameters from `userModels[].params`, merged over the
+   * body *and* over `extraBody` — a model-level setting is more specific
+   * than a provider-level one. Reserved keys still win.
+   */
+  modelParams?: Record<string, unknown>;
+  /**
+   * The registered kind sending this body, for fields whose spelling is
+   * the vendor's (`reasoningEffort`). Absent, those fields are omitted.
+   */
+  providerKind?: string;
+  /**
+   * Place Anthropic prompt-cache breakpoints on the messages (see
+   * `prompt-cache-control.ts`). Decided by the provider from the model
+   * id, the host and the entry's `promptCache` policy.
+   */
+  anthropicCacheControl?: boolean;
+  /**
+   * How a request that carries `messages` (the structured prompt) is
+   * laid out: `native` as `system` + history + final `user`
+   * (`openai-native-messages.ts`), `flat` as the one `user` message of
+   * text every request used to be. A request without `messages` is
+   * always flat. Default `native`.
+   */
+  messageShape?: "native" | "flat";
+  /** The adapter's tool-name escape, for the history's `tool_calls`. */
+  nameEscape?: (qualifiedName: string) => string;
+}
+
+/** The wire layout `buildOpenAiChatBody` chose for a request. */
+export function resolveMessageShape(
+  request: Pick<CompletionRequest, "messages" | "tools">,
+  options: Pick<OpenAiBodyOptions, "messageShape">,
+): "native" | "flat" {
+  if (!request.messages) return "flat";
+  if (!request.tools || request.tools.length === 0) return "flat";
+  return options.messageShape ?? "native";
+}
+
 export function buildOpenAiChatBody(
   request: CompletionRequest,
   defaultChatModel: string,
@@ -20,8 +69,10 @@ export function buildOpenAiChatBody(
   maxOutputTokens?: number,
   strictTools?: boolean,
   providerPreferences?: Record<string, unknown>,
+  options: OpenAiBodyOptions = {},
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
+  const profile = modelParamProfile(defaultChatModel);
   // Settled before the body exists because it also decides the prompt:
   // a request that sends `response_format` must mention JSON (see
   // `ensureJsonMention`). The tools guard is explained where
@@ -30,17 +81,33 @@ export function buildOpenAiChatBody(
     filtered.tools && filtered.tools.length > 0
       ? undefined
       : filtered.responseFormat;
+  // The structured prompt rides only on a main turn (it needs `tools`
+  // to answer with), and only when the provider takes the native
+  // layout; a sub-call, or a service that refused the layout, sends the
+  // flat text — which `messages` was built beside, from the same packed
+  // conversation, so both say the same thing.
+  const messages =
+    resolveMessageShape(filtered, options) === "native" && filtered.messages
+      ? buildNativeMessages(filtered.messages, {
+          nameEscape: options.nameEscape ?? nameEscape,
+        })
+      : [
+          {
+            role: "user",
+            content: responseFormat
+              ? ensureJsonMention(filtered.prompt)
+              : filtered.prompt,
+          },
+        ];
   const body: Record<string, unknown> = {
     model: defaultChatModel,
-    messages: [
-      {
-        role: "user",
-        content: responseFormat
-          ? ensureJsonMention(filtered.prompt)
-          : filtered.prompt,
-      },
-    ],
-    temperature: filtered.temperature ?? 0.2,
+    messages,
+    // OpenAI's reasoning models reject the field outright (`Unsupported
+    // parameter: 'temperature'`), so for them it is not sent at all —
+    // not even a caller's own value. See `model-params.ts`.
+    ...(profile.temperature
+      ? { temperature: filtered.temperature ?? 0.2 }
+      : {}),
     stream,
   };
   // `max_tokens` only when somebody actually asked for a bound.
@@ -61,9 +128,17 @@ export function buildOpenAiChatBody(
   // through the entry's `extraBody` — `max_tokens` is deliberately not
   // in `RESERVED_BODY_KEYS`, so that passthrough wins.
   // Order: what this call asked for, else the provider's configured
-  // ceiling, else nothing at all.
+  // ceiling, else nothing at all. The field is the model family's own:
+  // OpenAI's reasoning models answer `max_tokens` with "'max_tokens' is
+  // not supported with this model. Use 'max_completion_tokens' instead."
   const cap = filtered.maxTokens ?? maxOutputTokens;
-  if (typeof cap === "number") body.max_tokens = cap;
+  if (typeof cap === "number") body[profile.capField] = cap;
+  if (filtered.reasoningEffort !== undefined) {
+    Object.assign(
+      body,
+      reasoningEffortField(options.providerKind, filtered.reasoningEffort),
+    );
+  }
   if (stream) {
     // Ask for the usage block on the stream's last chunk. Without it
     // most servers send none — OpenAI, llama.cpp and everything built on
@@ -132,10 +207,21 @@ export function buildOpenAiChatBody(
   // `extraBody.provider` is the older way to say the same thing, and it
   // keeps winning. Absent, the body is byte-identical to what it was.
   if (providerPreferences) body.provider = providerPreferences;
-  if (!extraBody) return body;
-  // Vendor passthrough. Merged last so it can reach fields this builder
-  // does not model, then reserved keys are restored on top.
-  const merged: Record<string, unknown> = { ...body, ...extraBody };
+  if (options.anthropicCacheControl) {
+    body.messages = applyAnthropicCacheControl(
+      body.messages as ReadonlyArray<Record<string, unknown>>,
+    );
+  }
+  const modelParams = options.modelParams;
+  if (!extraBody && !modelParams) return body;
+  // Vendor passthrough, then the model's own parameters. Merged last so
+  // they can reach fields this builder does not model, then reserved
+  // keys are restored on top.
+  const merged: Record<string, unknown> = {
+    ...body,
+    ...extraBody,
+    ...modelParams,
+  };
   for (const key of RESERVED_BODY_KEYS) {
     if (key in body) merged[key] = body[key];
     else delete merged[key];

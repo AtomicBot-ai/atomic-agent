@@ -10,10 +10,62 @@ export interface CompletionUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * Prompt tokens the service served from its prompt cache
+   * (`prompt_tokens_details.cached_tokens` on OpenAI, OpenRouter and
+   * Gemini's compatibility layer). A subset of `promptTokens`, priced at
+   * the model's `cacheRead` rate when one is known. Absent — not zero —
+   * when the service did not report it.
+   */
+  cachedTokens?: number;
+}
+
+/**
+ * One turn of the packed conversation, as the prompt builder renders it:
+ * the same rows `### conversation` carries as text, with each
+ * tool-result body already capped exactly as the text form caps it.
+ * Provider-neutral on purpose — a native-tools provider lays these out as
+ * real chat messages, a grammar provider never reads them.
+ */
+export type PromptTurn =
+  | { kind: "user"; text: string }
+  | { kind: "assistant_reply"; text: string }
+  | { kind: "assistant_tool_call"; tool: string; args: Record<string, unknown> }
+  | {
+      kind: "tool_result";
+      tool: string;
+      status: "ok" | "error";
+      body: string;
+      truncated: boolean;
+    };
+
+/**
+ * The prompt as structure instead of as one string: the three zones a
+ * native-message request lays out as `system`, history and a final
+ * `user` message. `prompt` (the flat text) is always present beside it
+ * and is what every other transport sends; the two are built from the
+ * same packed conversation, so they cannot disagree about what the
+ * model sees.
+ */
+export interface PromptMessages {
+  /** The stable prefix, byte for byte. */
+  system: string;
+  /** The packer's one-line recap of dropped turns, or `null`. */
+  droppedSummary: string | null;
+  /** The visible conversation, oldest first. */
+  turns: ReadonlyArray<PromptTurn>;
+  /** The variable tail without `### conversation`: the final user message. */
+  tail: string;
 }
 
 export interface CompletionRequest {
   prompt: string;
+  /**
+   * The same prompt as structure. Set only for main-turn requests built
+   * for a native-tools link; providers that lay history out as real
+   * messages read it, everything else ignores it and sends `prompt`.
+   */
+  messages?: PromptMessages;
   grammar?: string;
   slotId?: number;
   cachePrompt?: boolean;
@@ -43,6 +95,14 @@ export interface CompletionRequest {
    * they rely on `grammar` instead.
    */
   responseFormat?: ResponseFormatJsonSchema;
+  /**
+   * How hard a reasoning model should think on this completion. Spelled
+   * per vendor by the body builder (`reasoning: { effort }` on
+   * OpenRouter, `reasoning_effort` on OpenAI-compatible services) and
+   * omitted for kinds that document neither. Ignored by grammar-only
+   * providers. Set by the fusion fan-out for its workers.
+   */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**

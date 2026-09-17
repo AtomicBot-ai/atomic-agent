@@ -7,6 +7,7 @@ import type {
 } from "../completion-types.js";
 import type { ReasoningFormat } from "../llm-provider.js";
 import { createFabricatedTranscriptWatcher } from "../../reliability/fabricated-tool-transcript.js";
+import { normaliseOpenAiUsage } from "./openai-normalise-response.js";
 import { createReasoningExtractor } from "./reasoning-extractor.js";
 import {
   parseOpenAiSseEvent,
@@ -127,15 +128,21 @@ export function createOpenAiStreamConsumer(
               toolArgsBuffer = chunk.toolArgsBuffer;
               const replyText =
                 extractPartialReplyTextFromToolArguments(toolArgsBuffer);
-              if (replyText.length > 0) {
+              // Text the event carried beside its tool-call delta is
+              // shown as it is; reply text still streaming inside the
+              // call's arguments is shown as it becomes readable.
+              const textDelta =
+                chunk.delta +
+                (replyText.length > 0
+                  ? replyText.slice(chunk.emittedReplyLength)
+                  : "");
+              if (
+                replyText.length > 0 ||
+                textDelta.length > 0 ||
+                chunk.reasoningDelta.length > 0
+              ) {
                 yield {
-                  delta: replyText.slice(chunk.emittedReplyLength),
-                  reasoningDelta: chunk.reasoningDelta,
-                  done: false,
-                };
-              } else if (chunk.reasoningDelta.length > 0) {
-                yield {
-                  delta: "",
+                  delta: textDelta,
                   reasoningDelta: chunk.reasoningDelta,
                   done: false,
                 };
@@ -356,9 +363,5 @@ function normaliseUsage(
   raw: Record<string, unknown> | null,
 ): CompletionUsage | undefined {
   if (!raw) return undefined;
-  return {
-    promptTokens: Number(raw.prompt_tokens ?? 0),
-    completionTokens: Number(raw.completion_tokens ?? 0),
-    totalTokens: Number(raw.total_tokens ?? 0),
-  };
+  return normaliseOpenAiUsage(raw);
 }

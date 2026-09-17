@@ -70,11 +70,22 @@ export type UserLlmProviderEntry = {
    */
   maxOutputTokens?: number;
   /**
-   * Prompt-caching policy for this provider. Declared in the config
-   * schema and on `LlmProviderConfigEntry`; no provider reads it yet,
-   * so today it only has to survive the round-trip through config.
+   * Prompt-caching policy for this provider. `off` sends no cache
+   * markers; `explicit-markers` always sends Anthropic breakpoints;
+   * `auto` (the default) sends them when the model or host is
+   * Anthropic's. See `openai/prompt-cache-control.ts`.
    */
   promptCache?: "auto" | "off" | "explicit-markers";
+  /**
+   * How a native-tools request lays the prompt out: `native` (the
+   * default) as a system message plus the history as assistant
+   * `tool_calls` and `tool` results, `flat` as the single user message
+   * of transcript text. Set `flat` for a server that rejects tool-role
+   * messages (older vLLM, llama.cpp shims); the provider also learns it
+   * from a 400 about roles for the rest of a session. Grammar and
+   * subscription-CLI kinds are flat by construction.
+   */
+  messageShape?: "native" | "flat";
   /**
    * OpenRouter provider routing — `order`, `only`, `ignore`,
    * `allow_fallbacks`, `require_parameters`, `sort`, `data_collection`,
@@ -146,14 +157,32 @@ export type UserModelEntry = {
   supportsVision?: boolean;
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
+  /**
+   * Which response field carries the model's reasoning. `auto` (the
+   * provider default when unset) reads `reasoning`, `reasoning_content`
+   * or `thinking`, whichever is present; a named format pins one.
+   */
   reasoningFormat?:
-    "none" | "delta_reasoning" | "delta_thinking" | "delta_reasoning_content";
+    | "auto"
+    | "none"
+    | "delta_reasoning"
+    | "delta_thinking"
+    | "delta_reasoning_content";
   pricing?: {
     input: number;
     output: number;
     cacheRead?: number;
     cacheWrite?: number;
   };
+  /**
+   * Wire parameters for this model, merged into every OpenAI-compatible
+   * chat body after the provider's `extraBody` (a model-level setting is
+   * the more specific one). The way to hand a model a `temperature`,
+   * `top_p`, `reasoning_effort` or any vendor field the runtime does not
+   * model; reserved keys (`model`, `messages`, `stream`, `tools`) still
+   * cannot be overridden.
+   */
+  params?: Record<string, unknown>;
 };
 
 export type UserLlmFallbackConfig = {
@@ -165,6 +194,21 @@ export type UserLlmFallbackConfig = {
   failureWindowMs?: number;
 };
 
+/**
+ * OpenRouter-wide settings, as opposed to a single `openrouter` entry's.
+ */
+export type UserLlmOpenRouterConfig = {
+  /**
+   * Steer models whose caching depends on the route toward the routes
+   * that cache — today `google/…` models to Google AI Studio, which
+   * cached 83 % of input where Vertex cached 1–4 % — unless the entry
+   * configured `providerPreferences` of its own. Default `true`; a
+   * pinned route can raise latency or lose availability while it is
+   * down, so it is a default an operator can turn off.
+   */
+  preferCacheRoutes?: boolean;
+};
+
 export type UserLlmFileConfig = {
   activeTextProvider: string;
   activeEmbeddingProvider: string;
@@ -173,6 +217,8 @@ export type UserLlmFileConfig = {
   fallback?: UserLlmFallbackConfig;
   /** Run mode (local | cloud | fusion) and the fusion legs. See `llm-run-mode-config.ts`. */
   runMode?: UserLlmRunModeConfig;
+  /** Settings for every `openrouter` entry at once. */
+  openrouter?: UserLlmOpenRouterConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -325,6 +371,9 @@ export function parseLlmProviderEntry(
     promptCache: parseOptionalEnum<
       NonNullable<UserLlmProviderEntry["promptCache"]>
     >(obj.promptCache, `${field}.promptCache`, PROMPT_CACHE_MODES),
+    messageShape: parseOptionalEnum<
+      NonNullable<UserLlmProviderEntry["messageShape"]>
+    >(obj.messageShape, `${field}.messageShape`, MESSAGE_SHAPES),
     providerPreferences: parseOptionalPlainObject(
       obj.providerPreferences,
       `${field}.providerPreferences`,
@@ -422,8 +471,10 @@ function parseOptionalPlainObject(
 }
 
 const PROMPT_CACHE_MODES = new Set(["auto", "off", "explicit-markers"]);
+const MESSAGE_SHAPES = new Set(["native", "flat"]);
 const TOOLS_SUPPORT_LEVELS = new Set(["none", "basic", "parallel", "strict"]);
 const REASONING_FORMATS = new Set([
+  "auto",
   "none",
   "delta_reasoning",
   "delta_thinking",
@@ -527,6 +578,7 @@ function parseUserModelEntry(raw: unknown, field: string): UserModelEntry {
       NonNullable<UserModelEntry["reasoningFormat"]>
     >(obj.reasoningFormat, `${field}.reasoningFormat`, REASONING_FORMATS),
     pricing: parseUserModelPricing(obj.pricing, `${field}.pricing`),
+    params: parseOptionalPlainObject(obj.params, `${field}.params`),
   };
 }
 
@@ -732,6 +784,8 @@ export function parseUserLlmFileConfig(
       ? undefined
       : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
+  const openrouter = parseLlmOpenRouterConfig(obj.openrouter, "llm.openrouter");
+
   return {
     activeTextProvider,
     activeEmbeddingProvider,
@@ -739,5 +793,22 @@ export function parseUserLlmFileConfig(
     providers,
     ...(fallback ? { fallback } : {}),
     ...(runMode ? { runMode } : {}),
+    ...(openrouter ? { openrouter } : {}),
   };
+}
+
+export function parseLlmOpenRouterConfig(
+  raw: unknown,
+  field: string,
+): UserLlmOpenRouterConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const preferCacheRoutes = parseOptionalBoolean(
+    obj.preferCacheRoutes,
+    `${field}.preferCacheRoutes`,
+  );
+  return preferCacheRoutes === undefined ? {} : { preferCacheRoutes };
 }

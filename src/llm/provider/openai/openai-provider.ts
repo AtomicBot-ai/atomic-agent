@@ -20,7 +20,12 @@ import {
   withStrictNullArgumentDrop,
 } from "./openai-tool-call-adapter.js";
 import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
-import { buildOpenAiChatBody } from "./openai-build-body.js";
+import {
+  buildOpenAiChatBody,
+  resolveMessageShape,
+  type OpenAiBodyOptions,
+} from "./openai-build-body.js";
+import { isNativeShapeRejection } from "./openai-native-messages.js";
 import {
   buildOpenAiHeaders,
   createOpenAiAttemptBudget,
@@ -37,9 +42,11 @@ import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import {
   adaptQwenCompletionResult,
   adaptQwenTaggedToolResponse,
+  type TaggedToolAdaptOptions,
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
@@ -64,7 +71,39 @@ export interface OpenAiProviderOptions {
   toolCallAdapter?: ToolCallAdapter;
   streamConsumer?: StreamConsumer;
   apiPathPrefix?: string;
+  /**
+   * Tagged text tool calls (`<tool_call>…</tool_call>`, Qwen's XML-ish
+   * form or the Hermes JSON form) are decoded for every kind when the
+   * whole reply is such blocks. `"qwen"` additionally reads a call out of
+   * `reasoning_content` when `content` holds none (#105).
+   */
   taggedToolCompatibility?: "qwen";
+  /**
+   * The registered kind this client serves (`openrouter`,
+   * `openai-compatible`, …), for body fields whose spelling is the
+   * vendor's. See `OpenAiBodyOptions.providerKind`.
+   */
+  providerKind?: string;
+  /**
+   * Wire parameters of the default chat model from `userModels[].params`,
+   * merged over every chat body after `extraBody`.
+   */
+  modelParams?: Record<string, unknown>;
+  /**
+   * How the structured prompt is laid out on the wire: `native` (the
+   * default) as `system` + history messages + final `user`; `flat` as the
+   * one `user` message of text every request used to be. A 400 about
+   * roles / `tool_call_id` / `messages` flips a session to `flat` and
+   * retries once. See `openai-native-messages.ts`.
+   */
+  messageShape?: "native" | "flat";
+  /**
+   * The entry's prompt-caching policy. `off` sends no cache markers;
+   * `explicit-markers` always sends Anthropic breakpoints; `auto` (and
+   * absent) sends them when the model or the host is Anthropic's. See
+   * `prompt-cache-control.ts`.
+   */
+  promptCache?: "auto" | "off" | "explicit-markers";
   /**
    * Vendor-specific fields merged into every chat completion body.
    * See `RESERVED_BODY_KEYS` in `openai-build-body.ts` for the keys
@@ -111,6 +150,17 @@ export class OpenAiProvider implements LlmProvider {
   private readonly maxOutputTokens: number | undefined;
   private readonly strictTools: boolean;
   private readonly providerPreferences: Record<string, unknown> | undefined;
+  private readonly bodyOptions: OpenAiBodyOptions;
+  private readonly reasoningFormat: ReasoningFormat;
+  private readonly messageShape: "native" | "flat";
+  /**
+   * Sessions whose requests go out flat after the service rejected the
+   * native layout (`"*"` for requests without a session id). Per
+   * session rather than per provider so one shim-backed session cannot
+   * downgrade another's caching; per instance because a provider is
+   * rebuilt on every config write, which is the cheapest re-probe.
+   */
+  private readonly flatSessions = new Set<string>();
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -124,9 +174,12 @@ export class OpenAiProvider implements LlmProvider {
     this.toolCallAdapter = options.strictTools
       ? withStrictNullArgumentDrop(baseToolCallAdapter)
       : baseToolCallAdapter;
+    // `auto` reads whichever reasoning field the service writes; a
+    // configured format (`userModels[].reasoningFormat`) pins one.
+    this.reasoningFormat = options.reasoningFormat ?? "auto";
     this.streamConsumer =
       options.streamConsumer ??
-      createOpenAiStreamConsumer(options.reasoningFormat ?? "delta_reasoning");
+      createOpenAiStreamConsumer(this.reasoningFormat);
     this.capabilities = {
       vision: options.supportsVision ?? true,
       visionSource: options.supportsVision ? "modalities.vision" : "absent",
@@ -135,7 +188,7 @@ export class OpenAiProvider implements LlmProvider {
       supportsParallelTools: options.supportsParallelTools ?? true,
       supportsSlotAffinity: false,
       supportsPromptCache: options.supportsPromptCache ?? true,
-      reasoningFormat: options.reasoningFormat ?? "delta_reasoning",
+      reasoningFormat: this.reasoningFormat,
     };
     this.defaultChatModel = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
@@ -144,6 +197,15 @@ export class OpenAiProvider implements LlmProvider {
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
     this.providerPreferences = options.providerPreferences;
+    this.messageShape = options.messageShape ?? "native";
+    this.bodyOptions = {
+      nameEscape: (name) => this.toolCallAdapter.nameEscape(name),
+      ...(options.providerKind ? { providerKind: options.providerKind } : {}),
+      ...(options.modelParams ? { modelParams: options.modelParams } : {}),
+      ...(resolveAnthropicCacheControl(options)
+        ? { anthropicCacheControl: true }
+        : {}),
+    };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -159,57 +221,120 @@ export class OpenAiProvider implements LlmProvider {
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     // The body the response actually came from; see `OnOpenAiRequestBody`.
     let sentBody: Record<string, unknown> | undefined;
-    // Unary only: sub-calls carry `response_format`, streamed turns never do.
-    const json = await sendWithStructuredOutputFallback(
-      {
-        providerId: this.id,
-        model: this.defaultChatModel,
-        logger: this.http.logger,
-      },
+    const send = (shape: "native" | "flat") =>
+      // Unary only: sub-calls carry `response_format`, streamed turns never do.
+      sendWithStructuredOutputFallback(
+        {
+          providerId: this.id,
+          model: this.defaultChatModel,
+          logger: this.http.logger,
+        },
+        request,
+        (req) => this.buildBody(req, false, shape),
+        (body) =>
+          openAiPostJson(
+            this.http,
+            `${this.apiPathPrefix}/chat/completions`,
+            body,
+            request,
+            (sent) => {
+              sentBody = sent;
+            },
+          ),
+      );
+    const shape = this.shapeFor(request);
+    let json: Record<string, unknown>;
+    try {
+      json = await send(shape);
+    } catch (err) {
+      if (!this.shouldFallBackToFlat(request, shape, err)) throw err;
+      this.markFlat(request, err);
+      json = await send("flat");
+    }
+    const adapted = adaptQwenTaggedToolResponse(
+      json,
       request,
-      (req) =>
-        buildOpenAiChatBody(
-          req,
-          this.defaultChatModel,
-          false,
-          this.extraBody,
-          this.maxOutputTokens,
-          this.strictTools,
-          this.providerPreferences,
-        ),
-      (body) =>
-        openAiPostJson(
-          this.http,
-          `${this.apiPathPrefix}/chat/completions`,
-          body,
-          request,
-          (sent) => {
-            sentBody = sent;
-          },
-        ),
+      this.taggedToolOptions(),
     );
-    const adapted =
-      this.taggedToolCompatibility === "qwen"
-        ? adaptQwenTaggedToolResponse(json, request)
-        : json;
     return withSentMaxTokens(
-      normaliseOpenAiChatResponse(adapted, this.defaultChatModel),
+      normaliseOpenAiChatResponse(
+        adapted,
+        this.defaultChatModel,
+        this.reasoningFormat,
+      ),
       sentBody,
+    );
+  }
+
+  /**
+   * A reply that is nothing but `<tool_call>` blocks is a tool call on
+   * every kind (Hermes fine-tunes and Qwen-derived models write one over
+   * any OpenAI-compatible server); only the Qwen kind also looks inside
+   * the reasoning channel. See `TaggedToolAdaptOptions`.
+   */
+  private taggedToolOptions(): TaggedToolAdaptOptions {
+    return { fromReasoning: this.taggedToolCompatibility === "qwen" };
+  }
+
+  private buildBody(
+    request: CompletionRequest,
+    stream: boolean,
+    shape: "native" | "flat",
+  ): Record<string, unknown> {
+    return buildOpenAiChatBody(
+      request,
+      this.defaultChatModel,
+      stream,
+      this.extraBody,
+      this.maxOutputTokens,
+      this.strictTools,
+      this.providerPreferences,
+      { ...this.bodyOptions, messageShape: shape },
+    );
+  }
+
+  /** The layout this request goes out in, given what the session learned. */
+  private shapeFor(request: CompletionRequest): "native" | "flat" {
+    if (this.messageShape === "flat") return "flat";
+    return this.flatSessions.has(sessionKey(request)) ? "flat" : "native";
+  }
+
+  /**
+   * Whether a failed send is the service refusing the native layout —
+   * which only a request that actually went out native can be — rather
+   * than anything else, and whether a flat resend is still wanted.
+   */
+  private shouldFallBackToFlat(
+    request: CompletionRequest,
+    shape: "native" | "flat",
+    err: unknown,
+  ): boolean {
+    if (request.signal?.aborted) return false;
+    if (resolveMessageShape(request, { messageShape: shape }) !== "native") {
+      return false;
+    }
+    return isNativeShapeRejection(err);
+  }
+
+  private markFlat(request: CompletionRequest, err: unknown): void {
+    this.flatSessions.add(sessionKey(request));
+    this.http.logger?.warn(
+      `llm: "${this.id}" rejected native chat messages (roles / tool_call_id); sending the flat prompt for the rest of this session`,
+      {
+        provider: this.id,
+        model: this.defaultChatModel,
+        sessionId: request.sessionId ?? null,
+        status: 400,
+        detail: err instanceof Error ? err.message.slice(0, 240) : String(err),
+      },
     );
   }
 
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const body = buildOpenAiChatBody(
-      request,
-      this.defaultChatModel,
-      true,
-      this.extraBody,
-      this.maxOutputTokens,
-      this.strictTools,
-      this.providerPreferences,
-    );
+    let shape = this.shapeFor(request);
+    let body = this.buildBody(request, true, shape);
     const path = `${this.apiPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -310,6 +435,17 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
+        // The service refused the message layout, before any byte of
+        // output existed (a 400 comes from the open): the same request
+        // goes out once more in the flat form, and the session stays
+        // flat. Only ever one such resend — the second attempt is flat
+        // by construction and cannot match again.
+        if (!committed && this.shouldFallBackToFlat(request, shape, err)) {
+          this.markFlat(request, err);
+          shape = "flat";
+          body = this.buildBody(request, true, shape);
+          continue;
+        }
         if (!canReopenStream(err, committed, budget)) throw err;
         // No `res.body.cancel()` here, on purpose. The only way to reach
         // this line with a response in hand is `isNetworkError(err)` on
@@ -365,10 +501,11 @@ export class OpenAiProvider implements LlmProvider {
     // so native and tagged calls are judged from the same final dispatchable
     // tool-call set. A synthetic `finishReason: "tool_calls"` from the
     // adapter is not evidence that the provider actually terminated cleanly.
-    const adaptedFinal =
-      this.taggedToolCompatibility === "qwen"
-        ? adaptQwenCompletionResult(final, request)
-        : final;
+    const adaptedFinal = adaptQwenCompletionResult(
+      final,
+      request,
+      this.taggedToolOptions(),
+    );
     return withSentMaxTokens(
       applyToolCallTerminationSafety(
         adaptedFinal,
@@ -435,6 +572,31 @@ export class OpenAiProvider implements LlmProvider {
   }
 }
 
+/**
+ * Whether this client places Anthropic cache breakpoints. The policy
+ * word decides when it is explicit; otherwise the model id or the host
+ * has to be Anthropic's, because every other service ignores the marker
+ * at best and rejects the request at worst.
+ */
+function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
+  switch (options.promptCache) {
+    case "off":
+      return false;
+    case "explicit-markers":
+      return true;
+    default:
+      return (
+        isAnthropicModel(options.defaultChatModel) ||
+        isAnthropicHost(options.baseUrl)
+      );
+  }
+}
+
+/** The key a session's learned layout is remembered under. */
+function sessionKey(request: Pick<CompletionRequest, "sessionId">): string {
+  return request.sessionId ?? "*";
+}
+
 function normalizeApiPathPrefix(prefix: string): string {
   const trimmed = prefix.trim().replace(/\/+$/, "");
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
@@ -463,7 +625,7 @@ function completionFromStreamFinal(
       promptTokens: usage.promptTokens,
       predictedTokens: usage.completionTokens,
     },
-    cacheHitTokens: 0,
+    cacheHitTokens: usage.cachedTokens ?? 0,
     slotId: -1,
     modelId: streamFinal?.modelId ?? defaultChatModel,
     usage,

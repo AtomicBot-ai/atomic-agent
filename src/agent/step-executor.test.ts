@@ -4548,3 +4548,90 @@ describe("executeStep tool roles (F18)", () => {
     expect(b.params.grammar).toBe(b.baseGrammar);
   });
 });
+
+describe("executeStep — the structured prompt on a native-tools link", () => {
+  const completion = (toolCalls?: CompletionResult["toolCalls"]): CompletionResult => ({
+    content: "",
+    reasoningContent: toolCalls ? "" : "thinking only",
+    stop: true,
+    truncated: false,
+    timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+    cacheHitTokens: 0,
+    slotId: -1,
+    modelId: "openai/gpt-5.5",
+    ...(toolCalls ? { toolCalls } : {}),
+  });
+  const replyCall: CompletionResult["toolCalls"] = [
+    { id: "c", type: "function", function: { name: "reply", arguments: JSON.stringify({ text: "ok" }) } },
+  ];
+
+  async function run(toolTransport: ToolCallTransport, answers: CompletionResult[]) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const base = createEmptySessionState({ id: `s-messages-${toolTransport}`, workingDir: "/w" });
+    const session = { ...base, turns: [{ kind: "user" as const, text: "hi", at: 1 }] };
+    const seen: Array<Parameters<NonNullable<Parameters<typeof executeStep>[1]["llmComplete"]>>[0]> = [];
+    let call = 0;
+    const grammar =
+      toolTransport === "grammar"
+        ? await buildGrammar(PLAIN_INSTRUCT_PROFILE, join(process.cwd(), "grammars"))
+        : "";
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete(params) {
+          seen.push(params);
+          const answer = answers[Math.min(call, answers.length - 1)]!;
+          call += 1;
+          return answer;
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport,
+        toolCallAdapter: null,
+        supportsSlotAffinity: toolTransport === "grammar",
+      },
+    );
+    return seen;
+  }
+
+  it("carries `messages` beside the flat prompt, built from the same packed conversation", async () => {
+    const [params] = await run("native_tools", [completion(replyCall)]);
+    expect(params?.messages).toBeDefined();
+    expect(params?.messages?.system).toBe(params?.prompt.slice(0, params.messages.system.length));
+    expect(params?.messages?.turns).toEqual([{ kind: "user", text: "hi" }]);
+    expect(params?.messages?.tail).not.toContain("### conversation");
+    expect(params?.prompt).toContain("### conversation\nuser: hi");
+  });
+
+  it("re-shapes the structured tail for the one-shot repair, notice included", async () => {
+    const seen = await run("native_tools", [completion(), completion(replyCall)]);
+    expect(seen).toHaveLength(2);
+    const repair = seen[1]!;
+    expect(repair.prompt).toContain("### tool-call-repair");
+    expect(repair.messages?.tail).toContain("### tool-call-repair");
+    expect(repair.messages?.tail).toContain("native function-calling interface");
+    expect(repair.messages?.system).toBe(seen[0]!.messages?.system);
+    expect(repair.messages?.turns).toEqual(seen[0]!.messages?.turns);
+  });
+
+  it("sends none on the grammar transport", async () => {
+    const grammarAnswer: CompletionResult = {
+      ...completion(),
+      reasoningContent: "",
+      content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+    };
+    const [params] = await run("grammar", [grammarAnswer]);
+    expect(params).not.toHaveProperty("messages");
+  });
+});

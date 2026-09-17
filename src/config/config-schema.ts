@@ -972,6 +972,12 @@ export interface AtomicAgentConfig {
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       /**
+       * Native-tools request layout: `native` (default) sends a system
+       * message plus the history as assistant `tool_calls` / `tool`
+       * results; `flat` sends the one user message of transcript text.
+       */
+      messageShape?: "native" | "flat";
+      /**
        * OpenRouter provider routing (`order`, `only`, `ignore`,
        * `allow_fallbacks`, `require_parameters`, `sort`,
        * `data_collection`, …), sent verbatim as the chat body's
@@ -1015,6 +1021,7 @@ export interface AtomicAgentConfig {
         supportsTools?: "none" | "basic" | "parallel" | "strict";
         supportsPromptCache?: boolean;
         reasoningFormat?:
+          | "auto"
           | "none"
           | "delta_reasoning"
           | "delta_thinking"
@@ -1025,6 +1032,11 @@ export interface AtomicAgentConfig {
           cacheRead?: number;
           cacheWrite?: number;
         };
+        /**
+         * Wire parameters for this model, merged into every chat body
+         * after the provider's `extraBody`. Reserved keys still win.
+         */
+        params?: Record<string, unknown>;
       }>;
     }>;
     toolTransport: "auto" | "grammar" | "native_tools";
@@ -1056,6 +1068,15 @@ export interface AtomicAgentConfig {
      * `src/llm/run-mode/resolve-run-mode.ts`.
      */
     runMode?: UserLlmRunModeConfig;
+    /**
+     * Settings for every `openrouter` entry at once.
+     * `preferCacheRoutes` (default `true`) pins `google/…` models to the
+     * routes that honour prompt caching unless the entry configured
+     * `providerPreferences` itself.
+     */
+    openrouter?: {
+      preferCacheRoutes?: boolean;
+    };
   };
 }
 
@@ -2175,6 +2196,13 @@ export interface UserConfigFile {
 // transcript keeps after a cut (default 0.65), so the cut holds and the
 // prompt only grows at its end between cuts. Additive: an older file has
 // no field and takes the default.
+// v66: provider entries accept `messageShape` (`native` | `flat`, the
+// layout of a native-tools request), `userModels[].params` (per-model
+// wire parameters merged over `extraBody`) and `userModels[].reasoningFormat`
+// accepts `auto`; a new `llm.openrouter` block carries `preferCacheRoutes`
+// (default `true`). All additive: an older file parses with every field
+// absent, which is the native layout, no extra parameters, `auto`
+// reasoning and the cache-capable routes for Google models.
 export const USER_CONFIG_VERSION = 66;
 
 /**

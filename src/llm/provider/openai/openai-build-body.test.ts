@@ -479,3 +479,166 @@ describe("buildOpenAiChatBody — strict function tools", () => {
     expect("tools" in body).toBe(false);
   });
 });
+
+describe("buildOpenAiChatBody — per-model parameters", () => {
+  // OpenAI's reasoning models reject `temperature` and answer
+  // `max_tokens` with "Use 'max_completion_tokens' instead." — the
+  // rejection `request-size-rejection.ts` quotes. Read after any
+  // vendor prefix, so the same model through OpenRouter gets the same
+  // body.
+  it.each(["o3", "o4-mini", "o1-preview", "gpt-5", "gpt-5.2-mini", "openai/o3", "openai/gpt-5-codex"])(
+    "sends no temperature and max_completion_tokens for %s",
+    (model) => {
+      const body = buildOpenAiChatBody(
+        { prompt: "hi", temperature: 0.7, maxTokens: 512 },
+        model,
+        false,
+      );
+      expect(body).not.toHaveProperty("temperature");
+      expect(body).not.toHaveProperty("max_tokens");
+      expect(body.max_completion_tokens).toBe(512);
+    },
+  );
+
+  it.each(["olmo-3", "gpt-4.1", "google/gemini-3.8-flash", "qwen/qwen3.8-27b", "o-mega"])(
+    "keeps the historical body for %s",
+    (model) => {
+      const body = buildOpenAiChatBody({ prompt: "hi", maxTokens: 512 }, model, false);
+      expect(body.temperature).toBe(0.2);
+      expect(body.max_tokens).toBe(512);
+      expect(body).not.toHaveProperty("max_completion_tokens");
+    },
+  );
+
+  it("merges userModels[].params over the body and over extraBody, reserved keys excepted", () => {
+    const body = buildOpenAiChatBody(
+      { prompt: "hi" },
+      "m",
+      false,
+      { top_p: 0.5, chat_template_kwargs: { enable_thinking: false } },
+      undefined,
+      undefined,
+      undefined,
+      {
+        modelParams: {
+          top_p: 0.9,
+          temperature: 1,
+          model: "other",
+          messages: [],
+        },
+      },
+    );
+    expect(body.top_p).toBe(0.9);
+    expect(body.temperature).toBe(1);
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.model).toBe("m");
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }]);
+  });
+
+  it("spells reasoningEffort the way each kind documents it, and omits it elsewhere", () => {
+    const request = { prompt: "hi", reasoningEffort: "low" as const };
+    expect(
+      buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, {
+        providerKind: "openrouter",
+      }).reasoning,
+    ).toEqual({ effort: "low" });
+    expect(
+      buildOpenAiChatBody(request, "m", false, undefined, undefined, undefined, undefined, {
+        providerKind: "openai-compatible",
+      }).reasoning_effort,
+    ).toBe("low");
+    for (const providerKind of ["gemini", "aimlapi", undefined]) {
+      const body = buildOpenAiChatBody(
+        request,
+        "m",
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { ...(providerKind ? { providerKind } : {}) },
+      );
+      expect(body).not.toHaveProperty("reasoning");
+      expect(body).not.toHaveProperty("reasoning_effort");
+    }
+    // Absent, nothing is sent whatever the kind.
+    const plain = buildOpenAiChatBody({ prompt: "hi" }, "m", false, undefined, undefined, undefined, undefined, {
+      providerKind: "openrouter",
+    });
+    expect(plain).not.toHaveProperty("reasoning");
+  });
+});
+
+describe("buildOpenAiChatBody — the native message layout", () => {
+  const tools = [{ type: "function", function: { name: "os__fs__read" } }];
+  const messages = {
+    system: "### system\nprefix",
+    droppedSummary: null,
+    turns: [
+      { kind: "user" as const, text: "read a" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "a" } },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "A", truncated: false },
+    ],
+    tail: "### respond\nRespond now.\n",
+  };
+
+  it("sends system, history and a final user message when the request is structured", () => {
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true);
+    expect(body.messages).toEqual([
+      { role: "system", content: "### system\nprefix" },
+      { role: "user", content: "read a" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "A" },
+      { role: "user", content: "### respond\nRespond now.\n" },
+    ]);
+    expect(body.tools).toEqual(tools);
+  });
+
+  it("sends the flat prompt when the shape is flat, when there are no tools, or when nothing is structured", () => {
+    const flat = [{ role: "user", content: "flat" }];
+    expect(
+      buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true, undefined, undefined, undefined, undefined, {
+        messageShape: "flat",
+      }).messages,
+    ).toEqual(flat);
+    expect(buildOpenAiChatBody({ prompt: "flat", messages }, "m", true).messages).toEqual(flat);
+    expect(buildOpenAiChatBody({ prompt: "flat", tools }, "m", true).messages).toEqual(flat);
+  });
+
+  it("places the Anthropic breakpoints on the native layout", () => {
+    const body = buildOpenAiChatBody(
+      { prompt: "flat", messages, tools },
+      "anthropic/claude-sonnet-4.5",
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { anthropicCacheControl: true },
+    );
+    const sent = body.messages as Array<Record<string, unknown>>;
+    expect(sent[0]?.content).toEqual([
+      { type: "text", text: "### system\nprefix", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(sent[3]?.content).toEqual([
+      { type: "text", text: "A", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(sent[4]).toEqual({ role: "user", content: "### respond\nRespond now.\n" });
+  });
+
+  it("uses the adapter's own name escape when one is given", () => {
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true, undefined, undefined, undefined, undefined, {
+      nameEscape: (name) => name.toUpperCase(),
+    });
+    const assistant = (body.messages as Array<Record<string, unknown>>)[2] as {
+      tool_calls: Array<{ function: { name: string } }>;
+    };
+    expect(assistant.tool_calls[0]?.function.name).toBe("OS.FS.READ");
+  });
+});

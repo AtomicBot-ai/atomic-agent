@@ -1,5 +1,8 @@
 import type { ModelProfile } from "../llm/model-profile.js";
-import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type {
+  PromptMessages,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ProfileClipStats } from "./clip-profile-section.js";
 import type { ConversationPackStart } from "../session/conversation-turn.js";
@@ -119,6 +122,13 @@ export interface BuiltPrompt {
   text: string;
   stablePrefix: string;
   tail: string;
+  /**
+   * The same prompt as structure — stable prefix, the packed turns, and
+   * the tail without its `### conversation` section — for a provider
+   * that sends history as real chat messages. Built from the same packed
+   * conversation as `text`, so the two never disagree.
+   */
+  messages: PromptMessages;
   tokens: {
     stablePrefix: number;
     loadedSkills: number;

@@ -1,7 +1,9 @@
+import type { PromptTurn } from "../llm/provider/completion-types.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   findCurrentMacroTurnStart,
   readStartLineOf,
+  renderToolResultBody,
   renderTurnForPrompt,
   type ConversationTurn,
   type RenderTurnOptions,
@@ -15,20 +17,81 @@ export function renderWorldSnapshotSection(session: SessionState): string {
   );
 }
 
+type PackedTurns = {
+  visibleTurns: readonly ConversationTurn[];
+  droppedSummary: string | null;
+};
+
 /**
  * Render the packed conversation section. When `packConversation` folded
  * older turns into a summary, that summary is emitted as the first line
  * so the model can tell the transcript was compressed.
  */
-export function renderPackedConversation(packed: {
-  visibleTurns: readonly ConversationTurn[];
-  droppedSummary: string | null;
-}): string {
+export function renderPackedConversation(packed: PackedTurns): string {
   if (packed.visibleTurns.length === 0 && packed.droppedSummary === null) {
     return "(no messages yet)";
   }
   const lines: string[] = [];
   if (packed.droppedSummary) lines.push(packed.droppedSummary);
+  for (const [turn, options] of packedTurnRenderOptions(packed)) {
+    lines.push(renderTurnForPrompt(turn, options));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * The same packed conversation as structure, for a provider that lays
+ * history out as real chat messages. Each row carries what its text line
+ * carries — a tool-result body capped by the same `RenderTurnOptions` the
+ * text form applied, a reply with its attachment note — so the two forms
+ * describe one transcript.
+ */
+export function packedConversationTurns(packed: PackedTurns): PromptTurn[] {
+  const out: PromptTurn[] = [];
+  for (const [turn, options] of packedTurnRenderOptions(packed)) {
+    switch (turn.kind) {
+      case "user":
+        out.push({ kind: "user", text: turn.text });
+        break;
+      case "assistant_tool_call":
+        out.push({
+          kind: "assistant_tool_call",
+          tool: turn.tool,
+          args: turn.args,
+        });
+        break;
+      case "tool_result":
+        out.push({
+          kind: "tool_result",
+          tool: turn.tool,
+          status: turn.status,
+          body: renderToolResultBody(turn, options),
+          truncated: turn.truncated === true,
+        });
+        break;
+      case "assistant_reply":
+        out.push({
+          kind: "assistant_reply",
+          text:
+            turn.attachments !== undefined && turn.attachments.length > 0
+              ? `${turn.text} (attached: ${turn.attachments.join(", ")})`
+              : turn.text,
+        });
+        break;
+    }
+  }
+  return out;
+}
+
+/**
+ * Every visible turn paired with the render options the text form uses
+ * for it. One walk for both renderers, so a cap decided here (fresh
+ * `os.http.request` bodies, `os.fs.read` paging hints) cannot differ
+ * between the flat and the structured prompt.
+ */
+function* packedTurnRenderOptions(
+  packed: PackedTurns,
+): Generator<[ConversationTurn, RenderTurnOptions]> {
   // Index of the first turn that belongs to the current (un-replied) macro
   // turn. Tools listed in `TOOLS_FULL_BODY_WHEN_FRESH` (see conversation-turn.ts)
   // render their full payload only while inside this slice; older
@@ -51,7 +114,6 @@ export function renderPackedConversation(packed: {
       const readStartLine = pendingReadStarts.shift();
       if (readStartLine !== undefined) options.readStartLine = readStartLine;
     }
-    lines.push(renderTurnForPrompt(turn, options));
+    yield [turn, options];
   }
-  return lines.join("\n");
 }

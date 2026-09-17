@@ -87,3 +87,132 @@ describe("providerPreferences through the built-in factories", () => {
     },
   );
 });
+
+describe("userModels[] wire options through the built-in factories", () => {
+  // `reasoningFormat` and `params` on the entry's row for the model it
+  // serves reach the provider; a row for another model does not.
+  it.each(["openai-compatible", "qwen-openai-compatible", "openrouter", "aimlapi", "gemini"])(
+    "%s applies the served model's params and reasoning format",
+    async (kind) => {
+      registerBuiltInProviderKinds();
+      const factory = getProviderFactory(kind);
+      if (!factory) throw new Error(`${kind} is not registered`);
+      const bodies: Record<string, unknown>[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, init?: RequestInit) => {
+          bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              choices: [
+                { message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }),
+      );
+      const provider = await factory({
+        config: {} as AtomicAgentConfig,
+        entry: {
+          id: kind,
+          kind,
+          apiKey: "test-key",
+          baseUrl: "https://example.invalid",
+          defaultChatModel: "served-model",
+          userModels: [
+            {
+              id: "other-model",
+              kind: "chat",
+              reasoningFormat: "delta_thinking",
+              params: { top_p: 0.1 },
+            },
+            {
+              id: "served-model",
+              kind: "chat",
+              reasoningFormat: "delta_reasoning_content",
+              params: { top_p: 0.9, presence_penalty: 0.5 },
+            },
+          ],
+        },
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      });
+      expect(provider.capabilities.reasoningFormat).toBe("delta_reasoning_content");
+      await provider.complete({ prompt: "hi" });
+      expect(bodies[0]).toMatchObject({ top_p: 0.9, presence_penalty: 0.5 });
+    },
+  );
+
+  it("defaults to `auto` reasoning and no extra parameters without a row", async () => {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory("openai-compatible");
+    if (!factory) throw new Error("openai-compatible is not registered");
+    const provider = await factory({
+      config: {} as AtomicAgentConfig,
+      entry: {
+        id: "plain",
+        kind: "openai-compatible",
+        apiKey: "test-key",
+        baseUrl: "https://example.invalid",
+        defaultChatModel: "some-model",
+      },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    });
+    expect(provider.capabilities.reasoningFormat).toBe("auto");
+  });
+});
+
+describe("llm.openrouter.preferCacheRoutes through the openrouter factory", () => {
+  async function openRouterBody(
+    config: Partial<AtomicAgentConfig>,
+    entry: Partial<LlmProviderConfigEntry>,
+  ): Promise<Record<string, unknown>> {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory("openrouter");
+    if (!factory) throw new Error("openrouter is not registered");
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const provider = await factory({
+      config: config as AtomicAgentConfig,
+      entry: {
+        id: "openrouter",
+        kind: "openrouter",
+        apiKey: "test-key",
+        defaultChatModel: "google/gemini-3.8-flash",
+        ...entry,
+      },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    });
+    await provider.complete({ prompt: "hi" });
+    return bodies[0]!;
+  }
+
+  it("is on when the file says nothing", async () => {
+    const body = await openRouterBody({}, {});
+    expect(body.provider).toEqual({
+      order: ["Google AI Studio", "Google"],
+      allow_fallbacks: true,
+    });
+  });
+
+  it("is off when the file says so, and yields to the entry's own preferences", async () => {
+    const off = await openRouterBody(
+      { llm: { openrouter: { preferCacheRoutes: false } } } as Partial<AtomicAgentConfig>,
+      {},
+    );
+    expect(off).not.toHaveProperty("provider");
+    const own = await openRouterBody({}, { providerPreferences: PREFERENCES });
+    expect(own.provider).toEqual(PREFERENCES);
+  });
+});

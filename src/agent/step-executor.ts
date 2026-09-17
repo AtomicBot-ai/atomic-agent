@@ -99,6 +99,7 @@ import {
   type ModelProfile,
 } from "../llm/model-profile.js";
 import type {
+  PromptMessages,
   ResponseFormatJsonSchema,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
@@ -115,6 +116,16 @@ export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
 
 export interface LlmStreamParams {
   prompt: string;
+  /**
+   * The same prompt as structure — stable prefix, packed turns, tail —
+   * for a native-tools link that lays history out as real chat messages
+   * instead of one user message of transcript text (which Gemini Flash
+   * kept continuing as text instead of calling tools). Set only when the
+   * primary transport is `native_tools`; the seam forwards it on that
+   * transport alone, so a grammar fallback link still gets `prompt` /
+   * `grammarPrompt`.
+   */
+  messages?: PromptMessages;
   /**
    * Lazy grammar-transport variant of `prompt`. Set when `prompt` was
    * built prefill-suppressed for a native-tools primary while the
@@ -588,6 +599,7 @@ async function executeStepInner(
   const llmParams: LlmStreamParams = {
     ...buildLlmStreamParams({
       promptText: prompt.text,
+      promptMessages: prompt.messages,
       deps,
       grammar: stepGrammar,
       slotId: slot.slotId,
@@ -975,6 +987,24 @@ async function executeStepInner(
         deps.toolTransport,
         promptCarriesPrefill,
       ),
+      // The structured prompt must be repair-shaped too, or a native
+      // link would replay the stale tail without the notice. The notice
+      // lands at the end of the final user message; the chat form never
+      // carried a prefill, so there is nothing to strip.
+      ...(llmParams.messages
+        ? {
+            messages: {
+              ...llmParams.messages,
+              tail: buildToolCallRepairPrompt(
+                llmParams.messages.tail,
+                repairError,
+                deps.profile,
+                deps.toolTransport,
+                false,
+              ),
+            },
+          }
+        : {}),
       // The grammar-link variant must be repair-shaped too — spreading
       // `llmParams` alone would hand a grammar fallback link the STALE
       // base prompt without the repair notice. It is repair-shaped for
@@ -1956,6 +1986,7 @@ function resolveStepGrammar(
 
 function buildLlmStreamParams(args: {
   promptText: string;
+  promptMessages?: PromptMessages;
   deps: Pick<
     StepDependencies,
     | "toolTransport"
@@ -1990,6 +2021,9 @@ function buildLlmStreamParams(args: {
   });
   return {
     ...base,
+    // The structured prompt rides only on the native path; the seam
+    // forwards it only to a native link (`llm-link-attempt.ts`).
+    ...(args.promptMessages ? { messages: args.promptMessages } : {}),
     // Keep `grammar` populated (not blanked) even on the native path: the
     // provider fallback chain may hand this request to a grammar-only
     // llama-server link, which needs the GBNF. Native (cloud) providers

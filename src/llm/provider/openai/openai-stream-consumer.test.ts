@@ -239,3 +239,75 @@ describe("openai stream consumer tool-call assembly", () => {
     ]);
   });
 });
+
+describe("openai stream consumer: text beside a tool-call delta", () => {
+  it("keeps the text of a chunk that also carries a tool-call delta", async () => {
+    // Gemini's compatibility layer and Anthropic shims put the model's
+    // prose and its call in one event; the prose used to be dropped.
+    const consumer = createOpenAiStreamConsumer("auto");
+    const iterator = consumer.consume(
+      bodyOf(
+        sseFrame({
+          model: "test-model",
+          choices: [
+            {
+              index: 0,
+              delta: {
+                content: "Reading the file. ",
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "os__fs__read", arguments: '{"path":"a"}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        }) + DONE,
+      ),
+      undefined,
+    );
+    const deltas: string[] = [];
+    let final: StreamFinalResult | undefined;
+    for (;;) {
+      const step = await iterator.next();
+      if (step.done) {
+        final = step.value as StreamFinalResult;
+        break;
+      }
+      deltas.push(step.value.delta);
+    }
+    expect(deltas.join("")).toBe("Reading the file. ");
+    expect(final?.content).toBe("Reading the file. ");
+    expect(final?.toolCalls).toMatchObject([
+      { function: { name: "os__fs__read", arguments: '{"path":"a"}' } },
+    ]);
+  });
+
+  it("reads reasoning from any of the three fields under `auto`", async () => {
+    for (const field of ["reasoning", "reasoning_content", "thinking"]) {
+      const consumer = createOpenAiStreamConsumer("auto");
+      const iterator = consumer.consume(
+        bodyOf(
+          sseFrame({
+            model: "test-model",
+            choices: [{ index: 0, delta: { [field]: "hmm" }, finish_reason: null }],
+          }) + DONE,
+        ),
+        undefined,
+      );
+      let final: StreamFinalResult | undefined;
+      for (;;) {
+        const step = await iterator.next();
+        if (step.done) {
+          final = step.value as StreamFinalResult;
+          break;
+        }
+      }
+      expect(final?.reasoningContent).toBe("hmm");
+    }
+  });
+});

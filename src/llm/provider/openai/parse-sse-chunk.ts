@@ -95,8 +95,12 @@ export function parseOpenAiSseEvent(
     if (toolCalls && toolCalls.length > 0) {
       const frag = toolCalls[0]?.function?.arguments ?? "";
       const nextBuffer = toolArgsBuffer + frag;
+      // A chunk that carries both text and a tool-call delta keeps its
+      // text: some services (Gemini's compatibility layer, Anthropic
+      // shims) put the model's prose and its call in one event, and
+      // dropping the prose here lost the reply that went with the call.
       return {
-        delta: "",
+        delta: content,
         reasoningDelta,
         toolArgsBuffer: nextBuffer,
         toolArgsDelta: true,

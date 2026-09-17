@@ -2,6 +2,10 @@ import {
   OpenAiProvider,
   type OpenAiProviderOptions,
 } from "../openai/openai-provider.js";
+import {
+  GOOGLE_CACHE_ROUTE_PREFERENCES,
+  isGoogleModel,
+} from "../openai/prompt-cache-control.js";
 
 /** Root without `/v1` — {@link OpenAiProvider} appends `/v1/chat/completions`. */
 export const DEFAULT_OPENROUTER_BASE = "https://openrouter.ai/api";
@@ -30,6 +34,12 @@ export type OpenRouterProviderOptions = Omit<
   xTitle?: string;
   /** Comma-separated marketplace categories, e.g. `cli-agent,personal-agent`. */
   categories?: string;
+  /**
+   * `llm.openrouter.preferCacheRoutes`: when no `providerPreferences`
+   * are configured, pin `google/…` models to the routes that honour
+   * prompt caching (`GOOGLE_CACHE_ROUTE_PREFERENCES`). Default `true`.
+   */
+  preferCacheRoutes?: boolean;
 };
 
 /**
@@ -48,13 +58,33 @@ export class OpenRouterProvider extends OpenAiProvider {
     if (options.categories) {
       headers["X-OpenRouter-Categories"] = options.categories;
     }
+    const defaultChatModel = options.defaultChatModel ?? "openrouter/auto";
     super({
       ...options,
       id: options.id,
       // OpenAiProvider normalizes the base URL.
       baseUrl: options.baseUrl ?? DEFAULT_OPENROUTER_BASE,
       headers: { ...headers, ...options.headers },
-      defaultChatModel: options.defaultChatModel ?? "openrouter/auto",
+      defaultChatModel,
+      providerPreferences: resolveProviderPreferences(
+        options,
+        defaultChatModel,
+      ),
     });
   }
+}
+
+/**
+ * The operator's own routing wins whenever it exists. Absent, a Google
+ * model gets the cache-capable routes unless the operator switched that
+ * default off; every other model keeps the body exactly as it was.
+ */
+function resolveProviderPreferences(
+  options: OpenRouterProviderOptions,
+  modelId: string,
+): Record<string, unknown> | undefined {
+  if (options.providerPreferences) return options.providerPreferences;
+  if (options.preferCacheRoutes === false) return undefined;
+  if (!isGoogleModel(modelId)) return undefined;
+  return { ...GOOGLE_CACHE_ROUTE_PREFERENCES };
 }
