@@ -2086,8 +2086,18 @@ export interface UserConfigFile {
    * (https://clawhub.ai) — the primary skill marketplace, browsed and
    * searched server-side. Older files are upgraded with it enabled,
    * pointed at the public registry, hiding suspicious skills by default.
+   *
+   * `catalogTokenBudget` (added in config v70) is the soft budget for
+   * the `### skills` block of the stable prefix, in tokens. It shipped
+   * as `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` only, which made it the one
+   * `skills.*` knob a config file could not set — writing it there was
+   * parsed away in silence (issue #466). Older files are upgraded with
+   * the env default, so the prompt is unchanged. The env var still wins
+   * when both are set (operator override), exactly as it does for
+   * `localModels.completionMaxTokens`.
    */
   skills: {
+    catalogTokenBudget: number;
     disabled: string[];
     taps: string[];
     clawhub: {
@@ -2417,7 +2427,13 @@ export interface UserConfigFile {
 // `finish` (F41, `src/agent/review-stall.ts`). Additive: an older file
 // has no field, the fusion block stays as it was, and the default applies
 // at read time like the other optional fusion fields.
-export const USER_CONFIG_VERSION = 69;
+// v70: `skills.catalogTokenBudget` (default 512) — the `### skills`
+// catalog budget, until now settable only through
+// `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET`; the key in config.json was
+// parsed away without a word (issue #466). Additive: an older file has
+// no field, takes the env default, and renders the same prompt. The env
+// var still overrides the file value.
+export const USER_CONFIG_VERSION = 70;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2575,8 +2591,17 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   66,
   67,
   68,
+  69,
   USER_CONFIG_VERSION,
 ];
+
+/**
+ * Default `skills.catalogTokenBudget`, shared by the file defaults and
+ * `ENV_DEFAULTS.SKILLS_CATALOG_BUDGET` so the two cannot drift apart.
+ * 512 tokens × 8 chars/token is the historical 4096-char catalog cap —
+ * see `SKILL_CATALOG_CHARS_PER_TOKEN`.
+ */
+export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -2864,6 +2889,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     maxImagesPerCall: 4,
   },
   skills: {
+    catalogTokenBudget: DEFAULT_SKILLS_CATALOG_BUDGET,
     disabled: [],
     taps: ["anthropics/skills", "openai/skills", "vercel-labs/agent-skills"],
     clawhub: {
@@ -2988,7 +3014,7 @@ export const ENV_DEFAULTS = {
   BROWSER_HEADLESS: false,
   BROWSER_NO_SANDBOX: false,
   BROWSER_LAUNCH_TIMEOUT_MS: 30_000,
-  SKILLS_CATALOG_BUDGET: 512,
+  SKILLS_CATALOG_BUDGET: DEFAULT_SKILLS_CATALOG_BUDGET,
   PROJECT_SKILLS_DIR: ".atomic-agent/skills",
   USER_CONFIG_FILE_NAME: "config.json",
   TASKS_ENABLED: true,
@@ -5299,6 +5325,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
     },
     skills: {
+      catalogTokenBudget: parseBoundedPositiveInt(
+        skills.catalogTokenBudget ??
+          USER_CONFIG_DEFAULTS.skills.catalogTokenBudget,
+        "skills.catalogTokenBudget",
+        1,
+        100_000,
+      ),
       disabled: parseSkillNameArray(
         skills.disabled ?? USER_CONFIG_DEFAULTS.skills.disabled,
         "skills.disabled",

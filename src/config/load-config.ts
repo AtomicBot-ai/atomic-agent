@@ -320,9 +320,13 @@ export function loadConfig(): AtomicAgentConfig {
       ),
     },
     skills: {
+      // File value is the default, env var overrides it — the same
+      // layering `localModels.completionMaxTokens` uses. Before v70 the
+      // fallback was the schema constant, so `skills.catalogTokenBudget`
+      // in config.json was read, validated and then ignored (issue #466).
       catalogTokenBudget: readBoundedPositiveInt(
         "ATOMIC_AGENT_SKILLS_CATALOG_BUDGET",
-        ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+        user.skills.catalogTokenBudget,
         1,
         100_000,
       ),

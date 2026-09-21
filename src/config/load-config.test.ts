@@ -111,6 +111,28 @@ describe("loadConfig", () => {
     expect(loadConfig().skills.catalogTokenBudget).toBe(2048);
   });
 
+  // Issue #466: `skills.catalogTokenBudget` was env-only. A config.json
+  // carrying the key parsed clean and changed nothing, which is how the
+  // catalog stayed clipped for operators who thought they had raised it.
+  it("reads skills.catalogTokenBudget from the user config file", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      skills: { ...USER_CONFIG_DEFAULTS.skills, catalogTokenBudget: 2048 },
+    });
+    resetConfigCache();
+    expect(loadConfig().skills.catalogTokenBudget).toBe(2048);
+  });
+
+  it("ATOMIC_AGENT_SKILLS_CATALOG_BUDGET overrides the file value", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      skills: { ...USER_CONFIG_DEFAULTS.skills, catalogTokenBudget: 2048 },
+    });
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "4096";
+    resetConfigCache();
+    expect(loadConfig().skills.catalogTokenBudget).toBe(4096);
+  });
+
   it("reads localModels.completionMaxTokens from the user config file", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,

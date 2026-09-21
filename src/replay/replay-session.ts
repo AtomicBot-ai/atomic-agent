@@ -15,6 +15,13 @@ export interface ReplayContext {
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Installed skills the catalog budget left out when `skillCatalog`
+   * was built. The recorded prefix carries the truncation marker when
+   * the traced session dropped any, so the replay has to rebuild it the
+   * same way or report drift on every step (issue #466).
+   */
+  skillCatalogDropped?: number;
   profile: ModelProfile;
   /**
    * Optional persona override. Defaults to the built-in persona inside
@@ -84,6 +91,9 @@ export async function replaySession(options: {
       toolDescriptors: context.toolDescriptors,
       capabilities: context.capabilities,
       skillCatalog: context.skillCatalog,
+      ...(context.skillCatalogDropped !== undefined
+        ? { skillCatalogDropped: context.skillCatalogDropped }
+        : {}),
       reasoningSystemToken: context.profile.reasoningSystemToken,
       toolTransport: transport,
       ...(context.systemPersona !== undefined

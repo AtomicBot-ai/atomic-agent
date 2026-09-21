@@ -171,7 +171,7 @@ import {
 } from "./announce-memory-health.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
-import { buildSkillCatalog } from "../skills/skill-catalog.js";
+import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
 import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
@@ -1527,10 +1527,10 @@ export async function createAgentRuntime(
   // `plain-instruct` fallback at construction time. See
   // `LlamaServerProvider.capabilities` for the rationale.
 
-  let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
-    skillRegistry.list(),
-    { tokenBudget: config.skills.catalogTokenBudget },
-  );
+  let skillSection = buildSkillCatalogSection(skillRegistry.list(), {
+    tokenBudget: config.skills.catalogTokenBudget,
+  });
+  let skillCatalog: readonly SkillCatalogEntry[] = skillSection.entries;
 
   let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
     browserEnabled: config.browser.enabled,
@@ -2512,6 +2512,13 @@ export async function createAgentRuntime(
     enumerable: true,
     get: () => skillCatalog,
   });
+  // Same live binding, for the same reason: `refreshSkills()` can turn
+  // a catalog that fit into one that does not, and the `### skills`
+  // truncation marker has to move with it.
+  Object.defineProperty(loopDeps, "skillCatalogDropped", {
+    enumerable: true,
+    get: () => skillSection.dropped,
+  });
   // Late-binding getters for the MCP-driven fields. `grammar` and
   // `toolDescriptors` are recomputed by `runtime.refreshMcp()` after a
   // server is live-added or live-removed via the TUI MCP panel. The
@@ -2702,9 +2709,10 @@ export async function createAgentRuntime(
         error: e.error,
       });
     }
-    skillCatalog = buildSkillCatalog(skillRegistry.list(), {
+    skillSection = buildSkillCatalogSection(skillRegistry.list(), {
       tokenBudget: config.skills.catalogTokenBudget,
     });
+    skillCatalog = skillSection.entries;
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
   };
 

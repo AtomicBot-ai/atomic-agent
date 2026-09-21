@@ -3,7 +3,10 @@ import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
 import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
-import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
+import {
+  formatSkillCatalogLine,
+  formatSkillCatalogOmittedLine,
+} from "../skills/skill-catalog.js";
 import { partitionByRole, type ToolRole } from "../tools/tool-roles.js";
 
 /**
@@ -72,6 +75,15 @@ export interface StablePrefixInput {
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Installed skills `buildSkillCatalogSection` left out of
+   * `skillCatalog` because `skills.catalogTokenBudget` ran out. When
+   * above zero the `### skills` block ends on a truncation marker
+   * naming the knob, so the model does not read a clipped catalog as
+   * the complete one (issue #466). Omitted / `0` keeps the block
+   * byte-identical to the legacy output (KV-cache safe).
+   */
+  skillCatalogDropped?: number;
   systemPersona?: string;
   reasoningSystemToken?: string;
   /**
@@ -265,9 +277,15 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       ? `${ALSO_AVAILABLE_VIA_TOOL_VIEW} ${outside.map((d) => d.name).join(", ")}`
       : null;
   const caps = formatCapabilities(input.capabilities);
+  const skillsDropped = input.skillCatalogDropped ?? 0;
   const skills =
     input.skillCatalog.length > 0
-      ? input.skillCatalog.map(formatSkillCatalogLine).join("\n")
+      ? [
+          ...input.skillCatalog.map(formatSkillCatalogLine),
+          ...(skillsDropped > 0
+            ? [formatSkillCatalogOmittedLine(skillsDropped)]
+            : []),
+        ].join("\n")
       : "(none installed)";
   // Head ordering. With `turnSystemOpen` (Gemma 4 turn-framing) the system
   // turn opens first and the reasoning token sits at the very top of it,

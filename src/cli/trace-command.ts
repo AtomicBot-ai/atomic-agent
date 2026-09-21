@@ -5,7 +5,7 @@ import { getConfig } from "../config/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
-import { buildSkillCatalog } from "../skills/skill-catalog.js";
+import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/index.js";
 import { replaySession } from "../replay/index.js";
 import { traceFilePath } from "../tracing/index.js";
@@ -140,7 +140,7 @@ async function handleReplay(args: string[]): Promise<number> {
     projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
   });
   await skillRegistry.refresh();
-  const skillCatalog = buildSkillCatalog(skillRegistry.list(), {
+  const skillSection = buildSkillCatalogSection(skillRegistry.list(), {
     tokenBudget: config.skills.catalogTokenBudget,
   });
   const capabilities = await buildCapabilities({
@@ -153,7 +153,8 @@ async function handleReplay(args: string[]): Promise<number> {
     context: {
       toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
       capabilities,
-      skillCatalog,
+      skillCatalog: skillSection.entries,
+      skillCatalogDropped: skillSection.dropped,
       profile: PLAIN_INSTRUCT_PROFILE,
     },
   });
