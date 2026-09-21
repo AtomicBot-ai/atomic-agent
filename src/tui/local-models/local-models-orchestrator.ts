@@ -2123,14 +2123,25 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * Keep `memory.embeddings.enabled` aligned with the live embedding
-   * daemon: on when the operator enabled embeddings, a model is on
-   * disk, and the daemon is running; off otherwise. Does not flip
-   * `localModels.embeddings.enabled` — that is the operator master
+   * Latch `memory.embeddings.enabled` **on** once the operator enabled
+   * embeddings, a model is on disk and the daemon is running. Does not
+   * flip `localModels.embeddings.enabled` — that is the operator master
    * switch (`E` hotkey).
+   *
+   * One-way by design. This runs off the snapshot timer (5s, 1s while a
+   * daemon is starting), so `emb.running` is a transient observation: a
+   * single sample taken while the daemon starts, restarts or auto-updates
+   * would otherwise write `false` to disk permanently and silently drop
+   * the runtime to FTS5-only recall at every later boot — in `serve` mode
+   * nothing ever writes the flag back. Writing `false` buys nothing
+   * anyway: `bootstrap` already probes the daemon and degrades gracefully
+   * when the flag is on but the daemon is unreachable. Turning hybrid
+   * recall off stays with the user-initiated paths (stop daemon, master
+   * switch, model teardown).
    */
   private reconcileHybridRecallFromDaemon(emb: EmbeddingDaemonInfo): void {
     const cfg = getConfig();
+    if (cfg.memory.embeddings.enabled) return;
     const dataDir = cfg.paths.localModelsDataDir;
     const modelId = cfg.localModels.embeddings.modelId;
     const hasModel =
@@ -2139,8 +2150,8 @@ export class LocalModelsOrchestrator {
       isEmbeddingModelDownloaded(dataDir, getEmbeddingModelDef(modelId));
     const shouldEnable =
       cfg.localModels.embeddings.enabled && hasModel && emb.running;
-    if (cfg.memory.embeddings.enabled === shouldEnable) return;
-    persistMemoryEmbeddingsEnabled(shouldEnable);
+    if (!shouldEnable) return;
+    persistMemoryEmbeddingsEnabled(true);
   }
 
   /**
