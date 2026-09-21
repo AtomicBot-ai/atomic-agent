@@ -1290,6 +1290,19 @@ export class AgentLoop {
       }
     };
     recordSurfacedProcedures(state);
+    // Memory-v2 phase 2 — same accumulator again, this time for the
+    // freeform note ids that feed `recalledMemoryIds` below. Reading
+    // `state.recalledNotes` at reflection time instead was a silent
+    // no-op on every multi-step turn: by the last step the recall
+    // query has drifted into tool-output noise and returns nothing, so
+    // the link-generator was handed an empty allowlist and skipped.
+    const surfacedNoteIds = new Set<number>();
+    const recordSurfacedNotes = (s: SessionState): void => {
+      for (const n of s.recalledNotes ?? []) {
+        surfacedNoteIds.add(n.id);
+      }
+    };
+    recordSurfacedNotes(state);
     // One-shot notice injected into the NEXT step's prompt only. Cleared
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
@@ -1902,6 +1915,7 @@ export class AgentLoop {
         state = await refreshMemoryContext(this.deps, state, options);
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
+        recordSurfacedNotes(state);
       } catch (err) {
         requestDeadline.dispose();
         runError = err instanceof Error ? err : new Error(String(err));
@@ -2594,11 +2608,13 @@ export class AgentLoop {
               userMessage,
               assistantReply,
               // Memory-v2 phase 2. Surfaced ids for this turn — the
-              // allowlist for the link-generator sub-call. Empty /
-              // undefined when memory.notes is disabled OR no recall
-              // was performed.
-              ...(state.recalledNotes && state.recalledNotes.length > 0
-                ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
+              // allowlist for the link-generator sub-call, and for the
+              // EVOLVE directives inside reflection. Every note
+              // surfaced through any step, not just the last refresh's
+              // recall. Empty / undefined when memory.notes is
+              // disabled OR no recall was performed.
+              ...(surfacedNoteIds.size > 0
+                ? { recalledMemoryIds: Array.from(surfacedNoteIds) }
                 : {}),
               // Memory-v2 phase 7a. Allowlist for the vote-runner —
               // every lesson surfaced through any step of this turn,
