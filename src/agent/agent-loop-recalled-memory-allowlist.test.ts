@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { AgentLoop } from "./agent-loop.js";
+import { AgentLoop, MAX_SURFACED_NOTE_ALLOWLIST } from "./agent-loop.js";
 import type {
   MemoryContext,
   MemoryContextProvider,
@@ -244,6 +244,75 @@ describe("AgentLoop recalledMemoryIds allowlist", () => {
     const ids = [...(inputs[0]!.recalledMemoryIds ?? [])];
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids.sort()).toEqual([11, 12, 13]);
+  });
+
+  it("caps the union at the most recently surfaced ids", async () => {
+    const inputs: ReflectionInput[] = [];
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok" as const,
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    // Six refreshes, six fresh ids each: 36 surfaced ids, well past
+    // the cap. Without it the union grows once per step for the whole
+    // turn and is rendered verbatim into the link-generator prompt.
+    const batches: number[][] = [];
+    for (let b = 0; b < 6; b += 1) {
+      batches.push([1, 2, 3, 4, 5, 6].map((n) => b * 6 + n));
+    }
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        return makeCompletion(
+          calls <= 5
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      memoryContextProvider: makeProvider(batches),
+      reflectionRunner: {
+        async reflect(input) {
+          inputs.push(input);
+        },
+        abortPending() {
+          /* no-op */
+        },
+      },
+    });
+
+    await loop.runTurn(
+      createEmptySessionState({ id: "s-cap", workingDir }),
+      {
+        userMessage: "do the thing",
+        maxSteps: 12,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(inputs).toHaveLength(1);
+    const ids = [...(inputs[0]!.recalledMemoryIds ?? [])];
+    expect(ids).toHaveLength(32);
+    expect(MAX_SURFACED_NOTE_ALLOWLIST).toBe(32);
+    // The tail wins: ids 1..4 (the oldest surfaced) are dropped.
+    expect(ids[0]).toBe(5);
+    expect(ids[ids.length - 1]).toBe(36);
   });
 
   it("stays undefined when no note ever surfaced", async () => {
