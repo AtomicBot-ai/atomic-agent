@@ -250,6 +250,48 @@ describe("conversation-turn helpers", () => {
     expect(rendered).not.toContain("[rendering-truncated");
   });
 
+  it("renders a fresh os.shell.run result from its end and drops to the old 400 chars in history", () => {
+    // What the tool stored at ingestion: a long log whose last line is
+    // the answer. 16 000 chars in, 8 000 renderable — the band where a
+    // head-first cut would show the start of a tail and hide the verdict.
+    const verdict = "Tests  948 passed (951)";
+    const summary = `$ npm test\nexit: 0\n${"x".repeat(12_000)}\n${verdict}`;
+    const turn = toolResultTurn({
+      tool: "os.shell.run",
+      status: "ok",
+      summary,
+      at: 7,
+    });
+
+    const fresh = renderTurnForPrompt(turn, { inCurrentMacroTurn: true });
+    expect(fresh).toContain("[rendering-truncated");
+    expect(fresh.endsWith(verdict)).toBe(true);
+    expect(fresh.length).toBeLessThanOrEqual(
+      "tool_result[os.shell.run ok]: ".length + 8_000,
+    );
+
+    // Aged out of the macro-turn it costs what it used to: ~400 chars,
+    // so the wider ingestion cap is not re-pasted on every later step.
+    const aged = renderTurnForPrompt(turn, { inCurrentMacroTurn: false });
+    expect(aged.endsWith(verdict)).toBe(true);
+    expect(aged.length).toBeLessThan(800);
+    // And the default (option omitted) is the history zone, not the fresh one.
+    expect(renderTurnForPrompt(turn)).toBe(aged);
+  });
+
+  it("leaves aged gog shell results on the generic render cap", () => {
+    const summary = `$ gog --json --no-input gmail search is:unread\n${"x".repeat(12_000)}`;
+    const aged = renderTurnForPrompt(
+      toolResultTurn({ tool: "os.shell.run", status: "ok", summary, at: 7 }),
+      { inCurrentMacroTurn: false },
+    );
+    expect(aged.startsWith("tool_result[os.shell.run ok]: $ gog ")).toBe(true);
+    expect(aged.length).toBeGreaterThan(6_000);
+    expect(aged.length).toBeLessThanOrEqual(
+      "tool_result[os.shell.run ok]: ".length + 8_000,
+    );
+  });
+
   it("caps historical os.http.request results to ~400 chars", () => {
     const big = "x".repeat(10_000);
     const rendered = renderTurnForPrompt(

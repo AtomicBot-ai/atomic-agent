@@ -34,9 +34,17 @@ import {
 /**
  * Output lines a still-running or killed result shows. These stay small
  * on purpose: a job that has not finished is a status report, not the
- * output itself, and the notice above the command line has to survive
- * the result compressor's tail whatever `agent.shellToolResultTailLines`
- * is set to.
+ * output itself, and the notice above the command line should survive
+ * the result compressor's tail.
+ *
+ * At the default `agent.shellToolResultTailLines` (500) it always does.
+ * At the 12-line minimum it is tight: a detached result is 1 notice line
+ * + 2 header lines + the marker and `RUNNING_TAIL_LINES` below it = 12
+ * exactly, so an *eviction* notice on top of the detach notice is the
+ * one line that can still be cut. That is the behaviour at the
+ * compressor's bare defaults, which is what the minimum restores — not
+ * something the knob introduced; the eviction is also on
+ * `details.evictedJobId`.
  */
 const RUNNING_TAIL_LINES = 8;
 const KILLED_TAIL_LINES = 9;
@@ -151,6 +159,8 @@ export function renderShellDetached(
     notices,
     statusLine: `still running (job ${record.id}, pid ${record.job.pid ?? "?"}, ${formatShellElapsed(runningMs)}${record.keep ? ", kept" : ""})`,
     body: tailShellOutput(joinShellOutput(output), RUNNING_TAIL_LINES),
+    // A status report: the notice on top is the point, not the excerpt.
+    overflow: "head",
     details: {
       detached: true,
       jobId: record.id,
@@ -177,6 +187,7 @@ function renderShellKilled(
     notices: [],
     statusLine: `killed (job ${record.id}, ${STOP_WORDING[reason]}) after ${formatShellElapsed(exit.durationMs)}, exit: ${formatExitStatus(exit)}`,
     body: tailShellOutput(joinShellOutput(output), KILLED_TAIL_LINES),
+    overflow: "head",
     details: {
       killed: true,
       jobId: record.id,

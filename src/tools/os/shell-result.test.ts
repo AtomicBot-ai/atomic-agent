@@ -99,6 +99,47 @@ describe("os.shell.run ingestion cap", () => {
     const result = run("npm", longOutput(300));
     expect(summaryLines(result.summary)).toBeLessThanOrEqual(24);
     expect(result.summary.length).toBeLessThanOrEqual(1_200);
+    // Lower bounds too, or the unfixed 12-line / 400-char behaviour
+    // satisfies this test and it proves nothing about the knobs.
+    expect(summaryLines(result.summary)).toBeGreaterThan(13);
+    expect(result.summary.length).toBeGreaterThan(400);
+  });
+
+  it("keeps the end of the output when the char cap cuts, not the start", () => {
+    // The line the command was run for — the verdict under the log.
+    const verdict = "Tests  948 passed (951)";
+    process.env[CHAR_CAP_ENV] = "400";
+    process.env[TAIL_LINES_ENV] = "500";
+    resetConfigCache();
+
+    const result = run("npm", `${longOutput(300)}\n${verdict}`);
+    expect(result.summary.length).toBeLessThanOrEqual(400);
+    expect(result.truncated).toBe(true);
+    // The compressor's bare cut keeps the *first* 385 characters of a
+    // tail it just took, which drops exactly this.
+    expect(result.summary).toContain(verdict);
+    expect(result.summary.endsWith(verdict)).toBe(true);
+    expect(result.summary).not.toContain("line 1:");
+  });
+
+  it("keeps the error signature above the cut when the end is kept", () => {
+    process.env[CHAR_CAP_ENV] = "400";
+    resetConfigCache();
+
+    const result = renderShellExit(
+      facts("npm"),
+      { exitCode: 1, signal: null, durationMs: 5 },
+      {
+        stdout: `error: the one line that names it\n${longOutput(300)}\nlast line here`,
+        stderr: "",
+        truncated: false,
+      },
+    );
+    expect(result.summary.startsWith("key: error: the one line that names it")).toBe(
+      true,
+    );
+    expect(result.summary.endsWith("last line here")).toBe(true);
+    expect(result.summary.length).toBeLessThanOrEqual(400);
   });
 
   it("clamps the env knobs to their bounds", () => {

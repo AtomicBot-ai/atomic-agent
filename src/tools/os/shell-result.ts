@@ -36,16 +36,22 @@ const GOG_COMPRESS_OPTIONS = {
  * lines) while `os.fs.read`, `os.git.diff` and the archive tools all
  * passed 8–64 KB.
  *
+ * `overflow` is `"tail"` for a command's own output: the end of it is
+ * what answers the call — the `exit:` line, the test verdict, the last
+ * error. The compressor's default cut takes the tail and then keeps its
+ * *first* characters, which drops exactly that.
+ *
  * Read per result rather than at module load so the env knobs apply to
  * a running agent; the defaults live in `ENV_DEFAULTS`
  * (`src/config/config-schema.ts`) and the bounds in `load-config.ts`.
  */
-function shellCompressOptions(): CompressorOptions {
+function shellCompressOptions(overflow: "head" | "tail"): CompressorOptions {
   const { shellToolResultCharCap, shellToolResultTailLines } =
     getConfig().agent;
   return {
     maxSummaryLength: shellToolResultCharCap,
     maxTailLines: shellToolResultTailLines,
+    overflow,
   };
 }
 
@@ -76,6 +82,15 @@ export interface ShellResultInput {
   body: string;
   /** Result-specific fields, placed between the command's and the guard's. */
   details: Record<string, unknown>;
+  /**
+   * Which end of the summary survives if it is over the char cap.
+   * Default `"tail"`: the end of a command's output is what the call was
+   * made for. A status report — a detached or killed job — passes
+   * `"head"` instead, because its body is already a short pre-tailed
+   * excerpt and the notice above the command line is the part that
+   * matters.
+   */
+  overflow?: "head" | "tail";
 }
 
 export function renderShellResult(input: ShellResultInput): CompressedToolResult {
@@ -101,7 +116,9 @@ export function renderShellResult(input: ShellResultInput): CompressedToolResult
         guardReason: facts.guard.reason,
       },
     },
-    facts.gog ? GOG_COMPRESS_OPTIONS : shellCompressOptions(),
+    facts.gog
+      ? GOG_COMPRESS_OPTIONS
+      : shellCompressOptions(input.overflow ?? "tail"),
   );
 }
 
