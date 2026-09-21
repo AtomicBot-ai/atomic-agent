@@ -181,8 +181,12 @@ describe("buildSkillCatalog", () => {
     });
 
     it("singular for one dropped skill", () => {
-      expect(formatSkillCatalogOmittedLine(1)).toContain("1 more installed skill ");
-      expect(formatSkillCatalogOmittedLine(2)).toContain("2 more installed skills ");
+      expect(formatSkillCatalogOmittedLine(1)).toContain(
+        "1 more installed skill ",
+      );
+      expect(formatSkillCatalogOmittedLine(2)).toContain(
+        "2 more installed skills ",
+      );
     });
   });
 

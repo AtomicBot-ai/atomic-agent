@@ -135,10 +135,17 @@ async function handleReplay(args: string[]): Promise<number> {
       ? sessionStarted.workingDir
       : process.cwd();
 
-  const skillRegistry = new SkillRegistry({
-    globalDir: config.paths.globalSkillsDir,
-    projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
-  });
+  // `skills.disabled` as well as the dirs: the registry's filtered
+  // `list()` is what the runtime fed the prompt, and a replay that
+  // rebuilds the catalog from every installed skill reports DRIFT on
+  // every step of any session recorded with a skill turned off.
+  const skillRegistry = new SkillRegistry(
+    {
+      globalDir: config.paths.globalSkillsDir,
+      projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
+    },
+    config.skills.disabled,
+  );
   await skillRegistry.refresh();
   const skillSection = buildSkillCatalogSection(skillRegistry.list(), {
     tokenBudget: config.skills.catalogTokenBudget,
