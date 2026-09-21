@@ -32,9 +32,11 @@ import {
  */
 
 /**
- * Output lines a still-running or killed result shows. The result
- * compressor keeps the last twelve non-blank lines, so the notice above
- * the command line survives only when the body is shorter than that.
+ * Output lines a still-running or killed result shows. These stay small
+ * on purpose: a job that has not finished is a status report, not the
+ * output itself, and the notice above the command line has to survive
+ * the result compressor's tail whatever `agent.shellToolResultTailLines`
+ * is set to.
  */
 const RUNNING_TAIL_LINES = 8;
 const KILLED_TAIL_LINES = 9;

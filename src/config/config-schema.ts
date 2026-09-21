@@ -419,6 +419,19 @@ export interface AtomicAgentConfig {
      */
     batchToolResultCharCap: number;
     /**
+     * What survives **ingestion** of a non-`gog` `os.shell.run` result.
+     * The compressor runs inside the tool and its summary is what gets
+     * stored as the `tool_result` turn, so whatever these drop is gone —
+     * not paged, not deferred. Before they existed the shell tool took
+     * the compressor's bare defaults (400 chars / 12 lines) while every
+     * read-oriented tool passed 8–64 KB. `gog` keeps its own far larger
+     * options and ignores both. Env-only:
+     * `ATOMIC_AGENT_SHELL_TOOL_RESULT_CHAR_CAP`,
+     * `ATOMIC_AGENT_SHELL_TOOL_RESULT_TAIL_LINES`.
+     */
+    shellToolResultCharCap: number;
+    shellToolResultTailLines: number;
+    /**
      * No-progress loop detection (OpenClaw-style `ToolLoopTracker`).
      * `loopWarningThreshold` — args-only repeat count that injects a
      * `### notice` (env `ATOMIC_AGENT_LOOP_WARNING_THRESHOLD`).
@@ -3016,6 +3029,13 @@ export const ENV_DEFAULTS = {
   MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
   BATCH_TOOL_RESULT_CHAR_CAP: 32_000,
+  /**
+   * Ingestion cap (chars) on a non-`gog` `os.shell.run` result summary.
+   * This is the one line to change to pick a different default.
+   */
+  SHELL_TOOL_RESULT_CHAR_CAP: 16_000,
+  /** Ingestion cap (tail lines) on a non-`gog` `os.shell.run` result summary. */
+  SHELL_TOOL_RESULT_TAIL_LINES: 500,
   /** Args-only repeat count that injects a no-progress `### notice`. */
   LOOP_WARNING_THRESHOLD: 3,
   /** Identical args+result streak that vetoes a call before dispatch. */

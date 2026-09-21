@@ -1,7 +1,9 @@
 import {
   compressToolResult,
   type CompressedToolResult,
+  type CompressorOptions,
 } from "../../compressor/result-compressor.js";
+import { getConfig } from "../../config/index.js";
 import type {
   CommandJobExit,
   CommandJobOutput,
@@ -24,6 +26,28 @@ const GOG_COMPRESS_OPTIONS = {
   maxSummaryLength: 64_000,
   maxTailLines: 10_000,
 } as const;
+
+/**
+ * What an ordinary (non-`gog`) command's output is compressed to on the
+ * way in. The compressor runs inside the tool and its summary is what
+ * is stored as the `tool_result` turn, so this is not a render budget —
+ * whatever it drops is gone for good. Passing nothing here left every
+ * shell command on the compressor's bare defaults (400 chars / 12
+ * lines) while `os.fs.read`, `os.git.diff` and the archive tools all
+ * passed 8–64 KB.
+ *
+ * Read per result rather than at module load so the env knobs apply to
+ * a running agent; the defaults live in `ENV_DEFAULTS`
+ * (`src/config/config-schema.ts`) and the bounds in `load-config.ts`.
+ */
+function shellCompressOptions(): CompressorOptions {
+  const { shellToolResultCharCap, shellToolResultTailLines } =
+    getConfig().agent;
+  return {
+    maxSummaryLength: shellToolResultCharCap,
+    maxTailLines: shellToolResultTailLines,
+  };
+}
 
 /** What a result says about the command, fixed when it was started. */
 export interface ShellCommandFacts {
@@ -77,7 +101,7 @@ export function renderShellResult(input: ShellResultInput): CompressedToolResult
         guardReason: facts.guard.reason,
       },
     },
-    facts.gog ? GOG_COMPRESS_OPTIONS : {},
+    facts.gog ? GOG_COMPRESS_OPTIONS : shellCompressOptions(),
   );
 }
 

@@ -261,6 +261,20 @@ export function loadConfig(): AtomicAgentConfig {
         1_000,
         1_000_000,
       ),
+      // Lower bounds are the compressor's own defaults, so an operator
+      // dialling down can land exactly on the pre-knob behaviour.
+      shellToolResultCharCap: readBoundedPositiveInt(
+        "ATOMIC_AGENT_SHELL_TOOL_RESULT_CHAR_CAP",
+        ENV_DEFAULTS.SHELL_TOOL_RESULT_CHAR_CAP,
+        400,
+        1_000_000,
+      ),
+      shellToolResultTailLines: readBoundedPositiveInt(
+        "ATOMIC_AGENT_SHELL_TOOL_RESULT_TAIL_LINES",
+        ENV_DEFAULTS.SHELL_TOOL_RESULT_TAIL_LINES,
+        12,
+        100_000,
+      ),
       loopWarningThreshold: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOOP_WARNING_THRESHOLD",
         ENV_DEFAULTS.LOOP_WARNING_THRESHOLD,
