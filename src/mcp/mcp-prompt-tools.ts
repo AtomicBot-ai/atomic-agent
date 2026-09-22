@@ -17,6 +17,27 @@ const DEFAULT_LIST_LIMIT = 30;
 const MAX_PROMPT_CHARS = 8_000;
 
 /**
+ * Per-field widths for one `mcp.prompt.list` row.
+ *
+ * Same reasoning as `RESOURCE_FIELD_CHARS` in `mcp-resource-tools`:
+ * `mcp-client.ts` copies a prompt's `name`, `description` and
+ * argument names into the catalog verbatim, so without a clamp one
+ * verbose server could spend the entire listing budget on a single
+ * template and hide the other 99 — and a newline anywhere in those
+ * fields would break the one-prompt-per-line format.
+ *
+ * Clamped: 80 + 1 + 160 + 1 + 3 + 120 = at most ~365 chars per row,
+ * so at least 21 of the 100 rows `clampLimit` allows always reach
+ * the model. The argument list is clamped once, after joining,
+ * because it is one visual field.
+ */
+const PROMPT_FIELD_CHARS = {
+  name: 80,
+  arguments: 160,
+  description: 120,
+} as const;
+
+/**
  * The most of a `tool_result.summary` the prompt will ever show:
  * `TOOL_RESULT_RENDER_CAP_CHARS` in `session/conversation-turn.ts`.
  * Only `TOOLS_FULL_BODY_WHEN_FRESH` bypasses it and no `mcp.*` tool
@@ -75,14 +96,13 @@ const PROMPT_COMPRESSOR_OPTIONS = {
  * twelve visible rows gives it no way to reach the rest.
  *
  * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show.
- * No ceiling can be computed from the rows — `mcp-client.ts` copies
- * a prompt's name, description and argument names verbatim from the
- * server and the row builder interpolates them raw, so one verbose
- * server can make a row arbitrarily wide. A typical row
- * (`<name>(<args>) — <description>`) runs 40-100 chars, so the 100
- * rows `clampLimit` allows normally fit well inside 8_000; when they
- * do not, tail truncation is off, so the cut is head-anchored and
- * the first rows stay.
+ * The row builder is what makes that a real ceiling — see
+ * `PROMPT_FIELD_CHARS`. With every field clamped a row is at most
+ * ~365 chars, so at least 21 of the 100 rows `clampLimit` allows
+ * always reach the model whatever the server sends, and an ordinary
+ * row (40-100 chars) leaves all 100 well inside 8_000. Tail
+ * truncation is off, so an overflowing listing is cut from the END
+ * and keeps its first rows.
  */
 const LIST_COMPRESSOR_OPTIONS = {
   maxSummaryLength: RENDER_DELIVERABLE_CHARS,
@@ -111,11 +131,17 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
       const limit = clampLimit(rawArgs.limit);
       const rows = catalog.prompts.slice(0, limit);
       const lines = rows.map((p) => {
-        const argsList = (p.arguments ?? [])
-          .map((a) => (a.required === false ? `${a.name}?` : a.name))
-          .join(", ");
-        const desc = p.description ? ` — ${p.description}` : "";
-        return `${p.name}(${argsList})${desc}`;
+        const argsList = oneLine(
+          (p.arguments ?? [])
+            .map((a) => (a.required === false ? `${a.name}?` : a.name))
+            .join(", "),
+          PROMPT_FIELD_CHARS.arguments,
+        );
+        const name = oneLine(p.name, PROMPT_FIELD_CHARS.name);
+        const desc = p.description
+          ? ` — ${oneLine(p.description, PROMPT_FIELD_CHARS.description)}`
+          : "";
+        return `${name}(${argsList})${desc}`;
       });
       return compressToolResult(
         {
@@ -231,6 +257,19 @@ function projectPromptMessages(res: unknown): string {
   return joined.length > MAX_PROMPT_CHARS
     ? `${joined.slice(0, MAX_PROMPT_CHARS - 14)}…[truncated]`
     : joined;
+}
+
+/**
+ * One catalog field, flattened to a single line and clamped, so a
+ * server cannot inject a line break into a line-oriented listing.
+ */
+function oneLine(text: string, max: number): string {
+  // eslint-disable-next-line no-control-regex
+  return text
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 function normaliseArguments(raw: unknown): Record<string, string> | undefined {

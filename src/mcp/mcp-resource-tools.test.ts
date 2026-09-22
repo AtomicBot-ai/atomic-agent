@@ -149,6 +149,63 @@ describe("mcp.resource.list", () => {
     expect(result.summary).toContain("… [truncated]");
   });
 
+  // An MCP server is untrusted input and `mcp-client.ts` copies its
+  // catalog fields verbatim. Without a per-field clamp one resource
+  // with a 4 KB description eats the whole listing budget and hides
+  // the other 99, which is the same data loss by another route.
+  it("clamps a verbose row so it cannot crowd out the catalog", async () => {
+    const resources = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      uri: `file:///r${i}.md`,
+      name: `Doc ${i}`,
+      description: i === 0 ? "D".repeat(7_900) : `catalog order ${i}`,
+      mimeType: "text/markdown",
+    }));
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], prompts: [], resources },
+      },
+    });
+    const tool = buildMcpResourceListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    const rows = result.summary.split("\n");
+    // The greedy row is clamped, not dropped...
+    expect(rows[0]).toContain("file:///r0.md");
+    expect(rows[0]!.length).toBeLessThanOrEqual(387);
+    // ...and every other resource still reaches the model.
+    expect(rows).toHaveLength(100);
+    expect(result.summary).toContain("file:///r99.md");
+  });
+
+  // A newline in a description would otherwise split one resource
+  // across two lines of a format documented as one entry per line —
+  // and the compressor splits on "\n" when it counts lines.
+  it("flattens control characters in a catalog field", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          prompts: [],
+          resources: [
+            {
+              server: "docs",
+              uri: "file:///a.md",
+              name: "A",
+              description: "first line\nsecond line\tand a tab",
+            },
+            { server: "docs", uri: "file:///b.md" },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpResourceListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.summary.split("\n")).toHaveLength(2);
+    expect(result.summary).toContain("first line second line and a tab");
+  });
+
   it("emits a placeholder line when the resource list is empty", async () => {
     const mgr = makeManager({
       docs: {

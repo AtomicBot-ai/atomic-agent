@@ -97,6 +97,53 @@ describe("mcp.prompt.list", () => {
     expect(result.details?.count).toBe(100);
   });
 
+  // Same untrusted-input clamp as the resource listing: one greedy
+  // template must not be able to hide the other 99 from the model.
+  it("clamps a verbose row so it cannot crowd out the catalog", async () => {
+    const prompts = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      name: `prompt_${i}`,
+      description: i === 0 ? "D".repeat(7_900) : `catalog order ${i}`,
+      arguments: [{ name: "uri", required: true }],
+    }));
+    const mgr = makeManager({
+      docs: { catalog: { server: "docs", tools: [], resources: [], prompts } },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    const rows = result.summary.split("\n");
+    expect(rows[0]).toContain("prompt_0(uri)");
+    expect(rows[0]!.length).toBeLessThanOrEqual(365);
+    expect(rows).toHaveLength(100);
+    expect(result.summary).toContain("prompt_99(uri)");
+  });
+
+  it("flattens control characters in a catalog field", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: "greet",
+              description: "first line\nsecond line",
+              arguments: [{ name: "who", required: true }],
+            },
+            { server: "docs", name: "other" },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.summary.split("\n")).toHaveLength(2);
+    expect(result.summary).toContain("first line second line");
+  });
+
   it("emits a placeholder when the prompt list is empty", async () => {
     const mgr = makeManager({
       docs: {
@@ -233,9 +280,8 @@ describe("mcp.prompt.get", () => {
     const tool = buildMcpPromptGetTool(mgr);
     const result = await tool.run({ server: "docs", name: "audit" }, ctx);
     expect(result.status).toBe("ok");
-    expect(result.summary.startsWith("system: You are a release auditor.")).toBe(
-      true,
-    );
+    const summary = result.summary;
+    expect(summary.startsWith("system: You are a release auditor.")).toBe(true);
     expect(result.summary).toContain("rule 0:");
     expect(result.summary).toContain("rule 59:");
     expect(result.summary).toContain("user: Go.");

@@ -19,6 +19,30 @@ const DEFAULT_LIST_LIMIT = 30;
 const MAX_READ_CHARS = 16_000;
 
 /**
+ * Per-field widths for one `mcp.resource.list` row.
+ *
+ * An MCP server is untrusted input: `mcp-client.ts` copies `uri`,
+ * `name`, `description` and `mimeType` into the catalog verbatim,
+ * with no clamp of any kind. Interpolated raw, one server with a
+ * 4 KB description would fill the whole listing budget and push
+ * every other resource out of the model's view — and a description
+ * containing a newline would break the one-resource-per-line format
+ * the tool documents, since the compressor splits on `\n`.
+ *
+ * So each field is clamped the way `os.email.inbox` clamps a sender
+ * and subject (`tools/os/email.ts`), which is what lets the listing
+ * budget be an actual ceiling: 160 + 1 + (2 + 40) + 1 + 60 + 3 + 120
+ * = at most ~387 chars per row. Generous for real catalogs — URIs
+ * are usually well under 160 — and bounded for the rest.
+ */
+const RESOURCE_FIELD_CHARS = {
+  uri: 160,
+  mimeType: 40,
+  name: 60,
+  description: 120,
+} as const;
+
+/**
  * The most of a `tool_result.summary` the prompt will ever show:
  * `TOOL_RESULT_RENDER_CAP_CHARS` in `session/conversation-turn.ts`
  * (see the constant there, and `renderToolResultBody` below it).
@@ -87,17 +111,15 @@ const READ_COMPRESSOR_OPTIONS = {
  * that 100 existed while being shown 12, with no way to ask for the
  * rest.
  *
- * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show
- * (see that constant). A listing has no projector budget of its own
- * to inherit, and no useful ceiling can be computed from the rows:
- * nothing clamps a resource's uri, name, description or mimeType —
- * `mcp-client.ts` copies all four verbatim from the server and the
- * row builder interpolates them raw — so a single verbose server can
- * make one row arbitrarily wide. A typical row (`<uri> [mime] name —
- * description`) runs 70-120 chars, so the 100 rows `clampLimit`
- * allows usually fit inside 8_000 with room to spare; when they do
- * not, tail truncation is off, so the cut stays head-anchored and it
- * is the last rows that go, not the first.
+ * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show.
+ * A listing has no projector budget of its own to inherit, so the
+ * row builder is what makes the arithmetic real — see
+ * `RESOURCE_FIELD_CHARS`. With every field clamped, one row is at
+ * most ~387 chars, so at least 20 of the 100 rows `clampLimit`
+ * allows always reach the model however verbose the server is, and
+ * an ordinary row (70-120 chars) leaves all 100 comfortably inside
+ * 8_000. Tail truncation is off, so a listing that still overflows
+ * is cut from the END and keeps its first rows.
  */
 const LIST_COMPRESSOR_OPTIONS = {
   maxSummaryLength: RENDER_DELIVERABLE_CHARS,
@@ -126,10 +148,17 @@ export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
       const limit = clampLimit(rawArgs.limit);
       const rows = catalog.resources.slice(0, limit);
       const lines = rows.map((r) => {
-        const mime = r.mimeType ? `[${r.mimeType}]` : "";
-        const name = r.name ? ` ${r.name}` : "";
-        const desc = r.description ? ` — ${r.description}` : "";
-        return `${r.uri} ${mime}${name}${desc}`.trim();
+        const uri = oneLine(r.uri, RESOURCE_FIELD_CHARS.uri);
+        const mime = r.mimeType
+          ? `[${oneLine(r.mimeType, RESOURCE_FIELD_CHARS.mimeType)}]`
+          : "";
+        const name = r.name
+          ? ` ${oneLine(r.name, RESOURCE_FIELD_CHARS.name)}`
+          : "";
+        const desc = r.description
+          ? ` — ${oneLine(r.description, RESOURCE_FIELD_CHARS.description)}`
+          : "";
+        return `${uri} ${mime}${name}${desc}`.trim();
       });
       return compressToolResult(
         {
@@ -219,6 +248,20 @@ function projectResourceContents(res: unknown): string {
   return joined.length > MAX_READ_CHARS
     ? `${joined.slice(0, MAX_READ_CHARS - 14)}…[truncated]`
     : joined;
+}
+
+/**
+ * One catalog field, flattened to a single line and clamped. Control
+ * characters go first so a server cannot inject a line break (or an
+ * ANSI escape) into a line-oriented listing.
+ */
+function oneLine(text: string, max: number): string {
+  // eslint-disable-next-line no-control-regex
+  return text
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 function coerceServerName(raw: unknown): string | null {
