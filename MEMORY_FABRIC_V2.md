@@ -37,26 +37,32 @@
 
 ## 0. Implementation ledger
 
-All paths below are **in the tree** unless marked deferred. Feature flags
-default **off** for phases 2–7b and v2.5 unless noted; phase **1A** defaults
-are **on** (`memory.dedup`, `memory.eviction`). See §10 for the full config
-table and [`src/config/config-schema.ts`](src/config/config-schema.ts)
-`USER_CONFIG_DEFAULTS` (config file version **19** at time of writing).
+All paths below are **in the tree** unless marked deferred. Every feature
+flag for phases 1A–7b now defaults **on**; the exceptions are phase **1B**
+(`memory.embeddings`, `localModels.embeddings`, which need an embedding
+daemon) and v2.5 phases **B** and **C**. Flags defaulted **off** while each
+phase was being rolled out — turning one *off* is now the deliberate act.
+See §10 for the full config table and
+[`src/config/config-schema.ts`](src/config/config-schema.ts)
+`USER_CONFIG_DEFAULTS` (config file version **69**).
 
 | Phase | Goal (short) | Schema | Config gate | Code home |
 |-------|----------------|--------|-------------|-----------|
 | **1A** | Utility eviction, FTS5 dedup, `recall_count` | v4 columns on `memories` | `memory.dedup.*`, `memory.eviction.*` (defaults on) | [`memory-store.ts`](src/memory/memory-store.ts), [`memory-store-v2.test.ts`](src/memory/memory-store-v2.test.ts) |
 | **1B** | Hybrid FTS5 + embedding recall | v5 `memory_embeddings` | `memory.embeddings.*` + `localModels.embeddings.*` (default off) | [`src/memory/embeddings/`](src/memory/embeddings/) |
-| **2** | Reactive link graph | v6 `memory_links` | `memory.links.*` (default off) | [`src/memory/links/`](src/memory/links/) |
-| **3** | Neighbor tag evolution (`EVOLVE`) | v4 `consolidating_at` (dormant until here) | `memory.evolution.*` (default off) | [`src/memory/evolution/`](src/memory/evolution/) |
+| **2** | Reactive link graph | v6 `memory_links` | `memory.links.*` (default on) | [`src/memory/links/`](src/memory/links/) |
+| **3** | Neighbor tag evolution (`EVOLVE`) | v4 `consolidating_at` (dormant until here) | `memory.evolution.*` (default on) | [`src/memory/evolution/`](src/memory/evolution/) |
 | **4** | Bi-temporal `ProfileStore` | v7 `profile_facts` rebuild | always-on after migration | [`profile-store.ts`](src/memory/profile-store.ts), [`memory.profile.history`](src/tools/memory/profile-history.ts) |
-| **5** | Lessons + cold consolidator | v8 `lessons`, `consolidated_into` | `memory.lessons.*`, `memory.consolidation.*` (default off) | [`src/memory/lessons/`](src/memory/lessons/), [`src/memory/consolidator/`](src/memory/consolidator/) |
+| **5** | Lessons + cold consolidator | v8 `lessons`, `consolidated_into` | `memory.lessons.*`, `memory.consolidation.*` (default on) | [`src/memory/lessons/`](src/memory/lessons/), [`src/memory/consolidator/`](src/memory/consolidator/) |
 | **6** | Lesson lifecycle + deprecation | (v8 columns) | same as phase 5 | [`lesson-lifecycle-hook.ts`](src/memory/lessons/lesson-lifecycle-hook.ts), consolidator sweep |
-| **7a** | ExpeL-style vote curation | v9 `vote_score`, `vote_events` | `memory.voting.*` (default off) | [`src/memory/voting/`](src/memory/voting/) |
-| **7b** | MemP-style procedure templates | v10 `procedures` | `memory.procedures.*` (default off) | [`src/memory/procedures/`](src/memory/procedures/), [`memory.procedures.recall`](src/tools/memory/procedures-recall.ts) |
+| **7a** | ExpeL-style vote curation | v9 `vote_score`, `vote_events` | `memory.voting.*` (default on) | [`src/memory/voting/`](src/memory/voting/) |
+| **7b** | MemP-style procedure templates | v10 `procedures` | `memory.procedures.*` (default on) | [`src/memory/procedures/`](src/memory/procedures/), [`memory.procedures.recall`](src/tools/memory/procedures-recall.ts) |
 
-**v2.5 (default-off):** query rewriter (A), reflection segmentation (B),
-typed `NOTE` markers (C) — see [`MEMORY_FABRIC_V2.5.md`](MEMORY_FABRIC_V2.5.md).
+**v2.5:** query rewriter (A) — `memory.retrieve.rewriter.enabled`
+(default `true`); reflection segmentation (B) —
+`memory.reflection.segmentation.enabled` (default `false`); typed `NOTE`
+markers (C) — `memory.reflection.typedNotes.enabled` (default `false`).
+See [`MEMORY_FABRIC_V2.5.md`](MEMORY_FABRIC_V2.5.md).
 
 `MEMORY_SCHEMA_VERSION` is **10** in
 [`memory-schema.ts`](src/memory/memory-schema.ts) (not the v7 figure used in

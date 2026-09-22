@@ -766,7 +766,7 @@ Lives in [src/memory/embeddings/](src/memory/embeddings/) and is **off in config
 
 **Out of scope (deferred to follow-up).** `sqlite-vec` virtual table integration (the JS brute force handles current corpus sizes; sqlite-vec graduates the schema without touching `EmbeddingStore` callers), ANN indexes, cross-model query embedding fallback (when the active model changes, the existing rows under a different `model` are simply skipped — there is no auto-reembed sweep yet), embedding-side reflection (the writer is only invoked by `MemoryStore.store`; reflection's own writes happen through the same path so they get embedded too, but there is no dedicated "embed everything" CLI command). All deferred items keep the wire-shape of `memory_embeddings` stable so no future migration is forced.
 
-### Memory-v2 phase 2 — reactive link graph (opt-in)
+### Memory-v2 phase 2 — reactive link graph (on by default)
 
 Lives in [src/memory/links/](src/memory/links/) and is **enabled by default** (`memory.links.enabled=true`, config v22). It gives memories a typed, directed graph layer that is grown by an end-of-turn LLM sub-call (`link-generator`) and consumed by `MemoryContextProvider` as BFS expansion on top of the BM25/cosine hits.
 
@@ -825,7 +825,7 @@ Anti-feedback-loop guard (mirrors phase 7a invariant 18 from MEMORY_FABRIC_V2.md
 
 **Out of scope (deferred).** Agent-facing `memory.links.add` / `memory.links.list` tools (the LLM can still grow the graph implicitly via the link-generator; explicit tool access is deferred until a use case actually demands it), weighted BFS ordering beyond the current weight-tiebreaker, graph-aware reflection (the link-generator currently consumes only `recalledMemoryIds`; consuming the **graph neighbourhood** of those ids during reflection extraction is a follow-up), and a CLI debugger (`atomic-agent memory links show`) for graph inspection. Neighbour-evolver landed in phase 3 (see below).
 
-### Memory-v2 phase 3 — neighbor-evolver (opt-in)
+### Memory-v2 phase 3 — neighbor-evolver (on by default)
 
 A reactive metadata-refinement layer that lets a new reflection turn enrich the `tags` of **existing** memories without ever touching their `content`. Modules in [src/memory/evolution/](src/memory/evolution/) + the grammar/parser/runner pieces inside [src/memory/reflection/](src/memory/reflection/). Default disabled; opt in via `memory.evolution.enabled = true` after phase 2 is live in your config.
 
@@ -872,7 +872,7 @@ No new LLM call. Phase 3 is pure post-parser bookkeeping on top of the same refl
 4. **`maxPerWrite` cap is hard.** Directive `N+1` and beyond never call `evolveTags`. Excess is counted under `skipped_cap_hit` so dashboards can spot models that routinely propose more evolves than the budget allows.
 5. **Tag-cap overflow keeps existing tags.** When the target already has `MEMORY_MAX_TAGS` (16) tags, every proposed addition is dropped silently — the store returns `skipped_no_change` and existing tags win. Pinned by `does not write past MEMORY_MAX_TAGS`.
 6. **`updated_at` is not bumped on `skipped_no_change`.** Legacy FIFO eviction (`memory.eviction.utilityWeighted=false`) keeps its expected ordering when an evolve is a no-op.
-7. **The master switch gates the runner, not the parser.** `memory.evolution.enabled` (default `true`) — older configs are migrated by filling the shipped default, so phase 3 is on unless an operator writes `false`. With it off the parser still recognises EVOLVE but the runner silently drops directives because `neighborEvolver` is `undefined`.
+7. **The master switch gates the runner, not the parser.** `memory.evolution.enabled` (default `true`). The migration is not a plain defaults-fill: `parseMemoryV2FeatureEnabled` returns `true` unconditionally for any file older than config v22, so a pre-v22 `false` is **discarded**, not honoured — opting out means writing `false` into a file that is already at v22 or later. With it off the parser still recognises EVOLVE but the runner silently drops directives because `neighborEvolver` is `undefined`.
 8. **Schema unchanged.** Phase 3 reuses `consolidating_at` (added dormant in v4 / phase 1A). No new tables, no new migration step; `MEMORY_SCHEMA_VERSION` stays at `6`.
 
 **Configuration.** Added in user config v14 — older files transparently migrate with `memory.evolution` populated from defaults (everything disabled).
@@ -1222,8 +1222,8 @@ The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate fr
 
 - **Shape.** `memories (id INTEGER PK, content, tags, source, scope, working_dir, created_at, updated_at)` + `memories_fts` virtual table (`porter unicode61`). CRUD in [src/memory/memory-store.ts](src/memory/memory-store.ts). Hard cap `memory.notes.maxEntries` (default `1000`); FIFO eviction by `(updated_at ASC, id ASC)` on overflow.
 - **Auto-injection.** Two new tail sections (rendered by [src/memory/notes-renderer.ts](src/memory/notes-renderer.ts)):
-  - `### recalled` — top-K BM25 hits against the current `userMessage`. Driven by `memory.recallInjection.{enabled, k, previewChars, maxTokens}` (defaults `k=3`, `previewChars=160`, `maxTokens=400`).
-  - `### memory-index` — compact `#id [tags] preview` pointer rows. Driven by `memory.index.{enabled, limit, previewChars, maxTokens}` (defaults `limit=20`, `previewChars=60`, `maxTokens=300`).
+  - `### recalled` — top-K BM25 hits against the current `userMessage`. Driven by `memory.recallInjection.{enabled, k, previewChars, maxTokens}` — `memory.recallInjection.k` (default `3`), `memory.recallInjection.previewChars` (default `160`), `memory.recallInjection.maxTokens` (default `400`).
+  - `### memory-index` — compact `#id [tags] preview` pointer rows. Driven by `memory.index.{enabled, limit, previewChars, maxTokens}` — `memory.index.limit` (default `20`), `memory.index.previewChars` (default `60`), `memory.index.maxTokens` (default `300`).
   - The two sections are **deduplicated by id** — anything in `### recalled` is filtered out of `### memory-index`.
 - **Pre-fetch.** Done once per turn by [src/memory/memory-context-provider.ts](src/memory/memory-context-provider.ts), invoked from `agent-loop.runTurn` before the per-step loop starts. Results land in ephemeral `SessionState.recalledNotes` / `SessionState.memoryIndex`. `stripEphemeral` in [src/session/session-store.ts](src/session/session-store.ts) removes them before snapshot persistence — they are recomputed every turn.
 - **Tools.** `memory.notes.store { content, tags?, scope?, workingDir? }`, `memory.notes.recall { query? | id?, scope?, workingDir?, k? }` (`{ id }` is direct lookup for `#42` pointers from `### memory-index`), `memory.notes.forget { id }`. The bulk corpus is **never** dumped wholesale into the prompt.
@@ -1277,7 +1277,7 @@ Reflection, link generation, voting and the query rewriter are fire-and-forget m
 
 Not covered: the consolidator's `distill` (it has no session), and a link generator that answers `none` every time (healthy by rule 1).
 
-### Memory v2.5 — phase A heuristic-gated query rewriter (opt-in)
+### Memory v2.5 — phase A heuristic-gated query rewriter (on by default)
 
 A new module [src/memory/retrieve/](src/memory/retrieve/) adds an LLM-based **query rewriter** that runs **before** `MemoryStore.recallHybridAsync` whenever the current user message looks **referential** (short, pronoun-laden, conjunction-starter). The rewriter expands "did they mention it?" into a self-contained query using the trailing 2-3 conversation turns; non-referential messages bypass the rewriter entirely and use the raw query. The whole layer is wrapped as a **decorator** around `createDefaultMemoryContextProvider` so the byte-output is identical to v2 when the flag is off.
 
@@ -1319,7 +1319,7 @@ When the gate returns `false`, the recall layer is byte-identical to v2: no LLM 
 
 1. **Rewriter always uses `slotId: -1`.** The main agent slot's KV cache is **never** touched by the rewriter call; the reflection slot is also untouched (the rewriter is a recall-side concern, not a reflection-side concern). Pinned by `query-rewriter-runner.test.ts` ("uses slotId -1 to keep the main agent and reflection slots untouched").
 2. **Fire-safe.** Any rewriter failure (timeout / abort / malformed completion / parser error) folds to "use the raw user message". The recall never blocks and never raises — pinned by `query-rewriter-runner.test.ts` (multiple cases) and the `outcome` taxonomy on `agent.memory.retrieve.rewriter`.
-3. **Disabled by default.** With `memory.retrieve.rewriter.enabled = false`, the bootstrap does not construct a rewriter runner; the inner `MemoryContextProvider` is returned as-is. The recall path is byte-identical to v2.
+3. **The master switch is a clean bypass.** `memory.retrieve.rewriter.enabled` (default `true`); set to `false` and the bootstrap does not construct a rewriter runner — the inner `MemoryContextProvider` is returned as-is and the recall path is byte-identical to v2.
 4. **Heuristic gate is pure.** No I/O, no state — easy to assert across a matrix of inputs. Pinned by `referential-detector.test.ts`.
 5. **Empty history is a hard skip.** Even when the gate fires, the rewriter is not called if `recentTurns` is empty (nothing to anchor against) — outcome `skipped_no_history`, raw query is used. Pinned by `rewriter-aware-recall-provider.test.ts`.
 6. **One rewrite per turn.** Repeated `buildMemoryContext` calls with the same session, user message and history slice reach the LLM once; a timed-out or failed attempt is reused, not retried; an aborted attempt is not remembered. Pinned by [rewriter-aware-recall-provider-memo.test.ts](src/memory/retrieve/rewriter-aware-recall-provider-memo.test.ts).
@@ -2511,7 +2511,7 @@ A run mode names *how* a chat runs, not a single model. `local` and `cloud` are 
 
 `fusion.orchestratorProvider` must name a configured non-`llama-server` provider (a `subscription-cli` entry counts as cloud); `fusion.workerProvider` must name a `llama-server` one; both default to the first such entry. `workers` (1..8, default 2) is the fan-out width used when a `fusion.delegate` call names no `maxWorkers` — it is a default, not a cap on the number the orchestrator asks for (see §"The orchestrator and its workers"); `workerMaxSteps` / `workerTimeoutMs` bound one worker turn. `orchestratorModel` / `workerModel` are informational pins only — a `CompletionRequest` carries no model field, so the orchestrator model is the provider entry's `defaultChatModel` and the worker model is whatever the managed daemon serves (`localModels.managed.modelId`). Removing a provider scrubs any pin that named it (`scrubRunModeProviderPins`), because the parser refuses a pin to an unknown id.
 
-`localModels.managed.parallel` (1..8, default 2 — the value that was hard-coded before config v52) is the llama-server `--parallel` slot count; workers run one per slot, so raising it is what lets them run concurrently rather than queue on the server. Applied on the next daemon start.
+`localModels.managed.parallel` (default `"auto"` since config v63, or a pinned 1..8) is the llama-server `--parallel` slot count; `"auto"` lets the machine decide from the launch context, and the v63 migration rewrites a pre-v63 file's unchosen `2` to `"auto"` while keeping any other number as a deliberate pin. workers run one per slot, so raising it is what lets them run concurrently rather than queue on the server. Applied on the next daemon start.
 
 ### The resolver rule
 
