@@ -67,11 +67,34 @@ describe("capBatchSummaries", () => {
     // A lone listing call cannot "ask for less per step" — it is already
     // one call. The marker has to name the call's own bound as well.
     expect(out[0]).toContain("fewer calls per step");
-    expect(out[0]).toContain("`limit`");
-    expect(out[0]).toContain("narrower path");
+    expect(out[0]).toContain("narrow this call");
     expect(out[0]).not.toContain("Ask for less per step");
   });
 
+  it("names no argument, because each tool spells its bound differently", () => {
+    // `os.fs.list` bounds itself with `maxEntries`, `os.fs.grep` with
+    // `headLimit`, `os.fs.glob` with `limit`, and `os.shell.run` with
+    // nothing at all. A marker that named one of those would send most
+    // callers back with an argument their tool silently ignores, which is
+    // the same dead end as the wording this replaced.
+    const tools = ["os.fs.list", "os.fs.grep", "os.shell.run", "os.fs.glob"];
+    const out = capBatchSummaries(
+      tools.map((tool) => ({ tool, summary: "y".repeat(20_000) })),
+      tools.map(() => ({})),
+      4_000,
+    );
+    out.forEach((s) => {
+      expect(s).toContain("narrow this call");
+      expect(s).not.toContain("`limit`");
+      expect(s).not.toContain("maxEntries");
+      expect(s).not.toContain("headLimit");
+    });
+  });
+
+  // Guards the reservation invariant rather than the wording above: it
+  // holds for any marker length, so it passes on `main` too. It is here
+  // because this change is what makes the marker long enough for a
+  // regression in `keep` to start costing real content.
   it("reserves room for the marker, so a clipped result still fits its share", () => {
     const out = capBatchSummaries(
       [

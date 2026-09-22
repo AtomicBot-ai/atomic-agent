@@ -72,13 +72,22 @@ export function fairShare(
  * batch but not the case that actually hits this cap most often: a single
  * listing or search call returning far too much. There the number of calls
  * is already one and the only lever is the call's own bound, so the model
- * was pointed at a knob it could not turn. Name both levers instead, and
- * keep the sentence short — the marker is spent out of the same budget as
- * the result, so every char of advice is a char of content dropped.
+ * was pointed at a knob it could not turn. Name both levers instead.
+ *
+ * Deliberately no argument name: the bound is spelled differently by every
+ * tool that reaches here — `maxEntries` on `os.fs.list`, `headLimit` on
+ * `os.fs.grep`, `limit` on `os.fs.glob` — and `os.shell.run` has none at
+ * all, so any single name would be wrong more often than right, and a
+ * wrong name sends the model back with an argument the tool silently
+ * ignores. Each tool's own description already spells its bound out; the
+ * marker only has to say that the lever exists on this call. Keeping it to
+ * that also keeps it short, which matters because the marker is spent out
+ * of the same budget as the result — every char of advice is a char of
+ * content dropped, on every clipped result in the batch.
  */
 function clipToShare(summary: string, share: number, capChars: number): string {
   const marker = (hidden: number) =>
-    `\n… [${hidden} more chars not shown: this step's results share a ${capChars}-char budget. To see more: fewer calls per step, or a tighter \`limit\`/narrower path on this call.]`;
+    `\n… [${hidden} more chars not shown: this step's results share a ${capChars}-char budget. To see more: fewer calls per step, or narrow this call.]`;
   const keep = Math.max(1, share - marker(summary.length).length);
   return `${summary.slice(0, keep)}${marker(summary.length - keep)}`;
 }
