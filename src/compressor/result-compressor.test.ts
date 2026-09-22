@@ -26,6 +26,46 @@ describe("compressToolResult", () => {
     expect(out.truncated).toBe(true);
   });
 
+  it("cuts an over-long summary from the start when overflow is tail", () => {
+    const lines = Array.from({ length: 400 }, (_, i) => `line ${i}`);
+    const raw = { tool: "run_test", status: "ok" as const, output: lines.join("\n") };
+
+    const head = compressToolResult(raw, {
+      maxSummaryLength: 200,
+      maxTailLines: 40,
+    });
+    // The default keeps the start of the tail it just took.
+    expect(head.summary).toContain("[omitted");
+    expect(head.summary.endsWith("… [truncated]")).toBe(true);
+    expect(head.summary).not.toContain("line 399");
+
+    const tail = compressToolResult(raw, {
+      maxSummaryLength: 200,
+      maxTailLines: 40,
+      overflow: "tail",
+    });
+    expect(tail.summary.startsWith("… [truncated]\n")).toBe(true);
+    expect(tail.summary.endsWith("line 399")).toBe(true);
+    expect(tail.summary.length).toBeLessThanOrEqual(200);
+    expect(tail.truncated).toBe(true);
+  });
+
+  it("keeps the error signature above an overflow: tail cut", () => {
+    const out = compressToolResult(
+      {
+        tool: "run_test",
+        status: "error",
+        output: `error: named it\n${Array.from({ length: 400 }, (_, i) => `line ${i}`).join("\n")}`,
+      },
+      { maxSummaryLength: 200, maxTailLines: 40, overflow: "tail" },
+    );
+    expect(out.summary.startsWith("key: error: named it\n… [truncated]\n")).toBe(
+      true,
+    );
+    expect(out.summary.endsWith("line 399")).toBe(true);
+    expect(out.summary.length).toBeLessThanOrEqual(200);
+  });
+
   it("extracts the first error signature when status is error", () => {
     const log = [
       "running tests ...",

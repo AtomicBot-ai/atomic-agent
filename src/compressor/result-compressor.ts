@@ -16,11 +16,20 @@ export interface CompressedToolResult {
 export interface CompressorOptions {
   maxSummaryLength: number;
   maxTailLines: number;
+  /**
+   * Which end of the summary survives when it is still over
+   * `maxSummaryLength` after the tail was taken. `"head"` (the default,
+   * and what every caller got before this existed) keeps the start;
+   * `"tail"` keeps the end, for tools whose last lines are the point —
+   * a command's `exit:` line, a test verdict, the final error.
+   */
+  overflow?: "head" | "tail";
 }
 
 const DEFAULTS: CompressorOptions = {
   maxSummaryLength: 400,
   maxTailLines: 12,
+  overflow: "head",
 };
 
 /**
@@ -42,9 +51,11 @@ export function compressToolResult(
   const summaryParts = [signature, tail].filter((part) => part.length > 0);
   const joined = summaryParts.join("\n");
   const overLength = joined.length > merged.maxSummaryLength;
-  const summary = overLength
-    ? `${joined.slice(0, merged.maxSummaryLength - 15)}\n… [truncated]`
-    : joined;
+  const summary = !overLength
+    ? joined
+    : merged.overflow === "tail"
+      ? keepSummaryTail(signature, tail, merged.maxSummaryLength)
+      : `${joined.slice(0, merged.maxSummaryLength - 15)}\n… [truncated]`;
   return {
     tool: raw.tool,
     status: raw.status,
@@ -52,6 +63,26 @@ export function compressToolResult(
     details: raw.details ?? {},
     truncated: tailTruncated || overLength,
   };
+}
+
+/**
+ * An over-long summary cut from its start instead of its end. Taking a
+ * tail and then slicing its first characters drops precisely what the
+ * tail was taken for, so `overflow: "tail"` cuts the other way. The
+ * error signature stays on top of the marker: it is the one line the
+ * compressor lifted out of the body on purpose.
+ */
+function keepSummaryTail(
+  signature: string,
+  tail: string,
+  maxSummaryLength: number,
+): string {
+  const head = signature.length > 0 ? `${signature}\n` : "";
+  const marker = "… [truncated]\n";
+  const room = maxSummaryLength - head.length - marker.length;
+  if (room <= 0)
+    return `${head}${marker}`.slice(0, Math.max(0, maxSummaryLength));
+  return `${head}${marker}${tail.slice(-room)}`;
 }
 
 function extractTail(

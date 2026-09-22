@@ -238,8 +238,26 @@ export function renderToolResultBody(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
   options: RenderTurnOptions,
 ): string {
-  if (isFreshGogShellResult(turn, options)) {
-    return capSummary(turn.summary, GOG_TOOL_RESULT_RENDER_CAP_CHARS);
+  if (isGogShellResult(turn)) {
+    if (options.inCurrentMacroTurn === true)
+      return capSummary(turn.summary, GOG_TOOL_RESULT_RENDER_CAP_CHARS);
+  } else if (turn.tool === "os.shell.run") {
+    // The tool compressed this at ingestion (`agent.shellToolResultCharCap`,
+    // 16 000 by default); the render budget only decides how much of that
+    // the prompt pays for. Fresh — the inference that has to act on the
+    // command — gets the generic cap; once the macro-turn closes it drops
+    // back to the 400 chars a shell result used to be, so widening
+    // ingestion costs nothing in `### conversation` forever. Both cuts are
+    // taken from the start: a shell summary *is* a tail, and its last
+    // lines (the `exit:` line, the verdict) are the answer. The command
+    // line is not lost with the head — it is on the `assistant_tool_call`
+    // turn immediately above.
+    return capSummaryToTail(
+      turn.summary,
+      options.inCurrentMacroTurn === true
+        ? TOOL_RESULT_RENDER_CAP_CHARS
+        : TOOL_RESULT_HISTORY_CAP_CHARS,
+    );
   }
   if (TOOLS_FULL_BODY_WHEN_FRESH.has(turn.tool)) {
     if (options.inCurrentMacroTurn === true) return turn.summary;
@@ -263,21 +281,28 @@ export function renderToolResultBody(
   return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
 }
 
-function isFreshGogShellResult(
+function isGogShellResult(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
-  options: RenderTurnOptions,
 ): boolean {
-  return (
-    options.inCurrentMacroTurn === true &&
-    turn.tool === "os.shell.run" &&
-    turn.summary.includes("$ gog ")
-  );
+  return turn.tool === "os.shell.run" && turn.summary.includes("$ gog ");
 }
 
 function capSummary(summary: string, capChars: number): string {
   if (summary.length <= capChars) return summary;
   const keep = Math.max(1, capChars - 40);
   return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
+}
+
+/**
+ * `capSummary` taken from the other end: what survives is the end of the
+ * summary rather than its start. For a result the tool already compressed
+ * into a tail, a head-first cut renders the beginning of that tail and
+ * drops the line the call was made for.
+ */
+function capSummaryToTail(summary: string, capChars: number): string {
+  if (summary.length <= capChars) return summary;
+  const keep = Math.max(1, capChars - 40);
+  return `… [rendering-truncated ${summary.length - keep} chars]\n${summary.slice(-keep)}`;
 }
 
 /**
