@@ -31,9 +31,14 @@ const SCRIPT_COMPRESS_OPTIONS = {
 
 /**
  * Room kept inside that budget for what is not body: the compressor's
- * own `key: …` signature line (~190 chars) and the omission banner.
- * The header is measured, not estimated, so a long skill or script name
- * costs body rather than overflowing the budget.
+ * own `key: …` signature line (185 chars at most) and the omission
+ * banner. The header is measured, not estimated, so a long skill or
+ * script name costs body rather than overflowing the budget.
+ *
+ * The banner is the binding half of this reserve, not the signature
+ * line: the longest one below runs ~121 chars, which leaves ~14 of
+ * slack against `maxSummaryLength`. Re-measure before making any
+ * banner wordier.
  */
 const SIGNATURE_RESERVE_CHARS = 320;
 const HEADER_RESERVE_LINES = 8;
