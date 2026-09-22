@@ -55,6 +55,13 @@ export interface BatchLoopSignal {
   detector: LoopCheckVerdict["detector"];
   warningKey: string;
   /**
+   * Veto path only: how many consecutive times THIS call has been
+   * refused, counting the refusal that raised this signal. `count` is a
+   * detector streak whose calls mostly ran, so it cannot stand in for
+   * this number in any user-facing wording.
+   */
+  blockedCount?: number;
+  /**
    * `test_repeat` only: human-readable command label (`pytest -k auth`)
    * for the notice text.
    */
@@ -852,9 +859,9 @@ function runSyncLoopGate(
     // forced the breaker, that is the wandering cap even if THIS call is a
     // verbatim repeat (a parallel batch can carry the spread past the cap
     // before anything is refused, and the window keeps it there). Taking
-    // the repeat verdict here would end the turn on "a no-progress loop
-    // after 0 blocked attempts". The veto body above keeps the repeat
-    // wording: it describes the call, this describes the stop.
+    // the repeat verdict here would end the turn on a repeat's count
+    // when the spread is what stopped it. The veto body above keeps the
+    // repeat wording: it describes the call, this describes the stop.
     const stoppedByWandering =
       wanderingEscalated && !breakerTripped && verdict.level !== "critical";
     loopSignals.push({
@@ -863,6 +870,10 @@ function runSyncLoopGate(
       count: stoppedByWandering ? spreadAtGate : count,
       detector: stoppedByWandering ? "wandering" : detector,
       warningKey: verdict.warningKey,
+      // Read AFTER `recordOutcome` noted the refusal above, so it counts
+      // this one and is therefore always >= 1 on this path — the reply
+      // never has to fall back to a number it cannot stand behind.
+      blockedCount: ctx.tracker.vetoStreak(tool, args),
     });
     return { proceed: false, vetoResult };
   }
