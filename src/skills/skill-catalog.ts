@@ -87,9 +87,19 @@ export function buildSkillCatalog(
  *
  * Packed twice when anything overflows: the first pass answers "does the
  * marker line have to exist at all", the second re-packs against a
- * budget reduced by that line, so the marker never pushes the section
- * past `maxChars`. A catalog that fits takes the first pass only and is
- * byte-identical to the pre-marker output (KV-cache safe).
+ * budget reduced by that line, so the marker does not push the section
+ * past `maxChars` — with one exception, below. A catalog that fits takes
+ * the first pass only and is byte-identical to the pre-marker output
+ * (KV-cache safe).
+ *
+ * The exception is the degenerate budget that leaves room for exactly
+ * one entry: `packCatalog` force-keeps the first row whatever it costs,
+ * and that row bypasses the reserve check, so the section can end up
+ * over `maxChars` by the marker's length. That is deliberate. A budget
+ * that shows one skill out of forty is precisely when the operator most
+ * needs to be told the catalog is clipped, and `maxChars` is a soft
+ * budget the force-kept row can already blow on its own. Whenever two
+ * or more entries survive, the reserve holds and the section fits.
  */
 export function buildSkillCatalogSection(
   records: ReadonlyArray<SkillRecord>,

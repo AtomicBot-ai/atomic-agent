@@ -161,6 +161,64 @@ describe("buildSkillCatalog", () => {
       expect(rendered.length).toBeLessThanOrEqual(maxChars);
     });
 
+    // The reserve is a per-row check, and `packCatalog` force-keeps the
+    // first row without it. So the budget guarantee is "two or more rows
+    // survive ⇒ the section fits", and these two pin both sides of that
+    // boundary so neither can drift unnoticed.
+    it("keeps the section inside the budget at every cut where two or more rows survive", () => {
+      const records = Array.from({ length: 12 }, (_, i) =>
+        record(`skill-${i}`, "d".repeat(40)),
+      );
+      const lineLength = formatSkillCatalogLine({
+        name: "skill-0",
+        description: "d".repeat(40),
+        source: "global",
+      }).length;
+      let checked = 0;
+      // Sweep every packing boundary and a byte either side of it.
+      for (let rows = 2; rows <= 12; rows++) {
+        for (const delta of [-1, 0, 1]) {
+          const maxChars = rows * (lineLength + 1) + delta;
+          const section = buildSkillCatalogSection(records, { maxChars });
+          if (section.entries.length < 2) continue;
+          const rendered = [
+            ...section.entries.map(formatSkillCatalogLine),
+            ...(section.dropped > 0
+              ? [formatSkillCatalogOmittedLine(section.dropped)]
+              : []),
+          ].join("\n");
+          expect(rendered.length).toBeLessThanOrEqual(maxChars);
+          checked++;
+        }
+      }
+      expect(checked).toBeGreaterThan(20);
+    });
+
+    it("still marks the truncation when the budget holds only the force-kept row", () => {
+      const records = Array.from({ length: 40 }, (_, i) =>
+        record(`skill-${i}`, "d".repeat(50)),
+      );
+      const lineLength = formatSkillCatalogLine({
+        name: "skill-0",
+        description: "d".repeat(50),
+        source: "global",
+      }).length;
+      // Room for one row but not for a second one plus the marker.
+      const section = buildSkillCatalogSection(records, {
+        maxChars: lineLength + 10,
+      });
+      expect(section.entries).toHaveLength(1);
+      expect(section.dropped).toBe(39);
+      // Deliberate: the marker is worth more than the soft budget here.
+      // A one-row catalog that does not say it is clipped is the exact
+      // failure #466 is about.
+      const rendered = [
+        formatSkillCatalogLine(section.entries[0]!),
+        formatSkillCatalogOmittedLine(section.dropped),
+      ].join("\n");
+      expect(rendered).toContain("39 more installed skills not shown");
+    });
+
     it("a catalog that only just fits gets no marker and no lost entry", () => {
       const records = [record("first", "one"), record("second", "two")];
       const exact =
