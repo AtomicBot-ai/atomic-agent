@@ -8,6 +8,11 @@ import {
   runGitRemote,
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
+import {
+  FETCH_REPORT_LIMITS,
+  NO_PROGRESS,
+  shapeFetchReport,
+} from "./git-remote-report.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 const TOOL = "os.git.fetch";
@@ -39,7 +44,7 @@ export function buildOsGitFetchTool(
       });
       requireGitSuccess(TOOL, root);
       const repoRoot = root.stdout.trim();
-      const args = ["fetch"];
+      const args = ["fetch", NO_PROGRESS];
       if (prune) args.push("--prune");
       if (all) args.push("--all");
       else args.push(remote);
@@ -65,13 +70,15 @@ export function buildOsGitFetchTool(
       if (result.exitCode !== 0) {
         return gitFailureResult(TOOL, result, { remote, all, prune, repoRoot });
       }
-      const report = result.stderr.trim() || "(already up to date)";
-      return compressToolResult({
-        tool: TOOL,
-        status: "ok",
-        output: `${preview}\n${report}`,
-        details: { remote: all ? null : remote, all, prune, repoRoot },
-      });
+      return compressToolResult(
+        {
+          tool: TOOL,
+          status: "ok",
+          output: `${preview}\n${shapeFetchReport(result.stderr)}`,
+          details: { remote: all ? null : remote, all, prune, repoRoot },
+        },
+        FETCH_REPORT_LIMITS,
+      );
     },
   };
 }

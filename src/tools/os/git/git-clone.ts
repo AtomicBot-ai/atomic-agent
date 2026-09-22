@@ -12,6 +12,11 @@ import {
   runGitRemote,
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
+import {
+  CLONE_REPORT_LIMITS,
+  NO_PROGRESS,
+  shapeCloneReport,
+} from "./git-remote-report.js";
 
 const TOOL = "os.git.clone";
 const CLONE_TIMEOUT_MS = 300_000;
@@ -77,7 +82,7 @@ export function buildOsGitCloneTool(
         typeof rawArgs.depth === "number" && Number.isInteger(rawArgs.depth) && rawArgs.depth > 0
           ? rawArgs.depth
           : undefined;
-      const args = ["clone"];
+      const args = ["clone", NO_PROGRESS];
       if (branch) args.push("--branch", branch);
       if (depth !== undefined) args.push("--depth", String(depth));
       args.push("--", url, dest);
@@ -103,12 +108,15 @@ export function buildOsGitCloneTool(
       if (result.exitCode !== 0) {
         return gitFailureResult(TOOL, result, { url, dest });
       }
-      return compressToolResult({
-        tool: TOOL,
-        status: "ok",
-        output: `${preview}\n${result.stderr.trim() || "cloned"}`,
-        details: { url, dest, branch: branch ?? null, depth: depth ?? null },
-      });
+      return compressToolResult(
+        {
+          tool: TOOL,
+          status: "ok",
+          output: `${preview}\n${shapeCloneReport(result.stderr)}`,
+          details: { url, dest, branch: branch ?? null, depth: depth ?? null },
+        },
+        CLONE_REPORT_LIMITS,
+      );
     },
   };
 }

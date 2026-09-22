@@ -8,6 +8,11 @@ import {
   runGitRemote,
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
+import {
+  NO_PROGRESS,
+  PULL_REPORT_LIMITS,
+  shapePullReport,
+} from "./git-remote-report.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 const TOOL = "os.git.pull";
@@ -44,7 +49,12 @@ export function buildOsGitPullTool(
       });
       requireGitSuccess(TOOL, root);
       const repoRoot = root.stdout.trim();
-      const args = ["pull", rebase ? "--rebase" : "--ff-only", remote];
+      const args = [
+        "pull",
+        NO_PROGRESS,
+        rebase ? "--rebase" : "--ff-only",
+        remote,
+      ];
       if (branch) args.push(branch);
       const preview = `git ${args.join(" ")}`;
       await requireGitRemoteApproval(
@@ -68,15 +78,15 @@ export function buildOsGitPullTool(
       if (result.exitCode !== 0) {
         return gitFailureResult(TOOL, result, { remote, branch, rebase, repoRoot });
       }
-      const report = [result.stdout.trim(), result.stderr.trim()]
-        .filter((s) => s.length > 0)
-        .join("\n");
-      return compressToolResult({
-        tool: TOOL,
-        status: "ok",
-        output: `${preview}\n${report || "(already up to date)"}`,
-        details: { remote, branch: branch ?? null, rebase, repoRoot },
-      });
+      return compressToolResult(
+        {
+          tool: TOOL,
+          status: "ok",
+          output: `${preview}\n${shapePullReport(result.stdout, result.stderr)}`,
+          details: { remote, branch: branch ?? null, rebase, repoRoot },
+        },
+        PULL_REPORT_LIMITS,
+      );
     },
   };
 }

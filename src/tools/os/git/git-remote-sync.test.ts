@@ -141,6 +141,34 @@ describe("os.git remote sync tools", () => {
     expect(prompts[1]?.preview).toContain(`remote: ${bare}`);
   });
 
+  it("a pull reports what it did to the tree even when the diffstat is long", async () => {
+    const on = options(true);
+    await runGitRaw(work, ["remote", "add", "origin", bare]);
+    await runGitRaw(work, ["push", "-q", "-u", "origin", "main"]);
+
+    // Forty files is more diffstat rows than the compressor's default
+    // twelve-line tail, which is the case the old report got wrong: the
+    // rows pushed `Updating`, `Fast-forward` and the totals line — the
+    // only three lines anyone reads — out of the stored summary.
+    const other = join(scratch, "other");
+    await runGitRaw(scratch, ["clone", "-q", bare, other]);
+    await runGitRaw(other, ["config", "user.name", "Other"]);
+    await runGitRaw(other, ["config", "user.email", "other@test"]);
+    for (let i = 0; i < 40; i += 1) {
+      await writeRepoFile(other, `file-${i}.txt`, `${i}\n`);
+    }
+    await runGitRaw(other, ["add", "."]);
+    await runGitRaw(other, ["commit", "-q", "-m", "forty files"]);
+    await runGitRaw(other, ["push", "-q", "origin", "main"]);
+
+    const pulled = await buildOsGitPullTool(on).run({}, makeCtx(work));
+    expect(pulled.status).toBe("ok");
+    expect(pulled.summary).toContain("Fast-forward");
+    expect(pulled.summary).toMatch(/40 files changed/);
+    // And the refs that moved, which live on the other stream.
+    expect(pulled.summary).toContain("-> origin/main");
+  });
+
   it("a denied approval stops the push and nothing reaches the remote", async () => {
     await runGitRaw(work, ["remote", "add", "origin", bare]);
     await expect(
