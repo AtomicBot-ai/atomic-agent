@@ -136,6 +136,22 @@ describe("shapePullReport", () => {
     expect(shapePullReport("", "")).toBe("(already up to date)");
   });
 
+  it("keeps the verdict of a rebase pull, which speaks only on stderr", () => {
+    // Captured from a real `git pull --no-progress --rebase`: stdout is
+    // empty, and the `Rebasing (n/m)` counter overwrites itself in place
+    // — so the stored summary used to read "Rebasing (1/1)Successfully
+    // rebased…" with the two glued together.
+    const rebased = [
+      "From /tmp/remote.git",
+      "   9930143..4eaa54d  main       -> origin/main",
+      "Rebasing (1/1)\rSuccessfully rebased and updated refs/heads/main.",
+    ].join("\n");
+    const report = shapePullReport("", rebased);
+    expect(report).toContain("Successfully rebased and updated refs/heads/main.");
+    expect(report).toContain("9930143..4eaa54d  main       -> origin/main");
+    expect(report).not.toContain("Rebasing (1/1)");
+  });
+
   it("fits the budget it asks for", () => {
     const summary = summaryOf("git pull --no-progress --ff-only origin", shapePullReport(stdout, stderr), PULL_REPORT_LIMITS);
     expect(summary.split("\n").length).toBeLessThanOrEqual(PULL_REPORT_LIMITS.maxTailLines!);
