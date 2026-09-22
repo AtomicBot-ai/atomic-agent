@@ -107,7 +107,9 @@ const PROMPT_COMPRESSOR_OPTIONS = {
  * name and argument names. An ordinary row (40-100 chars) leaves
  * all 100 rows `clampLimit` allows well inside 8_000. Tail
  * truncation is off, so an overflowing listing drops its LAST rows
- * and `details.count`/`total` still report the real size.
+ * and says so with the `… [truncated]` marker and `truncated:
+ * true`. `details.count` is not that signal: it is `rows.length`,
+ * taken before the compressor runs.
  */
 const LIST_COMPRESSOR_OPTIONS = {
   maxSummaryLength: RENDER_DELIVERABLE_CHARS,

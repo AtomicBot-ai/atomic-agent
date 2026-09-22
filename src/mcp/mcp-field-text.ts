@@ -45,10 +45,26 @@ const INVISIBLE = /[\u200b-\u200f\u2060-\u2064\ufeff]+/g;
 /**
  * A value the model may have to pass back, made safe to put on a
  * line and otherwise untouched. Never shortened.
+ *
+ * Deliberately no `.trim()`: `String.prototype.trim` strips the
+ * ECMAScript WhiteSpace set, which includes U+FEFF, U+00A0, U+1680,
+ * U+2000-200A, U+202F, U+205F and U+3000 — so trimming here would
+ * silently eat the very zero-width characters this function
+ * promises to keep, and `flattenKey("\ufeffsummarize_doc")` would
+ * hand back a name the server does not have. Unreachable for an
+ * RFC 3986 URI, which excludes all of them, but reachable for a
+ * prompt name from a server that leaked a BOM out of a file.
+ *
+ * One residue, unchanged from `main`: `mcp.resource.list` trims the
+ * assembled ROW, so a uri that begins with a whitespace-class
+ * character still loses it. Left alone because the row trim is what
+ * removes the trailing separator when a resource has no mime, name
+ * or description, and rebuilding it would change the spacing of
+ * every row for no real gain.
  */
 export function flattenKey(text: unknown): string {
   if (typeof text !== "string") return "";
-  return text.replace(LINE_BREAKING, " ").trim();
+  return text.replace(LINE_BREAKING, " ");
 }
 
 /**

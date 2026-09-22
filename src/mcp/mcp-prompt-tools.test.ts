@@ -214,6 +214,48 @@ describe("mcp.prompt.list", () => {
     expect(result.summary).toContain("first line second line");
   });
 
+  // `String.prototype.trim` strips the ECMAScript WhiteSpace set,
+  // which includes U+FEFF — so trimming a key would eat a BOM a
+  // server leaked into an identifier and hand back a name it does
+  // not have. `flattenKey` therefore does not trim.
+  it("keeps a BOM in a prompt name so it still resolves", async () => {
+    const bomName = "\ufeffsummarize_doc";
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [{ server: "docs", name: bomName }],
+        },
+        client: {
+          isConnected: true,
+          getPrompt: async (name: string) => {
+            if (name !== bomName) throw new Error("unknown prompt");
+            return {
+              messages: [
+                { role: "user", content: { type: "text", text: "ok" } },
+              ],
+            };
+          },
+        },
+      },
+    });
+    const listed = await buildMcpPromptListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    const row = listed.summary.split("\n")[0]!;
+    const nameFromListing = row.slice(0, row.indexOf("("));
+    expect(nameFromListing).toBe(bomName);
+    const got = await buildMcpPromptGetTool(mgr).run(
+      { server: "docs", name: nameFromListing },
+      ctx,
+    );
+    expect(got.status).toBe("ok");
+    expect(got.summary).toContain("ok");
+  });
+
   it("emits a placeholder when the prompt list is empty", async () => {
     const mgr = makeManager({
       docs: {

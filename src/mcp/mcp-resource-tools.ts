@@ -47,9 +47,12 @@ const MAX_READ_CHARS = 16_000;
  * Row bound is therefore `uri + 227`: the clamped part is
  * 1 + (2 + 40) + 1 + 60 + 3 + 120 = 227 chars. An unclamped key can
  * still push a long catalog past the listing budget, but tail
- * truncation is off, so that degrades to "later rows dropped" —
- * visible to the model as `details.count` < `details.total` — which
- * is strictly better than silently handing it dead keys.
+ * truncation is off, so that degrades to "later rows dropped",
+ * which the `… [truncated]` marker at the end of the summary and
+ * `truncated: true` both announce. (Not `details.count` — that is
+ * `rows.length`, counted before the compressor runs, so it always
+ * equals what was offered, never what survived.) Dropping later
+ * rows visibly beats silently handing the model dead keys.
  */
 const RESOURCE_FIELD_CHARS = {
   mimeType: 40,
@@ -138,8 +141,8 @@ const READ_COMPRESSOR_OPTIONS = {
  * the `uri` costs. An ordinary row (70-120 chars) leaves all 100
  * rows `clampLimit` allows well inside 8_000. Tail truncation is
  * off, so a catalog of unusually long URIs overflows by dropping
- * its LAST rows, and `details.count`/`total` still tell the model
- * how many there were.
+ * its LAST rows; the `… [truncated]` marker and `truncated: true`
+ * are what tell the model it happened.
  */
 const LIST_COMPRESSOR_OPTIONS = {
   maxSummaryLength: RENDER_DELIVERABLE_CHARS,
