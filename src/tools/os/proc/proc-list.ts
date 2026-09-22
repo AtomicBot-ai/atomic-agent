@@ -24,14 +24,16 @@ interface ListArgs {
 
 const DEFAULT_LIMIT = 500;
 /**
- * Estimated width of one rendered `formatTable` row: ~48 chars of
- * padded columns (8 + 8 + 18 + 5 + 5 plus separators) and then the
- * command, which on POSIX is whatever `ps -eo comm` prints — a full
- * executable path on macOS, measured here at ~95 chars on average
- * over 1 080 processes, 290 at the widest. Nothing clamps it, so 160
- * is an average-case estimate, not a ceiling.
+ * Width of one rendered `formatTable` row: ~48 chars of padded columns
+ * (8 + 8 + 18 + 5 + 5 plus separators) and then the command, which on
+ * POSIX is whatever `ps -eo comm` prints — a full executable path on
+ * macOS. Measured over 1 067 processes: 89 chars on average, 289 at
+ * the widest, so 48 + 289 rounded up covers even the widest row. A
+ * filtered call selects exactly the long-path rows, which is why this
+ * is sized for the worst case and not the mean; the shared ceiling is
+ * what keeps a 500-row table from spending it.
  */
-const ROW_CHARS = 160;
+const ROW_CHARS = 340;
 
 export const osProcListTool: ToolDefinition = {
   name: "os.proc.list",
@@ -67,10 +69,10 @@ export const osProcListTool: ToolDefinition = {
       // actually returns — at most `limit`, which is DEFAULT_LIMIT
       // (500) unless the caller raised it — at ROW_CHARS each. This is
       // the one listing here that a default call can outgrow: 500 rows
-      // want 80 KB and land on the 8 000-char render ceiling, which
-      // carries the header plus ~55 real rows. That is ~11x what the
-      // defaults left, and a `filter` (which is how this tool is meant
-      // to be used) fits whole.
+      // ask for 170 KB and land on the ceiling, which measured out at
+      // the header plus 84 real rows (7 999 chars) against the 2 rows
+      // the compressor defaults left. A `filter` narrow enough to be
+      // useful stays well under the ceiling and is not cut at all.
       listingResultCaps(limited.length, ROW_CHARS),
     );
   },

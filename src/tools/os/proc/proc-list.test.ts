@@ -53,10 +53,30 @@ describe("os.proc.list", () => {
     expect(lines[0]).toMatch(/^PID\s+PPID\s+USER\s+CPU%\s+MEM%\s+COMMAND$/);
     expect(result.summary.length).toBeGreaterThan(385);
     // Rows the old tail would have cut: the 13th row counted from the
-    // top is outside the last twelve of a 100-row table.
+    // top is outside the last twelve of a 100-row table. Match the row
+    // start, so a PID cannot be satisfied by a PPID column or by a run
+    // of digits inside a command path.
     const processes = result.details.processes as { pid: number }[];
     expect(lines.length).toBeGreaterThan(13);
-    expect(result.summary).toContain(String(processes[12]!.pid));
-    expect(result.summary).toContain(String(processes[0]!.pid));
+    const startsWithPid = (pid: number) =>
+      lines.some((l) => new RegExp(`^${pid}\\s`).test(l));
+    expect(startsWithPid(processes[0]!.pid)).toBe(true);
+    expect(startsWithPid(processes[12]!.pid)).toBe(true);
+  });
+
+  // Small listings must not come out worse than they did before the
+  // caps: a filter narrow enough to be useful is never cut, whatever
+  // the length of the matched command paths.
+  it("does not truncate a narrow filtered listing", async () => {
+    const result = await osProcListTool.run(
+      { filter: process.execPath },
+      makeCtx(),
+    );
+    const returned = result.details.returned as number;
+    expect(returned).toBeGreaterThan(0);
+    if (returned > 20) return;
+    expect(result.truncated).toBe(false);
+    expect(result.summary).not.toContain("[truncated]");
+    expect(result.summary).toContain(process.execPath);
   });
 });

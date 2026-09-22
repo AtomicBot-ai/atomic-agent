@@ -56,20 +56,31 @@ export interface ListingResultCaps {
  *
  * 8 000 is not a taste call: it is `TOOL_RESULT_RENDER_CAP_CHARS`
  * (src/session/conversation-turn.ts), the cap `renderToolResultBody`
- * puts on every tool_result body — including the inference that
- * consumes the result. The only escapes are
- * `TOOLS_FULL_BODY_WHEN_FRESH` (`os.http.request` alone), the fresh
- * gog-shell case and `fusion.delegate`; no listing tool is in any of
- * them. A `maxSummaryLength` above 8 000 is therefore a dead number —
- * the surplus is stored on the turn, re-clipped on every render, and
- * never reaches the model. `MCP_COMPRESSOR_OPTIONS` lands on exactly
- * 8 000 for the same reason.
+ * puts on a tool_result body on the inference that consumes it. A
+ * `maxSummaryLength` above 8 000 would be a dead number — the surplus
+ * would be stored on the turn, re-clipped on every render, and never
+ * reach the model. `MCP_COMPRESSOR_OPTIONS` lands on exactly 8 000 for
+ * the same reason.
  *
- * Raising this means adding these tools to
- * `TOOLS_FULL_BODY_WHEN_FRESH`, which is a prompt-budget policy call,
- * not a bug fix.
+ * It is a ceiling, not a target: only a large listing reaches it, and
+ * the listing tools are in `TOOLS_FULL_BODY_WHEN_FRESH` so that a
+ * result this wide is paid for once, on the turn that consumes it, and
+ * then falls back to `TOOL_RESULT_HISTORY_CAP_CHARS` (400) for the
+ * rest of the session.
  */
 export const MAX_LISTING_SUMMARY_CHARS = 8_000;
+
+/**
+ * Floor under any listing budget, in characters.
+ *
+ * 400 is `DEFAULTS.maxSummaryLength` in `result-compressor.ts`, so the
+ * floor says: a listing is never given LESS room than it had before
+ * this helper existed. Without it a row-derived budget can land under
+ * the default for a small listing — one matched process with a long
+ * executable path, or a clean `os.git.status` on a long branch name —
+ * and the fix would be a regression exactly where there was no bug.
+ */
+export const MIN_LISTING_SUMMARY_CHARS = 400;
 
 /**
  * Bounds for a listing of at most `rows` rows whose rows run to about
@@ -79,15 +90,32 @@ export const MAX_LISTING_SUMMARY_CHARS = 8_000;
  * (`# branch:`, the repo slug, the `PID PPID USER …` column row) so a
  * full listing never spends its last characters on the header and
  * drops a row, and so a header-only listing still has room. The result
- * is clamped to `MAX_LISTING_SUMMARY_CHARS`: bounded, never unbounded.
+ * is then held between `MIN_LISTING_SUMMARY_CHARS` and
+ * `MAX_LISTING_SUMMARY_CHARS`: never worse than the compressor's own
+ * default, and bounded above, never unbounded.
+ *
+ * A non-finite argument falls back to the floor rather than producing
+ * a `NaN` cap: `joined.length > NaN` is false, which would store the
+ * summary uncapped. No live caller can reach it — every `limit` parse
+ * path rejects non-finite input and the row counts are array lengths —
+ * but this is shared code and the guard is one line.
  */
 export function listingResultCaps(
   rows: number,
   charsPerRow: number,
 ): ListingResultCaps {
+  if (!Number.isFinite(rows) || !Number.isFinite(charsPerRow)) {
+    return {
+      maxSummaryLength: MIN_LISTING_SUMMARY_CHARS,
+      maxTailLines: Number.MAX_SAFE_INTEGER,
+    };
+  }
   const budget = (Math.max(0, Math.floor(rows)) + 1) * charsPerRow;
   return {
-    maxSummaryLength: Math.min(MAX_LISTING_SUMMARY_CHARS, budget),
+    maxSummaryLength: Math.min(
+      MAX_LISTING_SUMMARY_CHARS,
+      Math.max(MIN_LISTING_SUMMARY_CHARS, budget),
+    ),
     // Number.MAX_SAFE_INTEGER, not a big number: `extractTail` keeps
     // the LAST N lines, which is exactly backwards for an ordered
     // list. Any finite N would eventually eat the newest rows.

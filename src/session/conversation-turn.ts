@@ -173,6 +173,27 @@ const GOG_TOOL_RESULT_RENDER_CAP_CHARS = 16_000;
  */
 const TOOLS_FULL_BODY_WHEN_FRESH: ReadonlySet<string> = new Set([
   "os.http.request",
+  // The listing tools (see src/compressor/listing-caps.ts). Their
+  // summaries are an ordered list of rows: the model needs the rows on
+  // the turn it is choosing a commit, a PR, a branch, a process or a
+  // tab from, and a header plus the newest few is enough afterwards
+  // for "what did I look at?". Without this entry a wide listing —
+  // `os.proc.list` at its default `limit` runs to the full 8 000
+  // chars, ~2 000 tokens — would sit in `### conversation` at that
+  // size for the rest of the session; with it, that width is paid for
+  // once and the standing cost drops to TOOL_RESULT_HISTORY_CAP_CHARS,
+  // the same 400 chars these results cost before the caps changed.
+  // `os.shell.run` is deliberately absent: its `{"jobs": true}` form
+  // is a listing, but the tool's other forms are not, and its render
+  // budget is decided below.
+  "os.git.log",
+  "os.git.status",
+  "os.git.branch",
+  "os.proc.list",
+  "os.window.list",
+  "browser.tabs",
+  "github.pr.list",
+  "github.issue.list",
 ]);
 
 /**
