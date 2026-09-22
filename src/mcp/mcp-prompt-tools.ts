@@ -42,6 +42,33 @@ const PROMPT_COMPRESSOR_OPTIONS = {
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
+/**
+ * Per-call compressor bounds for `mcp.prompt.list`.
+ *
+ * Same defect as `mcp.resource.list`, same shape: an ORDERED catalog,
+ * one template per line, already bounded by `clampLimit` at
+ * `MAX_LIST_LIMIT` rows. The defaults cut it on both axes and both
+ * run backwards here — `maxTailLines: 12` keeps the LAST twelve rows
+ * of up to a hundred and `maxSummaryLength: 400` slices those to
+ * ~385 chars, so a server's first-listed (usually its primary)
+ * templates were the ones dropped. This is the catalog the model
+ * picks a `mcp.prompt.get` argument from: a name it never saw is a
+ * name it cannot call, and `details` reporting `total: 100` next to
+ * twelve visible rows gives it no way to reach the rest.
+ *
+ * Budget: one row is `<name>(<args>) — <description>`. Prompt names
+ * and argument lists are identifiers, so allowing 160 chars per row
+ * (name ~64, a handful of comma-joined argument names ~96, plus a
+ * one-line description) across the `MAX_LIST_LIMIT` rows the tool
+ * already enforces gives 100 × 160 = 16_000. Tail truncation is
+ * disabled so an over-budget listing is cut from the end, keeping
+ * the first rows.
+ */
+const LIST_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: MAX_LIST_LIMIT * 160,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.prompt.list",
@@ -70,17 +97,20 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
         const desc = p.description ? ` — ${p.description}` : "";
         return `${p.name}(${argsList})${desc}`;
       });
-      return compressToolResult({
-        tool: "mcp.prompt.list",
-        status: "ok",
-        output:
-          lines.length === 0 ? `(no prompts on ${server})` : lines.join("\n"),
-        details: {
-          server,
-          count: rows.length,
-          total: catalog.prompts.length,
+      return compressToolResult(
+        {
+          tool: "mcp.prompt.list",
+          status: "ok",
+          output:
+            lines.length === 0 ? `(no prompts on ${server})` : lines.join("\n"),
+          details: {
+            server,
+            count: rows.length,
+            total: catalog.prompts.length,
+          },
         },
-      });
+        LIST_COMPRESSOR_OPTIONS,
+      );
     },
   };
 }

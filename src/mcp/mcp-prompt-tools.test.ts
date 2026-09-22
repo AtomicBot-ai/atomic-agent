@@ -66,6 +66,38 @@ describe("mcp.prompt.list", () => {
     expect(result.summary).toContain("Summarise a doc.");
   });
 
+  // This listing is the catalog the model picks a `mcp.prompt.get`
+  // name from, and it carries no header line — its first rows are
+  // what a server leads with. The compressor defaults kept the LAST
+  // 12 of up to 100 rows and sliced them to 385 chars, so a template
+  // the model never saw was a template it could not call.
+  it("keeps the first rows of a 100-prompt catalog", async () => {
+    const prompts = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      name: `prompt_${i}`,
+      description: `template number ${i} in catalog order`,
+      arguments: [
+        { name: "uri", required: true },
+        { name: "length", required: false },
+      ],
+    }));
+    const mgr = makeManager({
+      docs: { catalog: { server: "docs", tools: [], resources: [], prompts } },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("prompt_0(uri, length?)");
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("prompt_1(uri, length?)");
+    expect(result.summary).toContain("prompt_50(uri, length?)");
+    expect(result.summary).toContain("prompt_99(uri, length?)");
+    expect(result.summary).not.toContain("[omitted");
+    expect(result.summary.split("\n")).toHaveLength(100);
+    expect(result.summary.length).toBeGreaterThan(400);
+    expect(result.details?.count).toBe(100);
+  });
+
   it("emits a placeholder when the prompt list is empty", async () => {
     const mgr = makeManager({
       docs: {

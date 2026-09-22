@@ -92,6 +92,63 @@ describe("mcp.resource.list", () => {
     expect(def.details?.count).toBe(30);
   });
 
+  // The listing is an ordered catalog and carries no header line, so
+  // its first rows ARE its header: the index / README / entry-point
+  // resources a server lists first. The compressor defaults kept the
+  // LAST 12 rows of up to 100 and sliced them to 385 chars, which is
+  // backwards for a catalog — and the tool takes no offset argument,
+  // so the dropped rows were unreachable.
+  it("keeps the first rows of a 100-resource catalog", async () => {
+    const resources = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      uri: `file:///r${i}.md`,
+      name: `Doc ${i}`,
+      description: `resource number ${i} in catalog order`,
+      mimeType: "text/markdown",
+    }));
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], prompts: [], resources },
+      },
+    });
+    const tool = buildMcpResourceListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("file:///r0.md");
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("file:///r1.md");
+    expect(result.summary).toContain("file:///r50.md");
+    expect(result.summary).toContain("file:///r99.md");
+    expect(result.summary).not.toContain("[omitted");
+    expect(result.summary.split("\n")).toHaveLength(100);
+    expect(result.summary.length).toBeGreaterThan(400);
+    // `details` already reported 100; the summary must agree.
+    expect(result.details?.count).toBe(100);
+  });
+
+  // Over the derived budget the one remaining cut is head-anchored,
+  // so the rows the model keeps are still the first ones.
+  it("cuts an over-budget catalog from the end, not the start", async () => {
+    const resources = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      uri: `file:///r${i}.md`,
+      description: "d".repeat(400),
+    }));
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], prompts: [], resources },
+      },
+    });
+    const tool = buildMcpResourceListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.truncated).toBe(true);
+    expect(result.summary.startsWith("file:///r0.md")).toBe(true);
+    expect(result.summary).not.toContain("file:///r99.md");
+    expect(result.summary.length).toBeGreaterThan(20_000);
+    expect(result.summary).toContain("… [truncated]");
+  });
+
   it("emits a placeholder line when the resource list is empty", async () => {
     const mgr = makeManager({
       docs: {

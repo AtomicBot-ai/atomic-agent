@@ -45,6 +45,37 @@ const READ_COMPRESSOR_OPTIONS = {
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
+/**
+ * Per-call compressor bounds for `mcp.resource.list`.
+ *
+ * The listing is an ORDERED catalog, one resource per line, already
+ * bounded by `clampLimit` at `MAX_LIST_LIMIT` rows. On the defaults
+ * it was cut on both axes at once, and both cuts run backwards for a
+ * listing: `maxTailLines: 12` keeps the LAST twelve rows of up to a
+ * hundred, and `maxSummaryLength: 400` then slices those to ~385
+ * chars. A 100-resource server therefore advertised its final dozen
+ * entries and nothing else — and since the rows are emitted in
+ * catalog order, the resources a server lists first (its index, its
+ * README, its entry points) were exactly the ones discarded. The
+ * tool takes no offset argument, so re-listing returns the same
+ * twelve; `details` carries `count`/`total`, so the model could see
+ * that 100 existed while being shown 12, with no way to ask for the
+ * rest.
+ *
+ * Budget: one row is `<uri> [mime] name — description`. Allowing a
+ * generous 240 chars per row (URI ~120, mime ~40, name ~40, plus a
+ * one-line description) across the `MAX_LIST_LIMIT` rows the tool
+ * already enforces gives 100 × 240 = 24_000 — the same ceiling
+ * `os.email.inbox` derives for its 100-message listing
+ * (`tools/os/email.ts`). Tail truncation is disabled so that when a
+ * listing does exceed the budget the cut stays head-anchored and the
+ * first rows survive.
+ */
+const LIST_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: MAX_LIST_LIMIT * 240,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.resource.list",
@@ -72,17 +103,22 @@ export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
         const desc = r.description ? ` — ${r.description}` : "";
         return `${r.uri} ${mime}${name}${desc}`.trim();
       });
-      return compressToolResult({
-        tool: "mcp.resource.list",
-        status: "ok",
-        output:
-          lines.length === 0 ? `(no resources on ${server})` : lines.join("\n"),
-        details: {
-          server,
-          count: rows.length,
-          total: catalog.resources.length,
+      return compressToolResult(
+        {
+          tool: "mcp.resource.list",
+          status: "ok",
+          output:
+            lines.length === 0
+              ? `(no resources on ${server})`
+              : lines.join("\n"),
+          details: {
+            server,
+            count: rows.length,
+            total: catalog.resources.length,
+          },
         },
-      });
+        LIST_COMPRESSOR_OPTIONS,
+      );
     },
   };
 }
