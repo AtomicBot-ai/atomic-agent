@@ -265,11 +265,25 @@ function describeJobState(record: ShellJobRecord): string {
 }
 
 /**
- * Estimated width of one rendered job line: `job N: ` plus a 60-char
- * command head (`headOfCommand` does clamp that one) plus the state
- * sentence and its `{"wait": n}` hint.
+ * Width of one rendered job line, derived rather than guessed:
+ * `job 123: ` (up to 9) + the command head, which `headOfCommand`
+ * really does clamp to 60, + ` — ` (3) + the longest state sentence
+ * `describeJobState` can produce (`exited with signal SIGKILL after
+ * 1h 2m — {"wait": 123} collects the output`, ~76). 9 + 60 + 3 + 76 =
+ * 148, rounded to 150, so a full listing is never cut.
+ *
+ * Note what this knob does NOT do: the stored size of this result is
+ * bound by its CONTENT, not by the budget. The registry holds at most
+ * `maxJobs` running plus the finished records it keeps — 23 rows in
+ * the default configuration — so the worst case is ~3.4 KB whatever
+ * number goes here, and a typical three-job session is ~600 chars. It
+ * matters because `os.shell.run` is not in `TOOLS_FULL_BODY_WHEN_FRESH`
+ * (only one of its forms is a listing), so unlike the other eight
+ * sites this one pays its width on every later turn rather than once.
+ * PR #470 gives `os.shell.run` its own fresh/aged split, after which
+ * this becomes transient too.
  */
-const JOB_CHARS = 200;
+const JOB_CHARS = 150;
 
 /** `{jobs: true}`: this session's jobs — id, command head, started, state. */
 export function listShellJobs(ctx: ShellJobCallContext): CompressedToolResult {

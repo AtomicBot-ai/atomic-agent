@@ -88,8 +88,8 @@ export function buildBrowserTabsTool(
         // path has no `worldSnapshot` escape hatch — what the
         // compressor cuts, the model cannot get back except by calling
         // again. Budget the tabs the backend just reported at
-        // TAB_CHARS each; ~15 tabs fit the 8 000-char render ceiling,
-        // against the three the defaults left.
+        // TAB_CHARS each; ~7 tabs fit the shared ceiling, against the
+        // three the defaults left.
         listingResultCaps(result.tabs.length, TAB_CHARS),
       );
     },

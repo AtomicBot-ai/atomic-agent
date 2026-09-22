@@ -87,9 +87,9 @@ export const osGitStatusTool: ToolDefinition = {
       // branch header first and then the earliest paths. The tool has
       // no `limit` of its own — the row count is whatever git reported
       // — so budget the rows we are about to print at PATH_CHARS each.
-      // ~28 dirty paths fit the 8 000-char render ceiling; past that
-      // the header and the first paths survive, which is the right end
-      // of a status.
+      // ~14 dirty paths fit the shared ceiling; past that the header
+      // and the first paths survive, which is the right end of a
+      // status.
       listingResultCaps(entries.length, PATH_CHARS),
     );
   },

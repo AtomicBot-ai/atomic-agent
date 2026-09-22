@@ -84,10 +84,10 @@ export const osGitLogTool: ToolDefinition = {
       // lines on each commit, so the default 12-line tail keeps the
       // OLDEST four and the 385-char head-slice then leaves ~2. Budget
       // the commits we actually asked git for: `limit` (20 by default,
-      // 1000 max) x COMMIT_CHARS — a default call wants ~5 KB and gets
-      // it; `limit: 1000` wants 240 KB and gets the 8 000 chars the
-      // render cap can deliver (~60-70 real commits, still ~15x the
-      // four the defaults left).
+      // 1000 max) x COMMIT_CHARS — a default call asks for ~5 KB and
+      // is held to the shared ceiling; `limit: 1000` asks for 240 KB
+      // and gets the ceiling too, which measured out at ~40 real
+      // commits, ten times the four the defaults left.
       listingResultCaps(limit, COMMIT_CHARS),
     );
   },

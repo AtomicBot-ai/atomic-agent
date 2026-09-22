@@ -94,9 +94,9 @@ export const osGitBranchTool: ToolDefinition = {
       // `# current: …` is line 1 and is the first thing the default
       // 12-line tail drops. No `limit` here either — `for-each-ref`
       // returns every matching ref — so budget the refs we are about
-      // to print at BRANCH_CHARS each. ~33 refs fit the 8 000-char
-      // render ceiling; a repo with more should be narrowed with
-      // `pattern` or `contains`, which the description already offers.
+      // to print at BRANCH_CHARS each. ~16 refs fit the shared
+      // ceiling; a repo with more should be narrowed with `pattern` or
+      // `contains`, which the description already offers.
       listingResultCaps(branches.length, BRANCH_CHARS),
     );
   },

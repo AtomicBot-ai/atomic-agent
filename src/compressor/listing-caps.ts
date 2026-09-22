@@ -1,7 +1,13 @@
 /**
  * Per-call compressor bounds for tools whose output is an ORDERED
- * LISTING: an optional header line followed by one row per record,
- * newest (or most relevant) first.
+ * LISTING: an optional header line followed by one row per record, in
+ * an order the tool chose. Several are newest-first (`os.git.log`, the
+ * two `github` lists); the rest are simply not last-N-first —
+ * `os.git.branch` is alphabetical (`for-each-ref` with no `--sort`),
+ * `os.window.list` is whatever order the OS emits, and
+ * `ShellJobRegistry.list` is oldest-first. What they have in common is
+ * that the END of the list is the wrong thing to keep and line 1 is
+ * often a header.
  *
  * `compressToolResult`'s runtime-wide defaults are tuned for log-tail
  * tools (`os.shell.run`, `os.fs.grep`): keep the LAST 12 non-blank
@@ -54,21 +60,42 @@ export interface ListingResultCaps {
 /**
  * Hard ceiling on any single listing result, in characters.
  *
- * 8 000 is not a taste call: it is `TOOL_RESULT_RENDER_CAP_CHARS`
- * (src/session/conversation-turn.ts), the cap `renderToolResultBody`
- * puts on a tool_result body on the inference that consumes it. A
- * `maxSummaryLength` above 8 000 would be a dead number — the surplus
- * would be stored on the turn, re-clipped on every render, and never
- * reach the model. `MCP_COMPRESSOR_OPTIONS` lands on exactly 8 000 for
- * the same reason.
+ * The hard limit above this one is `TOOL_RESULT_RENDER_CAP_CHARS`
+ * (8 000, src/session/conversation-turn.ts): `renderToolResultBody`
+ * clips every tool_result body to it, so anything stored above 8 000 is
+ * a dead number the model never sees. That is the ceiling on what CAN
+ * be delivered. This constant is lower, because of what a delivered
+ * listing costs the pack.
+ *
+ * `packConversation` prices each turn with `tokenCostForTurn`, which
+ * renders it with the same `inCurrentMacroTurn` flag the prompt will
+ * use — so a FRESH listing is priced at its full width, not at the 400
+ * chars it falls back to once aged. And the cut that pricing forces is
+ * persisted: `packStart` is carried back through `session-state` and
+ * returns as `heldPackStart`, a floor the packer never walks back
+ * ("those turns are already gone from the prompt"). The turns a wide
+ * listing evicts do not come back when it ages.
+ *
+ * The arithmetic that sets the number: `estimateTokens` is
+ * `chars / 3.6`, so 8 000 chars is 2 222 tokens. On a small local
+ * window (8 192) the conversation section is ~4 156 tokens, so one
+ * argument-free `os.proc.list` would take 53% of it and permanently
+ * evict most of the transcript. 4 000 chars is 1 111 tokens — still
+ * ten times the 111 tokens a listing cost before this helper existed,
+ * still ~40 process rows or ~40 commits, and a quarter of that window
+ * rather than half. `config-schema.ts` already names this hazard for
+ * `os.http.request`, a tool the model calls rarely; these nine it calls
+ * constantly and with no arguments.
  *
  * It is a ceiling, not a target: only a large listing reaches it, and
  * the listing tools are in `TOOLS_FULL_BODY_WHEN_FRESH` so that a
  * result this wide is paid for once, on the turn that consumes it, and
  * then falls back to `TOOL_RESULT_HISTORY_CAP_CHARS` (400) for the
- * rest of the session.
+ * rest of the session. On a 200k cloud window the whole question is
+ * invisible; this number is set for the local/Fusion path, where it is
+ * not.
  */
-export const MAX_LISTING_SUMMARY_CHARS = 8_000;
+export const MAX_LISTING_SUMMARY_CHARS = 4_000;
 
 /**
  * Floor under any listing budget, in characters.

@@ -115,10 +115,11 @@ export function buildGithubTools(
         // Newest-first, one line per PR, with the repo slug as line 1:
         // the default 12-line tail drops the slug and the newest PRs,
         // and 385 chars then leaves three. Budget `limit` (20 by
-        // default, 100 max) rows at RECORD_CHARS. A default call wants
-        // ~6.7 KB and gets it; `limit: 100` wants 32 KB and lands on
-        // the 8 000-char render ceiling, which still carries ~80 real
-        // rows.
+        // default, 100 max) rows at RECORD_CHARS. A default call asks
+        // for ~6.7 KB and is held to the shared ceiling; `limit: 100`
+        // asks for 32 KB and lands there too, which still carries ~60
+        // real rows (a rendered row is ~65 chars, not the 320 budgeted
+        // for a maximal title).
         listingResultCaps(limit, RECORD_CHARS),
       );
     },

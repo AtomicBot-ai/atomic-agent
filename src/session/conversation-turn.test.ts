@@ -248,17 +248,27 @@ describe("conversation-turn helpers", () => {
       // the newest rows are what the session keeps.
       expect(aged.startsWith("PID      PPID")).toBe(true);
     }
-    // `os.shell.run` is deliberately not in the set: it does not take
-    // the 400-char history cut a listing tool takes.
+    // `os.shell.run` is deliberately not in the set. Membership is
+    // only observable on the AGED path — the fresh path returns the
+    // body whole either way — so this has to check the aged render.
+    // It is either untouched (this tree: the generic 8 000-char cap
+    // leaves a 5 KB summary alone) or cut from its END by #470's
+    // `capSummaryToTail`, which leads with the marker. What it is
+    // never is a head-first 400-char clip, which is what a listing
+    // tool takes and what adding "os.shell.run" to the set would
+    // produce.
     const shell = toolResultTurn({
       tool: "os.shell.run",
       status: "ok",
       summary: listing,
       at: 7,
     });
+    const agedShell = renderToolResultBody(shell, {
+      inCurrentMacroTurn: false,
+    });
     expect(
-      renderToolResultBody(shell, { inCurrentMacroTurn: true }).length,
-    ).toBeGreaterThan(450);
+      agedShell === listing || agedShell.startsWith("… [rendering-truncated"),
+    ).toBe(true);
   });
 
   it("renders a fresh fusion.delegate result whole and gives it the generic cap once aged", () => {

@@ -54,8 +54,9 @@ export const osWindowListTool: ToolDefinition = {
       // lines — so anything the compressor cuts here is unrecoverable.
       // There is no `limit` to work from (the OS decides how many
       // windows exist), so budget the lines we are about to print at
-      // TITLE_CHARS each; ~33 windows fit the 8 000-char render
-      // ceiling, and the shared clamp bounds a busier desktop.
+      // TITLE_CHARS each — counted before the trim, so an empty list
+      // still buys a line. ~16 windows fit the shared ceiling, which
+      // is what bounds a busier desktop.
       listingResultCaps(lines.length, TITLE_CHARS),
     );
   },
