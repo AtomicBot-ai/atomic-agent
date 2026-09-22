@@ -647,10 +647,14 @@ export class ToolLoopTracker {
 
   /**
    * How many consecutive vetoes of `(tool, args)` have landed, counting
-   * the one `recordOutcome` just recorded. `0` once a non-veto outcome
-   * or a different signature has reset the counter.
+   * the one `recordOutcome` just recorded. `0` once a DIFFERENT
+   * signature's outcome has been recorded — including a sibling call in
+   * the same batch, which is why this is "vetoes uninterrupted by any
+   * other recorded outcome" and not "vetoes of this call". The same
+   * counter gates `isBreakerTripped`, so whatever trips the breaker is
+   * exactly what this returns.
    *
-   * This is the only exact count of calls that were REFUSED. The
+   * It is still the only count of calls that were refused: the
    * detector's `count` is a streak of no-progress calls, most of which
    * ran, so the two are not interchangeable in user-facing wording.
    */
@@ -1219,13 +1223,15 @@ export function formatWanderingRedirect(tool: string, spread: number): string {
  * holds the recent calls, not the whole turn.
  *
  * A repeat stop's `count` is the no-progress STREAK, and most of that
- * streak ran: with the defaults the breaker trips at 3 refusals while
- * the streak has plateaued at 5, and a stop forced by a wandering
- * escalation on a repeat verdict can have refused nothing at all. So
- * the streak is never quoted as "blocked attempts". `blocked` — the
- * tracker's consecutive-veto count, including the call refused right
- * now — is the only exact refusal count; when the caller has it, the
- * reply states it, and otherwise it describes the streak as a streak.
+ * streak ran: with the defaults the breaker trips on the 4th refusal
+ * while the streak has plateaued at 5. So the streak is never quoted as
+ * "blocked attempts". `blocked` — the tracker's consecutive-veto count,
+ * including the call refused right now — is the refusal count, and the
+ * production caller always has it (a veto is recorded before the signal
+ * is built, so it is never 0 there). The `blocked`-less form is for the
+ * exported 3-argument API: it quotes no number at all, because `count`
+ * on a breaker signal is `max(streak, breakerVetoStreak)` and so is not
+ * a streak this function can honestly describe.
  */
 export function formatForcedLoopReply(
   tool: string,
@@ -1242,7 +1248,7 @@ export function formatForcedLoopReply(
   const cause =
     blocked !== undefined && blocked > 0
       ? `(stopped: \`${tool}\` kept returning the same no-progress outcome, and the same call was refused ${blocked} ${blocked === 1 ? "time" : "times"} in a row, counting this one).`
-      : `(stopped: \`${tool}\` returned the same no-progress outcome on ${count} consecutive calls, and this one was not run).`;
+      : `(stopped: \`${tool}\` kept returning the same no-progress outcome, and this call was not run).`;
   return [
     cause,
     "I could not make further progress with the repeated tool call.",
