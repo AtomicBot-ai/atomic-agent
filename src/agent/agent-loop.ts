@@ -254,6 +254,12 @@ export interface AgentLoopDependencies {
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
   /**
+   * Installed skills `skills.catalogTokenBudget` left out of
+   * `skillCatalog`, rebuilt alongside it. Renders the `### skills`
+   * truncation marker (issue #466).
+   */
+  skillCatalogDropped?: number;
+  /**
    * Invoked once per step to produce the current user-profile snapshot.
    * The resulting array is rendered into the `### profile` section of
    * the prompt tail. `undefined` suppresses the section entirely — wire
@@ -1508,6 +1514,9 @@ export class AgentLoop {
             toolDescriptors: visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
+            ...(this.deps.skillCatalogDropped !== undefined
+              ? { skillCatalogDropped: this.deps.skillCatalogDropped }
+              : {}),
             stepIndex: i,
             signal: options.signal,
             requestSignal: requestDeadline.signal,
