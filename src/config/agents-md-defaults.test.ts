@@ -95,6 +95,8 @@ const ENV_KEY_BY_DOC_KEY: Readonly<Record<string, keyof typeof ENV_DEFAULTS>> =
   {
     "agent.maxParallelToolCalls": "MAX_PARALLEL_TOOL_CALLS",
     "agent.batchToolResultCharCap": "BATCH_TOOL_RESULT_CHAR_CAP",
+    "agent.shellToolResultCharCap": "SHELL_TOOL_RESULT_CHAR_CAP",
+    "agent.shellToolResultTailLines": "SHELL_TOOL_RESULT_TAIL_LINES",
     "agent.loopWarningThreshold": "LOOP_WARNING_THRESHOLD",
     "agent.loopCriticalThreshold": "LOOP_CRITICAL_THRESHOLD",
     "agent.loopBreakerVetoStreak": "LOOP_BREAKER_VETO_STREAK",
@@ -297,7 +299,7 @@ function collectSchemaJsdoc(): Claim[] {
  * heading rename, a moved file or a narrowed regex cannot make this test
  * pass vacuously.
  */
-const MIN_CHECKED_MARKDOWN = 166;
+const MIN_CHECKED_MARKDOWN = 168;
 const MIN_CHECKED_SCHEMA = 23;
 
 function judge(claims: readonly Claim[]): {
