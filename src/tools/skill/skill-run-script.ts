@@ -13,25 +13,50 @@ import {
  * store (`toolResultTurn`), so what it drops here is gone for good —
  * `details` never reaches the transcript. At the compressor's defaults
  * (400 chars / 12 tail lines) a script log arrives as its last 12 lines
- * cut to 385 characters. Same numbers the gog check already used, so
- * this is one line to change if the caps should be tuned.
+ * cut to 385 characters.
+ *
+ * `maxSummaryLength` matches `TOOL_RESULT_RENDER_CAP_CHARS`
+ * (src/session/conversation-turn.ts) on purpose. That cap keeps the HEAD
+ * of the summary, and this tool is in none of its exemptions, so a
+ * summary kept longer than 8 000 would have its tail — the part the trim
+ * below works to preserve — thrown away again at render time. Going
+ * higher means adding `skill.run_script` to `TOOLS_FULL_BODY_WHEN_FRESH`
+ * or giving it its own render cap, which is a prompt-budget policy call.
  */
 const SCRIPT_COMPRESS_OPTIONS = {
-  maxSummaryLength: 16_000,
+  maxSummaryLength: 8_000,
   maxTailLines: 2_000,
 } as const;
 
 /**
- * Room kept inside that budget for the header and for the compressor's
- * own `key: …` signature line, so trimming the body is what binds.
+ * Room kept inside that budget for what is not body: the compressor's
+ * own `key: …` signature line (~190 chars) and the omission banner.
+ * The header is measured, not estimated, so a long skill or script name
+ * costs body rather than overflowing the budget.
  */
-const HEADER_RESERVE_CHARS = 1_024;
+const SIGNATURE_RESERVE_CHARS = 320;
 const HEADER_RESERVE_LINES = 8;
 
-const MAX_BODY_CHARS =
-  SCRIPT_COMPRESS_OPTIONS.maxSummaryLength - HEADER_RESERVE_CHARS;
 const MAX_BODY_LINES =
   SCRIPT_COMPRESS_OPTIONS.maxTailLines - HEADER_RESERVE_LINES;
+
+/**
+ * Said when the script wrote more than the runner captured
+ * (`maxOutputBytes`, 256 KiB per stream in src/sandbox/command-runner.ts,
+ * which keeps the head of each stream). Without it the omission banner
+ * below would claim that only *earlier* output is missing, while the
+ * true end of the log — the part this tool promises to keep — was never
+ * captured at all.
+ */
+const CAPTURE_LIMIT_NOTE =
+  "… [the runner stopped capturing at its 256 KiB per-stream limit " +
+  "while the script was still writing: the end of the log is missing]";
+
+interface TrimmedBody {
+  text: string;
+  /** Something was dropped, so the result must report itself truncated. */
+  trimmed: boolean;
+}
 
 /**
  * The script body, trimmed to what the budget leaves under the header.
@@ -44,14 +69,33 @@ const MAX_BODY_LINES =
  * trailing footer instead. Trimming the body first leaves the header
  * intact under either pass, so the exit code always survives.
  */
-function tailScriptBody(body: string): string {
-  const lines = body.split("\n");
-  const droppedLines = Math.max(0, lines.length - MAX_BODY_LINES);
-  let kept = droppedLines > 0 ? lines.slice(-MAX_BODY_LINES).join("\n") : body;
-  const droppedChars = Math.max(0, kept.length - MAX_BODY_CHARS);
-  if (droppedChars > 0) kept = kept.slice(droppedChars);
-  if (droppedLines === 0 && droppedChars === 0) return body;
-  return `… [omitted ${droppedLines} earlier lines, ${droppedChars} characters]\n${kept}`;
+function tailScriptBody(body: string, maxChars: number): TrimmedBody {
+  // Script output almost always ends in a newline, and splitting it
+  // as-is would spend a line of the budget on the empty string after it.
+  const trailingNewline = body.endsWith("\n");
+  const core = trailingNewline ? body.slice(0, -1) : body;
+  const lines = core.split("\n");
+  let kept =
+    lines.length > MAX_BODY_LINES
+      ? lines.slice(-MAX_BODY_LINES).join("\n")
+      : core;
+  if (kept.length > Math.max(1, maxChars)) {
+    // Cut on a line boundary: a body that starts mid-line reads as
+    // corrupt output, and a half line would also have to be counted.
+    const cut = kept.slice(kept.length - Math.max(1, maxChars));
+    const firstBreak = cut.indexOf("\n");
+    kept = firstBreak === -1 ? cut : cut.slice(firstBreak + 1);
+  }
+  if (kept.length === core.length) return { text: body, trimmed: false };
+  // Count the lines actually gone, both passes together: the character
+  // pass drops whole lines of its own, so a banner counting only the
+  // line pass states a number that is not true.
+  const droppedLines = lines.length - kept.split("\n").length;
+  const droppedChars = core.length - kept.length;
+  return {
+    text: `… [omitted ${droppedLines} earlier lines, ${droppedChars} characters]\n${kept}`,
+    trimmed: true,
+  };
 }
 
 export function buildSkillRunScriptTool(
@@ -119,12 +163,18 @@ export function buildSkillRunScriptTool(
 
       const status = outcome.exitCode === 0 ? "ok" : "error";
       const header = `# ${record.manifest.name}/${scriptName}\nexit: ${outcome.exitCode ?? "signal:" + outcome.signal}${outcome.timedOut ? " (timed out)" : ""}`;
-      const body = tailScriptBody(
+      const note = outcome.truncated ? `\n${CAPTURE_LIMIT_NOTE}` : "";
+      const trimmed = tailScriptBody(
         [outcome.stdout, outcome.stderr]
           .filter((s) => s.trim().length > 0)
           .join("\n---\n"),
+        SCRIPT_COMPRESS_OPTIONS.maxSummaryLength -
+          header.length -
+          note.length -
+          SIGNATURE_RESERVE_CHARS,
       );
-      return compressToolResult(
+      const body = `${trimmed.text}${note}`;
+      const compressed = compressToolResult(
         {
           tool: "skill.run_script",
           status,
@@ -142,6 +192,11 @@ export function buildSkillRunScriptTool(
         },
         SCRIPT_COMPRESS_OPTIONS,
       );
+      // The compressor can no longer see what we trimmed before it, and
+      // it never sees what the runner dropped at capture: without this
+      // a result missing most of its log would render as complete.
+      const lost = trimmed.trimmed || outcome.truncated;
+      return lost ? { ...compressed, truncated: true } : compressed;
     },
   };
 }
