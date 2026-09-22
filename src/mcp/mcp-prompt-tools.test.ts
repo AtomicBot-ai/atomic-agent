@@ -151,7 +151,10 @@ describe("mcp.prompt.list", () => {
             }
             return {
               messages: [
-                { role: "user", content: { type: "text", text: "rendered ok" } },
+                {
+                  role: "user",
+                  content: { type: "text", text: "rendered ok" },
+                },
               ],
             };
           },
