@@ -2,6 +2,7 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../compressor/listing-caps.js";
 import {
   awaitJobExit,
   type CommandJobExit,
@@ -263,6 +264,13 @@ function describeJobState(record: ShellJobRecord): string {
   return `exited ${exit ? formatExitStatus(exit) : "?"} after ${formatShellElapsed(exit?.durationMs ?? 0)} — ${collectHint}`;
 }
 
+/**
+ * Estimated width of one rendered job line: `job N: ` plus a 60-char
+ * command head (`headOfCommand` does clamp that one) plus the state
+ * sentence and its `{"wait": n}` hint.
+ */
+const JOB_CHARS = 200;
+
 /** `{jobs: true}`: this session's jobs — id, command head, started, state. */
 export function listShellJobs(ctx: ShellJobCallContext): CompressedToolResult {
   const records = ctx.jobs.list(ctx.sessionId);
@@ -270,22 +278,33 @@ export function listShellJobs(ctx: ShellJobCallContext): CompressedToolResult {
     (record) =>
       `job ${record.id}: ${headOfCommand(record.facts.commandLine)} — ${describeJobState(record)}`,
   );
-  return compressToolResult({
-    tool: "os.shell.run",
-    status: "ok",
-    output: lines.length > 0 ? lines.join("\n") : "no jobs in this session",
-    details: {
-      jobs: records.map((record) => ({
-        id: record.id,
-        cmd: headOfCommand(record.facts.commandLine, 200),
-        startedAt: new Date(record.job.startedAt).toISOString(),
-        state: record.state,
-        pid: record.job.pid ?? null,
-        keep: record.keep,
-        runningMs: Date.now() - record.job.startedAt,
-        exitCode: record.job.exited()?.exitCode ?? null,
-        stopReason: record.stopReason,
-      })),
+  return compressToolResult(
+    {
+      tool: "os.shell.run",
+      status: "ok",
+      output: lines.length > 0 ? lines.join("\n") : "no jobs in this session",
+      details: {
+        jobs: records.map((record) => ({
+          id: record.id,
+          cmd: headOfCommand(record.facts.commandLine, 200),
+          startedAt: new Date(record.job.startedAt).toISOString(),
+          state: record.state,
+          pid: record.job.pid ?? null,
+          keep: record.keep,
+          runningMs: Date.now() - record.job.startedAt,
+          exitCode: record.job.exited()?.exitCode ?? null,
+          stopReason: record.stopReason,
+        })),
+      },
     },
-  });
+    // This listing is how a model finds its own jobs — `unknownJob`
+    // points it right here — and it bypasses `renderShellResult`, so
+    // it keeps the raw compressor defaults: the last 12 lines, then
+    // 385 chars. The registry already bounds the rows (`maxJobs`
+    // running, plus the finished records it keeps), so budget the rows
+    // we are about to print at JOB_CHARS each: a 60-char command head
+    // (`headOfCommand`) plus the state sentence, which carries the
+    // `{"wait": n}` hint the model needs next.
+    listingResultCaps(records.length, JOB_CHARS),
+  );
 }

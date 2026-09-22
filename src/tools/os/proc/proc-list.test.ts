@@ -36,4 +36,27 @@ describe("os.proc.list", () => {
       3,
     );
   });
+
+  // `formatTable`'s `PID PPID USER CPU% MEM% COMMAND` row is line 1,
+  // so the compressor's default 12-line tail drops the column header
+  // and every row but the last twelve — of which the 385-char
+  // head-slice then keeps about five. `listingResultCaps` budgets the
+  // rows the call actually returns.
+  it("keeps the column header and rows past the old 12-line tail", async () => {
+    const result = await osProcListTool.run({ limit: 100 }, makeCtx());
+    const returned = result.details.returned as number;
+    // Any host that can run this suite runs far more than 12
+    // processes; if one somehow does not there is nothing to keep.
+    expect(returned).toBeGreaterThan(20);
+
+    const lines = result.summary.split("\n");
+    expect(lines[0]).toMatch(/^PID\s+PPID\s+USER\s+CPU%\s+MEM%\s+COMMAND$/);
+    expect(result.summary.length).toBeGreaterThan(385);
+    // Rows the old tail would have cut: the 13th row counted from the
+    // top is outside the last twelve of a 100-row table.
+    const processes = result.details.processes as { pid: number }[];
+    expect(lines.length).toBeGreaterThan(13);
+    expect(result.summary).toContain(String(processes[12]!.pid));
+    expect(result.summary).toContain(String(processes[0]!.pid));
+  });
 });

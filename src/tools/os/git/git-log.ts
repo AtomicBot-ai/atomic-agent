@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
@@ -26,6 +27,13 @@ export interface GitLogEntry {
 const RS = "\x1e";
 const US = "\x1f";
 const LOG_FORMAT = `%H${US}%h${US}%an${US}%ae${US}%aI${US}%s${US}%b${RS}`;
+
+/**
+ * Estimated width of one commit's two rendered lines: ~80 for
+ * `shortHash  ISO-date  author`, plus the indented subject, which
+ * nothing here clamps. An estimate, not a ceiling.
+ */
+const COMMIT_CHARS = 240;
 
 export const osGitLogTool: ToolDefinition = {
   name: "os.git.log",
@@ -59,18 +67,29 @@ export const osGitLogTool: ToolDefinition = {
     const entries = parseLog(result.stdout);
     const human = formatHumanLog(entries);
 
-    return compressToolResult({
-      tool: "os.git.log",
-      status: "ok",
-      output: human,
-      details: {
-        count: entries.length,
-        entries,
-        revisionRange: revisionRange ?? null,
-        path: filterPath ?? null,
-        repoRoot: result.repoRoot,
+    return compressToolResult(
+      {
+        tool: "os.git.log",
+        status: "ok",
+        output: human,
+        details: {
+          count: entries.length,
+          entries,
+          revisionRange: revisionRange ?? null,
+          path: filterPath ?? null,
+          repoRoot: result.repoRoot,
+        },
       },
-    });
+      // `git log` is newest-first and `formatHumanLog` spends TWO
+      // lines on each commit, so the default 12-line tail keeps the
+      // OLDEST four and the 385-char head-slice then leaves ~2. Budget
+      // the commits we actually asked git for: `limit` (20 by default,
+      // 1000 max) x COMMIT_CHARS — a default call wants ~5 KB and gets
+      // it; `limit: 1000` wants 240 KB and gets the 8 000 chars the
+      // render cap can deliver (~60-70 real commits, still ~15x the
+      // four the defaults left).
+      listingResultCaps(limit, COMMIT_CHARS),
+    );
   },
 };
 

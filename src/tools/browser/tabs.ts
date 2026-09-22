@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, TabsInput } from "./browser-backend.js";
 import { isSafeUrl } from "./navigate.js";
@@ -6,6 +7,13 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+
+/**
+ * Estimated width of one rendered tab line: `*[3] <title> — <url>`.
+ * Neither the page title nor the URL is clamped, so this is a
+ * generous estimate, not a ceiling.
+ */
+const TAB_CHARS = 512;
 
 export function buildBrowserTabsTool(
   backend: BrowserBackend,
@@ -69,12 +77,21 @@ export function buildBrowserTabsTool(
             `${t.active ? "*" : " "}[${t.index}] ${t.title || "(untitled)"} — ${t.url}`,
         )
         .join("\n");
-      return compressToolResult({
-        tool: "browser.tabs",
-        status: "ok",
-        output: rendered || "(no open tabs)",
-        details: { action, tabs: result.tabs },
-      });
+      return compressToolResult(
+        {
+          tool: "browser.tabs",
+          status: "ok",
+          output: rendered || "(no open tabs)",
+          details: { action, tabs: result.tabs },
+        },
+        // One line per tab carrying a title AND a full URL, and this
+        // path has no `worldSnapshot` escape hatch — what the
+        // compressor cuts, the model cannot get back except by calling
+        // again. Budget the tabs the backend just reported at
+        // TAB_CHARS each; ~15 tabs fit the 8 000-char render ceiling,
+        // against the three the defaults left.
+        listingResultCaps(result.tabs.length, TAB_CHARS),
+      );
     },
   };
 }

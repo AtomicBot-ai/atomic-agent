@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { runCommand } from "../../../sandbox/command-runner.js";
 
@@ -22,6 +23,15 @@ interface ListArgs {
 }
 
 const DEFAULT_LIMIT = 500;
+/**
+ * Estimated width of one rendered `formatTable` row: ~48 chars of
+ * padded columns (8 + 8 + 18 + 5 + 5 plus separators) and then the
+ * command, which on POSIX is whatever `ps -eo comm` prints — a full
+ * executable path on macOS, measured here at ~95 chars on average
+ * over 1 080 processes, 290 at the widest. Nothing clamps it, so 160
+ * is an average-case estimate, not a ceiling.
+ */
+const ROW_CHARS = 160;
 
 export const osProcListTool: ToolDefinition = {
   name: "os.proc.list",
@@ -37,18 +47,32 @@ export const osProcListTool: ToolDefinition = {
       filtered = rows.filter((r) => r.command.toLowerCase().includes(needle));
     }
     const limited = filtered.slice(0, args.limit);
-    return compressToolResult({
-      tool: "os.proc.list",
-      status: "ok",
-      output: formatTable(limited),
-      details: {
-        total: rows.length,
-        matched: filtered.length,
-        returned: limited.length,
-        truncated: filtered.length > limited.length,
-        processes: limited,
+    return compressToolResult(
+      {
+        tool: "os.proc.list",
+        status: "ok",
+        output: formatTable(limited),
+        details: {
+          total: rows.length,
+          matched: filtered.length,
+          returned: limited.length,
+          truncated: filtered.length > limited.length,
+          processes: limited,
+        },
       },
-    });
+      // `formatTable` puts the `PID PPID USER CPU% MEM% COMMAND`
+      // header on line 1, so the default 12-line tail drops the column
+      // header and leaves the last 12 of up to 500 rows — of which the
+      // 385-char head-slice then keeps ~5. Budget the rows this call
+      // actually returns — at most `limit`, which is DEFAULT_LIMIT
+      // (500) unless the caller raised it — at ROW_CHARS each. This is
+      // the one listing here that a default call can outgrow: 500 rows
+      // want 80 KB and land on the 8 000-char render ceiling, which
+      // carries the header plus ~55 real rows. That is ~11x what the
+      // defaults left, and a `filter` (which is how this tool is meant
+      // to be used) fits whole.
+      listingResultCaps(limited.length, ROW_CHARS),
+    );
   },
 };
 

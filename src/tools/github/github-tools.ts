@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import {
   requireApproval,
@@ -20,6 +21,15 @@ import {
   requireString,
   resolveRepo,
 } from "./github-tool-args.js";
+
+/**
+ * Estimated width of one rendered `pr.list` / `issue.list` line:
+ * `#1234 [draft] `, a title (GitHub caps titles at 256 chars, but
+ * nothing here clamps one), and the `(head → base, @author)` or
+ * `{labels} (@author)` tail. Real titles run far shorter; 320 is the
+ * pessimistic estimate, not a ceiling.
+ */
+const RECORD_CHARS = 320;
 
 export interface GithubToolsOptions extends DangerousToolOptions {
   /** Test seam; production reads `GITHUB_TOKEN` at call time. */
@@ -79,27 +89,38 @@ export function buildGithubTools(
     readonly: true,
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, "github.pr.list");
+      const limit = parseLimit(rawArgs.limit);
       const prs = await client().listPullRequests({
         ...ref,
         state: parseState(rawArgs.state, "github.pr.list"),
-        limit: parseLimit(rawArgs.limit),
+        limit,
       });
       const lines = prs.map(
         (p) =>
           `#${p.number} [${p.draft ? "draft" : p.state}] ${p.title} (${p.head} → ${p.base}, @${p.author})`,
       );
-      return compressToolResult({
-        tool: "github.pr.list",
-        status: "ok",
-        output: lines.length
-          ? `${formatRepoSlug(ref)}\n${lines.join("\n")}`
-          : `${formatRepoSlug(ref)}: no pull requests`,
-        details: {
-          repo: formatRepoSlug(ref),
-          count: prs.length,
-          pullRequests: prs,
+      return compressToolResult(
+        {
+          tool: "github.pr.list",
+          status: "ok",
+          output: lines.length
+            ? `${formatRepoSlug(ref)}\n${lines.join("\n")}`
+            : `${formatRepoSlug(ref)}: no pull requests`,
+          details: {
+            repo: formatRepoSlug(ref),
+            count: prs.length,
+            pullRequests: prs,
+          },
         },
-      });
+        // Newest-first, one line per PR, with the repo slug as line 1:
+        // the default 12-line tail drops the slug and the newest PRs,
+        // and 385 chars then leaves three. Budget `limit` (20 by
+        // default, 100 max) rows at RECORD_CHARS. A default call wants
+        // ~6.7 KB and gets it; `limit: 100` wants 32 KB and lands on
+        // the 8 000-char render ceiling, which still carries ~80 real
+        // rows.
+        listingResultCaps(limit, RECORD_CHARS),
+      );
     },
   };
 
@@ -115,26 +136,32 @@ export function buildGithubTools(
         "github.issue.list",
         "labels",
       );
+      const limit = parseLimit(rawArgs.limit);
       const issues = (
         await client().listIssues({
           ...ref,
           state: parseState(rawArgs.state, "github.issue.list"),
           ...(labels ? { labels } : {}),
-          limit: parseLimit(rawArgs.limit),
+          limit,
         })
       ).filter((i) => !i.isPullRequest);
       const lines = issues.map(
         (i) =>
           `#${i.number} [${i.state}] ${i.title}${i.labels.length ? ` {${i.labels.join(", ")}}` : ""} (@${i.author})`,
       );
-      return compressToolResult({
-        tool: "github.issue.list",
-        status: "ok",
-        output: lines.length
-          ? `${formatRepoSlug(ref)}\n${lines.join("\n")}`
-          : `${formatRepoSlug(ref)}: no issues`,
-        details: { repo: formatRepoSlug(ref), count: issues.length, issues },
-      });
+      return compressToolResult(
+        {
+          tool: "github.issue.list",
+          status: "ok",
+          output: lines.length
+            ? `${formatRepoSlug(ref)}\n${lines.join("\n")}`
+            : `${formatRepoSlug(ref)}: no issues`,
+          details: { repo: formatRepoSlug(ref), count: issues.length, issues },
+        },
+        // Same shape as `pr.list`; `limit` is the pre-filter page size,
+        // so budgeting it covers the post-filter rows too.
+        listingResultCaps(limit, RECORD_CHARS),
+      );
     },
   };
 
