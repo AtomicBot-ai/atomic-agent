@@ -782,8 +782,9 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 2: reactive link graph. See UserConfigFile.memory.links.
-     * Default disabled — the link-generator LLM sub-call is opt-in,
-     * and recall-side expansion only fires when enabled is true.
+     * Enabled by default. With the master switch off the
+     * link-generator LLM sub-call never fires and recall-side
+     * expansion is skipped.
      */
     links: {
       enabled: boolean;
@@ -795,9 +796,10 @@ export interface AtomicAgentConfig {
       generatorTimeoutMs: number;
     };
     /**
-     * Phase 3: memory evolution (neighbor-evolver). Default disabled
-     * — without it the parser still recognises `EVOLVE` lines but
-     * silently drops them. See UserConfigFile.memory.evolution.
+     * Phase 3: memory evolution (neighbor-evolver). Enabled by
+     * default. With the master switch off the parser still
+     * recognises `EVOLVE` lines but silently drops them. See
+     * UserConfigFile.memory.evolution.
      */
     evolution: {
       enabled: boolean;
@@ -806,8 +808,8 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 5: distilled lessons + cold-path consolidator. See
-     * UserConfigFile.memory.lessons for full doc. Default disabled —
-     * with the master switch off, `### lessons` is not rendered,
+     * UserConfigFile.memory.lessons for full doc. Enabled by
+     * default; with the master switch off, `### lessons` is not rendered,
      * `memory.lessons.recall` returns `LessonsDisabledError`, and
      * the consolidator never registers its periodic timer.
      */
@@ -821,7 +823,7 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 7b: MemP-style advisory procedures distilled alongside
-     * lessons. Default disabled — when off, the `### procedures`
+     * lessons. Enabled by default; when off, the `### procedures`
      * section is not rendered, `memory.procedures.recall` returns a
      * `ProceduresDisabledError`, and the consolidator emits only the
      * `LESSON` half of the combined grammar.
@@ -848,9 +850,9 @@ export interface AtomicAgentConfig {
      * one extra sub-call per turn (after link-generator and
      * neighbor-evolver) that asks the model to UPVOTE/DOWNVOTE the
      * items surfaced in this turn's variable tail. See
-     * `UserConfigFile.memory.voting` for full doc. Default disabled
-     * — flipping it on adds the extra LLM call on the shared
-     * reflection slot.
+     * `UserConfigFile.memory.voting` for full doc. Enabled by
+     * default; the extra LLM call rides the shared reflection slot,
+     * so turning it off removes one sub-call per turn.
      */
     voting: {
       enabled: boolean;
@@ -1863,7 +1865,7 @@ export interface UserConfigFile {
      * `EVOLVE` lines but the runner drops them silently. Flip on to
      * let reflection refine `tags` on existing memories.
      *
-     *  - `enabled`     master switch. Default `false`.
+     *  - `enabled`     master switch. Default `true`.
      *  - `maxPerWrite` Hard cap on number of EVOLVE directives
      *                  actually applied per reflection. Default `2`.
      *  - `leaseMs`     B↔C lease window in ms. EVOLVE skips any
@@ -1877,15 +1879,16 @@ export interface UserConfigFile {
     };
     /**
      * Memory-v2 phase 5. Distilled lessons + cold-path consolidator.
-     * Default disabled because rolling phase 5 on flips the stable
-     * prefix bytes once (see AGENTS.md "Memory fabric phase 5"), so
-     * deployments choose an explicit upgrade window.
+     * Enabled by default. Rolling phase 5 on flipped the stable
+     * prefix bytes once (see AGENTS.md "Memory fabric phase 5");
+     * that upgrade has shipped, so the switch is now on out of the
+     * box and turning it off is the deliberate act.
      *
      * `lessons` keys:
      *   - `enabled`            master switch for `### lessons`
      *                          rendering + `memory.lessons.recall` +
      *                          `ConsolidatorJob.start`. Default
-     *                          `false`.
+     *                          `true`.
      *   - `recallK`            top-K lessons surfaced per turn (BM25).
      *                          Default `2`.
      *   - `maxTokens`          hard cap on the rendered `### lessons`
@@ -1902,7 +1905,7 @@ export interface UserConfigFile {
      *
      * `consolidation` keys:
      *   - `enabled`              master switch on the consolidator
-     *                            timer. Default `false`. Independent
+     *                            timer. Default `true`. Independent
      *                            from `lessons.enabled` so the schema
      *                            can be inspected without ticking.
      *   - `intervalMs`           consolidator tick period. Default
@@ -1933,7 +1936,7 @@ export interface UserConfigFile {
     /**
      * Memory-v2 phase 7b. Procedures (MemP-style how-to templates)
      * mirroring `lessons.*`:
-     *   - `enabled`           master switch. Default `false`.
+     *   - `enabled`           master switch. Default `true`.
      *   - `recallK`           top-K procedures surfaced per turn
      *                         via BM25 against the current user
      *                         message. Default `2`.
@@ -1978,7 +1981,7 @@ export interface UserConfigFile {
      *                              does not run, and the lesson
      *                              recall reranker treats every
      *                              row as if `vote_score = 0`.
-     *                              Default `false`.
+     *                              Default `true`.
      *   - `maxVotePerItem`        clamp on `|vote_score|`. Each
      *                              UPVOTE/DOWNVOTE is `+1`/`-1` and
      *                              the row is pinned in
@@ -2029,8 +2032,8 @@ export interface UserConfigFile {
      * slot** and the **reflection slot** are both untouched.
      *
      * `retrieve.rewriter` keys:
-     *  - `enabled`       master switch. Default `false`.
-     *  - `timeoutMs`     hard per-call timeout. Default `3000`.
+     *  - `enabled`       master switch. Default `true`.
+     *  - `timeoutMs`     hard per-call timeout. Default `10_000`.
      *  - `historyTurns`  trailing turns fed into the rewriter
      *                    prompt. Default `3`.
      *  - `gateMode`      `heuristic` | `embedding` | `always`.

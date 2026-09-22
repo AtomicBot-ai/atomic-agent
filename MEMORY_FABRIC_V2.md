@@ -936,10 +936,12 @@ silently break them.
 
 ## 10. Configuration surface
 
-All under `memory.*` in [`src/config/config-schema.ts`](src/config/config-schema.ts)
-(`USER_CONFIG_VERSION` **19**). Defaults below match
-`USER_CONFIG_DEFAULTS` at time of writing — **not** the early "everything on"
-proposal. Phases 2–7b and v2.5 ship **dark** until the operator flips flags.
+All under `memory.*` in [`src/config/config-schema.ts`](src/config/config-schema.ts).
+Defaults below are the ones `USER_CONFIG_DEFAULTS` ships today
+(`USER_CONFIG_VERSION` **69**); they are pinned against the code by
+`src/config/agents-md-defaults.test.ts`. Phases 2–7b and v2.5 shipped
+**dark** while they were being rolled out; every master switch below is
+now on by default, and turning one **off** is the deliberate act.
 
 | Key | Shipped default | Meaning |
 |---|---|---|
@@ -948,36 +950,36 @@ proposal. Phases 2–7b and v2.5 ship **dark** until the operator flips flags.
 | `memory.eviction.utilityWeighted` | `true` | Phase 1A utility eviction (vs FIFO). |
 | `memory.eviction.maxAgeMs` | `30d` | Declared; phase 1A overflow does not use it yet. |
 | `memory.embeddings.enabled` | `false` | Phase 1B hybrid recall (needs embedding daemon). |
-| `memory.links.enabled` | `false` | Master switch for link generation + BFS expansion. |
+| `memory.links.enabled` | `true` | Master switch for link generation + BFS expansion. |
 | `memory.links.autoGenerate` | `true` | Link-generator after reflection (when links on). |
 | `memory.links.expansionDepth` | `1` | BFS depth on recall (clamped 1–3 in store). |
 | `memory.links.maxExpanded` | `12` | Cap on expanded ids per turn. |
 | `memory.links.maxLinksPerCall` | `4` | Cap per link-generator call. |
-| `memory.evolution.enabled` | `false` | `EVOLVE` branch + neighbor evolver. |
+| `memory.evolution.enabled` | `true` | `EVOLVE` branch + neighbor evolver. |
 | `memory.evolution.maxPerWrite` | `2` | Cap on applied evolves per reflection. |
 | `memory.evolution.leaseMs` | `60000` | B↔C lease read by `evolveTags`. |
-| `memory.lessons.enabled` | `false` | `### lessons` + `memory.lessons.recall`. |
+| `memory.lessons.enabled` | `true` | `### lessons` + `memory.lessons.recall`. |
 | `memory.lessons.recallK` | `2` | Top-K lesson pointers per turn. |
 | `memory.lessons.maxTokens` | `300` | Token budget for `### lessons`. |
 | `memory.lessons.maxEntries` | `500` | Active lesson cap (FIFO + age sweeps). |
 | `memory.lessons.deprecationAgeMs` | `30d` | Age demotion when `success_count == 0`. |
-| `memory.consolidation.enabled` | `false` | Consolidator `setInterval`. |
+| `memory.consolidation.enabled` | `true` | Consolidator `setInterval`. |
 | `memory.consolidation.intervalMs` | `6h` | Tick period. |
 | `memory.consolidation.cooldownMs` | `24h` | Min episode age before clustering. |
 | `memory.consolidation.minClusterSize` | `3` | Cluster size floor. |
 | `memory.consolidation.maxClustersPerTick` | `5` | Throughput cap per tick. |
 | `memory.consolidation.requireSharedTag` | `true` | Trim CCs to majority shared tag. |
 | `memory.consolidation.distillTimeoutMs` | `45000` | Per-cluster LLM timeout. |
-| `memory.voting.enabled` | `false` | Vote sub-call + decay sweep. |
+| `memory.voting.enabled` | `true` | Vote sub-call + decay sweep. |
 | `memory.voting.maxVotePerItem` | `50` | Clamp magnitude; bootstrap rejects `<= 0`. |
 | `memory.voting.signalDecay` | `0.95` | Per-tick decay on consolidator. |
 | `memory.voting.scoreBlend` | `0.6` | Lesson/procedure rerank blend. |
 | `memory.voting.profileFilterThreshold` | `3` | Hide profile facts with `vote_score <= -threshold`. |
-| `memory.procedures.enabled` | `false` | `### procedures` + combined distill grammar. |
+| `memory.procedures.enabled` | `true` | `### procedures` + combined distill grammar. |
 | `memory.procedures.recallK` | `2` | Top-K procedure pointers. |
 | `memory.procedures.maxTokens` | `400` | Token budget for `### procedures`. |
 | `memory.procedures.maxEntries` | `500` | Active procedure cap. |
-| `memory.retrieve.rewriter.enabled` | `false` | v2.5 phase A query rewriter. |
+| `memory.retrieve.rewriter.enabled` | `true` | v2.5 phase A query rewriter. |
 
 Bi-temporal profile (phase 4) has **no** feature flag — always on after v7
 migration. Full tables: [`MEMORY.md`](MEMORY.md) and AGENTS.md §"Memory fabric".
