@@ -14,7 +14,11 @@ import {
   toBatchInputs,
   type BatchLoopSignal,
 } from "./batch-executor.js";
-import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
+import {
+  LOOP_VETO_DENIED_REASON,
+  ToolLoopTracker,
+  formatVetoInstruction,
+} from "./loop-detector.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { toolSetRefusal } from "./step-tool-set.js";
 import { createTraceRecorder } from "../tracing/trace/trace-recorder.js";
@@ -829,12 +833,23 @@ describe("executeBatch", () => {
       );
       expect(body).toContain("honestly report you could not complete the task");
       expect(body).not.toContain("… [truncated]");
+      expect(body).not.toContain("[omitted");
       expect(out.results[0]!.compressed!.truncated).toBe(false);
       seen.push(body);
     }
-    // Every veto this file can produce is far under the budget, so none
-    // of them is ever cut.
-    expect(Math.max(...seen.map((b) => b.length))).toBeLessThan(4_000);
+    // Asserting on the compressed body here would be tautological — the
+    // compressor cannot return more than `maxSummaryLength`. The bound
+    // that means something is on the RAW instruction: the longest shape
+    // this file produces is an `os.http.request` veto with a target at
+    // `sanitizeLoopTarget`'s 60-char cap.
+    const longest = formatVetoInstruction({
+      tool: "os.http.request",
+      count: 5,
+      target: "m".repeat(60),
+    });
+    expect(longest.length).toBeGreaterThan(400);
+    expect(longest.length).toBeLessThan(1_000);
+    expect(Math.max(...seen.map((b) => b.length))).toBeGreaterThan(400);
   });
 
   it("veto body names the command for a shell loop", async () => {

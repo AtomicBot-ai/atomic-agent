@@ -799,20 +799,22 @@ function runFusionOrchestratorGate(
 
 /**
  * The veto body is an instruction this file writes to the model, not
- * tool output, and the compressor's bare defaults destroy it: a veto is
- * 479-588 chars (header, class hint, the reply bullet, and the bullet
- * that actually names the rule), so `capSummary` cuts at 385 and the
- * last line — "Do NOT repeat this exact call. Either try a different
- * approach or close the turn with `reply`…" — never reaches the model.
- * The message whose whole purpose is to end a loop lost the sentence
- * that says how.
+ * tool output, and the compressor's bare defaults destroy it: measured
+ * across every shape this file produces, a veto is 479-689 chars
+ * (header, class hint, the reply bullet, and the bullet that actually
+ * names the rule), so `capSummary` cuts at 385 and the last line — "Do
+ * NOT repeat this exact call. Either try a different approach or close
+ * the turn with `reply`…" — never reaches the model. The message whose
+ * whole purpose is to end a loop lost the sentence that says how.
  *
  * Every line is load-bearing and the header is line 1, so line-based
- * tail truncation is disabled (it keeps the LAST lines) and the char
- * budget is set well above the longest veto this file can produce: the
- * text is generated here, and its only unbounded-looking inputs are
- * already clamped upstream (`sanitizeLoopTarget`, and
- * `sanitizeTestSummary` at 300 chars).
+ * tail truncation is disabled (it keeps the LAST lines — inert at five
+ * lines, kept as a guard rail) and the char budget sits well above the
+ * longest veto: the text is generated here, and the only interpolation
+ * that could run long is the target, clamped to 60 chars by
+ * `sanitizeLoopTarget`. `tool` is not clamped, so an MCP server
+ * registering a multi-thousand-character qualified name could still
+ * overflow 4 000 — it would simply be cut as it is today.
  */
 const VETO_COMPRESS_OPTIONS = {
   maxSummaryLength: 4_000,
