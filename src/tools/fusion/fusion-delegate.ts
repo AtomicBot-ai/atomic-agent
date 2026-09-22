@@ -391,12 +391,16 @@ export function buildFusionDelegateTool(
       // reads, not `ok` with a footnote.
       let contract: ContractReport | undefined;
       if (parsed.contract !== undefined) {
-        const findings = await inspectContractProvides(
+        // `results` goes in so a task that never ran is not accused of
+        // failing to provide: a cancelled fan-out leaves the disk empty
+        // for reasons that are not the worker's.
+        const provides = await inspectContractProvides(
           parsed.contract,
           parsed.tasks,
           ctx.workingDir,
+          { results, signal: ctx.signal },
         );
-        results = applyContractFindings(results, findings);
+        results = applyContractFindings(results, provides.findings);
         const checks = await runContractChecks(
           parsed.contract.checks ?? [],
           deps.runChecks,
@@ -410,7 +414,10 @@ export function buildFusionDelegateTool(
         // reads it here, on the line and in the details.
         const warnings = [...(parsed.contract.warnings ?? []), ...waveWarnings];
         contract = {
-          findings,
+          findings: provides.findings,
+          ...(provides.providesSkipped === undefined
+            ? {}
+            : { providesSkipped: provides.providesSkipped }),
           checks: checks.outcomes,
           ...(checks.checksSkipped === undefined
             ? {}
