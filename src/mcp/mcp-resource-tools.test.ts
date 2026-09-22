@@ -115,6 +115,7 @@ describe("mcp.resource.list", () => {
     const result = await tool.run({ server: "docs", limit: 100 }, ctx);
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("file:///r0.md");
+    expect(result.truncated).toBe(false);
     expect(result.summary).toContain("file:///r1.md");
     expect(result.summary).toContain("file:///r50.md");
     expect(result.summary).toContain("file:///r99.md");
@@ -412,6 +413,10 @@ describe("mcp.resource.read", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.summary.startsWith("# Title")).toBe(true);
+    // Delivered whole: neither the projector nor the compressor cut
+    // it, so the flag that drives the " (truncated)" suffix must say
+    // so. `overLength` is live here, not structurally false.
+    expect(result.truncated).toBe(false);
     expect(result.summary).toContain("line-0:");
     expect(result.summary).toContain("line-60:");
     expect(result.summary).toContain("line-119:");

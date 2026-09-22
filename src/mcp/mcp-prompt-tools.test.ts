@@ -88,6 +88,7 @@ describe("mcp.prompt.list", () => {
     const result = await tool.run({ server: "docs", limit: 100 }, ctx);
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("prompt_0(uri, length?)");
+    expect(result.truncated).toBe(false);
     expect(result.summary).toContain("prompt_1(uri, length?)");
     expect(result.summary).toContain("prompt_50(uri, length?)");
     expect(result.summary).toContain("prompt_99(uri, length?)");
@@ -348,6 +349,7 @@ describe("mcp.prompt.get", () => {
     expect(result.status).toBe("ok");
     const summary = result.summary;
     expect(summary.startsWith("system: You are a release auditor.")).toBe(true);
+    expect(result.truncated).toBe(false);
     expect(result.summary).toContain("rule 0:");
     expect(result.summary).toContain("rule 59:");
     expect(result.summary).toContain("user: Go.");
@@ -381,6 +383,12 @@ describe("mcp.prompt.get", () => {
     const result = await tool.run({ server: "docs", name: "big" }, ctx);
     expect(result.status).toBe("ok");
     expect(result.summary.startsWith("user: BBB")).toBe(true);
+    // The projector clipped, so the flag must say so. It cannot come
+    // from `compressToolResult`: the projector clips to
+    // MAX_PROMPT_CHARS and the compressor is allowed exactly that
+    // many, so `overLength` never fires on this path. `main` got
+    // `true` only because its 400-char default always fired.
+    expect(result.truncated).toBe(true);
     expect(result.summary.length).toBeGreaterThan(7_000);
     expect(result.summary.length).toBeLessThanOrEqual(8_000);
     expect(result.summary.endsWith("…[truncated]")).toBe(true);

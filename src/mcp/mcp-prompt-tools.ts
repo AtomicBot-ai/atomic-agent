@@ -70,11 +70,12 @@ const RENDER_DELIVERABLE_CHARS = 8_000;
  * name and the template's description, and re-running the tool
  * renders the same text and cuts it the same way.
  *
- * So we cap at the budget the projector already declared and disable
- * line-based tail truncation. `MAX_PROMPT_CHARS` and
- * `RENDER_DELIVERABLE_CHARS` are both 8_000 — what this tool can
- * produce and what the prompt can deliver happen to coincide here,
- * which is why the number is written as the projector's budget.
+ * So we cap at what the prompt can deliver and disable line-based
+ * tail truncation. `RENDER_DELIVERABLE_CHARS` and the projector's
+ * `MAX_PROMPT_CHARS` are both 8_000 today, but for unrelated
+ * reasons, so this names the render ceiling rather than aliasing
+ * the projector's budget: if one moves the other should not follow
+ * silently.
  *
  * Caveat inherited from the compressor: `extractTail` drops blank
  * lines unconditionally, so a multi-paragraph template arrives with
@@ -82,7 +83,7 @@ const RENDER_DELIVERABLE_CHARS = 8_000;
  * between the messages do not.
  */
 const PROMPT_COMPRESSOR_OPTIONS = {
-  maxSummaryLength: MAX_PROMPT_CHARS,
+  maxSummaryLength: RENDER_DELIVERABLE_CHARS,
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
@@ -196,11 +197,11 @@ export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
       try {
         const res = await client.getPrompt(name, args, ctx.signal);
         const projected = projectPromptMessages(res);
-        return compressToolResult(
+        const compressed = compressToolResult(
           {
             tool: "mcp.prompt.get",
             status: "ok",
-            output: projected || `(empty messages for prompt ${name})`,
+            output: projected.text || `(empty messages for prompt ${name})`,
             details: {
               server,
               name,
@@ -213,6 +214,18 @@ export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
           },
           PROMPT_COMPRESSOR_OPTIONS,
         );
+        // `compressToolResult` can only report its OWN cuts, and it
+        // makes none here: the projector clips to `MAX_PROMPT_CHARS`
+        // and `PROMPT_COMPRESSOR_OPTIONS` allows exactly that many,
+        // so `overLength` never fires and the flag would read
+        // `false` on a template that was in fact cut — `main`
+        // reported `true` only because its 400-char default always
+        // fired. The flag drives the " (truncated)" suffix in
+        // `conversation-turn.ts`, `openai-native-messages.ts` and
+        // `run-agent.ts`, so the projector's clip is folded in here.
+        return projected.clipped
+          ? { ...compressed, truncated: true }
+          : compressed;
       } catch (err) {
         return errorResult(
           "mcp.prompt.get",
@@ -224,10 +237,17 @@ export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
   };
 }
 
-function projectPromptMessages(res: unknown): string {
-  if (!res || typeof res !== "object") return "";
+/** Rendered messages, plus whether the projector had to clip them. */
+interface ProjectedPrompt {
+  text: string;
+  clipped: boolean;
+}
+
+function projectPromptMessages(res: unknown): ProjectedPrompt {
+  const empty = { text: "", clipped: false };
+  if (!res || typeof res !== "object") return empty;
   const messages = (res as { messages?: unknown }).messages;
-  if (!Array.isArray(messages)) return "";
+  if (!Array.isArray(messages)) return empty;
   const parts: string[] = [];
   for (const m of messages) {
     if (!m || typeof m !== "object") continue;
@@ -259,9 +279,13 @@ function projectPromptMessages(res: unknown): string {
     }
   }
   const joined = parts.join("\n\n");
-  return joined.length > MAX_PROMPT_CHARS
-    ? `${joined.slice(0, MAX_PROMPT_CHARS - 14)}…[truncated]`
-    : joined;
+  if (joined.length <= MAX_PROMPT_CHARS) {
+    return { text: joined, clipped: false };
+  }
+  return {
+    text: `${joined.slice(0, MAX_PROMPT_CHARS - 14)}…[truncated]`,
+    clipped: true,
+  };
 }
 
 function normaliseArguments(raw: unknown): Record<string, string> | undefined {

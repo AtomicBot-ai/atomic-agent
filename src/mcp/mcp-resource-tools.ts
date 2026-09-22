@@ -229,15 +229,26 @@ export function buildMcpResourceReadTool(manager: McpManager): ToolDefinition {
       try {
         const res = await client.readResource(uri, ctx.signal);
         const projected = projectResourceContents(res);
-        return compressToolResult(
+        const compressed = compressToolResult(
           {
             tool: "mcp.resource.read",
             status: "ok",
-            output: projected || `(empty contents for ${uri})`,
+            output: projected.text || `(empty contents for ${uri})`,
             details: { server, uri },
           },
           READ_COMPRESSOR_OPTIONS,
         );
+        // The compressor reports only its own cuts. Today its 8_000
+        // cap always fires before the projector's 16_000 one, so the
+        // flag happens to be right — but raise this cap back to
+        // `MAX_READ_CHARS` (as the comment there invites) and the
+        // two coincide, `overLength` stops firing, and a clipped
+        // document would report `truncated: false`. Fold the
+        // projector's clip in so that stays correct by construction
+        // rather than by arithmetic luck.
+        return projected.clipped
+          ? { ...compressed, truncated: true }
+          : compressed;
       } catch (err) {
         return errorResult(
           "mcp.resource.read",
@@ -249,10 +260,17 @@ export function buildMcpResourceReadTool(manager: McpManager): ToolDefinition {
   };
 }
 
-function projectResourceContents(res: unknown): string {
-  if (!res || typeof res !== "object") return "";
+/** Concatenated contents, plus whether the projector had to clip. */
+interface ProjectedResource {
+  text: string;
+  clipped: boolean;
+}
+
+function projectResourceContents(res: unknown): ProjectedResource {
+  const empty = { text: "", clipped: false };
+  if (!res || typeof res !== "object") return empty;
   const contents = (res as { contents?: unknown }).contents;
-  if (!Array.isArray(contents)) return "";
+  if (!Array.isArray(contents)) return empty;
   const parts: string[] = [];
   for (const block of contents) {
     if (!block || typeof block !== "object") continue;
@@ -265,9 +283,13 @@ function projectResourceContents(res: unknown): string {
     }
   }
   const joined = parts.join("\n");
-  return joined.length > MAX_READ_CHARS
-    ? `${joined.slice(0, MAX_READ_CHARS - 14)}…[truncated]`
-    : joined;
+  if (joined.length <= MAX_READ_CHARS) {
+    return { text: joined, clipped: false };
+  }
+  return {
+    text: `${joined.slice(0, MAX_READ_CHARS - 14)}…[truncated]`,
+    clipped: true,
+  };
 }
 
 function coerceServerName(raw: unknown): string | null {
