@@ -9,6 +9,7 @@
 import { compressToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
+import { clampField, flattenKey } from "./mcp-field-text.js";
 import type { McpManager } from "./mcp-manager.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
 
@@ -17,23 +18,27 @@ const DEFAULT_LIST_LIMIT = 30;
 const MAX_PROMPT_CHARS = 8_000;
 
 /**
- * Per-field widths for one `mcp.prompt.list` row.
+ * Per-field width for the one DISPLAY field of a `mcp.prompt.list`
+ * row. `name` and the argument names are absent on purpose.
  *
  * Same reasoning as `RESOURCE_FIELD_CHARS` in `mcp-resource-tools`:
- * `mcp-client.ts` copies a prompt's `name`, `description` and
- * argument names into the catalog verbatim, so without a clamp one
- * verbose server could spend the entire listing budget on a single
- * template and hide the other 99 — and a newline anywhere in those
- * fields would break the one-prompt-per-line format.
+ * `mcp-client.ts` copies a prompt's name, description and argument
+ * names in verbatim, so an unclamped description lets one template
+ * spend the whole listing budget and hide the other 99, and a
+ * newline in one breaks the one-prompt-per-line format.
  *
- * Clamped: 80 + 1 + 160 + 1 + 3 + 120 = at most ~365 chars per row,
- * so at least 21 of the 100 rows `clampLimit` allows always reach
- * the model. The argument list is clamped once, after joining,
- * because it is one visual field.
+ * But this listing is the catalog the model picks a `mcp.prompt.get`
+ * call out of: the prompt `name` is that call's `name` argument and
+ * the listed argument names are the keys of its `arguments` object.
+ * Shortening either produces a call that cannot succeed — measured
+ * before this was split out: a 131-char prompt name listed at 80
+ * came back "unknown prompt". So both are made line-safe and left
+ * at full length, and only the description is clamped.
+ *
+ * Row bound is `name + args + 125`: the clamped part is
+ * 1 + 1 + 3 + 120 = 125 chars.
  */
 const PROMPT_FIELD_CHARS = {
-  name: 80,
-  arguments: 160,
   description: 120,
 } as const;
 
@@ -96,13 +101,12 @@ const PROMPT_COMPRESSOR_OPTIONS = {
  * twelve visible rows gives it no way to reach the rest.
  *
  * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show.
- * The row builder is what makes that a real ceiling — see
- * `PROMPT_FIELD_CHARS`. With every field clamped a row is at most
- * ~365 chars, so at least 21 of the 100 rows `clampLimit` allows
- * always reach the model whatever the server sends, and an ordinary
- * row (40-100 chars) leaves all 100 well inside 8_000. Tail
- * truncation is off, so an overflowing listing is cut from the END
- * and keeps its first rows.
+ * The row builder is what bounds it — see `PROMPT_FIELD_CHARS`,
+ * which holds the display part to 125 chars per row on top of the
+ * name and argument names. An ordinary row (40-100 chars) leaves
+ * all 100 rows `clampLimit` allows well inside 8_000. Tail
+ * truncation is off, so an overflowing listing drops its LAST rows
+ * and `details.count`/`total` still report the real size.
  */
 const LIST_COMPRESSOR_OPTIONS = {
   maxSummaryLength: RENDER_DELIVERABLE_CHARS,
@@ -131,15 +135,16 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
       const limit = clampLimit(rawArgs.limit);
       const rows = catalog.prompts.slice(0, limit);
       const lines = rows.map((p) => {
-        const argsList = oneLine(
-          (p.arguments ?? [])
-            .map((a) => (a.required === false ? `${a.name}?` : a.name))
-            .join(", "),
-          PROMPT_FIELD_CHARS.arguments,
-        );
-        const name = oneLine(p.name, PROMPT_FIELD_CHARS.name);
+        const argsList = (p.arguments ?? [])
+          .map((a) =>
+            a.required === false
+              ? `${flattenKey(a.name)}?`
+              : flattenKey(a.name),
+          )
+          .join(", ");
+        const name = flattenKey(p.name);
         const desc = p.description
-          ? ` — ${oneLine(p.description, PROMPT_FIELD_CHARS.description)}`
+          ? ` — ${clampField(p.description, PROMPT_FIELD_CHARS.description)}`
           : "";
         return `${name}(${argsList})${desc}`;
       });
@@ -257,19 +262,6 @@ function projectPromptMessages(res: unknown): string {
   return joined.length > MAX_PROMPT_CHARS
     ? `${joined.slice(0, MAX_PROMPT_CHARS - 14)}…[truncated]`
     : joined;
-}
-
-/**
- * One catalog field, flattened to a single line and clamped, so a
- * server cannot inject a line break into a line-oriented listing.
- */
-function oneLine(text: string, max: number): string {
-  // eslint-disable-next-line no-control-regex
-  return text
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
 }
 
 function normaliseArguments(raw: unknown): Record<string, string> | undefined {

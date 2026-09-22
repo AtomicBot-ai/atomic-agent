@@ -114,9 +114,75 @@ describe("mcp.prompt.list", () => {
     expect(result.status).toBe("ok");
     const rows = result.summary.split("\n");
     expect(rows[0]).toContain("prompt_0(uri)");
-    expect(rows[0]!.length).toBeLessThanOrEqual(365);
+    // name + args + the 125-char display budget.
+    expect(rows[0]!.length).toBeLessThanOrEqual("prompt_0".length + 3 + 125);
     expect(rows).toHaveLength(100);
     expect(result.summary).toContain("prompt_99(uri)");
+  });
+
+  // The prompt `name` is the `name` argument of `mcp.prompt.get` and
+  // the listed argument names are the keys of its `arguments` object.
+  // Clamping either produced a call that could not succeed.
+  it("lists a long name and args unshortened so they can be used", async () => {
+    const longName = `report_${"n".repeat(140)}`;
+    const longArg = `parameter_${"p".repeat(120)}`;
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: longName,
+              description: "d".repeat(400),
+              arguments: [{ name: longArg, required: true }],
+            },
+          ],
+        },
+        client: {
+          isConnected: true,
+          getPrompt: async (name: string, args?: Record<string, string>) => {
+            if (name !== longName) throw new Error("unknown prompt");
+            if (args?.[longArg] === undefined) {
+              throw new Error("missing required argument");
+            }
+            return {
+              messages: [
+                { role: "user", content: { type: "text", text: "rendered ok" } },
+              ],
+            };
+          },
+        },
+      },
+    });
+    const listed = await buildMcpPromptListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    expect(listed.status).toBe("ok");
+    expect(listed.summary).toContain(longName);
+    expect(listed.summary).toContain(longArg);
+    expect(listed.summary).not.toContain("d".repeat(200));
+
+    // Round trip: use exactly the name and argument key that were
+    // listed.
+    const row = listed.summary.split("\n")[0]!;
+    const nameFromListing = row.slice(0, row.indexOf("("));
+    const argFromListing = row.slice(row.indexOf("(") + 1, row.indexOf(")"));
+    expect(nameFromListing).toBe(longName);
+    expect(argFromListing).toBe(longArg);
+    const got = await buildMcpPromptGetTool(mgr).run(
+      {
+        server: "docs",
+        name: nameFromListing,
+        arguments: { [argFromListing]: "value" },
+      },
+      ctx,
+    );
+    expect(got.status).toBe("ok");
+    expect(got.summary).toContain("rendered ok");
   });
 
   it("flattens control characters in a catalog field", async () => {

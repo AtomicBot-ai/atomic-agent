@@ -172,10 +172,65 @@ describe("mcp.resource.list", () => {
     const rows = result.summary.split("\n");
     // The greedy row is clamped, not dropped...
     expect(rows[0]).toContain("file:///r0.md");
-    expect(rows[0]!.length).toBeLessThanOrEqual(387);
+    // ...to the uri plus the 227-char display budget...
+    expect(rows[0]!.length).toBeLessThanOrEqual("file:///r0.md".length + 227);
     // ...and every other resource still reaches the model.
     expect(rows).toHaveLength(100);
     expect(result.summary).toContain("file:///r99.md");
+  });
+
+  // The regression this pair of tests exists to catch. `uri` is the
+  // key `mcp.resource.read` documents as "exact URI as returned by
+  // mcp.resource.list" — clamping it handed the model a key that
+  // looks real, carries no truncation marker and cannot work.
+  // API-backed servers emit presigned URLs of 500-1000 chars.
+  it("lists a long uri unshortened so it can be read back", async () => {
+    const longUri = `https://api.example.com/v1/docs/${"a".repeat(600)}?sig=k`;
+    const served = new Map([[longUri, "the document body"]]);
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          prompts: [],
+          resources: [
+            {
+              server: "docs",
+              uri: longUri,
+              name: "Long",
+              description: "d".repeat(400),
+            },
+          ],
+        },
+        client: {
+          isConnected: true,
+          readResource: async (uri: string) => {
+            const text = served.get(uri);
+            if (text === undefined) throw new Error("resource not found");
+            return { contents: [{ text }] };
+          },
+        },
+      },
+    });
+    const listed = await buildMcpResourceListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    expect(listed.status).toBe("ok");
+    // The uri arrives byte-for-byte, however long...
+    expect(listed.summary).toContain(longUri);
+    // ...while the description beside it is still clamped.
+    expect(listed.summary).not.toContain("d".repeat(200));
+
+    // Round trip: take the key exactly as listed and read it.
+    const uriFromListing = listed.summary.split(" ")[0]!;
+    expect(uriFromListing).toBe(longUri);
+    const read = await buildMcpResourceReadTool(mgr).run(
+      { server: "docs", uri: uriFromListing },
+      ctx,
+    );
+    expect(read.status).toBe("ok");
+    expect(read.summary).toContain("the document body");
   });
 
   // A newline in a description would otherwise split one resource
@@ -204,6 +259,63 @@ describe("mcp.resource.list", () => {
     const result = await tool.run({ server: "docs" }, ctx);
     expect(result.summary.split("\n")).toHaveLength(2);
     expect(result.summary).toContain("first line second line and a tab");
+  });
+
+  // A bidi override reverses the rest of the rendered line, which is
+  // how one row disguises itself as another; zero-width characters
+  // hide differences between two keys. Neither may reach the TUI.
+  it("strips bidi and zero-width characters from a description", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          prompts: [],
+          resources: [
+            {
+              server: "docs",
+              uri: "file:///a.md",
+              description: "safe\u202egnirts desrever\u200b\ufeff tail",
+            },
+          ],
+        },
+      },
+    });
+    const result = await buildMcpResourceListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    expect(result.summary).not.toMatch(/[\u202a-\u202e\u200b-\u200f\ufeff]/);
+    expect(result.summary).toContain("safe gnirts desrever tail");
+  });
+
+  // `.slice()` cuts UTF-16 code units, so a clamp landing inside a
+  // surrogate pair would leave a lone high surrogate that encodes as
+  // U+FFFD. Drop the half character instead of emitting a tofu box.
+  it("never leaves a lone surrogate at the clamp boundary", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          prompts: [],
+          resources: [
+            {
+              server: "docs",
+              uri: "file:///a.md",
+              // 119 chars, then an astral emoji straddling char 120.
+              description: `${"x".repeat(119)}\u{1f600}tail`,
+            },
+          ],
+        },
+      },
+    });
+    const result = await buildMcpResourceListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    expect(result.summary).not.toMatch(/[\ud800-\udbff]/);
+    expect(result.summary.endsWith("x".repeat(119))).toBe(true);
   });
 
   it("emits a placeholder line when the resource list is empty", async () => {

@@ -11,6 +11,7 @@
 import { compressToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
+import { clampField, flattenKey } from "./mcp-field-text.js";
 import type { McpManager } from "./mcp-manager.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
 
@@ -19,24 +20,38 @@ const DEFAULT_LIST_LIMIT = 30;
 const MAX_READ_CHARS = 16_000;
 
 /**
- * Per-field widths for one `mcp.resource.list` row.
+ * Per-field widths for the DISPLAY fields of one `mcp.resource.list`
+ * row. `uri` is deliberately absent — see below.
  *
- * An MCP server is untrusted input: `mcp-client.ts` copies `uri`,
- * `name`, `description` and `mimeType` into the catalog verbatim,
- * with no clamp of any kind. Interpolated raw, one server with a
- * 4 KB description would fill the whole listing budget and push
- * every other resource out of the model's view — and a description
- * containing a newline would break the one-resource-per-line format
- * the tool documents, since the compressor splits on `\n`.
+ * An MCP server is untrusted input: `mcp-client.ts` copies every
+ * catalog field in verbatim. Interpolated raw, one server with a
+ * 4 KB description fills the whole listing budget and pushes the
+ * other resources out of the model's view (measured: a single
+ * 7_900-char description cut a 100-resource catalog down to 2 rows),
+ * and a field containing a newline breaks the one-resource-per-line
+ * format the tool documents, since the compressor counts lines by
+ * splitting on `\n`.
  *
- * So each field is clamped the way `os.email.inbox` clamps a sender
- * and subject (`tools/os/email.ts`), which is what lets the listing
- * budget be an actual ceiling: 160 + 1 + (2 + 40) + 1 + 60 + 3 + 120
- * = at most ~387 chars per row. Generous for real catalogs — URIs
- * are usually well under 160 — and bounded for the rest.
+ * So the display fields are clamped the way `os.email.inbox` clamps
+ * a sender and a subject (`tools/os/email.ts`).
+ *
+ * `uri` is NOT clamped, only made line-safe. It is the key this
+ * tool's sibling takes back — `mcp.resource.read` documents "exact
+ * URI as returned by `mcp.resource.list`" — so a shortened one is a
+ * key that looks real and cannot work, with no marker to warn the
+ * model it was cut. API-backed servers routinely emit URIs with
+ * opaque ids, query strings or presigned signatures that run to
+ * several hundred characters. `mcp-tool-adapter.ts` renders
+ * `[resource_link <uri>]` uncapped for the same reason.
+ *
+ * Row bound is therefore `uri + 227`: the clamped part is
+ * 1 + (2 + 40) + 1 + 60 + 3 + 120 = 227 chars. An unclamped key can
+ * still push a long catalog past the listing budget, but tail
+ * truncation is off, so that degrades to "later rows dropped" —
+ * visible to the model as `details.count` < `details.total` — which
+ * is strictly better than silently handing it dead keys.
  */
 const RESOURCE_FIELD_CHARS = {
-  uri: 160,
   mimeType: 40,
   name: 60,
   description: 120,
@@ -78,7 +93,12 @@ const RENDER_DELIVERABLE_CHARS = 8_000;
  * PRODUCE `MAX_READ_CHARS` (16_000), but the prompt can DELIVER only
  * `RENDER_DELIVERABLE_CHARS` (8_000), so we cap here rather than
  * store 16 KB per turn that the renderer cuts in half again every
- * time. Measured on the 8_000/16_000 pair: a 15_998-char summary
+ * time. A consequence worth naming: since 8_000 < 16_000, the
+ * projector's own `…[truncated]` marker can never reach the model —
+ * the compressor always re-cuts first and stamps its own, and
+ * `MAX_READ_CHARS` stays the number to restore if the deliverable
+ * cap is ever lifted.
+ * Measured on the 8_000/16_000 pair: a 15_998-char summary
  * renders as 7_995 chars either way. If these tools are ever added
  * to `TOOLS_FULL_BODY_WHEN_FRESH` so a fresh read arrives whole,
  * this constant becomes the binding limit and should go back up to
@@ -113,13 +133,13 @@ const READ_COMPRESSOR_OPTIONS = {
  *
  * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show.
  * A listing has no projector budget of its own to inherit, so the
- * row builder is what makes the arithmetic real — see
- * `RESOURCE_FIELD_CHARS`. With every field clamped, one row is at
- * most ~387 chars, so at least 20 of the 100 rows `clampLimit`
- * allows always reach the model however verbose the server is, and
- * an ordinary row (70-120 chars) leaves all 100 comfortably inside
- * 8_000. Tail truncation is off, so a listing that still overflows
- * is cut from the END and keeps its first rows.
+ * row builder is what bounds it — see `RESOURCE_FIELD_CHARS`, which
+ * holds the display fields to 227 chars per row on top of whatever
+ * the `uri` costs. An ordinary row (70-120 chars) leaves all 100
+ * rows `clampLimit` allows well inside 8_000. Tail truncation is
+ * off, so a catalog of unusually long URIs overflows by dropping
+ * its LAST rows, and `details.count`/`total` still tell the model
+ * how many there were.
  */
 const LIST_COMPRESSOR_OPTIONS = {
   maxSummaryLength: RENDER_DELIVERABLE_CHARS,
@@ -148,15 +168,15 @@ export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
       const limit = clampLimit(rawArgs.limit);
       const rows = catalog.resources.slice(0, limit);
       const lines = rows.map((r) => {
-        const uri = oneLine(r.uri, RESOURCE_FIELD_CHARS.uri);
+        const uri = flattenKey(r.uri);
         const mime = r.mimeType
-          ? `[${oneLine(r.mimeType, RESOURCE_FIELD_CHARS.mimeType)}]`
+          ? `[${clampField(r.mimeType, RESOURCE_FIELD_CHARS.mimeType)}]`
           : "";
         const name = r.name
-          ? ` ${oneLine(r.name, RESOURCE_FIELD_CHARS.name)}`
+          ? ` ${clampField(r.name, RESOURCE_FIELD_CHARS.name)}`
           : "";
         const desc = r.description
-          ? ` — ${oneLine(r.description, RESOURCE_FIELD_CHARS.description)}`
+          ? ` — ${clampField(r.description, RESOURCE_FIELD_CHARS.description)}`
           : "";
         return `${uri} ${mime}${name}${desc}`.trim();
       });
@@ -248,20 +268,6 @@ function projectResourceContents(res: unknown): string {
   return joined.length > MAX_READ_CHARS
     ? `${joined.slice(0, MAX_READ_CHARS - 14)}…[truncated]`
     : joined;
-}
-
-/**
- * One catalog field, flattened to a single line and clamped. Control
- * characters go first so a server cannot inject a line break (or an
- * ANSI escape) into a line-oriented listing.
- */
-function oneLine(text: string, max: number): string {
-  // eslint-disable-next-line no-control-regex
-  return text
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
 }
 
 function coerceServerName(raw: unknown): string | null {
