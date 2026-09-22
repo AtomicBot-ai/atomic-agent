@@ -212,6 +212,55 @@ describe("conversation-turn helpers", () => {
     expect(rendered).not.toContain("[rendering-truncated");
   });
 
+  // A listing summary is budgeted by `listingResultCaps` and can reach
+  // the full 8 000-char ceiling. Without the fresh-body entry that
+  // width would sit in `### conversation` for the rest of the session;
+  // with it the model gets the rows on the turn that has to choose
+  // from them, and history pays the same ~400 chars it always did.
+  it("gives the listing tools their rows fresh and 400 chars once aged", () => {
+    const listing = `PID      PPID     USER               CPU%   MEM%   COMMAND\n${Array.from(
+      { length: 80 },
+      (_, i) => `${1000 + i}    1        someone              0.0   0.0 /usr/bin/thing-${i}`,
+    ).join("\n")}`;
+    for (const tool of [
+      "os.git.log",
+      "os.git.status",
+      "os.git.branch",
+      "os.proc.list",
+      "os.window.list",
+      "browser.tabs",
+      "github.pr.list",
+      "github.issue.list",
+    ]) {
+      const turn = toolResultTurn({
+        tool,
+        status: "ok",
+        summary: listing,
+        at: 7,
+      });
+      expect(renderToolResultBody(turn, { inCurrentMacroTurn: true })).toBe(
+        listing,
+      );
+      const aged = renderToolResultBody(turn, { inCurrentMacroTurn: false });
+      expect(aged.length).toBeLessThan(450);
+      expect(aged).toContain("[rendering-truncated");
+      // The head survives the history cut, so the column header and
+      // the newest rows are what the session keeps.
+      expect(aged.startsWith("PID      PPID")).toBe(true);
+    }
+    // `os.shell.run` is deliberately not in the set: it does not take
+    // the 400-char history cut a listing tool takes.
+    const shell = toolResultTurn({
+      tool: "os.shell.run",
+      status: "ok",
+      summary: listing,
+      at: 7,
+    });
+    expect(
+      renderToolResultBody(shell, { inCurrentMacroTurn: true }).length,
+    ).toBeGreaterThan(450);
+  });
+
   it("renders a fresh fusion.delegate result whole and gives it the generic cap once aged", () => {
     const summary = `3 tasks: 3 ok\n${"r".repeat(18_000)}`;
     const turn = toolResultTurn({
@@ -249,54 +298,6 @@ describe("conversation-turn helpers", () => {
     );
     expect(rendered).toContain(body);
     expect(rendered).not.toContain("[rendering-truncated");
-  });
-
-  // A listing summary is budgeted by `listingResultCaps` and can reach
-  // the full 8 000-char ceiling. Without the fresh-body entry that
-  // width would sit in `### conversation` for the rest of the session;
-  // with it the model gets the rows on the turn that has to choose
-  // from them, and history pays the same ~400 chars it always did.
-  it("gives the listing tools their rows fresh and 400 chars once aged", () => {
-    const listing = `PID      PPID     USER               CPU%   MEM%   COMMAND\n${Array.from(
-      { length: 80 },
-      (_, i) => `${1000 + i}    1        someone              0.0   0.0 /usr/bin/thing-${i}`,
-    ).join("\n")}`;
-    for (const tool of [
-      "os.git.log",
-      "os.git.status",
-      "os.git.branch",
-      "os.proc.list",
-      "os.window.list",
-      "browser.tabs",
-      "github.pr.list",
-      "github.issue.list",
-    ]) {
-      const turn = toolResultTurn({
-        tool,
-        status: "ok",
-        summary: listing,
-        at: 7,
-      });
-      expect(renderToolResultBody(turn, { inCurrentMacroTurn: true })).toBe(
-        listing,
-      );
-      const aged = renderToolResultBody(turn, { inCurrentMacroTurn: false });
-      expect(aged.length).toBeLessThan(450);
-      expect(aged).toContain("[rendering-truncated");
-      // The head survives the history cut, so the column header and
-      // the newest rows are what the session keeps.
-      expect(aged.startsWith("PID      PPID")).toBe(true);
-    }
-    // `os.shell.run` is deliberately not in the set.
-    const shell = toolResultTurn({
-      tool: "os.shell.run",
-      status: "ok",
-      summary: listing,
-      at: 7,
-    });
-    expect(renderToolResultBody(shell, { inCurrentMacroTurn: false })).toBe(
-      listing,
-    );
   });
 
   it("caps historical os.http.request results to ~400 chars", () => {
