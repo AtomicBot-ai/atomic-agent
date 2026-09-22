@@ -799,6 +799,44 @@ describe("executeBatch", () => {
     expect(body).not.toContain("/web/2020/");
   });
 
+  // The veto is an instruction, not tool output. At the compressor's bare
+  // defaults it is 479-588 chars and `capSummary` cuts at 385, so the
+  // bullet that names the rule never reached the model — the message
+  // whose whole purpose is to end a loop lost the sentence saying how.
+  it("delivers the whole veto instruction, including the rule it ends on", async () => {
+    const seen: string[] = [];
+    for (const [tool, args] of [
+      ["os.web.fetch", { url: "https://x.test/a" }],
+      ["os.shell.run", { command: "npm test" }],
+      ["os.fs.read", { path: "/tmp/a.txt" }],
+    ] as const) {
+      const registry = buildRegistry({ [tool]: async () => okResult(tool) });
+      const tracker = new ToolLoopTracker({
+        warningThreshold: 2,
+        criticalThreshold: 2,
+      });
+      seedCriticalStreak(tracker, tool, args, 2);
+      const out = await executeBatch(
+        toBatchInputs([{ tool, args }]),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+      const body = out.results[0]!.compressed!.summary;
+      // The rule, in full: on main this is cut mid-sentence, and for
+      // os.web.fetch the bullet does not survive at all.
+      expect(body).toContain(
+        "Do NOT repeat this exact call. Either try a different approach or close the turn with `reply`",
+      );
+      expect(body).toContain("honestly report you could not complete the task");
+      expect(body).not.toContain("… [truncated]");
+      expect(out.results[0]!.compressed!.truncated).toBe(false);
+      seen.push(body);
+    }
+    // Every veto this file can produce is far under the budget, so none
+    // of them is ever cut.
+    expect(Math.max(...seen.map((b) => b.length))).toBeLessThan(4_000);
+  });
+
   it("veto body names the command for a shell loop", async () => {
     const registry = buildRegistry({
       "os.shell.run": async () => okResult("os.shell.run"),
