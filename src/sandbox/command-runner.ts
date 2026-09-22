@@ -76,6 +76,13 @@ export interface CommandResult {
  * must outlast one `await` — the shell tool's detached jobs — goes
  * through `startCommandJob` (command-job.ts) instead.
  */
+/**
+ * What one stream keeps when the caller names no `maxOutputBytes`: the
+ * first bytes of it, with `truncated` set once a stream runs past this.
+ * Exported so a caller that reports the loss can name the real limit.
+ */
+export const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024;
+
 export async function runCommand(
   command: string,
   args: string[],
@@ -83,7 +90,7 @@ export async function runCommand(
 ): Promise<CommandResult> {
   const started = Date.now();
   const timeoutMs = options.timeoutMs ?? 60_000;
-  const maxOutputBytes = options.maxOutputBytes ?? 256 * 1024;
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise<CommandResult>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,

@@ -2,6 +2,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
 import { runSkillScript } from "../../skills/skill-script-runner.js";
+import { DEFAULT_MAX_OUTPUT_BYTES } from "../../sandbox/command-runner.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -41,16 +42,18 @@ const MAX_BODY_LINES =
   SCRIPT_COMPRESS_OPTIONS.maxTailLines - HEADER_RESERVE_LINES;
 
 /**
- * Said when the script wrote more than the runner captured
- * (`maxOutputBytes`, 256 KiB per stream in src/sandbox/command-runner.ts,
- * which keeps the head of each stream). Without it the omission banner
- * below would claim that only *earlier* output is missing, while the
- * true end of the log — the part this tool promises to keep — was never
- * captured at all.
+ * Said when the script wrote more than the runner captured.
+ * `runSkillScript` names no `maxOutputBytes`, so the runner's default
+ * applies, and it keeps the HEAD of each stream — without this note the
+ * omission banner below would claim that only *earlier* output is
+ * missing, while the true end of the log — the part this tool promises
+ * to keep — was never captured at all. The limit is read from the
+ * runner rather than restated, so the note cannot drift out of date.
  */
 const CAPTURE_LIMIT_NOTE =
-  "… [the runner stopped capturing at its 256 KiB per-stream limit " +
-  "while the script was still writing: the end of the log is missing]";
+  `… [the runner stopped capturing at its ` +
+  `${Math.round(DEFAULT_MAX_OUTPUT_BYTES / 1024)} KiB per-stream limit ` +
+  `while the script was still writing: the end of the log is missing]`;
 
 interface TrimmedBody {
   text: string;
@@ -70,32 +73,62 @@ interface TrimmedBody {
  * intact under either pass, so the exit code always survives.
  */
 function tailScriptBody(body: string, maxChars: number): TrimmedBody {
-  // Script output almost always ends in a newline, and splitting it
-  // as-is would spend a line of the budget on the empty string after it.
-  const trailingNewline = body.endsWith("\n");
-  const core = trailingNewline ? body.slice(0, -1) : body;
-  const lines = core.split("\n");
-  let kept =
-    lines.length > MAX_BODY_LINES
-      ? lines.slice(-MAX_BODY_LINES).join("\n")
-      : core;
-  if (kept.length > Math.max(1, maxChars)) {
-    // Cut on a line boundary: a body that starts mid-line reads as
-    // corrupt output, and a half line would also have to be counted.
-    const cut = kept.slice(kept.length - Math.max(1, maxChars));
-    const firstBreak = cut.indexOf("\n");
-    kept = firstBreak === -1 ? cut : cut.slice(firstBreak + 1);
+  const budget = Math.max(1, maxChars);
+  // Count and cut over the non-blank lines only. `extractTail` deletes
+  // blank lines from whatever we hand it, right after this banner is
+  // written, so counting them here would state a number the model
+  // cannot reconcile with what it received — and it also disposes of
+  // the empty element that output ending in a newline splits into.
+  const lines = body.split("\n").filter((line) => line.trim().length > 0);
+  const whole = lines.join("\n");
+  const keptLines =
+    lines.length > MAX_BODY_LINES ? lines.slice(-MAX_BODY_LINES) : lines;
+  const kept = keptLines.join("\n");
+  if (kept.length <= budget) {
+    if (keptLines.length === lines.length) {
+      return { text: body, trimmed: false };
+    }
+    const dropped = lines.length - keptLines.length;
+    return {
+      text: banner(dropped, whole.length - kept.length, kept),
+      trimmed: true,
+    };
   }
-  if (kept.length === core.length) return { text: body, trimmed: false };
+  // Cut on a line boundary: a body that starts mid-line reads as
+  // corrupt output, and a half line would also have to be counted.
+  const cut = kept.slice(kept.length - budget);
+  const firstBreak = cut.indexOf("\n");
+  if (firstBreak === -1) {
+    // A single line longer than the whole budget — there is no boundary
+    // to cut on, so the line-boundary promise above cannot be kept.
+    // Say that, rather than report a cut through the middle of a token
+    // as "0 earlier lines" of loss.
+    const earlier = lines.length - 1;
+    const lastLine = lines[lines.length - 1] ?? "";
+    const also = earlier > 0 ? `, along with ${earlier} earlier lines` : "";
+    return {
+      text:
+        `… [one line is longer than this result's budget: its first ` +
+        `${lastLine.length - cut.length} characters are omitted${also}]\n${cut}`,
+      trimmed: true,
+    };
+  }
+  const tail = cut.slice(firstBreak + 1);
   // Count the lines actually gone, both passes together: the character
   // pass drops whole lines of its own, so a banner counting only the
   // line pass states a number that is not true.
-  const droppedLines = lines.length - kept.split("\n").length;
-  const droppedChars = core.length - kept.length;
   return {
-    text: `… [omitted ${droppedLines} earlier lines, ${droppedChars} characters]\n${kept}`,
+    text: banner(
+      lines.length - tail.split("\n").length,
+      whole.length - tail.length,
+      tail,
+    ),
     trimmed: true,
   };
+}
+
+function banner(lines: number, chars: number, kept: string): string {
+  return `… [omitted ${lines} earlier lines, ${chars} characters]\n${kept}`;
 }
 
 export function buildSkillRunScriptTool(

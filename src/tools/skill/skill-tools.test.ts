@@ -92,9 +92,18 @@ describe("skill tools", () => {
 
   /**
    * A skill whose script prints `lines` numbered lines, then exits 3.
-   * `last` is printed after them, as a failing script's final word.
+   * `last` is printed after them, as a failing script's final word —
+   * with no trailing newline, the shape a script that ends mid-line
+   * produces, when `newlineAtEnd` is false. `blanks` double-spaces the
+   * log, the shape that separates blank lines the compressor deletes
+   * from the lines the omission banner counts.
    */
-  async function installLoud(lines: number, last = ""): Promise<SkillRegistry> {
+  async function installLoud(
+    lines: number,
+    last = "",
+    newlineAtEnd = true,
+    blanks = false,
+  ): Promise<SkillRegistry> {
     const skillDir = join(global, "loud");
     await mkdir(join(skillDir, "scripts"), { recursive: true });
     await writeFile(
@@ -117,9 +126,11 @@ describe("skill tools", () => {
         `const total = ${lines};`,
         "const pad = 'x'.repeat(40);",
         "let out = '';",
-        "for (let i = 1; i <= total; i++) out += `line ${i} ${pad}\\n`;",
+        `const gap = ${blanks ? "'\\n'" : "''"};`,
+        "for (let i = 1; i <= total; i++) out += `line ${i} ${pad}\\n` + gap;",
         "process.stdout.write(out);",
-        `if (${JSON.stringify(last)}) process.stdout.write(${JSON.stringify(last)} + '\\n');`,
+        `const last = ${JSON.stringify(last)};`,
+        `if (last) process.stdout.write(last + ${newlineAtEnd ? "'\\n'" : "''"});`,
         // Not process.exit(): it would cut the pipe before it flushed.
         "process.exitCode = 3;",
       ].join("\n"),
@@ -128,6 +139,22 @@ describe("skill tools", () => {
     const registry = new SkillRegistry({ globalDir: global, projectDir: null });
     await registry.refresh();
     return registry;
+  }
+
+  /** A skill whose script writes one line of `width` chars, no newline. */
+  async function installOneLine(width: number): Promise<SkillRegistry> {
+    const skills = await installLoud(0);
+    await writeFile(
+      join(global, "loud", "scripts", "loud.js"),
+      [
+        `const filler = 'z'.repeat(${width});`,
+        "process.stdout.write('START-MARKER' + filler + 'END-MARKER');",
+        "process.exitCode = 3;",
+      ].join("\n"),
+      "utf8",
+    );
+    await skills.refresh();
+    return skills;
   }
 
   function approvingTool(skills: SkillRegistry) {
@@ -146,7 +173,10 @@ describe("skill tools", () => {
    * `renderToolResultBody` caps the summary again at render time, and
    * it keeps the head, so a summary that overruns that cap loses the
    * tail this tool works to preserve. Asserting here is the only way to
-   * see the whole path.
+   * see the whole path. `inCurrentMacroTurn` is inert for this tool —
+   * it has no freshness branch in `renderToolResultBody`, so a fresh
+   * result and an aged one render identically — and is passed only to
+   * show the most generous case still holds.
    */
   function rendered(result: CompressedToolResult): string {
     return renderToolResultBody(
@@ -162,6 +192,18 @@ describe("skill tools", () => {
 
   /** The header, wherever the compressor's `key: …` line puts it. */
   const HEADER_RE = /(^|\n)# loud\/loud\.js\nexit: 3(\n|$)/;
+
+  /**
+   * How many lines the omission banner says went. The rendered body is
+   * the two header lines, the banner, then what survived — all of them
+   * non-blank, which is what the banner counts.
+   */
+  function bannerLines(body: string): number {
+    const found = /… \[omitted (\d+) earlier lines, \d+ characters\]/.exec(
+      body,
+    );
+    return Number(found?.[1]);
+  }
 
   it("skill.run_script keeps the exit line and the log tail", async () => {
     const skills = await installLoud(150, "FINAL-STATE-MARKER");
@@ -200,15 +242,61 @@ describe("skill tools", () => {
     expect(body).toContain("line 3000 ");
     expect(body).not.toContain("line 1 x");
     expect(body).not.toContain("rendering-truncated");
+    expect(body).not.toContain("… [truncated]");
     // A result that lost 2 700 lines must not claim to be complete.
     expect(result.truncated).toBe(true);
-    // The banner counts every line dropped, by either pass. The script
-    // wrote 3 001 lines; the body is the two header lines, the banner,
-    // then what survived.
-    const banner = /… \[omitted (\d+) earlier lines, \d+ characters\]/.exec(
-      body,
+    // What survives starts at a line boundary, never mid-token.
+    expect(body).toMatch(/\n… \[omitted[^\n]*\]\nline \d+ x/);
+    expect(bannerLines(body)).toBe(3_001 - (body.split("\n").length - 3));
+  });
+
+  it("skill.run_script counts the same with no trailing newline", async () => {
+    // Output that ends mid-line is the shape that made an earlier cut
+    // spend a line of the budget on the empty string after the last
+    // newline, so the banner was one line off.
+    const skills = await installLoud(3_000, "FINAL-STATE-MARKER", false);
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
     );
-    expect(Number(banner?.[1])).toBe(3_001 - (body.split("\n").length - 3));
+    const body = rendered(result);
+    expect(body).toContain("FINAL-STATE-MARKER");
+    expect(bannerLines(body)).toBe(3_001 - (body.split("\n").length - 3));
+  });
+
+  it("skill.run_script counts the lines the model actually loses", async () => {
+    // The compressor deletes blank lines from the body after the
+    // banner is written, so a banner counting them states a number the
+    // model cannot reconcile with the lines it received.
+    const skills = await installLoud(1_500, "FINAL-STATE-MARKER", true, true);
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toContain("FINAL-STATE-MARKER");
+    // 1 500 numbered lines + the marker; the blank line after each one
+    // is not a line the model is ever shown.
+    expect(bannerLines(body)).toBe(1_501 - (body.split("\n").length - 3));
+  });
+
+  it("skill.run_script names a single line too long to cut", async () => {
+    // No line boundary to cut on: the banner must not report a 50 KB
+    // cut through the middle of a token as "0 earlier lines" of loss.
+    const skills = await installOneLine(60_000);
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toMatch(HEADER_RE);
+    expect(body).toContain("one line is longer than this result's budget");
+    expect(body).not.toContain("omitted 0 earlier lines");
+    expect(body).toContain("END-MARKER");
+    expect(body).not.toContain("START-MARKER");
+    expect(result.truncated).toBe(true);
+    const cut = /its first (\d+) characters are omitted/.exec(body);
+    expect(Number(cut?.[1])).toBeGreaterThan(50_000);
   });
 
   it("skill.run_script keeps the exit line past the `key:` signature", async () => {
