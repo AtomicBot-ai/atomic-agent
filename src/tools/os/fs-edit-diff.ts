@@ -2,6 +2,33 @@ const DIFF_MAX_LINES = 40;
 const PREVIEW_MAX_LEN = 800;
 
 /**
+ * What `os.fs.edit` hands `compressToolResult` so the diff it just built
+ * survives as built.
+ *
+ * `renderUnifiedDiff` emits two header lines plus at most
+ * `DIFF_MAX_LINES` body lines and, when it clips, one
+ * `… [diff truncated]` marker — 43 lines is everything this module can
+ * produce. The compressor's 12-line default re-cuts that to its *tail*,
+ * which for a diff throws away the `--- a/…` / `+++ b/…` headers that
+ * say which file changed and keeps only the last few `+` lines: the one
+ * result where both ends carry meaning is the one the default mangles
+ * worst.
+ */
+export const DIFF_SUMMARY_MAX_LINES = DIFF_MAX_LINES + 3;
+
+/**
+ * The character budget for those 43 lines. Measured against this repo: a
+ * full-length 43-line diff of its own TypeScript is ~1.7 KB, and its
+ * lines are capped at 80 columns by the formatter, so 4000 leaves better
+ * than 2× headroom for wider sources. It stays well under the 8000-char
+ * `TOOL_RESULT_RENDER_CAP_CHARS` that `conversation-turn.ts` applies to
+ * every tool result at render time — a cap above that would be dead on
+ * arrival, and one anywhere near it would charge the packed transcript
+ * ~2.2K tokens for a diff that costs ~480.
+ */
+export const DIFF_SUMMARY_MAX_CHARS = 4_000;
+
+/**
  * Minimal unified diff, capped at DIFF_MAX_LINES total lines. We avoid a
  * full LCS algorithm: the edit is a single substring replacement, so the
  * diff is well approximated by a simple before/after line listing around

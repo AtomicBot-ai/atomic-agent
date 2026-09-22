@@ -7,6 +7,39 @@ import type { ToolDefinition } from "../tool-registry.js";
 const DEFAULT_MAX_ENTRIES = 200;
 const TOP_EXTENSIONS_IN_HEADER = 5;
 
+/**
+ * Character budget for the summary, matching what the archive listing
+ * tools use so the two read the same size in a transcript.
+ *
+ * The old 4000 was not wrong so much as unexplained, and it was enforced
+ * by the compressor's head-slice, which ends the listing mid-row with a
+ * bare "… [truncated]" and no count. Measured: a 125-entry listing of
+ * `node_modules/typescript/lib` renders at ~4.4 KB, so the old cap was
+ * already silently dropping rows off the end of an ordinary directory.
+ * 6000 chars is ~1.7K tokens — it carries a default-sized listing whole,
+ * and stays far enough below the 8000-char `TOOL_RESULT_RENDER_CAP_CHARS`
+ * in `session/conversation-turn.ts` that a session can hold several
+ * without the packer evicting its own history to pay for them.
+ */
+const LISTING_MAX_CHARS = 6_000;
+
+/**
+ * Rows the summary carries before it starts hiding them. Matching the
+ * default `maxEntries` means the ordinary call is never clipped by count;
+ * a caller who asks for thousands gets an honest excerpt instead of a
+ * wall. The character budget above usually bites first.
+ */
+const LISTING_MAX_ROWS = DEFAULT_MAX_ENTRIES;
+
+/**
+ * `renderOutput` emits at most five header lines — path, totals, filter,
+ * top extensions, sort — plus the `[showing n/m]` label, then the rows,
+ * then at most one "… N more entries" note. The compressor keeps the
+ * *last* `maxTailLines` lines, so anything shorter than this would throw
+ * the header away and leave a listing with no path on it.
+ */
+const LISTING_MAX_LINES = 6 + LISTING_MAX_ROWS + 1;
+
 type EntryKind = "file" | "dir" | "other";
 
 interface RawEntry {
@@ -72,7 +105,10 @@ export const osFsListTool: ToolDefinition = {
           })),
         },
       },
-      { maxSummaryLength: 4000, maxTailLines: 500 },
+      // `renderOutput` has already clipped the rows to these bounds and
+      // named what it hid; passing them on keeps the compressor from
+      // cutting a second time and losing either the header or that line.
+      { maxSummaryLength: LISTING_MAX_CHARS, maxTailLines: LISTING_MAX_LINES },
     );
   },
 };
@@ -197,14 +233,49 @@ function renderOutput(
         ? `[showing ${shown.length}/${matched.length}]`
         : `[showing ${shown.length}/${matched.length}; refine with pattern= or extensions= to narrow]`;
 
-  const body =
-    shown.length === 0
-      ? ``
-      : shown.map((e) => formatRow(e, args.sort)).join("\n");
+  const head = [header.join("\n"), shownLabel].join("\n");
+  if (shown.length === 0) return head;
+  return [
+    head,
+    clipRows(
+      shown.map((e) => formatRow(e, args.sort)),
+      head,
+    ),
+  ].join("\n");
+}
 
-  return [header.join("\n"), shownLabel, body]
-    .filter((s) => s.length > 0)
-    .join("\n");
+/**
+ * The rows, clipped from the head so the block above them always
+ * survives, and ended with a line naming how many were left out.
+ *
+ * The header is the part of this output that cannot be reconstructed —
+ * it carries the path, the totals and the filter that produced the rows —
+ * so it is budgeted first and the rows take what is left.
+ */
+function clipRows(rows: readonly string[], head: string): string {
+  // Budget against the longest note we could end up writing, so the
+  // clipped text fits the cap whatever the hidden count turns out to be.
+  const budget =
+    LISTING_MAX_CHARS - head.length - hiddenRowsNote(rows.length).length - 2;
+  let kept = 0;
+  let chars = 0;
+  while (kept < rows.length && kept < LISTING_MAX_ROWS) {
+    const next = chars + (kept > 0 ? 1 : 0) + rows[kept]!.length;
+    if (next > budget) break;
+    chars = next;
+    kept += 1;
+  }
+  if (kept >= rows.length) return rows.join("\n");
+  // One pathologically long name should still be shown rather than
+  // replaced by a note saying every row was hidden.
+  const shown = Math.max(1, kept);
+  return [...rows.slice(0, shown), hiddenRowsNote(rows.length - shown)].join(
+    "\n",
+  );
+}
+
+function hiddenRowsNote(hidden: number): string {
+  return `… ${hidden} more ${hidden === 1 ? "entry" : "entries"} not shown; narrow with pattern= or extensions=`;
 }
 
 function describeFilter(args: ParsedArgs): string[] {

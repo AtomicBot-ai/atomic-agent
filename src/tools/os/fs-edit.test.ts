@@ -176,6 +176,44 @@ describe("os.fs.edit", () => {
     ).toEqual([]);
   });
 
+  it("keeps the whole diff, both ends, for a multi-line edit", async () => {
+    // Eighteen changed lines, so the diff is 38 lines: well past the
+    // compressor's 12-line default, and inside the 40 lines
+    // `renderUnifiedDiff` is willing to emit.
+    const file = join(dir, "many.ts");
+    const before = Array.from(
+      { length: 18 },
+      (_, i) => `const v${i} = ${i};`,
+    ).join("\n");
+    const after = Array.from(
+      { length: 18 },
+      (_, i) => `const v${i} = ${i + 100};`,
+    ).join("\n");
+    await writeFile(file, `${before}\n`, "utf8");
+    const tool = buildOsFsEditTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
+    const result = await tool.run(
+      { path: "many.ts", oldString: before, newString: after },
+      makeCtx(dir),
+    );
+
+    expect(result.status).toBe("ok");
+    // The header end: which file this diff is of. A 12-line tail-slice
+    // throws these two lines away first.
+    expect(result.summary).toContain(`--- a/${file}`);
+    expect(result.summary).toContain(`+++ b/${file}`);
+    // The body end: the first and last line on both sides of the change.
+    expect(result.summary).toContain("-const v0 = 0;");
+    expect(result.summary).toContain("-const v17 = 17;");
+    expect(result.summary).toContain("+const v0 = 100;");
+    expect(result.summary).toContain("+const v17 = 117;");
+    expect(result.summary).not.toContain("[omitted");
+    expect(result.summary).not.toContain("[truncated]");
+    expect(result.truncated).toBe(false);
+  });
+
   describe("parse check on code files", () => {
     /**
      * `HD.Scene = { m0() {…}, m1() {…}, … }` — the shape a local model
