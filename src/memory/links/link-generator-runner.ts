@@ -188,7 +188,11 @@ export function createLinkGeneratorRunner(
 
   const runOne = async (input: LinkGeneratorInput): Promise<number> => {
     if (input.candidates.length < minCandidates) {
-      finish("skipped", { sessionId: input.sessionId, startedAt: now() });
+      finish("skipped", {
+        sessionId: input.sessionId,
+        startedAt: now(),
+        reason: `candidates=${input.candidates.length} < minCandidates=${minCandidates}`,
+      });
       return 0;
     }
     const previous = pending.get(input.sessionId);
