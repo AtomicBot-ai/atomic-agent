@@ -241,15 +241,37 @@ function refusal(
   };
 }
 
+/**
+ * What the refusal is compressed with. The compressor's default 400 is
+ * not enough for a message whose point is the way onward: the longer of
+ * the two texts above is 224 characters of fixed wording before
+ * `display` and `counts` are interpolated, so a 186-character absolute
+ * path — an ordinary one under a session workspace — already makes it
+ * 431, and the head slice at 385 eats exactly the end: the
+ * `os.fs.edit` / `os.fs.patch` instruction and the "say so in your
+ * reply so the orchestrator can redeclare it" escape hatch. The model
+ * would be told it was refused and never told what to do instead.
+ *
+ * The message is one line, so the tail slice never fires and only the
+ * length matters, and its one unbounded part is the path, which the
+ * filesystem bounds at PATH_MAX. 224 + 40 for the widest counts
+ * (`12345.6 MB → 1,234,567,890 lines`) + 1024 = 1288, so this keeps
+ * whole every refusal this guard can build.
+ */
+export const INPUT_REFUSAL_SUMMARY_CHARS = 1300;
+
 /** The tool result a refused write returns instead of running. */
 export function refuseInputReplacement(
   tool: string,
   refused: InputRefusal,
 ): CompressedToolResult {
-  return compressToolResult({
-    tool,
-    status: "error",
-    output: refused.text,
-    details: refused.details,
-  });
+  return compressToolResult(
+    {
+      tool,
+      status: "error",
+      output: refused.text,
+      details: refused.details,
+    },
+    { maxSummaryLength: INPUT_REFUSAL_SUMMARY_CHARS },
+  );
 }
