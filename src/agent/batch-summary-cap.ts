@@ -65,9 +65,20 @@ export function fairShare(
   return Math.max(MIN_SHARE_CHARS, sorted[sorted.length - 1] ?? 0);
 }
 
+/**
+ * Clip one over-share result and say what was dropped and how to get it.
+ *
+ * The marker used to offer only "ask for less per step", which fits a wide
+ * batch but not the case that actually hits this cap most often: a single
+ * listing or search call returning far too much. There the number of calls
+ * is already one and the only lever is the call's own bound, so the model
+ * was pointed at a knob it could not turn. Name both levers instead, and
+ * keep the sentence short — the marker is spent out of the same budget as
+ * the result, so every char of advice is a char of content dropped.
+ */
 function clipToShare(summary: string, share: number, capChars: number): string {
   const marker = (hidden: number) =>
-    `\n… [${hidden} more chars not shown: this step's results share a ${capChars}-char budget. Ask for less per step to see the rest.]`;
+    `\n… [${hidden} more chars not shown: this step's results share a ${capChars}-char budget. To see more: fewer calls per step, or a tighter \`limit\`/narrower path on this call.]`;
   const keep = Math.max(1, share - marker(summary.length).length);
   return `${summary.slice(0, keep)}${marker(summary.length - keep)}`;
 }

@@ -58,6 +58,37 @@ describe("capBatchSummaries", () => {
     );
   });
 
+  it("points the clip marker at both levers, not just the number of calls", () => {
+    const out = capBatchSummaries(
+      [{ tool: "os.fs.list", summary: "y".repeat(20_000) }],
+      [{ args: { path: "src" } }],
+      4_000,
+    );
+    // A lone listing call cannot "ask for less per step" — it is already
+    // one call. The marker has to name the call's own bound as well.
+    expect(out[0]).toContain("fewer calls per step");
+    expect(out[0]).toContain("`limit`");
+    expect(out[0]).toContain("narrower path");
+    expect(out[0]).not.toContain("Ask for less per step");
+  });
+
+  it("reserves room for the marker, so a clipped result still fits its share", () => {
+    const out = capBatchSummaries(
+      [
+        { tool: "os.shell.run", summary: "y".repeat(20_000) },
+        { tool: "os.shell.run", summary: "z".repeat(20_000) },
+      ],
+      [{}, {}],
+      4_000,
+    );
+    out.forEach((s) => {
+      expect(s.length).toBeLessThanOrEqual(2_000);
+      const shown = /^[yz]+/.exec(s)![0].length;
+      const hidden = Number(/… \[(\d+) more chars not shown/.exec(s)![1]);
+      expect(shown + hidden).toBe(20_000);
+    });
+  });
+
   it("names the offset after the range a read started at", () => {
     const out = capBatchSummaries(
       [
