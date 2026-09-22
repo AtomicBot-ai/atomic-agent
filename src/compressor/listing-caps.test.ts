@@ -25,6 +25,11 @@ describe("listingResultCaps", () => {
   });
 
   it("clamps an outsized budget and floors a fractional row count", () => {
+    // Pinned to the literal, not to the constant: the ceiling is the
+    // whole prompt-budget argument (a fresh listing is what
+    // `packConversation` prices, and the cut it forces is held), so a
+    // silent change back to 8 000 has to fail here.
+    expect(MAX_LISTING_SUMMARY_CHARS).toBe(4_000);
     expect(listingResultCaps(5000, 160).maxSummaryLength).toBe(
       MAX_LISTING_SUMMARY_CHARS,
     );

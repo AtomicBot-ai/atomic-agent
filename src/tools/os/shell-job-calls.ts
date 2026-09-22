@@ -275,13 +275,15 @@ function describeJobState(record: ShellJobRecord): string {
  * Note what this knob does NOT do: the stored size of this result is
  * bound by its CONTENT, not by the budget. The registry holds at most
  * `maxJobs` running plus the finished records it keeps — 23 rows in
- * the default configuration — so the worst case is ~3.4 KB whatever
- * number goes here, and a typical three-job session is ~600 chars. It
- * matters because `os.shell.run` is not in `TOOLS_FULL_BODY_WHEN_FRESH`
- * (only one of its forms is a listing), so unlike the other eight
- * sites this one pays its width on every later turn rather than once.
- * PR #470 gives `os.shell.run` its own fresh/aged split, after which
- * this becomes transient too.
+ * the default configuration — so the worst case is ~3.3 KB whatever
+ * number goes here. A typical three-job session measures 209 chars,
+ * which is under the 400 a result like this was capped at before, so
+ * in the ordinary case there is no standing cost at all. It matters
+ * only at the pathological end, because `os.shell.run` is not in
+ * `TOOLS_FULL_BODY_WHEN_FRESH` (only one of its forms is a listing),
+ * so unlike the other eight sites this one would pay its width on
+ * every later turn rather than once. PR #470 gives `os.shell.run` its
+ * own fresh/aged split, after which even that becomes transient.
  */
 const JOB_CHARS = 150;
 

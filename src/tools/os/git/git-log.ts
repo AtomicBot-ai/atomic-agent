@@ -86,8 +86,10 @@ export const osGitLogTool: ToolDefinition = {
       // the commits we actually asked git for: `limit` (20 by default,
       // 1000 max) x COMMIT_CHARS — a default call asks for ~5 KB and
       // is held to the shared ceiling; `limit: 1000` asks for 240 KB
-      // and gets the ceiling too, which measured out at ~40 real
-      // commits, ten times the four the defaults left.
+      // and gets the ceiling too, which carried 35-41 real commits on
+      // the two repos it was measured against (the row width is a
+      // commit subject, so it is repo-dependent) — against the four
+      // the compressor defaults left.
       listingResultCaps(limit, COMMIT_CHARS),
     );
   },
