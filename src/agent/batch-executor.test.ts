@@ -14,7 +14,11 @@ import {
   toBatchInputs,
   type BatchLoopSignal,
 } from "./batch-executor.js";
-import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
+import {
+  LOOP_VETO_DENIED_REASON,
+  ToolLoopTracker,
+  formatVetoInstruction,
+} from "./loop-detector.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { toolSetRefusal } from "./step-tool-set.js";
 import { createTraceRecorder } from "../tracing/trace/trace-recorder.js";
@@ -862,6 +866,55 @@ describe("executeBatch", () => {
     // The full URL — path, query, secret — must NOT reach model context.
     expect(body).not.toContain("SECRET");
     expect(body).not.toContain("/web/2020/");
+  });
+
+  // The veto is an instruction, not tool output. At the compressor's bare
+  // defaults it is 479-588 chars and `capSummary` cuts at 385, so the
+  // bullet that names the rule never reached the model — the message
+  // whose whole purpose is to end a loop lost the sentence saying how.
+  it("delivers the whole veto instruction, including the rule it ends on", async () => {
+    const seen: string[] = [];
+    for (const [tool, args] of [
+      ["os.web.fetch", { url: "https://x.test/a" }],
+      ["os.shell.run", { command: "npm test" }],
+      ["os.fs.read", { path: "/tmp/a.txt" }],
+    ] as const) {
+      const registry = buildRegistry({ [tool]: async () => okResult(tool) });
+      const tracker = new ToolLoopTracker({
+        warningThreshold: 2,
+        criticalThreshold: 2,
+      });
+      seedCriticalStreak(tracker, tool, args, 2);
+      const out = await executeBatch(
+        toBatchInputs([{ tool, args }]),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+      const body = out.results[0]!.compressed!.summary;
+      // The rule, in full: on main this is cut mid-sentence, and for
+      // os.web.fetch the bullet does not survive at all.
+      expect(body).toContain(
+        "Do NOT repeat this exact call. Either try a different approach or close the turn with `reply`",
+      );
+      expect(body).toContain("honestly report you could not complete the task");
+      expect(body).not.toContain("… [truncated]");
+      expect(body).not.toContain("[omitted");
+      expect(out.results[0]!.compressed!.truncated).toBe(false);
+      seen.push(body);
+    }
+    // Asserting on the compressed body here would be tautological — the
+    // compressor cannot return more than `maxSummaryLength`. The bound
+    // that means something is on the RAW instruction: the longest shape
+    // this file produces is an `os.http.request` veto with a target at
+    // `sanitizeLoopTarget`'s 60-char cap.
+    const longest = formatVetoInstruction({
+      tool: "os.http.request",
+      count: 5,
+      target: "m".repeat(60),
+    });
+    expect(longest.length).toBeGreaterThan(400);
+    expect(longest.length).toBeLessThan(1_000);
+    expect(Math.max(...seen.map((b) => b.length))).toBeGreaterThan(400);
   });
 
   it("veto body names the command for a shell loop", async () => {
