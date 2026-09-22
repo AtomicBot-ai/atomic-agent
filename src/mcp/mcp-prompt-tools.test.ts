@@ -175,6 +175,68 @@ describe("mcp.prompt.get", () => {
     });
   });
 
+  // `projectPromptMessages` budgets the rendered template at 8_000
+  // chars; the compressor defaults used to throw that budget away,
+  // keeping the last 12 non-blank lines and slicing them to 385
+  // chars. The `system:` opening carries the instructions, so it is
+  // exactly the part that must not be dropped.
+  it("keeps the whole rendered template, opening first", async () => {
+    const systemText = [
+      "You are a release auditor.",
+      ...Array.from({ length: 60 }, (_, i) => `rule ${i}: ${"y".repeat(40)}`),
+    ].join("\n");
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], resources: [], prompts: [] },
+        client: {
+          isConnected: true,
+          getPrompt: async () => ({
+            messages: [
+              { role: "system", content: { type: "text", text: systemText } },
+              { role: "user", content: { type: "text", text: "Go." } },
+            ],
+          }),
+        },
+      },
+    });
+    const tool = buildMcpPromptGetTool(mgr);
+    const result = await tool.run({ server: "docs", name: "audit" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("system: You are a release auditor.");
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("rule 0:");
+    expect(result.summary).toContain("rule 59:");
+    expect(result.summary).toContain("user: Go.");
+    expect(result.summary).not.toContain("[truncated]");
+    expect(result.summary.length).toBeGreaterThan(400);
+  });
+
+  it("clips at the projector budget, not at the 400-char default", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], resources: [], prompts: [] },
+        client: {
+          isConnected: true,
+          getPrompt: async () => ({
+            messages: [
+              {
+                role: "user",
+                content: { type: "text", text: "B".repeat(12_000) },
+              },
+            ],
+          }),
+        },
+      },
+    });
+    const tool = buildMcpPromptGetTool(mgr);
+    const result = await tool.run({ server: "docs", name: "big" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary.startsWith("user: BBB")).toBe(true);
+    expect(result.summary.length).toBeGreaterThan(7_000);
+    expect(result.summary.length).toBeLessThanOrEqual(8_000);
+    expect(result.summary.endsWith("…[truncated]")).toBe(true);
+  });
+
   it("folds transport errors into a status=error result", async () => {
     const mgr = makeManager({
       docs: {

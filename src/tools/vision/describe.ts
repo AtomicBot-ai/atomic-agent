@@ -9,6 +9,37 @@ import {
   UnsupportedImageFormatError,
 } from "./load-image.js";
 
+/**
+ * Per-call compressor bounds for a successful `vision.describe`.
+ *
+ * The VLM's answer is free-form prose, routinely several paragraphs
+ * (a screenshot walkthrough, an OCR transcript). Under the
+ * runtime-wide defaults it was cut twice: `maxTailLines: 12` keeps
+ * only the LAST twelve non-blank lines and `maxSummaryLength: 400`
+ * then slices the head of the remainder, so a 2 KB description
+ * reached the model as ~385 chars of its ending — the opening
+ * sentence, which is where a describe answer states what the image
+ * is, was the first thing thrown away. Nothing can recover it: the
+ * conversation turn keeps only `summary`, `details` holds just
+ * provider/paths/bytes, and a re-run costs another paid,
+ * non-deterministic model call that would be cut the same way.
+ *
+ * Budget: this tool declares none of its own, so we bound it by what
+ * the provider can actually emit. `describeImage` caps generation at
+ * `max_tokens: 4096` on the OpenAI path
+ * (`llm/provider/openai/openai-describe-image.ts`) and 512 on
+ * llama-server (`llm/provider/llama-server/llama-server-vision.ts`).
+ * At ~4 chars/token, 4096 tokens is ~16 KB, so 16_000 chars covers
+ * the largest reply either path can produce while staying a real
+ * bound — the same ceiling `mcp.resource.read` and
+ * `skill.run_script` use. Tail truncation is disabled because prose
+ * is a document, not a log.
+ */
+const VISION_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: 16_000,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export interface VisionDescribeToolOptions {
   provider: LlmProvider;
   /** Per-call image count cap mirrored from `config.vision.maxImagesPerCall`. */
@@ -135,22 +166,25 @@ export function buildVisionDescribeTool(
           })),
           signal: ctx.signal,
         });
-        return compressToolResult({
-          tool: "vision.describe",
-          status: "ok",
-          output: result.text,
-          details: {
-            provider: options.provider.name,
-            images: images.map((img) => ({
-              id: img.id,
-              path: img.path,
-              bytes: img.bytes.byteLength,
-              mimeType: img.mimeType,
-              mimeTypeSource: img.mimeTypeSource,
-            })),
-            durationMs: result.durationMs,
+        return compressToolResult(
+          {
+            tool: "vision.describe",
+            status: "ok",
+            output: result.text,
+            details: {
+              provider: options.provider.name,
+              images: images.map((img) => ({
+                id: img.id,
+                path: img.path,
+                bytes: img.bytes.byteLength,
+                mimeType: img.mimeType,
+                mimeTypeSource: img.mimeTypeSource,
+              })),
+              durationMs: result.durationMs,
+            },
           },
-        });
+          VISION_COMPRESSOR_OPTIONS,
+        );
       } catch (error) {
         if (error instanceof VisionUnsupportedError) {
           return errorResult(error.message);

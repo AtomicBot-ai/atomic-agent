@@ -16,6 +16,32 @@ const MAX_LIST_LIMIT = 100;
 const DEFAULT_LIST_LIMIT = 30;
 const MAX_PROMPT_CHARS = 8_000;
 
+/**
+ * Per-call compressor bounds for `mcp.prompt.get`.
+ *
+ * `projectPromptMessages` already budgets the rendered template at
+ * `MAX_PROMPT_CHARS` and stamps its own `…[truncated]` marker.
+ * Passing that string to `compressToolResult` with the runtime-wide
+ * defaults discarded the budget: `maxTailLines: 12` keeps only the
+ * LAST twelve non-blank lines and `maxSummaryLength: 400` then slices
+ * the head of the remainder, so an 8 KB rendered prompt reached the
+ * model as ~385 chars of its tail — and the `system:`/`user:` opening
+ * that carries the instructions was the first thing dropped.
+ *
+ * The loss is permanent: the conversation turn keeps only `summary`
+ * (`session/conversation-turn.ts`), `details` holds just the server,
+ * name and the template's description, and re-running the tool
+ * renders the same text and cuts it the same way.
+ *
+ * So we cap at the budget the projector already declared and disable
+ * line-based tail truncation, mirroring `MCP_COMPRESSOR_OPTIONS` in
+ * `mcp-tool-adapter.ts`.
+ */
+const PROMPT_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: MAX_PROMPT_CHARS,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.prompt.list",
@@ -89,20 +115,23 @@ export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
       try {
         const res = await client.getPrompt(name, args, ctx.signal);
         const projected = projectPromptMessages(res);
-        return compressToolResult({
-          tool: "mcp.prompt.get",
-          status: "ok",
-          output: projected || `(empty messages for prompt ${name})`,
-          details: {
-            server,
-            name,
-            ...(res &&
-            typeof res === "object" &&
-            typeof (res as { description?: unknown }).description === "string"
-              ? { description: (res as { description: string }).description }
-              : {}),
+        return compressToolResult(
+          {
+            tool: "mcp.prompt.get",
+            status: "ok",
+            output: projected || `(empty messages for prompt ${name})`,
+            details: {
+              server,
+              name,
+              ...(res &&
+              typeof res === "object" &&
+              typeof (res as { description?: unknown }).description === "string"
+                ? { description: (res as { description: string }).description }
+                : {}),
+            },
           },
-        });
+          PROMPT_COMPRESSOR_OPTIONS,
+        );
       } catch (err) {
         return errorResult(
           "mcp.prompt.get",

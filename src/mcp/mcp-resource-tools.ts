@@ -18,6 +18,33 @@ const MAX_LIST_LIMIT = 100;
 const DEFAULT_LIST_LIMIT = 30;
 const MAX_READ_CHARS = 16_000;
 
+/**
+ * Per-call compressor bounds for `mcp.resource.read`.
+ *
+ * `projectResourceContents` already budgets the payload at
+ * `MAX_READ_CHARS` and stamps its own `…[truncated]` marker when it
+ * clips. Handing that string to `compressToolResult` with the
+ * runtime-wide defaults threw the budget away twice over:
+ * `maxTailLines: 12` keeps only the LAST twelve non-blank lines, and
+ * `maxSummaryLength: 400` then slices the head of whatever survived —
+ * so a 16 KB document reached the model as ~385 chars taken from
+ * somewhere in its middle, with its opening silently gone.
+ *
+ * The loss is not a rendering detail: the conversation turn stores
+ * only `summary` (`session/conversation-turn.ts`), `details` here is
+ * just `{ server, uri }`, and the tool exposes no offset/paging arg,
+ * so re-reading the resource reproduces the very same slice.
+ *
+ * A resource is a document, not a log tail: the head is the part that
+ * matters. So we cap at the budget the projector already declared and
+ * disable line-based tail truncation, mirroring
+ * `MCP_COMPRESSOR_OPTIONS` in `mcp-tool-adapter.ts`.
+ */
+const READ_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: MAX_READ_CHARS,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.resource.list",
@@ -89,12 +116,15 @@ export function buildMcpResourceReadTool(manager: McpManager): ToolDefinition {
       try {
         const res = await client.readResource(uri, ctx.signal);
         const projected = projectResourceContents(res);
-        return compressToolResult({
-          tool: "mcp.resource.read",
-          status: "ok",
-          output: projected || `(empty contents for ${uri})`,
-          details: { server, uri },
-        });
+        return compressToolResult(
+          {
+            tool: "mcp.resource.read",
+            status: "ok",
+            output: projected || `(empty contents for ${uri})`,
+            details: { server, uri },
+          },
+          READ_COMPRESSOR_OPTIONS,
+        );
       } catch (err) {
         return errorResult(
           "mcp.resource.read",

@@ -140,6 +140,45 @@ describe("buildVisionDescribeTool", () => {
     expect(call.images[0]!.mimeType).toBe("image/png");
   });
 
+  // A VLM answer is prose, routinely several paragraphs. The
+  // compressor defaults kept only the last 12 non-blank lines and
+  // then sliced those to 385 chars, so the opening sentence — the one
+  // that says what the image is — never reached the model, and
+  // recovering it costs another paid, non-deterministic call.
+  it("keeps a long description whole, opening sentence first", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const path = join(tmp, "image.png");
+    await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const paragraphs = [
+      "The screenshot shows the Atomic Agent settings window.",
+      ...Array.from(
+        { length: 40 },
+        (_, i) => `Row ${i}: a labelled control. ${"z".repeat(40)}`,
+      ),
+      "The Save button at the bottom right is disabled.",
+    ];
+    const text = paragraphs.join("\n");
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider({
+        onCall: async () => ({ text, durationMs: 7 }),
+      }),
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain(
+      "The screenshot shows the Atomic Agent settings window.",
+    );
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("Row 0:");
+    expect(result.summary).toContain("Row 39:");
+    expect(result.summary).toContain("Save button");
+    expect(result.summary).not.toContain("[truncated]");
+    expect(result.summary.length).toBeGreaterThan(400);
+    expect(result.summary).toBe(text);
+  });
+
   // Issue #185: the per-call image cap was enforced but documented
   // nowhere the model could read, so it discovered the limit only by
   // burning a step on a failed 8/12/20-image call. The cap now appears

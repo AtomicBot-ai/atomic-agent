@@ -156,6 +156,65 @@ describe("mcp.resource.read", () => {
     expect(result.summary).toContain("[blob image/png");
   });
 
+  // `projectResourceContents` budgets the payload at 16_000 chars;
+  // the compressor defaults used to throw that budget away, keeping
+  // the last 12 non-blank lines and then slicing them to 385 chars.
+  // A resource is a document: its opening must survive.
+  it("keeps the whole projected document, opening first", async () => {
+    const lines = Array.from(
+      { length: 200 },
+      (_, i) => `line-${i}: ${"x".repeat(40)}`,
+    );
+    const body = lines.join("\n");
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], prompts: [], resources: [] },
+        client: {
+          isConnected: true,
+          readResource: async () => ({ contents: [{ text: body }] }),
+        },
+      },
+    });
+    const tool = buildMcpResourceReadTool(mgr);
+    const result = await tool.run(
+      { server: "docs", uri: "file:///big.md" },
+      ctx,
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("line-0:");
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("line-100:");
+    expect(result.summary).toContain("line-199:");
+    expect(result.summary).not.toContain("[truncated]");
+    expect(result.summary.length).toBeGreaterThan(400);
+    expect(result.summary).toBe(body);
+  });
+
+  // The projector's own 16_000-char clip stays the only cut, and it
+  // is head-anchored, so the opening is still what the model reads.
+  it("clips at the projector budget, not at the 400-char default", async () => {
+    const body = "A".repeat(20_000);
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], prompts: [], resources: [] },
+        client: {
+          isConnected: true,
+          readResource: async () => ({ contents: [{ text: body }] }),
+        },
+      },
+    });
+    const tool = buildMcpResourceReadTool(mgr);
+    const result = await tool.run(
+      { server: "docs", uri: "file:///huge.md" },
+      ctx,
+    );
+    expect(result.status).toBe("ok");
+    // 16_000 - 14 chars of body + the projector's own marker.
+    expect(result.summary.length).toBeGreaterThan(15_000);
+    expect(result.summary.length).toBeLessThanOrEqual(16_000);
+    expect(result.summary.endsWith("…[truncated]")).toBe(true);
+  });
+
   it("folds transport errors into a status=error result", async () => {
     const mgr = makeManager({
       docs: {
