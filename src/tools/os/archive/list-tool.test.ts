@@ -96,8 +96,10 @@ describe("os.fs.archive.list", () => {
   });
 
   it("keeps the head of a large listing and says how much it hid", async () => {
+    // Past 2000 entries the old `maxTailLines` dropped the *first* ones,
+    // which is the half of the defect a 400-entry archive does not show.
     const tool = buildOsFsArchiveListTool({
-      backends: { tar: () => fakeBackendListing(400) },
+      backends: { tar: () => fakeBackendListing(2500) },
     });
     const result = await tool.run(
       { path: "sample.tar", format: "tar" },
@@ -114,7 +116,7 @@ describe("os.fs.archive.list", () => {
     const rows = result.summary
       .split("\n")
       .filter((line) => line.startsWith("-")).length;
-    expect(rows + Number(note![1])).toBe(400);
+    expect(rows + Number(note![1])).toBe(2500);
     expect(result.summary).not.toContain("[truncated]");
     // And it fits the budget, so nothing is cut a second time at render.
     expect(result.summary.length).toBeLessThanOrEqual(
@@ -122,7 +124,7 @@ describe("os.fs.archive.list", () => {
     );
 
     const details = (result.details ?? {}) as Record<string, unknown>;
-    expect(details.entryCount).toBe(400);
+    expect(details.entryCount).toBe(2500);
   });
 
   it("leaves a listing that fits alone", async () => {
