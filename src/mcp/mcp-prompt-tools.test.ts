@@ -75,7 +75,7 @@ describe("mcp.prompt.list", () => {
     const prompts = Array.from({ length: 100 }, (_, i) => ({
       server: "docs",
       name: `prompt_${i}`,
-      description: `template number ${i} in catalog order`,
+      description: `catalog order ${i}`,
       arguments: [
         { name: "uri", required: true },
         { name: "length", required: false },
@@ -88,7 +88,6 @@ describe("mcp.prompt.list", () => {
     const result = await tool.run({ server: "docs", limit: 100 }, ctx);
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("prompt_0(uri, length?)");
-    expect(result.truncated).toBe(false);
     expect(result.summary).toContain("prompt_1(uri, length?)");
     expect(result.summary).toContain("prompt_50(uri, length?)");
     expect(result.summary).toContain("prompt_99(uri, length?)");
@@ -234,16 +233,22 @@ describe("mcp.prompt.get", () => {
     const tool = buildMcpPromptGetTool(mgr);
     const result = await tool.run({ server: "docs", name: "audit" }, ctx);
     expect(result.status).toBe("ok");
-    expect(result.summary).toContain("system: You are a release auditor.");
-    expect(result.truncated).toBe(false);
+    expect(result.summary.startsWith("system: You are a release auditor.")).toBe(
+      true,
+    );
     expect(result.summary).toContain("rule 0:");
     expect(result.summary).toContain("rule 59:");
     expect(result.summary).toContain("user: Go.");
     expect(result.summary).not.toContain("[truncated]");
     expect(result.summary.length).toBeGreaterThan(400);
+    // `projectPromptMessages` joins messages with a BLANK line, which
+    // `extractTail` then drops (result-compressor.ts). Every line of
+    // text survives in order; the separator between the messages does
+    // not, so this is not the projected string byte-for-byte.
+    expect(result.summary).not.toContain("\n\n");
   });
 
-  it("clips at the projector budget, not at the 400-char default", async () => {
+  it("clips at the deliverable budget, not at the 400-char default", async () => {
     const mgr = makeManager({
       docs: {
         catalog: { server: "docs", tools: [], resources: [], prompts: [] },

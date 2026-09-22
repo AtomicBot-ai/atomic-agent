@@ -24,19 +24,31 @@ import {
  * provider/paths/bytes, and a re-run costs another paid,
  * non-deterministic model call that would be cut the same way.
  *
- * Budget: this tool declares none of its own, so we bound it by what
- * the provider can actually emit. `describeImage` caps generation at
- * `max_tokens: 4096` on the OpenAI path
- * (`llm/provider/openai/openai-describe-image.ts`) and 512 on
- * llama-server (`llm/provider/llama-server/llama-server-vision.ts`).
- * At ~4 chars/token, 4096 tokens is ~16 KB, so 16_000 chars covers
- * the largest reply either path can produce while staying a real
- * bound — the same ceiling `mcp.resource.read` and
- * `skill.run_script` use. Tail truncation is disabled because prose
- * is a document, not a log.
+ * Budget — what the tool can PRODUCE and what the prompt can DELIVER
+ * are different numbers, and the smaller one wins. Produce:
+ * `describeImage` caps generation at `max_tokens: 4096` on the
+ * OpenAI path (`llm/provider/openai/openai-describe-image.ts`) and
+ * 512 on llama-server
+ * (`llm/provider/llama-server/llama-server-vision.ts`), so ~16 KB at
+ * ~4 chars/token. Deliver: `TOOL_RESULT_RENDER_CAP_CHARS` in
+ * `session/conversation-turn.ts` clips every rendered tool_result to
+ * 8_000 chars, and `vision.describe` is not in the
+ * `TOOLS_FULL_BODY_WHEN_FRESH` bypass set — not even on the
+ * inference that consumes the result. Keeping more than 8_000 would
+ * only store text the renderer cuts again every turn, so the cap is
+ * aligned to the render ceiling, as `MCP_COMPRESSOR_OPTIONS` in
+ * `mcp/mcp-tool-adapter.ts` already is. A typical description is
+ * 500-3000 chars and is unaffected; if `vision.describe` ever joins
+ * the bypass set, this should go back up to ~16_000.
+ *
+ * Tail truncation is disabled because prose is a document, not a
+ * log. Caveat inherited from the compressor: `extractTail` drops
+ * blank lines unconditionally, so a multi-paragraph description
+ * arrives with its paragraph breaks collapsed — every sentence
+ * survives, the blank lines between them do not.
  */
 const VISION_COMPRESSOR_OPTIONS = {
-  maxSummaryLength: 16_000,
+  maxSummaryLength: 8_000,
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 

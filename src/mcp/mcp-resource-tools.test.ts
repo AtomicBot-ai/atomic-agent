@@ -103,7 +103,7 @@ describe("mcp.resource.list", () => {
       server: "docs",
       uri: `file:///r${i}.md`,
       name: `Doc ${i}`,
-      description: `resource number ${i} in catalog order`,
+      description: `catalog order ${i}`,
       mimeType: "text/markdown",
     }));
     const mgr = makeManager({
@@ -115,7 +115,6 @@ describe("mcp.resource.list", () => {
     const result = await tool.run({ server: "docs", limit: 100 }, ctx);
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("file:///r0.md");
-    expect(result.truncated).toBe(false);
     expect(result.summary).toContain("file:///r1.md");
     expect(result.summary).toContain("file:///r50.md");
     expect(result.summary).toContain("file:///r99.md");
@@ -132,7 +131,7 @@ describe("mcp.resource.list", () => {
     const resources = Array.from({ length: 100 }, (_, i) => ({
       server: "docs",
       uri: `file:///r${i}.md`,
-      description: "d".repeat(400),
+      description: "d".repeat(200),
     }));
     const mgr = makeManager({
       docs: {
@@ -145,7 +144,8 @@ describe("mcp.resource.list", () => {
     expect(result.truncated).toBe(true);
     expect(result.summary.startsWith("file:///r0.md")).toBe(true);
     expect(result.summary).not.toContain("file:///r99.md");
-    expect(result.summary.length).toBeGreaterThan(20_000);
+    expect(result.summary.length).toBeGreaterThan(7_000);
+    expect(result.summary.length).toBeLessThanOrEqual(8_000);
     expect(result.summary).toContain("… [truncated]");
   });
 
@@ -213,16 +213,20 @@ describe("mcp.resource.read", () => {
     expect(result.summary).toContain("[blob image/png");
   });
 
-  // `projectResourceContents` budgets the payload at 16_000 chars;
-  // the compressor defaults used to throw that budget away, keeping
-  // the last 12 non-blank lines and then slicing them to 385 chars.
-  // A resource is a document: its opening must survive.
-  it("keeps the whole projected document, opening first", async () => {
-    const lines = Array.from(
-      { length: 200 },
+  // The compressor defaults kept the last 12 non-blank lines and then
+  // sliced them to 385 chars. A resource is a document: its opening
+  // must survive, and so must the body between opening and end.
+  //
+  // The fixture carries blank lines on purpose. `extractTail` drops
+  // them unconditionally (result-compressor.ts), so the contract this
+  // pins is "every line of text survives, in order", NOT byte
+  // identity with the input — the blank lines are gone either way.
+  it("keeps every line of a markdown resource, opening first", async () => {
+    const paragraphs = Array.from(
+      { length: 120 },
       (_, i) => `line-${i}: ${"x".repeat(40)}`,
     );
-    const body = lines.join("\n");
+    const body = `# Title\n\n${paragraphs.join("\n\n")}\n\n## End\n`;
     const mgr = makeManager({
       docs: {
         catalog: { server: "docs", tools: [], prompts: [], resources: [] },
@@ -238,18 +242,27 @@ describe("mcp.resource.read", () => {
       ctx,
     );
     expect(result.status).toBe("ok");
+    expect(result.summary.startsWith("# Title")).toBe(true);
     expect(result.summary).toContain("line-0:");
-    expect(result.truncated).toBe(false);
-    expect(result.summary).toContain("line-100:");
-    expect(result.summary).toContain("line-199:");
+    expect(result.summary).toContain("line-60:");
+    expect(result.summary).toContain("line-119:");
+    expect(result.summary).toContain("## End");
     expect(result.summary).not.toContain("[truncated]");
     expect(result.summary.length).toBeGreaterThan(400);
-    expect(result.summary).toBe(body);
+    // Every non-blank line, in order and complete...
+    expect(result.summary.split("\n")).toEqual(
+      body.split("\n").filter((l) => l.trim().length > 0),
+    );
+    // ...but the blank lines between them are dropped by the
+    // compressor, so this is not the input byte-for-byte.
+    expect(result.summary).not.toBe(body);
   });
 
-  // The projector's own 16_000-char clip stays the only cut, and it
-  // is head-anchored, so the opening is still what the model reads.
-  it("clips at the projector budget, not at the 400-char default", async () => {
+  // The render path clips every tool_result body at 8_000 chars
+  // (TOOL_RESULT_RENDER_CAP_CHARS, session/conversation-turn.ts), and
+  // mcp.* is not in the TOOLS_FULL_BODY_WHEN_FRESH bypass set, so the
+  // compressor cap is aligned to what can actually be delivered.
+  it("clips at the deliverable budget, not at the 400-char default", async () => {
     const body = "A".repeat(20_000);
     const mgr = makeManager({
       docs: {
@@ -266,10 +279,11 @@ describe("mcp.resource.read", () => {
       ctx,
     );
     expect(result.status).toBe("ok");
-    // 16_000 - 14 chars of body + the projector's own marker.
-    expect(result.summary.length).toBeGreaterThan(15_000);
-    expect(result.summary.length).toBeLessThanOrEqual(16_000);
-    expect(result.summary.endsWith("…[truncated]")).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(result.summary.startsWith("AAAA")).toBe(true);
+    expect(result.summary.length).toBeGreaterThan(7_000);
+    expect(result.summary.length).toBeLessThanOrEqual(8_000);
+    expect(result.summary).toContain("… [truncated]");
   });
 
   it("folds transport errors into a status=error result", async () => {

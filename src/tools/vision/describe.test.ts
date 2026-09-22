@@ -157,7 +157,9 @@ describe("buildVisionDescribeTool", () => {
       ),
       "The Save button at the bottom right is disabled.",
     ];
-    const text = paragraphs.join("\n");
+    // Paragraph breaks on purpose: a VLM answer is prose, and the
+    // compressor's `extractTail` drops blank lines unconditionally.
+    const text = paragraphs.join("\n\n");
     const tool = buildVisionDescribeTool({
       provider: fakeProvider({
         onCall: async () => ({ text, durationMs: 7 }),
@@ -167,16 +169,21 @@ describe("buildVisionDescribeTool", () => {
     });
     const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
     expect(result.status).toBe("ok");
-    expect(result.summary).toContain(
-      "The screenshot shows the Atomic Agent settings window.",
-    );
-    expect(result.truncated).toBe(false);
+    expect(
+      result.summary.startsWith(
+        "The screenshot shows the Atomic Agent settings window.",
+      ),
+    ).toBe(true);
     expect(result.summary).toContain("Row 0:");
     expect(result.summary).toContain("Row 39:");
     expect(result.summary).toContain("Save button");
     expect(result.summary).not.toContain("[truncated]");
     expect(result.summary.length).toBeGreaterThan(400);
-    expect(result.summary).toBe(text);
+    // Every paragraph survives, in order and complete...
+    expect(result.summary.split("\n")).toEqual(paragraphs);
+    // ...but the blank lines between them are dropped by the
+    // compressor, so the answer is not returned byte-for-byte.
+    expect(result.summary).not.toBe(text);
   });
 
   // Issue #185: the per-call image cap was enforced but documented

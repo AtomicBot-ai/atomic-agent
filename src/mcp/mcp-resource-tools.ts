@@ -19,6 +19,18 @@ const DEFAULT_LIST_LIMIT = 30;
 const MAX_READ_CHARS = 16_000;
 
 /**
+ * The most of a `tool_result.summary` the prompt will ever show:
+ * `TOOL_RESULT_RENDER_CAP_CHARS` in `session/conversation-turn.ts`
+ * (see the constant there, and `renderToolResultBody` below it).
+ * Only the tools in `TOOLS_FULL_BODY_WHEN_FRESH` bypass it, and no
+ * `mcp.*` tool is in that set, so anything a compressor budget keeps
+ * past this point is stored per turn and re-clipped on every render.
+ * `MCP_COMPRESSOR_OPTIONS` in `mcp-tool-adapter.ts` is set to the
+ * same 8_000 for the same reason.
+ */
+const RENDER_DELIVERABLE_CHARS = 8_000;
+
+/**
  * Per-call compressor bounds for `mcp.resource.read`.
  *
  * `projectResourceContents` already budgets the payload at
@@ -36,12 +48,25 @@ const MAX_READ_CHARS = 16_000;
  * so re-reading the resource reproduces the very same slice.
  *
  * A resource is a document, not a log tail: the head is the part that
- * matters. So we cap at the budget the projector already declared and
- * disable line-based tail truncation, mirroring
- * `MCP_COMPRESSOR_OPTIONS` in `mcp-tool-adapter.ts`.
+ * matters, so line-based tail truncation is disabled.
+ *
+ * Budget — two different numbers, deliberately: the projector can
+ * PRODUCE `MAX_READ_CHARS` (16_000), but the prompt can DELIVER only
+ * `RENDER_DELIVERABLE_CHARS` (8_000), so we cap here rather than
+ * store 16 KB per turn that the renderer cuts in half again every
+ * time. Measured on the 8_000/16_000 pair: a 15_998-char summary
+ * renders as 7_995 chars either way. If these tools are ever added
+ * to `TOOLS_FULL_BODY_WHEN_FRESH` so a fresh read arrives whole,
+ * this constant becomes the binding limit and should go back up to
+ * `MAX_READ_CHARS`.
+ *
+ * Caveat inherited from the compressor: `extractTail` drops blank
+ * lines unconditionally, so a markdown resource arrives with its
+ * paragraph breaks collapsed. Every character of text survives; the
+ * blank lines between them do not.
  */
 const READ_COMPRESSOR_OPTIONS = {
-  maxSummaryLength: MAX_READ_CHARS,
+  maxSummaryLength: RENDER_DELIVERABLE_CHARS,
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
@@ -62,17 +87,20 @@ const READ_COMPRESSOR_OPTIONS = {
  * that 100 existed while being shown 12, with no way to ask for the
  * rest.
  *
- * Budget: one row is `<uri> [mime] name — description`. Allowing a
- * generous 240 chars per row (URI ~120, mime ~40, name ~40, plus a
- * one-line description) across the `MAX_LIST_LIMIT` rows the tool
- * already enforces gives 100 × 240 = 24_000 — the same ceiling
- * `os.email.inbox` derives for its 100-message listing
- * (`tools/os/email.ts`). Tail truncation is disabled so that when a
- * listing does exceed the budget the cut stays head-anchored and the
- * first rows survive.
+ * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show
+ * (see that constant). A listing has no projector budget of its own
+ * to inherit, and no useful ceiling can be computed from the rows:
+ * nothing clamps a resource's uri, name, description or mimeType —
+ * `mcp-client.ts` copies all four verbatim from the server and the
+ * row builder interpolates them raw — so a single verbose server can
+ * make one row arbitrarily wide. A typical row (`<uri> [mime] name —
+ * description`) runs 70-120 chars, so the 100 rows `clampLimit`
+ * allows usually fit inside 8_000 with room to spare; when they do
+ * not, tail truncation is off, so the cut stays head-anchored and it
+ * is the last rows that go, not the first.
  */
 const LIST_COMPRESSOR_OPTIONS = {
-  maxSummaryLength: MAX_LIST_LIMIT * 240,
+  maxSummaryLength: RENDER_DELIVERABLE_CHARS,
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 

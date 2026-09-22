@@ -17,6 +17,17 @@ const DEFAULT_LIST_LIMIT = 30;
 const MAX_PROMPT_CHARS = 8_000;
 
 /**
+ * The most of a `tool_result.summary` the prompt will ever show:
+ * `TOOL_RESULT_RENDER_CAP_CHARS` in `session/conversation-turn.ts`.
+ * Only `TOOLS_FULL_BODY_WHEN_FRESH` bypasses it and no `mcp.*` tool
+ * is in that set, so anything kept past this point is stored per
+ * turn and re-clipped on every render. `MCP_COMPRESSOR_OPTIONS` in
+ * `mcp-tool-adapter.ts` is set to the same 8_000 for the same
+ * reason.
+ */
+const RENDER_DELIVERABLE_CHARS = 8_000;
+
+/**
  * Per-call compressor bounds for `mcp.prompt.get`.
  *
  * `projectPromptMessages` already budgets the rendered template at
@@ -34,8 +45,15 @@ const MAX_PROMPT_CHARS = 8_000;
  * renders the same text and cuts it the same way.
  *
  * So we cap at the budget the projector already declared and disable
- * line-based tail truncation, mirroring `MCP_COMPRESSOR_OPTIONS` in
- * `mcp-tool-adapter.ts`.
+ * line-based tail truncation. `MAX_PROMPT_CHARS` and
+ * `RENDER_DELIVERABLE_CHARS` are both 8_000 — what this tool can
+ * produce and what the prompt can deliver happen to coincide here,
+ * which is why the number is written as the projector's budget.
+ *
+ * Caveat inherited from the compressor: `extractTail` drops blank
+ * lines unconditionally, so a multi-paragraph template arrives with
+ * its paragraph breaks collapsed. The text survives; the blank lines
+ * between the messages do not.
  */
 const PROMPT_COMPRESSOR_OPTIONS = {
   maxSummaryLength: MAX_PROMPT_CHARS,
@@ -56,16 +74,18 @@ const PROMPT_COMPRESSOR_OPTIONS = {
  * name it cannot call, and `details` reporting `total: 100` next to
  * twelve visible rows gives it no way to reach the rest.
  *
- * Budget: one row is `<name>(<args>) — <description>`. Prompt names
- * and argument lists are identifiers, so allowing 160 chars per row
- * (name ~64, a handful of comma-joined argument names ~96, plus a
- * one-line description) across the `MAX_LIST_LIMIT` rows the tool
- * already enforces gives 100 × 160 = 16_000. Tail truncation is
- * disabled so an over-budget listing is cut from the end, keeping
- * the first rows.
+ * Budget: `RENDER_DELIVERABLE_CHARS`, the most the prompt will show.
+ * No ceiling can be computed from the rows — `mcp-client.ts` copies
+ * a prompt's name, description and argument names verbatim from the
+ * server and the row builder interpolates them raw, so one verbose
+ * server can make a row arbitrarily wide. A typical row
+ * (`<name>(<args>) — <description>`) runs 40-100 chars, so the 100
+ * rows `clampLimit` allows normally fit well inside 8_000; when they
+ * do not, tail truncation is off, so the cut is head-anchored and
+ * the first rows stay.
  */
 const LIST_COMPRESSOR_OPTIONS = {
-  maxSummaryLength: MAX_LIST_LIMIT * 160,
+  maxSummaryLength: RENDER_DELIVERABLE_CHARS,
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
