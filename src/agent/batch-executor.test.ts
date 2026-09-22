@@ -641,6 +641,71 @@ describe("executeBatch", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  // The forced reply may only quote a refusal count it can prove. The
+  // signal therefore carries the tracker's consecutive-veto count, read
+  // after this refusal was recorded, alongside the detector streak.
+  it("carries the refusal count on every veto signal, counting the current one", async () => {
+    const fn = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": fn });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+      breakerVetoStreak: 2,
+    });
+    seedCriticalStreak(tracker, "os.fs.read", { path: "a" }, 2);
+    const inputs = toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]);
+    const run = () =>
+      executeBatch(inputs, registry, {
+        ...ctx(new AbortController().signal),
+        tracker,
+      });
+    expect((await run()).loopSignals[0]).toMatchObject({
+      kind: "critical",
+      blockedCount: 1,
+    });
+    expect((await run()).loopSignals[0]).toMatchObject({
+      kind: "critical",
+      blockedCount: 2,
+    });
+    expect((await run()).loopSignals[0]).toMatchObject({
+      kind: "breaker",
+      blockedCount: 3,
+    });
+  });
+
+  // A wandering escalation forces the stop on the FIRST refusal of that
+  // call: the streak of no-progress calls behind it may be long, but
+  // exactly one call has been refused, and that is what the reply gets.
+  it("reports a single refusal when a wandering escalation forces the first stop", async () => {
+    const fn = vi.fn(async (args: unknown) =>
+      okResult("os.web.fetch", (args as { url: string }).url),
+    );
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 3,
+    });
+    for (const url of ["u1", "u2", "u3", "u4"]) {
+      tracker.check("os.web.fetch", { url });
+      tracker.recordCall("os.web.fetch", { url });
+      tracker.recordOutcome(
+        "os.web.fetch",
+        { url },
+        okResult("os.web.fetch", url),
+      );
+    }
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args: { url: "u1" } }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    expect(out.loopSignals[0]).toMatchObject({
+      kind: "breaker",
+      blockedCount: 1,
+    });
+    expect(fn).not.toHaveBeenCalled();
+  });
+
   it("emits a wandering warn without vetoing the unique call", async () => {
     const fn = vi.fn(async () => okResult("os.web.fetch"));
     const registry = buildRegistry({ "os.web.fetch": fn });

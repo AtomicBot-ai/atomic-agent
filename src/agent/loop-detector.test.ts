@@ -322,9 +322,41 @@ describe("loop notice formatters", () => {
       "outcome_repeat",
     ] as const) {
       const reply = formatForcedLoopReply("os.shell.run", 3, detector);
-      expect(reply).toContain("no-progress loop");
-      expect(reply).toContain("3 blocked attempts");
+      expect(reply).toContain("no-progress outcome");
+      expect(reply).toContain("3 consecutive calls");
+      expect(reply).toContain("repeated tool call");
     }
+  });
+
+  // The streak is not the number of refusals: with the defaults the
+  // breaker trips after 3 refusals while the no-progress streak has
+  // plateaued at 5, so "after 5 blocked attempts" overstated the
+  // refusals by two on every ordinary repeat stop.
+  it("formatForcedLoopReply quotes the refusal count, not the streak, when it has one", () => {
+    const reply = formatForcedLoopReply("os.shell.run", 5, "no_progress", 3);
+    expect(reply).toContain("refused 3 times in a row, counting this one");
+    expect(reply).not.toMatch(/blocked attempts/i);
+    // The streak must not be quoted as a refusal count.
+    expect(reply).not.toContain("5");
+    expect(reply.toLowerCase()).toContain("best answer");
+  });
+
+  it("formatForcedLoopReply says `time` for a single refusal", () => {
+    const reply = formatForcedLoopReply("os.shell.run", 5, "no_progress", 1);
+    expect(reply).toContain("refused 1 time in a row");
+    expect(reply).not.toContain("1 times");
+  });
+
+  // A wandering escalation can force the stop while the verdict of the
+  // call at the gate is an ordinary repeat. Nothing has been refused
+  // yet in that case, so the reply may not claim any refusals at all.
+  it("formatForcedLoopReply describes the streak when nothing was refused", () => {
+    const reply = formatForcedLoopReply("os.shell.run", 5, "no_progress", 0);
+    expect(reply).toContain(
+      "returned the same no-progress outcome on 5 consecutive calls",
+    );
+    expect(reply).toContain("this one was not run");
+    expect(reply).not.toMatch(/blocked attempts|refused/i);
   });
 
   // Issue #458: a wandering escalation ended a turn of 11 successful,

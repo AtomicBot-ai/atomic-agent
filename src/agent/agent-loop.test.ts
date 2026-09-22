@@ -2413,8 +2413,19 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // The last turn is the forced synthetic reply.
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: expect.stringMatching(/no-progress loop/),
+      text: expect.stringMatching(/no-progress outcome/),
     });
+    // The refusal count is the tracker's, not the detector streak: with
+    // these defaults exactly 4 calls were refused (three vetoes trip the
+    // breaker, and the call that reads it is refused too) while the
+    // no-progress streak plateaued at 5. The reply used to announce
+    // "after 5 blocked attempts" — a refusal that never happened.
+    const forcedReply = (result.session.turns.at(-1) as { text: string }).text;
+    expect(forcedReply).toContain(
+      "refused 4 times in a row, counting this one",
+    );
+    expect(forcedReply).not.toMatch(/blocked attempts/i);
+    expect(forcedReply).not.toContain("5");
     // A breaker-level loop_detected event was surfaced.
     expect(detectedEvents.some((e) => e.level === "breaker")).toBe(true);
     // Critical vetoes prevented the tool from running every step — the
