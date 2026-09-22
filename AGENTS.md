@@ -954,7 +954,7 @@ Both migrations are idempotent — restarting after a successful v8 boot is a no
 - [memory-store.ts](src/memory/memory-store.ts) gained `archiveInto(parentIds, lessonId, now?)` (single atomic UPDATE that stamps `consolidated_into = lessonId` for every parent) and `getConsolidatedInto(id)`. `list({ excludeArchived: true })` and `listIndex({ excludeArchived: true })` filter `consolidated_into IS NULL`. Archived rows stay readable by `get(id)` so the agent can still inspect a lesson's parents via the `parent_ids` array returned by `memory.lessons.recall`.
 - [lessons/lesson-store.ts](src/memory/lessons/lesson-store.ts) is a self-contained store with `create`, `getById` (returns deprecated rows too — used for direct-id lookups from `### lessons`), `recall { query, k, includeDeprecated? }` (BM25 against `lessons_fts`; defaults to active-only), `listIndex { limit, workingDir? }` (compact pointer view for the `### lessons` section), `markDeprecated`, `bumpSuccess` / `bumpFailure`, `pickOverflowForDeprecation`, and `countAll`. All writes go through the same validators (`LESSON_ACTIVATION_MAX_LENGTH`, `LESSON_PRINCIPLE_MAX_LENGTH`, `LESSON_MAX_TAGS`, `LESSON_TAG_MAX_LENGTH`) — there is no second back door, identical to `ProfileStore` / `MemoryStore`.
 
-**Prompt surface.** The variable tail gained a `### lessons` section rendered by [lessons-renderer.ts](src/memory/lessons/lessons-renderer.ts) — one `*<id> [tags] activation` line per lesson, ordered as the recall returned them, capped at `memory.lessons.maxTokens` (default `400`) with a `[truncated]` marker. Placement is after `### conversation`, between `### profile` and `### procedures` (the sections a step can change come after the transcript). The renderer **never** emits the `principle` body — that requires an explicit `memory.lessons.recall { id }` call. Token cost is subtracted from the effective conversation cap in [token-budget.ts](src/prompt/token-budget.ts).
+**Prompt surface.** The variable tail gained a `### lessons` section rendered by [lessons-renderer.ts](src/memory/lessons/lessons-renderer.ts) — one `*<id> [tags] activation` line per lesson, ordered as the recall returned them, capped at `memory.lessons.maxTokens` (default `300`) with a `[truncated]` marker. Placement is after `### conversation`, between `### profile` and `### procedures` (the sections a step can change come after the transcript). The renderer **never** emits the `principle` body — that requires an explicit `memory.lessons.recall { id }` call. Token cost is subtracted from the effective conversation cap in [token-budget.ts](src/prompt/token-budget.ts).
 
 **Stable-prefix change (KV-cache invalidation #1).** [stable-prefix.ts](src/prompt/stable-prefix.ts)'s persona text was extended to mention `### lessons` and how to materialise the full body via `memory.lessons.recall { id }`. This **invalidates the main agent slot's KV cache** for one cold start across the whole runtime — a planned one-time event for phase 5. The reflection slot is untouched (phase 4 already invalidated that one). There is no hot migration path; restart with a fresh session pool. Phase 7b is the second and final planned invalidation (`### procedures`).
 
@@ -964,31 +964,31 @@ Both migrations are idempotent — restarting after a successful v8 boot is a no
 
 **Consolidator (cold path).** [consolidator/consolidator-job.ts](src/memory/consolidator/consolidator-job.ts) is the single orchestrator. One tick (`runOnce`) does:
 
-1. **Select candidates.** `MemoryStore.list({ excludeArchived: true, beforeCreatedAtMs: now - cooldownMs })` — rows that have aged beyond `memory.consolidation.cooldownMs` (default `0`; production deployments should bump this so freshly-written notes have time to attract `RELATES_TO` links).
+1. **Select candidates.** `MemoryStore.list({ excludeArchived: true, beforeCreatedAtMs: now - cooldownMs })` — rows that have aged beyond `memory.consolidation.cooldownMs` (default `86_400_000` = 24 h, so freshly-written notes have a day to attract `RELATES_TO` links before they are eligible).
 2. **Cluster.** [consolidator/clustering.ts](src/memory/consolidator/clustering.ts) — undirected BFS over `LinkStore.listOutgoing` + `listIncoming` to find connected components, filtered by `minClusterSize` (default `3`). When `requireSharedTag=true` (default `false`), each component is trimmed to the members sharing the **single most common tag**; components with no shared tag are dropped. The chosen algorithm is "CC + tag-intersection" — a deliberate tradeoff between recall (loose CC) and precision (strict tag intersection); pinned by [clustering.test.ts](src/memory/consolidator/clustering.test.ts) (eight cases including empty input, size floor, external edges, the trimming path, the `requireSharedTag` drop path, the `maxClusters` cap, and bidirectional traversal).
 3. **Acquire leases.** Per-member `MemoryStore.acquireConsolidationLease(id, leaseMs)`. If any member is already leased (phase 3 neighbour-evolver or a concurrent tick), the entire cluster is skipped and members released — clusters are atomic units. Lease TTL is hardcoded to `60_000` ms today; outliving the tick is fine because the next tick will re-acquire.
 4. **Distill.** [consolidator/distill-runner.ts](src/memory/consolidator/distill-runner.ts) — one LLM call per cluster on the reflection slot (so the main agent slot's KV cache is never disturbed by consolidation). Prompt + GBNF in [distill-prompt.ts](src/memory/consolidator/distill-prompt.ts) + [distill-grammar.ts](src/memory/consolidator/distill-grammar.ts) — the model must emit either `LESSON activation="..."; principle="..."[; tags=...]` **or** the explicit abstain sentinel `LESSON activation="(no consensus)"; principle="(no durable advice)"`. [distill-parser.ts](src/memory/consolidator/distill-parser.ts) recognises the sentinel as `kind: "none"`; the consolidator counts these in `lessonsAbstained` and leaves the parents un-archived (abstain ≠ archive — the cluster can be retried in a future tick when more episodes accumulate).
 5. **Persist + archive + rewire.** On `kind: "lesson"`, the consolidator calls `LessonStore.create(...)` then `MemoryStore.archiveInto(parentIds, lessonId)` in that order. Link rewiring is deliberately deferred — `memory_links` rows pointing at archived members stay intact (the BFS view still works for postmortem walks); a future "link compaction" pass can collapse them.
 6. **Release leases + record metrics.** Every member's lease is released even on failure. Per-cluster failures (LLM throw / parse error / timeout) are caught and logged; sibling clusters in the same tick keep running — the tick's outcome is `ok` if at least one lesson landed, `failed` only if every cluster errored, `none` otherwise.
 
-**Scheduler seam — scoped `setInterval` carve-out.** The consolidator owns its own `setInterval` with period `memory.consolidation.intervalMs` (default `300_000` = 5 min). This is the **second** carve-out from the §"Background autonomy" invariant that "`Scheduler` is the only periodic timer in the runtime" — the first was Telegram long-polling, the second is the consolidator. The carve-out is deliberate and bounded: the loop is owned by [consolidator-job.ts](src/memory/consolidator/consolidator-job.ts) only, every tick is wrapped in a try/catch with a `running` re-entry guard, and ticks never block — distillation runs on the reflection slot with its own timeout (`memory.consolidation.distillTimeoutMs`, default `45_000`). New cold-path jobs of this shape **must not** add a third timer without an analogous AGENTS.md review.
+**Scheduler seam — scoped `setInterval` carve-out.** The consolidator owns its own `setInterval` with period `memory.consolidation.intervalMs` (default `21_600_000` = 6 h). This is the **second** carve-out from the §"Background autonomy" invariant that "`Scheduler` is the only periodic timer in the runtime" — the first was Telegram long-polling, the second is the consolidator. The carve-out is deliberate and bounded: the loop is owned by [consolidator-job.ts](src/memory/consolidator/consolidator-job.ts) only, every tick is wrapped in a try/catch with a `running` re-entry guard, and ticks never block — distillation runs on the reflection slot with its own timeout (`memory.consolidation.distillTimeoutMs`, default `45_000`). New cold-path jobs of this shape **must not** add a third timer without an analogous AGENTS.md review.
 
 **Bootstrap wiring.** [runtime/bootstrap.ts](src/runtime/bootstrap.ts) constructs `LessonStore` unconditionally (it owns a SQLite handle on the shared `memory.sqlite` file, must be closed by `shutdown`), wires it into `memory.lessons.recall` registration (gated by `memory.lessons.enabled`), and threads it into `createDefaultMemoryContextProvider`. The `ConsolidatorJob` is constructed and started **only** when `memory.lessons.enabled && memory.consolidation.enabled`; the distill runner shares the reflection slot reserved earlier for link-generation. `shutdown()` calls `consolidatorJob?.stop()` before `lessonStore.close()` so a final tick never touches a closed handle.
 
 **Configuration (`memory.lessons.*` and `memory.consolidation.*`).** User config v15; `parseUserConfigFile` transparently migrates v14 → v15 filling defaults. Keys:
 
 - `memory.lessons.enabled` (default `true`) — master switch. Controls `### lessons` rendering, `memory.lessons.recall` registration, and the consolidator.
-- `memory.lessons.recallK` (default `5`) — top-K for the read-side BM25 surface.
-- `memory.lessons.maxTokens` (default `400`) — token cap on the rendered `### lessons` block.
+- `memory.lessons.recallK` (default `2`) — top-K for the read-side BM25 surface.
+- `memory.lessons.maxTokens` (default `300`) — token cap on the rendered `### lessons` block.
 - `memory.lessons.indexLimit` (default `20`) — cap on `LessonStore.listIndex` rows (today read by the recall path only — phase 6 will surface this as `### lessons-index` analogous to `### memory-index`).
-- `memory.lessons.maxEntries` (default `200`) — hard ceiling on active lesson rows; phase 6 enforces this via deprecation sweep.
+- `memory.lessons.maxEntries` (default `500`) — hard ceiling on active lesson rows; phase 6 enforces this via deprecation sweep.
 - `memory.lessons.deprecationAgeMs` (default `30 days`) — age threshold for the phase-6 deprecation sweep.
 - `memory.consolidation.enabled` (default `true`) — master switch for the cold-path job.
-- `memory.consolidation.intervalMs` (default `300_000` = 5 min) — period of the scoped `setInterval`.
-- `memory.consolidation.cooldownMs` (default `0`) — minimum age of an episode before it is eligible. Bump in production so freshly-written notes have time to attract links.
+- `memory.consolidation.intervalMs` (default `21_600_000` = 6 h) — period of the scoped `setInterval`.
+- `memory.consolidation.cooldownMs` (default `86_400_000` = 24 h) — minimum age of an episode before it is eligible, so freshly-written notes have time to attract links.
 - `memory.consolidation.minClusterSize` (default `3`) — size floor.
 - `memory.consolidation.maxClustersPerTick` (default `5`) — soft cap on clusters processed per tick.
-- `memory.consolidation.requireSharedTag` (default `false`) — when `true`, clusters are trimmed by the majority-tag rule (see clustering above).
+- `memory.consolidation.requireSharedTag` (default `true`) — when `true`, clusters are trimmed by the majority-tag rule (see clustering above).
 - `memory.consolidation.distillTimeoutMs` (default `45_000`) — per-cluster LLM timeout.
 
 **Metrics.** [agent-metrics.ts](src/tracing/agent-metrics.ts):
@@ -1070,11 +1070,11 @@ Phase 7a adds an explicit operator-controlled curation signal across memories, l
 **Configuration (`memory.voting.*`).** User config v15 → v16 (transparent migration; see [config-schema.ts](src/config/config-schema.ts)):
 
 - `memory.voting.enabled` (default `true`, config v21) — master switch. When off, the `VoteStore` is not constructed, the reflection chain is not decorated, and the consolidator's vote decay + vote-deprecation passes are skipped.
-- `memory.voting.maxVotePerItem` (default `5`) — strictly-positive clamp on `|vote_score|`. Bootstrap fails fast on `≤ 0` (scenario 7a.C.3).
+- `memory.voting.maxVotePerItem` (default `50`) — strictly-positive clamp on `|vote_score|`. Bootstrap fails fast on `≤ 0` (scenario 7a.C.3).
 - `memory.voting.signalDecay` (default `0.95`) — multiplicative decay factor in `(0, 1]`. `1.0` is identity (audit-only mode); `0` disables decay **and** vote-deprecation but is rejected by validation. Applied once per consolidator tick — never per turn (cross-phase invariant 23).
-- `memory.voting.scoreBlend` (default `0.4`) — weight in `[0, 1]` for the lesson rerank: `combinedScore = bm25 + scoreBlend × vote_score + (1 - scoreBlend) × (success - failure)`.
-- `memory.voting.eventLogMaxRows` (default `2000`) — FIFO cap on `vote_events`.
-- `memory.voting.profileFilterThreshold` (default `2`) — strictly-positive threshold; profile facts with `vote_score ≤ -profileFilterThreshold` are hidden from `### profile` regardless of pinned/keyword status. `0` disables the filter.
+- `memory.voting.scoreBlend` (default `0.6`) — weight in `[0, 1]` for the lesson rerank: `combinedScore = bm25 + scoreBlend × vote_score + (1 - scoreBlend) × (success - failure)`.
+- `memory.voting.eventLogMaxRows` (default `50_000`) — FIFO cap on `vote_events`.
+- `memory.voting.profileFilterThreshold` (default `3`) — strictly-positive threshold; profile facts with `vote_score ≤ -profileFilterThreshold` are hidden from `### profile` regardless of pinned/keyword status. `0` disables the filter.
 
 **Hot path — `vote-runner` reflection sub-call.** [src/memory/voting/](src/memory/voting/) ships a self-contained sub-call:
 
@@ -1895,7 +1895,7 @@ User-config block (`config.json` v6; `ensureUserConfigFileSync` actively migrate
 - `vision.enabled` (default `true`) — master switch. Set to `false` to skip provider construction and tool registration entirely.
 - `vision.autoDetect` (default `true`) — when `true`, the provider's capabilities follow `ModelProfile.vision.supported`. When `false`, the provider trusts the operator and reports `vision: true` regardless of `/props`; useful when running a custom backend that does not expose multimodal flags.
 - `vision.maxImagesPerCall` (default `4`) — per-call ceiling enforced both in the tool and in the provider (`describeImage` throws if exceeded).
-- `vision.maxImageBytes` (default `10485760`) — per-image byte cap enforced after `loadImageFile` reads from disk.
+- `vision.maxImageBytes` (default `8_388_608`) — per-image byte cap enforced after `loadImageFile` reads from disk.
 
 ### Out of scope (deferred)
 
