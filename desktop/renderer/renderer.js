@@ -19709,7 +19709,8 @@ if (typeof window !== 'undefined') {
     return document.activeElement ? document.activeElement.id : '';
   };
   window.__newChatFromSidebar = () => {
-    const b = document.querySelector('[data-list="chats"] .sb-list-head button[data-act="session:new"]');
+    // S1 (calm): the Chats header plus became the sidebar's "New chat" row.
+    const b = document.querySelector('#sidebar .sb-new[data-act="session:new"]');
     if (!b) return null;
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     b.click();
