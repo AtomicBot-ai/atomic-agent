@@ -2142,18 +2142,24 @@ function toolLine(m) {
   if (/^memory\..*\.recall$/.test(n)) return a.query ? 'Recalled ' + quote(a.query) : 'Recalled memories';
   return esc(toolVerb(n));
 }
-/* A call still running (or waiting on your approval) has not done it yet:
-   "Ran touch x" reads "Running touch x" until its result lands. */
-function toolRunning(line) {
-  const now = {'Added to':'Adding to', 'Looked for':'Looking for', 'Looked at':'Looking at', 'Listed':'Listing',
-    'Read':'Reading', 'Wrote':'Writing', 'Replaced':'Replacing', 'Edited':'Editing', 'Moved':'Moving',
-    'Searched':'Searching', 'Ran':'Running', 'Opened':'Opening', 'Called':'Calling', 'Delegated':'Delegating',
-    'Remembered':'Remembering', 'Recalled':'Recalling', 'Used':'Using', 'Forgot':'Forgetting',
-    'Scheduled':'Scheduling', 'Cancelled':'Cancelling', 'Checked':'Checking', 'Compared':'Comparing',
-    'Restored':'Restoring', 'Clicked':'Clicking', 'Typed':'Typing', 'Scrolled':'Scrolling', 'Sent':'Sending',
-    'Copied':'Copying'};
+/* A call still running (or waiting on your approval) has not done it yet,
+   and a failed one did not do it: "Ran touch x" reads "Running touch x"
+   until its result lands, and "Couldn't run touch x" when it failed. A
+   command that ran and exited non-zero did run — it keeps "Ran … · exit N". */
+function toolTense(line, state) {
+  const forms = {'Added to':['Adding to','add to'], 'Looked for':['Looking for','look for'], 'Looked at':['Looking at','look at'],
+    'Listed':['Listing','list'], 'Read':['Reading','read'], 'Wrote':['Writing','write'], 'Replaced':['Replacing','replace'],
+    'Edited':['Editing','edit'], 'Moved':['Moving','move'], 'Searched':['Searching','search'], 'Ran':['Running','run'],
+    'Opened':['Opening','open'], 'Called':['Calling','call'], 'Delegated':['Delegating','delegate'],
+    'Remembered':['Remembering','remember'], 'Recalled':['Recalling','recall'], 'Used':['Using','use'],
+    'Forgot':['Forgetting','forget'], 'Scheduled':['Scheduling','schedule'], 'Cancelled':['Cancelling','cancel'],
+    'Checked':['Checking','check'], 'Compared':['Comparing','compare'], 'Restored':['Restoring','restore'],
+    'Clicked':['Clicking','click'], 'Typed':['Typing','type'], 'Scrolled':['Scrolling','scroll'],
+    'Sent':['Sending','send'], 'Copied':['Copying','copy']};
   const mt = /^(Added to|Looked for|Looked at|[A-Z][a-z]+)\b/.exec(line);
-  return mt && now[mt[1]] ? now[mt[1]] + line.slice(mt[1].length) : line;
+  if (!mt || !forms[mt[1]]) return line;
+  if (state === 'err' && /\u00b7 exit /.test(line)) return line;
+  return (state === 'run' ? forms[mt[1]][0] : 'Couldn\u2019t ' + forms[mt[1]][1]) + line.slice(mt[1].length);
 }
 /* The failure, in one line, for a card that failed: the first line of the
    result that says something \u2014 the shell's own `$ cmd` / `exit: N` header and
@@ -2196,7 +2202,7 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
-      + '<span class="nm">' + (running ? toolRunning(toolLine(m)) : toolLine(m)) + '</span>'
+      + '<span class="nm">' + (running ? toolTense(toolLine(m), 'run') : failed ? toolTense(toolLine(m), 'err') : toolLine(m)) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
