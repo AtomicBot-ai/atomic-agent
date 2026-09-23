@@ -128,13 +128,15 @@ function formatProfileSystemMessage(facts: readonly ProfileFact[]): string {
 }
 
 /**
- * Multiline text for the chat transcript (`/skills`); feed still gets
- * `runtime_info` lines.
+ * Multiline text for the chat transcript (`/skills dump`); feed still
+ * gets `runtime_info` lines. Bare `/skills` opens the Skills tab, which
+ * renders `skillRegistry.listAll()` and is honest already — the flat
+ * dump is the one that reads the prompt's catalog.
  *
  * `dropped` is what `skills.catalogTokenBudget` cut out of `catalog`.
  * The entry list is the prompt's list, so without the trailing note
- * `/skills` answers "which skills do I have?" with the clipped half and
- * no sign of the rest — the operator-facing form of issue #466, where
+ * `/skills dump` answers "which skills do I have?" with the clipped
+ * half and no sign of the rest — the operator-facing form of issue #466, where
  * the model did the same to the user. At zero the note is absent and
  * the message is byte-identical to the pre-fix output.
  */
@@ -918,7 +920,7 @@ export class ChatOrchestrator {
     }
   }
 
-  /** Emit the installed skill catalog into chat + event feed (`/skills`). */
+  /** Emit the installed skill catalog into chat + event feed (`/skills dump`). */
   dumpSkillCatalog(): void {
     try {
       const catalog = this.runtime.skillCatalog;

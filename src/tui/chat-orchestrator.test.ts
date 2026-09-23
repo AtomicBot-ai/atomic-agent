@@ -503,13 +503,13 @@ function noticeLines(actions: readonly TuiAction[]): readonly string[] {
 }
 
 /**
- * `/skills` answers "what is installed?" out of `runtime.skillCatalog`,
- * which is the catalog the prompt got — clipped at
+ * `/skills dump` answers "what is installed?" out of
+ * `runtime.skillCatalog`, which is the catalog the prompt got — clipped at
  * `skills.catalogTokenBudget`. PR #471 taught the prompt to admit the
  * cut; the operator asking the same question still got the short list
  * with no sign of the rest (issue #466).
  */
-describe("ChatOrchestrator /skills truncation", () => {
+describe("ChatOrchestrator /skills dump truncation", () => {
   function skillRuntime(
     catalog: Array<{ name: string; description: string; source: string }>,
     dropped: number,

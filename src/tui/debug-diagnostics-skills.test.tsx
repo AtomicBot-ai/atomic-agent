@@ -73,4 +73,27 @@ describe("the debug diagnostics skills field", () => {
     expect(state.session.skillCountDropped).toBe(30);
     expect(diagnosticsLine(state)).toContain("skills 13 (+30 not shown)");
   });
+
+  it("clears the note when an uninstall brings the catalog back under budget", () => {
+    // The other direction, and the one a reducer gets wrong: this row
+    // is the single surface that does NOT re-read the runtime, so a
+    // `skillCountDropped` that is only ever written when it is non-zero
+    // would leave "(+30 not shown)" pinned to the line forever after
+    // the skill that overflowed the budget is removed. The reducer has
+    // to write the zero, not skip it.
+    const overflowed = reduceTuiState(createInitialTuiState(SESSION), {
+      type: "skill_count_changed",
+      count: 13,
+      dropped: 30,
+    });
+    const back = reduceTuiState(overflowed, {
+      type: "skill_count_changed",
+      count: 12,
+      dropped: 0,
+    });
+    expect(back.session.skillCountDropped).toBe(0);
+    const line = diagnosticsLine(back);
+    expect(line).toContain("skills 12");
+    expect(line).not.toContain("not shown");
+  });
 });
