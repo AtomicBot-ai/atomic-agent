@@ -134,27 +134,66 @@ export function resolveFusionMachineFacts(
     fusion?.workerProvider === undefined
       ? undefined
       : providers.find((p) => p.id === fusion.workerProvider);
-  // Fusion runs in both directions, and with the legs swapped — the
-  // orchestrator PINNED to the llama-server entry — the local daemon is
-  // the one orchestrating, so the workers are not on this machine.
-  // `resolveRunMode` fills an unpinned worker leg with the first
-  // llama-server that is not already the orchestrator, and with the only
-  // one taken that is a cloud provider. Without this the unpinned branch
-  // below would call the worker leg "local" and state a slot count from
-  // `managed.parallel` for a daemon `resolveLocalLegRole` launches with
-  // exactly one slot — the stated number and the launched number must
-  // not disagree.
+  // Fusion runs in both directions, so an unpinned worker leg is not
+  // "the local daemon" by assumption — it is whichever entry
+  // `resolveRunMode` will hand the workers to. Two shapes make the
+  // assumption false, and both of them made this module state numbers
+  // about a machine that is not running the fan-out:
+  //
+  // - the orchestrator PINNED to the only llama-server entry. The local
+  //   daemon runs the one orchestrating stream, `resolveLocalLegRole`
+  //   launches it with `--parallel 1`, and the workers are in the cloud.
+  //   Calling the leg local here stated `managed.parallel` — 4 or 5 on a
+  //   roomy context — for a one-slot daemon.
+  // - no llama-server entry at all. Fusion between two cloud providers
+  //   is a shape `resolveRunMode` allows ("which kinds they are is the
+  //   operator's business"), and the leg was still called local: the
+  //   block stated a slot count, a ~24K worker footprint and the managed
+  //   GGUF's name for a daemon that was serving nobody.
+  //
+  // So mirror the resolver's own chain rather than guessing at it —
+  // the same duplication the worker label below already makes, and for
+  // the same reason (this module is pure over `AtomicAgentConfig` and
+  // does not reach for the resolver). Keeping the *entry* rather than
+  // just its kind is what lets the cloud branch name the worker model
+  // instead of dropping it.
   const pinnedOrchestrator =
     fusion?.orchestratorProvider === undefined
       ? undefined
       : providers.find((p) => p.id === fusion.orchestratorProvider);
+  const activeEntry = providers.find(
+    (p) => p.id === config.llm?.activeTextProvider,
+  );
+  const orchestratorEntry =
+    pinnedOrchestrator ??
+    (activeEntry !== undefined && activeEntry.kind !== LOCAL_PROVIDER_KIND
+      ? activeEntry
+      : undefined) ??
+    providers.find((p) => p.kind !== LOCAL_PROVIDER_KIND);
+  // Local first, then anything that is not already the orchestrator —
+  // `resolveRunMode`'s worker chain, verbatim. A leg may not be the
+  // other leg, which is what both `p.id !== orchestratorEntry?.id`
+  // guards say.
+  const unpinnedWorker =
+    providers.find(
+      (p) =>
+        p.kind === LOCAL_PROVIDER_KIND && p.id !== orchestratorEntry?.id,
+    ) ?? providers.find((p) => p.id !== orchestratorEntry?.id);
+  const workerEntry =
+    fusion?.workerProvider === undefined ? unpinnedWorker : pinnedWorker;
+  // Nothing resolved: either there are no entries to read — a config
+  // with no `llm` block at all, which `resolveLlmConfig` fills with one
+  // synthesized llama-server — or the single entry is already the
+  // orchestrator. `resolveRunMode` degrades both to a one-leg mode, so
+  // the `### fusion` block does not render and the answer is never read;
+  // keep the historical "local" rather than inventing a second answer
+  // for a state nobody sees.
   const unpinnedWorkerLeg: FusionWorkerLeg =
-    pinnedOrchestrator?.kind !== LOCAL_PROVIDER_KIND ||
-    providers.some(
-      (p) => p.kind === LOCAL_PROVIDER_KIND && p.id !== pinnedOrchestrator.id,
-    )
+    unpinnedWorker === undefined
       ? "local"
-      : "cloud";
+      : unpinnedWorker.kind === LOCAL_PROVIDER_KIND
+        ? "local"
+        : "cloud";
   const workerLeg: FusionWorkerLeg | null =
     fusion?.workerProvider === undefined
       ? unpinnedWorkerLeg
@@ -219,13 +258,20 @@ export function resolveFusionMachineFacts(
   // resolver: the explicit pin, then — for a local leg — the managed
   // daemon's model and the llama-server entry's `model`, or — for a
   // cloud leg — the entry's own chat model. Never an invented string.
+  //
+  // Read off `workerEntry`, not the pin, so an UNPINNED cloud worker leg
+  // is named too. It resolves to a real provider in the config with a
+  // real `defaultChatModel`; falling back to the pin alone dropped the
+  // name and left the block saying only "workers run on a cloud
+  // provider" — honest, but a fact the runtime had in hand and the
+  // composer strip was already showing.
   const localEntry =
-    pinnedWorker ?? providers.find((p) => p.kind === "llama-server");
+    workerEntry ?? providers.find((p) => p.kind === LOCAL_PROVIDER_KIND);
   const workerModel =
     nonEmpty(fusion?.workerModel) ??
     (workerLeg === "cloud"
-      ? (nonEmpty(pinnedWorker?.defaultChatModel) ??
-        nonEmpty(pinnedWorker?.model))
+      ? (nonEmpty(workerEntry?.defaultChatModel) ??
+        nonEmpty(workerEntry?.model))
       : ((local.mode === "managed" ? nonEmpty(local.managed.modelId) : null) ??
         nonEmpty(localEntry?.model)));
 
