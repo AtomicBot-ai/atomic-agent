@@ -6,7 +6,9 @@ This document describes how Atomic Agent integrates
 Peer patterns consulted while shaping this work: OpenClaw web-search plugin
 (anonymous + vertical `tag`/`zone`/`language`), AutoGPT search/parallel/extract
 blocks, CAMEL toolkit, HyperResearcher provider + concurrent batch, Hermes
-vertical-search skill (discover-then-route), GPT-Researcher retriever/extract.
+vertical-search skill (discover-then-route), GPT-Researcher retriever/extract,
+AnythingLLM AnySearch provider (#6439), official
+[anysearch-skill](https://github.com/anysearch-ai/anysearch-skill) CLI + MCP.
 
 ## What shipped
 
@@ -62,7 +64,8 @@ Or keep Exa as primary and add `"anysearch"` to `fallback`.
 ANYSEARCH_API_KEY=as_sk_…
 ```
 
-3. **Vertical example**
+3. **Vertical example** (`params` is a JSON object *string* so the tool
+   schema stays OpenAI-strict convertible):
 
 ```json
 {
@@ -70,7 +73,7 @@ ANYSEARCH_API_KEY=as_sk_…
   "args": {
     "query": "Go context cancellation",
     "tag": "code.doc",
-    "params": { "library": "golang" },
+    "params": "{\"library\":\"golang\"}",
     "maxResults": 5
   }
 }

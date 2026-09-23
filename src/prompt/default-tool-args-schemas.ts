@@ -528,9 +528,9 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         tag: stringSchema,
         zone: { type: "string", enum: ["cn", "intl"] },
         language: stringSchema,
-        params: {
-          anyOf: [{ type: "object" }, { type: "string" }],
-        },
+        // JSON-encoded object string — keeps the schema strict-convertible
+        // (open maps are refused by toStrictJsonSchema; see os.http.request).
+        params: stringSchema,
       },
       ["query"],
     ),

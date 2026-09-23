@@ -6,11 +6,11 @@
  *   node batch-search.js --queries '[{"query":"q1"},{"query":"q2","tag":"code.doc","params":{"library":"golang"}}]'
  *
  * Optional env: ANYSEARCH_API_KEY. Anonymous access works without a key.
+ *
+ * ESM: the repo package.json sets "type":"module", so this script uses import.
  */
-"use strict";
-
-const https = require("https");
-const http = require("http");
+import https from "node:https";
+import http from "node:http";
 
 const API_BASE = (
   process.env.ANYSEARCH_API_BASE_URL || "https://api.anysearch.com"
@@ -60,6 +60,30 @@ function normalize(item) {
   const tag = item.tag || item.sub_domain;
   if (tag) body.tag = String(tag);
   if (item.params && typeof item.params === "object") body.params = item.params;
+  else if (typeof item.params === "string" && item.params.trim()) {
+    try {
+      body.params = JSON.parse(item.params);
+    } catch {
+      throw new Error("params must be a JSON object or object string");
+    }
+  } else if (
+    typeof item.sub_domain_params === "string" &&
+    item.sub_domain_params.trim()
+  ) {
+    // Hermes / official skill alias: flat key=value or JSON
+    const sdp = item.sub_domain_params.trim();
+    if (sdp.startsWith("{")) {
+      body.params = JSON.parse(sdp);
+    } else {
+      const params = {};
+      for (const part of sdp.split(",")) {
+        const eq = part.indexOf("=");
+        if (eq <= 0) continue;
+        params[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+      }
+      if (Object.keys(params).length) body.params = params;
+    }
+  }
   if (item.zone) body.zone = String(item.zone);
   if (item.language) body.language = String(item.language);
   if (item.max_results != null) {

@@ -28,7 +28,9 @@ routing (17 domains), parallel batch search, and full-page URL extraction.
 | Clean page Markdown | This skill → `POST /v1/extract` (or `os.web.fetch` for local SSRF-safe fetch) |
 
 Base URL: `https://api.anysearch.com`. API key **optional** (anonymous works;
-set `ANYSEARCH_API_KEY` in `~/.atomic-agent/.env` for higher limits).
+set `ANYSEARCH_API_KEY` in `~/.atomic-agent/.env` for higher limits). Prefer
+`os.http.request` for skill HTTP; if `http.hostAllowlist` is not `null`, it
+must include `api.anysearch.com` (same rule as `currency` / `wttr-weather`).
 
 ## Everyday + vertical search via `os.web.search`
 
@@ -44,12 +46,13 @@ Vertical (OpenClaw / Hermes style) — discover first, then route:
 [{ "tool": "os.web.search", "args": {
   "query": "Go context cancellation documentation",
   "tag": "code.doc",
-  "params": { "library": "golang" },
+  "params": "{\"library\":\"golang\"}",
   "language": "en",
   "maxResults": 5
 } }]
 ```
 
+`params` is a **JSON object string** (strict tool schemas cannot accept open maps).
 `zone` is `"cn"` or `"intl"`. Config defaults: `web.search.anysearch.zone` /
 `language`. A key alone does **not** select the provider — set `provider`
 explicitly (same rule as OpenClaw).
@@ -121,7 +124,9 @@ Read `ANYSEARCH_API_KEY` once when needed. Missing → anonymous. Optional
 register: `POST /v1/auth/email/register` with `{ "email": "<real>" }`, then ask
 before writing `data.api_key.key` to `~/.atomic-agent/.env`. Never echo the
 full key. On HTTP 402, explain quota and offer key setup; do not retry the
-same anonymous call in a tight loop.
+same anonymous call in a tight loop. If a response includes `auto_registered`
+with a new `api_key`, ask the user before saving — never write keys without
+explicit confirmation (same rule as the official AnySearch skill).
 
 ## MCP alternative (optional)
 
