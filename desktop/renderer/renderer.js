@@ -1264,6 +1264,8 @@ const SLASH = [
   ['help','list available slash commands'],
   ['tools','list built-in tools (fs, shell, browser, memory, vision)','<query>'],
   ['theme','switch the UI theme','<name>|list'],
+  // menu-registry.ts setup.onboarding: `/onboarding`, alias `/setup` (the 4th field: aliases, matched as typed).
+  ['onboarding','run first-time setup again from the start — keeps your providers, keys, sessions and memory','',['setup']],
   ['clear','clear chat transcript (keeps session)'],
   ['abort','abort the running turn'],
   ['quit','exit Atomic Agent'],
@@ -2760,7 +2762,8 @@ function slashMatches() {
   // keeps showing that command and its hint instead of "no matching command".
   const q = S.draft.replace(/^\//, '').toLowerCase().split(/\s+/)[0];
   if (!q) return SLASH;
-  return SLASH.filter(([n, d]) => n.startsWith(q)) .concat(SLASH.filter(([n, d]) => !n.startsWith(q) && n.includes(q)));
+  const starts = (row) => row[0].startsWith(q) || (row[3] || []).some((al) => al.startsWith(q));
+  return SLASH.filter(starts).concat(SLASH.filter((row) => !starts(row) && row[0].includes(q)));
 }
 function slashPopover() {
   const m = slashMatches();
@@ -2768,10 +2771,10 @@ function slashPopover() {
   // Soft Tactile: one amber row, no inline colour.
   if (!m.length) return '<div class="slash"><div class="slashlist"><div class="slashrow nomatch"><span class="cmd">no matching command</span></div></div></div>';
   // Rows scroll inside .slashlist; the footer (count + keys) stays put.
-  return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a], i) =>
+  return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a, al], i) =>
     '<button class="slashrow' + (i === S.slashCur ? ' on' : '') + '" data-slash="' + esc(n) + '">'
     + '<span class="cmd">/' + bold(n, q) + '</span><span class="ds">' + esc(d) + '</span>'
-    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div>'
+    + '<span class="hint">' + esc(a || (al && al.length ? 'also /' + al.join(', /') : '')) + '</span></button>').join('') + '</div>'
     + '<div class="slashfoot"><span>' + m.length + (m.length === 1 ? ' command' : ' commands') + '</span>'
     + '<span class="grow"></span>' + keycaps('↑↓ tab esc') + '</div></div>';
 }
@@ -4153,7 +4156,8 @@ function runSlash(parts) {
     telegram:'settings:telegram', import:'settings:import', privacy:'settings:privacy', analytics:'settings:privacy',
     theme:'palette:theme', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
     session:'session:id', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
-    expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar'};
+    expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar',
+    onboarding:'onboarding', setup:'onboarding'};
   if (name === 'runmode') { fzSlash(parts.slice(1).join(' ')); return; }
   // Item 7: `/privacy [analytics <verb>]` and `/analytics <verb>` as
   // slash-command-handler.ts dispatchPrivacySub / dispatchAnalyticsSub.
