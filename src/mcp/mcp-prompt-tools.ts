@@ -9,7 +9,7 @@
 import { compressToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
-import { clampField, flattenKey } from "./mcp-field-text.js";
+import { clampField, renderRowKey } from "./mcp-field-text.js";
 import type { McpManager } from "./mcp-manager.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
 
@@ -36,7 +36,9 @@ const MAX_PROMPT_CHARS = 8_000;
  * at full length, and only the description is clamped.
  *
  * Row bound is `name + args + 125`: the clamped part is
- * 1 + 1 + 3 + 120 = 125 chars.
+ * 1 + 1 + 3 + 120 = 125 chars. A key JSON-quoted by `renderRowKey`
+ * adds its two quotes and any escapes on top — bounded by the key,
+ * not by this budget, for the same reason the key itself is.
  */
 const PROMPT_FIELD_CHARS = {
   description: 120,
@@ -120,7 +122,7 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.prompt.list",
     description:
-      "List prompt templates exposed by an MCP server. Args: `server` (string, required), optional `limit` (1..100, default 30). Returns one entry per line: `<name>(arg1, arg2?) — description`.",
+      "List prompt templates exposed by an MCP server. Args: `server` (string, required), optional `limit` (1..100, default 30). Returns one entry per line: `<name>(arg1, arg2?) — description`. A name or argument name that would be ambiguous in that format is printed JSON-quoted (`\"my (odd) name\"`); pass the decoded string, without the quotes, as `name` / as an `arguments` key.",
     readonly: true,
     async run(rawArgs) {
       const server = coerceServerName(rawArgs.server);
@@ -141,11 +143,11 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
         const argsList = (p.arguments ?? [])
           .map((a) =>
             a.required === false
-              ? `${flattenKey(a.name)}?`
-              : flattenKey(a.name),
+              ? `${renderRowKey(a.name)}?`
+              : renderRowKey(a.name),
           )
           .join(", ");
-        const name = flattenKey(p.name);
+        const name = renderRowKey(p.name);
         const desc = p.description
           ? ` — ${clampField(p.description, PROMPT_FIELD_CHARS.description)}`
           : "";

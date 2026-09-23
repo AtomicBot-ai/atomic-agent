@@ -121,6 +121,102 @@ describe("mcp.prompt.list", () => {
     expect(result.summary).toContain("prompt_99(uri)");
   });
 
+  // MCP does not restrict the prompt-name charset, and the row format
+  // is `<name>(<args>) — <desc>`: a name carrying a paren, a space or
+  // the em-dash leaves the model no way to see where the name ends.
+  // Quoted, the key stays intact and reversible — the one thing it
+  // must be, since it IS the `name` argument of `mcp.prompt.get`.
+  it("quotes a name the row format would otherwise split", async () => {
+    const odd = "summarize (long) — v2";
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: odd,
+              description: "Summarise a doc.",
+              arguments: [{ name: "uri", required: true }],
+            },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.status).toBe("ok");
+    const row = result.summary.split("\n")[0]!;
+    expect(row).toBe(`${JSON.stringify(odd)}(uri) — Summarise a doc.`);
+    // Reversible: what the model decodes is what the server named.
+    expect(JSON.parse(row.slice(0, row.indexOf("(uri)")))).toBe(odd);
+  });
+
+  // An argument name has the same three readers to confuse — the
+  // comma between arguments, the `?` that marks one optional, and the
+  // closing paren — and is likewise a key the model must echo back.
+  it("quotes an argument name the row format would otherwise split", async () => {
+    const oddArg = "which, exactly?";
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: "summarize",
+              arguments: [
+                { name: oddArg, required: false },
+                { name: "uri", required: true },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary.split("\n")[0]).toBe(
+      `summarize(${JSON.stringify(oddArg)}?, uri)`,
+    );
+  });
+
+  // The whole design: an ordinary catalog row must be byte-identical
+  // to what it was before quoting existed. The model has learnt to
+  // read this format.
+  it("leaves an ordinary row byte-identical", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: "review-pr_2",
+              description: "Review a pull request.",
+              arguments: [
+                { name: "uri", required: true },
+                { name: "length", required: false },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.summary).toBe(
+      "review-pr_2(uri, length?) — Review a pull request.",
+    );
+  });
+
   // The prompt `name` is the `name` argument of `mcp.prompt.get` and
   // the listed argument names are the keys of its `arguments` object.
   // Clamping either produced a call that could not succeed.
