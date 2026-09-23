@@ -7,6 +7,7 @@ import {
   isFinalReplyTurn,
   macroTurnBoundaries,
   packConversation,
+  renderToolResultBody,
   renderTurnForPrompt,
   toolResultTurn,
   trimTurnsToTokens,
@@ -209,6 +210,65 @@ describe("conversation-turn helpers", () => {
     );
     expect(rendered).toBe(`tool_result[os.http.request ok]: ${big}`);
     expect(rendered).not.toContain("[rendering-truncated");
+  });
+
+  // A listing summary is budgeted by `listingResultCaps` and can reach
+  // the full 8 000-char ceiling. Without the fresh-body entry that
+  // width would sit in `### conversation` for the rest of the session;
+  // with it the model gets the rows on the turn that has to choose
+  // from them, and history pays the same ~400 chars it always did.
+  it("gives the listing tools their rows fresh and 400 chars once aged", () => {
+    const listing = `PID      PPID     USER               CPU%   MEM%   COMMAND\n${Array.from(
+      { length: 80 },
+      (_, i) => `${1000 + i}    1        someone              0.0   0.0 /usr/bin/thing-${i}`,
+    ).join("\n")}`;
+    for (const tool of [
+      "os.git.log",
+      "os.git.status",
+      "os.git.branch",
+      "os.proc.list",
+      "os.window.list",
+      "browser.tabs",
+      "github.pr.list",
+      "github.issue.list",
+    ]) {
+      const turn = toolResultTurn({
+        tool,
+        status: "ok",
+        summary: listing,
+        at: 7,
+      });
+      expect(renderToolResultBody(turn, { inCurrentMacroTurn: true })).toBe(
+        listing,
+      );
+      const aged = renderToolResultBody(turn, { inCurrentMacroTurn: false });
+      expect(aged.length).toBeLessThan(450);
+      expect(aged).toContain("[rendering-truncated");
+      // The head survives the history cut, so the column header and
+      // the newest rows are what the session keeps.
+      expect(aged.startsWith("PID      PPID")).toBe(true);
+    }
+    // `os.shell.run` is deliberately not in the set. Membership is
+    // only observable on the AGED path — the fresh path returns the
+    // body whole either way — so this has to check the aged render.
+    // It is either untouched (this tree: the generic 8 000-char cap
+    // leaves a 5 KB summary alone) or cut from its END by #470's
+    // `capSummaryToTail`, which leads with the marker. What it is
+    // never is a head-first 400-char clip, which is what a listing
+    // tool takes and what adding "os.shell.run" to the set would
+    // produce.
+    const shell = toolResultTurn({
+      tool: "os.shell.run",
+      status: "ok",
+      summary: listing,
+      at: 7,
+    });
+    const agedShell = renderToolResultBody(shell, {
+      inCurrentMacroTurn: false,
+    });
+    expect(
+      agedShell === listing || agedShell.startsWith("… [rendering-truncated"),
+    ).toBe(true);
   });
 
   it("renders a fresh fusion.delegate result whole and gives it the generic cap once aged", () => {
