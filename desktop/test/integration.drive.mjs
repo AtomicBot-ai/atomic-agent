@@ -57,9 +57,10 @@ const stage = (n, t) => console.log(`\n${n}. ${t}`);
 
 /* ------------------------------------------------------------ looking -- */
 
-/** The composer's parameter chips, left to right, as a person reads them. */
+/** The composer's parameter chips, left to right: the id each stands for
+    (`data-id`) and the words a person reads on it (Calm S2). */
 const chips = (app) => app.eval(`[...document.querySelectorAll('#composer .cfoot [data-sel-open]')]
-  .map((n) => ({kind: n.dataset.selOpen, text: (n.textContent || '').trim()}))`);
+  .map((n) => ({kind: n.dataset.selOpen, id: n.dataset.id || '', text: (n.textContent || '').trim()}))`);
 
 /** The rows of whatever selector popover is open. */
 const selRows = (app) => app.eval(`[...document.querySelectorAll('.selpop .modelrow')]
@@ -162,9 +163,9 @@ async function main() {
     await shot(app, '01-set-up');
     ok('the first-run wizard was finished by clicking', activeModel(stateDir) || 'no config');
     const first = await settled(app);
-    want(first.some((c) => c.kind === 'backend' && /cloud/.test(c.text)),
+    want(first.some((c) => c.kind === 'backend' && /cloud/.test(c.id)),
       'the composer says a cloud route is live', JSON.stringify(first));
-    want(first.some((c) => c.kind === 'provider' && c.text.includes(PROVIDER === 'aimlapi' ? 'aimlapi' : 'openrouter')),
+    want(first.some((c) => c.kind === 'provider' && c.id.includes(PROVIDER === 'aimlapi' ? 'aimlapi' : 'openrouter')),
       'the provider chip names the provider that was set up', JSON.stringify(first));
 
     stage(2, 'Ask it something, and get an answer');
@@ -180,7 +181,7 @@ async function main() {
     want(backends.length === 3, 'three backends are offered', backends.join(', '));
     const onLocal = await pickRow(app, 'local');
     await shot(app, '03-local');
-    want(onLocal.some((c) => c.kind === 'backend' && /local/.test(c.text)),
+    want(onLocal.some((c) => c.kind === 'backend' && /local/.test(c.id)),
       'the backend chip reads local', JSON.stringify(onLocal));
     want(!onLocal.some((c) => c.kind === 'provider'),
       'the managed-local route draws NO provider control, as composerSwitchKindsFor says',
@@ -190,7 +191,7 @@ async function main() {
     await openSel(app, 'backend');
     const onCloud = await pickRow(app, 'cloud');
     await shot(app, '04-cloud-again');
-    want(onCloud.some((c) => c.kind === 'backend' && /cloud/.test(c.text)),
+    want(onCloud.some((c) => c.kind === 'backend' && /cloud/.test(c.id)),
       'the backend chip reads cloud again', JSON.stringify(onCloud));
     want(onCloud.some((c) => c.kind === 'provider'),
       'the provider control is back', JSON.stringify(onCloud.map((c) => c.kind)));
@@ -215,7 +216,7 @@ async function main() {
     await closeSel(app);
     const onOther = await settled(app);
     await shot(app, '05-provider-switched');
-    want(onOther.some((c) => c.kind === 'provider' && c.text.includes(OTHER.id)),
+    want(onOther.some((c) => c.kind === 'provider' && c.id.includes(OTHER.id)),
       `the provider chip followed to ${OTHER.id}`, JSON.stringify(onOther));
 
     stage(6, 'Switch model, by clicking the model chip');
@@ -223,7 +224,7 @@ async function main() {
     const models = await selRows(app);
     want(models.length > 1, 'the model pane lists models',
       models.length > 1 ? `${models.length} rows` : `${models.length} rows — the pane says: ${await selError(app)}`);
-    const current = (onOther.find((c) => c.kind === 'model') || {}).text || '';
+    const current = (onOther.find((c) => c.kind === 'model') || {}).id || '';
     /* Pick a SMALL model, the way a person picks one to try a switch out.
        Taking the first row that is not the active one landed on
        `anthropic/claude-opus-5-fast`, and this key could afford 18 tokens
@@ -237,7 +238,7 @@ async function main() {
     if (want(!!target, 'there is another model to move to', target ? target.label : 'none')) {
       const onModel = await pickRow(app, target.label);
       await shot(app, '06-model-switched');
-      want(onModel.some((c) => c.kind === 'model' && c.text.includes(target.label)),
+      want(onModel.some((c) => c.kind === 'model' && c.id.includes(target.label)),
         'the model chip followed the click', JSON.stringify(onModel));
     } else {
       /* The pane stays OPEN when there is nothing to pick, and it covers the

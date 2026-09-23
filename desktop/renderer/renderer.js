@@ -135,14 +135,17 @@ const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cach
    same pair the TUI's onCodingModeChanged moves, and writes nothing to
    config. Copy is the TUI's verbatim; the route also returns its own
    `look`, which setCodingMode prefers so the two cannot drift. */
+/* Calm (S2): `word` is what the composer's mode chip and the mode popover
+   print — the stance in the user's words. `label` is the TUI's own name and
+   stays for everything that quotes the agent (summaries, the plan bar). */
 const CODING_MODES = [
-  {id:'default', label:'default', detail:'asks before risky steps', tone:'ok',
+  {id:'default', label:'default', word:'Ask first', detail:'asks before risky steps', tone:'ok',
    summary:'default — approvals follow the configured approval level'},
-  {id:'plan', label:'plan', detail:'reads only, then proposes', tone:'accent',
+  {id:'plan', label:'plan', word:'Plan', detail:'reads only, then proposes', tone:'accent',
    summary:'plan mode — the agent reads and proposes, and every tool that would change something is refused'},
-  {id:'auto', label:'auto', detail:'edits this folder freely', tone:'warn',
+  {id:'auto', label:'auto', word:'Auto', detail:'edits this folder freely', tone:'warn',
    summary:'auto — file writes inside this workspace stop asking; everything else still does'},
-  {id:'bypass', label:'bypass permissions', detail:'never asks at all', tone:'bad',
+  {id:'bypass', label:'bypass permissions', word:'Bypass', detail:'never asks at all', tone:'bad',
    summary:'bypass permissions — nothing asks, for the rest of this session. Hardline shell-guard rules still block.'},
 ];
 
@@ -1435,6 +1438,35 @@ const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, com
 const MODELS = { local: [], cloud: [], external: [] };
 const shortModel = (id) => id.replace(/-instruct$/, '');
 
+/* Calm (S2) — the words the composer's chips print. Each chip keeps the raw
+   id it stands for in `data-id` (what the drivers and the smoke compare);
+   the visible text is for a person. Nothing here invents a name: a model
+   the catalogue does not know keeps its id, a provider with no preset keeps
+   its id. */
+const BACKEND_WORDS = {cloud:'Cloud', local:'This Mac', custom:'Custom server', fusion:'Fusion'};
+function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
+/** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
+function providerWord(id) {
+  const s = String(id || '');
+  if (s === 'no provider') return 'No provider';
+  const p = PRESETS.find((x) => x.id === s) || KIND_ROWS.find((x) => x.id === s && !x.custom);
+  return p ? p.label.split(' (')[0] : s;
+}
+/** A model id → the local catalogue's `name` without the file-format tail
+    ("Gemma 4 E4B QAT GGUF" → "Gemma 4 E4B"); otherwise the id as before. */
+function modelWord(id) {
+  const s = String(id || '');
+  const m = (SEL.local || []).find((x) => x && x.id === s && x.name);
+  return m ? m.name.replace(/\s+(?:QAT\s+)?GGUF$/i, '') : shortModel(s);
+}
+/** Token counts for a tooltip: 7.5k, 131k, 1.0M — the exact figures live in the context popover. */
+function tokensWord(n) {
+  if (n < 1000) return String(Math.round(n));
+  if (n < 100000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  if (n < 1000000) return Math.round(n / 1000) + 'k';
+  return (n / 1000000).toFixed(1) + 'M';
+}
+
 const SKILLS = [];
 const HUB = [];
 const NOTES = [];
@@ -2161,26 +2193,31 @@ function composer() {
       + '<div class="field"><textarea id="entry" rows="1" placeholder="'
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
-           : 'Ask for an outcome, or / for a command') + '"></textarea>'
+           : 'Ask Atomic Agent\u2026') + '"></textarea>'
       + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile — Valerii's ruling: Backend · Provider · Model, a
-         spacer, then Context · Mode. The controls are still named, but the
-         name is a caption INSIDE the pill, drawn by CSS from `data-cap`
-         (::before), so each chip's textContent stays exactly the id the
-         drivers compare. Every chip is a direct child of `.cfoot`, so the
-         popovers can anchor to `#composer .cfoot [data-sel-open=…]`. */
+         spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
+         so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
+         Calm (S2): the chips print human words ("This Mac", "OpenRouter",
+         "Gemma 4 E4B") and no caption — the icon and the word say which
+         control it is, the tooltip and aria-label name it. The raw id each
+         chip stands for is its `data-id`, which is what the drivers and the
+         smoke compare. */
       + '<div class="cfoot' + (selHasKind('workers') ? ' is-fusion' : '') + '">'
-        + '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend">'
+        + '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend" data-id="' + esc(backend) + '"'
+          + ' title="Where it runs: ' + esc(backendWord(backend)) + '" aria-label="Where it runs: ' + esc(backendWord(backend)) + '">'
           + ic(backend === 'cloud' ? 'cloud' : backend === 'custom' ? 'server' : backend === 'fusion' ? 'fusion' : 'laptop')
-          + '<span class="cval" data-cap="Backend">' + esc(backend) + '</span>' + ic('chevD', 'chev') + '</button>'
+          + '<span class="cval">' + esc(backendWord(backend)) + '</span>' + ic('chevD', 'chev') + '</button>'
         // SELECTOR LANE: the visible control set follows composerSwitchKindsFor,
         // not a hard-coded `cloud` test — see selKinds(). Cloud and custom draw
         // the provider control; the managed-local route draws none, because on
         // that route the second control IS the model.
         + (selHasKind('provider')
-            ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider">'
+            ? '<button class="cchip providerchip' + cchipOpen('provider') + '" data-sel-open="provider" data-id="' + esc(selProviderLabel()) + '"'
+              + ' title="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '"'
+              + ' aria-label="' + (backend === 'fusion' ? 'Plans the work: ' : 'Provider: ') + esc(providerWord(selProviderLabel())) + '">'
               + providerMark(selProviderLabel(), 'xs')
-              + '<span class="cval" data-cap="Provider">' + esc(selProviderLabel()) + '</span>' + ic('chevD', 'chev') + '</button>'
+              + '<span class="cval">' + esc(providerWord(selProviderLabel())) + '</span>' + ic('chevD', 'chev') + '</button>'
             : '')
         // Lane B — backend switch: the TUI's ComposerMetaControls renders
         // no model control when there is no model (cloud provider without
@@ -10739,21 +10776,22 @@ function repaintContextChip() {
 function contextChip() {
   if (!CTX.tokens) return '';
   const proj = CTX.source === 'projected';
-  // Soft Tactile spaces the figure: `36.6k / 1.0M`, projected `~7.4k / 256k`.
-  const label = (proj ? '~' : '') + (CTX.window
-    ? fmtTokens(CTX.tokens) + ' / ' + fmtTokens(CTX.window)
-    : fmtTokens(CTX.tokens));
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
-  /* The bar is a 20px ring over the same percentage: amber above 70%, red
-     above 85%. r = 7.5, so the circumference is 47.1. */
+  /* Calm (S2): the chip is the ring alone; the figure is its tooltip
+     ("7.5k of 131k", projected "~7.4k of 256k · projected") and the exact
+     numbers stay in the popover. The ring fills to the same percentage:
+     amber above 70%, red above 85%. With no known window it is the empty
+     track — the tooltip says the window is unknown. r = 7.5, so the
+     circumference is 47.1. */
   const tone = pct > 85 ? ' crit' : pct > 70 ? ' warn' : '';
-  const ring = CTX.window
-    ? '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
-      + '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.1 * pct / 100).toFixed(1) + ' 47.1" transform="rotate(-90 10 10)"/></svg>'
-    : '';
-  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context" title="'
-    + (proj ? 'projected — nothing measured in this session yet' : 'context') + '">'
-    + ring + '<span class="tnum gaugelb">' + label + '</span></button>';
+  const tip = (proj ? '~' : '') + tokensWord(CTX.tokens)
+    + (CTX.window ? ' of ' + tokensWord(CTX.window) : ' used · window size unknown')
+    + (proj ? ' · projected' : '');
+  const ring = '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
+    + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.1 * pct / 100).toFixed(1) + ' 47.1" transform="rotate(-90 10 10)"/>' : '')
+    + '</svg>';
+  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context"'
+    + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + '</button>';
 }
 
 /* ============================================================
@@ -10772,7 +10810,7 @@ function codingModeChip() {
   // No route on this agent build: print the honest blank rather than a
   // mode. Painting 'default' would name a stance the agent does not have.
   if (MODE.supported === false) {
-    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" '
+    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" data-id="" '
       + 'title="' + esc(MODE_NEEDS_NEWER) + '">' + ic('shield') + 'mode —' + ic('chevD', 'chev') + '</button>';
   }
   // The same blank, for the same reason, one state earlier: the route has not
@@ -10780,26 +10818,28 @@ function codingModeChip() {
   // name a stance the agent has not confirmed — at approvalLevel 5 it would
   // say a green `default` while the live stance is `bypass`.
   if (!MODE.known) {
-    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" '
+    return '<button class="cchip cmodechip blank' + cchipOpen('modes') + '" data-act="modes" data-id="" '
       + 'title="the agent has not reported a stance yet">' + ic('shield') + 'mode —' + ic('chevD', 'chev') + '</button>';
   }
   const id = currentMode();
   const look = CODING_MODES.find((m) => m.id === id) || CODING_MODES[0];
   /* Soft Tactile tones as classes: default neutral, plan blue, auto amber,
-     bypass permissions red — each with its own icon. */
+     bypass permissions red. Calm (S2): one shield for every stance — the
+     tone and the word ("Ask first", "Plan", "Auto", "Bypass") tell them
+     apart; `data-id` is the agent's own mode id. */
   const tone = look.tone === 'bad' ? ' tone-bypass' : look.tone === 'warn' ? ' tone-auto'
     : look.tone === 'accent' ? ' tone-plan' : '';
-  const icon = look.tone === 'bad' ? 'bolt' : look.tone === 'warn' ? 'edit' : look.tone === 'accent' ? 'list' : 'shield';
   // At a configured level of 5 the agent seeds its stance by inference and
   // reports `bypass`, because default/auto/bypass all resolve to level 5
   // with plan off — so the chip opens red until a mode is chosen. Say so
   // in the tooltip, where it is readable without opening the popover.
   const title = MODE.baseLevel === MAX_APPROVAL_LEVEL
-    ? 'what the agent may do without asking — your configured approval level is '
-      + MAX_APPROVAL_LEVEL + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything'
-    : 'what the agent may do without asking';
-  return '<button class="cchip cmodechip' + tone + cchipOpen('modes') + '" data-act="modes" title="' + esc(title) + '">'
-    + ic(icon) + esc(look.label) + ic('chevD', 'chev') + '</button>';
+    ? look.word + ' — ' + look.detail + '. Your configured approval level is '
+      + MAX_APPROVAL_LEVEL + ' of ' + MAX_APPROVAL_LEVEL + ', so Ask first already approves everything'
+    : look.word + ' — ' + look.detail;
+  return '<button class="cchip cmodechip' + tone + cchipOpen('modes') + '" data-act="modes" data-id="' + esc(look.id) + '"'
+    + ' title="' + esc(title) + '" aria-label="Mode: ' + esc(look.word) + '">'
+    + ic('shield') + esc(look.word) + ic('chevD', 'chev') + '</button>';
 }
 
 function modesHTML() {
@@ -10821,7 +10861,7 @@ function modesHTML() {
         return '<button class="poprow modetone-' + m.id + (on ? ' on' : '') + (off ? ' dim' : '') + '"'
           + (off ? ' disabled' : ' data-mode="' + m.id + '"') + '>'
           + '<span class="radio' + (on ? ' on' : '') + '"></span>'
-          + '<span class="col"><span class="ml">' + esc(m.label) + '</span>'
+          + '<span class="col"><span class="ml">' + esc(m.word) + '</span>'
           + '<span class="cap">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
           + (on ? '<span class="cap modecur">current</span>' : '') + '</button>';
       }).join('')
@@ -11489,8 +11529,14 @@ function fzChipsHtml() {
   const label = fzLegLabel(rm, 'worker');
   return '<button class="cchip fzswap" data-act="runmode:swap" title="Swap the seats — the orchestrator runs the workers and back" aria-label="Swap orchestrator and workers">'
       + ic('swap') + '</button>'
-    + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" title="' + esc(label) + '">' + modelMark(label, 'xs')
-      + '<span class="cval" data-cap="Workers">' + esc(fzSeatId(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+    + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" data-id="' + esc(label) + '"'
+      + ' title="Does the work: ' + esc(label) + '" aria-label="Does the work: ' + esc(fzSeatWord(label)) + '">' + modelMark(label, 'xs')
+      + '<span class="cval">' + esc(fzSeatWord(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+}
+/** A Fusion seat's chip word: the catalogue name for a local model, else the id without its vendor prefix. */
+function fzSeatWord(label) {
+  const w = modelWord(label);
+  return w !== shortModel(String(label || '')) ? w : fzSeatId(label);
 }
 /* Fusion puts five controls where cloud has three, in the same 700px: a seat
    names its model without the vendor prefix (`grok-4-6`, not `x-ai/grok-4-6`),
@@ -11701,7 +11747,8 @@ if (typeof window !== 'undefined') {
       const rows = (kind) => { SEL.kind = kind; return selRows().map((r) => ({type:r.type, id:r.id, label:r.label, detail:r.detail || '', active:!!r.active})); };
       const tpl = document.createElement('template');
       tpl.innerHTML = composer();
-      const chips = Array.from(tpl.content.querySelectorAll('.cfoot [data-sel-open]')).map((b) => [b.dataset.selOpen, b.textContent.trim()]);
+      // Calm (S2): the id each chip stands for is its data-id; its text is the human word.
+      const chips = Array.from(tpl.content.querySelectorAll('.cfoot [data-sel-open]')).map((b) => [b.dataset.selOpen, b.dataset.id || '']);
       const set = document.createElement('template');
       set.innerHTML = llmRunModeHTML();
       const on = set.content.querySelector('.llm-rm.on');
@@ -13013,8 +13060,8 @@ function modelChipHtml() {
        route (a provider with a catalogue behind it) gets the call to action;
        everything else keeps the honest blank. */
     if (!selHasKind('model') || selBackend() !== 'cloud') return '';
-    return '<button class="cchip modelchip needsmodel' + cchipOpen('model') + '" data-sel-open="model"'
-      + ' title="No model chosen for this provider — pick one">' + ic('cpu') + '<span class="cval">choose a model</span>' + ic('chevD', 'chev') + '</button>';
+    return '<button class="cchip modelchip needsmodel' + cchipOpen('model') + '" data-sel-open="model" data-id=""'
+      + ' title="No model chosen for this provider — pick one">' + ic('cpu') + '<span class="cval">Choose a model</span>' + ic('chevD', 'chev') + '</button>';
   }
   /* SELECTOR LANE — the model slot's TWO components, as
      composer-meta-controls.tsx has them. A model label is a `Control`, and
@@ -13029,12 +13076,18 @@ function modelChipHtml() {
      route's model control, for the composer strip and for anything reading
      it. `data-sel-dl` is the component split. */
   const cta = label === DOWNLOAD_MODEL_LABEL;
-  // Soft Tactile: the model family's real mark (CPU badge when there is none),
-  // the download icon on the call to action; the id itself in DM Mono.
-  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + cchipOpen('model') + '" data-sel-open="model"'
+  /* Soft Tactile: the model family's real mark (CPU badge when there is none),
+     the download icon on the call to action. Calm (S2): the catalogue's
+     human name where it has one ("Gemma 4 E4B"), else the id as before;
+     `data-id` carries the id, the tooltip names both. */
+  const fz = selHasKind('workers');
+  const word = cta ? 'Download a model' : fz ? fzSeatWord(label) : modelWord(label);
+  const tip = cta ? 'No model on this Mac yet — download one'
+    : (fz ? 'Plans the work: ' : 'Model: ') + (word === label ? label : word + ' (' + label + ')');
+  return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + cchipOpen('model') + '" data-sel-open="model" data-id="' + esc(label) + '"'
     + (cta ? ' data-sel-dl="1"' : '')
-    + (selHasKind('workers') ? ' title="' + esc(label) + '"' : '') + '>' + (cta ? ic('download') : modelMark(label, 'xs'))
-    + '<span class="cval">' + esc(selHasKind('workers') ? fzSeatId(label) : shortModel(label)) + '</span>' + ic('chevD', 'chev') + '</button>';
+    + ' title="' + esc(tip) + '" aria-label="' + esc(tip) + '">' + (cta ? ic('download') : modelMark(label, 'xs'))
+    + '<span class="cval">' + esc(word) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
 /**
  * What the two facts change on screen, repainted in place. These land
@@ -13187,7 +13240,8 @@ if (typeof window !== 'undefined') {
     };
   };
   window.__ctxClose = () => { act('close'); render(); };
-  window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:(el.querySelector('.gaugelb') || {}).textContent || '', proj:el.classList.contains('proj')} : null; };
+  // Calm (S2): the chip is a ring; its figure is the tooltip a person hovers.
+  window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:el.getAttribute('title') || '', proj:el.classList.contains('proj')} : null; };
   window.__ctxNew = () => { act('session:new'); return refreshContext().then(() => window.__ctx()); };
   // The no-trace state, against a real empty directory: the caller restores with __ctxRefresh().
   window.__ctxEmpty = (dir) => refreshContext(dir).then(() => window.__ctx());

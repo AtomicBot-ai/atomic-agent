@@ -76,8 +76,9 @@ const until = async (fn, label, timeout = 90000) => {
     await sleep(300);
   }
 };
-const chip = (kind) => app.eval(`(() => { const b = document.querySelector('#composer .cfoot [data-sel-open="${kind}"]'); return b ? b.textContent.trim() : null; })()`);
-const chips = () => app.eval(`[...document.querySelectorAll('#composer .cfoot [data-sel-open]')].map((b) => [b.dataset.selOpen, b.textContent.trim()])`);
+// Calm (S2): a chip's id is its data-id; its text is the human word ("Fusion", "AI/ML API").
+const chip = (kind) => app.eval(`(() => { const b = document.querySelector('#composer .cfoot [data-sel-open="${kind}"]'); return b ? (b.dataset.id || '') : null; })()`);
+const chips = () => app.eval(`[...document.querySelectorAll('#composer .cfoot [data-sel-open]')].map((b) => [b.dataset.selOpen, b.dataset.id || ''])`);
 const popRows = () => app.eval(`[...document.querySelectorAll('.selpop .modelrow')].map((r) => [
   (r.querySelector('.nm') || {}).textContent || '', (r.querySelector('.cap') || {}).textContent || '', r.classList.contains('on')])`);
 const popTitle = () => app.eval(`(document.querySelector('.selpop .selttl') || {}).textContent || null`);

@@ -69,8 +69,9 @@ for (const name of ['OPENROUTER_API_KEY', 'AIMLAPI_API_KEY']) {
 const app = await launch({ stateDir, port: PORT });
 let failed = 0;
 
-/** The composer's chips, left to right — what the app says is active. */
-const chips = () => app.js(`[...document.querySelectorAll('.cfoot .cchip')].map((n) => (n.textContent||'').trim())`);
+/** The composer's chips, left to right — the id each stands for (`data-id`;
+    Calm S2 prints human words on the pills). */
+const chips = () => app.js(`[...document.querySelectorAll('.cfoot .cchip')].map((n) => n.dataset.id || '')`);
 /** The transcript, flattened. Rows are `#scroller .col720 > .turn`; a
     user's own message is the one that carries `.usr`. */
 const TURNS = `[...document.querySelectorAll('#scroller .col720 > .turn')]`;
@@ -186,7 +187,7 @@ async function pickCloudModel(modelId) {
     { timeoutMs: 60000, label: `the row for ${modelId} arrives` });
   await app.clickText(`use openrouter/${modelId}`, { settleMs: 2500 });
   await app.waitFor(
-    `[...document.querySelectorAll('.cfoot .cchip')].some((n) => (n.textContent||'').trim() === ${JSON.stringify(modelId)})`,
+    `[...document.querySelectorAll('.cfoot .cchip')].some((n) => n.dataset.id === ${JSON.stringify(modelId)})`,
     { timeoutMs: 90000, label: `the model chip follows the pick of ${modelId}` });
 }
 
@@ -340,14 +341,14 @@ try {
      3. AI/ML API, added AFTER setup from the composer's own chip.
      ============================================================ */
   step(11, 'add AI/ML API from the composer provider chip');
-  await app.clickText('openrouter', { tags: '.cfoot .cchip', settleMs: 1200 });
+  await app.clickText('OpenRouter', { tags: '.cfoot .cchip', settleMs: 1200 });
   await app.clickText('Add a new provider', { settleMs: 1500 });
   await app.clickText('AI/ML API', { settleMs: 1500 });
   check('the AI/ML API key screen is up',
     await app.js(`!!document.querySelector('#wiz-key') && /AI\\/ML API/.test(document.body.textContent)`));
   await app.type('#wiz-key', ENV.AIMLAPI_API_KEY, { settleMs: 400 });
   await app.clickText('Next', { settleMs: 2000 });
-  await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => (n.textContent||'').trim() === 'aimlapi')`,
+  await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => n.dataset.id === 'aimlapi')`,
     { timeoutMs: 90000, label: 'aimlapi becomes the active provider' });
   c = await chips();
   check('the chips switched to aimlapi with a model of its own', c[1] === 'aimlapi' && !!c[2], JSON.stringify(c));
@@ -379,7 +380,7 @@ try {
   check('both providers are listed with a resolved key',
     await app.js(`${keyOk('openrouter')} && ${keyOk('aimlapi')}`));
   await app.clickText('switch cloud route to openrouter', { settleMs: 2000 });
-  await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => (n.textContent||'').trim() === 'openrouter')`,
+  await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => n.dataset.id === 'openrouter')`,
     { timeoutMs: 90000, label: 'the route moves to openrouter' });
   /* The pane repaints from the live config a beat after the route moves,
      so this waits for the row to say it rather than sampling once. */

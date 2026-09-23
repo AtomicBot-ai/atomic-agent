@@ -54,9 +54,10 @@ const ATAG = arg('atag', 'atag');
 
 /* ---- what the screen says, read the way a person reads it ---- */
 
-/** The composer's control strip: which controls are on it, left to right. */
+/** The composer's control strip: which controls are on it, left to right —
+    the id each stands for (`data-id`) and the words it shows (Calm S2). */
 const CHIPS = `[...document.querySelectorAll('#composer .cfoot [data-sel-open]')]
-  .map((b) => ({ kind: b.dataset.selOpen, text: (b.textContent||'').replace(/\\s+/g,' ').trim() }))`;
+  .map((b) => ({ kind: b.dataset.selOpen, id: b.dataset.id || '', text: (b.textContent||'').replace(/\\s+/g,' ').trim() }))`;
 
 /** The open switch popup: its title and the rows under it. */
 const POPUP = `(() => {
@@ -77,10 +78,11 @@ const LLM_MODE = `(() => {
   return on ? on.textContent.trim() : null;
 })()`;
 
-/** The route, as the window itself paints it on the backend control. */
+/** The route the backend control stands for (its `data-id`; the pill itself
+    says "Cloud" / "This Mac" / "Custom server" / "Fusion"). */
 const BACKEND = `(() => {
   const b = document.querySelector('#composer .cfoot [data-sel-open="backend"]');
-  return b ? (b.textContent||'').replace(/\\s+/g,' ').trim() : null;
+  return b ? (b.dataset.id || '') : null;
 })()`;
 
 /** Anything the app is complaining about right now — toasts and switch errors. */
@@ -155,7 +157,7 @@ async function settled(app, { timeoutMs = 120000 } = {}) {
  */
 async function onRoute(app, word, { timeoutMs = 180000 } = {}) {
   const ok = await app.waitFor(
-    `/${word}/.test((document.querySelector('#composer .cfoot [data-sel-open="backend"]')||{textContent:''}).textContent||'')`,
+    `/${word}/.test((document.querySelector('#composer .cfoot [data-sel-open="backend"]')||{dataset:{}}).dataset.id||'')`,
     { timeoutMs },
   );
   if (!ok) return false;
@@ -302,7 +304,7 @@ async function main() {
        the empty catalog and its own deep link to the same pane". */
     t.say('\n--- the local route’s model control ---');
     const modelChip = backChips.find((c) => c.kind === 'model');
-    const isCta = !!modelChip && /download model/.test(modelChip.text);
+    const isCta = !!modelChip && /download model/.test(modelChip.id);
     t.say(`  the model control reads: ${JSON.stringify(modelChip && modelChip.text)}`
       + (isCta ? ' — the download call to action' : ' — a model label'));
     r = await app.clickSel('#composer .cfoot [data-sel-open="model"]', { settle: 2500 });
@@ -355,7 +357,7 @@ async function main() {
       `saw ${JSON.stringify(kinds(customChips))}`);
     const providerChip = customChips.find((c) => c.kind === 'provider');
     t.check('the custom provider control reads "llama.cpp" (selectPromptLlmMeta)',
-      !!providerChip && /llama\.cpp/.test(providerChip.text), JSON.stringify(providerChip));
+      !!providerChip && /llama\.cpp/.test(providerChip.id), JSON.stringify(providerChip));
 
     const r2 = await app.clickSel('#composer .cfoot [data-sel-open="provider"]', { settle: 900 });
     t.check('the custom provider control takes a real click', r2.ok, r2.why || `clicked "${r2.clicked}"`);

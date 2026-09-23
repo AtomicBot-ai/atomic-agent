@@ -2157,13 +2157,16 @@ async function smokeTest(): Promise<void> {
     // ...and once it HAS answered the chip names the stance, so the blank
     // above is a state this window really leaves — not one it is stuck in.
     if (modeState.supported === true) {
+      // Calm (S2): the chip prints the stance in words ("Ask first", "Plan",
+      // "Auto", "Bypass") and carries the agent's mode id as `data-id`.
       const chipLive = await js<string>("window.__chipHTML()");
       const chipLiveText = chipLive.replace(/<[^>]*>/g, "").trim();
+      const chipLiveId = (/data-id="([^"]*)"/.exec(chipLive) ?? [])[1] ?? "";
+      const modeWords: Record<string, string> = { default: "Ask first", plan: "Plan", auto: "Auto", bypass: "Bypass" };
       check(
         "coding mode chip names the stance the agent confirmed",
-        modeState.known === true
-          && ["default", "plan", "auto", "bypass permissions"].includes(chipLiveText),
-        `known=${modeState.known} chip=${JSON.stringify(chipLiveText)}`,
+        modeState.known === true && !!modeWords[chipLiveId] && modeWords[chipLiveId] === chipLiveText,
+        `known=${modeState.known} chip=${JSON.stringify(chipLiveText)} id=${JSON.stringify(chipLiveId)}`,
       );
     }
 
@@ -7164,7 +7167,7 @@ async function isolationAndSwitchTest(
   const modeSupported = await js<boolean | null>("window.__modeSupported()");
   const modeBefore = await js<string>("window.__mode()");
   const modeTarget = modeBefore === "plan" ? "default" : "plan";
-  const modeProbe = await js<{ samples: Array<{ disabled: boolean; spins: number; mode: string; chip: string; blank: boolean }>; ms: number }>(
+  const modeProbe = await js<{ samples: Array<{ disabled: boolean; spins: number; mode: string; chip: string; id: string; blank: boolean }>; ms: number }>(
     /* r5 review fix — sample the RENDERED chip, not only window.__mode().
        currentMode() returns SWX.want.mode the instant the mode is clicked, but
        codingModeChip() returns the `mode —` blank AHEAD of any call to it
@@ -7178,7 +7181,7 @@ async function isolationAndSwitchTest(
        const take = () => { const b = document.querySelector('.sendbtn');
          const c = document.querySelector('.cmodechip');
          samples.push({disabled: !!(b && b.disabled), spins: document.querySelectorAll('.sspin').length, mode: window.__mode(),
-                       chip: c ? c.textContent.trim() : '',
+                       chip: c ? c.textContent.trim() : '', id: c ? (c.dataset.id || '') : '',
                        blank: !!(c && /^mode\\s+—$/.test(c.textContent.trim()))}); };
        const t0 = Date.now();
        const p = window.__setCodingMode(${JSON.stringify(modeTarget)});
@@ -7202,7 +7205,7 @@ async function isolationAndSwitchTest(
       // the honest `mode —` blank because the agent has not confirmed a stance.
       && (modeProbe.samples[0]!.blank
         ? modeSupported === false || modeProbe.samples[0]!.chip === "mode —"
-        : modeProbe.samples[0]!.chip === modeTarget),
+        : modeProbe.samples[0]!.id === modeTarget),
     `route supported=${modeSupported}; ${modeProbe.ms}ms; samples=${JSON.stringify(modeProbe.samples)}`,
   );
   await js<void>(`window.__setCodingMode(${JSON.stringify(modeBefore)})`);
@@ -7394,7 +7397,7 @@ async function backendSwitchTest(
     // Read once before the harness refreshes anything: this is what the
     // renderer's own post-IPC refreshLiveConfig() produced.
     const rawLocal = await js<{ backend: string; mode: string }>(
-      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? ''})",
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.dataset.id ?? ''})",
     );
     const stLocal = await waitConnected();
     const afterLocal = await cfgNow();
@@ -7447,7 +7450,7 @@ async function backendSwitchTest(
     // The chip's own list: `models list` minus the CLI's embedding catalogue.
     const onDisk = ((await chatModelsList()).models ?? []).some((m) => m.downloaded);
     const localChips = await js<{ backend: string; mode: string; model: string }>(
-      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? '', model: document.querySelector('.modelchip')?.textContent ?? ''})",
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.dataset.id ?? '', model: document.querySelector('.modelchip')?.dataset.id ?? ''})",
     );
     check(
       "backend: renderer follows the file",
@@ -7597,7 +7600,7 @@ async function backendSwitchTest(
     const stCloud = await waitConnected();
     const afterCloud = await cfgNow();
     const cloudChips = await js<{ backend: string; mode: string; provider: string }>(
-      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.textContent ?? '', provider: window.__activeProvider()})",
+      "({backend: window.__sel().backend, mode: document.querySelector('.modechip')?.dataset.id ?? '', provider: window.__activeProvider()})",
     );
     const activeEntry = (afterCloud?.llm?.providers ?? []).find((p) => p.id === afterCloud?.llm?.activeTextProvider);
     check(
@@ -9541,7 +9544,7 @@ async function planHandoffTest(
     "dismiss|✕ dismiss plan",
   ];
   const HINT = "Type to change the plan — it stays in plan mode…";
-  const IDLE_HINT = "Ask for an outcome, or / for a command";
+  const IDLE_HINT = "Ask Atomic Agent\u2026";
 
   const seed = await agent!.codingMode();
   if (!seed.supported) {
