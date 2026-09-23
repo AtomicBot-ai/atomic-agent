@@ -756,6 +756,13 @@ async function runOneTask(
     deps.declaredInputs?.clear(session.id);
   }
 
+  // How long the server took to say anything. The one number that tells
+  // a queued worker from one nothing ever answered — see `queueWaitMs`.
+  result = {
+    ...result,
+    queueWaitMs: servedAt === null ? null : servedAt - startedAt,
+  };
+
   // Out of time, not out of steps. Only this function knows whose clock
   // fired — `classifyWorkerStatus` sees a `cancelled` turn with a
   // `time_ceiling` cause and deliberately keeps `cancelled` ahead of it,

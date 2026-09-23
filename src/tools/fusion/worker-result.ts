@@ -113,6 +113,23 @@ export interface WorkerTaskResult {
   reply: string;
   stepCount: number;
   durationMs: number;
+  /**
+   * How long the worker waited between being started and the server's
+   * first token, in ms. `null` when no token ever arrived.
+   *
+   * Recorded because the transcript could not tell two very different
+   * failures apart: a worker queued behind busy slots, and a worker whose
+   * request never reached the server at all. Both arrived as a task with
+   * zero steps and a duration equal to its whole budget, and separating
+   * them in the field took four delegations plus reading the
+   * llama-server log alongside the trace to see the server had recorded
+   * nothing.
+   *
+   * With this on the row, `durationMs` minus `queueWaitMs` is the time
+   * the worker actually had, and a `null` on a fan-out of one points at
+   * the daemon rather than at the fan-out's width.
+   */
+  queueWaitMs?: number | null;
   tools: WorkerToolStats;
   usage?: CompletionUsage;
   /**

@@ -173,6 +173,73 @@ describe("the worker's clock does not run while it is queued", () => {
     expect(result!.status).toBe("timeout");
   });
 
+  it("records how long the server took to answer, so a wedge is visible in the trace", async () => {
+    vi.useFakeTimers();
+    const QUEUED_FOR = 7 * MIN;
+    const deps = harness(
+      (options) =>
+        new Promise<RunTurnResult>((resolve) => {
+          setTimeout(() => {
+            options.eventHook?.({
+              type: "llm_event",
+              event: { type: "assistant_delta", text: "hi" },
+            });
+            options.eventHook?.({
+              type: "llm_event",
+              event: { type: "assistant_reply", text: "done" },
+            });
+            resolve({
+              session: createEmptySessionState({
+                id: "s-x",
+                workingDir: "/repo",
+              }),
+              reason: "reply",
+              stepCount: 1,
+            });
+          }, QUEUED_FOR);
+        }),
+    );
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: TASK,
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(QUEUED_FOR + MIN);
+    const [result] = await run;
+    expect(result!.queueWaitMs).toBe(QUEUED_FOR);
+    // durationMs minus the wait is the time the worker actually had.
+    expect(result!.durationMs - result!.queueWaitMs!).toBe(0);
+  });
+
+  it("reports a null wait when nothing ever answered — the wedge signature", async () => {
+    vi.useFakeTimers();
+    const deps = harness(
+      (options) =>
+        new Promise<RunTurnResult>((resolve) => {
+          options.signal?.addEventListener("abort", () =>
+            resolve({
+              session: createEmptySessionState({
+                id: "s-x",
+                workingDir: "/repo",
+              }),
+              reason: "cancelled",
+              stepCount: 0,
+            }),
+          );
+        }),
+    );
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: TASK,
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(WORKER_BUDGET + MIN);
+    const [result] = await run;
+    expect(result!.queueWaitMs).toBeNull();
+  });
+
   it("lets the loop's own ceiling outlive the queue wait", async () => {
     vi.useFakeTimers();
     let seen: number | undefined;
