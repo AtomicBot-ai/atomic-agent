@@ -13,7 +13,11 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  */
 
 /** Providers whose configured `apiKeyEnv` materially changes their quota. */
-const KEYED_PROVIDERS = new Set<WebSearchProviderName>(["exa", "brave"]);
+const KEYED_PROVIDERS = new Set<WebSearchProviderName>([
+  "exa",
+  "brave",
+  "anysearch",
+]);
 
 export interface MissingSearchKeyWarning {
   provider: WebSearchProviderName;
@@ -39,8 +43,7 @@ export function checkMissingSearchKey(input: {
   const provider = search.provider;
   if (!KEYED_PROVIDERS.has(provider)) return null;
 
-  const apiKeyEnv =
-    provider === "exa" ? search.exa.apiKeyEnv : search.brave.apiKeyEnv;
+  const apiKeyEnv = resolveApiKeyEnv(provider, search);
   const key = input.env[apiKeyEnv]?.trim();
   if (typeof key === "string" && key.length > 0) return null;
 
@@ -55,15 +58,35 @@ export function checkMissingSearchKey(input: {
   };
 }
 
+function resolveApiKeyEnv(
+  provider: WebSearchProviderName,
+  search: AtomicAgentConfig["web"]["search"],
+): string {
+  switch (provider) {
+    case "exa":
+      return search.exa.apiKeyEnv;
+    case "brave":
+      return search.brave.apiKeyEnv;
+    case "anysearch":
+      return search.anysearch.apiKeyEnv;
+    default:
+      return "";
+  }
+}
+
 /**
  * Providers that actually have a keyless tier. Exa falls back to the
- * public MCP endpoint without a key; Brave has no such tier, so a
- * keyless Brave is not "degraded" — `isProviderUsable` skips it outright
- * and the chain never sends it a request. Telling that operator to
- * expect 429s points them at a rate limit that cannot happen instead of
- * at the real problem: their configured primary is disabled.
+ * public MCP endpoint without a key; AnySearch answers anonymously with
+ * lower rate limits. Brave has no such tier, so a keyless Brave is not
+ * "degraded" — `isProviderUsable` skips it outright and the chain never
+ * sends it a request. Telling that operator to expect 429s points them
+ * at a rate limit that cannot happen instead of at the real problem:
+ * their configured primary is disabled.
  */
-const KEYLESS_TIER_PROVIDERS = new Set<WebSearchProviderName>(["exa"]);
+const KEYLESS_TIER_PROVIDERS = new Set<WebSearchProviderName>([
+  "exa",
+  "anysearch",
+]);
 
 function buildMessage(
   provider: WebSearchProviderName,

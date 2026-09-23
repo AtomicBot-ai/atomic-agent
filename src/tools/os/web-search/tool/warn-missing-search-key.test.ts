@@ -22,6 +22,10 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        anysearch: {
+          endpoint: "https://api.anysearch.com/v1/search",
+          apiKeyEnv: "ANYSEARCH_API_KEY",
+        },
         ...overrides,
       },
     },
@@ -74,6 +78,17 @@ describe("checkMissingSearchKey", () => {
     });
 
     expect(warning!.apiKeyEnv).toBe("BRAVE_SEARCH_API_KEY");
+  });
+
+  it("warns for an anysearch primary against its own env var (keyless tier)", () => {
+    const warning = checkMissingSearchKey({
+      config: makeConfig({ provider: "anysearch" }),
+      env: {},
+    });
+
+    expect(warning).not.toBeNull();
+    expect(warning!.apiKeyEnv).toBe("ANYSEARCH_API_KEY");
+    expect(warning!.message).toContain("keyless tier");
   });
 
   it("stays silent when search is disabled outright", () => {

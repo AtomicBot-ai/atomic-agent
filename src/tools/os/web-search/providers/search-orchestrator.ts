@@ -164,7 +164,8 @@ function buildProviderChain(
 
 /**
  * `searxng` needs an `instanceUrl`; `brave` needs its API key in the env.
- * `duckduckgo` and `exa` are always attempted (Exa has a keyless MCP path).
+ * `duckduckgo`, `exa`, and `anysearch` are always attempted (Exa and
+ * AnySearch both have a keyless path).
  */
 function isProviderUsable(
   name: WebSearchProviderName,
@@ -181,6 +182,7 @@ function isProviderUsable(
     }
     case "duckduckgo":
     case "exa":
+    case "anysearch":
       return true;
   }
 }
