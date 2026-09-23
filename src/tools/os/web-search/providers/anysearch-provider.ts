@@ -89,7 +89,20 @@ export function createAnySearchProvider(
         );
       }
 
-      assertProviderStatus(response, "anysearch", "AnySearch");
+      try {
+        assertProviderStatus(response, "anysearch", "AnySearch");
+      } catch (err) {
+        // OpenClaw / QwenPaw: never surface a Bearer that an upstream
+        // echoed into a 4xx body / retry-after caption.
+        if (err instanceof WebSearchRateLimitedError) {
+          throw new WebSearchRateLimitedError(
+            err.provider,
+            err.retryAfterMs,
+            redactSecrets(err.message, apiKey),
+          );
+        }
+        throw new Error(redactSecrets((err as Error).message, apiKey));
+      }
       try {
         return parseAnySearchJson(response.body, options.maxResults);
       } catch (err) {
@@ -148,7 +161,7 @@ export function parseAnySearchJson(
   for (const raw of rawResults as AnySearchResult[]) {
     if (typeof raw.title !== "string" || typeof raw.url !== "string") continue;
     const title = raw.title.trim();
-    const url = raw.url.trim();
+    const url = sanitizeResultUrl(raw.url.trim());
     if (!title || !url) continue;
     results.push({
       title,
@@ -158,6 +171,27 @@ export function parseAnySearchJson(
     if (results.length >= maxResults) break;
   }
   return results;
+}
+
+/**
+ * Drop embedded `user:pass@` from result URLs (OpenClaw web-search plugin
+ * hardening). Credentials in a URL that reaches the model are a prompt /
+ * transcript leak; the page itself is still reachable without them.
+ */
+export function sanitizeResultUrl(url: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) {
+      parsed.username = "";
+      parsed.password = "";
+      return parsed.toString();
+    }
+    return url;
+  } catch {
+    // Absolute URLs only — leave relative / opaque strings alone.
+    return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]+@/i, "$1");
+  }
 }
 
 function extractSnippet(raw: AnySearchResult): string {
@@ -189,9 +223,14 @@ function requestIdSuffix(body: string): string {
 
 /** Never leak a Bearer token that an upstream echoed into an error body. */
 export function redactSecrets(message: string, apiKey?: string): string {
-  let out = message.replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [REDACTED]");
+  let out = message;
+  // Exact known key first so a short key is not left as `as_sk_[REDACTED]`.
   if (apiKey && apiKey.length >= 8) {
     out = out.split(apiKey).join("[REDACTED]");
   }
-  return out;
+  return out
+    .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [REDACTED]")
+    // AnySearch key shape + generic URL userinfo (OpenClaw-style).
+    .replace(/\bas_sk_[A-Za-z0-9._\-]+/g, "as_sk_[REDACTED]")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)([^/@\s]+)@/gi, "$1[REDACTED]@");
 }

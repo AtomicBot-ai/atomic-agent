@@ -7,11 +7,12 @@ Peer patterns consulted while shaping this work:
 
 | Peer | What we borrowed |
 |---|---|
-| [QwenPaw #7081](https://github.com/agentscope-ai/QwenPaw/pull/7081) (anysearch-ai) | Opt-in provider, anonymous+keyed, security notes, evidence-heavy PR |
+| [QwenPaw #7081](https://github.com/agentscope-ai/QwenPaw/pull/7081) (anysearch-ai) | Opt-in provider, anonymous+keyed, empty-Bearer guard, MCP env-ref hygiene |
 | [AnythingLLM #6058](https://github.com/Mintplex-Labs/anything-llm/pull/6058) (You.com) | Keyless-default + optional key, shared result shape, test evidence |
-| Official [anysearch-skill](https://github.com/anysearch-ai/anysearch-skill) / MCP | Discover-then-route, batch, extract, `auto_registered` key etiquette |
-| OpenClaw / Hermes vertical search | `tag` / `zone` / `language`, sub-domain discovery before inventing tags |
-| AutoGPT / HyperResearcher | Parallel batch + isolated per-query failure |
+| [OpenClaw #47541](https://github.com/openclaw/openclaw/pull/47541) (pluggable search) | Strip `user:pass@` from result URLs, clamp `maxResults`, redact errors |
+| [Hermes #41161](https://github.com/NousResearch/hermes-agent/issues/41161) | Discover-then-route, zone/language, extract + MCP notes |
+| Official [anysearch-skill](https://github.com/anysearch-ai/anysearch-skill) / MCP | Batch, extract, `auto_registered` key etiquette, untrusted content |
+| AutoGPT / HyperResearcher / GPT-Researcher | Parallel batch + isolated per-query failure |
 
 ## Architecture
 
@@ -119,9 +120,11 @@ ANYSEARCH_API_KEY=as_sk_…
 ## Hardening notes
 
 - HTTP **402** quota → `WebSearchRateLimitedError` (orchestrator parks / falls back)
-- Bearer tokens redacted from surfaced error strings
+- Bearer / `as_sk_*` / URL-userinfo redacted from surfaced error strings
+- Result URLs strip embedded `user:pass@` (OpenClaw-style) before they reach the model
 - Cache keys include `tag` / `params` / `zone` / `language` extras
 - Authenticated calls never silently fall back to anonymous on 401
+- Empty / whitespace `ANYSEARCH_API_KEY` never sends `Authorization: Bearer ` (QwenPaw)
 
 ## API surface
 

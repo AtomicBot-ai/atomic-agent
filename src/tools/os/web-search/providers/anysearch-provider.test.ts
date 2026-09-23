@@ -7,6 +7,7 @@ import {
   createAnySearchProvider,
   parseAnySearchJson,
   redactSecrets,
+  sanitizeResultUrl,
 } from "./anysearch-provider.js";
 
 const MARKER = "__ATOMIC_WEB_SEARCH_META__";
@@ -71,6 +72,24 @@ describe("parseAnySearchJson", () => {
     expect(parseAnySearchJson(body, 1)[0]?.snippet).toBe("Long content body");
   });
 
+  it("strips embedded userinfo from result URLs (OpenClaw hardening)", () => {
+    const body = JSON.stringify({
+      code: 0,
+      data: {
+        results: [
+          {
+            title: "Leak",
+            url: "https://user:secret@example.com/path?q=1",
+            snippet: "x",
+          },
+        ],
+      },
+    });
+    expect(parseAnySearchJson(body, 1)[0]?.url).toBe(
+      "https://example.com/path?q=1",
+    );
+  });
+
   it("throws on a non-zero business code and keeps request_id", () => {
     expect(() =>
       parseAnySearchJson(
@@ -126,6 +145,26 @@ describe("redactSecrets", () => {
     expect(
       redactSecrets("Bearer as_sk_secret failed; as_sk_secret", "as_sk_secret"),
     ).toBe("Bearer [REDACTED] failed; [REDACTED]");
+  });
+
+  it("strips AnySearch key shapes and URL userinfo in error text", () => {
+    expect(
+      redactSecrets(
+        "upstream https://user:as_sk_abc123@api.example/x as_sk_other",
+      ),
+    ).toBe(
+      "upstream https://[REDACTED]@api.example/x as_sk_[REDACTED]",
+    );
+  });
+});
+
+describe("sanitizeResultUrl", () => {
+  it("clears username/password from https URLs", () => {
+    expect(sanitizeResultUrl("https://a:b@host/p")).toBe("https://host/p");
+  });
+
+  it("leaves clean URLs unchanged", () => {
+    expect(sanitizeResultUrl("https://host/p")).toBe("https://host/p");
   });
 });
 

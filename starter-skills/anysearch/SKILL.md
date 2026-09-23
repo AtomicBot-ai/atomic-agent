@@ -1,7 +1,7 @@
 ---
 name: anysearch
 description: "AnySearch vertical discovery, parallel batch search, and URL extract. Everyday search: os.web.search with provider anysearch (supports tag/params)."
-version: 1.1.0
+version: 1.1.1
 requires_tools:
   - os.http.request
   - os.shell.run
