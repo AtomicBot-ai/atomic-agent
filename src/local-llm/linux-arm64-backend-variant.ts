@@ -1,75 +1,44 @@
-import { execSync } from "node:child_process";
+import {
+  LINUX_ARM64_MIN_GLIBC,
+  UnsupportedGlibcError,
+} from "./platform-assets.js";
 
-import { UnsupportedGlibcError } from "./platform-assets.js";
-import type { BackendVariantPreference } from "./windows-backend-variant.js";
+export { LINUX_ARM64_MIN_GLIBC } from "./platform-assets.js";
 
 /**
- * The turboquant repo ships two Linux arm64 backend builds. The binary
- * inside both zips is `llama-server`; only the bundled GPU backend
- * differs, and both carry the portable CPU backend, so a box whose GPU
- * cannot be used still serves on the CPU.
+ * The turboquant repo publishes exactly **one** Linux arm64 build, and
+ * this is its name. Verified against the repo's releases rather than
+ * assumed: across all 64 releases the only `linux-arm64` assets are
+ * `llama-turboquant-linux-arm64-cuda-13.3.{zip,tar.gz}`. There is no
+ * arm64 Vulkan, CPU or CUDA 12.4 asset, so arm64 has nothing to select
+ * between and `backendVariant` is ignored there, exactly as it is on
+ * macOS and Linux x64.
  *
- * The CUDA build is compiled for exactly the architectures listed in
- * `CUDA_BUILD_COMPUTE_CAPS` (GB10, the DGX Spark superchip) with the
- * CUDA runtime and cuBLAS bundled. It has no kernels for any other GPU,
- * so it is picked by the GPU's compute capability, not by the driver's
- * CUDA version: a GH200 or Jetson Thor with a CUDA 13 driver would load
- * it and then fail on its first kernel launch. Everything else gets
- * Vulkan, which the NVIDIA driver also serves.
+ * The name says CUDA, but the zip is not CUDA-only, which is why one
+ * asset can serve every arm64 machine. Read out of the published zip:
+ *
+ *  - `llama-server` is a 72 KB launcher whose `DT_NEEDED` list is
+ *    `libllama-server-impl.so`, libstdc++, libgcc, libc. Neither it nor
+ *    `libllama-server-impl.so` links `libcuda.so.1` or
+ *    `libggml-cuda.so`. The compute backends are separate shared
+ *    objects the ggml registry `dlopen`s at startup, so on a machine
+ *    with no NVIDIA driver the CUDA backend simply fails to load and
+ *    the server runs on the CPU. It does not fail to start.
+ *  - The CPU backend ships as eight variants, `libggml-cpu-armv8.0_1`
+ *    through `libggml-cpu-armv9.2_2`, picked by runtime dispatch — so
+ *    plain aarch64 hardware down to armv8.0 is covered.
+ *  - The size (554 MB, against 30 MB for linux-x64-vulkan) is almost
+ *    entirely `libcublasLt` and `libcublas`. That is the cost of the
+ *    one published arm64 build; it is stated in the README so the
+ *    download is not a surprise.
+ *
+ * If an arm64 Vulkan or CPU asset is ever published, this module is
+ * where the choice between them belongs — see the git history of this
+ * file for a detection-by-compute-capability shape that was removed
+ * because it could only ever return one answer.
  */
-export const LINUX_ARM64_BACKEND_ASSETS = {
-  vulkan: "llama-turboquant-linux-arm64-vulkan.zip",
-  cuda133: "llama-turboquant-linux-arm64-cuda-13.3.zip",
-} as const;
-
-/** `nvidia-smi --query-gpu=compute_cap` values the CUDA build has kernels for. */
-export const CUDA_BUILD_COMPUTE_CAPS: readonly string[] = ["12.1"];
-
-/**
- * Parse `nvidia-smi --query-gpu=compute_cap --format=csv,noheader`: one
- * `major.minor` per GPU. Lines that are not a capability (`[N/A]`, an
- * error string) are dropped. Pure — no IO.
- */
-export function parseComputeCaps(output: string): string[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /^\d+\.\d+$/.test(line));
-}
-
-/**
- * Pure selection of the Linux arm64 backend zip from the detected
- * compute capabilities. `null` (no NVIDIA driver / nvidia-smi missing)
- * and any GPU the CUDA build has no kernels for yield Vulkan.
- */
-export function selectLinuxArm64BackendAsset(
-  computeCaps: readonly string[] | null,
-): string {
-  if (computeCaps?.some((cap) => CUDA_BUILD_COMPUTE_CAPS.includes(cap))) {
-    return LINUX_ARM64_BACKEND_ASSETS.cuda133;
-  }
-  return LINUX_ARM64_BACKEND_ASSETS.vulkan;
-}
-
-/**
- * Run `nvidia-smi` for the GPUs' compute capabilities, or null when the
- * tool is missing / errors / reports none.
- */
-export function detectComputeCaps(): string[] | null {
-  try {
-    const out = execSync(
-      "nvidia-smi --query-gpu=compute_cap --format=csv,noheader",
-      { timeout: 4000, stdio: ["ignore", "pipe", "ignore"] },
-    ).toString();
-    const caps = parseComputeCaps(out);
-    return caps.length > 0 ? caps : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Oldest glibc the arm64 builds load on (see `UnsupportedGlibcError`). */
-export const LINUX_ARM64_MIN_GLIBC = { major: 2, minor: 38 } as const;
+export const LINUX_ARM64_BACKEND_ASSET =
+  "llama-turboquant-linux-arm64-cuda-13.3.zip";
 
 /**
  * True when `version` (`"2.39"`) is at least `LINUX_ARM64_MIN_GLIBC`.
@@ -95,37 +64,28 @@ let cachedGlibcVersion: string | null | undefined;
 export function detectGlibcVersion(): string | null {
   if (cachedGlibcVersion !== undefined) return cachedGlibcVersion;
   const report = process.report?.getReport() as
-    | { header?: { glibcVersionRuntime?: string } }
-    | undefined;
+    { header?: { glibcVersionRuntime?: string } } | undefined;
   cachedGlibcVersion = report?.header?.glibcVersionRuntime ?? null;
   return cachedGlibcVersion;
 }
 
-/** Throw `UnsupportedGlibcError` unless `version` can load the arm64 builds. */
+/** Test helper: clear the cached glibc probe. */
+export function resetGlibcVersionCache(): void {
+  cachedGlibcVersion = undefined;
+}
+
+/** Throw `UnsupportedGlibcError` unless `version` can load the arm64 build. */
 export function assertLinuxArm64Glibc(version: string | null): void {
   if (!isSupportedGlibc(version)) throw new UnsupportedGlibcError(version);
 }
 
-let cachedLinuxArm64Asset: string | null = null;
-
 /**
- * Detect the Linux arm64 backend asset, caching the probe process-wide
- * the same way the Windows detection does. A configured `"vulkan"` or
- * `"cuda-13.3"` pins that build without probing. `"cpu"` and
- * `"cuda-12.4"` name builds that do not exist for arm64, so they fall
- * through to detection; both arm64 builds carry the CPU backend anyway.
+ * Whether managed mode can serve this machine, without throwing. The
+ * Models tab and `models status` ask this to explain themselves; the
+ * install path asserts instead.
  */
-export function detectLinuxArm64BackendAsset(
-  configured: BackendVariantPreference,
-): string {
-  if (configured === "vulkan") return LINUX_ARM64_BACKEND_ASSETS.vulkan;
-  if (configured === "cuda-13.3") return LINUX_ARM64_BACKEND_ASSETS.cuda133;
-  if (cachedLinuxArm64Asset !== null) return cachedLinuxArm64Asset;
-  cachedLinuxArm64Asset = selectLinuxArm64BackendAsset(detectComputeCaps());
-  return cachedLinuxArm64Asset;
-}
-
-/** Test helper: clear the process-wide detection cache. */
-export function resetLinuxArm64BackendAssetCache(): void {
-  cachedLinuxArm64Asset = null;
+export function linuxArm64ManagedSupport(
+  glibcVersion: string | null = detectGlibcVersion(),
+): { supported: boolean; glibcVersion: string | null } {
+  return { supported: isSupportedGlibc(glibcVersion), glibcVersion };
 }

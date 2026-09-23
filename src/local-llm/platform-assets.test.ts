@@ -30,9 +30,9 @@ describe("platform-assets", () => {
     );
   });
 
-  it("resolves linux arm64 to the Vulkan asset", () => {
+  it("resolves linux arm64 to the one published arm64 asset", () => {
     const a = resolvePlatformAsset("linux", "arm64");
-    expect(a.assetName).toBe("llama-turboquant-linux-arm64-vulkan.zip");
+    expect(a.assetName).toBe("llama-turboquant-linux-arm64-cuda-13.3.zip");
     expect(a.binaryName).toBe("llama-server");
   });
 
