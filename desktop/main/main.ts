@@ -1470,6 +1470,8 @@ function wireIpc(client: AgentClient): void {
     openclaw: importAgentDir("openclaw"),
     "claude-code": importAgentDir("claude-code"),
     codex: importAgentDir("codex"),
+    pi: importAgentDir("pi"),
+    "oh-my-pi": importAgentDir("oh-my-pi"),
   }));
   /* r5 item 7 (setup wizard): the first-run import step's own scan —
      src/import/detect-import-agents.ts, shallow existsSync checks only. */
@@ -9269,6 +9271,8 @@ async function onboardingTest(
     const argvCodex = argvOf("codex", ["memory", "mcp"], true);
     const argvOpenclaw = argvOf("openclaw", ["sessions"], true);
     const argvHermes = argvOf("hermes", ["cron"], true);
+    const argvPi = argvOf("pi", ["sessions", "cron"], true);
+    const argvOmp = argvOf("oh-my-pi", ["mcp"], true);
     const argvUnknown = argvOf("atomic-agent", [], false);
     check(
       "wizard: the import argv excludes only domains the source understands, and gates the secrets flag",
@@ -9279,10 +9283,14 @@ async function onboardingTest(
         // OpenClaw has no secrets domain and no --migrate-secrets leg.
         argvOpenclaw.args?.join(" ") === "import openclaw --source /tmp/src --exclude sessions --dry-run" &&
         argvHermes.args?.join(" ") === "import hermes --source /tmp/src --exclude cron --migrate-secrets --dry-run" &&
+        // Pi and Oh-My-Pi (agent 0.6.2) have no secrets leg; `cron` is not a Pi domain.
+        argvPi.args?.join(" ") === "import pi --source /tmp/src --exclude sessions --dry-run" &&
+        argvOmp.args?.join(" ") === "import oh-my-pi --source /tmp/src --exclude mcp --dry-run" &&
         argvUnknown.ok === false &&
-        argvUnknown.error === "source must be hermes, openclaw, claude-code or codex",
+        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi",
       `claude=${JSON.stringify(argvClaude)} codex=${JSON.stringify(argvCodex)}` +
         ` openclaw=${JSON.stringify(argvOpenclaw)} hermes=${JSON.stringify(argvHermes)}` +
+        ` pi=${JSON.stringify(argvPi)} omp=${JSON.stringify(argvOmp)}` +
         ` unknown=${JSON.stringify(argvUnknown)}`,
     );
 

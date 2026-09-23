@@ -2069,13 +2069,16 @@ export async function modelsUseDevice(id: string): Promise<CliResult> {
    the import-options.ts files under src/import — with one whitelist for all four an
    unticked `skills` on Claude Code was dropped from --exclude and the dry
    run previewed more than the operator ticked. */
-export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex";
+export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex" | "pi" | "oh-my-pi";
 /** Domain ids each source's resolver understands, from its import-options.ts. */
 export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
   hermes: ["sessions", "cron", "secrets"],
   openclaw: ["sessions", "cron"],
   "claude-code": ["skills", "memory", "mcp", "sessions", "secrets"],
   codex: ["skills", "memory", "sessions", "secrets"],
+  // agent 0.6.2 (#457): src/import/pi/import-options.ts, src/import/oh-my-pi/import-options.ts.
+  pi: ["skills", "sessions"],
+  "oh-my-pi": ["skills", "mcp", "sessions"],
 };
 /** Sources whose CLI leg accepts `--migrate-secrets` (import-command.ts:128, :332, :446). */
 const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex"];
@@ -2104,7 +2107,7 @@ export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: 
  */
 export function importArgs(input: ImportRunInput): { ok: true; args: string[] } | { ok: false; error: string } {
   const domains = IMPORT_DOMAINS[input.source as ImportSourceId];
-  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code or codex" };
+  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi" };
   const dir = input.dir.trim();
   if (!dir) return { ok: false, error: "source dir is empty" };
   const args = ["import", input.source, "--source", dir];
@@ -2608,6 +2611,8 @@ const IMPORT_AGENT_LABELS: Record<ImportSourceId, string> = {
   openclaw: "OpenClaw",
   "claude-code": "Claude Code",
   codex: "Codex",
+  pi: "Pi",
+  "oh-my-pi": "Oh-My-Pi",
 };
 
 export function importAgentDir(id: ImportSourceId, home = homedir(), env = process.env): string {
@@ -2620,6 +2625,11 @@ export function importAgentDir(id: ImportSourceId, home = homedir(), env = proce
       return env["CLAUDE_CODE_STATE_DIR"] ?? join(home, ".claude");
     case "codex":
       return env["CODEX_STATE_DIR"] ?? join(home, ".codex");
+    // The products' `agent/` subtree, where the importable artefacts live.
+    case "pi":
+      return env["PI_STATE_DIR"] ?? join(home, ".pi", "agent");
+    case "oh-my-pi":
+      return env["OMP_STATE_DIR"] ?? join(home, ".omp", "agent");
   }
 }
 
@@ -2642,6 +2652,10 @@ function hasImportableState(id: ImportSourceId, dir: string): boolean {
         existsSync(join(dir, "auth.json")) ||
         existsSync(join(dir, "AGENTS.md"))
       );
+    case "pi":
+      return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions"));
+    case "oh-my-pi":
+      return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions")) || existsSync(join(dir, "mcp.json"));
   }
 }
 

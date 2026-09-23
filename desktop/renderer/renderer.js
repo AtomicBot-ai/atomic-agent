@@ -933,10 +933,24 @@ const TG = {
 /* Import panel — the TUI's ImportPanelState; the form is
    createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
 const IMP = {
-  mode:'configure', form:{source:'hermes', sourceDir:'', sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
+  mode:'configure', form:{source:'hermes', sourceDir:'', skills:true, memory:true, mcp:true, sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
   report:null, reportExecuted:false, notice:null, state:null, defaults:null, runs:0, busy:false,
 };
-const IMP_TOGGLE_FIELDS = ['sessions','cron','secrets','overwrite'];
+const IMP_TOGGLE_FIELDS = ['skills','memory','mcp','sessions','cron','secrets','overwrite'];
+/* src/tui/import/import-sources.ts: the source row's order, its labels, the
+   default-folder placeholder, and which toggles each source draws, in row order.
+   The descriptions are the importers' own (obImportRegistry); the secrets row
+   shows the variable names instead, as the TUI's hint does. */
+const IMP_SOURCES = ['hermes','openclaw','claude-code','codex','pi','oh-my-pi'];
+const IMP_SOURCE_META = {
+  hermes:{label:'Hermes', logo:'hermes', dir:'~/.hermes', toggles:['sessions','cron','secrets'], secretsHint:'OPENROUTER_API_KEY / AIMLAPI_API_KEY'},
+  openclaw:{label:'OpenClaw', logo:'openclaw', dir:'~/.openclaw', toggles:['sessions','cron']},
+  'claude-code':{label:'Claude Code', logo:'claudecode', dir:'~/.claude', toggles:['skills','memory','mcp','sessions','secrets'], secretsHint:'ANTHROPIC_API_KEY'},
+  codex:{label:'Codex', logo:'codex', dir:'~/.codex', toggles:['skills','memory','sessions','secrets'], secretsHint:'OPENAI_API_KEY'},
+  pi:{label:'Pi', logo:'', dir:'~/.pi/agent', toggles:['skills','sessions']},
+  'oh-my-pi':{label:'Oh-My-Pi', logo:'', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
+};
+const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
@@ -8580,8 +8594,8 @@ async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
 }
 
 /* ---- the import step ------------------------------------------------
-   Four sources through `atag import` (src/cli/import-command.ts accepts
-   hermes, openclaw, claude-code and codex and nothing else), plus one
+   Six sources through `atag import` (src/cli/import-command.ts accepts
+   hermes, openclaw, claude-code, codex, pi and oh-my-pi), plus one
    the import machinery cannot reach at any level: the operator's OWN
    ~/.atomic-agent, the terminal setup this desktop keeps its own state
    dir beside.  There is no `atomic-agent` import source to route that
@@ -8591,7 +8605,7 @@ async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
    key ENV VAR NAMES rather than values.  Absent that bridge the row is
    simply not offered; nothing here throws when it is missing.
    ------------------------------------------------------------------ */
-/** The four registries under src/import (import-options.ts), plus the bridge's. */
+/** The six registries under src/import (import-options.ts), plus the bridge's. */
 function obImportRegistry(id) {
   if (id === 'hermes') return [
     {id:'sessions', label:'Sessions', description:'Conversation history (state.db) -> sessions.sqlite'},
@@ -8614,6 +8628,16 @@ function obImportRegistry(id) {
     {id:'memory', label:'Instructions', description:'AGENTS.md -> memory.sqlite'},
     {id:'sessions', label:'Sessions', description:'Rollouts (sessions/**/*.jsonl) -> sessions.sqlite'},
     {id:'secrets', label:'Provider key', description:'OPENAI_API_KEY (auth.json) -> <stateDir>/.env'},
+  ];
+  // agent 0.6.2 (#457): src/import/pi/import-options.ts, src/import/oh-my-pi/import-options.ts. No secrets domain.
+  if (id === 'pi') return [
+    {id:'skills', label:'Skills', description:'Skill directories (skills/**/SKILL.md) -> global skills dir'},
+    {id:'sessions', label:'Sessions', description:'Transcripts (sessions/*/*.jsonl) -> sessions.sqlite'},
+  ];
+  if (id === 'oh-my-pi') return [
+    {id:'skills', label:'Skills', description:'Skill directories (skills/*/SKILL.md) -> global skills dir'},
+    {id:'mcp', label:'MCP servers', description:'mcpServers (mcp.json) -> config.mcp.servers'},
+    {id:'sessions', label:'Sessions', description:'Transcripts (sessions/*/*.jsonl) -> sessions.sqlite'},
   ];
   // The bridge's own domains. `keys` is the secret row and starts off,
   // exactly as `secrets` does everywhere else.
@@ -17096,19 +17120,22 @@ function telegramKey(e, k, inText) {
    HTTP API has no import route); its report lines are parsed into the TUI's rows. ---------------- */
 
 function importVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'import'; }
-function impFocusOrder(source) { const order = ['sourceType', 'source', 'sessions', 'cron']; if (source === 'hermes') order.push('secrets'); order.push('overwrite', 'limit', 'run'); return order; }
+function impFocusOrder(source) { return ['sourceType', 'source'].concat(impMeta(source).toggles, ['overwrite', 'limit', 'run']); }
+function impMeta(source) { return IMP_SOURCE_META[source] || IMP_SOURCE_META.hermes; }
+/* import-sources.ts nextImportSource: ←/→ / space / Enter step the source row, wrapping. */
+function impNextSource(source, d) { const i = Math.max(0, IMP_SOURCES.indexOf(source)); return IMP_SOURCES[(i + d + IMP_SOURCES.length) % IMP_SOURCES.length]; }
 function impRepaint() { if (importVisible()) paneRepaintKeepFocus(importTab()); }
 async function importTabEntered() {
   if (!BR || IMP.defaults) return;
   const d = await BR.importDefaults();
   if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = d[IMP.form.source] || ''; impRepaint(); }
 }
-function impDefaultDir(source) { return IMP.defaults ? (IMP.defaults[source] || '') : (homeDir() ? homeDir() + (source === 'openclaw' ? '/.openclaw' : '/.hermes') : ''); }
+function impDefaultDir(source) { return IMP.defaults && IMP.defaults[source] ? IMP.defaults[source] : (homeDir() ? homeDir() + impMeta(source).dir.slice(1) : ''); }
 function importTab() {
   const f = IMP.form;
-  const sourceLabel = f.source === 'openclaw' ? 'OpenClaw' : 'Hermes';
+  const meta = impMeta(f.source);
   const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
-  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(f.source === 'openclaw' ? 'openclaw' : 'hermes', 'sm') + '<h3 class="sd-title">' + sourceLabel + ' → Atomic Agent</h3></div>';
+  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(meta.logo, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3></div>';
   if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
   else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
@@ -17117,23 +17144,22 @@ function importTab() {
 }
 function impFormHTML(f) {
   const fc = f.focus;
-  const hermes = f.source === 'hermes';
-  // The agent's own option descriptions (src/import/<source>/import-options.ts).
-  const desc = hermes
-    ? {sessions:'Conversation history (state.db) → sessions.sqlite', cron:'Scheduled jobs (cron/jobs.json) → tasks.sqlite'}
-    : {sessions:'Transcript logs (agents/<agent>/sessions/*.jsonl) → sessions.sqlite', cron:'Scheduled jobs (state/openclaw.sqlite cron_jobs) → tasks.sqlite'};
+  const meta = impMeta(f.source);
+  // The agent's own option descriptions (src/import/<source>/import-options.ts), via the wizard's registry.
+  const desc = {};
+  for (const o of obImportRegistry(f.source)) desc[o.id] = o.description.replace(/ -> /g, ' → ');
   const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
     + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
     + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
   // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
   return '<div class="sd-form">'
     + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
-    + ['hermes', 'openclaw'].map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
-      + logoHTML(s, 'xs') + (s === 'hermes' ? 'Hermes' : 'OpenClaw') + '</button>').join('') + '</div></div>'
+    + IMP_SOURCES.map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
+      + logoHTML(IMP_SOURCE_META[s].logo, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
     + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
-    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(hermes ? '~/.hermes' : '~/.openclaw') + '" autocomplete="off" spellcheck="false"></div>'
-    + '<div class="tk-card sd-rows">' + sw('sessions', 'Sessions', esc(desc.sessions)) + sw('cron', 'Cron jobs', esc(desc.cron))
-    + (hermes ? sw('secrets', 'Secrets', '<span class="sd-mono">OPENROUTER_API_KEY / AIMLAPI_API_KEY</span>') : '')
+    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="tk-card sd-rows">'
+    + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
     + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Limit</label>'
     + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
@@ -17178,11 +17204,19 @@ async function impRun(execute) {
   const f = IMP.form;
   const limit = f.limit.trim();
   if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'limit must be a non-negative integer'; impRepaint(); return {ok:false, error:IMP.notice}; }
-  const exclude = []; if (!f.sessions) exclude.push('sessions'); if (!f.cron) exclude.push('cron');
-  const selected = f.source === 'hermes' ? (f.sessions || f.cron || f.secrets) : (f.sessions || f.cron);
-  if (!selected) { IMP.mode = 'configure'; IMP.notice = f.source === 'hermes' ? 'nothing selected to import — enable sessions, cron or secrets' : 'nothing selected to import — enable sessions or cron'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  // import-form-options.ts: every drawn toggle that is off is excluded; secrets is its own opt-in.
+  const toggles = impMeta(f.source).toggles;
+  const exclude = toggles.filter((t) => t !== 'secrets' && !f[t]);
+  const selected = toggles.some((t) => f[t]);
+  if (!selected) {
+    // nothingSelectedNotice: "enable a, b or c".
+    const names = toggles.slice(); const last = names.pop();
+    IMP.mode = 'configure'; IMP.notice = 'nothing selected to import — enable ' + (names.length ? names.join(', ') + ' or ' + last : last);
+    impRepaint(); return {ok:false, error:IMP.notice};
+  }
   IMP.mode = 'running'; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
-  const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets:f.secrets, overwrite:f.overwrite, limit, execute});
+  const secrets = toggles.includes('secrets') && f.secrets;
+  const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets, overwrite:f.overwrite, limit, execute});
   IMP.busy = false;
   if (!res || !res.ok) { IMP.mode = 'configure'; IMP.notice = (res && res.error) || 'import failed'; impRepaint(); return {ok:false, error:IMP.notice}; }
   IMP.report = res.report; IMP.state = res.state;
@@ -17192,7 +17226,7 @@ async function impRun(execute) {
     if (res.state === 'applied') {
       const s = res.report.summary;
       toast('import done', 'migrated=' + s.migrated + ' skipped=' + s.skipped + ' conflict=' + s.conflict + ' error=' + s.error);
-      if (f.cron) tasksRefresh();
+      if (toggles.includes('cron') && f.cron) tasksRefresh();
       if (f.sessions) loadResources();
     }
   } else { IMP.mode = 'preview'; IMP.reportExecuted = false; }
@@ -17203,7 +17237,8 @@ function importAct(what) {
   const [verb, ...rest] = what.split(':');
   const arg = rest.join(':');
   const f = IMP.form;
-  if (verb === 'source') { if (arg !== f.source && (arg === 'hermes' || arg === 'openclaw')) { f.source = arg; f.sourceDir = impDefaultDir(arg); if (arg !== 'hermes') f.secrets = false; f.focus = 'sourceType'; } impRepaint(); return; }
+  // import-reducer.ts import_source_set: the folder follows the source; a source with no secrets row drops the opt-in.
+  if (verb === 'source') { if (arg !== f.source && IMP_SOURCES.includes(arg)) { f.source = arg; f.sourceDir = impDefaultDir(arg); if (!impMeta(arg).toggles.includes('secrets')) f.secrets = false; f.focus = 'sourceType'; } impRepaint(); return; }
   if (verb === 'toggle') { if (IMP_TOGGLE_FIELDS.includes(arg)) { f[arg] = !f[arg]; f.focus = arg; } impRepaint(); return; }
   if (verb === 'field') { const [name, ...v] = rest; if (name === 'sourceDir' || name === 'limit') f[name] = v.join(':'); impRepaint(); return; }
   if (verb === 'focus') { f.focus = arg; impRepaint(); return; }
@@ -17243,12 +17278,12 @@ function importKey(e, k, inText) {
   if (k === 'Enter') {
     e.preventDefault();
     if (f.focus === 'run') importAct('preview');
-    else if (f.focus === 'sourceType') importAct('source:' + (f.source === 'hermes' ? 'openclaw' : 'hermes'));
+    else if (f.focus === 'sourceType') importAct('source:' + impNextSource(f.source, 1));
     else if (IMP_TOGGLE_FIELDS.includes(f.focus)) importAct('toggle:' + f.focus);
     else move(1);
     return true;
   }
-  if (f.focus === 'sourceType') { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('source:' + (f.source === 'hermes' ? 'openclaw' : 'hermes')); } return true; }
+  if (f.focus === 'sourceType') { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('source:' + impNextSource(f.source, k === 'ArrowLeft' ? -1 : 1)); } return true; }
   if (IMP_TOGGLE_FIELDS.includes(f.focus)) { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('toggle:' + f.focus); } return true; }
   if (f.focus === 'source' || f.focus === 'limit') { const n = document.querySelector('[data-imp-focus="' + f.focus + '"]'); if (n && k.length === 1) { n.focus(); return false; } }
   return true;
