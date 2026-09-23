@@ -742,7 +742,7 @@ describe("workerFailureHint", () => {
       // The /slots watchdog's own verdict. It reads as saturation on
       // the words alone, and "use fewer workers" is the wrong advice
       // for a daemon that is answering nobody — so it is matched first.
-      "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll got a reply, so the server is not merely busy, it is unreachable; check that llama-server is still alive and restart it before retrying (running fewer workers will not help)",
+      "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll reached a listening socket (connection refused / host unreachable, never a timeout), so the server is not merely busy, it is unreachable; check that llama-server is still alive and restart it before retrying (running fewer workers will not help)",
       WORKER_HINT_UNREACHABLE,
     ],
     ["openrouter HTTP 402: Payment Required", WORKER_HINT_QUOTA],
@@ -754,7 +754,7 @@ describe("workerFailureHint", () => {
 
   it("sends an unreachable server to a restart, not to a narrower fan-out", () => {
     const hint = workerFailureHint(
-      "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll got a reply, so the server is not merely busy, it is unreachable",
+      "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll reached a listening socket, so the server is not merely busy, it is unreachable",
     );
     expect(hint).toBeDefined();
     expect(hint).not.toBe(WORKER_HINT_SATURATED);

@@ -2,9 +2,12 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   LlamaServerClient,
   LlamaServerError,
+  SLOTS_POLL_INTERVAL_MS,
   SLOTS_UNREACHABLE_BUDGET_MS,
+  SLOTS_UNREACHABLE_MIN_POLLS,
   extractLlamaErrorDetail,
   judgeSlotProgress,
+  slotsPollFailure,
 } from "./llama-server-client.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
@@ -1363,9 +1366,11 @@ describe("LlamaServerClient.completeStream deadlines", () => {
         .catch((err: unknown) => err);
 
       // One budget minus a poll interval: plenty of failed polls, no abort.
-      await vi.advanceTimersByTimeAsync(SLOTS_UNREACHABLE_BUDGET_MS - 15_000);
-      expect(polls).toBeGreaterThan(30);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(
+        SLOTS_UNREACHABLE_BUDGET_MS - SLOTS_POLL_INTERVAL_MS,
+      );
+      expect(polls).toBeGreaterThan(SLOTS_UNREACHABLE_MIN_POLLS);
+      await vi.advanceTimersByTimeAsync(2 * SLOTS_POLL_INTERVAL_MS);
 
       const err = (await failure) as LlamaServerError;
       expect(err).toBeInstanceOf(LlamaServerError);
@@ -1401,7 +1406,9 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       // Three unreachable budgets' worth of the same pattern: the run of
       // unanswered polls never gets past one, so nothing fires.
       await vi.advanceTimersByTimeAsync(3 * SLOTS_UNREACHABLE_BUDGET_MS);
-      expect(polls).toBeGreaterThan(100);
+      expect(polls).toBeGreaterThan(
+        (3 * SLOTS_UNREACHABLE_BUDGET_MS) / SLOTS_POLL_INTERVAL_MS - 2,
+      );
       opened().push('data: {"content":"hi","stop":false}\n\n');
       const chunk = (await failure) as IteratorResult<{ delta: string }>;
       expect(chunk.done).toBe(false);
@@ -1424,6 +1431,81 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       opened().push('data: {"content":"ok","stop":false}\n\n');
       expect((await first).done).toBe(false);
       opened().close();
+    });
+
+    it("never aborts a long prompt eval whose /slots hangs the whole way", async () => {
+      // The failure this deadline must not have. `/slots` hanging is the
+      // documented look of a slot evaluating a large prompt: llama.cpp
+      // serves it from the same loop that is inside `llama_decode`, and
+      // one n_batch chunk of a long context on CPU runs far past the 3 s
+      // poll deadline — so EVERY poll times out for the whole eval, an
+      // unbroken run with the request working the entire time. Counting
+      // those as evidence of a dead server killed this request at ten
+      // minutes with its first token four minutes away, inside the
+      // 30-minute budget that exists precisely for it.
+      vi.useFakeTimers();
+      let polls = 0;
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: (init: RequestInit) => {
+          polls += 1;
+          // Hangs until the poll's own deadline aborts it — exactly what
+          // a `fetch` against a wedged endpoint does.
+          return new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("The operation was aborted"), {
+                  name: "AbortError",
+                }),
+              );
+            });
+          });
+        },
+      });
+      const first = client
+        .completeStream({ prompt: "a very long prompt", sessionId: "s", slotId: 0 })
+        .next();
+
+      // Well past the unreachable budget, and past the 8-poll floor many
+      // times over: 14 minutes of legitimate prompt eval.
+      await vi.advanceTimersByTimeAsync(14 * 60_000);
+      expect(polls).toBeGreaterThan(SLOTS_UNREACHABLE_MIN_POLLS);
+      expect(
+        (14 * 60_000) / SLOTS_POLL_INTERVAL_MS,
+      ).toBeGreaterThan(SLOTS_UNREACHABLE_BUDGET_MS / SLOTS_POLL_INTERVAL_MS);
+
+      // The eval finishes and the token arrives, as it would have.
+      opened().push('data: {"content":"hi","stop":false}\n\n');
+      const chunk = await first;
+      expect(chunk.done).toBe(false);
+      expect(chunk.value.delta).toBe("hi");
+      opened().close();
+    });
+
+    it("counts only polls that prove nothing is listening", () => {
+      // The safety property in one assertion: a busy llama-server
+      // accepts the connection and then fails to serve /slots, which
+      // reaches us as our own abort or an undici socket error. Only a
+      // connection that never reached a listener may extend the run.
+      expect(slotsPollFailure(Object.assign(new Error("x"), { code: "ECONNREFUSED" }))).toBe("refused");
+      expect(slotsPollFailure(Object.assign(new Error("x"), { code: "ENOTFOUND" }))).toBe("refused");
+      expect(slotsPollFailure(Object.assign(new Error("x"), { code: "EHOSTUNREACH" }))).toBe("refused");
+      // undici buries the errno one level down under `fetch failed`.
+      expect(
+        slotsPollFailure(
+          new TypeError("fetch failed", {
+            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+          }),
+        ),
+      ).toBe("refused");
+      // Everything a working-but-loaded server can produce.
+      expect(
+        slotsPollFailure(Object.assign(new Error("The operation was aborted"), { name: "AbortError" })),
+      ).toBe("unanswered");
+      expect(slotsPollFailure(Object.assign(new Error("x"), { code: "ETIMEDOUT" }))).toBe("unanswered");
+      expect(slotsPollFailure(Object.assign(new Error("x"), { code: "ECONNRESET" }))).toBe("unanswered");
+      expect(slotsPollFailure(new Error("socket hang up"))).toBe("unanswered");
+      expect(slotsPollFailure(new TypeError("fetch failed"))).toBe("unanswered");
     });
 
     it("latches a build without /slots instead of pretending to watch it", async () => {
@@ -1462,6 +1544,64 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       await vi.advanceTimersByTimeAsync(91_000);
       expect((await second) as LlamaServerError).toBeInstanceOf(LlamaServerError);
       expect(polls).toBe(1);
+    });
+
+    it("stops latching /slots as absent once that daemon is gone", async () => {
+      // The latch is self-sealing — once it is set nothing polls, so
+      // nothing can disprove it — and this client outlives the daemon
+      // (`runtime/bootstrap.ts` builds one for the process). So a 404
+      // from a proxy covering a bounce, or a 501 from a build that
+      // `/llm restart` replaces, would otherwise turn the watch off for
+      // the rest of the session and have the first-token message claim
+      // the server "has no /slots endpoint" when the new one does. A
+      // refused connection retires the latch: whatever listens there
+      // next is not the process that answered.
+      vi.useFakeTimers();
+      const slotsStatus = 404;
+      let refuse = false;
+      const client = new LlamaServerClient({
+        baseUrl: "http://127.0.0.1:9999",
+        requestTimeoutMs: 60_000,
+        firstTokenTimeoutMs: 90_000,
+        completionRetries: 1,
+        completionRetryBackoffMs: 0,
+        sleep: async () => {},
+        fetchImpl: createMockFetch(async (url, init) => {
+          if (init.method === "GET" || url.endsWith("/slots")) {
+            return new Response("nope", { status: slotsStatus });
+          }
+          if (refuse) {
+            throw new TypeError("fetch failed", {
+              cause: Object.assign(new Error("connect ECONNREFUSED"), {
+                code: "ECONNREFUSED",
+              }),
+            });
+          }
+          return pushableSse(init.signal).response;
+        }),
+      });
+
+      // A proxy answers 404 for /slots while the daemon is down.
+      const blind = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(91_000);
+      await blind;
+      expect(client.slotsWatchUnavailable()).toBe(true);
+
+      // Then the daemon itself goes away: the completion is refused.
+      refuse = true;
+      const failed = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const err = await failed;
+      expect(err).toBeInstanceOf(LlamaServerError);
+      expect((err as LlamaServerError).code).toBe("ECONNREFUSED");
+      // The latch is retired, so the restarted build gets watched again.
+      expect(client.slotsWatchUnavailable()).toBe(false);
     });
 
     it("stops polling once the first byte arrives", async () => {
