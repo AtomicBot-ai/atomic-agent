@@ -266,7 +266,7 @@ export async function ask(app, text) {
 
 /**
  * Wait for the turn to finish, approving what it asks for with a real click
- * on the real Approve button. Returns the agent's reply text.
+ * on the real Allow once button. Returns the agent's reply text.
  *
  * `approve: 'none'` leaves the request standing so a scenario can assert on
  * the card itself before answering it.
@@ -288,7 +288,7 @@ export async function waitTurn(app, { timeout = 300000, approve = 'auto', quiet 
     }))()`);
     if (st.pending && approve === 'auto') {
       const kind = await app.eval(`(document.querySelector('#apprcard .badge')||{textContent:''}).textContent.trim()`);
-      await app.clickText('Approve');
+      await app.clickText('Allow once');
       approvals++;
       idleSince = 0;
       app.log(`approved a "${kind}" request with a click (${approvals} so far)`);

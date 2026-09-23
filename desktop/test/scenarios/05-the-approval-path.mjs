@@ -2,7 +2,7 @@
  * 05 — the approval path.
  *
  * The person: asks for something the agent cannot do without permission,
- * reads the card, and clicks Approve.
+ * reads the card, and clicks Allow once.
  *
  * The human result: the card really appears and really blocks (the work
  * has NOT happened while it is up), the click really releases it, and the
@@ -11,7 +11,7 @@
  * button that approves everything it is shown is not an approval button.
  *
  * This is the scenario the hook-driven suite could least afford to fake:
- * every Approve and Deny here is a mouse press at the button's coordinates.
+ * every Allow once and Deny here is a mouse press at the button's coordinates.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -46,8 +46,9 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   app.log(`the card says: ${JSON.stringify(card.text)}`);
   app.log(`its buttons are: ${JSON.stringify(card.buttons)}`);
 
-  check(/approve/i.test(card.buttons.join(' ')) && /deny/i.test(card.buttons.join(' ')),
-    'the card offers me both Approve and Deny', JSON.stringify(card.buttons));
+  // Calm (S4): the card's buttons read "Allow once" and "Deny".
+  check(/allow once/i.test(card.buttons.join(' ')) && /deny/i.test(card.buttons.join(' ')),
+    'the card offers me both Allow once and Deny', JSON.stringify(card.buttons));
   check(!existsSync(target),
     'nothing has happened yet — the file does not exist while the card is still up',
     `${target} already exists, so the gate did not gate`);
@@ -70,8 +71,8 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   }
   check(true, 'it asked again rather than remembering a permission I never gave');
 
-  await app.clickText('Approve');
-  app.log('clicked Approve — a real mouse press on the button');
+  await app.clickText('Allow once');
+  app.log('clicked Allow once — a real mouse press on the button');
 
   /* The moment after the click is the one a person judges the app on: did
      anything happen? Approving used to leave the window completely idle —
@@ -85,7 +86,7 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
     lit: !!document.querySelector('#composer.cl-on .cloader'),
     stop: !!document.querySelector('.sendbtn.stop'),
   }))()`);
-  app.log(`the instant after Approve, the app says: ${JSON.stringify(working)}`);
+  app.log(`the instant after Allow once, the app says: ${JSON.stringify(working)}`);
   check(working.lit && working.stop,
     'the app says it is working the instant I approve, and offers me Stop',
     `composer lit=${working.lit} stop=${working.stop} — approving left the window looking idle`);
@@ -105,7 +106,7 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
     .filter((t) => /^(Approved|Denied)\\b/.test(t)).map((t) => t.slice(0, 40)))()`);
   app.log(`the chat records my decisions as: ${JSON.stringify(decisions)}`);
   check(decisions.some((d) => /^Denied/.test(d)) && decisions.some((d) => /^Approved/.test(d)),
-    'both the Deny and the Approve are written into the chat where I can see them',
+    'both the Deny and the Allow once are written into the chat where I can see them',
     JSON.stringify(decisions));
 });
 

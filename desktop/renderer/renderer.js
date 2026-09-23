@@ -2269,60 +2269,129 @@ function apprCard(m) {
       + '<span class="badge tk-chip tk-chip--sm">' + esc(m.kind) + '</span></div>';
   }
   const isTrust = m.cat === 'trust_config';
-  /* Soft Tactile: the indigo decision block (the deep critical block for
-     trust_config). Approve is the white pill, Deny the glass pill that takes
-     the focus, Abort run a ghost on the block. */
+  /* Calm (S4): a question in plain words, the one line that says what
+     allowing it does, the file or folder it touches, and two answers.
+     Everything an engineer wants — the tool id, the category and the level
+     that would have let it through, the agent's own reason, the preview —
+     sits under Details. The chords stay (y / n / Esc, the keydown handler)
+     and are named only in the buttons' tooltips. Allow once / Deny keep
+     their verbs exactly: `y` is allow-once, `n` is deny. */
+  const why = apprWhy(m);
+  const res = apprResource(m);
+  const typed = !!(m.approvalId && m.sessionId && m.sessionId === S.agentSession);
+  const pv = String(m.preview || '').trim();
   return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard">'
-    + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'alert') + '</span>'
-      + '<span class="ttl">Approval required</span>'
-      + '<span class="badge">' + esc(m.kind) + '</span></div>'
-    + '<dl class="dl aplate">'
-      + '<dt>tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
-      + '<dt>kind</dt><dd>' + esc(m.kind) + ' <span class="cap">— auto-approves from level ' + m.lvl + '</span></dd>'
-      + '<dt>reason</dt><dd>' + esc(m.reason) + '</dd>'
-      + '<dt>preview</dt><dd><div class="previewblk">' + esc(m.preview) + '</div></dd>'
-      + '<dt>affects</dt><dd><span class="pathchip">' + ic('file') + '<b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
-    + '</dl>'
-    /* B3: the one approval that outlives its call. Approving a read outside
+    + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'shield') + '</span>'
+      + '<div class="apprmain"><div class="ttl">' + apprAsk(m) + '</div>'
+      + (why ? '<div class="apprwhy">' + why + '</div>' : '')
+      + (res ? '<div class="apprres">' + res + '</div>' : '')
+    + '</div></div>'
+    + '<div class="apprbtns">'
+      + '<button class="btn sm appr-yes" data-appr="y" title="Allow this one call (Y)">Allow once</button>'
+      + '<button class="btn sm btn-s" data-appr="n" id="denybtn" title="Deny (N)">Deny</button>'
+      + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run (Esc)">Abort run</button>'
+    + '</div>'
+    /* Item 1 (approval parity): typing prose under an open request denies
+       the call with those words and sends them on (denyByProse). Said only
+       on a card typing can answer: a live approvalId and this chat's own
+       request, so a background thread's question makes no such promise. */
+    + (typed ? '<div class="apprfoot">Or type below to answer instead. Enter denies this call and sends your words to the agent.</div>' : '')
+    + '<details class="apprdet"' + (m.open ? ' open' : '') + '><summary data-apprdet="' + m.id + '">' + ic('chevR') + 'Details</summary>'
+      + '<dl class="aplate">'
+        + '<dt>Tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
+        + '<dt>Category</dt><dd><span class="badge">' + esc(m.kind) + '</span> <span class="cap">'
+          + (isTrust ? 'never allowed for longer than one call' : 'allowed without asking from level ' + m.lvl) + '</span></dd>'
+        + (m.reason ? '<dt>Reason</dt><dd>' + esc(m.reason) + '</dd>' : '')
+        + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + esc(pv) + '</div></dd>' : '')
+      + '</dl>'
+      /* The one approval surface for "ask me less" is the mode control in the
+         composer (src/tui/approval-modal.tsx footerHint); the agent's HTTP
+         API carries allow-once and deny only, so no session grant is drawn. */
+      + '<div class="apprmode">To be asked less often, change the <button class="apprlink" data-act="modes">mode</button> in the composer.</div>'
+    + '</details>'
+    + '</div>';
+}
+
+/* ---- Calm (S4): the approval card's words ----
+   Built from what the request carries (category, tool, preview, reason,
+   affected resources). Nothing is invented: a request these rules do not
+   recognise falls back to the agent's own clause, then to the category. */
+
+/** A path as a person reads it: relative inside the working folder, ~ under home. */
+function apprPath(p) {
+  const s = String(p || '');
+  const wd = String(S.live.workingDir || '').replace(/\/+$/, '');
+  if (wd && s.startsWith(wd + '/')) return s.slice(wd.length + 1);
+  const home = homeDir();
+  if (home && (s === home || s.startsWith(home + '/'))) return '~' + s.slice(home.length);
+  return s;
+}
+function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
+const APPR_FALLBACK = {
+  fs_write_workspace:'change a file in this folder', fs_write_home:'change a file outside this folder',
+  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command',
+  script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
+  trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
+  git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
+};
+/** The question: "Allow Atomic Agent to run `touch approved.txt`?" (html). */
+function apprAsk(m) {
+  const q = (h) => 'Allow Atomic Agent to ' + h + '?';
+  const r = String(m.reason || '').trim();
+  const pv = String(m.preview || '').trim();
+  const firstLine = (s) => String(s).split('\n')[0].trim();
+  let mt;
+  if (m.cat === 'shell' || m.tool === 'os.shell.run') {
+    const cmd = pv && pv !== '(no preview)' ? firstLine(pv) : '';
+    if (cmd) return q('run ' + apprCode(cmd));
+  }
+  if (m.cat === 'fs_read_outside') {
+    if ((mt = /^read (.+?) — /.exec(r))) return q('read ' + apprCode(apprPath(mt[1])));
+    if ((mt = /^run `(.+?)` — /.exec(r))) return q('run ' + apprCode(mt[1]));
+  }
+  if ((mt = /^(replace|append) \d+ bytes into (.+)$/.exec(r))) return q((mt[1] === 'append' ? 'add to ' : 'write ') + apprCode(apprPath(mt[2])));
+  if ((mt = /^edit \d+ occurrences? in (.+)$/.exec(r))) return q('edit ' + apprCode(apprPath(mt[1])));
+  if ((mt = /^move (\d+) path\(s\) to Trash$/.exec(r))) return q('move ' + plural(Number(mt[1]), 'item') + ' to the Trash');
+  if (m.cat === 'http' && (mt = /^([A-Z]+) (\S+)/.exec(r))) {
+    let host = mt[2]; try { host = new URL(mt[2]).host; } catch (e) { /* keep it */ }
+    return q('send a ' + esc(mt[1]) + ' request to ' + apprCode(host));
+  }
+  if (m.cat === 'email' && (mt = /^e-mail to ([^:]+)/.exec(r))) return q('send an e-mail to ' + esc(mt[1].trim()));
+  // Anything else: the agent's own clause, when it reads as one ("push main to origin").
+  const clause = firstLine(r).split(/ — |; /)[0].trim();
+  if (/^[a-z]/.test(clause) && clause.length <= 140 && !/approval required|guard|fail-closed/.test(clause)) {
+    return q(esc(clause.replace(/(^|\s)(\/[^\s"]+)/g, (all, sp, p) => sp + apprPath(p))));
+  }
+  return q(APPR_FALLBACK[m.cat] || 'go ahead');
+}
+/** One line of what allowing it does, or '' when there is nothing to add (html). */
+function apprWhy(m) {
+  if (m.cat === 'fs_read_outside') {
+    /* B3: the one approval that outlives its call. Allowing a read outside
        the working folder also lets the agent read under that folder for the
        rest of this chat (ReadScopeGrants), so the card says so up front. */
-    + (m.cat === 'fs_read_outside' && m.state == null
-        ? '<div class="apprscope">' + ic('info') + '<span>Approving lets the agent read <span class="mono">' + esc(m.readRoot || m.affectsDir + m.affectsBase) + '</span> for the rest of this chat.</span></div>' : '')
-    + '<div class="apprbtns"><div class="apprgrp">'
-      + '<button class="btn sm btn-white' + (isTrust ? ' dg' : '') + '" data-appr="y">Approve' + keycaps('Y') + '</button>'
-      + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
-      + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
-      + '<button class="btn sm btn-glass" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
-      + '<button class="btn sm btn-g apprabort" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
-    + '</div>'
-    /* Item 1 (approval parity). Two repairs, both about not promising what the
-       card cannot do or omitting what it now does:
-       (a) the pointer. It sent the operator to the Privacy tab, whose ladder is
-           read-only here and which the TUI deleted in PR #303; the one approval
-           surface is the coding-mode control in the composer
-           (src/tui/approval-modal.tsx footerHint says exactly that).
-       (b) the typing clause, verbatim from the same footerHint, now that it is
-           true: typing prose under this prompt denies the call with your words
-           and sends them on. It was not documented on screen before because it
-           did not happen.
-       What is deliberately still missing is the TUI's session grants and its
-       `edit target path\u2026`: `ResolveBody` on the wire is {approvalId, decision,
-       reason} and parseDecision maps decision to a bare boolean, so neither a
-       grant scope nor a pathOverride can be carried. The card says so rather
-       than drawing a button it cannot honour. */
-    + '<div class="apprfoot">' + (isTrust
-        ? 'trust-config writes are never granted for the session; y approves this call only'
-        : (m.approvalId
-        ? 'y approves this call once, n refuses it. Session-wide grants are not offered here because the agent\u2019s HTTP API implements allow-once and deny only \u2014 loosen the standing stance with the <button class="apprlink" data-act="modes">mode</button> control in the composer.'
-        : 'y approves this call once; s / a grant for this session only (never persisted); loosen the standing stance with the <button class="apprlink" data-act="modes">mode</button> control in the composer'))
-      // Only on a card that typing can actually answer: the deny-with-reason
-      // path needs a live approvalId AND this chat's own request, so a
-      // background thread's question (or a prototype card) does not carry a
-      // promise that would not be kept for it.
-      + (m.approvalId && m.sessionId && m.sessionId === S.agentSession
-          ? ' \u00b7 the composer stays live \u2014 type to answer the agent instead (enter cancels this call and sends it)'
-          : '')
-    + '</div></div>';
+    return 'Allowing it also lets the agent read anything in ' + apprCode(apprPath(m.readRoot || m.affectsDir + m.affectsBase)) + ' for the rest of this chat.';
+  }
+  if (m.cat === 'trust_config') return 'This changes what Atomic Agent may do without asking you.';
+  if (m.cat === 'fs_trash') return 'You can put them back from the Trash.';
+  if (m.cat === 'shell' || m.tool === 'os.shell.run') {
+    // The guard's verdict, when it flagged something ("recursive remove").
+    const g = String(m.reason || '').replace(/ in \/.*$/, '').trim();
+    if (g && !/no shell guard rule matched|fail-closed|threw|normalisation/.test(g)) return 'Flagged: ' + esc(g) + '.';
+  }
+  return '';
+}
+/** The file or folder it touches, as a chip — only for a real path. */
+function apprResource(m) {
+  const full = String(m.affectsDir || '') + String(m.affectsBase || '');
+  if (!/^[/~]/.test(full)) return '';
+  const folder = m.cat === 'shell' || m.cat === 'fs_read_outside' || m.tool === 'os.shell.run' || !/\.[^/]+$/.test(m.affectsBase || '');
+  const shown = apprPath(full);
+  const cut = shown.lastIndexOf('/');
+  const base = cut >= 0 && cut < shown.length - 1 ? shown.slice(cut + 1) : (shown || full);
+  const dir = cut > 0 ? shown.slice(0, cut + 1) : '';
+  return '<span class="pathchip" title="' + esc(full) + '">' + ic(folder ? 'folder' : 'file') + '<b>' + esc(base) + '</b>'
+    + (dir ? '<span class="cap">' + esc(dir) + '</span>' : '') + '</span>';
 }
 
 function composer() {
@@ -4595,6 +4664,11 @@ document.addEventListener('click', (e) => {
   if (fchip && BR) { openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
+  /* Calm (S4): the approval card's Details is a native <details>; the click
+     lands before it toggles, so the new state is the opposite of `open`. It
+     is kept on the request so a repaint while the card waits keeps it. */
+  const adet = t.closest('[data-apprdet]');
+  if (adet) { const m = S.log.find((x) => x.id === adet.dataset.apprdet); if (m && adet.parentElement) m.open = !adet.parentElement.open; return; }
   const tg = t.closest('[data-toggle]');
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
@@ -6197,7 +6271,7 @@ function answerLive(req, key) {
     S.busy = true;
   }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
-    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text:'could not resolve the approval: ' + esc(res.error || '')});
+    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(res.error || 'no reply')});
     render();
   });
   if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
@@ -6256,9 +6330,13 @@ async function denyByProse(req, text, post) {
   if (landed && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
     S.busy = true;
   }
-  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text: landed
-    ? 'that call was denied with your message as the reason'
-    : 'could not deny that call with your message: ' + esc(why)});
+  /* Calm (S4): plain words. The route's 404 body ("approvalId not pending:
+     <id>") is the agent's, not a sentence for a person: it means the agent
+     had stopped waiting for that answer. */
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev: landed ? '' : 'warn', text: landed
+    ? 'Denied, with your message as the reason.'
+    : 'Couldn\u2019t deny that call with your message: ' + (/not pending/i.test(why)
+      ? 'the agent was no longer waiting for an answer.' : esc(why))});
   render();
   // Then the text itself. steerOrQueue prints its own honest line about where
   // it landed — folded into the running turn, or parked as the next one.
@@ -19554,7 +19632,9 @@ if (typeof window !== 'undefined') {
     rec.verbs = [...document.querySelectorAll('#apprcard [data-appr]')].map((n) => n.dataset.appr);
     rec.grantS = document.querySelectorAll('#apprcard [data-appr="s"]').length;
     rec.grantA = document.querySelectorAll('#apprcard [data-appr="a"]').length;
-    rec.foot = (document.querySelector('.apprfoot') || {}).textContent || '';
+    rec.foot = (document.querySelector('#apprcard .apprfoot') || {}).textContent || '';
+    // Calm (S4): the "ask me less" pointer moved under the card's Details.
+    rec.mode = (document.querySelector('#apprcard .apprdet .apprmode') || {}).textContent || '';
     // The two keys the card no longer offers, pressed with the card up and the
     // composer blurred: neither may resolve anything.
     const entry = document.getElementById('entry');

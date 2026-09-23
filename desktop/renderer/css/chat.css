@@ -171,53 +171,64 @@
 .cardbody .micro{padding:4px 2px 0;font-size:11.5px;line-height:16px;font-weight:500;color:var(--ink-3)}
 .cardbody pre{margin:0;max-height:240px;max-width:100%;font-size:11.5px}
 
-/* ---------------- approval: the indigo decision block ----------------
+/* ---------------- approval: a lifted card with an indigo accent ----------------
    Inline, never a modal. `.appr` / `#apprcard` / `.badge` / `[data-appr]` /
-   `#denybtn` are what scenario 05, drive.mjs and harness.mjs read. */
-.appr{display:grid;gap:12px;padding:16px;border-radius:var(--r-block);background:var(--indigo);color:var(--on-indigo);
-  box-shadow:0 22px 44px -22px var(--indigo-shadow);min-width:0}
-.appr.danger{background:var(--critical-block);box-shadow:0 22px 44px -22px var(--critical-shadow)}
-.apprhead{display:flex;align-items:center;gap:10px;min-width:0}
-.apprico{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex:none;
-  background:var(--glass-soft);color:var(--caution-on-indigo)}
-.apprico svg{width:16px;height:16px}
-.appr.danger .apprico{color:var(--on-strong)}
-.appr .ttl{font-size:15.5px;line-height:1.3;letter-spacing:-.015em;color:var(--on-strong)}
-.appr .badge{margin-left:auto;display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:var(--r-pill);
-  background:var(--glass-soft);color:var(--on-strong);font-size:11.5px;font-weight:500;white-space:nowrap}
-.aplate{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 12px;margin:0;font-size:13px;line-height:1.45}
-.aplate dt{margin:0;color:var(--indigo-muted)}
-.aplate dd{margin:0;min-width:0;color:var(--on-strong);overflow-wrap:anywhere}
-.aplate .mono{font-size:12px}
-.appr .cap{font-size:13px;line-height:1.45;color:var(--indigo-muted)}
-.previewblk{max-height:240px;overflow:auto;padding:10px 12px;border-radius:var(--r-well);background:var(--sink-on-indigo);
-  color:var(--on-strong);font:400 12px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
-.pathchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;max-width:100%;min-height:22px;padding:2px 10px 2px 8px;
-  border-radius:var(--r-pill);background:var(--glass-soft);color:var(--on-strong);font-size:11.5px;line-height:1.4}
-.pathchip svg{width:13px;height:13px}
-.pathchip b{font-weight:600;overflow-wrap:anywhere}
-.appr .pathchip .cap{font-size:11.5px;color:inherit;opacity:.75;overflow-wrap:anywhere}
-/* B3: what approving a read outside the working folder also grants */
-.apprscope{display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-radius:var(--r-well);background:var(--glass-soft);
-  color:var(--on-strong);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
-.apprscope svg{width:15px;height:15px;flex:none;margin-top:2px;color:var(--caution-on-indigo)}
-.apprscope .mono{font-size:12px}
-.apprbtns{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.apprgrp{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.appr .apprabort{margin-left:auto;color:var(--on-strong)}
-.appr .apprabort:hover{background:var(--glass-12);color:var(--on-strong)}
-.appr .apprabort .kc{color:var(--on-strong);border-color:var(--glass-20)}
-.appr .btn-white.dg,.appr .btn-white.dg:hover{color:var(--critical-block)}
-.appr .btn-white.dg .kc{color:var(--critical-block);border-color:color-mix(in srgb, var(--critical-block) 30%, transparent)}
-.appr .btn:focus-visible{outline-color:var(--on-strong)}
+   `#denybtn` are what scenario 05, drive.mjs and harness.mjs read.
+   Calm (S4): the solid indigo slab became a lifted card on the page's own
+   ground, so the decision reads as the one important thing without
+   shouting. Soft Tactile's indigo stays as the accent: the shield disc and
+   the Allow once fill (white on indigo is ≥ 8:1 in both themes). A
+   trust_config request swaps the accent for the critical red. */
+.appr{display:grid;gap:12px;padding:14px 16px 12px;border-radius:var(--r-card);background:var(--lift);color:var(--ink);
+  box-shadow:var(--sh-card),0 0 0 1px color-mix(in srgb, var(--blue) 26%, transparent);min-width:0}
+.appr.danger{box-shadow:var(--sh-card),0 0 0 1px color-mix(in srgb, var(--critical) 38%, transparent)}
+.apprhead{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.apprico{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--indigo);color:var(--on-strong)}
+.apprico svg{width:15px;height:15px}
+.appr.danger .apprico{background:var(--critical-wash);color:var(--critical)}
+.apprmain{display:grid;gap:4px;min-width:0;padding-top:4px}
+.appr .ttl{font-size:15px;line-height:1.4;font-weight:600;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
+.appr .ttl code,.apprwhy code{padding:1px 6px;border-radius:var(--r-kbd);background:var(--hover);font:500 .9em/1.4 var(--font-mono);color:var(--ink)}
+.apprwhy{font-size:13px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere}
+.apprres{padding-top:4px}
+.pathchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;max-width:100%;min-height:24px;padding:2px 10px 2px 8px;
+  border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font-size:12px;line-height:1.4}
+.pathchip svg{width:13px;height:13px;color:var(--ink-3)}
+.pathchip b{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.pathchip .cap{font:400 11.5px/1.4 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
+/* the answers, under the words, aligned with them (30px disc + 12px gap) */
+.apprbtns{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:42px}
+.appr .appr-yes{background:var(--indigo);color:var(--on-strong)}
+.appr .appr-yes:hover{background:color-mix(in srgb, var(--indigo) 86%, var(--black));color:var(--on-strong)}
+.appr.danger .appr-yes{background:var(--critical);color:var(--on-fill)}
+.appr.danger .appr-yes:hover{background:color-mix(in srgb, var(--critical) 88%, var(--black));color:var(--on-fill)}
+.appr .apprabort{margin-left:auto;color:var(--ink-2)}
+.appr .apprbtns .btn:active{transform:scale(.97)}
 /* Deny takes the focus on arrival (afterChat → #denybtn.focus()); the ring is
    drawn for any focus, because that programmatic focus is the cue that y/n/Esc
    are live and a mouse-driven :focus-visible heuristic would hide it. */
-.appr #denybtn:focus{outline:2px solid var(--on-strong);outline-offset:2px}
-.apprfoot{font-size:12px;line-height:1.5;color:var(--indigo-muted)}
-.apprlink{display:inline;color:var(--on-strong);text-decoration:underline;text-underline-offset:2px}
-.apprlink:hover{color:var(--on-indigo)}
-.appr.danger .aplate dt,.appr.danger .cap,.appr.danger .apprfoot{color:var(--on-critical-muted)}
+.appr #denybtn:focus{outline:2px solid var(--blue);outline-offset:2px}
+.apprfoot{padding-left:42px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+/* Details: the engineer's view, closed until asked */
+.apprdet{margin-left:42px;min-width:0}
+.apprdet > summary{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px 0 4px;margin-left:-4px;border-radius:var(--r-pill);
+  list-style:none;cursor:pointer;font-size:12.5px;color:var(--ink-2);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.apprdet > summary::-webkit-details-marker{display:none}
+.apprdet > summary:hover{background:var(--hover);color:var(--ink)}
+.apprdet > summary svg{width:12px;height:12px;transition:transform var(--t-state) var(--ease)}
+.apprdet[open] > summary svg{transform:rotate(90deg)}
+.aplate{display:grid;grid-template-columns:76px minmax(0,1fr);gap:6px 12px;margin:8px 0 0;font-size:12.5px;line-height:1.45}
+.aplate dt{margin:0;color:var(--ink-3)}
+.aplate dd{margin:0;min-width:0;color:var(--ink);overflow-wrap:anywhere}
+.aplate .mono{font-size:12px}
+.appr .cap{color:var(--ink-2)}
+.appr .badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-pill);
+  box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2);font-size:11.5px;font-weight:500;white-space:nowrap}
+.previewblk{max-height:200px;overflow:auto;padding:8px 10px;border-radius:var(--r-well);background:var(--well);
+  color:var(--ink);font:400 12px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.apprmode{margin-top:8px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.apprlink{display:inline;color:var(--blue);text-decoration:underline;text-underline-offset:2px}
+.apprlink:hover{color:var(--blue-deep)}
 
 /* resolved: a one-line receipt pill */
 .appr.done{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-height:36px;padding:0 8px 0 7px;

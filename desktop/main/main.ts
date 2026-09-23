@@ -9863,7 +9863,7 @@ async function planHandoffTest(
       );
       await js<unknown>(`window.__approvalRestore(${order.at})`);
 
-      type Prose = { foot: string; verbs: string[]; grantS: number; grantA: number;
+      type Prose = { foot: string; mode: string; verbs: string[]; grantS: number; grantA: number;
         afterGrantKeys: { pending: boolean; state: string | null };
         state: string | null; pending: boolean; doneCards: number; okCards: number;
         queuedBefore: number; queued: string[]; systems: string[]; at: number };
@@ -9876,15 +9876,19 @@ async function planHandoffTest(
           && (prose.queued.includes("use the other folder")
             /* or steered into a live turn — both are real deliveries (r4 item 7) */
             || prose.systems.some((t) => /steering the running turn/i.test(t)))
-          && prose.systems.some((t) => t === "that call was denied with your message as the reason"),
+          && prose.systems.some((t) => t === "Denied, with your message as the reason."),
         JSON.stringify({ state: prose.state, pending: prose.pending, done: prose.doneCards, ok: prose.okCards, queued: prose.queued, systems: prose.systems }),
       );
+      /* Calm (S4): the engineer paragraph under the buttons is gone (U30).
+         What typing does is one plain line on the card; the pointer to the
+         mode control sits under the card's Details disclosure. */
       check(
         "the approval card says on screen what typing now does",
-        prose.foot.includes("the composer stays live — type to answer the agent instead (enter cancels this call and sends it)")
-          && prose.foot.includes("loosen the standing stance with the mode control in the composer")
-          && !prose.foot.includes("Privacy"),
-        JSON.stringify(prose.foot),
+        prose.foot.includes("Or type below to answer instead. Enter denies this call and sends your words to the agent.")
+          && !/HTTP API|session-wide/i.test(prose.foot)
+          && prose.mode.includes("To be asked less often, change the mode in the composer.")
+          && !prose.foot.includes("Privacy") && !prose.mode.includes("Privacy"),
+        JSON.stringify({ foot: prose.foot, mode: prose.mode }),
       );
       /* Review fix: sampled while the request is LIVE, from inside the fixture,
          and against the card's own three verbs — the previous form counted
@@ -9910,8 +9914,8 @@ async function planHandoffTest(
       check(
         "a verdict the agent never took is reported as not taken, not as a deny",
         unknownId.state === "undelivered"
-          && unknownId.systems.some((t) => t.startsWith("could not deny that call with your message: approvalId not pending:"))
-          && !unknownId.systems.some((t) => t === "that call was denied with your message as the reason")
+          && unknownId.systems.some((t) => t === "Couldn\u2019t deny that call with your message: the agent was no longer waiting for an answer.")
+          && !unknownId.systems.some((t) => t === "Denied, with your message as the reason.")
           && (unknownId.queued.includes("use the other folder")
             || unknownId.systems.some((t) => /steering the running turn/i.test(t))),
         JSON.stringify({ state: unknownId.state, systems: unknownId.systems, queued: unknownId.queued }),
@@ -9926,8 +9930,8 @@ async function planHandoffTest(
       check(
         "the live route's 404 for an unheld approvalId is read, not assumed to be a success",
         liveDeny.state === "undelivered"
-          && liveDeny.systems.some((t) => t.startsWith("could not deny that call with your message:"))
-          && !liveDeny.systems.some((t) => t === "that call was denied with your message as the reason"),
+          && liveDeny.systems.some((t) => t.startsWith("Couldn\u2019t deny that call with your message:"))
+          && !liveDeny.systems.some((t) => t === "Denied, with your message as the reason."),
         JSON.stringify({ state: liveDeny.state, systems: liveDeny.systems }),
       );
       await js<unknown>(`window.__approvalRestore(${liveDeny.at})`);
