@@ -530,31 +530,56 @@ function isWaitableOutage(err: unknown): boolean {
  * client had already written, which names the deadline and the knob
  * that raises it (issue #490 reports exactly this pair of runs).
  *
- * The timeout KIND is deliberately not inspected. Every one of them is
- * our clock, and for three of the five the server is provably alive at
- * the moment we give up, which is the opposite of an outage:
- * `first-token-stall` fires only because `/slots` kept answering,
- * `stream-total` only because data kept arriving for six hours, and
- * `idle` only after the server had already started the reply. The
- * remaining two — `first-token` and `total` — say nothing about the
- * link either way, and replaying them costs another full budget. So
- * `timedOut` alone is the right granularity.
+ * The timeout KIND is deliberately not inspected, and the five do not
+ * cost the same, so here is what is actually being traded away:
+ *
+ *   first-token        30 min   `firstTokenTimeoutMs`
+ *   stream-total        6 h     `streamTotalTimeoutMs`
+ *   first-token-stall  300 s    `requestTimeoutMs`
+ *   idle               300 s    `requestTimeoutMs`
+ *   total              300 s    `requestTimeoutMs`
+ *
+ * Only the first is the 45-minute-worker disaster in #490. Two of the
+ * others carry their own positive evidence that the server is alive:
+ * `first-token-stall` fires only because `/slots` kept answering right
+ * up to the verdict, and `stream-total` only because data kept arriving
+ * for six hours. `idle` does NOT — it means the socket is still open
+ * and nothing has come down it for a whole `requestTimeoutMs`, so what
+ * it proves is five minutes stale. A server that actually died mid-turn
+ * usually closes the socket instead, which arrives as `ECONNRESET` with
+ * `timedOut: false` and is still parked.
+ *
+ * The three 300 s kinds are narrowed with the other two anyway, because
+ * the alternative is worse than the wait it saves: the park does not
+ * resume the stream, it replays the whole step from the top, so every
+ * token already generated is thrown away and a second full budget is
+ * spent reproducing it. `isRetryableLlamaError` made exactly this call
+ * one layer down for exactly this reason, and a predicate that reads
+ * `timedOut` while that one reads `timedOut` cannot drift apart.
  *
  * Deliberately still waitable, because none of these is our clock:
  *  - `LlamaServerError(timedOut: false)` with an errno — `ECONNREFUSED`
  *    while llama-server restarts, `ECONNRESET`, and the socket-level
- *    `ETIMEDOUT`, which is the kernel's deadline, not ours;
+ *    `ETIMEDOUT`, which is the kernel's deadline, not ours. `timedOut`
+ *    is set only by `createRequestController`'s own three timers, so a
+ *    kernel `ETIMEDOUT` never reaches this predicate flagged;
  *  - a bare `TypeError: fetch failed` wrapped as `TransportError(null)`
  *    by `toLlmFailure`, i.e. DNS or TLS failing while a cloud provider
  *    is down;
- *  - `OpenAiHttpError.timedOut`, whose budget is `REQUEST_TIMEOUT_MS`
- *    (300 s, two orders of magnitude cheaper to replay) and which has
- *    no field report behind it.
+ *  - `OpenAiHttpError.timedOut`. Its budget is also 300 s, so the cost
+ *    argument above would carry over — but a cloud request is not the
+ *    thing #490 reports, nothing pins the cloud park's behaviour today,
+ *    and one narrowing at a time. Out of scope, not settled.
  *
  * The expiry travels wrapped: `toLlmFailure` rebuilds it as a
- * `TransportError` carrying the original on `cause`, and a fallback
- * chain may wrap it again, so walk the chain rather than testing the
- * outermost error alone.
+ * `TransportError` carrying the original on `cause`, so the outermost
+ * error is never the `LlamaServerError` itself. That is one link, not
+ * many — `runWithFallback` rethrows the last link's error untouched and
+ * keeps the earlier links in a WeakMap beside it (`failed-attempts.ts`)
+ * precisely so that predicates like this one cannot be fooled by a
+ * previous attempt. The depth cap is therefore slack, not a budget, and
+ * exists only so a self-referential or mutually-referential `cause`
+ * cannot spin here.
  */
 function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
   let current: unknown = err;

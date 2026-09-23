@@ -1261,6 +1261,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         userMessage: "build the thing",
         maxSteps: 5,
         taskMaxSteps: 5,
+        // Clips the park budget to a single 1 ms sleep so that a
+        // regression here fails on `waits` below rather than by hanging
+        // this test for its whole 15 s ceiling. With the default 300 s
+        // budget the un-narrowed loop parks and replays until vitest
+        // gives up, and a timed-out test is indistinguishable from any
+        // other deadlock — it would go red for a deleted park block or
+        // a hung tool just as readily. The assertion is the evidence.
+        providerWaitMaxMs: 1,
         signal: new AbortController().signal,
       },
     );
@@ -1311,6 +1319,58 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       createEmptySessionState({ id: "s-econnrefused", workingDir }),
       {
         userMessage: "server restarting",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
+  it("still waits out a socket-level ETIMEDOUT, which is the kernel's deadline (issue #490)", async () => {
+    // The second half of the same pin, and the one that catches the
+    // tempting shortcut: this error says "timed out" in its message and
+    // carries `ETIMEDOUT` in its errno, but `timedOut` is false because
+    // none of `createRequestController`'s timers fired — the kernel gave
+    // up on the connect before any of ours did. Reading the word or the
+    // errno instead of the flag would stop parking a genuine outage
+    // (a llama-server host that dropped off the network), and the
+    // ECONNREFUSED case above would stay green while it happened.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new LlamaServerError(
+            "connect ETIMEDOUT 10.0.0.7:8080",
+            null,
+            "http://10.0.0.7:8080/completion",
+            false,
+            "ETIMEDOUT",
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-etimedout", workingDir }),
+      {
+        userMessage: "host dropped off the network",
         maxSteps: 5,
         taskMaxSteps: 5,
         signal: new AbortController().signal,
