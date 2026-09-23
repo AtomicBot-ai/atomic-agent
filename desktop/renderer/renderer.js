@@ -1723,7 +1723,12 @@ function emptyChat() {
      value span, so the text of each value is exactly what it was. */
   const rows = [
     ['Workspace', S.live.workingDir || 'not set', ''],
-    ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured', id ? providerMark(id, 'xs') : ''],
+    /* The managed-local route has no provider entry of its own to name (the
+       agent synthesizes `local-llama`), so "none configured" there read as
+       "nothing will answer" beside a model that was ready to. */
+    selBackend() === 'local'
+      ? ['Provider', 'this Mac · llama.cpp', providerMark('local-llama', 'xs')]
+      : ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured', id ? providerMark(id, 'xs') : ''],
     ['Model', model || 'none chosen', model ? modelMark(model, 'xs') : ''],
     ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—', ''],
   ];
@@ -5924,7 +5929,15 @@ if (typeof window !== 'undefined') {
    fmtContextWindow (the TUI's own formatContextWindow), so the picker and the
    chip no longer print two different numbers for one window. */
 function activeProvider() {
-  if (!LIVE_CONFIG || !LIVE_CONFIG.llm) return null;
+  if (!LIVE_CONFIG) return null;
+  /* A config with no `llm` block — every fresh state dir, and the first run
+     of anyone who picks Local — is not a config with no provider: the agent
+     synthesizes one `local-llama` entry from `localModels.*`
+     (src/config/config-schema.ts) and runs on it. Reading the absent block
+     as "no provider" drew `Backend cloud · no provider` and a cloud model in
+     the composer while Settings › LLM, which asks the agent, said
+     Local · Active. */
+  if (!LIVE_CONFIG.llm) return { id: 'local-llama', kind: 'llama-server' };
   const id = LIVE_CONFIG.llm.activeTextProvider;
   return (LIVE_CONFIG.llm.providers || []).find((p) => p.id === id) || null;
 }
@@ -8851,7 +8864,11 @@ async function obSettle() {
   OB.open = false;
   OB.settling = false;
   obSkyStop();
-  toast('Setup complete', outcome === 'skipped' ? 'You can run it again from the menu' : 'Restarting the agent…');
+  /* A skipped setup is not a completed one: saying "Setup complete" to
+     someone who chose nothing sent them to a composer with no working model
+     and the word that it was done. */
+  if (outcome === 'skipped') toast('Setup skipped', 'Pick a model any time from the composer, or run setup again from the menu');
+  else toast('Setup complete', 'Restarting the agent…');
   render();
   if (OB.restarted) { refreshLiveConfig(); return; }
   BR.restart().then(applyStatus);
