@@ -7558,7 +7558,7 @@ async function backendSwitchTest(
           "backend: an external route reads as custom, not as the managed local one",
           managedRows.backend === "local" && managedRows.rows.length === 4 // cloud, local, custom, fusion
             && customRows.backend === "custom" && /custom/i.test(customRows.chip) && !customRows.modelChip
-            && !!custom && custom.active && custom.detail.includes("http://127.0.0.1:19199") && custom.detail.includes("Settings › LLM › External")
+            && !!custom && custom.active && custom.detail.includes("127.0.0.1:19199") && /llama\.cpp server/i.test(custom.detail)
             && !!localRow && !localRow.active,
           `managed: backend=${managedRows.backend} rows=${managedRows.rows.length} chip=${JSON.stringify(managedRows.chip)}`
           + ` modelChip=${customRows.modelChip}; external: backend=${customRows.backend} chip=${JSON.stringify(customRows.chip)} custom.active=${custom?.active} local.active=${localRow?.active} detail=${JSON.stringify(custom?.detail)}`,
