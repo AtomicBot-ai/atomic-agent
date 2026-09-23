@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { getToolDescriptorByName } from "../prompt/tool-descriptors.js";
 import type { ToolContext } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
@@ -214,6 +215,28 @@ describe("mcp.prompt.list", () => {
     const result = await tool.run({ server: "docs" }, ctx);
     expect(result.summary).toBe(
       "review-pr_2(uri, length?) — Review a pull request.",
+    );
+  });
+
+  // Quoting only works if the model is told to undo it, and a native
+  // tool's `ToolDefinition.description` does NOT tell it anything:
+  // `http/route-capabilities.ts` is that string's only reader. What
+  // reaches the model is the descriptor `summary` — `formatToolRare`
+  // puts it in the stable prefix, `openai-tool-call-adapter` puts it
+  // in the native function spec. So the convention has to live there,
+  // and this pins the two together: a row that prints quotes while
+  // the prefix says nothing about them is a model that sends
+  // `"my (odd) name"` verbatim and gets "unknown prompt" — the exact
+  // failure the quoting was added to remove.
+  it("tells the model about the quoting in the summary it actually reads", () => {
+    const descriptor = getToolDescriptorByName("mcp.prompt.list");
+    expect(descriptor).toBeDefined();
+    expect(descriptor!.summary).toContain("JSON-quoted");
+    expect(descriptor!.summary).toContain("without the quotes");
+    expect(descriptor!.summary).toContain("<name>(arg1, arg2?) — description");
+    // And the definition keeps its own copy, for the capabilities route.
+    expect(buildMcpPromptListTool(makeManager({})).description).toContain(
+      "JSON-quoted",
     );
   });
 

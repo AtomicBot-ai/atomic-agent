@@ -133,9 +133,24 @@ const ROW_AMBIGUOUS = /["\\(),?\u0020]/;
  * the mistake `flattenKey`'s doc warns about: it hands the model a
  * key that looks real and cannot work, and `mcp.prompt.get` answers
  * "unknown prompt". Quoting keeps the key intact and reversible, and
- * the tool description tells the model to decode it.
+ * the `mcp.prompt.list` entry in `prompt/default-tool-descriptors-b.ts`
+ * — the summary the model actually reads, as opposed to the
+ * `ToolDefinition` description, which only the HTTP capabilities
+ * route surfaces — tells it to decode the quotes.
  *
- * `flattenKey` still runs first: a quoted key is still one row.
+ * `flattenKey` still runs first: a quoted key is still one row. That
+ * bounds "reversible" to keys `flattenKey` left alone, which is all
+ * of them but the ones carrying a `LINE_BREAKING` character: those
+ * lose it to a space BEFORE the quoting, so `JSON.parse` of the row
+ * returns the flattened key, not the server's. Unchanged from `main`
+ * — a name with a newline in it was unrecoverable there too, and the
+ * row could not carry one and stay a row — so the quotes are honest
+ * about where the key ENDS even when they cannot restore what a
+ * control character was. Escaping the raw value instead would fix
+ * that one case and reopen the other: `JSON.stringify` escapes the
+ * C0 controls but emits U+2028, the C1 range and the bidi overrides
+ * raw, and U+202E inside a quoted key reverses the rendered row just
+ * as well as outside one.
  */
 export function renderRowKey(text: unknown): string {
   const flat = flattenKey(text);

@@ -211,9 +211,19 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // The quoting note belongs HERE, not in the `ToolDefinition`
+    // description in `mcp/mcp-prompt-tools.ts`. That string reaches
+    // only `http/route-capabilities.ts`; what the model reads is this
+    // `summary` — rendered into the stable prefix by `formatToolRare`
+    // and into the native function spec by `openai-tool-call-adapter`
+    // as `${summary}\nArgs: ${argsSchema}`. A convention explained
+    // only in the definition is a convention the model never sees, so
+    // it would meet a quoted key with no idea to strip the quotes and
+    // send `"my (odd) name"` verbatim — the "unknown prompt" the
+    // quoting exists to prevent.
     name: "mcp.prompt.list",
     summary:
-      "List prompt templates exposed by an MCP server. Pass `server` and optional `limit` (1..100, default 30).",
+      "List prompt templates exposed by an MCP server. Pass `server` and optional `limit` (1..100, default 30). One entry per line: `<name>(arg1, arg2?) — description`. A name or argument name that would be ambiguous in that format is printed JSON-quoted (`\"my (odd) name\"`); pass it decoded, without the quotes, as `mcp.prompt.get`'s `name` or as an `arguments` key.",
     argsSchema: "{ server: string, limit?: number /* 1..100 */ }",
     tier: "rare",
   },

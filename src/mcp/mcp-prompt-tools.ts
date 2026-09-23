@@ -121,6 +121,14 @@ const LIST_COMPRESSOR_OPTIONS = {
 export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.prompt.list",
+    // NOT the string the model reads. A native tool's `description`
+    // is surfaced only by `http/route-capabilities.ts` (the desktop
+    // client's tool list); the model's copy is the `summary` on this
+    // tool's entry in `prompt/default-tool-descriptors-b.ts`, which
+    // both the stable prefix and the native function spec render.
+    // The quoting convention below is therefore documented in BOTH
+    // places, and `mcp-prompt-tools.test.ts` pins the descriptor one
+    // so the pair cannot drift apart silently.
     description:
       "List prompt templates exposed by an MCP server. Args: `server` (string, required), optional `limit` (1..100, default 30). Returns one entry per line: `<name>(arg1, arg2?) — description`. A name or argument name that would be ambiguous in that format is printed JSON-quoted (`\"my (odd) name\"`); pass the decoded string, without the quotes, as `name` / as an `arguments` key.",
     readonly: true,
