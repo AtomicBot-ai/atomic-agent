@@ -769,14 +769,34 @@ const MENU_ACTS = {
   'model.chat':'selector:model',
   'run.type':'runmode', 'run.mode':'modes', 'run.abort':'stop', 'run.expand':'cards:expand', 'run.collapse':'cards:collapse',
   'run.steer':'steer',
-  'setup.theme':'palette:theme', 'setup.sidebar':'toggle:sidebar', 'setup.analytics':'settings:privacy',
+  'setup.theme':'palette:theme', 'setup.sidebar':'toggle:sidebar', 'setup.analytics':'settings:general',
   'setup.skill':'settings:skills', 'setup.task':'settings:tasks',
   'help.commands':'palette', 'help.tools':'tools', 'help.quit':'quit',
   'help.dump':'dump', 'help.report':'help.report',
 };
-/* ids === MANAGE_TABS (src/tui/section.ts), labels from buildManageTabs. */
-const SETTINGS_TABS = [['tasks','Tasks','tasks'],['skills','Skills','skills'],['memory','Memory','doc'],['mcp','MCP','link'],
-                       ['llm','LLM','cpu'],['telegram','Telegram','chat'],['import','Import','folder'],['privacy','Privacy','key']];
+/* Calm (S5): Settings is ordinary app preferences. Nine sections, in the
+   order Danny set; a section shows one pane, except Connections, which holds
+   two (MCP servers and Telegram) behind a segmented control in its header.
+   The pane ids are the ones the rest of the file already keys on (the TUI's
+   MANAGE_TABS, plus `general` and `diagnostics`), so every pane's own state,
+   poll and write path is untouched: [section id, label, icon, pane ids]. */
+const SETTINGS_SECTIONS = [
+  ['general','General','sliders',['general']],
+  ['models','Models','cpu',['llm']],
+  ['connections','Connections','plug',['mcp','telegram']],
+  ['memory','Memory','memory',['memory']],
+  ['tasks','Tasks','tasks',['tasks']],
+  ['skills','Skills','skills',['skills']],
+  ['privacy','Privacy','lock',['privacy']],
+  ['import','Import','import',['import']],
+  ['diagnostics','Diagnostics','gauge',['diagnostics']],
+];
+/* Every pane, in nav order: [pane id, the name it goes by]. */
+const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['memory','Memory'],
+                       ['tasks','Tasks'],['skills','Skills'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+/* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
+   one shown, per viewer, like atag.theme; General the first time. */
+const SETTINGS_LAST = { section: (() => { try { const v = localStorage.getItem('atag.settingsSection'); return typeof v === 'string' ? v : null; } catch (e) { return null; } })() };
 /* Settings shell state: the diagnostics line's tool counters, read from
    the open session's tool_result rows (GET /api/sessions/{id}). */
 const SET = { tools:null, toolsFor:null, toolsBusy:false, health:null, healthBusy:false };
@@ -1053,7 +1073,7 @@ let VOICE_STRIP_KEY = null;
 let VOICE_MIC_KEY = null;
 
 /* ---- Item 7A: add a model from Hugging Face ----
-   The branch the TUI reaches with `a` in Manage › LLM › Local
+   The branch the TUI reaches with `a` in Settings › Models › Local
    (local-models-hf-branch.tsx). `open`/`step` are the desktop's own: the
    TUI keeps them on LocalModelsPanelMode as "hfRef"|"hfPick", and the
    remaining five fields are LocalModelsHfState field for field. `repo`
@@ -1352,20 +1372,26 @@ const PAL = [
     ['atom','World','Observe','/world','insp:world'],
     ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
     ['console','Logs','Console','/logs','console:agent'],
-    // r5 item 8: the keycap left the bottom-left button, so the palette row
-    // that opens the same destination carries the chord instead.
-    ['tasks','Tasks','Manage','⌘ ,','settings:tasks'],
-    ['skills','Skills','Manage','','settings:skills'],
-    ['doc','Memory','Manage','⌘ 4','settings:memory'],
-    ['link','MCP','Manage','/mcp','settings:mcp'],
-    ['cpu','LLM','Manage','/llm','settings:llm'],
-    ['chat','Telegram','Manage','/telegram','settings:telegram'],
-    ['folder','Import','Manage','/import','settings:import'],
-    ['key','Privacy','Manage','⇧ ⌘ ,','settings:privacy'],
+    // Calm (S5): the Settings sections; the row that opens Settings where it
+    // was left carries the chord of the sidebar button.
+    ['gear','Settings','','⌘ ,','settings:open'],
+    ['sliders','General','Settings','','settings:general'],
+    ['cpu','Models','Settings','/llm','settings:models'],
+    ['plug','MCP servers','Settings · Connections','/mcp','settings:mcp'],
+    ['send','Telegram','Settings · Connections','/telegram','settings:telegram'],
+    ['memory','Memory','Settings','⌘ 4','settings:memory'],
+    ['tasks','Tasks','Settings','','settings:tasks'],
+    ['skills','Skills','Settings','','settings:skills'],
+    ['lock','Privacy','Settings','⇧ ⌘ ,','settings:privacy'],
+    ['import','Import','Settings','/import','settings:import'],
+    ['gauge','Diagnostics','Settings','','settings:diagnostics'],
   ]],
   ['Session', [
     ['plus','New session','keeps warm runtime','⌘ N','session:new'],
+    // Calm (S5): the verbs the Settings window's Commands list used to carry.
+    ['chat','Switch session…','','⌘ O','session:switch'],
     ['x','Clear transcript','keeps session','⌘ ⌫','clear'],
+    ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
   ]],
   ['Model', [
@@ -1373,18 +1399,24 @@ const PAL = [
   ]],
   ['Run', [
     ['fusion','Where it runs…','/runmode','','runmode'],
+    ['shield','Coding mode…','','','modes'],
     ['stop','Abort turn','','⌘ .','stop'],
+    ['arrowR','Steer the running turn','','','steer'],
     ['chevD','Expand all tool cards','','⌥ ⌘ E','cards:expand'],
     ['chevR','Collapse all tool cards','','⌥ ⌘ K','cards:collapse'],
   ]],
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
+    ['sidebar','Hide or show the sidebar','','⌘ 0','toggle:sidebar'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
-    ['key','Analytics','','','settings:privacy'],
+    ['key','Analytics','','','settings:general'],
   ]],
   ['Help', [
     ['doc','List built-in tools','','⌥ ⌘ T','tools'],
+    ['download','Write debug bundle','','','dump'],
+    ['flag','Report an issue…','','','help.report'],
+    ['x','Quit','','⌘ Q','quit'],
   ]],
 ];
 
@@ -1405,7 +1437,7 @@ const S = {
   sidebar:'open',   // r5 item 2: 'open' | 'rail' — the class on #sidebar is derived from this
 
   consoleOpen:false, consoleTab:'agent',
-  settings:null, settingsPane:'tasks',
+  settings:null, settingsPane:'general',
   overlay:null, menuOpen:null, alert:null,
   q:'', cur:0, scope:null,
   slash:false, slashCur:0,
@@ -1596,7 +1628,7 @@ function renderSidebar() {
     // The bottom-left Settings entry: house icon and the word. The ⌘ , chord
     // lives in the tooltip, the palette and the app menu, not on the button.
     + '<div class="sb-footwrap">'
-      + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
+      + '<button class="btn sb-settings" data-act="settings:open" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
         + '<span class="sb-settings-ic">' + ic('home') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
       + '</button></div>'
@@ -3532,173 +3564,104 @@ function sheet(title, body, foot, cls) {
 }
 
 /* ---------------- settings ---------------- */
-/* Item 7: the settings window is the TUI menu. Left column = the menu
-   tree (src/tui/menu/menu-registry.ts); right = the Manage sub-tab strip
-   (buildManageTabs, src/tui/components/debug-pane.tsx), the diagnostics
-   line (debug-diagnostics-line.tsx) and the active panel. The popup
-   title is the TUI's "Menu › Manage" (menu-selectors.ts). */
+/* Calm (S5): the settings window is app preferences — a nav of nine
+   sections on the left, the section's pane on the right under its title.
+   The TUI menu tree (MENU_GROUPS) is no longer drawn here: its verbs live in
+   the command palette and the app menu, and its ctrl+g chords still run
+   (chordKey). The build / agent / state footer moved to Diagnostics. */
 /* r6 cloud item 5: which pane the remembered scroll offset belongs to. */
 const SETTINGS_SCROLL = { pane: null };
 function renderSettings() {
   const old = $('#settings');
   // r4-ui item 5: stop re-applying the Escape focus as soon as the focus is off
-  // the first menu row — otherwise the next render would steal it back out of
+  // the first nav row — otherwise the next render would steal it back out of
   // whatever the operator tabbed or clicked into. The test is deliberately NOT
   // `old.contains(document.activeElement)`: clicking any non-focusable surface
   // blurs to <body>, which is an ANCESTOR of #settings and not a descendant, so
-  // a containment test misses exactly that case and the next full render — a
-  // stream frame, the tasks poll, the diagnostics poll — would drag focus back
-  // onto the Tasks row seconds after an ordinary click on dead space.
-  if (MENUFOCUS.want && old && document.activeElement !== old.querySelector('.setmenu button.menurow')) MENUFOCUS.want = false;
-  /* r6 cloud item 5 — how far down the pane the operator had scrolled.
-     This function REMOVES the whole window and builds a new one, and it
-     runs on every poll that repaints (agent status, tasks, diagnostics),
-     so `.setbody` went back to the top a second or so after any scroll.
-     On Settings › LLM › Cloud that is not cosmetic: the provider's model
-     list is long, and a row below the fold could not be reached with a
-     mouse at all — scroll to it, and it is gone again before it can be
-     clicked. Kept per pane, so switching tabs still starts at the top. */
+  // a containment test misses exactly that case.
+  if (MENUFOCUS.want && old && document.activeElement !== old.querySelector('.setmenu button.menurow.on')) MENUFOCUS.want = false;
+  /* r6 cloud item 5 — this function REMOVES the whole window and builds a
+     new one on every poll that repaints, so `.setbody` would jump back to the
+     top a second after any scroll. Kept per pane, so switching still starts
+     at the top. */
   const keepScroll = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
     ? ((old.querySelector('.setbody') || {}).scrollTop || 0) : 0;
-  // Soft Tactile: the nav's command list scrolls on its own, and the same
-  // rebuild would throw it back to the top on every poll.
-  const keepNavScroll = old ? ((old.querySelector('.setnav-cmds') || {}).scrollTop || 0) : 0;
   if (old) old.remove();
   if (!S.settings) { MENUFOCUS.want = false; return; }
   const cur = settingsPaneId(S.settingsPane);
+  const sec = settingsSectionOf(cur);
+  settingsRemember(sec[0]);
   const el = document.createElement('div');
   el.id = 'settings';
-  /* r5 item 5: "clicking outside the menu closes it" — the user's words. The
-     desktop's only menu is this window (the README's contract: "Settings is
-     the TUI menu"; the prototype #menubar is never populated). The element is
-     a full-bleed dim backdrop with `.setwin` centred in it, and this attribute
-     is what the click handler's new branch tests. Deliberately NOT `data-close`:
+  /* r5 item 5: "clicking outside the menu closes it". The element is a
+     full-bleed dim backdrop with `.setwin` centred in it, and this attribute
+     is what the click handler's branch tests. Deliberately NOT `data-close`:
      that branch runs act('close'), which does not clear S.settings. */
   el.dataset.setclose = '1';
-  /* Soft Tactile (ST-01…33): a two-column window on the well. The nav on the
-     left IS the tab switcher — the eight Manage rows carry `.settab` (+`.on`,
-     `data-act="settings:<id>"`, text "Label (N)") inside the menu rows the
-     TUI tree draws — and the body is a floating card: crumb + close, the
-     pane, and the diagnostics data plate at the foot. Each tab draws its own
-     toolbar at the top of `.setbody`; the frame never repeats the tab title. */
-  const tabLabel = (SETTINGS_TABS.find((t) => t[0] === cur) || [cur, cur])[1];
-  const buildText = BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—';
-  const agentText = S.live.binary || 'not started';
-  const diag = diagLine();
-  el.innerHTML = '<div class="setwin" role="dialog" aria-label="Manage">'
-    + '<nav class="setnav" aria-label="Manage"><div class="setmenu">' + menuTreeHTML() + '</div></nav>'
+  el.innerHTML = '<div class="setwin" role="dialog" aria-label="Settings">'
+    + '<nav class="setnav" aria-label="Settings"><div class="setnav-title">Settings</div>'
+      + '<div class="setmenu">' + settingsNavHTML(sec[0]) + '</div></nav>'
     + '<div class="setmain">'
-    + '<div class="settb"><div class="tk-crumb"><span class="k">Manage ›</span><h3 class="setttl">' + esc(tabLabel) + '</h3></div>'
+    + '<div class="settb"><h3 class="setttl">' + esc(sec[1]) + '</h3>' + settingsSubnavHTML(sec, cur)
     + '<span class="grow"></span>'
-    /* B.8 — one close control with a name on it. Every icon-only control in
-       this window carries a label or a tooltip. */
     + '<button class="iconbtn" data-act="settings:close" title="Close (Esc)" aria-label="Close settings">' + ic('x') + '</button>'
     + '</div>'
     + '<div class="setbody" data-pane="' + esc(cur) + '">' + settingsPane() + '</div>'
-    /* B.8 — the diagnostics line is a data plate at the foot, in mono,
-       carrying the build and the agent binary. Sentence-case keys. */
-    + '<div class="setplate plate"><dl>'
-      + '<div class="set-kv"><dt>Build</dt><dd>' + esc(buildText) + '</dd></div>'
-      + '<div class="set-kv set-kv--agent"><dt>Agent</dt><dd title="' + esc(agentText) + '">' + esc(agentText) + '</dd></div>'
-      + '<div class="set-kv set-kv--wide"><dt>State</dt><dd title="' + esc(diag) + '">' + esc(diag) + '</dd></div>'
-    + '</dl></div>'
     + '</div>'
     + '</div>';
   $('#window').appendChild(el);
   // r6 cloud item 5: put the operator back where they were reading.
   SETTINGS_SCROLL.pane = cur;
   if (keepScroll) { const body = el.querySelector('.setbody'); if (body) body.scrollTop = keepScroll; }
-  if (keepNavScroll) { const cmds = el.querySelector('.setnav-cmds'); if (cmds) cmds.scrollTop = keepNavScroll; }
-  if (MENUFOCUS.want) { const first = el.querySelector('.setmenu button.menurow'); if (first) first.focus(); }
+  // Calm (S5): the ring goes on the section the window opened on.
+  if (MENUFOCUS.want) { const row = el.querySelector('.setmenu button.menurow.on'); if (row) row.focus(); }
 }
 
-/* The prototype's pane ids and the --models harness (`__pane('models')`)
-   still name panes that are now Manage tabs. */
+/* A pane id, a section id or an old name → the pane to show. The prototype's
+   ids and the --models harness (`__pane('models')`) still use a few old
+   names. Connections opens on whichever of its two panes was last shown. */
 function settingsPaneId(v) {
   if (SETTINGS_TABS.some((t) => t[0] === v)) return v;
-  return {models:'llm', channels:'telegram', general:'tasks', appearance:'tasks'}[v] || 'tasks';
+  if (v === 'connections') return SETTINGS_LAST.connections || 'mcp';
+  const sec = SETTINGS_SECTIONS.find((s) => s[0] === v);
+  if (sec) return sec[3][0];
+  return {channels:'telegram', appearance:'general'}[v] || 'general';
+}
+/* The section a pane belongs to. */
+function settingsSectionOf(pane) {
+  return SETTINGS_SECTIONS.find((s) => s[3].includes(pane)) || SETTINGS_SECTIONS[0];
+}
+/* Remember the section (and Connections' pane) for the next opening. */
+function settingsRemember(section) {
+  const pane = settingsPaneId(S.settingsPane);
+  if (section === 'connections') SETTINGS_LAST.connections = pane;
+  if (SETTINGS_LAST.section === section) return;
+  SETTINGS_LAST.section = section;
+  try { localStorage.setItem('atag.settingsSection', section); } catch (e) { /* no storage: remembered for this launch */ }
+}
+/* Where the sidebar button, ⌘ , and Escape open Settings. */
+function settingsOpenPane() {
+  const s = SETTINGS_LAST.section;
+  return SETTINGS_SECTIONS.some((x) => x[0] === s) ? settingsPaneId(s) : 'general';
 }
 
-/* Count suffix ` (N)` exactly as debug-pane.tsx suffix(): tasks = every
-   fetched row, skills = every installed skill, memory = rows of the
-   selected channel, mcp = configured servers. Zero → no suffix. */
-function tabSuffix(id) {
-  let n = 0;
-  if (id === 'tasks') n = TK.lastRefreshedAt === null ? TASKS.length : TK.rows.length; // until the tab's own fetch lands, GET /api/tasks from loadResources
-  else if (id === 'skills') n = SK.rows ? SK.rows.length : 0; // no suffix until `atag skill list` has answered
-  else if (id === 'memory') n = MEM.rows.length; // Item 7 part B: rows of the selected channel (debug-pane.tsx:160)
-  else if (id === 'mcp') n = ((LIVE_CONFIG && LIVE_CONFIG.mcp && LIVE_CONFIG.mcp.servers) || []).length;
-  return n === 0 ? '' : ' (' + n + ')';
+/* The nav: one row per section, icon and name. A row is the section's
+   switch (`.settab` carries its act and `.lb` its label for the drivers). */
+function settingsNavHTML(current) {
+  return SETTINGS_SECTIONS.map(([id, label, icon]) => {
+    const on = id === current;
+    return '<button class="menurow setrow' + (on ? ' on' : '') + '" data-act="settings:' + id + '"' + (on ? ' aria-current="page"' : '') + '>' + ic(icon)
+      + '<span class="settab' + (on ? ' on' : '') + '" data-act="settings:' + id + '"><span class="lb">' + esc(label) + '</span></span></button>';
+  }).join('');
 }
-/* What a Manage tab shows in the nav: its label, then the count as a badge
-   (nothing at zero). The space between them takes no room in the flex row;
-   it keeps the row's accessible name "Skills 18" rather than "Skills18".
-   The Memory and MCP refreshes repaint it in place. */
-function settabInner(label, id) {
-  const suffix = tabSuffix(id);
-  return '<span class="lb">' + esc(label) + '</span>' + (suffix ? ' <span class="setcount">' + esc(suffix.slice(2, -1)) + '</span>' : '');
-}
-
-function menuTreeHTML() {
-  const cur = settingsPaneId(S.settingsPane);
-  // Soft Tactile nav icons, one per node (function-local: no top-level state).
-  const ICON = {
-    'go.manage.tasks':'tasks', 'go.manage.skills':'skills', 'go.manage.memory':'memory', 'go.manage.mcp':'plug',
-    'go.manage.llm':'cpu', 'go.manage.telegram':'send', 'go.manage.import':'import', 'go.manage.privacy':'lock',
-    'session.new':'plus', 'session.switch':'chat', 'session.clear':'trash', 'session.context':'gauge', 'session.id':'hash',
-    'session.window':'term', 'model.chat':'cpu', 'run.mode':'shield', 'run.abort':'stop', 'run.queue':'list',
-    'run.steer':'arrowR', 'run.expand':'expand', 'run.collapse':'minus', 'setup.theme':'sun', 'setup.mouse':'dots',
-    'setup.sidebar':'sidebar', 'setup.analytics':'lock', 'setup.skill':'skills', 'setup.task':'tasks',
-    'help.commands':'search', 'help.tools':'bolt', 'help.dump':'download', 'help.report':'flag', 'help.quit':'x',
-    'danger.uninstall':'trash',
-  };
-  // The chord is live in the desktop too: ctrl+g then the key (the keydown
-  // handler's CHORD layer). The keycap shows the letter and the nav foot says
-  // "⌃G then a letter"; the row carries the whole chord as aria-keyshortcuts.
-  const chordCap = (n) => n.chord ? '<span class="ch" title="press ctrl+g, then ' + esc(n.chord) + '"><span class="kc">' + esc(n.chord) + '</span></span>' : '';
-  const shortcut = (n) => n.chord ? ' aria-keyshortcuts="Control+G ' + esc(n.chord) + '"' : '';
-  const row = (n, sub) => {
-    const on = n.tab && n.tab === cur;
-    const icon = ic(ICON[n.id] || 'dots');
-    if (n.na) {
-      return '<div class="menurow na' + (sub ? ' sub' : '') + '" title="not available in the desktop">' + icon
-        + '<span class="lbw"><span class="lb">' + esc(n.label) + '</span><span class="note">not available in the desktop</span></span></div>';
-    }
-    if (n.tab) {
-      /* A Manage node is also the tab switcher: `.settab` carries the tab's
-         act, its label (`.lb`) and the count badge (`.setcount`, absent at
-         zero). A click on the label lands on `settings:<id>`, anywhere else
-         on the row on `menu:go.manage.<id>` — the same destination. */
-      return '<button class="menurow setrow' + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + (on ? ' aria-current="page"' : '') + shortcut(n) + '>' + icon
-        + '<span class="settab' + (on ? ' on' : '') + '" data-act="settings:' + esc(n.tab) + '">' + settabInner(n.label, n.tab) + '</span>'
-        + chordCap(n) + '</button>';
-    }
-    return '<button class="menurow' + (sub ? ' sub' : '') + (on ? ' on' : '') + '" data-act="menu:' + esc(n.id) + '"' + shortcut(n) + '>' + icon
-      + '<span class="lb">' + esc(n.label) + '</span>' + chordCap(n) + '</button>';
-  };
-  // r4-ui item 5: no node carries `sub` any more — `Observe` and `Manage` were
-  // the only two, and both left. The branch (and `.menurow.sub` / `.parent` in
-  // the stylesheet) is kept on purpose: MENU_GROUPS is a copy of the TUI registry
-  // and the next node pulled across may well be a parent, and it is what
-  // __menuSubRows() asserts zero of — delete the branch and that check stops
-  // meaning anything.
-  const group = (nodes) => nodes.map((n) => n.sub
-    ? '<div class="menurow parent">' + ic(ICON[n.id] || 'dots') + '<span class="lb">' + esc(n.label) + ' →</span></div>' + n.sub.map((c) => row(c, true)).join('')
-    : row(n, false)).join('');
-  /* Layout: "Manage" and its eight tabs on top; every other group of the
-     real tree under "Commands" in a list that scrolls on its own; the Danger
-     zone (not available) and the chord hint pinned at the foot. */
-  const manage = MENU_GROUPS.filter(([label]) => label === 'Manage');
-  const danger = MENU_GROUPS.filter(([label]) => label === 'Danger zone');
-  const commands = MENU_GROUPS.filter(([label]) => label !== 'Manage' && label !== 'Danger zone');
-  return manage.map(([label, nodes]) => '<div class="menuhd setnav-title">' + esc(label) + '</div>' + group(nodes)).join('')
-    + '<div class="setnav-cmds"><div class="setnav-h">Commands</div>'
-      + commands.map(([label, nodes]) => '<div class="menuhd">' + esc(label) + '</div>' + group(nodes)).join('')
-    + '</div>'
-    + '<div class="setnav-foot">'
-      + danger.map(([, nodes]) => group(nodes)).join('')
-      + '<div class="setnav-hint"><span class="kc">⌃G</span> then a letter</div>'
-    + '</div>';
+/* A section with more than one pane (Connections) switches between them
+   with a segmented control beside its title. */
+function settingsSubnavHTML(sec, cur) {
+  if (sec[3].length < 2) return '';
+  return '<span class="tk-seg set-subseg" role="tablist" aria-label="' + esc(sec[1]) + '">'
+    + sec[3].map((p) => '<button class="' + (p === cur ? 'on' : '') + '" role="tab" aria-selected="' + (p === cur) + '" data-act="settings:' + p + '">'
+      + esc((SETTINGS_TABS.find((t) => t[0] === p) || [p, p])[1]) + '</button>').join('')
+    + '</span>';
 }
 
 /* debug-diagnostics-line.tsx: `cwd | llama | llm — · step — | kv — |
@@ -3799,8 +3762,8 @@ async function refreshSkillList() {
 function settingsPaneEntered(opened) {
   refreshDiag({skills: !!opened});
   if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
-  // Privacy: fetch the effective value once; `r` re-reads on demand (no repaint for a value already known).
-  if (settingsPaneId(S.settingsPane) === 'privacy' && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
+  // General (the analytics switch) and Privacy (its cross-link): fetch the effective value once; `r` re-reads on demand.
+  if (['general', 'privacy'].includes(settingsPaneId(S.settingsPane)) && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
   const pane = settingsPaneId(S.settingsPane);
   if (pane === 'skills') skillsTabEntered();
@@ -3814,6 +3777,8 @@ function settingsPaneEntered(opened) {
 
 function settingsPane() {
   const p = settingsPaneId(S.settingsPane);
+  if (p === 'general') return generalPane();
+  if (p === 'diagnostics') return diagnosticsPane();
   if (p === 'tasks') return tasksTab();
   if (p === 'privacy') return privacyPane();
   // Item 7 part B: the Skills, Memory and MCP tabs.
@@ -3829,6 +3794,86 @@ function settingsPane() {
 function comingNote(label) {
   return '<div class="set-pane"><div class="tk-empty"><span class="tk-ico tk-ico--lg">' + ic('clock') + '</span><h4>' + esc(label) + '</h4><p>coming in the next step of this branch</p></div></div>';
 }
+/* Calm (S5) › General: what is general about the app today — the theme
+   (the same `theme:*` act and atag.theme key as the palette and View ›
+   Appearance), the working folder (the sidebar chip's picker) and the
+   analytics switch, moved here from Privacy (same `privacy:analytics` act,
+   same `atag config set analytics.enabled` write, same restart notice). */
+function generalPane() {
+  const eff = privacyEffective();
+  const known = typeof eff === 'boolean';
+  const on = known && eff;
+  const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
+  const THEMES = [['light', 'Light'], ['dark', 'Dark'], ['system', 'System']];
+  const ws = BR ? WORKSPACE : '';
+  const home = homeDir();
+  const wsShort = ws && home && ws.startsWith(home) ? '~' + ws.slice(home.length) : ws;
+  return '<div class="set-pane set-general">'
+    + privacyNoticesHTML()
+    + '<div class="tk-list set-setlist">'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Appearance</div><div class="d">System follows your Mac.</div></div>'
+        + '<div class="tk-seg set-seg" role="group" aria-label="Appearance">'
+          + THEMES.map(([v, label]) => '<button class="' + (S.theme === v ? 'on' : '') + '" aria-pressed="' + (S.theme === v) + '" data-act="theme:' + v + '">' + esc(label) + '</button>').join('')
+        + '</div>'
+      + '</div>'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Working folder</div>'
+          + '<div class="d">' + (ws ? '<span class="mono set-path" title="' + esc(ws) + '">' + esc(wsShort) + '</span>' : 'Not chosen yet.') + '</div></div>'
+        + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
+      + '</div>'
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
+          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments never leave this Mac. '
+            + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
+          + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
+        + '</div>'
+        + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy || pending ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : '—')) + '</span>'
+        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
+          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
+      + '</div>'
+    + '</div>'
+    + '</div>';
+}
+/* The restart notice and the error line an analytics or read-scope write
+   leaves behind, on whichever of General / Privacy is showing. */
+function privacyNoticesHTML() {
+  return (PRIV.message ? restartLine(PRIV.message) : '')
+    + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '');
+}
+
+/* Calm (S5) › Diagnostics: what the old footer printed under every pane —
+   the build, the agent binary, the state and working folders, the local
+   model server — plus the two things you do when something is wrong: read
+   the llama-server log and write a debug bundle. The agent's routes carry
+   no version of their own (/health, /api/capabilities on 0.6.3), so the
+   agent is named by the binary that answered, as the footer did. */
+function diagnosticsPane() {
+  const home = homeDir();
+  const short = (p) => (p && home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
+  const wd = (SET.health && SET.health.workingDir) || WORKSPACE || S.live.workingDir || '';
+  const llama = (SET.health && SET.health.llamaUrl) || (S.live.llama && S.live.llama.url) || (LIVE_CAPS && LIVE_CAPS.llama && LIVE_CAPS.llama.url) || '';
+  const sd = (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || (FIRSTRUN && FIRSTRUN.stateDir) || '';
+  const rows = [
+    ['App', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
+    ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
+    ['State folder', short(sd), sd],
+    ['Working folder', short(wd), wd],
+    ['Local model server', llama],
+  ];
+  return '<div class="set-pane set-diag">'
+    + '<div class="tk-list set-setlist set-diaglist">'
+      + rows.map(([k, v, full]) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
+        + '<div class="set-diagv mono" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div></div>').join('')
+    + '</div>'
+    + '<div class="set-diagacts">'
+      + '<button class="btn btn-s sm" data-act="diag:llmlogs">' + ic('log') + 'LLM logs</button>'
+      + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Write debug bundle</button>'
+      + '<span class="set-cap">A bundle holds the agent log and your config with every secret removed.</span>'
+    + '</div>'
+    + '<div class="set-diagline"><div class="tk-sh">Status line</div><div class="set-diagcode mono">' + esc(diagLine()) + '</div></div>'
+    + '</div>';
+}
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
    + session grants, no ladder. The desktop's approval path only offers
    allow-once/deny, so the runtime never accumulates grants and the TUI's
@@ -3838,30 +3883,12 @@ function comingNote(label) {
 function privacyPane() {
   const eff = privacyEffective();
   const known = typeof eff === 'boolean';
-  const on = known && eff;
-  const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
-  // ST-33: the state word beside the switch (the switch itself carries aria-checked).
-  const stateWord = known ? (on ? 'on' : 'off') : pending ? '…' : '—';
-  const unknownNote = !known && !pending
-    ? '<div class="tk-help tk-help--warn">— (analytics.enabled is not set in config.json and `atag config get analytics.enabled` did not answer)</div>' : '';
-  // What is and is not sent — both lists are the TUI sentence below, split into its parts.
+  // What is and is not sent — both lists are the analytics sentence, split into its parts.
   const sentList = (title, items, icon, tone) => '<div class="set-privcol"><div class="tk-sh">' + esc(title) + '</div><ul class="set-privul">'
     + items.map((t) => '<li><span class="tk-ico tk-ico--xs ' + tone + '">' + ic(icon) + '</span>' + esc(t) + '</li>').join('') + '</ul></div>';
   return '<div class="set-pane set-privacy">'
-    // The TUI's own restart sentence for this toggle, in the shared restart-line look.
-    + (PRIV.message ? '<div class="tuimsg tk-notice tk-notice--blue">' + ic('refresh')
-        + '<span class="grow">' + esc(PRIV.message) + ' <span class="sec">(the running agent picks it up after Restart Agent Runtime)</span></span>'
-        + '<button class="btn btn-t sm" data-act="agent:restart">Restart Agent Runtime</button></div>' : '')
-    + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '')
+    + privacyNoticesHTML()
     + '<div class="tk-list set-setlist">'
-      + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">Product analytics + crash reports, fully anonymous. No message content, paths, args, or IP ever leave this machine — only an install id and coarse counters.</div>'
-          + unknownNote + '</div>'
-        + '<span class="set-state' + (on ? ' on' : '') + '" aria-hidden="true">' + (PRIV.busy ? '<span class="tk-spin"></span>' : esc(known ? (on ? 'On' : 'Off') : stateWord)) + '</span>'
-        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
-          + (!known || PRIV.busy ? ' disabled' : '') + ' title="a: analytics ' + (on ? 'off' : 'on') + '"></button>'
-      + '</div>'
       /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
          config cache, which a CLI write does not reset in a running
          `atag serve` (checked live: a write with the chat open still asked),
@@ -3878,12 +3905,17 @@ function privacyPane() {
         + '<div class="body"><div class="t">Session grants</div>'
           + '<div class="d">Each approval is answered once, allow or deny. One exception: approving a read outside the working folder lets the agent read that folder for the rest of that chat.</div></div>'
       + '</div>'
+      // Calm (S5): the analytics switch lives in General; this row says where it stands and links there.
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
+          + '<div class="d">' + (known ? (eff ? 'On.' : 'Off.') : PRIV.effectiveBusy ? 'Checking…' : 'Unknown.') + ' You can turn it on or off in General.</div></div>'
+        + '<button class="btn btn-s sm" data-act="settings:general">Open General</button>'
+      + '</div>'
     + '</div>'
     + '<div class="set-privgrid">'
-      + sentList('What is sent', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
-      + sentList('What never leaves this machine', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
+      + sentList('What analytics send', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
+      + sentList('What never leaves this Mac', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
     + '</div>'
-    + tuiHints([['a: analytics ' + (on ? 'off' : 'on'), 'privacy:analytics', {disabled: !known || PRIV.busy}], ['r: refresh', 'privacy:refresh']])
     + '</div>';
 }
 /* B3: `agent.readScope` — the user file's value, else the schema default. */
@@ -4191,7 +4223,11 @@ function act(a) {
     return;
   }
   if (a === 'workspace') { close(); render(); toast('Workspace', '~/Teletubbies · rw'); return; }
-  if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'privacy'; render(); settingsPaneEntered(opened); return; }
+  if (a === 'analytics') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = 'general'; render(); settingsPaneEntered(opened); return; }
+  // Calm (S5): the sidebar button, ⌘ , and the app menu open Settings on the last section shown (General the first time).
+  if (a === 'settings:open') { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsOpenPane(); render(); settingsPaneEntered(opened); return; }
+  // Diagnostics › LLM logs: the Models pane's log view, whose Back returns here.
+  if (a === 'diag:llmlogs') { close(); S.settings = 1; S.settingsPane = 'llm'; LLMP.logsBack = 'diagnostics'; render(); llmAct('logs'); return; }
   if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
   // Item 7 part B: the Skills / Memory / MCP tabs' verbs.
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
@@ -4227,7 +4263,7 @@ function act(a) {
   if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
                            else if (v === 'inspector') { S.inspector = !S.inspector; writePaneFlag('atag.inspector', S.inspector); }
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
-  if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); render(); settingsPaneEntered(opened); return; }
+  if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
@@ -4553,8 +4589,8 @@ function abort() {
    effective value is then the schema default, true). */
 function analyticsSlash(args) {
   const verb = (args[0] || '').toLowerCase();
-  if (verb === 'on' || verb === 'enable' || verb === 'off' || verb === 'disable') { act('settings:privacy'); privacySet(verb === 'on' || verb === 'enable'); return; }
-  if (verb === 'status') { act('settings:privacy'); privacyRefresh(); return; }
+  if (verb === 'on' || verb === 'enable' || verb === 'off' || verb === 'disable') { act('settings:general'); privacySet(verb === 'on' || verb === 'enable'); return; }
+  if (verb === 'status') { act('settings:general'); privacyRefresh(); return; }
   S.log.push({id:nid(), k:'system', text:'usage: /analytics on | off | status'}); render();
 }
 
@@ -4562,8 +4598,8 @@ function runSlash(parts) {
   const name = parts[0];
   const nav = {chat:'room:chat', tasks:'settings:tasks', task:'tasks:new', skills:'settings:skills', skill:'settings:skills',
     memory:'settings:memory', feed:'insp:steps', world:'insp:world', reasoning:'insp:reasoning', observe:'insp:steps',
-    logs:'console:agent', manage:'settings:tasks', mcp:'settings:mcp', llm:'settings:llm', model:'selector:model',
-    telegram:'settings:telegram', import:'settings:import', privacy:'settings:privacy', analytics:'settings:privacy',
+    logs:'console:agent', manage:'settings:open', mcp:'settings:mcp', llm:'settings:llm', model:'selector:model',
+    telegram:'settings:telegram', import:'settings:import', privacy:'settings:privacy', analytics:'settings:general',
     theme:'palette:theme', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
     session:'session:id', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
     expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar',
@@ -5410,7 +5446,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
-                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:tasks',
+                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts'};
     if (map[k.toLowerCase()]) { e.preventDefault(); act(map[k.toLowerCase()]); return; }
     if (k === 'Enter') { e.preventDefault(); submit(); return; }
@@ -5496,9 +5532,9 @@ document.addEventListener('keydown', (e) => {
        Escape to open the menu, full stop, and clearing a composer draft on one
        keypress with no undo is a destructive behaviour nobody asked for. So a
        draft survives and the menu opens over it.
-       S.settingsPane is not reset either: it defaults to 'tasks' and otherwise
-       reopens where the operator left it. */
+       Calm (S5): it opens on the last section shown, General the first time. */
     S.settings = 1;
+    S.settingsPane = settingsOpenPane();
     MENUFOCUS.want = true;
     render();
     settingsPaneEntered(true);
@@ -10504,7 +10540,7 @@ async function selActivate(row) {
   // "Download more models…" the local models pane (Settings › Models).
   if (row.type === 'action') {
     if (row.id === 'add') { act('sel:add'); return; }
-    // model:local:download-more → Manage › LLM › Local, the pane that
+    // model:local:download-more → Settings › Models › Local, the pane that
     // downloads. (Review fix: it used to open the same tab but then set the
     // retired Models pane's tab and spawn an `atag models list` nothing drew.)
     closeSelector(); act('settings:llm'); llmSetMode('local');
@@ -11836,9 +11872,9 @@ function fzBlockerFor(cfg, facts) {
   const cloudReady = providers.filter((p) => p.kind !== 'llama-server' && facts.readyIds.includes(p.id)).length;
   const localReady = !facts.localLoaded || facts.localDownloaded ? providers.filter((p) => p.kind === 'llama-server').length : 0;
   if (cloudReady + localReady >= 2) return null;
-  if (cloudReady + localReady === 1 && localReady === 1) return 'needs a second provider to orchestrate — Manage › LLM › Cloud';
-  if (cloudReady + localReady === 1) return 'needs a second provider for the workers — Manage › LLM';
-  return 'needs two providers, one per leg — Manage › LLM';
+  if (cloudReady + localReady === 1 && localReady === 1) return 'needs a second provider to orchestrate — Settings › Models › Cloud';
+  if (cloudReady + localReady === 1) return 'needs a second provider for the workers — Settings › Models';
+  return 'needs two providers, one per leg — Settings › Models';
 }
 function fzBlocker() {
   return fzBlockerFor(LIVE_CONFIG, {readyIds: BSW.readyIds, localLoaded: BSW.localLoaded, localDownloaded: SEL.local.some((m) => m.downloaded)});
@@ -12045,7 +12081,7 @@ async function fzSetWorkers(n) {
 /** `/runmode status` — a system message, from the resolver. */
 function fzStatus() {
   S.log.push({id:nid(), k:'system', note:true,
-    text: esc(LIVE_CONFIG ? rmDescribe(rmNow()) : 'run mode: not resolved yet — open Manage › LLM once')});
+    text: esc(LIVE_CONFIG ? rmDescribe(rmNow()) : 'run mode: not resolved yet — open Settings › Models once')});
   render();
 }
 /** `/runmode <mode>` and the menu's Local / Cloud / Fusion: the backend row's own activation. */
@@ -14211,9 +14247,10 @@ function settingsKey(e, k, inText) {
   }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === '[' || k === ']') {
     e.preventDefault();
-    const ids = SETTINGS_TABS.map((t) => t[0]);
+    // Calm (S5): the arrows walk the nav's sections, as the TUI's cycleSubTab walked its tabs.
+    const ids = SETTINGS_SECTIONS.map((t) => t[0]);
     const dir = (k === 'ArrowRight' || k === ']') ? 1 : -1;
-    S.settingsPane = ids[(ids.indexOf(pane) + dir + ids.length) % ids.length];
+    S.settingsPane = settingsPaneId(ids[(ids.indexOf(settingsSectionOf(pane)[0]) + dir + ids.length) % ids.length]);
     render(); settingsPaneEntered(false); return true;
   }
   return false;
@@ -14283,6 +14320,7 @@ if (typeof window !== 'undefined') {
   window.__settingsLabels = () => [...document.querySelectorAll('#settings .settab')].map((b) => ((b.querySelector('.lb') || b).textContent || '').trim()); // the label a person reads, without the count badge
   window.__settingsOpen = (id) => { act('settings:' + id); return settingsPaneId(S.settingsPane); };
   window.__settingsPane = () => (S.settings ? settingsPaneId(S.settingsPane) : null);
+  window.__settingsOpenPane = () => settingsOpenPane(); // where the sidebar button / ⌘ , will open (Calm S5)
   window.__settingsClose = () => { act('settings:close'); };
   window.__settingsBody = () => (document.querySelector('#settings .setbody') || {}).innerText || '';
   window.__errCount = () => ERR_COUNT;
@@ -15074,7 +15112,6 @@ async function memRefresh(quiet) {
     return;
   }
   if (memoryVisible()) paneRepaintKeepFocus(memoryTab()); else if (!quiet) render();
-  if (S.settings) { const tab = document.querySelector('#settings .settab[data-act="settings:memory"]'); if (tab) tab.innerHTML = settabInner('Memory', 'memory'); } // the nav's count badge follows the selected channel's rows
 }
 function memStatusLine() {
   return [MEM.loading ? 'loading' : null, MEM.auto ? 'auto' : 'manual',
@@ -15514,7 +15551,6 @@ async function mcpRefreshRun(quiet) {
     return;
   }
   if (mcpVisible()) paneRepaintKeepFocus(mcpTab()); else if (!quiet) render();
-  if (S.settings) { const tab = document.querySelector('#settings .settab[data-act="settings:mcp"]'); if (tab) tab.innerHTML = settabInner('MCP', 'mcp'); }
 }
 function mcpStatusLine() {
   return [MCP.loading ? 'loading' : null, MCP.auto ? 'auto' : 'manual',
@@ -17337,7 +17373,12 @@ function llmAct(what) {
   if (verb === 'device') { llmDeviceCycle(); return; }
   if (verb === 'logs') { llmLogsOpen(); return; }
   if (verb === 'logsRefresh') { llmLogsRefresh(); return; }
-  if (verb === 'back') { llmStopLogs(); LLMP.view = 'panel'; llmRepaint(); return; }
+  if (verb === 'back') {
+    llmStopLogs(); LLMP.view = 'panel';
+    // Opened from Diagnostics › LLM logs: Back returns there.
+    if (LLMP.logsBack === 'diagnostics') { LLMP.logsBack = null; S.settingsPane = 'diagnostics'; render(); return; }
+    llmRepaint(); return;
+  }
   if (verb === 'cancelPull') { if (BR) BR.cancelPull(); LLMP.pulling = null; llmRepaint(); return; }
   if (verb === 'remove') {
     if (LLMP.mode === 'fallback') { llmFallbackRemove(); return; }
@@ -18441,7 +18482,7 @@ if (typeof window !== 'undefined') {
      the backdrop followed by a real click, and this hook dispatches neither, so
      MENUFOCUS is still the only thing under test here. */
   window.__menuFocusBlur = () => {
-    const first = document.querySelector('#settings .setmenu button.menurow');
+    const first = document.querySelector('#settings .setmenu button.menurow.on');
     if (!first) return null;
     const focusedBefore = document.activeElement === first;
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -20085,7 +20126,7 @@ if (typeof window !== 'undefined') {
   };
 
   /* --- item 5 --- */
-  window.__openSettings = () => { act('settings:tasks'); return {settings: !!S.settings, pane: settingsPaneId(S.settingsPane)}; };
+  window.__openSettings = () => { act('settings:open'); return {settings: !!S.settings, pane: settingsPaneId(S.settingsPane)}; };
   /* 'outside'  — press and release on the dim backdrop.
      'inside'   — press and release inside the window.
      'dragout'  — press inside .setwin, release on the backdrop (a selection

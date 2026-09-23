@@ -27,7 +27,7 @@ export function buildMenu(send: (command: string) => void): void {
         { role: "about" },
         item("Run Setup Again…", "onboarding"),
         sep,
-        item("Settings…", "settings:tasks", "CommandOrControl+,"),
+        item("Settings…", "settings:open", "CommandOrControl+,"),
         item("Privacy…", "settings:privacy", "Shift+CommandOrControl+,"),
         sep,
         { role: "services" },

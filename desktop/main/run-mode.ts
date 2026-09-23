@@ -205,10 +205,10 @@ export function describeFusionBlocker(cfg: RunModeConfig | null | undefined, fac
   const localReady = !facts.localLoaded || facts.localDownloaded ? providers.filter(isLocalKind).length : 0;
   if (cloudReady + localReady >= 2) return null;
   if (cloudReady + localReady === 1 && localReady === 1) {
-    return "needs a second provider to orchestrate — Manage › LLM › Cloud";
+    return "needs a second provider to orchestrate — Settings › Models › Cloud";
   }
-  if (cloudReady + localReady === 1) return "needs a second provider for the workers — Manage › LLM";
-  return "needs two providers, one per leg — Manage › LLM";
+  if (cloudReady + localReady === 1) return "needs a second provider for the workers — Settings › Models";
+  return "needs two providers, one per leg — Settings › Models";
 }
 
 /** The fusion backend row's detail when nothing blocks it. */
@@ -359,7 +359,7 @@ export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeV
   if (!Number.isInteger(workers) || workers < FUSION_WORKERS_MIN || workers > FUSION_WORKERS_MAX) {
     return { write: false, before, refusal: `workers must be an integer ${FUSION_WORKERS_MIN}-${FUSION_WORKERS_MAX}, got ${workers}` };
   }
-  if (!cfg.llm) return { write: false, before, refusal: "no provider is configured yet — Manage › LLM" };
+  if (!cfg.llm) return { write: false, before, refusal: "no provider is configured yet — Settings › Models" };
   const snapshot = JSON.stringify(cfg);
   const parallelBefore = cfg.localModels?.managed?.parallel;
   const llm = cfg.llm;
@@ -368,7 +368,7 @@ export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeV
   const hint = cfg.localModels.mode === "managed" && parallelBefore !== workers
     // The TUI's notice names its `s` chord and the `--parallel` flag; the
     // desktop says what to do in its own terms.
-    ? ` — restart the local model (Manage › LLM › Local) so it runs ${workers} at once`
+    ? ` — restart the local model (Settings › Models › Local) so it runs ${workers} at once`
     : "";
   return {
     write: JSON.stringify(cfg) !== snapshot,

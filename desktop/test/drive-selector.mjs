@@ -223,7 +223,7 @@ async function main() {
     t.say('\n--- Settings › LLM, on the local route ---');
     r = await app.clickSel('.sb-settings', { settle: 900 });
     t.check('the Settings button opens Settings', r.ok, r.why || '');
-    r = await app.clickText('#settings .settab', 'LLM', { settle: 2500 });
+    r = await app.clickText('#settings .settab', 'Models', { settle: 2500 });
     t.check('the LLM tab opens', r.ok, r.why || `clicked "${r.clicked}"`);
     const localPane = await app.snap(LLM_MODE);
     t.say(`  Settings › LLM opened on: ${JSON.stringify(localPane)}`);
@@ -275,7 +275,7 @@ async function main() {
     t.say('\n--- Settings › LLM, on the cloud route ---');
     r = await app.clickSel('.sb-settings', { settle: 900 });
     t.check('Settings opens', r.ok, r.why || '');
-    r = await app.clickText('#settings .settab', 'LLM', { settle: 2500 });
+    r = await app.clickText('#settings .settab', 'Models', { settle: 2500 });
     t.check('the LLM tab opens', r.ok, r.why || `clicked "${r.clicked}"`);
     const cloudPane = await app.snap(LLM_MODE);
     t.say(`  Settings › LLM opened on: ${JSON.stringify(cloudPane)}`);
@@ -377,7 +377,7 @@ async function main() {
     t.say('\n--- Settings › LLM, on the custom route ---');
     const rs = await app.clickSel('.sb-settings', { settle: 900 });
     t.check('Settings opens', rs.ok, rs.why || '');
-    const r4 = await app.clickText('#settings .settab', 'LLM', { settle: 2500 });
+    const r4 = await app.clickText('#settings .settab', 'Models', { settle: 2500 });
     t.check('the LLM tab opens', r4.ok, r4.why || '');
     const customPane = await app.snap(LLM_MODE);
     t.say(`  Settings › LLM opened on: ${JSON.stringify(customPane)}`);

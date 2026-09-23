@@ -3824,13 +3824,18 @@ async function settingsTest(
   // gone. This is a deliberate divergence recorded at MENU_GROUPS in renderer.js,
   // not a relaxed assertion — the rest of the tree is still the registry's.
   const GROUPS = ["Manage", "Session", "Model", "Run", "Setup", "Help", "Danger zone"];
+  // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
-  const LABELS = ["Tasks", "Skills", "Memory", "MCP", "LLM", "Telegram", "Import", "Privacy"];
+  // Calm (S5): the window's own panes and nav sections, in Danny's order.
+  const PANES = ["general", "llm", "mcp", "telegram", "memory", "tasks", "skills", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Privacy", "Import", "Diagnostics"];
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", memory: "memory",
+    tasks: "tasks", skills: "skills", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: tab ids mirror MANAGE_TABS", same(tabs, TABS), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
@@ -3859,42 +3864,37 @@ async function settingsTest(
   const manageTabs = nodes.filter((n) => n.tab).map((n) => n.tab);
   check("settings: Manage children are the eight tabs", same(manageTabs, TABS), JSON.stringify(manageTabs));
 
-  // The bottom-left entry lands on Go › Manage › Tasks. r5 item 8 replaced the
-  // `.sb-foot` row (gear + label + keycap) with a plain accent button, so the
-  // selector follows it; the destination is unchanged and is what this asserts.
-  const foot = await js<{ present: boolean; text: string; pane: string }>(
-    "(() => { const f = document.querySelector('#sidebar .sb-settings'); if (!f) return {present:false,text:'',pane:''};"
-    + " f.click(); return {present:true, text:f.textContent, pane:window.__settingsPane()}; })()",
+  // Calm (S5): the bottom-left entry and Cmd+, open Settings on the section
+  // last shown, General the first time (atag.settingsSection, per viewer).
+  // The expectation is read before the click, so the check holds whichever
+  // section an earlier lane left behind.
+  const foot = await js<{ present: boolean; text: string; pane: string; want: string }>(
+    "(() => { const f = document.querySelector('#sidebar .sb-settings'); if (!f) return {present:false,text:'',pane:'',want:''};"
+    + " const want = window.__settingsOpenPane(); f.click(); return {present:true, text:f.textContent, pane:window.__settingsPane(), want}; })()",
   );
-  check("settings: bottom-left entry opens on Tasks", foot.present && /Settings/.test(foot.text) && foot.pane === "tasks", `pane=${foot.pane}`);
-  await js<void>("window.__settingsClose()");
+  check("settings: bottom-left entry opens on the last section (General at first)", foot.present && /Settings/.test(foot.text) && !!foot.want && foot.pane === foot.want, `pane=${foot.pane} want=${foot.want}`);
+  await js<void>("window.__settingsOpen('skills'); window.__settingsClose()");
   const viaKey = await js<string>(
     "(() => { document.dispatchEvent(new KeyboardEvent('keydown', {key: ',', metaKey: true, bubbles: true, cancelable: true})); return window.__settingsPane(); })()",
   );
-  check("settings: Cmd+, opens on Tasks", viaKey === "tasks", `pane=${viaKey}`);
+  check("settings: Cmd+, reopens on the section last shown", viaKey === "skills", `pane=${viaKey}`);
 
   const labels = await js<string[]>("window.__settingsLabels()");
-  check("settings: tab labels mirror the TUI", same(labels, LABELS), JSON.stringify(labels));
+  check("settings: the nav names the nine sections", same(labels, LABELS), JSON.stringify(labels));
 
-  // The menu column: every row with a chord shows its key as a keycap, the
-  // nav foot says what the keycap means ("⌃G then a letter"), nodes the
-  // desktop cannot do keep their label with the note, and a verb dispatches
-  // its act.
-  const menuDom = await js<{ chords: Array<[string, string]>; hint: string; naCount: number; naText: string }>(
-    "(() => { const chords = [...document.querySelectorAll('#settings .setmenu .menurow[data-act^=\"menu:\"]')]"
-    + ".filter((r) => r.querySelector('.ch')).map((r) => [r.dataset.act.slice(5), ((r.querySelector('.ch .kc') || {}).textContent || '').trim()]);"
-    + " const foot = document.querySelector('#settings .setnav-hint');"
-    + " const na = [...document.querySelectorAll('#settings .menurow.na')];"
-    + " const win = na.find((r) => r.textContent.includes('New terminal window'));"
-    + " return {chords, hint: foot && foot.getClientRects().length ? foot.innerText.replace(/\\s+/g, ' ').trim() : '', naCount: na.length, naText: win ? win.textContent : ''}; })()",
+  // Calm (S5): the nav is the nine sections and nothing else — no keycaps,
+  // no count badges, no Commands list, no rows "not available in the desktop".
+  // The chords themselves still run (the ctrl+g check below).
+  const navDom = await js<{ rows: number; keycaps: number; counts: number; na: number; text: string }>(
+    "(() => { const nav = document.querySelector('#settings .setnav'); if (!nav) return {rows: 0, keycaps: 0, counts: 0, na: 0, text: ''};"
+    + " return {rows: nav.querySelectorAll('.menurow').length, keycaps: nav.querySelectorAll('.kc, .ch').length, counts: nav.querySelectorAll('.setcount').length,"
+    + " na: nav.querySelectorAll('.menurow.na').length, text: nav.innerText.replace(/\\s+/g, ' ').trim()}; })()",
   );
-  const naExpected = nodes.filter((n) => n.na).length;
-  const chordsExpected = nodes.filter((n) => n.chord && !n.na).map((n) => [n.id, n.chord]);
   check(
-    "settings: menu column renders chords and the not-available note",
-    chordsExpected.length > 0 && same(menuDom.chords, chordsExpected) && menuDom.hint === "⌃G then a letter"
-      && menuDom.naCount === naExpected && menuDom.naText.includes("not available in the desktop"),
-    `keycaps ${menuDom.chords.length}/${chordsExpected.length}${same(menuDom.chords, chordsExpected) ? "" : " " + JSON.stringify(menuDom.chords)} hint=${JSON.stringify(menuDom.hint)} na=${menuDom.naCount}/${naExpected}`,
+    "settings: the nav has no keycaps, counts, Commands list or not-available rows",
+    navDom.rows === LABELS.length && navDom.keycaps === 0 && navDom.counts === 0 && navDom.na === 0
+      && !/Commands|not available in the desktop|then a letter/.test(navDom.text),
+    JSON.stringify(navDom),
   );
   // `go.observe.world` used to prove this; that node is gone. `help.tools` is
   // the surviving verb with the same observable result (the inspector on its
@@ -3917,7 +3917,7 @@ async function settingsTest(
        (round 2, Fusion) — the count is here to catch a Go/Observe node
        creeping back in, so it moves with a deliberate addition rather than
        pinning the menu's size forever. */
-    gone.ids.length === 0 && gone.subs === 0 && gone.rows === 34,
+    gone.ids.length === 0 && gone.subs === 0 && gone.rows === LABELS.length,
     JSON.stringify(gone),
   );
   const viaNode = await js<{ settings: boolean; pane: string | null }>(
@@ -3961,7 +3961,7 @@ async function settingsTest(
   let allRender = true;
   const details: string[] = [];
   const PLACEHOLDER: string[] = []; // Item 7 part C: every Manage tab is real now (LLM / Telegram / Import are asserted in settingsTestPartC)
-  for (const id of TABS) {
+  for (const id of PANES) {
     const r = await js<{ pane: string; on: string; body: string }>(
       `(() => { const pane = window.__settingsOpen(${JSON.stringify(id)});`
       + " const on = (document.querySelector('#settings .settab.on') || {dataset:{}}).dataset.act || '';"
@@ -3971,19 +3971,19 @@ async function settingsTest(
     const bodyOk = PLACEHOLDER.includes(id)
       ? r.body.includes(LABELS[TABS.indexOf(id)]!) && r.body.includes("coming in the next step of this branch")
       : r.body.length > 0;
-    const ok = r.pane === id && r.on === "settings:" + id && bodyOk;
+    const ok = r.pane === id && r.on === "settings:" + SECTION_OF[id] && bodyOk;
     if (!ok) { allRender = false; details.push(`${id}: pane=${r.pane} on=${r.on} body=${r.body.slice(0, 60)}`); }
   }
   const errAfter = await js<number>("window.__errCount()");
   check("settings: every tab renders without errors", allRender && errAfter === errBefore, details.join("; ") || `errors ${errBefore}→${errAfter}`);
 
-  // Tab cycling with the arrow keys, as the TUI's cycleSubTab does.
+  // Section cycling with the arrow keys, as the TUI's cycleSubTab does.
   const cycled = await js<string>(
-    "(() => { window.__settingsOpen('privacy');"
+    "(() => { window.__settingsOpen('diagnostics');"
     + " document.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true}));"
     + " return window.__settingsPane(); })()",
   );
-  check("settings: ArrowRight wraps from Privacy to Tasks", cycled === "tasks", `pane=${cycled}`);
+  check("settings: ArrowRight wraps from Diagnostics to General", cycled === "general", `pane=${cycled}`);
 
   // The chord column is live: ctrl+g then `p` opens Go › Manage › Privacy
   // from a closed window, exactly the chord the column prints.
@@ -4007,7 +4007,7 @@ async function settingsTest(
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
   const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
-  // The nav row a person reads: the label, then the count badge (none at zero).
+  // The nav row a person reads: the label alone (Calm S5: no count badge; the pane itself says "N shown").
   const skillsLabel = await js<{ act: string; label: string; count: string | null }>(
     "(() => { window.__settingsOpen('skills'); const b = document.querySelector('#settings .settab.on'); if (!b) return {act: '', label: '', count: null};"
     + " const c = b.querySelector('.setcount');"
@@ -4016,7 +4016,7 @@ async function settingsTest(
   check(
     "settings: Skills tab count is `atag skill list`",
     skillsCli.ok && skillCount === (skillsCli.rows ?? []).length
-      && skillsLabel.act === "settings:skills" && skillsLabel.label === "Skills" && skillsLabel.count === (skillCount ? String(skillCount) : null),
+      && skillsLabel.act === "settings:skills" && skillsLabel.label === "Skills" && skillsLabel.count === null,
     `count=${String(skillCount)} cli=${skillsCli.ok ? (skillsCli.rows ?? []).length : skillsCli.error} label=${JSON.stringify(skillsLabel)}`,
   );
   // (After the count check, so `atag skill list` has answered.) Skills, this step: the installed list as skills-list.tsx draws it — the
@@ -4193,14 +4193,21 @@ async function settingsTest(
     }
   }
 
-  // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it.
+  // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it. Calm
+  // (S5): the analytics switch moved to General; Privacy names its state and
+  // links there, so there is exactly one switch.
   await js<void>("window.__settingsOpen('privacy')");
   const priv = await js<string>("window.__settingsBody()");
-  const privacyCopy = ["Anonymous usage analytics", "Product analytics + crash reports, fully anonymous.", "Session grants",
-    "Reading outside the working folder", "Ask first", "Read anywhere"]
-    .every((s) => priv.includes(s));
+  const privSwitches = await js<number>("document.querySelectorAll('#settings .setbody [data-act=\"privacy:analytics\"]').length");
+  await js<void>("window.__settingsOpen('general')");
+  const gen = await js<string>("window.__settingsBody()");
+  const genSwitches = await js<number>("document.querySelectorAll('#settings .setbody .tk-switch[data-act=\"privacy:analytics\"]').length");
+  const privacyCopy = ["Session grants", "Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Open General"]
+    .every((s) => priv.includes(s))
+    && ["Appearance", "Working folder", "Anonymous usage analytics", "Crash reports and coarse usage counts"].every((s) => gen.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
-  check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
+  check("privacy tab: TUI copy, no approval ladder; the analytics switch is in General only", privacyCopy && noLadder && privSwitches === 0 && genSwitches === 1,
+    privacyCopy ? (noLadder ? `switches privacy=${privSwitches} general=${genSwitches}` : "ladder text present") : "copy missing");
   // The TUI's tab strip is one line; with the count suffixes the eight
   // labels used to wrap onto a second row inside the 900px window.
   const stripRows = await js<number>("window.__settingsStripRows()");
@@ -4246,7 +4253,8 @@ async function settingsTest(
     await js<void>(`window.__runSlash(${JSON.stringify(`/privacy analytics ${verbSame}`)})`);
     const sameAfter = await settle(effective);
     const pane1 = await js<string | null>("window.__settingsPane()");
-    check("privacy slash: `/privacy analytics " + verbSame + "` keeps the effective value", sameAfter === effective && pane1 === "privacy", `effective=${String(sameAfter)} pane=${String(pane1)}`);
+    // Calm (S5): the verbs open General, where the switch now is.
+    check("privacy slash: `/privacy analytics " + verbSame + "` keeps the effective value", sameAfter === effective && pane1 === "general", `effective=${String(sameAfter)} pane=${String(pane1)}`);
     // … and asking for the other value flips it, through the same write as the `a` key.
     const verbOther = effective ? "off" : "on";
     await js<void>(`window.__runSlash(${JSON.stringify(`/analytics ${verbOther}`)})`);
@@ -6391,8 +6399,9 @@ async function uiTest(
   await js<number>("window.__settingsOpen('tasks'); window.__tasksAct('back'); window.__tasksAct('clearSearch'); window.__settingsClose(); window.__clearToasts()");
   const opened = await js<Esc>("window.__esc()");
   check(
-    "item 5: Escape with nothing open opens the menu on its first row",
-    opened.pane === "tasks" && opened.focusRow && opened.focusAct === "menu:go.manage.tasks" && opened.firstRowLabel === "Tasks",
+    // Calm (S5): Settings reopens on the section last shown (Tasks, just above), and the ring is on its nav row.
+    "item 5: Escape with nothing open opens Settings with the ring on its section",
+    opened.pane === "tasks" && opened.focusRow && opened.focusAct === "settings:tasks" && opened.firstRowLabel === "General",
     JSON.stringify(opened),
   );
   // The focus ring is re-applied on every render while the window is open, so
@@ -10348,7 +10357,7 @@ async function chromeTest(
          with the gear, the word and its ⌘, keycap. It stays default rank,
          never primary: a permanent nav control in the corner of every screen
          is not the primary action of the screen. */
-      !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:tasks"
+      !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:open"
         && setBtn.keycaps === 0 && setBtn.labelVisible && setBtn.iconVisible
         && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes)
         && !/(^|\s)btn-p(\s|$)/.test(setBtn.classes),
@@ -10378,11 +10387,13 @@ async function chromeTest(
       setDark.fg !== setLight.fg && setDark.fg !== "" && setLight.fg !== "",
       `dark ${setDark.bg}/${setDark.fg}; light ${setLight.bg}/${setLight.fg}`,
     );
+    // Calm (S5): it opens Settings on the section last shown (General the first time).
+    const openWant = await js<string>("window.__settingsOpenPane()");
     const opened = await js<{ settings: boolean; pane: string | null }>("window.__settingsBtnClick()");
     check(
-      "item 8: it still opens Manage › Tasks",
-      opened.settings && opened.pane === "tasks",
-      JSON.stringify(opened),
+      "item 8: it opens Settings on the section last shown",
+      opened.settings && opened.pane === openWant,
+      JSON.stringify({ ...opened, want: openWant }),
     );
 
     // --- item 5: clicking outside the menu closes it -------------------------
@@ -10395,7 +10406,7 @@ async function chromeTest(
     const inside = await js<{ settings: boolean; pane: string | null }>("window.__setClick('inside')");
     check(
       "item 5: a click inside the window does not",
-      reopened.settings && inside.settings && inside.pane === "tasks",
+      reopened.settings && inside.settings && inside.pane === reopened.pane,
       JSON.stringify(inside),
     );
     const tabbed = await js<{ settings: boolean; pane: string | null }>("window.__setClickTab('skills')");
@@ -11021,10 +11032,10 @@ async function chromeTest(
     const chordBtn = await js<SetBtn | null>("window.__settingsBtn()");
     check(
       "item 8: the ⌘ , chord is still discoverable without the keycap",
-      (await js<string | null>("window.__palShortcut('Tasks')")) === "⌘ ,"
+      (await js<string | null>("window.__palShortcut('Settings')")) === "⌘ ,"
         && (await js<string | null>("window.__shortcutRow('Settings')")) === "⌘ ,"
         && !!chordBtn && chordBtn.title === "Settings (⌘ ,)" && chordBtn.aria === "Settings (⌘ ,)",
-      "the ⌘K Tasks row, the ⌘/ shortcuts sheet and the button's own title AND aria-label"
+      "the ⌘K Settings row, the ⌘/ shortcuts sheet and the button's own title AND aria-label"
       + ` (title=${JSON.stringify(chordBtn && chordBtn.title)} aria=${JSON.stringify(chordBtn && chordBtn.aria)});`
       + " the fourth home is the macOS menu bar accelerator at desktop/main/menu.ts, drawn by the OS and not assertable from the renderer",
     );

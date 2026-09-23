@@ -1,6 +1,6 @@
 /* ============================================================
-   Settings "Manage" — the window frame and nav for every tab, and the
-   Tasks, Skills and Privacy tabs. Screens ST-01…11, ST-33.
+   Settings — the window frame and nav for every section, and the
+   General, Tasks, Skills, Privacy and Diagnostics panes. Screens ST-01…11, ST-33.
    Memory / MCP / Telegram / Import live in css/settings-data.css and LLM in
    css/settings-llm.css; both load after this file and draw inside the frame
    defined here. Colours come from tokens only.
@@ -8,9 +8,8 @@
    Frame contract a tab can rely on:
      #settings > .setwin > (nav.setnav > .setmenu) + .setmain
      .setmain  — the floating body card, position:relative (overlays anchor here)
-       .settb    — crumb "Manage › Tab" + close
+       .settb    — the section's title (+ Connections' pane switch) and close
        .setbody  — the scrolling pane, 24px side padding (paneBox() repaints it)
-       .setplate — Build · Agent · State data plate
      .set-pane    — a tab's root: a column with 14px gaps
      .set-toolbar > .set-tbrow — the tab's toolbar rows (filters · search · readout · actions)
      .set-overlay > .tk-modal.set-modal — a confirm over the whole body card
@@ -38,15 +37,17 @@ body.electron #settings{-webkit-app-region:no-drag}
   background:var(--well);border-radius:var(--r-comp);box-shadow:var(--sh-pop);overflow:hidden}
 
 /* ---------------- Nav ---------------- */
-.setnav{min-width:0;min-height:0;display:flex;flex-direction:column;padding:14px 10px 12px}
+/* Calm (S5): nine sections, icon and name, nothing else — no keycaps, no
+   counts, no command list. */
+.setnav{min-width:0;min-height:0;display:flex;flex-direction:column;padding:16px 10px 12px}
+.setnav-title{margin:2px 10px 12px;font:600 15px/20px var(--font-ui);letter-spacing:-.02em;color:var(--ink)}
 .setmenu{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px}
-.setmenu .setnav-title{margin:4px 10px 10px;font:700 15px/20px var(--font-ui);letter-spacing:-.02em;color:var(--ink)}
 
-.menurow{position:relative;display:flex;align-items:center;gap:9px;width:100%;min-height:34px;padding:0 8px 0 10px;flex:none;
+.menurow{position:relative;display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:0 10px;flex:none;
   border:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-2);
   font:500 13.5px/1.2 var(--font-ui);letter-spacing:-.003em;text-align:left;
-  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-.menurow > svg{flex:none;color:var(--ink-3)}
+  transition:background-color var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.menurow > svg{flex:none;width:15px;height:15px;color:var(--ink-3)}
 button.menurow{cursor:pointer}
 button.menurow:hover{background:var(--hover);color:var(--ink)}
 button.menurow:hover > svg{color:var(--ink-2)}
@@ -54,50 +55,18 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .menurow.on > svg{color:var(--blue)}
 .menurow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .menurow .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.menurow .ch{flex:none;display:inline-flex;align-items:center}
-.menurow.on .ch .kc{color:var(--blue);border-color:color-mix(in srgb, var(--blue) 30%, transparent)}
-/* The tab switcher inside a Manage row: label · count. */
-.settab{flex:1;min-width:0;align-self:stretch;display:flex;align-items:center;gap:8px}
-.setcount{flex:none;font:400 11.5px/1 var(--font-mono);color:var(--ink-2);font-variant-numeric:tabular-nums}
-.menurow.on .setcount{color:var(--blue)}
-/* Parent / sub rows: none in the tree today, kept for the next node pulled across from the TUI registry. */
-.menurow.sub{padding-left:26px}
-.menurow.parent{cursor:default}
-/* Nodes the desktop cannot do keep their label, muted, with the note under it. */
-.menurow.na{align-items:flex-start;min-height:30px;padding:6px 10px;color:var(--ink-3);cursor:default}
-.menurow.na > svg{margin-top:1px}
-.menurow .lbw{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.menurow .note{font-size:11.5px;line-height:1.35;font-weight:400;color:var(--ink-2);white-space:normal}
-
-/* Commands: every other group of the menu tree, scrolling on its own. */
-.setnav-cmds{flex:1;min-height:0;overflow-y:auto;margin:12px -6px 0;padding:0 6px 6px;
-  display:flex;flex-direction:column;gap:1px;scrollbar-width:thin}
-.setnav-h{margin:0 12px 2px;font:700 12px/16px var(--font-ui);color:var(--ink-2)}
-.setnav-cmds .menuhd{margin:10px 12px 2px;font:500 11px/14px var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none}
-.setnav-cmds .menurow{min-height:30px;font-size:13px;gap:8px}
-.setnav-cmds .menurow > svg{width:14px;height:14px}
-.setnav-foot{flex:none;display:flex;flex-direction:column;gap:2px;padding-top:8px}
-.setnav-foot .menurow.na{font-size:12.5px}
-.setnav-hint{display:flex;align-items:center;gap:6px;padding:4px 12px 0;font-size:12px;color:var(--ink-2)}
+/* The section switch inside a nav row: its label. */
+.settab{flex:1;min-width:0;align-self:stretch;display:flex;align-items:center}
 
 /* ---------------- Body card ---------------- */
 .setmain{position:relative;min-width:0;min-height:0;margin:8px 8px 8px 0;display:flex;flex-direction:column;
   background:var(--lift);border-radius:var(--r-card);box-shadow:var(--sh-card);overflow:hidden}
 .settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
 .settb .grow{flex:1}
-.settb .tk-crumb .k{font-size:12.5px;color:var(--ink-2)}
-.settb .setttl{margin:0;font:600 20px/26px var(--font-ui);letter-spacing:-.03em;color:var(--ink)}
+.settb .setttl{margin:0;font:600 18px/24px var(--font-ui);letter-spacing:-.025em;color:var(--ink)}
+/* Connections: MCP servers · Telegram beside the title. */
+.settb .set-subseg{margin-left:8px}
 .setbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 24px 22px;scrollbar-gutter:stable}
-
-/* The diagnostics data plate: sentence-case keys, mono values, one line each. */
-.setplate{flex:none;margin:0;padding:9px 20px 10px;background:transparent;box-shadow:inset 0 1px 0 var(--divider)}
-.setplate dl{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 18px;margin:0}
-.set-kv{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:100%}
-.set-kv dt{flex:none;margin:0;font:400 11.5px/1.5 var(--font-ui);color:var(--ink-2)}
-.set-kv dd{margin:0;min-width:0;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text}
-.set-kv--agent{flex:1 1 220px}
-.set-kv--wide{flex:1 1 100%}
 
 /* ---------------- Utilities ---------------- */
 .set-cap{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
@@ -261,6 +230,19 @@ button.set-search:hover{border-color:var(--bd)}
 .set-setlist{padding:6px}
 .set-setlist .tk-setrow{padding:10px 16px}
 .set-setlist .tk-help{margin-top:6px}
+/* General and Diagnostics (Calm S5). */
+.set-path{font-size:12px;color:var(--ink-2);user-select:text}
+.set-link{display:inline;padding:0;border:0;background:none;font:inherit;color:var(--blue);cursor:pointer}
+.set-link:hover{text-decoration:underline}
+.set-diaglist .tk-setrow{min-height:40px;gap:24px}
+.set-diagrow .t{flex:none;width:150px;font-weight:500;font-size:13px}
+.set-diagv{flex:1;min-width:0;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text;text-align:right}
+.set-diagacts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.set-diagacts .set-cap{flex:1 1 220px}
+.set-diagline{display:flex;flex-direction:column;gap:6px}
+.set-diagline .tk-sh{padding:0;min-height:20px;color:var(--ink-2);font-weight:500}
+.set-diagcode{padding:10px 12px;border-radius:var(--r-block);background:var(--well);font-size:11.5px;line-height:1.55;color:var(--ink-2);
+  overflow-wrap:anywhere;user-select:text}
 .set-privgrid{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px}
 .set-privcol{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:var(--r-card);background:var(--well)}
 .set-privcol .tk-sh{padding:0;min-height:20px;color:var(--ink)}

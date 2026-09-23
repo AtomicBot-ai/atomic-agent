@@ -368,7 +368,7 @@ try {
     await app.clickText('Settings', { tags: 'button', settleMs: 1500 });
   }
   await app.waitFor(`!!document.querySelector('#settings .setmenu')`, { timeoutMs: 20000, label: 'the settings window opens' });
-  await app.clickText('LLM', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
+  await app.clickText('Models', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
   await app.waitFor(`!!document.querySelector('[data-act="llm:mode:cloud"]')`, { timeoutMs: 20000, label: 'the LLM pane opens' });
   await app.clickSel('[data-act="llm:mode:cloud"]', { settleMs: 2500 });
   /* A provider row as the Cloud pane draws it: the id, its key chip, and
@@ -433,7 +433,7 @@ try {
   step(16, 'a provider refusal is reported in the provider\'s own words');
   if (!(await app.js(`!!document.querySelector('#settings')`))) {
     await app.clickText('Settings', { tags: 'button', settleMs: 1500 });
-    await app.clickText('LLM', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
+    await app.clickText('Models', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
     await app.clickSel('[data-act="llm:mode:cloud"]', { settleMs: 2500 });
   }
   await pickCloudModel(REFUSING_MODEL);

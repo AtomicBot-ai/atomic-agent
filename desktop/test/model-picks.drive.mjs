@@ -219,7 +219,7 @@ try {
     for (let attempt = 1; attempt <= 4 && !/^local$/i.test(pane.trim()); attempt += 1) {
       if (!(await app.eval('!!document.querySelector("#settings")'))) {
         await app.clickSel('.sb-settings');
-        await app.clickText('LLM', { scope: '#settings' });
+        await app.clickText('Models', { scope: '#settings' });
         await sleep(2000);
         /* The pane the tab opens on follows the chat route, and the route is
            only known once the tab's first refresh lands (llmTabEntered arms

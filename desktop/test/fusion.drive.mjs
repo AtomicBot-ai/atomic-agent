@@ -116,7 +116,7 @@ try {
 
   /* A — one provider with a key, nothing on disk: Fusion says why not. */
   await app.clickSel('#composer .cfoot [data-sel-open="backend"]');
-  const blocked = 'needs a second provider for the workers — Manage › LLM';
+  const blocked = 'needs a second provider for the workers — Settings › Models';
   await until(async () => (await fusionRowCap()) === blocked, 'the fusion row with its pre-flight line', 30000);
   const rowsA = await popRows();
   check('A: Where it runs lists cloud · local · custom · fusion, fusion carrying the pre-flight line',
@@ -196,11 +196,11 @@ try {
   await landed((c) => c.runMode.fusion.workers === 3, 'three workers written');
   const toastF = await until(() => app.eval(`(() => { const t = window.__lastToast(); return t && /^fusion: 3 workers/.test(t.t) ? t.t : null; })()`), 'the workers notice', 20000);
   check('F: /runmode workers 3 writes the count and the llama-server slots together, with the TUI notice',
-    cfg().parallel === 3 && toastF === 'fusion: 3 workers — restart the local model (Manage › LLM › Local) so it runs 3 at once', toastF);
+    cfg().parallel === 3 && toastF === 'fusion: 3 workers — restart the local model (Settings › Models › Local) so it runs 3 at once', toastF);
 
   /* G — Settings › LLM: the same state, the same write path. */
   await app.clickSel('.sb-settings');
-  await app.clickText('LLM', { scope: '#settings' });
+  await app.clickText('Models', { scope: '#settings' });
   await until(() => app.eval(`!!document.querySelector('#settings .llm-rm.on')`), 'the Run mode cards', 20000);
   const card = await app.eval(`({on: document.querySelector('#settings .llm-rm.on').dataset.act,
     workers: (document.querySelector('#settings .llm-workerseg .on') || {}).textContent,

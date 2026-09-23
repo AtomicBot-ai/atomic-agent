@@ -105,9 +105,9 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
 
   /* ---- the pre-flight's one line ---- */
   const cases: Array<[FusionFacts, string | null]> = [
-    [{ readyIds: ["aimlapi"], localLoaded: true, localDownloaded: false }, "needs a second provider for the workers — Manage › LLM"],
-    [{ readyIds: [], localLoaded: true, localDownloaded: true }, "needs a second provider to orchestrate — Manage › LLM › Cloud"],
-    [{ readyIds: [], localLoaded: true, localDownloaded: false }, "needs two providers, one per leg — Manage › LLM"],
+    [{ readyIds: ["aimlapi"], localLoaded: true, localDownloaded: false }, "needs a second provider for the workers — Settings › Models"],
+    [{ readyIds: [], localLoaded: true, localDownloaded: true }, "needs a second provider to orchestrate — Settings › Models › Cloud"],
+    [{ readyIds: [], localLoaded: true, localDownloaded: false }, "needs two providers, one per leg — Settings › Models"],
     [{ readyIds: ["aimlapi"], localLoaded: true, localDownloaded: true }, null],
     [{ readyIds: ["aimlapi", "openrouter"], localLoaded: true, localDownloaded: false }, null],
     [{ readyIds: ["aimlapi"], localLoaded: false, localDownloaded: false }, null],
@@ -174,7 +174,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   check("fusion: workers write fusion.workers and managed.parallel together, with the TUI's notice",
     vw.write && w.llm?.runMode?.fusion?.workers === 4 && w.localModels?.managed?.parallel === 4
       && w.llm?.runMode?.mode === "fusion" && w.llm?.activeTextProvider === "aimlapi"
-      && vw.notice === "fusion: 4 workers — restart the local model (Manage › LLM › Local) so it runs 4 at once"
+      && vw.notice === "fusion: 4 workers — restart the local model (Settings › Models › Local) so it runs 4 at once"
       && vw1.notice === "fusion: 1 worker" && !vw9.write && vw9.refusal === "workers must be an integer 1-8, got 9",
     `${vw.notice} · ${vw1.notice} · ${vw9.refusal}`);
 
@@ -187,7 +187,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
   const rowBlocked = pBlocked.rows.backend.find((r) => r.id === "fusion");
   check("fusion: the backend popover lists fusion last, carrying the pre-flight's line",
     same(pBlocked.rows.backend.map((r) => r.id), ["cloud", "local", "custom", "fusion"])
-      && rowBlocked?.detail === "needs a second provider for the workers — Manage › LLM" && !rowBlocked.active
+      && rowBlocked?.detail === "needs a second provider for the workers — Settings › Models" && !rowBlocked.active
       && pBlocked.backend === "cloud" && pBlocked.kinds.length === 3 && !pBlocked.swap && chip(pBlocked, "workers") === null,
     JSON.stringify(rowBlocked));
   const pReady = await probe(cfgs.cloud, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });
