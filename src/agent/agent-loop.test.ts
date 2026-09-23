@@ -1219,6 +1219,108 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(waits).toHaveLength(1);
   });
 
+  it("does not wait out our own request deadline (issue #490)", async () => {
+    // A first-token timeout is `status === null` — there is no HTTP
+    // response to carry a status — so it used to classify as an outage
+    // and get parked and replayed. With the shipped 30-minute
+    // `firstTokenTimeoutMs`, a server that queues the request forever
+    // then burns a 45-minute fusion worker on two silent attempts and
+    // reports `max_steps` with `stepCount: 0`. Our clock running out is
+    // not evidence about the provider: surface it on the first attempt.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    let failure = "";
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        throw new LlamaServerError(
+          "llama-server sent no first token within 1800000ms — it may still be " +
+            "evaluating the prompt or queued behind other requests; raise " +
+            "ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS (localModels.firstTokenTimeoutMs)",
+          null,
+          "http://127.0.0.1:8080/completion",
+          true,
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+        if (event.type === "loop_failed") failure = event.error.message;
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-first-token-deadline", workingDir }),
+      {
+        userMessage: "build the thing",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
+    expect(calls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // And the operator reads which deadline expired and which knob
+    // raises it, not a generic transport failure.
+    expect(failure).toContain("no first token within 1800000ms");
+    expect(failure).toContain("localModels.firstTokenTimeoutMs");
+  });
+
+  it("still waits out a transport failure that never had a status (issue #490)", async () => {
+    // The narrowing above is on `timedOut`, not on `status === null`.
+    // A refused connection while llama-server restarts wears the same
+    // statusless shape and is exactly what the park exists for.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new LlamaServerError(
+            "fetch failed",
+            null,
+            "http://127.0.0.1:8080/completion",
+            false,
+            "ECONNREFUSED",
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-econnrefused", workingDir }),
+      {
+        userMessage: "server restarting",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
   it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
     // The Codex attempt: a 429 carrying `credit_balance_exhausted` was
     // parked and retried as rate limiting, 42 times per worker.

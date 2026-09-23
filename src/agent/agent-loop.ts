@@ -33,6 +33,7 @@ import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
+  LlamaServerError,
   LlmFailure,
   TransportError,
   classifyFailure,
@@ -482,8 +483,16 @@ export interface SteeringChannel {
  * So the wait is for the failures that plausibly recover on their own —
  * no HTTP response at all (DNS, refused connection, TLS, socket reset),
  * a server error, or the server saying "busy, later" (408 / 429).
+ *
+ * The one thing `status === null` must NOT sweep up is our own deadline
+ * expiring — see {@link isOwnLlamaDeadlineExpiry}.
  */
 function isWaitableOutage(err: unknown): boolean {
+  // Our own clock ran out. Never evidence about the provider, so it is
+  // decided before the status split rather than inside it: the shape
+  // arrives as `status === null`, which is otherwise the strongest
+  // "no answer at all, wait for it" signal there is.
+  if (isOwnLlamaDeadlineExpiry(err)) return false;
   if (!(err instanceof TransportError)) {
     // An untyped socket failure that reached the classifier through
     // `isNetworkError` — no status to inspect, and by construction it is
@@ -492,6 +501,68 @@ function isWaitableOutage(err: unknown): boolean {
   }
   if (err.status === null) return true;
   return err.status >= 500 || err.status === 408 || err.status === 429;
+}
+
+/**
+ * Did one of OUR OWN request deadlines fire, rather than the link
+ * failing?
+ *
+ * `LlamaServerClient` already treats this as terminal —
+ * `isRetryableLlamaError` refuses to replay a `timedOut` error because
+ * "the model is slower than the budget" does not improve on a second
+ * attempt. The agent loop was undoing that decision one layer up: every
+ * expiry is built with `status === null` (there is no HTTP response to
+ * carry a status), so it classified `transport`, satisfied
+ * `isWaitableOutage`, and the loop parked and replayed the same step.
+ *
+ * What that costs, with the shipped defaults — `firstTokenTimeoutMs` is
+ * 30 minutes (`ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS`) — on a server that
+ * accepts a request and then queues it forever:
+ *
+ *   t=0      request 1 sent, queues inside llama.cpp, no log line
+ *   t=30min  first-token deadline fires → transport → "waitable" → 2 s park
+ *   t=30min  request 2 sent, queues, no log line
+ *   t=45min  the fusion worker's wall clock aborts the turn
+ *            → `max_steps`, `stepCount: 0`, 45.0 minutes, zero tool calls
+ *
+ * The whole 45-minute budget is spent on two silent attempts, and the
+ * operator is handed "ran out of steps" instead of the message the
+ * client had already written, which names the deadline and the knob
+ * that raises it (issue #490 reports exactly this pair of runs).
+ *
+ * The timeout KIND is deliberately not inspected. Every one of them is
+ * our clock, and for three of the five the server is provably alive at
+ * the moment we give up, which is the opposite of an outage:
+ * `first-token-stall` fires only because `/slots` kept answering,
+ * `stream-total` only because data kept arriving for six hours, and
+ * `idle` only after the server had already started the reply. The
+ * remaining two — `first-token` and `total` — say nothing about the
+ * link either way, and replaying them costs another full budget. So
+ * `timedOut` alone is the right granularity.
+ *
+ * Deliberately still waitable, because none of these is our clock:
+ *  - `LlamaServerError(timedOut: false)` with an errno — `ECONNREFUSED`
+ *    while llama-server restarts, `ECONNRESET`, and the socket-level
+ *    `ETIMEDOUT`, which is the kernel's deadline, not ours;
+ *  - a bare `TypeError: fetch failed` wrapped as `TransportError(null)`
+ *    by `toLlmFailure`, i.e. DNS or TLS failing while a cloud provider
+ *    is down;
+ *  - `OpenAiHttpError.timedOut`, whose budget is `REQUEST_TIMEOUT_MS`
+ *    (300 s, two orders of magnitude cheaper to replay) and which has
+ *    no field report behind it.
+ *
+ * The expiry travels wrapped: `toLlmFailure` rebuilds it as a
+ * `TransportError` carrying the original on `cause`, and a fallback
+ * chain may wrap it again, so walk the chain rather than testing the
+ * outermost error alone.
+ */
+function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError && current.timedOut) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** First backoff after the provider stops answering. */
@@ -2323,6 +2394,12 @@ export class AgentLoop {
         // 120 s", OpenRouter's `in_flight_budget_exhausted` — a 402 the
         // outage predicate would otherwise refuse) is waited for as
         // long as it asked, within the same budget.
+        //
+        // The precondition is "the provider is not answering", not
+        // "this step failed": one of our own deadlines expiring is not
+        // an observation about the provider at all, and replaying it
+        // buys a second helping of the same silence — see
+        // `isOwnLlamaDeadlineExpiry`.
         const retryHint =
           verdict?.kind === "retry_after" ? verdict : null;
         if (
