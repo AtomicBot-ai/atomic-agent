@@ -282,7 +282,6 @@ svg{display:block;flex:none}
   font:600 13.5px/1 var(--font-ui);letter-spacing:-.003em;white-space:nowrap;cursor:pointer;flex:none;position:relative;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .btn:hover,.b:hover{background:var(--press)}
-.btn:active:not([disabled]),.b:active:not([disabled]){transform:scale(.96)}
 .btn.sm,.b.sm{height:30px;padding:0 12px;font-size:12.5px}
 .btn.xs{height:26px;padding:0 10px;font-size:12px}
 .btn.lg{height:44px;padding:0 22px;font-size:14.5px}

@@ -4156,18 +4156,59 @@ async function privacySet(enabled) {
    item 4 is that nothing may claim something it did not do, and a success glyph
    on a failure is that same lie in a different place — so a toast now carries a
    kind, and `bad` draws the warn glyph in --danger. */
+/* Calm (S7): toasts are keyed, not rebuilt. render() calls this on every
+   repaint, and an innerHTML rebuild would replay an entrance each time (and
+   eat a press on the ×). A new toast slides in from the right edge it sits
+   on and fades up (220 ms, ease-out); a dismissed or expired one leaves by
+   the same edge, faster (150 ms). Reduced motion: opacity only. */
+const TOAST_IN_MS = 220, TOAST_OUT_MS = 150;
+function toastHTML(t) {
+  const bad = t.kind === 'bad';
+  // No whitespace between the text spans: drivers read the toast's textContent.
+  return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
+    + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
+    + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
+    // r2: every toast can be dismissed before its 6 s are up. Icon only, so
+    // the toast's textContent (what the drivers read) is unchanged.
+    + '<button class="iconbtn sm toast-x" data-act="toastx:' + t.id + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button>';
+}
 function renderToasts() {
-  $('#toasts').innerHTML = S.toasts.map((t) => {
-    const bad = t.kind === 'bad';
-    // No whitespace between the text spans: drivers read the toast's textContent.
-    return '<div class="toast' + (bad ? ' bad' : '') + '">'
-      + '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : 'tk-ico--green') + '">' + ic(bad ? 'alert' : 'check') + '</span>'
-      + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
-      + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
-      // r2: every toast can be dismissed before its 6 s are up. Icon only, so
-      // the toast's textContent (what the drivers read) is unchanged.
-      + '<button class="iconbtn sm toast-x" data-act="toastx:' + t.id + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
-  }).join('');
+  const box = $('#toasts');
+  if (!box) return;
+  const want = new Set(S.toasts.map((t) => String(t.id)));
+  const reduce = reducedMotion();
+  const animate = typeof Element !== 'undefined' && !!Element.prototype.animate;
+  const have = new Map();
+  [...box.children].forEach((n) => {
+    const id = n.dataset.toast;
+    if (n.classList.contains('out')) return;
+    if (!want.has(id)) {
+      n.classList.add('out');
+      n.style.pointerEvents = 'none';
+      if (!animate) { n.remove(); return; }
+      const a = n.animate(reduce ? [{opacity: 1}, {opacity: 0}]
+        : [{opacity: 1, transform: 'translateX(0)'}, {opacity: 0, transform: 'translateX(24px)'}],
+        {duration: TOAST_OUT_MS, easing: OVM.EASE_OUT, fill: 'forwards'});
+      const gone = () => { if (n.parentNode) n.remove(); };
+      a.onfinish = gone; setTimeout(gone, TOAST_OUT_MS + 200);
+      return;
+    }
+    have.set(id, n);
+  });
+  S.toasts.forEach((t) => {
+    const id = String(t.id);
+    if (have.has(id)) return;
+    const n = document.createElement('div');
+    n.className = 'toast' + (t.kind === 'bad' ? ' bad' : '');
+    n.dataset.toast = id;
+    n.innerHTML = toastHTML(t);
+    // Newest last, before any toast that is on its way out.
+    const firstOut = [...box.children].find((c) => c.classList.contains('out'));
+    box.insertBefore(n, firstOut || null);
+    if (animate) n.animate(reduce ? [{opacity: 0}, {opacity: 1}]
+      : [{opacity: 0, transform: 'translateX(24px)'}, {opacity: 1, transform: 'translateX(0)'}],
+      {duration: TOAST_IN_MS, easing: OVM.EASE_OUT});
+  });
 }
 function toast(t, s, kind) {
   const id = ++S.toastId;

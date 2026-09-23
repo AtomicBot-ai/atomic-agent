@@ -65,7 +65,6 @@
 .searchbtn .sec{color:inherit}
 .searchbtn:hover{color:var(--ink)}
 .searchbtn:hover svg{color:var(--ink-2)}
-.searchbtn:active{transform:scale(.97)}
 
 #main{flex:1;min-height:0;min-width:0;display:flex}
 
@@ -102,7 +101,6 @@
   transition:background var(--t-state) var(--ease);
 }
 .sb-new:hover{background:var(--hover)}
-.sb-new:active{transform:scale(.97)}
 .sb-new:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .sb-new-ic{display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--ink-2)}
 .sb-new-ic svg{width:15px;height:15px}

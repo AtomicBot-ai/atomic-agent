@@ -194,7 +194,6 @@
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .sendbtn svg{width:16px;height:16px;stroke-width:2.2}
 .sendbtn:hover{background:color-mix(in srgb, var(--ink) 84%, var(--paper))}
-.sendbtn:active:not([disabled]):not(.mute){transform:scale(.94)}
 .sendbtn.mute,.sendbtn.mute:hover{background:var(--panel-2);color:var(--ink-3);cursor:default}
 .sendbtn.stop svg{width:12px;height:12px}
 .sendbtn.steer{background:var(--brand);color:var(--on-strong)}
@@ -215,7 +214,6 @@
   font:500 12.5px/1 var(--font-ui);white-space:nowrap;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .cfoot .cchip:hover,.cfoot .cchip.is-open{background:color-mix(in srgb, var(--ink) 7%, transparent)}
-.cfoot .cchip:active{transform:scale(.97)}
 .cfoot .cchip > svg{width:14px;height:14px;color:var(--ink-2)}
 .cfoot .cchip > svg.chev{width:12px;height:12px;opacity:.6}
 .cfoot .cchip > .logo,.cfoot .cchip > .tk-ico{width:20px;height:20px;margin-left:-4px}

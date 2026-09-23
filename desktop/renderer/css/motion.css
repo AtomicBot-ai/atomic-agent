@@ -1,0 +1,47 @@
+/* ============================================================
+   Motion — Calm (S7). Loaded last. One place for press feedback, per the
+   Emil rules in SPEC.md "References":
+   - a pressable answers a press: :active scales it to 0.97 (compact
+     controls) or 0.985 (full-width rows, where 3% of 600px would lurch),
+     160 ms, a strong ease-out (--ease-out);
+   - transitions name their properties, never `all`; no ease-in anywhere;
+   - reduced motion: no press scale (colour feedback stays).
+   The region sheets keep their own colour transitions; this rule restates
+   them together with `transform`, because a transition list is replaced,
+   not merged. The :is() list carries an id selector so its specificity
+   beats every region rule it restates (it is the last sheet, so equal
+   specificity would win too — the id makes the intent explicit).
+   Keyboard-driven surfaces (the palette's list navigation) repaint without
+   transitions; a :active scale only happens under a pointer.
+   ============================================================ */
+:root{--t-press:160ms;--ease-out:cubic-bezier(0.23, 1, 0.32, 1)}
+
+:is(#motion-root, .btn, .b, .iconbtn, .cchip, .sendbtn, .micbtn, .searchbtn, .sb-new, .ghostchip, .msgact,
+    button.tk-chip, .seg button, .tk-seg button, .wschip, .filechip, .vschip, .loadmore, .llm-rm, .llmmode,
+    .set-rowbtn, .ob-offer, .prow, .sesrow,
+    #onboarding .ob-row, .selpop .modelrow, .selpop .prows [data-wizmodel], .poprow, .palrow, .cardhead,
+    .slashrow, button.menurow, button.tk-li, .tuirow){
+  transition-property:background-color, color, border-color, box-shadow, opacity, transform;
+  transition-duration:var(--t-state), var(--t-state), var(--t-state), var(--t-state), var(--t-state), var(--t-press);
+  transition-timing-function:var(--ease), var(--ease), var(--ease), var(--ease), var(--ease), var(--ease-out);
+}
+/* The palette is walked from the keyboard: its rows change colour at once. */
+:is(#motion-root, .palrow){transition:transform var(--t-press) var(--ease-out)}
+
+/* Compact controls. */
+:is(#motion-root, .btn, .b, .iconbtn, .cchip, .searchbtn, .sb-new, .ghostchip, .msgact, button.tk-chip,
+    .seg button, .tk-seg button, .wschip, .filechip, .vschip, .loadmore, .llm-rm, .llmmode, .set-rowbtn,
+    .micbtn):active:not([disabled]):not([aria-disabled="true"]):not(.is-disabled){transform:scale(0.97)}
+/* The send button keeps its deeper press — it is the one primary verb. */
+:is(#motion-root, .sendbtn):active:not([disabled]):not(.mute){transform:scale(0.95)}
+/* Rows and cards that span a list: the same press, scaled to their width. */
+:is(#motion-root, .ob-offer, .prow, .sesrow, #onboarding .ob-row, .selpop .modelrow, .selpop .prows [data-wizmodel],
+    .poprow, .palrow, .cardhead, .slashrow, button.menurow, button.tk-li, .tuirow):active:not([disabled]){transform:scale(0.985)}
+
+@media (prefers-reduced-motion: reduce){
+  :is(#motion-root, .btn, .b, .iconbtn, .cchip, .sendbtn, .micbtn, .searchbtn, .sb-new, .ghostchip, .msgact,
+      button.tk-chip, .seg button, .tk-seg button, .wschip, .filechip, .vschip, .loadmore, .llm-rm, .llmmode,
+      .set-rowbtn, .ob-offer, .prow, .sesrow,
+      #onboarding .ob-row, .selpop .modelrow, .selpop .prows [data-wizmodel], .poprow, .palrow, .cardhead,
+      .slashrow, button.menurow, button.tk-li, .tuirow):active{transform:none}
+}

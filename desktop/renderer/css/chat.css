@@ -58,7 +58,6 @@
   background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:13px;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .ghostchip:hover{background:var(--hover);color:var(--ink)}
-.ghostchip:active{transform:scale(.97)}
 
 /* ---------------- user bubble ----------------
    "Messages from user should be sticky to the right side of the dialogue
@@ -203,7 +202,6 @@
 .appr.danger .appr-yes{background:var(--critical);color:var(--on-fill)}
 .appr.danger .appr-yes:hover{background:color-mix(in srgb, var(--critical) 88%, var(--black));color:var(--on-fill)}
 .appr .apprabort{margin-left:auto;color:var(--ink-2)}
-.appr .apprbtns .btn:active{transform:scale(.97)}
 /* Deny takes the focus on arrival (afterChat → #denybtn.focus()); the ring is
    drawn for any focus, because that programmatic focus is the cue that y/n/Esc
    are live and a mouse-driven :focus-visible heuristic would hide it. */
@@ -280,7 +278,6 @@
 /* Calm (S3): no permanently shown row — the last message reveals its
    actions like every other (F11's labelled row is gone; the names are the
    buttons' tooltips). */
-.msgact:active{transform:scale(.97)}
 
 /* ---------------- Saved to strip (item 5) ---------------- */
 .attach{margin-top:10px;display:flex;flex-direction:column;gap:3px;min-width:0}
@@ -327,7 +324,6 @@
 .sysrow .sys-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:-3px}
 .sysrow .sys-acts .btn{height:26px}
 .sysrow .sys-acts .btn svg{width:12px;height:12px}
-.sysrow .sys-acts .btn:active{transform:scale(.97)}
 .sysrow code{font:400 12px var(--font-mono);color:var(--ink)}
 /* Fusion's first-switch intro (fusion-intro.ts): the tree mark, then paragraphs. */
 .sysrow.sys-block{grid-template-columns:0 minmax(0,1fr);column-gap:0}
