@@ -119,18 +119,59 @@
 
 /* ---- The composer card --------------------------------------------------
    Translucent lift over a blur — the only glass in the app — with the
-   indigo-tinted composer shadow. Typing in it adds a quiet brand hairline. */
+   indigo-tinted composer shadow. Typing in it adds a quiet brand hairline.
+   The blur makes the card a stacking context, which is what lets the
+   loader below sit under the text and still over the card's own fill. */
 .composer{position:relative;display:flex;flex-direction:column;gap:6px;min-width:0;
   padding:10px 10px 8px 16px;border-radius:var(--r-comp);cursor:text;
   background:color-mix(in srgb, var(--lift) 86%, transparent);
   -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
   box-shadow:var(--sh-comp);transition:box-shadow var(--t-state) var(--ease)}
 .composer:has(#entry:focus),.composer.focus{box-shadow:var(--sh-comp),0 0 0 1px color-mix(in srgb, var(--brand) 38%, transparent)}
-/* Running: a soft brand glint travelling along the top edge, not a bar. */
-.composer.running::after{content:"";position:absolute;top:0;left:28px;right:28px;height:2px;border-radius:2px;pointer-events:none;
-  background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand) 60%, transparent), transparent) no-repeat;
-  background-size:36% 100%;animation:cmp-glint 2.2s var(--ease) infinite}
-@keyframes cmp-glint{from{background-position:-60% 0}to{background-position:160% 0}}
+/* While the band runs it is the card's edge; a second ring beside it is noise. */
+.composer.cl-on:has(#entry:focus),.composer.cl-on.focus{box-shadow:var(--sh-comp)}
+
+/* ---- The composer loader (Calm S2) ----------------------------------------
+   While the agent works, a band of light travels the card's rim at one
+   speed: a crisp leading edge in brand blue, a tail that cools through
+   indigo to nothing, and a soft bloom that spills a little way inward.
+   Starting and stopping fade the whole effect over 300 ms, so the card
+   lights up rather than switching. Motion is CSS only: each layer rides
+   `offset-path: border-box` (the card's own rounded outline) at a linear
+   offset-distance, which keeps the speed constant along long and short
+   sides alike. render() rebuilds the card on every event, so the renderer
+   pins each new node's animations to the turn's start (syncLoader) — the
+   band never jumps back.
+   Everything sits under the text (z-index:-1 inside the card's stacking
+   context), takes no layout, ignores the pointer, and is only in the DOM
+   while a turn runs or fades out. Reduced motion: a still, soft glow. */
+.composer{--cl-edge:color-mix(in oklab, var(--brand) 78%, var(--ink));
+  --cl-mid:var(--brand);--cl-tail:color-mix(in srgb, var(--indigo) 85%, transparent);
+  --cl-bloom:color-mix(in srgb, var(--brand) 24%, transparent);--cl-lap:4.2s}
+.cloader{position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;
+  animation:cl-in 300ms var(--ease) both}
+.composer.cl-out .cloader{animation:cl-out 300ms var(--ease) both}
+@keyframes cl-in{from{opacity:0}to{opacity:1}}
+@keyframes cl-out{from{opacity:1}to{opacity:0}}
+/* The rim: a 2px ring cut out of the card's edge. */
+.cl-rim{position:absolute;inset:0;border-radius:inherit;padding:2px;
+  -webkit-mask:linear-gradient(var(--ink) 0 0) content-box,linear-gradient(var(--ink) 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude}
+/* The inward bloom: clipped to the card, so only its inner half shows. */
+.cl-glow{position:absolute;inset:0;border-radius:inherit;overflow:hidden}
+.cl-rim::before,.cl-glow::before{content:"";position:absolute;top:0;left:0;
+  offset-path:border-box;offset-rotate:auto;animation:cl-lap var(--cl-lap) linear infinite}
+/* The band, oriented along the path: its right end is the leading edge. */
+.cl-rim::before{width:240px;height:24px;offset-anchor:100% 50%;
+  background:linear-gradient(90deg, transparent 0%, var(--cl-tail) 46%, var(--cl-mid) 88%, var(--cl-edge) 99%, transparent 99.6%)}
+.cl-glow::before{width:260px;height:64px;offset-anchor:92% 50%;
+  background:radial-gradient(closest-side, var(--cl-bloom), transparent)}
+@keyframes cl-lap{from{offset-distance:0%}to{offset-distance:100%}}
+@media (prefers-reduced-motion: reduce){
+  .cl-rim::before,.cl-glow::before{content:none;animation:none}
+  .cl-rim{background:linear-gradient(90deg, var(--cl-tail), color-mix(in srgb, var(--brand) 55%, transparent), var(--cl-tail))}
+  .cl-glow{box-shadow:inset 0 0 22px var(--cl-bloom)}
+}
 
 .composer .field{display:flex;align-items:flex-end;gap:4px;min-width:0}
 #entry{flex:1;min-width:0;height:36px;max-height:180px;padding:6px 8px 6px 0;border:0;outline:none;

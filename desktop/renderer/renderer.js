@@ -130,6 +130,15 @@ function openFilePath(p) {
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
   window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0,
   previewSupported:null, seq:0, chipTimer:null, draftTimer:null };
+/* Calm (S2) — the composer loader. While the agent works, a band of light
+   travels the composer's rim. Its motion is CSS (composer.css); this only
+   remembers WHEN it started and stopped, because render() rebuilds
+   #composer on every event and a CSS animation on a new node starts from
+   zero. syncLoader() pins each new node's animations to these start times,
+   so the band keeps moving at one speed across re-renders. `off` opens the
+   fade-out window after the turn ends. */
+const LOADER = { on:false, t0:0, off:-1e9, timer:null };
+const LOADER_FADE_MS = 300;
 /* All four modes are live over GET/POST /api/coding-mode, plan included:
    the route moves the runtime's approval ladder AND its plan flag, the
    same pair the TUI's onCodingModeChanged moves, and writes nothing to
@@ -2186,7 +2195,8 @@ function composer() {
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
     + (S.slash ? slashPopover() : '')
-    + '<div class="composer' + (running ? ' running' : '') + '" id="composer">'
+    + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
+      + loaderHTML()
       // Item 1 (plan hand-off): src/tui/tui-app.tsx:2011 verbatim while the
       // offer stands. It is the user's third clause — "texting in the input
       // field would reconfigure the plan" — said where they are about to type.
@@ -2231,6 +2241,45 @@ function composer() {
         + codingModeChip()
       + '</div>'
     + '</div></div>';
+}
+
+/* Calm (S2) — the composer loader's state, read by composer(). It is on
+   while the agent is working (S.busy); it is off while a question waits for
+   the person (S.pending), because then nothing is working. Starting and
+   stopping are noted here, where the composer is drawn. */
+function loaderWorking() { return !!S.busy && !S.pending; }
+function loaderTick() {
+  const now = performance.now();
+  const want = loaderWorking();
+  if (want && !LOADER.on) { LOADER.on = true; LOADER.t0 = now; clearTimeout(LOADER.timer); }
+  else if (!want && LOADER.on) {
+    LOADER.on = false; LOADER.off = now;
+    clearTimeout(LOADER.timer);
+    // The fade-out ends on its own; the class goes without a render().
+    LOADER.timer = setTimeout(() => {
+      const c = document.getElementById('composer');
+      if (c && !LOADER.on) { c.classList.remove('cl-out'); const l = c.querySelector('.cloader'); if (l) l.remove(); }
+    }, LOADER_FADE_MS + 40);
+  }
+  return now;
+}
+function loaderClass() {
+  const now = loaderTick();
+  return LOADER.on ? ' cl-on' : now - LOADER.off < LOADER_FADE_MS ? ' cl-out' : '';
+}
+/** The rim and its inward bloom — drawn only while the band is lit. */
+function loaderHTML() {
+  if (!LOADER.on && performance.now() - LOADER.off >= LOADER_FADE_MS) return '';
+  return '<span class="cloader" aria-hidden="true"><span class="cl-glow"></span><span class="cl-rim"></span></span>';
+}
+/** After a render: continue the band where it was, and the fade where it was. */
+function syncLoader() {
+  const l = document.querySelector('#composer .cloader');
+  if (!l || !l.getAnimations) return;
+  for (const a of l.getAnimations({subtree:true})) {
+    const name = a.animationName || '';
+    try { a.startTime = name === 'cl-out' ? LOADER.off : LOADER.t0; } catch (e) { /* not a CSS animation of ours */ }
+  }
 }
 
 /** ' is-open' while the popover a composer chip opens is up (presentation only). */
@@ -2479,6 +2528,7 @@ function voiceMenuHTML() {
 function afterChat(keep, hadFocus, caret) {
   const e = $('#entry');
   if (!e) return;
+  syncLoader();
   e.value = S.draft;
   autosize(e);
   /* r5 item 6: "clicking new chat puts keyboard focus straight in the prompt
