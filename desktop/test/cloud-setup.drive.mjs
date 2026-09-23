@@ -96,19 +96,19 @@ const wizard = () => app.js(`(() => {
 })()`);
 
 /**
- * Activate a list row the way the flow asks a hand to: MouseListRow is
- * two-stage — the first click moves the cursor onto the row, the second
- * sends the same Enter the keyboard sends. Clicking once and calling the
- * row dead would be as wrong as calling the handler directly.
+ * Activate a list row the way the flow asks a hand to. Calm (S6): a click
+ * selects the row (it wears a tick) and the step's primary button —
+ * Continue, "Download 3.4 GB", "Use …" — sends the same Enter the keyboard
+ * sends. Two separate single clicks a second apart are NOT a double click
+ * (Chrome would not coalesce them), so the second input is the button.
  */
 const ROW_TAGS = '[data-obrow],[data-obwiz],.modelrow';
 async function pickRow(text, opts = {}) {
   const o = { tags: ROW_TAGS, settleMs: 900, ...opts };
-  await app.clickText(text, o);
-  // The row under the cursor activates on the FIRST click, so the second
-  // one only happens while the row is still on screen — otherwise it would
-  // land on whatever the flow moved to.
-  return app.clickText(text, { ...o, optional: true, settleMs: (opts.settleMs || 1500) });
+  await app.clickText(text, { ...o, settleMs: 600 });
+  // The first visible primary button of the step: the wizard's action bar
+  // (`.ob-foot .btn-p`), inside the first-run layer or the composer popover.
+  return app.clickSel('.ob-foot .btn-p', { settleMs: o.settleMs });
 }
 
 /**
@@ -119,10 +119,15 @@ async function pickRow(text, opts = {}) {
  */
 async function finishOnboarding({ timeoutMs = 90000 } = {}) {
   const deadline = Date.now() + timeoutMs;
-  const exits = ['Start using the agent now', 'Skip — take me to the agent', 'Skip adding data from other agents'];
+  const exits = ['Start using the agent now', 'Skip — take me to the agent'];
   while (Date.now() < deadline) {
     if (!(await app.js(`!!document.querySelector('#onboarding')`))) return;
     let moved = false;
+    // The import step's skip is an action-bar button, not a row (B.5).
+    if (await app.js(`!!document.querySelector('#onboarding [data-obact="import:skip"]')`)) {
+      await app.clickSel('#onboarding [data-obact="import:skip"]', { settleMs: 2000 });
+      continue;
+    }
     for (const label of exits) {
       if (await app.js(`[...document.querySelectorAll('#onboarding [data-obrow]')].some((n) => (n.textContent||'').includes(${JSON.stringify(label)}))`)) {
         await pickRow(label, { settleMs: 2000 });
@@ -258,7 +263,8 @@ try {
   step(3, 'choose "Local models" — the choice the complaint starts from');
   await pickRow('Local models', { settleMs: 2500 });
   w = await wizard();
-  check('the local model list is up', /Recommended models/.test(w.head || ''), JSON.stringify(w.head));
+  // Calm (S6): the "Recommended models" caption is gone; the step itself is the proof.
+  check('the local model list is up', await app.js(`window.__ob && window.__ob().step === 'local_pick'`), JSON.stringify(w.head));
 
   step(4, 'the local list must have a MOUSE way back');
   // r2: no keycap hint strip any more — the action bar's Back is the way.
@@ -274,12 +280,15 @@ try {
      state directory can take the better part of a minute — the list is
      just the Hugging Face row until it lands. Wait for a pick the way a
      person waits for a list to fill, rather than clicking into a gap. */
-  await app.waitFor(`[...document.querySelectorAll('#onboarding .ob-row, #onboarding .modelrow')].some((n) => /qwen-3.5-4b/.test(n.textContent || ''))`,
+  // Calm (S6): rows show human names; the id is the row's data-model.
+  await app.waitFor(`!!document.querySelector('#onboarding .ob-row[data-model="qwen-3.5-4b"]')`,
     { timeoutMs: 120000, label: 'the recommended local models arrive' });
-  await pickRow('qwen-3.5-4b', { settleMs: 3500 });
+  await app.clickSel('#onboarding .ob-row[data-model="qwen-3.5-4b"]', { settleMs: 600 });
+  // The action bar's "Download 3.4 GB".
+  await app.clickSel('#onboarding .ob-foot .btn-p', { settleMs: 3500 });
   w = await wizard();
   check('the download screen is up with the cloud offer on it',
-    await app.js(`[...document.querySelectorAll('#onboarding .ob-offer')].some((n) => /Set up a cloud model in the meantime/.test(n.textContent || ''))`),
+    await app.js(`[...document.querySelectorAll('#onboarding .ob-offer')].some((n) => /Set up a cloud model (meanwhile|instead)/.test(n.textContent || ''))`),
     JSON.stringify(w.buttons));
   // Cancel the pull straight away — this file has no business fetching
   // gigabytes, and the cloud offer stays on screen either way.
@@ -288,7 +297,8 @@ try {
   step(6, 'take the wizard up on "set up a cloud model in the meantime"');
   await app.clickText('Set up a cloud', { settleMs: 1800 });
   w = await wizard();
-  check('the provider list opened inside the setup', /add provider/.test(w.head || ''), JSON.stringify(w.head));
+  // Calm (S6): the provider step is titled "Choose a provider".
+  check('the provider list opened inside the setup', await app.js(`window.__ob && window.__ob().step === 'cloud'`) && !w.key, JSON.stringify(w.head));
   check('OpenRouter and AI/ML API are both on it',
     w.rows.some((r) => /OpenRouter/.test(r)) && w.rows.some((r) => /AI\/ML API/.test(r)));
 
@@ -344,7 +354,7 @@ try {
   step(11, 'add AI/ML API from the composer provider chip');
   await app.clickText('OpenRouter', { tags: '.cfoot .cchip', settleMs: 1200 });
   await app.clickText('Add a new provider', { settleMs: 1500 });
-  await app.clickText('AI/ML API', { settleMs: 1500 });
+  await pickRow('AI/ML API', { settleMs: 1500 });   // Calm (S6): select, then Continue
   check('the AI/ML API key screen is up',
     await app.js(`!!document.querySelector('#wiz-key') && /AI\\/ML API/.test(document.body.textContent)`));
   await app.type('#wiz-key', ENV.AIMLAPI_API_KEY, { settleMs: 400 });

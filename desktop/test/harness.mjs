@@ -178,7 +178,9 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
     await sleep(400);
   }
   await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices');
-  await pick(app, 'Cloud models', `/LLM provider/.test(${wizText})`, 'the provider list');
+  // Calm (S6): the steps are read by id; their old subtitles are no longer drawn.
+  const obStep = (id) => `(window.__ob && window.__ob().open && window.__ob().step === '${id}')`;
+  await pick(app, 'Cloud models', `${obStep('cloud')} && !document.querySelector('#wiz-key')`, 'the provider list');
   await pick(app, P.row, `!!document.querySelector('#wiz-key')`, `the ${P.label} key field`);
   await app.clickSel('#wiz-key');
   const secret = key ?? providerKey();
@@ -194,12 +196,12 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
       `typed ${secret.length}, the box holds ${got} — a repaint took the caret`);
   }
   await app.clickText('Next');
-  await app.waitFor(`/one more thing|Verifying/.test(${wizText})`, 'the key going off to be verified', { timeout: 30000 });
-  await app.waitFor(`/one more thing/.test(${wizText})`, 'the key accepted — “Cloud model ready”', { timeout: 90000 });
+  await app.waitFor(`${obStep('propose_second')} || /Verifying/.test(${wizText})`, 'the key going off to be verified', { timeout: 30000 });
+  await app.waitFor(obStep('propose_second'), 'the key accepted — “Cloud model ready”', { timeout: 90000 });
 
   await pick(app, 'Skip — take me to the agent',
-    `/bring your data/.test(${wizText}) || !document.querySelector('#onboarding')`, 'the import offer');
-  if (await app.eval(`/bring your data/.test(${wizText})`)) {
+    `${obStep('import_pick')} || !document.querySelector('#onboarding')`, 'the import offer');
+  if (await app.eval(obStep('import_pick'))) {
     // Nothing is ticked, so this only closes the step — no other agent's
     // data is ever read by a scenario.
     await pick(app, 'Skip adding data from other agents', `!document.querySelector('#onboarding')`, 'the wizard closing');
@@ -213,13 +215,19 @@ export async function firstRun(app, { provider = PROVIDER, key } = {}) {
     'the send button live again after the restart', { timeout: 90000 });
 }
 
-/** Click a two-stage list row until the screen moves on. */
+/** Pick a list row until the screen moves on. Calm (S6): a click selects the
+    row and the step's primary button (Continue / Download / Use …) sends it;
+    a verb that is itself a button (the import step's skip) acts at once. */
 export async function pick(app, text, doneExpr, doneLabel, { tries = 4 } = {}) {
   const done = () => app.eval(`(() => (${doneExpr}))()`);
   for (let i = 0; i < tries; i++) {
     if (await done()) break;
     try {
       await app.clickText(text, { timeout: 5000 });
+      await sleep(300);
+      if (!(await done()) && await app.eval(`!!document.querySelector('#onboarding .ob-foot .btn-p')`)) {
+        await app.clickSel('#onboarding .ob-foot .btn-p', { timeout: 5000, scroll: false });
+      }
     } catch (e) {
       /* The row is gone. Two innocent reasons, and both look like this:
          the second click landed and the next screen painted while we were

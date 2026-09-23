@@ -258,6 +258,13 @@ async function laneC() {
     const until = Date.now() + 120000;
     while (Date.now() < until) {
       if (!(await app.eval('!!document.querySelector("#onboarding")'))) break;
+      // The import step's skip is an action-bar button, not a row (B.5).
+      if (await app.eval(`!!document.querySelector('#onboarding [data-obact="import:skip"]')`)) {
+        try { await app.clickSel('#onboarding [data-obact="import:skip"]', { scroll: false }); }
+        catch (e) { app.log(`the import skip click did not come back (${e.message})`); }
+        await sleep(1200);
+        continue;
+      }
       const skip = await app.eval(`(() => {
         const n = [...document.querySelectorAll('#onboarding .ob-row')]
           .find((r) => /^Skip/i.test(((r.querySelector('.t')||{innerText:''}).innerText || '').trim()));
@@ -267,7 +274,9 @@ async function laneC() {
       const sel = `#onboarding .ob-row[data-obrow="${skip}"]`;
       try {
         await scrollTo(app, sel);
+        // Calm (S6): a click selects the skip row; Continue takes it.
         await app.clickSel(sel, { scroll: false });
+        await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });
       } catch (e) { app.log(`the skip click did not come back (${e.message})`); }
       await sleep(1200);
     }

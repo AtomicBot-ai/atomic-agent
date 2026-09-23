@@ -165,7 +165,9 @@ export const PROVIDER = { row: 'AI/ML API', envKey: 'AIMLAPI_API_KEY' };
  */
 export async function configureCloud(app, seedEnv, { timeout = 180000 } = {}) {
   await app.waitFor("(window.__ob().step === 'cloud')", 'the cloud step', { timeout: 30000 });
+  // Calm (S6): a click selects the provider row; Continue opens its key step.
   await app.clickText(PROVIDER.row);
+  await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });
   await app.waitFor('!!document.querySelector("#wiz-key")', 'the key field', { timeout: 30000 });
   await app.clickSel('#wiz-key');
   await app.typeSecret(keyFor(seedEnv, PROVIDER.envKey), `the ${PROVIDER.row} key`);

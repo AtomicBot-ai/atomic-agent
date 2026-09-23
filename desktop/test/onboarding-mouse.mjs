@@ -75,6 +75,14 @@ async function stage(step_, opts = '') {
   }
   throw new Error(`could not stage ${step_}`);
 }
+/* Calm (S6): every list step selects on a click (the row wears a tick) and
+   continues on its primary button — the action bar's Continue / Download,
+   the same Enter the keyboard sends. A click alone no longer activates. */
+const primary = '#onboarding .ob-foot .btn-p';
+async function pick(txt) {
+  say(await app.clickText(txt));
+  say(await app.clickSel(primary));
+}
 /** The rendered action bar, as a person reads it. */
 const foot = () => app.js(`[...document.querySelectorAll('#onboarding .ob-foot button')]
   .map((b) => (b.textContent || '').trim() + (b.disabled ? ' (disabled)' : ''))`);
@@ -99,17 +107,22 @@ try {
   check('one click leaves the title card', (await step()) === 'choose', await step());
   await snapshot('choose');
 
-  /* --- THE ROOT DEFECT: one click on a row must activate it. --- */
+  /* --- THE ROOT DEFECT, as Calm S6 redefined it: one click on a row must
+     DO something visible — it selects that row (the tick moves) — and the
+     primary button then opens it. Two clicks on a row used to be needed to
+     do anything; now one click selects and Continue commits. --- */
   {
     const before = await app.snap();
     const rowIsUnderCursor = before.rows.findIndex((r) => r.startsWith('> '));
     say(await app.clickText('Cloud models'));
-    const now = await step();
+    const picked = await app.snap();
     check(
-      'ONE click on a row that is not under the cursor activates it',
-      now === 'cloud',
-      `cursor was on row ${rowIsUnderCursor}, clicked row 1, step=${now}`,
+      'ONE click on a row that is not under the cursor selects it, and stays on the step',
+      (await step()) === 'choose' && (picked.rows[1] || '').startsWith('> '),
+      `cursor was on row ${rowIsUnderCursor}, clicked row 1, rows=${JSON.stringify(picked.rows)}`,
     );
+    say(await app.clickSel(primary));
+    check('Continue opens the selected row', (await step()) === 'cloud', await step());
   }
   await snapshot('cloud-list');
 
@@ -143,8 +156,8 @@ try {
   }
 
   /* --- the custom-endpoint branch: two screens that had NO control --- */
-  say(await app.clickText('Custom endpoint'));
-  check('ONE click reaches the custom endpoint step', (await step()) === 'custom_chat_url', await step());
+  await pick('Custom endpoint');
+  check('a click and Continue reach the custom endpoint step', (await step()) === 'custom_chat_url', await step());
   check('the URL step offers Back and a primary action',
     JSON.stringify(await foot()) === JSON.stringify(['Back', 'Test and continue']), JSON.stringify(await foot()));
   await snapshot('custom-url');
@@ -179,8 +192,8 @@ try {
   check('Back leaves the URL step', (await step()) === 'choose', await step());
 
   /* --- the local branch, and the row pinned past the catalogue --- */
-  say(await app.clickText('Local models'));
-  check('ONE click reaches the local model list', (await step()) === 'local_pick', await step());
+  await pick('Local models');
+  check('a click and Continue reach the local model list', (await step()) === 'local_pick', await step());
   await app.waitFor('#onboarding .ob-row', { timeout: 40000 });
   for (let i = 0; i < 60; i += 1) {
     if ((await app.snap()).rows.length > 1) break;
@@ -202,8 +215,13 @@ try {
        download. What is asserted is that a click would land on it.) */
     const painted = await app.js("document.querySelectorAll('#onboarding .ob-models .ob-row').length");
     const catalogue = await app.js('window.__obPickCounts().models');
+    /* On a Mac that cannot run the whole catalogue the rest are named under
+       "Needs more memory than this Mac has" (.ob-out) — still on screen,
+       inside the same scroller. Count both, so the check holds on an 18 GB
+       Mac as on a 68 GB one. */
+    const outOfReach = await app.js("document.querySelectorAll('#onboarding .ob-models .ob-out').length");
     check('every model in the catalogue is in the list, not the first six',
-      painted === catalogue && catalogue > 6, `painted=${painted} catalogue=${catalogue}`);
+      painted === catalogue && painted + outOfReach > 6, `painted=${painted} catalogue=${catalogue} out of reach=${outOfReach}`);
     /* Wheel until the last row is actually in view, rather than a fixed 900px
        and a hope. Row heights are a layout decision and they change; a
        scroll amount hard-coded against yesterday's row height reports a
@@ -261,7 +279,7 @@ try {
      a keyboard user who tabbed to `Back` and pressed Enter had a great
      deal to lose by the flow answering with its own verb instead. */
   {
-    say(await app.clickText('Local models'));
+    await pick('Local models');
     await app.waitFor('#onboarding .ob-foot button', { timeout: 40000 });
     let on = null;
     for (let i = 0; i < 6 && !(on && /Back/.test(on.label)); i += 1) {
@@ -275,29 +293,33 @@ try {
   }
 
   /* --- the cloud wizard: the list, then the key screen --- */
-  say(await app.clickText('Cloud models'));
+  await pick('Cloud models');
   {
     const before = (await app.snap()).wizRows.findIndex((r) => r.startsWith('> '));
     say(await app.clickText('Groq'));
+    check('ONE click on a provider row selects it and stays on the list',
+      (await app.snap()).wizRows.some((r) => r.startsWith('> ') && /Groq/.test(r)) && !(await app.boxOf('#wiz-key')),
+      JSON.stringify((await app.snap()).wizRows.filter((r) => r.startsWith('> '))));
+    say(await app.clickSel(primary));
     const head = (await app.snap()).heads[0] || '';
     /* B.4 — the screen says "API key" once, in the 11px kicker, and names
        the provider as the subhead. It used to be one heading reading
        "API key — Groq" with the words "API key" again on the field's label
        below it, which the tester read as the same thing twice. */
-    check('ONE click on a provider row that is not under the cursor opens its key screen',
+    check('Continue on the selected provider opens its key screen',
       /^Groq/.test(head), `cursor was on row ${before}; head=${JSON.stringify(head)}`);
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     check('Back returns to the provider list',
       (await app.snap()).wizRows.length > 0, JSON.stringify((await app.snap()).heads));
-    say(await app.clickText('OpenRouter'));
-    check('the first row also opens on one click',
+    await pick('OpenRouter');
+    check('the first row also opens with a click and Continue',
       /^OpenRouter/.test((await app.snap()).heads[0] || ''), JSON.stringify((await app.snap()).heads));
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     /* Groq for the button test rather than OpenRouter: its model list
        needs the key, so a made-up one is refused instead of quietly
        verifying against a public catalogue and activating a dead
        provider halfway through the pass. */
-    say(await app.clickText('Groq'));
+    await pick('Groq');
   }
   await snapshot('cloud-key');
 
@@ -403,8 +425,8 @@ try {
      verified against the live model list, and the flow moves on. This is
      the whole wizard completed with a pointer and nothing else. */
   {
-    say(await app.clickText('Cloud models'));
-    say(await app.clickText('OpenRouter'));
+    await pick('Cloud models');
+    await pick('OpenRouter');
     const placeholder = await app.js("(document.getElementById('wiz-key')||{}).placeholder");
     /* B.4 — one label. The field's own <label> is gone: the screen is titled
        "API key" in the 11px style and the placeholder names the field and
@@ -435,7 +457,8 @@ try {
        it; on the throwaway directory this driver makes for itself there is
        no key, and the honest result is a skip rather than a failure that
        says nothing about the app. */
-    const noKeyHere = /no API key/.test((await app.snap()).error || '');
+    // Calm (S6): a missing key now reads "OpenRouter didn't accept this key…".
+    const noKeyHere = /no API key|didn.t accept this key/.test((await app.snap()).error || '');
     if (noKeyHere && !process.env.ATOMIC_AGENT_STATE_DIR) {
       say('SKIP an empty key verifies from .env — this run has no OPENROUTER_API_KEY to answer with');
     } else {
@@ -484,8 +507,8 @@ try {
   {
     const rows = (await app.snap()).rows;
     check('the almost-there screen lists both ways on', rows.length >= 2, JSON.stringify(rows));
-    say(await app.clickText('Add another cloud provider'));
-    check('ONE click on the second row opens the wizard', (await step()) === 'cloud', await step());
+    await pick('Add another cloud provider');
+    check('a click on the second row and Continue open the wizard', (await step()) === 'cloud', await step());
   }
 
   // One more thing.
@@ -494,16 +517,16 @@ try {
   await sleep(300);
   await snapshot('propose');
   {
-    say(await app.clickText('Set up local models too'));
-    check('ONE click accepts the second backend', (await step()) === 'local_pick', await step());
+    await pick('Set up local models too');
+    check('a click and Continue accept the second backend', (await step()) === 'local_pick', await step());
   }
   await stage('propose_second');
   await app.js("window.__obSeed({offer:'local', outcome:'cloud'})");
   await sleep(300);
   {
-    say(await app.clickText('Skip — take me to the agent'));
+    await pick('Skip — take me to the agent');
     const after = await step();
-    check('ONE click on the skip row ends the flow', after === 'finished' || after === 'import_pick', after);
+    check('a click on the skip row and Continue end the flow', after === 'finished' || after === 'import_pick', after);
   }
 
   // Bring your data.

@@ -84,11 +84,13 @@ try {
 
     // 3 — the provider list, reached by a real click
     await app.clickText('Cloud models');
+    await app.clickSel('#onboarding .ob-foot .btn-p');   // Calm (S6): select, then Continue
     await app.waitFor(`!!document.querySelector('.prow')`, 'the provider list', { timeout: 20000 });
     await shot(`${theme}-3-providers`);
 
     // 4 — the key screen, reached by clicking a provider row
     await app.clickSel('.prow', { nth: 0, timeout: 12000 });
+    await app.clickSel('#onboarding .ob-foot .btn-p');
     await app.waitFor(`!!document.querySelector('#wiz-key')`, 'the key screen', { timeout: 20000 });
     await shot(`${theme}-4-api-key`);
 

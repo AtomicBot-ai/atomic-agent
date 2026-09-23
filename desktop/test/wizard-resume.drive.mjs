@@ -91,6 +91,7 @@ async function laneA() {
 
     // The row the operator picked: "Start using the agent now".
     await app.clickText('Start using the agent now');
+    await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });   // Calm (S6): select, then Continue
     const closed = await app.waitFor('!document.querySelector("#onboarding")',
       'the wizard closing onto the agent', { timeout: 60000 }).then(() => true, () => false);
     const end = await ob(app);
@@ -159,6 +160,7 @@ async function laneC() {
     // "Add another cloud provider — one more key or endpoint, then straight
     // back to this screen."
     await app.clickText('Add another cloud provider');
+    await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });   // Calm (S6): select, then Continue
     const s2 = await ob(app);
     R.check('the second provider offer opens the wizard from wait-or-jump',
       s2.step === 'cloud' && s2.resumeAfterCloud === 'wait_or_jump',
@@ -173,6 +175,7 @@ async function laneC() {
     await shot(app, 'c1-still-wait-or-jump.png');
 
     await app.clickText('Start using the agent now');
+    await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });   // Calm (S6): select, then Continue
     const closed = await app.waitFor('!document.querySelector("#onboarding")',
       'the wizard closing', { timeout: 60000 }).then(() => true, () => false);
     R.check('and choosing the agent from it still ends the flow', closed,

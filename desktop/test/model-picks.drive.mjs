@@ -8,12 +8,18 @@
  * though it would.
  *
  * Everything is read off the rendered DOM after real clicks. The only
- * thing this file arranges is the size of the machine: the host has 68 GB
- * and every curated model fits it comfortably, so the interesting half of
- * the behaviour cannot be reached on this hardware. `--fake-ram=<gb>` is a
- * test-only Electron flag (main.ts FAKE_RAM_GB) that changes exactly one
- * number — what `app:hostRam` answers. THE 68 GB PASS RUNS WITHOUT IT, so
- * the production path (os.totalmem) is the one proved on the real figure.
+ * thing this file arranges is the size of the machine. `--fake-ram=<gb>` is
+ * a test-only Electron flag (main.ts FAKE_RAM_GB) that changes exactly one
+ * number — what `app:hostRam` answers. The first pass runs WITHOUT it, so
+ * the production path (os.totalmem) is proved on the real figure with
+ * checks that hold on any Mac; the 68 GB pass (every curated model fits)
+ * then runs with the flag, so it no longer needs a 68 GB host.
+ *
+ * Calm (S6): the wizard selects on a click and continues on its button;
+ * rows show human names ("Qwen 3.5 9B") with one "Recommended" badge, one
+ * facts line (blurb · download size) and at most one quiet caution line;
+ * out-of-reach models read "Needs 24 GB" under "Needs more memory than this
+ * Mac has". The checks below read that copy.
  *
  *   ATOMIC_AGENT_STATE_DIR=/some/dir node test/model-picks.drive.mjs
  *
@@ -75,8 +81,11 @@ async function pickListAt(ram, label) {
       await app.clickSel('#onboarding', { scroll: false });
       await sleep(300);
     }
+    /* Calm (S6): a click selects the route; Continue opens it. `.ob-explain`
+       exists on the choose step too, so wait for the step itself. */
     await app.clickText('Local models');
-    await app.waitFor('!!document.querySelector("#onboarding .ob-explain")', 'the local step', { quiet: true });
+    await app.clickSel('#onboarding .ob-foot .btn-p');
+    await app.waitFor(`window.__ob && window.__ob().step === 'local_pick'`, 'the local step', { quiet: true });
     // The catalogue is a real `atag models list` — wait for it to land.
     for (let i = 0; i < 80; i += 1) {
       const rows = await app.eval("document.querySelectorAll('#onboarding .ob-row').length");
@@ -137,25 +146,37 @@ try {
   /* ================================================================
      1 — THE REAL MACHINE. No flag: `app:hostRam` answers os.totalmem().
      ================================================================ */
-  const big = await pickListAt(null, '68gb');
-  transcribe('the wizard on this Mac (no flag — the real RAM figure)', big);
-  const ram = Number((big.intro.match(/reports (\d+) GB/) || [])[1] || 0);
+  const real = await pickListAt(null, 'this-mac');
+  transcribe('the wizard on this Mac (no flag — the real RAM figure)', real);
+  const RAM_RE = /Ordered for this Mac.s (\d+) GB of memory/;
+  const ram = Number((real.intro.match(RAM_RE) || [])[1] || 0);
   check('the picker names the machine it is ranking for', ram > 0, `${ram} GB`);
+  check('on this Mac exactly one row is recommended, and it is the first',
+    real.picks.filter((p) => p.best).length === 1 && real.picks[0] && real.picks[0].best,
+    real.picks.filter((p) => p.best).map((p) => p.name).join(', '));
+  check('on this Mac every model is either offered or named as out of reach',
+    real.picks.length + real.out.length === 13, `${real.picks.length} offered, ${real.out.length} out of reach`);
+
+  /* ================================================================
+     1b — A 68 GB MACHINE (flag): every curated model fits.
+     ================================================================ */
+  const big = await pickListAt(68, '68gb');
+  transcribe('the wizard on a simulated 68 GB machine', big);
   check('every curated model is offered on a machine this size',
     big.picks.length === 13 && big.out.length === 0, `${big.picks.length} offered, ${big.out.length} out of reach`);
   check('exactly one row is marked the best fit',
     big.picks.filter((p) => p.best).length === 1, big.picks.filter((p) => p.best).map((p) => p.name).join(', '));
   check('the best fit is the first row, and it is the biggest model that runs comfortably',
-    big.picks[0].best && /qwen-3\.6-35b-a3b/.test(big.picks[0].name), big.picks[0].name);
+    big.picks[0].best && /Qwen 3\.6 35B-A3B/.test(big.picks[0].name), big.picks[0].name);
+  check('the one badge reads "Recommended", in words, with the human name',
+    /Recommended/.test(big.picks[0].name) && !/★|Best fit|qwen-/.test(big.picks[0].name), big.picks[0].name);
   check('the recommendation is never a reduced-refusal model',
-    !big.picks.filter((p) => p.best).some((p) => /uncensored/.test(p.name)), big.picks[0].name);
-  check('every row carries the catalogue’s own description',
-    big.picks.every((p) => p.lines.length >= 3), JSON.stringify(big.picks[0].lines));
-  check('a vision model says so',
-    big.picks.some((p) => p.lines.some((l) => /reads images/.test(l))),
-    JSON.stringify((big.picks.find((p) => p.lines.some((l) => /reads images/.test(l))) || {}).lines));
-  check('a model that needs no caution is given none',
-    big.picks[0].lines.length === 3 && !big.picks[0].lines.some((l) => /small model|slow the rest/.test(l)),
+    !big.picks.filter((p) => p.best).some((p) => /uncensored|reduced/i.test(p.name + p.lines.join(' '))), big.picks[0].name);
+  check('every row carries the catalogue’s own description and its download size',
+    big.picks.every((p) => p.lines.length >= 1 && / · \d+(\.\d)? GB/.test(p.lines[0]) && !/^\d/.test(p.lines[0])),
+    JSON.stringify(big.picks[0].lines));
+  check('a model that needs no caution is given none — one line, no warning',
+    big.picks[0].lines.length === 1 && !big.picks[0].lines.some((l) => /small model|Tight fit/i.test(l)),
     JSON.stringify(big.picks[0].lines));
   check('the small-model caution belongs to the model, not to the machine — it is on the 4B rows even here',
     big.picks.filter((p) => p.lines.some((l) => /A small model:/.test(l))).length === 2,
@@ -171,23 +192,25 @@ try {
      ================================================================ */
   const small = await pickListAt(8, '8gb');
   transcribe('the wizard on a simulated 8 GB machine', small);
-  check('an 8 GB machine is told it is an 8 GB machine', /reports 8 GB/.test(small.intro), small.intro.replace(/\s+/g, ' '));
+  check('an 8 GB machine is told it is an 8 GB machine', /this Mac.s 8 GB of memory/.test(small.intro), small.intro.replace(/\s+/g, ' '));
   check('only what runs here is offered',
     small.picks.length === 3 && small.out.length === 10, `${small.picks.length} offered, ${small.out.length} out of reach`);
   check('the recommendation is the best model that runs comfortably',
-    small.picks[0].best && /gemma-4-e4b/.test(small.picks[0].name), small.picks[0].name);
-  check('a small model says plainly what it gives up',
-    small.picks[0].lines.some((l) => /small model/i.test(l) && /correct it more often/.test(l)),
+    small.picks[0].best && /Gemma 4 E4B/.test(small.picks[0].name), small.picks[0].name);
+  check('a small model says plainly what it gives up, in one line',
+    small.picks[0].lines.length === 2 && /^A small model: quick, but weaker at long multi-step work\.$/.test(small.picks[0].lines[1]),
     JSON.stringify(small.picks[0].lines));
-  check('a tight fit is named as one, with both RAM figures',
-    small.picks.some((p) => p.lines.some((l) => /tight fit/.test(l) && /8 GB/.test(l))),
-    JSON.stringify((small.picks.find((p) => p.lines.some((l) => /tight fit/.test(l))) || {}).lines));
+  check('a tight fit is named as one, with this Mac’s RAM',
+    small.picks.some((p) => p.lines.some((l) => /^Tight fit on 8 GB\. It will run slowly\.$/.test(l))),
+    JSON.stringify((small.picks.find((p) => p.lines.some((l) => /Tight fit/.test(l))) || {}).lines));
+  check('every row has at most one caution line',
+    small.picks.every((p) => p.lines.length <= 2), JSON.stringify(small.picks.map((p) => p.lines.length)));
   check('a model that will not run says how much RAM it wants',
-    small.out.every((o) => /needs \d+ GB of RAM at minimum/.test(o)), small.out[0]);
+    small.out.length > 0 && small.out.every((o) => /Needs \d+ GB$/.test(o)), small.out[0]);
   check('a model that will not run is not a control',
     small.outAreButtons === false, small.outAreButtons ? 'it renders as a button' : 'plain rows');
   check('the out-of-reach block says what it is',
-    /Needs a bigger machine/.test(small.outHeading), JSON.stringify(small.outHeading));
+    /Needs more memory than this Mac has/.test(small.outHeading), JSON.stringify(small.outHeading));
   check('the list is on the screen next to the out-of-reach block, not collapsed by it',
     small.geometry.boxH > 100 && small.geometry.rowH > 40 && small.geometry.rowInBox, JSON.stringify(small.geometry));
 
