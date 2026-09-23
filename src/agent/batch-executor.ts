@@ -804,6 +804,30 @@ function runFusionOrchestratorGate(
   return { proceed: false, vetoResult: verdict.refusal! };
 }
 
+/**
+ * The veto body is an instruction this file writes to the model, not
+ * tool output, and the compressor's bare defaults destroy it: measured
+ * across every shape this file produces, a veto is 479-689 chars
+ * (header, class hint, the reply bullet, and the bullet that actually
+ * names the rule), so `capSummary` cuts at 385 and the last line — "Do
+ * NOT repeat this exact call. Either try a different approach or close
+ * the turn with `reply`…" — never reaches the model. The message whose
+ * whole purpose is to end a loop lost the sentence that says how.
+ *
+ * Every line is load-bearing and the header is line 1, so line-based
+ * tail truncation is disabled (it keeps the LAST lines — inert at five
+ * lines, kept as a guard rail) and the char budget sits well above the
+ * longest veto: the text is generated here, and the only interpolation
+ * that could run long is the target, clamped to 60 chars by
+ * `sanitizeLoopTarget`. `tool` is not clamped, so an MCP server
+ * registering a multi-thousand-character qualified name could still
+ * overflow 4 000 — it would simply be cut as it is today.
+ */
+const VETO_COMPRESS_OPTIONS = {
+  maxSummaryLength: 4_000,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 function runSyncLoopGate(
   input: BatchCallInput,
   ctx: BatchExecutionContext,
@@ -844,16 +868,19 @@ function runSyncLoopGate(
       wanderingEscalated && verdict.detector === "wandering"
         ? "wandering"
         : verdict.detector;
-    const vetoResult = compressToolResult({
-      tool,
-      status: "error",
-      output: formatVetoInstruction({ tool, count, target, detector }),
-      details: {
-        deniedReason: LOOP_VETO_DENIED_REASON,
-        loopCount: count,
-        detector,
+    const vetoResult = compressToolResult(
+      {
+        tool,
+        status: "error",
+        output: formatVetoInstruction({ tool, count, target, detector }),
+        details: {
+          deniedReason: LOOP_VETO_DENIED_REASON,
+          loopCount: count,
+          detector,
+        },
       },
-    });
+      VETO_COMPRESS_OPTIONS,
+    );
     ctx.tracker.recordOutcome(tool, args, vetoResult);
     // The signal names what ended the turn. When the escalation alone
     // forced the breaker, that is the wandering cap even if THIS call is a
