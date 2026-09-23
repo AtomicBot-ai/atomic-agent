@@ -223,9 +223,11 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
 
   const pH = await probe(cfgs.fusionHandSwitched, { readyIds: ["aimlapi", "openrouter"], localLoaded: true, local: [] });
   const pD = await probe(cfgs.cloud, { readyIds: ["aimlapi"], localLoaded: true, local: [] });
-  check("fusion: a stored fusion that is not in force draws cloud, and Settings says so; the count defaults to 2",
+  /* The worker count is Fusion's: off Fusion the pane draws none (it used to
+     show "Workers: 2 — the default fan-out" under Local and Cloud too). */
+  check("fusion: a stored fusion that is not in force draws cloud, and Settings says so; no worker count off Fusion",
     pH.backend === "cloud" && chip(pH, "backend") === "cloud" && pH.settings.active === "runmode:cloud"
-      && pH.settings.status.includes("stored fusion, effective cloud") && pD.settings.workersOn === "2",
+      && pH.settings.status.includes("stored fusion, effective cloud") && pD.settings.workerButtons === 0 && pH.settings.workerButtons === 0,
     `${pH.backend} · ${pH.settings.status}`);
 
   /* ---- fusion_worker frames ---- */

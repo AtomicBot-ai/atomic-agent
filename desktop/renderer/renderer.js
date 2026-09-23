@@ -11186,7 +11186,9 @@ function rmResolve(cfg) {
         ? (managedModelId ?? worker.model ?? null)
         : ((worker && worker.defaultChatModel) ?? (worker && worker.model) ?? null)),
     workers: fusion.workers ?? 2,
-    workerMaxSteps: fusion.workerMaxSteps ?? 40,
+    cloudWorkers: fusion.cloudWorkers ?? 4,
+    workersPinned: fusion.workers !== undefined,
+    workerMaxSteps: fusion.workerMaxSteps ?? 60,
     workerTimeoutMs: fusion.workerTimeoutMs ?? 2700000,
     primaryProviderId, degraded,
   };
@@ -15666,14 +15668,30 @@ function llmRunModeHTML() {
     + '</div>'
     // /runmode status, where the stored and the effective mode can disagree.
     + '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>'
-    + '<div class="llm-workers">'
-      + '<span class="tk-help">' + esc('Workers: ' + rm.workers + ' — the default fan-out. The orchestrator can ask for more or fewer per job.') + '</span>'
-      + '<span class="tk-seg llm-workerseg" role="group" aria-label="Workers">'
-      + [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
-          '<button class="' + (n === rm.workers ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === rm.workers) + '">'
-          + n + '</button>').join('')
-      + '</span></div>'
+    // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
+    + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
     + '</section>';
+}
+/* What the count means depends on the worker leg (agent v0.6.3,
+   fusion-delegate.ts): an unpinned LOCAL leg runs one worker per job —
+   parallel local workers measured slower — so the default "2" would be a
+   lie there; a cloud leg takes the count, capped at cloudWorkers. */
+function llmWorkersHTML(rm) {
+  const leg = rm.workerProviderId ? llmProvider(rm.workerProviderId) : null;
+  const localLeg = !!leg && leg.kind === 'llama-server';
+  const shown = rm.workersPinned || !localLeg ? rm.workers : null;
+  const help = rm.workersPinned
+    ? 'Fusion workers: ' + rm.workers + ' per job. The orchestrator can ask for more or fewer.'
+    : localLeg
+      ? 'Fusion workers: auto — one local worker per job, since parallel local workers run slower. Pick a number to set your own.'
+      : 'Fusion workers: ' + rm.workers + ' per job by default, up to ' + rm.cloudWorkers + ' at once in the cloud. The orchestrator can ask for more or fewer.';
+  return '<div class="llm-workers">'
+    + '<span class="tk-help">' + esc(help) + '</span>'
+    + '<span class="tk-seg llm-workerseg" role="group" aria-label="Fusion workers">'
+    + [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+        '<button class="' + (n === shown ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === shown) + '">'
+        + n + '</button>').join('')
+    + '</span></div>';
 }
 
 function llmRouteCardHTML() {
