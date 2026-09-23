@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillRegistry } from "../../skills/skill-registry.js";
 import { ApprovalGate } from "../../approval/approval-gate.js";
+import type { CompressedToolResult } from "../../compressor/result-compressor.js";
+import {
+  renderToolResultBody,
+  toolResultTurn,
+} from "../../session/conversation-turn.js";
 import type { ToolContext } from "../tool-registry.js";
 import { buildSkillViewTool } from "./skill-view.js";
 import { buildSkillRunScriptTool } from "./skill-run-script.js";
@@ -85,6 +90,321 @@ describe("skill tools", () => {
     return registry;
   }
 
+  /**
+   * A skill whose script prints `lines` numbered lines, then exits 3.
+   * `last` is printed after them, as a failing script's final word —
+   * with no trailing newline, the shape a script that ends mid-line
+   * produces, when `newlineAtEnd` is false. `blanks` double-spaces the
+   * log, the shape that separates blank lines the compressor deletes
+   * from the lines the omission banner counts.
+   */
+  async function installLoud(
+    lines: number,
+    last = "",
+    newlineAtEnd = true,
+    blanks = false,
+  ): Promise<SkillRegistry> {
+    const skillDir = join(global, "loud");
+    await mkdir(join(skillDir, "scripts"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: loud",
+        'description: "Prints a long log"',
+        "version: 0.1.0",
+        "requires_scripts: [loud.js]",
+        "---",
+        "",
+        "Loud playbook body.",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(skillDir, "scripts", "loud.js"),
+      [
+        `const total = ${lines};`,
+        "const pad = 'x'.repeat(40);",
+        "let out = '';",
+        `const gap = ${blanks ? "'\\n'" : "''"};`,
+        "for (let i = 1; i <= total; i++) out += `line ${i} ${pad}\\n` + gap;",
+        "process.stdout.write(out);",
+        `const last = ${JSON.stringify(last)};`,
+        `if (last) process.stdout.write(last + ${newlineAtEnd ? "'\\n'" : "''"});`,
+        // Not process.exit(): it would cut the pipe before it flushed.
+        "process.exitCode = 3;",
+      ].join("\n"),
+      "utf8",
+    );
+    const registry = new SkillRegistry({ globalDir: global, projectDir: null });
+    await registry.refresh();
+    return registry;
+  }
+
+  /**
+   * A skill whose script writes exactly `write` — a JavaScript
+   * expression, evaluated inside the script — and exits 3.
+   */
+  async function installWriting(write: string): Promise<SkillRegistry> {
+    const skills = await installLoud(0);
+    await writeFile(
+      join(global, "loud", "scripts", "loud.js"),
+      [`process.stdout.write(${write});`, "process.exitCode = 3;"].join("\n"),
+      "utf8",
+    );
+    await skills.refresh();
+    return skills;
+  }
+
+  /** `before` short lines, then one line of `width` chars, no newline. */
+  function oneLongLine(width: number, before = 0): string {
+    const head =
+      before === 0
+        ? "''"
+        : `Array.from({ length: ${before} }, (_, i) => 'line ' + (i + 1)).join('\\n') + '\\n'`;
+    return `${head} + 'START-MARKER' + 'z'.repeat(${width}) + 'END-MARKER'`;
+  }
+
+  function approvingTool(skills: SkillRegistry) {
+    const gate = new ApprovalGate({
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    return buildSkillRunScriptTool(skills, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+  }
+
+  /**
+   * What the MODEL is given for a result, not what the tool returned:
+   * `renderToolResultBody` caps the summary again at render time, and
+   * it keeps the head, so a summary that overruns that cap loses the
+   * tail this tool works to preserve. Asserting here is the only way to
+   * see the whole path. `inCurrentMacroTurn` is inert for this tool —
+   * it has no freshness branch in `renderToolResultBody`, so a fresh
+   * result and an aged one render identically — and is passed only to
+   * show the most generous case still holds.
+   */
+  function rendered(result: CompressedToolResult): string {
+    return renderToolResultBody(
+      toolResultTurn({
+        tool: result.tool,
+        status: result.status,
+        summary: result.summary,
+        truncated: result.truncated,
+      }),
+      { inCurrentMacroTurn: true },
+    );
+  }
+
+  /** The header, wherever the compressor's `key: …` line puts it. */
+  const HEADER_RE = /(^|\n)# loud\/loud\.js\nexit: 3(\n|$)/;
+
+  const BANNER_RE = /… \[omitted (\d+) earlier lines, (\d+) characters\]/;
+
+  /**
+   * How many lines the omission banner says went. The rendered body is
+   * the two header lines, the banner, then what survived — all of them
+   * non-blank, which is what the banner counts.
+   */
+  function bannerLines(body: string): number {
+    return Number(BANNER_RE.exec(body)?.[1]);
+  }
+
+  /** How many characters the banner says went. */
+  function bannerChars(body: string): number {
+    return Number(BANNER_RE.exec(body)?.[2]);
+  }
+
+  /** The same, for a line too long to cut on a boundary. */
+  function cutChars(body: string): number {
+    return Number(/its first (\d+) characters are omitted/.exec(body)?.[1]);
+  }
+
+  /**
+   * What the model was handed under the banner: everything after the
+   * two header lines and the banner itself. The counts are asserted
+   * against this rather than against literals, so they stay true if the
+   * budget at the top of `skill-run-script.ts` is ever retuned.
+   */
+  function delivered(body: string): string {
+    return body.split("\n").slice(3).join("\n");
+  }
+
+  it("skill.run_script keeps the exit line and the log tail", async () => {
+    const skills = await installLoud(150, "FINAL-STATE-MARKER");
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    expect(result.status).toBe("error");
+    expect(result.details.exitCode).toBe(3);
+    const body = rendered(result);
+    // The exit code is the first thing the model needs and it lives in
+    // the header, which the compressor's 12-line tail used to drop.
+    expect(body).toMatch(HEADER_RE);
+    // Far more than the old 400-char / 12-line budget, and the END of
+    // the log — the part that says how the run finished.
+    expect(body).toContain("FINAL-STATE-MARKER");
+    expect(body).toContain("line 150 ");
+    expect(body).toContain("line 20 ");
+    expect(body).not.toContain("rendering-truncated");
+    expect(body.length).toBeGreaterThan(6_000);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("skill.run_script keeps the exit line when the body overflows", async () => {
+    const skills = await installLoud(3_000, "FINAL-STATE-MARKER");
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toMatch(HEADER_RE);
+    expect(body).toContain("… [omitted ");
+    // Overflow drops the head of the log, never its tail — and the
+    // render cap must not undo that.
+    expect(body).toContain("FINAL-STATE-MARKER");
+    expect(body).toContain("line 3000 ");
+    expect(body).not.toContain("line 1 x");
+    expect(body).not.toContain("rendering-truncated");
+    expect(body).not.toContain("… [truncated]");
+    // A result that lost 2 700 lines must not claim to be complete.
+    expect(result.truncated).toBe(true);
+    // What survives starts at a line boundary, never mid-token.
+    expect(body).toMatch(/\n… \[omitted[^\n]*\]\nline \d+ x/);
+    expect(bannerLines(body)).toBe(3_001 - (body.split("\n").length - 3));
+    // Both counts are measured against the whole log, not against what
+    // the line pass left behind: 144 294 of 151 934 characters today.
+    const written = [
+      ...Array.from({ length: 3_000 }, (_, i) => `line ${i + 1} ${"x".repeat(40)}`),
+      "FINAL-STATE-MARKER",
+    ].join("\n");
+    expect(bannerChars(body)).toBe(written.length - delivered(body).length);
+  });
+
+  it("skill.run_script counts a log cut by the line pass alone", async () => {
+    // Lines short enough that the 2 000-line budget binds before the
+    // character one — the branch where nothing but whole lines go.
+    const skills = await installWriting("'#\\n'.repeat(5_000) + 'FINAL'");
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    const kept = delivered(body);
+    expect(kept.endsWith("FINAL")).toBe(true);
+    expect(kept.split("\n").length).toBe(1_992);
+    expect(bannerLines(body)).toBe(5_001 - 1_992);
+    const written = [...Array(5_000).fill("#"), "FINAL"].join("\n");
+    expect(bannerChars(body)).toBe(written.length - kept.length);
+    expect(body).not.toContain("… [truncated]");
+  });
+
+  it("skill.run_script counts the same with no trailing newline", async () => {
+    // Output that ends mid-line is the shape that made an earlier cut
+    // spend a line of the budget on the empty string after the last
+    // newline, so the banner was one line off.
+    const skills = await installLoud(3_000, "FINAL-STATE-MARKER", false);
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toContain("FINAL-STATE-MARKER");
+    expect(bannerLines(body)).toBe(3_001 - (body.split("\n").length - 3));
+  });
+
+  it("skill.run_script counts the lines the model actually loses", async () => {
+    // The compressor deletes blank lines from the body after the
+    // banner is written, so a banner counting them states a number the
+    // model cannot reconcile with the lines it received.
+    const skills = await installLoud(1_500, "FINAL-STATE-MARKER", true, true);
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toContain("FINAL-STATE-MARKER");
+    // 1 500 numbered lines + the marker; the blank line after each one
+    // is not a line the model is ever shown.
+    expect(bannerLines(body)).toBe(1_501 - (body.split("\n").length - 3));
+  });
+
+  it("skill.run_script names a single line too long to cut", async () => {
+    // No line boundary to cut on: the banner must not report a 50 KB
+    // cut through the middle of a token as "0 earlier lines" of loss.
+    const skills = await installWriting(oneLongLine(60_000));
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toMatch(HEADER_RE);
+    expect(body).toContain("one line is longer than this result's budget");
+    expect(body).not.toContain("omitted 0 earlier lines");
+    expect(body).not.toContain("earlier lines");
+    expect(body).toContain("END-MARKER");
+    expect(body).not.toContain("START-MARKER");
+    expect(result.truncated).toBe(true);
+    // Exactly the characters missing from the line shown — 52 364 of
+    // its 60 022 today, and still exact if the budget is retuned.
+    const line = `START-MARKER${"z".repeat(60_000)}END-MARKER`;
+    expect(cutChars(body)).toBe(line.length - delivered(body).length);
+  });
+
+  it("skill.run_script counts earlier lines beside the long one", async () => {
+    // The same, with a log in front of the oversized last line: those
+    // lines go too, and saying so is the whole point of the clause.
+    const skills = await installWriting(oneLongLine(60_000, 500));
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body).toContain(", along with 500 earlier lines]");
+    expect(body).toContain("END-MARKER");
+    expect(body).not.toContain("line 500");
+    const line = `START-MARKER${"z".repeat(60_000)}END-MARKER`;
+    expect(cutChars(body)).toBe(line.length - delivered(body).length);
+  });
+
+  it("skill.run_script keeps the exit line past the `key:` signature", async () => {
+    // A failing script — the case this budget exists for — usually
+    // prints something the compressor picks up as its signature line,
+    // which lands above the header.
+    const skills = await installLoud(150, "Error: boom");
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(body.startsWith("key: Error: boom")).toBe(true);
+    expect(body).toMatch(HEADER_RE);
+    expect(body).toContain("line 150 ");
+  });
+
+  it("skill.run_script says when the runner never captured the end", async () => {
+    // Past `maxOutputBytes` the runner keeps the HEAD of the stream, so
+    // the end of the log is gone before this tool sees it — and the
+    // omission banner alone would claim only earlier output is missing.
+    const skills = await installLoud(8_000, "FINAL-STATE-MARKER");
+    const result = await approvingTool(skills).run(
+      { skill: "loud", script: "loud.js" },
+      makeCtx(base),
+    );
+    const body = rendered(result);
+    expect(result.details.truncated).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(body).toMatch(HEADER_RE);
+    // The limit is the runner's own, named from its constant.
+    expect(body).toContain("256 KiB per-stream limit");
+    expect(body).toContain("the end of the log is missing");
+    expect(body).not.toContain("FINAL-STATE-MARKER");
+    expect(body).not.toContain("rendering-truncated");
+  });
+
   it("skill.view returns body and emits skillLoaded patch", async () => {
     const skills = await installEcho();
     const tool = buildSkillViewTool(skills);
@@ -129,15 +449,7 @@ describe("skill tools", () => {
 
   it("skill.run_script runs an allowed script after approval", async () => {
     const skills = await installEcho();
-    const gate = new ApprovalGate({
-      emit: (req) =>
-        gate.resolve({ approvalId: req.approvalId, approved: true }),
-    });
-    const tool = buildSkillRunScriptTool(skills, {
-      approvals: gate,
-      approvalRequired: true,
-    });
-    const result = await tool.run(
+    const result = await approvingTool(skills).run(
       { skill: "echo", script: "say.js", args: ["hi"] },
       makeCtx(base),
     );
