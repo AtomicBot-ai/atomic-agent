@@ -2359,6 +2359,87 @@ describe("executeStep streaming reasoning accumulator", () => {
     expect(captured).not.toBeNull();
     expect(captured!.reasoningContent).toBe("server-authoritative reasoning");
   });
+
+  /**
+   * The stream consumer drives the generator by hand rather than with
+   * `for await`, so nothing closes it for us. An exception out of the
+   * consuming body — a parser throw, or an `onEvent` sink throwing back
+   * at us, which is how the abandon path is reached at all — used to
+   * leave the generator suspended at its `yield` forever. That generator
+   * is `LlamaServerClient.completeStream`, whose `finally` is the only
+   * thing that closes the socket, and a llama.cpp slot is freed when the
+   * connection closes: an unclosed abandon holds a slot that no server
+   * log mentions until the process exits.
+   */
+  it("closes the LLM stream when the consumer throws out of the drain loop", async () => {
+    const registry = new ToolRegistry();
+    const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
+    const session = createEmptySessionState({
+      id: "s-abandon",
+      workingDir: "/w",
+    });
+    let released = false;
+    let threw = false;
+    const boom = new Error("consumer blew up mid-stream");
+    // What the step does with the failure afterwards (it has a unary
+    // retry) is another test's subject; this one is only about the
+    // transport the abandoned generator was holding.
+    await (async () =>
+      executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "hi",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async () => {
+            throw new Error("unary path not taken");
+          },
+          llmCompleteStream: async function* () {
+            try {
+              yield { delta: "one", reasoningDelta: "", done: false };
+              yield { delta: "two", reasoningDelta: "", done: false };
+              return {
+                content: "onetwo",
+                reasoningContent: "",
+                stop: true,
+                truncated: false,
+                timing: {
+                  promptMs: 1,
+                  predictedMs: 1,
+                  promptTokens: 1,
+                  predictedTokens: 1,
+                },
+                cacheHitTokens: 0,
+                slotId: 0,
+                modelId: "mock",
+              };
+            } finally {
+              released = true;
+            }
+          },
+          grammar,
+          profile: QWEN_THINK_PROFILE,
+          onEvent: (event) => {
+            if (event.type === "reasoning_delta") {
+              threw = true;
+              throw boom;
+            }
+          },
+        },
+      ))().catch(() => undefined);
+    // Not vacuous: the consumer really did throw out of the drain loop,
+    // on the FIRST of two chunks, so the generator was abandoned live
+    // rather than having run to its own `return`.
+    expect(threw).toBe(true);
+    expect(released).toBe(true);
+  });
 });
 
 describe("executeStep remembers the transcript cut", () => {

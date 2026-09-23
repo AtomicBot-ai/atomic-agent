@@ -611,3 +611,87 @@ describe("providerId pin — bypasses the chain", () => {
     expect(stream).toEqual(["local"]);
   });
 });
+
+/**
+ * A slot on a llama.cpp server is freed when the connection closes, and
+ * the client closes it in the `finally` of `completeStream` — a block
+ * that only runs if somebody closes the generator. The seam sits between
+ * that generator and the step executor, and it stamps every chunk, which
+ * means it cannot delegate with `yield*`: it pumps by hand, and a
+ * hand-run iterator is not closed when its driver is. These pin that the
+ * seam closes what it drives, at both places a consumer can walk away —
+ * the replayed first chunk and any delegated one after it.
+ */
+describe("createFallbackStreamer — abandoning the stream releases the provider", () => {
+  async function drain(
+    gen: AsyncGenerator<StreamChunk, CompletionResult, void>,
+  ): Promise<CompletionResult> {
+    let next = await gen.next();
+    while (!next.done) next = await gen.next();
+    return next.value;
+  }
+
+  function trackedStreamProvider(id: string): {
+    provider: LlmProvider;
+    released: () => boolean;
+  } {
+    let released = false;
+    const base = fakeProvider(id, "grammar", async () => answer(id));
+    const provider: LlmProvider = {
+      ...base,
+      async *completeStream() {
+        try {
+          yield { delta: "a", reasoningDelta: "", done: false } as StreamChunk;
+          yield { delta: "b", reasoningDelta: "", done: false } as StreamChunk;
+          yield { delta: "", reasoningDelta: "", done: true } as StreamChunk;
+          return answer(id, "ab");
+        } finally {
+          released = true;
+        }
+      },
+    };
+    return { provider, released: () => released };
+  }
+
+  it("releases the provider stream abandoned on the first chunk", async () => {
+    const tracked = trackedStreamProvider("local");
+    const deps = seamDeps(new Map([["local", tracked.provider]]));
+    const stream = createFallbackStreamer(deps)({
+      ...baseParams,
+      providerId: "local",
+    });
+
+    expect((await stream.next()).value).toMatchObject({ delta: "a" });
+    expect(tracked.released()).toBe(false);
+
+    await stream.return(undefined as never);
+    expect(tracked.released()).toBe(true);
+  });
+
+  it("releases the provider stream abandoned on a later chunk", async () => {
+    const tracked = trackedStreamProvider("local");
+    const deps = seamDeps(new Map([["local", tracked.provider]]));
+    const stream = createFallbackStreamer(deps)({
+      ...baseParams,
+      providerId: "local",
+    });
+
+    await stream.next();
+    expect((await stream.next()).value).toMatchObject({ delta: "b" });
+    expect(tracked.released()).toBe(false);
+
+    await stream.return(undefined as never);
+    expect(tracked.released()).toBe(true);
+  });
+
+  it("a fully drained stream still returns its result and stamps it", async () => {
+    const tracked = trackedStreamProvider("local");
+    const deps = seamDeps(new Map([["local", tracked.provider]]));
+    const result = await drain(
+      createFallbackStreamer(deps)({ ...baseParams, providerId: "local" }),
+    );
+    expect(result.content).toBe("ab");
+    expect(result.servedTransport).toBe("grammar");
+    expect(tracked.released()).toBe(true);
+  });
+});
