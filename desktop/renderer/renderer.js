@@ -1810,6 +1810,13 @@ function item(m, end) {
      seat the end mark on the action row; `.prose` stays its direct child
      (cloud-setup.drive reads `.turn > div > .prose`). `tk-ph` greys the
      desktop's own "(no reply)" / "(stopped)" backfill. */
+  /* Calm (S4): a turn that failed before it said anything has the failure
+     row under it; the desktop's own "(no reply)" backfill above that row
+     adds nothing, so it is not drawn (it stays in the log, where copy and
+     the history already treat it as a placeholder). */
+  if (m.k === 'assistant' && m.placeholder && m.failed) return '';
+  if (m.k === 'assistant' && pausedKind(m)) return pausedRowHTML(m);
+  if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   if (m.k === 'assistant') return '<div class="turn"><div></div>'
     + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
     + (end ? '<div class="endmark' + (end === 'latest' ? ' latest' : '') + '" title="Turn complete">' + MARK_MONO + '</div>' : '')
@@ -1823,7 +1830,6 @@ function item(m, end) {
        copy/retry buttons — those belong to the message, this belongs to the
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
-    + (pausedOffer(m) ? pausedBarHTML(m) : '')
     + '</div></div>';
   /* F2 — the one action that helps, on the row that reports the problem.
      A person told their provider is not answering has exactly one useful
@@ -2405,8 +2411,10 @@ function composer() {
      Stop is the composer's own button (sendButton: `.sendbtn.stop` whenever
      S.busy || S.pending), and ⌘ . still aborts while a steer is drafted. */
   const status = S.pending
+    /* Calm (S4): every strip is one shape — a small glyph, one sentence,
+       machine numbers in tabular figures, a quiet action on the right. */
     ? '<div class="statusstrip gated">'
-      + '<span class="tk-chip tk-chip--sm tk-chip--amber">' + ic('alert') + 'Waiting for your approval</span>'
+      + '<span class="ss-ic warn">' + ic('shield') + '</span><span class="ss-text">Waiting for your approval</span>'
       + '<span class="ss-grow"></span>'
       + '<button class="btn btn-g xs ss-jump" data-act="jump:appr">Jump to request' + ic('up') + '</button></div>'
     /* F3 — a parked turn says so, and says when it tries again. The brief's
@@ -2414,9 +2422,11 @@ function composer() {
        Caution, not critical: nothing has failed yet. */
     : WAIT
     ? '<div class="statusstrip waiting">'
-      + '<span class="ann caution"><span class="ss-dot"></span>Waiting</span>'
-      + '<span class="readout">' + esc(waitReadout()) + '</span>'
+      + '<span class="ss-ic"><span class="ss-dot"></span></span>'
+      + '<span class="ann">Waiting for ' + esc(providerWord(selActiveProviderId()) || 'the provider') + '</span>'
       + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
+      + '<span class="ss-grow"></span>'
+      + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + '</div>'
     /* Calm (S3): no busy strip. It said "Thinking 1.3s" / the running
        tool's raw id / "Writing reply" above the composer — and each of
@@ -2433,8 +2443,8 @@ function composer() {
     : SWX.err
     ? '<div class="statusstrip gated">'
       + (/has not finished/.test(SWX.err)
-          ? '<span class="ann caution">' + ic('alert') + 'Caution</span>'
-          : '<span class="ann critical">' + ic('alert') + 'Switch failed</span>')
+          ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
+          : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
       + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
     /* r2 (DMG feedback): the F10 "Ready · <last thing that changed>" strip is
        no longer drawn under the transcript — it read as noise. APPSTATUS is
@@ -4529,7 +4539,7 @@ function abort() {
   // pulses until the agent has actually stopped.
   if (S.turnId && BR) BR.cancel(S.turnId);
   S.busy = false; dropPendingApproval();
-  S.log.push({id:nid(), k:'system', text:'turn aborted — everything produced so far is kept'});
+  S.log.push({id:nid(), k:'system', sev:'stop', text:'Stopped. Everything so far is kept.'});
   render();
 }
 
@@ -5245,10 +5255,11 @@ function refreshSend() {
 /** The waiting line: who, which attempt, and how long until the next try. */
 function waitReadout() {
   if (!WAIT) return '';
-  const id = selActiveProviderId() || 'the provider';
   const left = Math.max(0, Math.round((WAIT.until - Date.now()) / 1000));
-  const waited = Math.round((WAIT.waitedMs + Math.max(0, WAIT.nextRetryMs - left * 1000)) / 1000);
-  return id + ' · attempt ' + WAIT.attempt + ' · next try ' + left + 's · waited ' + waited + 's';
+  /* Calm (S4): the provider is named in the strip's sentence, not here, and
+     the time already waited is dropped: the failure line says how long the
+     turn gave up after, if it comes to that. */
+  return 'attempt ' + WAIT.attempt + ' · next try ' + left + 's';
 }
 
 /** The agent's reason, in words. `fetch failed` is undici's, not a person's. */
@@ -5257,7 +5268,12 @@ function humanWaitReason(reason) {
   if (/^fetch failed/i.test(r)) return 'no connection';
   if (/terminated|socket hang up|other side closed/i.test(r)) return 'connection dropped mid-reply';
   if (/timed out|ETIMEDOUT/i.test(r)) return 'the provider stopped answering';
-  return r.length > 60 ? r.slice(0, 57) + '…' : r;
+  // Calm (S4): the agent's own sentences name the provider and the host,
+  // which the strip already says; keep only the condition.
+  if (/^Can.t reach /.test(r)) return 'no response';
+  if (/took too long to answer/.test(r)) return 'too slow to answer';
+  const head = r.split(/ \u2014 |\. /)[0];
+  return head.length > 60 ? head.slice(0, 57) + '…' : head;
 }
 
 /* Repaint only the readout. A render() here would rebuild the composer once a
@@ -5794,7 +5810,7 @@ function turnFailureLine(ev) {
   const waited = turnWaited();
   if (providerFailure(ev)) {
     const host = providerHost(entry);
-    return esc((id || 'The provider') + ' is not answering'
+    return esc((id ? providerWord(id) : 'The provider') + ' is not answering'
       + (host ? ' — ' + host : '') + '.' + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
   /* Anything else is the turn going wrong rather than the endpoint, and the
@@ -6055,14 +6071,14 @@ function onChatEvent(ev) {
        attachment strip off the clipboard. The row still renders (skipping it
        would put a 24px jump back at turn end); the copy just says what
        happened, exactly as copy:reply does on an empty transcript. */
-    if (item && !item.text) { item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)'; item.placeholder = true; }
+    if (item && !item.text) { item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)'; item.placeholder = true; item.failed = ev.kind === 'error'; }
     // Review fix: only into the transcript this turn is actually streaming
     // into — otherwise the failure of chat A is announced inside chat B.
     // DRIFT FIX (D2 of the 0.5.5 review): the frame carries `{error, category}`
     // and the desktop was reading `ev.error` off a payload it never lifted,
     // so a failed turn printed the bare sentence `turn failed: `. The
     // bracketed category mirrors the TUI's `failed [${category}]: …`.
-    if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system',
+    if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       text: turnFailureLine(ev),
       act: providerFailure(ev) ? 'switch-provider' : null});
     // A turn ended: the steer watermark belongs to the turn that is over
@@ -11543,10 +11559,62 @@ function pausedOffer(m) {
   }
   return false;
 }
-function pausedBarHTML(m) {
-  return '<div class="pausebar">'
-    + '<button class="btn sm btn-p" data-act="turn:continue" title="send \u201ccontinue\u201d so the agent picks up where it stopped">' + ic('play') + 'Continue</button>'
-    + (pausedKind(m) === 'credit' ? '<button class="btn sm btn-s" data-sel-open="provider">Switch provider</button>' : '')
+/* Calm (S4): a paused task is a system row, not prose. The agent's reply
+   ("(paused: this task hit its step ceiling of 3 after 3 steps over ~1 min.)
+   Here is where I got to \u2026 raise `agent.task.maxSteps` for longer runs.")
+   is its own formatted notice, not the model talking, and it names a config
+   key. The row says the same thing in one plain sentence, with the agent's
+   words in the tooltip; Continue (and, for a credit pause, Switch provider)
+   sit on the chat's latest one while nothing runs. The item stays an
+   `assistant` entry, so turn order, history and the store are untouched. */
+function pausedSentence(m) {
+  const t = String(m.text || '').trim();
+  let mt;
+  if ((mt = /^\(paused: "([^"]+)" reports the account is out of credit/.exec(t))) {
+    return 'Paused: ' + providerWord(mt[1]) + ' says the account is out of credit. Top it up, then continue.';
+  }
+  if ((mt = /^\(paused: this task hit its step ceiling of (\d+) after \d+ steps over ~(\d+) min/.exec(t))) {
+    return 'Paused at this task\u2019s limit of ' + mt[1] + ' steps, after about ' + mt[2] + ' min. The work so far is kept.';
+  }
+  if ((mt = /^\(paused: this task hit its time limit after (\d+) steps over ~(\d+) min/.exec(t))) {
+    return 'Paused at this task\u2019s time limit, after ' + mt[1] + ' steps and about ' + mt[2] + ' min. The work so far is kept.';
+  }
+  if ((mt = /^\(paused: nothing came back from my last (\d+) steps/.exec(t))) {
+    return 'Paused: nothing came back from the last ' + mt[1] + ' steps of tool calls. Check the failing tool or connection, then continue.';
+  }
+  // An opening this does not know: the agent's own parenthesis, as a sentence.
+  const head = (/^\(paused: ([^)]*)\)/.exec(t) || [, 'the task stopped before it finished'])[1].replace(/\.$/, '');
+  return 'Paused: ' + head + '.';
+}
+/* The same for the loop guard's stop (src/agent/loop-detector.ts
+   formatForcedLoopReply): "(stopped: stuck in a no-progress loop on
+   `os.fs.list` after 5 blocked attempts). I could not make further progress
+   \u2026". Nothing is paused, so there is nothing to continue; sending again
+   starts over. '' when the reply is not one of those. */
+function stoppedSentence(m) {
+  if (!m || m.k !== 'assistant' || m.placeholder) return '';
+  const t = String(m.text || '').trim();
+  let mt;
+  if ((mt = /^\(stopped: stuck in a no-progress loop on `([^`]+)` after (\d+) blocked attempts\)/.exec(t))) {
+    return 'Stopped: the agent kept repeating the same step without getting anywhere (' + mt[2] + ' tries). The task may be incomplete.';
+  }
+  if ((mt = /^\(stopped: `([^`]+)` hit the limit on different arguments/.exec(t))) {
+    return 'Stopped: the agent kept trying variations of the same step. The task may be incomplete.';
+  }
+  return '';
+}
+function stoppedRowHTML(m) {
+  return '<div class="sysrow warn"><span class="sys-ic warn">' + ic('alert') + '</span>'
+    + '<span class="sys-tx" title="' + esc(String(m.text || '')) + '">' + esc(stoppedSentence(m)) + '</span></div>';
+}
+function pausedRowHTML(m) {
+  const offer = pausedOffer(m);
+  return '<div class="sysrow pause"><span class="sys-ic pause">' + ic('pause') + '</span>'
+    + '<span class="sys-tx" title="' + esc(String(m.text || '')) + '">' + esc(pausedSentence(m)) + '</span>'
+    + (offer ? '<span class="sys-acts">'
+      + ' <button class="btn xs btn-t" data-act="turn:continue" title="Send \u201ccontinue\u201d so the agent picks up where it stopped">' + ic('play') + 'Continue</button>'
+      + (pausedKind(m) === 'credit' ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '')
+      + '</span>' : '')
     + '</div>';
 }
 function continueTurn() {
@@ -12765,16 +12833,29 @@ function systemRun(m, times) {
 /* One system row, single or folded (`times` \u2265 2 adds the \u00d7N count). `m.text`
    is already-escaped html. A row whose item carries `tone` (the session
    model stamp) is drawn as a Tactile notice inside the same `.sysrow`; the
-   literal "loading session\u2026" row gets the kit spinner. */
+   literal "loading session\u2026" row gets the kit spinner.
+   Calm (S4): every other row is one shape — a small glyph, the sentence,
+   then its actions as quiet buttons. `m.sev` picks the glyph's tone: `err`
+   (a failure, red), `warn` (amber), `pause`, `stop`; anything else is a
+   muted info glyph. The actions keep a leading space so a row's
+   textContent still reads "sentence Action" (and "sentence \u00d7N"). */
+function sysGlyph(m) {
+  if (m.text === 'loading session\u2026') return '<span class="sys-ic"><span class="tk-spin"></span></span>';
+  const sev = m.sev || (m.act === 'switch-provider' ? 'err' : '');
+  const name = sev === 'err' || sev === 'warn' ? 'alert' : sev === 'pause' ? 'pause' : sev === 'stop' ? 'stop' : m.fusion ? 'fusion' : 'info';
+  return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';
+}
 function sysRowHTML(m, times) {
-  const tail = (m.act === 'switch-provider'
-      ? ' <button class="sysact" data-sel-open="provider">Switch provider</button>' : '')
-    + (times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '');
+  const acts = m.act === 'switch-provider'
+    ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '';
+  const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
-    + ic(m.icon || 'info') + '<span class="grow">' + m.text + tail + '</span></div></div>';
-  return '<div class="sysrow"><span></span><span>'
-    + (m.text === 'loading session\u2026' ? '<span class="tk-spin"></span>' : '')
-    + m.text + tail + '</span></div>';
+    + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts + '</span></div></div>';
+  // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
+  if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
+  return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)
+    + '<span class="sys-tx">' + m.text + rep + '</span>'
+    + (acts ? '<span class="sys-acts">' + acts + '</span>' : '') + '</div>';
 }
 
 function groupCard(run) {
@@ -19104,7 +19185,7 @@ if (typeof window !== 'undefined') {
                  // abort() is what the branch calls, and its system line is
                  // the only observable it leaves behind.
                  aborted: S.log.length > keep.len
-                   && /turn aborted/.test(S.log[S.log.length - 1].text || '')};
+                   && /^Stopped\./.test(S.log[S.log.length - 1].text || '')};
     S.log.length = keep.len;
     S.busy = keep.busy; S.settings = keep.settings;
     render();

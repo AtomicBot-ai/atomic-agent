@@ -312,22 +312,34 @@
 .planhint{margin:0}
 
 /* ---------------- system rows and notices ----------------
-   Muted 13px lines in the content column. Failure lines carry the one action
-   that helps inline (F2, `.sysact` — failure-line.drive reads it). */
-.sysrow{display:grid;grid-template-columns:0 minmax(0,1fr);padding:0 4px;font-size:13px;line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere}
-.sysrow .sysact{display:inline;margin-left:6px;color:var(--blue);font-weight:600;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
-.sysrow .sysact:hover{color:var(--blue-deep)}
+   Calm (S4): one shape for everything the app says in the transcript — a
+   failure, a pause, a stop, a steer, a restart. A 16px glyph column, the
+   sentence in the secondary ink, then its actions as quiet buttons
+   (`.sysact` — failure-line.drive reads it). The glyph carries the tone:
+   red for a failure, amber for a pause or a warning, muted otherwise. */
+.sysrow{display:grid;grid-template-columns:16px minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:0 4px;
+  font-size:13px;line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere}
+.sysrow .sys-ic{display:grid;place-items:center;height:20px;color:var(--ink-3)}
+.sysrow .sys-ic svg{width:14px;height:14px}
+.sysrow .sys-ic.err{color:var(--critical)}
+.sysrow .sys-ic.warn,.sysrow .sys-ic.pause{color:var(--amber-text)}
+.sysrow.err .sys-tx{color:var(--ink)}
+.sysrow .sys-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:-3px}
+.sysrow .sys-acts .btn{height:26px}
+.sysrow .sys-acts .btn svg{width:12px;height:12px}
+.sysrow .sys-acts .btn:active{transform:scale(.97)}
 .sysrow code{font:400 12px var(--font-mono);color:var(--ink)}
 /* Fusion's first-switch intro (fusion-intro.ts): the tree mark, then paragraphs. */
+.sysrow.sys-block{grid-template-columns:0 minmax(0,1fr);column-gap:0}
 .sysrow .fz-intro{display:flex;flex-direction:column;gap:8px;padding:6px 0 4px;max-width:72ch}
 .sysrow .fz-mark{display:block;white-space:pre;overflow-x:auto;font:400 12px/1.35 var(--font-mono);letter-spacing:0;color:var(--ink)}
 .sysrow .fz-p{display:block}
-.sysrow .tk-spin{display:inline-block;vertical-align:-2px;margin-right:8px;width:13px;height:13px}
+.sysrow .tk-spin{display:inline-block;width:13px;height:13px}
 /* a repeated warning is one row with a count, not a wall */
 .sysrow .sysrep{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 7px;border-radius:var(--r-pill);
   font-size:11px;font-variant-numeric:tabular-nums;background:var(--hover);color:var(--ink-2);vertical-align:1px}
 /* a system row that is a notice (the session model stamp) */
-.tk-sysnotice{padding:0}
+.sysrow.tk-sysnotice{padding:0;grid-template-columns:0 minmax(0,1fr);column-gap:0}
 .tk-sysnotice .tk-notice{align-items:flex-start}
 .tk-sysnotice .tk-notice > svg{width:16px;height:16px;margin-top:2px}
 .tk-sysnotice .grow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:center;line-height:1.5}
@@ -348,10 +360,8 @@
 .tk-interim .prose{font-size:14px;line-height:1.6;color:var(--ink-2)}
 
 /* ---------------- paused task (B5) ----------------
-   Under a reply that opens "(paused:": Continue sends `continue`; a credit
-   pause also offers Switch provider. */
-.pausebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
-.pausebar .btn svg{width:13px;height:13px}
+   Calm (S4): a paused task is a `.sysrow.pause` (chat.css system rows);
+   Continue and, for a credit pause, Switch provider are its quiet buttons. */
 
 /* ---------------- steered message (B4) ----------------
    Caption under a bubble that was folded into the running turn. */

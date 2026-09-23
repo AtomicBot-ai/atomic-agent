@@ -13,28 +13,31 @@
 .composerwrap{flex:none;position:relative;width:100%;max-width:760px;margin:0 auto;
   padding:0 28px 14px;display:flex;flex-direction:column;gap:8px}
 
-/* ---- Status line: a chip, then machine text ----------------------------
+/* ---- Status line: a glyph, one sentence, a quiet action -----------------
    Variants in priority order (renderer composer()): approval gated ·
-   provider waiting · busy · switch failed · Ready / Caution. */
-.statusstrip{display:flex;align-items:center;gap:8px;min-height:28px;min-width:0;padding:0 6px;
+   provider waiting · switch failed. Calm (S4): the same shape as a system
+   row in the transcript — no chips; numbers in tabular figures. */
+.statusstrip{display:flex;align-items:center;gap:8px;min-height:28px;min-width:0;padding:0 8px;
   font-size:12.5px;line-height:1.3;color:var(--ink-2)}
 .statusstrip > *{flex:none}
-.statusstrip .tk-chip svg,.statusstrip .ann svg{width:12px;height:12px}
-/* The kit's red chip text on --well is 4.1:1 in light at 11.5px. Mixing a
-   little --ink into the red darkens it in light and lightens it in dark, so
-   the word clears 4.5:1 in both without a new hue. */
-.statusstrip .ann.critical{background:color-mix(in srgb, var(--critical) 8%, transparent);color:color-mix(in srgb, var(--critical) 85%, var(--ink))}
+.statusstrip .ss-ic{display:grid;place-items:center;width:14px;height:14px;color:var(--ink-3)}
+.statusstrip .ss-ic svg{width:13px;height:13px}
+.statusstrip .ss-ic.warn{color:var(--amber-text)}
+.statusstrip .ss-ic.err{color:var(--critical)}
+.statusstrip .ann{height:auto;padding:0;background:none;border-radius:0;font-size:12.5px;font-weight:500;color:var(--ink)}
 .statusstrip .ss-grow{flex:1 1 auto;min-width:0}
-.statusstrip .readout{flex:0 1 auto;min-width:0;font:400 11.5px/18px var(--font-mono);
+.statusstrip .readout{flex:0 1 auto;min-width:0;font-family:var(--font-ui);font-size:12px;line-height:18px;
   color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .statusstrip .ss-text,.statusstrip .ss-why{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;color:var(--ink-2)}
+.statusstrip.gated .ss-text{color:var(--ink)}
 .statusstrip .ss-why::before{content:"· "}
 .statusstrip .btn svg{width:11px;height:11px}
 .statusstrip .ss-jump{color:var(--blue)}
 .statusstrip .ss-jump:hover{color:var(--blue-deep)}
 .statusstrip .ss-jump svg{width:13px;height:13px}
 .ss-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 1.6s var(--ease) infinite}
+@media (prefers-reduced-motion:reduce){.ss-dot{animation:none}}
 
 /* ---- Queue tray: outline pills "Queued · text · ×" --------------------- */
 .qtray{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px;min-width:0}
