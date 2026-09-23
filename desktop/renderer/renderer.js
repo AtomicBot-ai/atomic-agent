@@ -1767,7 +1767,11 @@ function item(m, end) {
   // typed turns into a clickable chip inside their own message.
   // r5 item 4: the action row goes OUTSIDE the bubble, so the buttons are never
   // drawn inside the accent-wash box.
-  if (m.k === 'user') return '<div class="turn usr"><div class="prose usr bubble">' + esc(m.text) + '</div>' + msgActs(m) + '</div>';
+  /* B4: a message folded into the running turn says so, in the TUI's words
+     (user-bubble.tsx STEERED_LABEL_SUFFIX). The reply that follows answers
+     the turn's opening request; drawn bare, it reads as the answer to this. */
+  if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '"><div class="prose usr bubble">' + esc(m.text) + '</div>'
+    + (m.steered ? '<div class="usrcap">steered into the running turn</div>' : '') + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
   /* r5 item 4: the action row goes after the attachment strip and BEFORE the
      end mark. The mark is the turn's full stop and r4-ui's contract is that it
@@ -3772,8 +3776,10 @@ function act(a) {
      user message. */
   if (a === 'retry') {
     close(); render();
+    // B4: the turn's own request, never a steer folded into it — the TUI's
+    // `[try again]` (reducer-helpers.ts lastTurnRequest) skips them the same way.
     for (let i = S.log.length - 1; i >= 0; i--) {
-      if (S.log[i].k === 'user' && String(S.log[i].text || '').trim()) { resendUser(S.log[i].id); return; }
+      if (S.log[i].k === 'user' && !S.log[i].steered && String(S.log[i].text || '').trim()) { resendUser(S.log[i].id); return; }
     }
     toast('Nothing to send again', 'no message in this transcript', 'bad');
     return;
@@ -11735,7 +11741,8 @@ function sessionTurnsToLog(turns) {
   const log = [];
   (Array.isArray(turns) ? turns : []).forEach((t) => {
     if (!t || typeof t !== 'object') return;
-    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
+    // B4: a stored steer (agent ≥ 0.6.3 `steered: true`) keeps its caption.
+    if (t.kind === 'user') { log.push(t.steered ? {id:nid(), k:'user', text:t.text || '', steered:true} : {id:nid(), k:'user', text:t.text || ''}); return; }
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
     if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
     if (t.kind === 'assistant_tool_call') {
@@ -19742,7 +19749,9 @@ if (typeof window !== 'undefined') {
       // kind, so the render() inside act() draws a shape the item() switch knows.
       S.log = [{id: 'r5-a', k: 'user', text: 'the first thing said'},
                {id: 'r5-b', k: 'user', text: '   '},
-               {id: 'r5-c', k: 'system', text: 'a system line'}];
+               {id: 'r5-c', k: 'system', text: 'a system line'},
+               // B4: a steer folded into the turn is not the turn's request.
+               {id: 'r5-d', k: 'user', text: 'a steer', steered: true}];
       S.toasts = [];
       act('retry');
       return {empty, last: {resent, toasts: window.__toasts()}};

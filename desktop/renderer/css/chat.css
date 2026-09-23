@@ -315,3 +315,7 @@
    pause also offers Switch provider. */
 .pausebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
 .pausebar .btn svg{width:13px;height:13px}
+
+/* ---------------- steered message (B4) ----------------
+   Caption under a bubble that was folded into the running turn. */
+.turn.usr .usrcap{margin:4px 4px 0 auto;width:fit-content;max-width:74%;font-size:12px;line-height:1.4;color:var(--ink-2);text-align:right}

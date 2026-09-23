@@ -10827,7 +10827,7 @@ async function chromeTest(
       last: { resent: string | null; toasts: Array<[string, string, string]> };
     }>("window.__retryVerb()");
     check(
-      "item 4: the retry verb resends the last real user message, or says there is none",
+      "item 4: the retry verb resends the last real user message (never a steer), or says there is none",
       retryVerb.empty.resent === null
         && retryVerb.empty.toasts.length === 1
         && retryVerb.empty.toasts[0]![0] === "Nothing to send again"
