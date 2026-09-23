@@ -362,10 +362,11 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.web.search",
     summary:
-      "Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.",
-    argsSchema: `{ query: string, maxResults?: number }`,
+      "Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; AnySearch/SearXNG/Brave configurable; Exa/Brave/AnySearch can use env API keys). Optional tag/params/zone/language route AnySearch vertical queries. Returns compact title/url/snippet results. Use os.web.fetch (or the anysearch skill extract) to read a chosen result.",
+    argsSchema: `{ query: string, maxResults?: number, tag?: string, params?: object, zone?: "cn"|"intl", language?: string }`,
     examples: [
       '{"query":"atomic agent local operator runtime","maxResults":5}',
+      '{"query":"Go context cancellation","tag":"code.doc","params":{"library":"golang"},"maxResults":5}',
       '{"query":"latest llama.cpp server grammar cache_prompt slot_id"}',
     ],
   },

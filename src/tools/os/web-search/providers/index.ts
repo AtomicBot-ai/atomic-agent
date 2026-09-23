@@ -1,6 +1,8 @@
 export {
   createAnySearchProvider,
   parseAnySearchJson,
+  buildSearchBody,
+  redactSecrets,
 } from "./anysearch-provider.js";
 export type { AnySearchProviderConfig } from "./anysearch-provider.js";
 export { createBraveProvider, parseBraveJson } from "./brave-provider.js";

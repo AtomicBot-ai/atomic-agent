@@ -21,6 +21,17 @@ export interface WebSearchProviderOptions {
   timeoutMs: number;
   cwd: string;
   signal: AbortSignal;
+  /**
+   * Optional AnySearch vertical routing (`tag` = `{domain}.{sub_domain}`).
+   * Ignored by providers that do not support it.
+   */
+  tag?: string;
+  /** Optional AnySearch structured params for a vertical `tag`. */
+  params?: Record<string, string>;
+  /** Optional AnySearch region: `cn` | `intl`. */
+  zone?: string;
+  /** Optional AnySearch language hint, e.g. `zh-CN` or `en`. */
+  language?: string;
 }
 
 export interface WebSearchProvider {

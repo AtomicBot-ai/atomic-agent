@@ -1,8 +1,10 @@
 import { assertProviderStatus } from "./assert-provider-status.js";
 import { searchHttp } from "../transport/search-http.js";
+import { WebSearchRateLimitedError } from "../web-search-errors.js";
 import type {
   WebSearchHttpDeps,
   WebSearchProvider,
+  WebSearchProviderOptions,
   WebSearchResult,
 } from "../web-search-provider.js";
 
@@ -11,11 +13,16 @@ export interface AnySearchProviderConfig {
   endpoint: string;
   /** Env var holding an optional Bearer API key (`ANYSEARCH_API_KEY`). */
   apiKeyEnv: string;
+  /** Optional default region (`cn` | `intl`). Overridden per-call by `options.zone`. */
+  zone: string | null;
+  /** Optional default language hint. Overridden per-call by `options.language`. */
+  language: string | null;
 }
 
 interface AnySearchEnvelope {
   code?: unknown;
   message?: unknown;
+  request_id?: unknown;
   data?: {
     results?: unknown;
   };
@@ -35,10 +42,10 @@ const CLIENT_HEADER = "atomic-agent/web-search";
  *
  * Anonymous by default (no `Authorization` header). When
  * `ANYSEARCH_API_KEY` (or the configured env name) is set, the key is
- * sent as `Authorization: Bearer …` for higher rate limits. Vertical
- * domain routing, batch search, and URL extract live in the bundled
- * `anysearch` starter skill — this provider only covers the shared
- * `os.web.search` contract.
+ * sent as `Authorization: Bearer …` for higher rate limits. Optional
+ * vertical routing (`tag` / `params` / `zone` / `language`) follows the
+ * public REST contract used by OpenClaw and HyperResearcher. Batch search
+ * and URL extract remain in the bundled `anysearch` starter skill.
  */
 export function createAnySearchProvider(
   config: AnySearchProviderConfig,
@@ -61,33 +68,79 @@ export function createAnySearchProvider(
         url: config.endpoint,
         method: "POST",
         headers,
-        body: JSON.stringify({
-          query: options.query,
-          max_results: clampMaxResults(options.maxResults),
-        }),
+        body: JSON.stringify(buildSearchBody(options, config)),
         timeoutMs: options.timeoutMs,
         cwd: options.cwd,
         signal: options.signal,
         runCommand: deps.runCommand,
         lookup: deps.lookup,
       });
+
+      // Quota exhaustion (402) is a standing rate limit — park via the
+      // orchestrator instead of treating it as a hard transport failure.
+      if (response.status === 402) {
+        throw new WebSearchRateLimitedError(
+          "anysearch",
+          response.retryAfterMs,
+          redactSecrets(
+            `AnySearch returned HTTP 402 (quota exhausted)${requestIdSuffix(response.body)}`,
+            apiKey,
+          ),
+        );
+      }
+
       assertProviderStatus(response, "anysearch", "AnySearch");
-      return parseAnySearchJson(response.body, options.maxResults);
+      try {
+        return parseAnySearchJson(response.body, options.maxResults);
+      } catch (err) {
+        throw new Error(redactSecrets((err as Error).message, apiKey));
+      }
     },
   };
+}
+
+export function buildSearchBody(
+  options: Pick<
+    WebSearchProviderOptions,
+    "query" | "maxResults" | "tag" | "params" | "zone" | "language"
+  >,
+  config: Pick<AnySearchProviderConfig, "zone" | "language">,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    query: options.query,
+    max_results: clampMaxResults(options.maxResults),
+  };
+  if (options.tag?.trim()) body.tag = options.tag.trim();
+  if (options.params && Object.keys(options.params).length > 0) {
+    body.params = options.params;
+  }
+  const zone = options.zone?.trim() || config.zone?.trim() || "";
+  if (zone) body.zone = zone;
+  const language = options.language?.trim() || config.language?.trim() || "";
+  if (language) body.language = language;
+  return body;
 }
 
 export function parseAnySearchJson(
   body: string,
   maxResults: number,
 ): WebSearchResult[] {
-  const parsed = JSON.parse(body) as AnySearchEnvelope;
+  let parsed: AnySearchEnvelope;
+  try {
+    parsed = JSON.parse(body) as AnySearchEnvelope;
+  } catch {
+    throw new Error("AnySearch returned invalid JSON");
+  }
   if (parsed.code !== undefined && parsed.code !== 0) {
     const message =
       typeof parsed.message === "string" && parsed.message.trim()
         ? parsed.message.trim()
         : `AnySearch returned code ${String(parsed.code)}`;
-    throw new Error(message);
+    const suffix =
+      typeof parsed.request_id === "string" && parsed.request_id
+        ? ` (request_id: ${parsed.request_id})`
+        : "";
+    throw new Error(`${message}${suffix}`);
   }
   const rawResults = parsed.data?.results;
   if (!Array.isArray(rawResults)) return [];
@@ -120,4 +173,25 @@ function extractSnippet(raw: AnySearchResult): string {
 function clampMaxResults(n: number): number {
   if (!Number.isFinite(n)) return 10;
   return Math.max(1, Math.min(Math.trunc(n), 10));
+}
+
+function requestIdSuffix(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { request_id?: unknown };
+    if (typeof parsed.request_id === "string" && parsed.request_id) {
+      return ` (request_id: ${parsed.request_id})`;
+    }
+  } catch {
+    // ignore
+  }
+  return "";
+}
+
+/** Never leak a Bearer token that an upstream echoed into an error body. */
+export function redactSecrets(message: string, apiKey?: string): string {
+  let out = message.replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [REDACTED]");
+  if (apiKey && apiKey.length >= 8) {
+    out = out.split(apiKey).join("[REDACTED]");
+  }
+  return out;
 }

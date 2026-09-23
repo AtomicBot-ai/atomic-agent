@@ -44,6 +44,10 @@ export interface OsWebSearchOptions {
 interface WebSearchArgs {
   query: string;
   maxResults: number;
+  tag?: string;
+  params?: Record<string, string>;
+  zone?: string;
+  language?: string;
 }
 
 export function buildOsWebSearchTool(
@@ -93,9 +97,10 @@ export function buildOsWebSearchTool(
     description:
       "Search the web through the configured provider and return compact " +
       "title/url/snippet results. Default provider is keyless Exa with a " +
-      "DuckDuckGo fallback; SearXNG is keyless, Exa/Brave use an environment " +
-      "API key when present. " +
-      "Use os.web.fetch to read a chosen result page.",
+      "DuckDuckGo fallback; AnySearch/SearXNG are also keyless, Exa/Brave/" +
+      "AnySearch use an environment API key when present for higher limits. " +
+      "Optional tag/params/zone/language route vertical AnySearch queries. " +
+      "Use os.web.fetch (or the anysearch skill extract) to read a chosen page.",
     readonly: true,
     async run(rawArgs, ctx) {
       const cfg = options.config.web.search;
@@ -122,6 +127,10 @@ export function buildOsWebSearchTool(
             timeoutMs: cfg.timeoutMs,
             cwd: ctx.workingDir,
             signal: ctx.signal,
+            ...(args.tag ? { tag: args.tag } : {}),
+            ...(args.params ? { params: args.params } : {}),
+            ...(args.zone ? { zone: args.zone } : {}),
+            ...(args.language ? { language: args.language } : {}),
           },
           cache,
           cooldown,
@@ -137,6 +146,7 @@ export function buildOsWebSearchTool(
               fromCache: outcome.fromCache,
               query: args.query,
               results: outcome.results,
+              ...(args.tag ? { tag: args.tag } : {}),
               ...(outcome.degraded.length > 0
                 ? { degraded: outcome.degraded }
                 : {}),
@@ -178,7 +188,50 @@ function parseArgs(
     maxResults = Math.trunc(rawArgs.maxResults);
   }
   maxResults = Math.min(MAX_RESULTS_CAP, Math.max(1, maxResults));
-  return { query: query.trim(), maxResults };
+
+  const out: WebSearchArgs = { query: query.trim(), maxResults };
+
+  if (typeof rawArgs.tag === "string" && rawArgs.tag.trim()) {
+    out.tag = rawArgs.tag.trim();
+  }
+  if (typeof rawArgs.zone === "string" && rawArgs.zone.trim()) {
+    const zone = rawArgs.zone.trim();
+    if (zone !== "cn" && zone !== "intl") {
+      throw new Error(`${TOOL_NAME}: \`zone\` must be "cn" or "intl"`);
+    }
+    out.zone = zone;
+  }
+  if (typeof rawArgs.language === "string" && rawArgs.language.trim()) {
+    out.language = rawArgs.language.trim();
+  }
+  const params = parseParams(rawArgs.params);
+  if (params) out.params = params;
+  return out;
+}
+
+function parseParams(
+  raw: unknown,
+): Record<string, string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    try {
+      return parseParams(JSON.parse(trimmed));
+    } catch {
+      throw new Error(`${TOOL_NAME}: \`params\` must be a JSON object`);
+    }
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`${TOOL_NAME}: \`params\` must be an object`);
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string") out[key] = value;
+    else if (value === null || value === undefined) out[key] = "";
+    else out[key] = String(value);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

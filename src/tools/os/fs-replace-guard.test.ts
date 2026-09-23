@@ -409,6 +409,8 @@ describe("replace guard (F36)", () => {
               anysearch: {
                 endpoint: "https://api.anysearch.com/v1/search",
                 apiKeyEnv: "ANYSEARCH_API_KEY",
+                zone: null,
+                language: null,
               },
             },
           },

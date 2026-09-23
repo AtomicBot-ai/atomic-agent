@@ -156,6 +156,10 @@ export interface WebSearchConfig {
   anysearch: {
     endpoint: string;
     apiKeyEnv: string;
+    /** Optional default region for AnySearch (`cn` | `intl`). */
+    zone: string | null;
+    /** Optional default language hint for AnySearch. */
+    language: string | null;
   };
 }
 
@@ -2682,6 +2686,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       anysearch: {
         endpoint: "https://api.anysearch.com/v1/search",
         apiKeyEnv: "ANYSEARCH_API_KEY",
+        zone: null,
+        language: null,
       },
     },
     fetch: {
@@ -3133,6 +3139,14 @@ export function parseWebSearchProviderName(
   throw new ConfigValidationError(
     field,
     `expected one of duckduckgo|searxng|exa|brave|anysearch, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseAnySearchZone(raw: unknown, field: string): string {
+  if (raw === "cn" || raw === "intl") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of cn|intl, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -4805,6 +4819,24 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
               USER_CONFIG_DEFAULTS.web.search.anysearch.apiKeyEnv,
             "web.search.anysearch.apiKeyEnv",
           ),
+          zone:
+            webSearchAnysearch.zone === null ||
+            webSearchAnysearch.zone === undefined ||
+            webSearchAnysearch.zone === ""
+              ? null
+              : parseAnySearchZone(
+                  webSearchAnysearch.zone,
+                  "web.search.anysearch.zone",
+                ),
+          language:
+            webSearchAnysearch.language === null ||
+            webSearchAnysearch.language === undefined ||
+            webSearchAnysearch.language === ""
+              ? null
+              : parseNonEmptyString(
+                  webSearchAnysearch.language,
+                  "web.search.anysearch.language",
+                ),
         },
       },
       fetch: {

@@ -1,6 +1,7 @@
 import type { AtomicAgentConfig } from "../../../../config/index.js";
 import {
   buildSearchCacheKey,
+  buildSearchCacheExtras,
   type SearchCache,
 } from "../transport/search-cache.js";
 import {
@@ -91,6 +92,7 @@ export async function runWebSearchWithFallback(
       name,
       input.options.query,
       input.options.maxResults,
+      buildSearchCacheExtras(input.options),
     );
     const cached = input.cache?.get(cacheKey);
     if (cached) {

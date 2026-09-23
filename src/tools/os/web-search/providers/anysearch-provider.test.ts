@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { runCommand as RunCommandType } from "../../../../sandbox/command-runner.js";
+import { WebSearchRateLimitedError } from "../web-search-errors.js";
 import {
+  buildSearchBody,
   createAnySearchProvider,
   parseAnySearchJson,
+  redactSecrets,
 } from "./anysearch-provider.js";
 
 const MARKER = "__ATOMIC_WEB_SEARCH_META__";
@@ -13,6 +16,13 @@ const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }];
 function curlStdout(body: string, status = 200): string {
   return `${body}\n${MARKER}${status}|application/json||${body.length}`;
 }
+
+const defaultConfig = {
+  endpoint: "https://api.anysearch.com/v1/search",
+  apiKeyEnv: "ANYSEARCH_API_KEY",
+  zone: null as string | null,
+  language: null as string | null,
+};
 
 describe("parseAnySearchJson", () => {
   it("normalises AnySearch REST results", () => {
@@ -61,13 +71,61 @@ describe("parseAnySearchJson", () => {
     expect(parseAnySearchJson(body, 1)[0]?.snippet).toBe("Long content body");
   });
 
-  it("throws on a non-zero business code", () => {
+  it("throws on a non-zero business code and keeps request_id", () => {
     expect(() =>
       parseAnySearchJson(
-        JSON.stringify({ code: -1, message: "Query is required." }),
+        JSON.stringify({
+          code: -1,
+          message: "Query is required.",
+          request_id: "abc",
+        }),
         5,
       ),
-    ).toThrow(/Query is required/);
+    ).toThrow(/Query is required.*request_id: abc/);
+  });
+
+  it("throws on invalid JSON", () => {
+    expect(() => parseAnySearchJson("not-json", 5)).toThrow(/invalid JSON/);
+  });
+});
+
+describe("buildSearchBody", () => {
+  it("includes vertical routing and config defaults", () => {
+    expect(
+      buildSearchBody(
+        {
+          query: "AAPL",
+          maxResults: 3,
+          tag: "finance.quote",
+          params: { type: "stock", symbol: "AAPL", cn_code: "" },
+        },
+        { zone: "intl", language: "en" },
+      ),
+    ).toEqual({
+      query: "AAPL",
+      max_results: 3,
+      tag: "finance.quote",
+      params: { type: "stock", symbol: "AAPL", cn_code: "" },
+      zone: "intl",
+      language: "en",
+    });
+  });
+
+  it("lets per-call zone override config defaults", () => {
+    expect(
+      buildSearchBody(
+        { query: "q", maxResults: 5, zone: "cn" },
+        { zone: "intl", language: null },
+      ).zone,
+    ).toBe("cn");
+  });
+});
+
+describe("redactSecrets", () => {
+  it("strips bearer tokens and known keys", () => {
+    expect(
+      redactSecrets("Bearer as_sk_secret failed; as_sk_secret", "as_sk_secret"),
+    ).toBe("Bearer [REDACTED] failed; [REDACTED]");
   });
 });
 
@@ -109,13 +167,10 @@ describe("createAnySearchProvider", () => {
     }) as unknown as typeof RunCommandType;
 
     try {
-      const provider = createAnySearchProvider(
-        {
-          endpoint: "https://api.anysearch.com/v1/search",
-          apiKeyEnv: "ANYSEARCH_API_KEY",
-        },
-        { runCommand, lookup: publicLookup },
-      );
+      const provider = createAnySearchProvider(defaultConfig, {
+        runCommand,
+        lookup: publicLookup,
+      });
       const results = await provider.search({
         query: "atomic agent",
         maxResults: 3,
@@ -138,12 +193,16 @@ describe("createAnySearchProvider", () => {
     }
   });
 
-  it("attaches Bearer auth when ANYSEARCH_API_KEY is set", async () => {
+  it("attaches Bearer auth and vertical fields when configured", async () => {
     const previous = process.env.ANYSEARCH_API_KEY;
     process.env.ANYSEARCH_API_KEY = "as_sk_test";
-    const calls: Array<{ args: string[] }> = [];
-    const runCommand = (async (_cmd: string, args: string[]) => {
-      calls.push({ args });
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    const runCommand = (async (
+      _cmd: string,
+      args: string[],
+      opts: { input?: string },
+    ) => {
+      calls.push({ args, input: opts.input });
       return {
         command: "curl",
         args,
@@ -164,10 +223,7 @@ describe("createAnySearchProvider", () => {
 
     try {
       const provider = createAnySearchProvider(
-        {
-          endpoint: "https://api.anysearch.com/v1/search",
-          apiKeyEnv: "ANYSEARCH_API_KEY",
-        },
+        { ...defaultConfig, zone: "intl" },
         { runCommand, lookup: publicLookup },
       );
       await provider.search({
@@ -176,13 +232,54 @@ describe("createAnySearchProvider", () => {
         timeoutMs: 10_000,
         cwd: "/tmp",
         signal: new AbortController().signal,
+        tag: "code.doc",
+        params: { library: "golang" },
+        language: "en",
       });
       expect(calls[0]?.args.join("\n")).toContain(
         "Authorization: Bearer as_sk_test",
       );
+      expect(calls[0]?.input).toContain('"tag":"code.doc"');
+      expect(calls[0]?.input).toContain('"zone":"intl"');
+      expect(calls[0]?.input).toContain('"language":"en"');
     } finally {
       if (previous === undefined) delete process.env.ANYSEARCH_API_KEY;
       else process.env.ANYSEARCH_API_KEY = previous;
     }
+  });
+
+  it("maps HTTP 402 to WebSearchRateLimitedError", async () => {
+    const runCommand = (async () => ({
+      command: "curl",
+      args: [],
+      exitCode: 0,
+      signal: null,
+      stdout: curlStdout(
+        JSON.stringify({
+          code: -1,
+          message: "quota",
+          request_id: "rid-1",
+        }),
+        402,
+      ),
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      truncated: false,
+    })) as unknown as typeof RunCommandType;
+
+    const provider = createAnySearchProvider(defaultConfig, {
+      runCommand,
+      lookup: publicLookup,
+    });
+    await expect(
+      provider.search({
+        query: "q",
+        maxResults: 1,
+        timeoutMs: 10_000,
+        cwd: "/tmp",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toBeInstanceOf(WebSearchRateLimitedError);
   });
 });

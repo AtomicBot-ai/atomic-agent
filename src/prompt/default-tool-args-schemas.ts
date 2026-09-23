@@ -525,6 +525,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       {
         query: stringSchema,
         maxResults: numberSchema,
+        tag: stringSchema,
+        zone: { type: "string", enum: ["cn", "intl"] },
+        language: stringSchema,
+        params: {
+          anyOf: [{ type: "object" }, { type: "string" }],
+        },
       },
       ["query"],
     ),

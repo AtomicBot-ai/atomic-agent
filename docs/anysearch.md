@@ -3,36 +3,52 @@
 This document describes how Atomic Agent integrates
 [AnySearch](https://anysearch.com) for maintainers and bounty reviewers.
 
+Peer patterns consulted while shaping this work: OpenClaw web-search plugin
+(anonymous + vertical `tag`/`zone`/`language`), AutoGPT search/parallel/extract
+blocks, CAMEL toolkit, HyperResearcher provider + concurrent batch, Hermes
+vertical-search skill (discover-then-route), GPT-Researcher retriever/extract.
+
 ## What shipped
 
 | Surface | Path | Role |
 |---|---|---|
-| `os.web.search` provider | `src/tools/os/web-search/providers/anysearch-provider.ts` | General anonymous/keyed web search through the existing provider contract |
-| Starter skill | `starter-skills/anysearch/` | Vertical domains (`tag`/`params`), batch search guidance, URL extract, optional MCP notes |
-| Config | `web.search.anysearch.{endpoint,apiKeyEnv}` | Defaults to `https://api.anysearch.com/v1/search` and `ANYSEARCH_API_KEY` |
+| `os.web.search` provider | `src/tools/os/web-search/providers/anysearch-provider.ts` | Anonymous/keyed general + vertical-routed search |
+| Tool args | `tag` / `params` / `zone` / `language` on `os.web.search` | First-class vertical routing (other providers ignore) |
+| Starter skill | `starter-skills/anysearch/` | Sub-domain discovery, parallel `batch-search.js`, extract, MCP notes |
+| Config | `web.search.anysearch.{endpoint,apiKeyEnv,zone,language}` | Defaults + optional region/language |
+| Docs | this file + README secrets section | Operator enablement |
+
+## Advantages (operator-facing)
+
+- **Anonymous access** — works without an API key at lower rate limits
+- **Vertical domains** — structured search across code, finance, academic, …
+- **Parallel batch** — up to 5 queries via `skill.run_script` / `batch-search.js`
+- **Extract** — full-page Markdown via `/v1/extract`
+- **No new cloud** — uses hosted `https://api.anysearch.com` (no self-hosting)
 
 ## Why this shape
 
-Atomic Agent already owns web search through `os.web.search` (Exa, DuckDuckGo,
-Brave, SearXNG). Adding AnySearch as another provider matches that contract and
-stays merge-friendly: no new tool names, no SDK dependency, same SSRF-safe
-`searchHttp` transport, same fallback/cooldown/cache stack.
-
-Capabilities that do not fit the shared `{query, maxResults}` provider
-interface — vertical discovery, tagged search, parallel batch, extract — live
-in the auto-seeded `anysearch` starter skill and call the public REST API via
-`os.http.request` (same pattern as the `notion` and `currency` starters).
+Atomic already owns web search through the provider contract (Exa, DuckDuckGo,
+Brave, SearXNG). Adding AnySearch as another provider stays merge-friendly:
+same SSRF-safe `searchHttp`, fallback, cooldown, and cache stack. Extending
+`os.web.search` with optional routing fields mirrors OpenClaw without a new
+tool name. Discovery, true parallel batch, and extract that do not fit the
+shared contract live in the auto-seeded starter skill (Hermes / HyperResearcher).
 
 ## Enable for users
 
-1. **Provider (general search)** — in `~/.atomic-agent/config.json`:
+1. **Select the provider** (a key alone does **not** auto-select it):
 
 ```json
 {
   "web": {
     "search": {
       "provider": "anysearch",
-      "fallback": ["duckduckgo"]
+      "fallback": ["duckduckgo"],
+      "anysearch": {
+        "zone": null,
+        "language": null
+      }
     }
   }
 }
@@ -40,69 +56,70 @@ in the auto-seeded `anysearch` starter skill and call the public REST API via
 
 Or keep Exa as primary and add `"anysearch"` to `fallback`.
 
-2. **Optional key** — append to `~/.atomic-agent/.env`:
+2. **Optional key** — `<stateDir>/.env`:
 
 ```
 ANYSEARCH_API_KEY=as_sk_…
 ```
 
-Anonymous access works without a key (lower rate limits). Register at
-https://anysearch.com/console/api-keys or via
-`POST /v1/auth/email/register`.
+3. **Vertical example**
 
-3. **Vertical / extract** — on first boot the starter skill is copied to
-`<stateDir>/skills/anysearch/`. The agent should `skill.view({ name: "anysearch" })`
-then follow the skill body.
+```json
+{
+  "tool": "os.web.search",
+  "args": {
+    "query": "Go context cancellation",
+    "tag": "code.doc",
+    "params": { "library": "golang" },
+    "maxResults": 5
+  }
+}
+```
 
-4. **Optional MCP** — Streamable HTTP endpoint `https://api.anysearch.com/mcp`
-(documented in the skill). Not required for the integration to qualify.
+4. **Optional MCP** — `https://api.anysearch.com/mcp` (Streamable HTTP).
 
-## API surface used
+## Hardening notes
+
+- HTTP **402** quota → `WebSearchRateLimitedError` (orchestrator parks / falls back)
+- Bearer tokens redacted from surfaced error strings
+- Cache keys include `tag` / `params` / `zone` / `language` extras
+- Authenticated calls never silently fall back to anonymous on 401
+
+## API surface
 
 | Method | Path | Used by |
 |---|---|---|
-| `POST` | `/v1/search` | Provider + skill |
-| `GET` | `/v1/sub-domains` | Skill (vertical discovery) |
+| `POST` | `/v1/search` | Provider + skill + batch script |
+| `GET` | `/v1/sub-domains` | Skill |
 | `POST` | `/v1/extract` | Skill |
-| `POST` | `/v1/auth/email/register` | Skill (optional key bootstrap) |
+| `POST` | `/v1/auth/email/register` | Skill (optional) |
 
-Client attribution header: `X-Anysearch-Client: atomic-agent/web-search` (provider)
-or `atomic-agent/skill` (skill).
+Client headers: `atomic-agent/web-search`, `atomic-agent/skill`,
+`atomic-agent/skill-batch`.
 
 ## Tests
 
 ```sh
 npx vitest run src/tools/os/web-search/providers/anysearch-provider.test.ts
 npx vitest run src/tools/os/web-search/tool/warn-missing-search-key.test.ts
-```
-
-Live smoke (optional, network):
-
-```sh
-curl -fsS -X POST https://api.anysearch.com/v1/search \
-  -H "Content-Type: application/json" \
-  -H "X-Anysearch-Client: atomic-agent/smoke" \
-  -d '{"query":"hello world","max_results":1}'
+npx vitest run src/tools/os/web-search/providers/search-orchestrator.test.ts
 ```
 
 ## File map
 
-- `src/tools/os/web-search/web-search-provider.ts` — provider name union
-- `src/tools/os/web-search/providers/anysearch-provider.ts` — implementation
-- `src/tools/os/web-search/providers/anysearch-provider.test.ts` — unit tests
-- `src/tools/os/web-search/providers/provider-registry.ts` — wiring
-- `src/tools/os/web-search/providers/search-orchestrator.ts` — keyless usability
-- `src/tools/os/web-search/tool/warn-missing-search-key.ts` — optional-key warning
-- `src/config/config-schema.ts` — defaults + parse
-- `starter-skills/anysearch/SKILL.md` — agent playbook
-- `docs/anysearch.md` — this file
+- `src/tools/os/web-search/providers/anysearch-provider.ts`
+- `src/tools/os/web-search/tool/web-search-tool.ts`
+- `src/tools/os/web-search/transport/search-cache.ts` (`buildSearchCacheExtras`)
+- `src/config/config-schema.ts`
+- `starter-skills/anysearch/SKILL.md`
+- `starter-skills/anysearch/scripts/batch-search.js`
+- `docs/anysearch.md`
 
 ## Bounty checklist
 
-- [x] Built-in (merged into main / shipped with release starters)
+- [x] Built-in provider + seeded skill + docs
 - [x] General search (anonymous + keyed)
-- [x] Vertical domain search (skill + `/v1/sub-domains`)
-- [x] Parallel / multi-query guidance (skill)
-- [x] Extract (skill + `/v1/extract`)
-- [x] Markdown maintenance doc (`docs/anysearch.md`)
-- [x] Users can follow official docs (`README.md` / `SKILLS.md` / this file)
+- [x] Vertical domain search (tool args + discovery)
+- [x] Parallel batch (`batch-search.js`)
+- [x] Extract
+- [x] Markdown maintenance doc
