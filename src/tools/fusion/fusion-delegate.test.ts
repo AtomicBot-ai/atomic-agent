@@ -484,13 +484,18 @@ describe("fusion.delegate", () => {
         }),
       );
     const task = { id: "t1", title: "One", instructions: "Do one", files: ["a.js", "b.js"] };
+    // What the LOOP is handed is the worker's budget plus its queue
+    // allowance (a third): the loop's clock starts at turn start, which
+    // includes the wait for a slot, while the worker's own clock starts
+    // at its first token.
+    const withQueue = (ms: number): number => ms + Math.floor(ms / 3);
     await capture({}).run({ tasks: [task] }, ctx());
-    expect(limits[0]).toBeGreaterThanOrEqual(600_000);
-    expect(limits[0]).toBeLessThan(2_700_000);
+    expect(limits[0]).toBeGreaterThanOrEqual(withQueue(600_000));
+    expect(limits[0]).toBeLessThan(withQueue(2_700_000));
     await capture({ workerSupportsSlotAffinity: () => false }).run({ tasks: [task] }, ctx());
-    expect(limits[1]).toBe(2_700_000);
+    expect(limits[1]).toBe(withQueue(2_700_000));
     await capture({ localTokensPerSecond: () => null }).run({ tasks: [task] }, ctx());
-    expect(limits[2]).toBe(2_700_000);
+    expect(limits[2]).toBe(withQueue(2_700_000));
   });
 
   it("clamps a cloud fan-out to cloudWorkers and says so (F21)", async () => {

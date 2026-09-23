@@ -28,7 +28,26 @@ export type WorkerTaskStatus =
   | "failed"
   | "cancelled"
   | "needs_orchestrator"
-  | "max_steps";
+  | "max_steps"
+  /**
+   * The worker ran out of WALL TIME rather than steps. Set by
+   * `runOneTask`, which is the only caller that knows whose clock
+   * fired: `classifyWorkerStatus` deliberately keeps `cancelled` ahead
+   * of a `time_ceiling` stop cause, because an operator who cancelled a
+   * worker that also passed a ceiling cancelled it. Kept apart from
+   * `max_steps` because the orchestrator's remedy differs: a task that
+   * ran out of steps needs a bigger step budget (or splitting), one that
+   * ran out of time needs a longer deadline. Relabelling a timeout as
+   * `max_steps` told it to raise the wrong one.
+   */
+  | "timeout"
+  /**
+   * The worker never got a server slot: it sat in llama-server's queue
+   * behind busy slots and produced no token at all. Not the worker's
+   * fault and not a ceiling it hit — a scheduling outcome, so the remedy
+   * is a narrower fan-out, not a bigger budget.
+   */
+  | "queued";
 
 /**
  * The order the head line counts statuses in: what was delivered first,
@@ -40,6 +59,8 @@ export const WORKER_STATUS_ORDER: readonly WorkerTaskStatus[] = [
   "no_changes",
   "needs_orchestrator",
   "max_steps",
+  "timeout",
+  "queued",
   "failed",
   "cancelled",
 ];
@@ -375,6 +396,16 @@ export function classifyWorkerStatus(
   if (reason === "max_steps" || stopCause !== undefined) return "max_steps";
   return "ok";
 }
+
+/**
+ * What a `queued` worker reports. It produced nothing, so there is no
+ * reply to summarise; the remedy belongs to the fan-out's width, not to
+ * the task, and saying so is the whole content of the row.
+ */
+export const WORKER_QUEUED_NOTE =
+  "never got a server slot: waited in the local server's queue behind busy workers and produced no token";
+export const WORKER_HINT_QUEUED =
+  "the local server had no free slot: run fewer workers at once, or split the fan-out into smaller waves";
 
 export const WORKER_HINT_CONTEXT =
   "the local server ran out of context: use fewer workers at once or shorter briefs";

@@ -87,6 +87,19 @@ export interface DelegateTask {
   deliverable?: string;
   /** Paths the worker should start from. */
   files?: string[];
+  /**
+   * Step budget for THIS task, when the orchestrator judges it needs
+   * more than the install's default. Clamped at the runner against a
+   * multiple of the configured default — see
+   * `WORKER_BUDGET_CEILING_FACTOR`. Absent means the default.
+   */
+  maxSteps?: number;
+  /**
+   * Wall-time budget for THIS task, same rules as `maxSteps`. It is the
+   * budget for the WORK: the wait for a server slot is bounded
+   * separately and does not spend it.
+   */
+  timeoutMs?: number;
 }
 
 export type ParsedDelegateArgs =
@@ -98,7 +111,14 @@ export type ParsedDelegateArgs =
     }
   | { ok: false; error: string };
 
-export const MAX_DELEGATE_TASKS = 8;
+/**
+ * Fan-out width ceiling. Sixteen, not eight: `maxWorkers` is
+ * deliberately unbounded (the machine's slots are the real limit), so
+ * this constant was the one thing actually capping how wide a plan
+ * could be, and it capped it below what a 2-slot machine can work
+ * through in waves.
+ */
+export const MAX_DELEGATE_TASKS = 16;
 export const MAX_INSTRUCTIONS_CHARS = 32_000;
 export const MAX_TASK_FILES = 32;
 /**
@@ -142,6 +162,27 @@ function readString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * A per-task budget override. Out-of-range is CLAMPED at the runner, not
+ * refused here: a number that is too big is the orchestrator's estimate
+ * of the work, not a malformed call, and refusing it would cost a whole
+ * regeneration to fix one integer. Only a value that is not a positive
+ * finite number at all is a validation problem.
+ */
+function readBudget(
+  value: unknown,
+  label: string,
+  problems: string[],
+): number | null {
+  if (value === undefined || value === null) return null;
+  const n = typeof value === "string" ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) {
+    problems.push(`${label} must be a positive number`);
+    return null;
+  }
+  return Math.floor(n);
 }
 
 /**
@@ -465,6 +506,12 @@ export function parseDelegateArgs(
     }
     const files = readFiles(entry.files, label, problems);
     const deliverable = readString(entry.deliverable);
+    const maxSteps = readBudget(entry.maxSteps, `${label}.maxSteps`, problems);
+    const taskTimeoutMs = readBudget(
+      entry.timeoutMs,
+      `${label}.timeoutMs`,
+      problems,
+    );
     if (id !== null && !seen.has(id)) {
       seen.add(id);
       bindable.push({ id, ...(files.length === 0 ? {} : { files }) });
@@ -478,6 +525,8 @@ export function parseDelegateArgs(
       instructions,
       ...(deliverable === null ? {} : { deliverable }),
       ...(files.length === 0 ? {} : { files }),
+      ...(maxSteps === null ? {} : { maxSteps }),
+      ...(taskTimeoutMs === null ? {} : { timeoutMs: taskTimeoutMs }),
     });
   }
 
