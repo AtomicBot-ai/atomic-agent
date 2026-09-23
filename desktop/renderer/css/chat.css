@@ -297,3 +297,10 @@
   #scroller > .col720{padding:18px 16px 12px}
   .emptychat{padding:16px}
 }
+
+/* ---------------- progress note (B1) ----------------
+   Words the agent sent while its turn went on (`progress_note`). Secondary
+   ink, a hair smaller than a reply, hung off a thin rule so it reads as
+   running commentary; the final reply below it stays the turn's message. */
+.tk-interim{padding:1px 0 1px 12px;border-left:2px solid var(--bd-2)}
+.tk-interim .prose{font-size:13.5px;line-height:1.55;color:var(--ink-2)}

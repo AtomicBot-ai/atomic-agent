@@ -1791,6 +1791,12 @@ function item(m, end) {
      (and its `.sysact` Switch provider) is drawn by sysRowHTML, which the
      folded repeat shares. */
   if (m.k === 'system') return sysRowHTML(m, 1);
+  /* B1: a progress note — words the agent sent while the turn went on. Quiet
+     and secondary, with no end mark and no actions: the turn's final reply is
+     the message, this is the running commentary above it. No `.tk-asst`, so
+     nothing that looks for "the reply" (drivers, end mark) mistakes it. */
+  if (m.k === 'interim') return '<div class="turn interim"><div></div><div class="tk-interim"><div class="prose">'
+    + renderProse(m.text) + '</div></div></div>';
   // The label keeps its textContent ("Reasoning · N steps"); only the weight moved.
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<b>Reasoning</b> <span>· ' + m.steps + ' steps</span></button>'
@@ -5528,6 +5534,23 @@ function onChatEvent(ev) {
     if (item) { item.text += ev.text; S.phase = 'Writing reply'; render(); }
     return;
   }
+  /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
+     batched a `reply` with work tools, so the turn goes on past it
+     (src/http/openai-chat-completions.ts; the store row is an
+     `assistant_reply` with `progressNote: true`). It is interim: drawn as a
+     quiet row above the live reply, like tool cards, so the turn's final
+     reply stays its last row. Deltas the note streamed are already in
+     `item.text` and are not the start of the final reply, so they come out
+     again here. The note never enters S.history (only `item.text` does, at
+     `done`) nor the plan hand-off check, which reads `item.text` too. */
+  if (ev.kind === 'progress_note') {
+    const text = String(pick(ev.payload, 'text') || '');
+    if (!text.trim() || !item) return;
+    item.text = stripStreamedNote(item.text, text);
+    S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'interim', text});
+    render();
+    return;
+  }
   /* Item 7C — the agent read a steer at a step boundary. The frame comes
      UNNAMED on the wire and is recognised in agent-client.ts by its
      `object`. A steer sent from this window is already in the transcript;
@@ -5646,6 +5669,22 @@ function onChatEvent(ev) {
     }
     render();
   }
+}
+
+/** B1: `body` with a trailing streamed copy of `note` taken off. The agent's
+    own test for "already on the wire" is `endsWith` / trimmed equality; a
+    stream cut short may have carried only the note's start, so a trailing
+    run of at least 12 characters that begins the note goes too. Anything
+    that is not the note (an earlier step's words) stays. */
+function stripStreamedNote(body, note) {
+  const b = String(body || '').replace(/\s+$/, '');
+  const n = String(note || '').trim();
+  if (!n || !b) return String(body || '');
+  if (b.endsWith(n)) return b.slice(0, b.length - n.length).replace(/\s+$/, '');
+  for (let k = Math.min(b.length, n.length - 1); k >= 12; k--) {
+    if (n.startsWith(b.slice(b.length - k).replace(/^\s+/, ''))) return b.slice(0, b.length - k).replace(/\s+$/, '');
+  }
+  return String(body || '');
 }
 
 /* Turn order — "end agent results should be the last message within the
@@ -11566,7 +11605,8 @@ function sessionTurnsToLog(turns) {
   (Array.isArray(turns) ? turns : []).forEach((t) => {
     if (!t || typeof t !== 'object') return;
     if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
-    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
+    // B1: a progress note (`progressNote`) is an interim row, never a reply.
+    if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
     if (t.kind === 'assistant_tool_call') {
       if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
@@ -17497,6 +17537,7 @@ if (typeof window !== 'undefined') {
     const body = t.querySelector('.prose,.card,.appr,.disc');
     const usr = t.classList.contains('usr');
     return {k: usr ? 'user'
+              : t.classList.contains('interim') ? 'interim'
               : t.querySelector('.card') ? 'tool'
               : t.querySelector('.appr') ? 'approval'
               : t.querySelector('.disc') ? 'reason'
