@@ -1,5 +1,10 @@
 import { execSync } from "node:child_process";
 
+import {
+  assertLinuxArm64Glibc,
+  detectGlibcVersion,
+  detectLinuxArm64BackendAsset,
+} from "./linux-arm64-backend-variant.js";
 import { resolvePlatformAsset, type PlatformAsset } from "./platform-assets.js";
 
 /**
@@ -23,9 +28,10 @@ export const WINDOWS_BACKEND_ASSETS = {
 /**
  * Operator-facing values for `localModels.managed.backendVariant`.
  * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
- * the Windows zips outright (no probe). Meaningful only on win32 —
- * every other platform publishes a single asset, so the preference is
- * ignored there.
+ * the Windows zips outright (no probe). Meaningful on win32 and on
+ * linux-arm64, where `"vulkan"` and `"cuda-13.3"` pin the two arm64
+ * builds (see `linux-arm64-backend-variant.ts`). macOS and Linux x64
+ * publish a single asset, so the preference is ignored there.
  */
 export const BACKEND_VARIANT_PREFERENCES = [
   "auto",
@@ -185,16 +191,31 @@ export function resetWindowsBackendAssetCache(): void {
 
 /**
  * Resolve the platform asset for an actual download. Identical to
- * `resolvePlatformAsset` on macOS/Linux; on Windows it swaps the default
- * Vulkan `assetName` for the CUDA build when a compatible NVIDIA driver
- * is present. `binaryName` is unchanged (`llama-server.exe` in every
- * Windows zip), so install paths and `isBackendDownloaded` stay stable.
+ * `resolvePlatformAsset` on macOS and Linux x64; on Windows it swaps the
+ * default Vulkan `assetName` for the CUDA build when a compatible NVIDIA
+ * driver is present, and on Linux arm64 when the GPU is one the arm64
+ * CUDA build has kernels for. `binaryName` is unchanged within a
+ * platform, so install paths and `isBackendDownloaded` stay stable.
+ *
+ * Linux arm64 also refuses a system whose glibc cannot load those builds
+ * (`UnsupportedGlibcError`). `glibcVersion` is for tests; production
+ * reads the running process.
  */
 export function resolveDownloadAsset(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  glibcVersion?: string | null,
 ): PlatformAsset {
   const base = resolvePlatformAsset(platform, arch);
+  if (base.platform === "linux" && base.arch === "arm64") {
+    assertLinuxArm64Glibc(
+      glibcVersion === undefined ? detectGlibcVersion() : glibcVersion,
+    );
+    return {
+      ...base,
+      assetName: detectLinuxArm64BackendAsset(configuredBackendVariant),
+    };
+  }
   if (base.platform !== "win32") return base;
   return { ...base, assetName: detectWindowsBackendAsset() };
 }

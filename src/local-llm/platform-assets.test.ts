@@ -30,8 +30,14 @@ describe("platform-assets", () => {
     );
   });
 
-  it("throws on linux arm64", () => {
-    expect(() => resolvePlatformAsset("linux", "arm64")).toThrow(
+  it("resolves linux arm64 to the Vulkan asset", () => {
+    const a = resolvePlatformAsset("linux", "arm64");
+    expect(a.assetName).toBe("llama-turboquant-linux-arm64-vulkan.zip");
+    expect(a.binaryName).toBe("llama-server");
+  });
+
+  it("throws on win32 arm64", () => {
+    expect(() => resolvePlatformAsset("win32", "arm64")).toThrow(
       UnsupportedPlatformError,
     );
   });
