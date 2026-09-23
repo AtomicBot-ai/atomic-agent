@@ -5205,6 +5205,22 @@ async function hfAndDeltaTest(
   // Let the turn finish before anything else drives the composer.
   const endDeadline = Date.now() + 150_000;
   while (Date.now() < endDeadline && (await js<boolean>("window.__busy()"))) await wait(1000);
+  /* A small local model can run away inside one step (7,400 tokens over six
+     minutes in one run) and outlive the wait above. The checks below steer
+     S.agentSession and expect a refusal, so a real turn still running there
+     takes the steer instead, and its RUNNING entry keeps that chat's dot on
+     "running" through every dot check after. Stop it the way the Stop button
+     does and wait for its end frame, so the dot checks read this window's
+     state. Stop only drops the stream: the agent may still hold the turn for
+     a while and accept the next steer, so the DIAG line names the cause. */
+  if (await js<boolean>("window.__busy()")) {
+    process.stdout.write("DIAG steer: the live turn outlived its 150 s wait (a runaway step?) — stopped here;"
+      + " if the agent still holds it, the refused-steer checks below read it as running\n");
+    await js<void>("abort()");
+    const stopDeadline = Date.now() + 30_000;
+    while (Date.now() < stopDeadline
+      && (await js<boolean>("!!S.agentSession && [...RUNNING.values()].includes(S.agentSession)"))) await wait(500);
+  }
 
   // A refusal parks the text ahead of ordinary backlog, in the TUI's words.
   await js<number>("window.__clearQueue()");
