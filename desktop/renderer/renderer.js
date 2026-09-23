@@ -1412,7 +1412,7 @@ const S = {
   draft:'',
   localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelQuery:'',
   level:3, grants:[],
-  busy:false, pending:null, queued:[], phase:'', elapsed:0,
+  busy:false, pending:null, queued:[],
   sessionId:'s1',
   stick:true,
   memTab:'notes', skillsTab:'installed', taskFilter:'all',
@@ -2145,9 +2145,15 @@ function toolLine(m) {
 /* A call still running (or waiting on your approval) has not done it yet,
    and a failed one did not do it: "Ran touch x" reads "Running touch x"
    until its result lands, and "Couldn't run touch x" when it failed. A
-   command that ran and exited non-zero did run — it keeps "Ran … · exit N". */
+   command that ran and exited non-zero did run — it keeps "Ran … · exit N".
+   A call whose outcome was never recorded (`unk`, see toolState) reads
+   "Tried to write x": it may or may not have happened.
+   The past tense is only ever returned for `ok`: a verb this table does not
+   know still cannot claim a failed call happened. */
 function toolTense(line, state) {
+  if (state === 'ok') return line;
   const forms = {'Added to':['Adding to','add to'], 'Looked for':['Looking for','look for'], 'Looked at':['Looking at','look at'],
+    'Looked up':['Looking up','look up'],
     'Listed':['Listing','list'], 'Read':['Reading','read'], 'Wrote':['Writing','write'], 'Replaced':['Replacing','replace'],
     'Edited':['Editing','edit'], 'Moved':['Moving','move'], 'Searched':['Searching','search'], 'Ran':['Running','run'],
     'Opened':['Opening','open'], 'Called':['Calling','call'], 'Delegated':['Delegating','delegate'],
@@ -2156,10 +2162,15 @@ function toolTense(line, state) {
     'Checked':['Checking','check'], 'Compared':['Comparing','compare'], 'Restored':['Restoring','restore'],
     'Clicked':['Clicking','click'], 'Typed':['Typing','type'], 'Scrolled':['Scrolling','scroll'],
     'Sent':['Sending','send'], 'Copied':['Copying','copy']};
-  const mt = /^(Added to|Looked for|Looked at|[A-Z][a-z]+)\b/.exec(line);
-  if (!mt || !forms[mt[1]]) return line;
-  if (state === 'err' && /\u00b7 exit /.test(line)) return line;
-  return (state === 'run' ? forms[mt[1]][0] : 'Couldn\u2019t ' + forms[mt[1]][1]) + line.slice(mt[1].length);
+  const mt = /^(Added to|Looked for|Looked at|Looked up|[A-Z][a-z]+)\b/.exec(line);
+  if (state === 'err' && mt && mt[1] === 'Ran' && /\u00b7 exit /.test(line)) return line;
+  if (!mt || !forms[mt[1]]) {
+    return state === 'run' ? line
+      : (state === 'unk' ? 'Tried: ' : 'Couldn\u2019t finish: ') + line.charAt(0).toLowerCase() + line.slice(1);
+  }
+  const rest = line.slice(mt[1].length);
+  if (state === 'run') return forms[mt[1]][0] + rest;
+  return (state === 'unk' ? 'Tried to ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
 }
 /* The failure, in one line, for a card that failed: the first line of the
    result that says something \u2014 the shell's own `$ cmd` / `exit: N` header and
@@ -2191,18 +2202,28 @@ function toolIcon(name) {
 function toolStatus(state) {
   return state === 'run' ? '<span class="tl-st run" title="Running"><span class="tk-spin"></span></span>'
     : state === 'err' ? '<span class="tl-st err" title="Failed">' + ic('alert') + '</span>'
+    : state === 'unk' ? '<span class="tl-st unk" title="The outcome was not recorded">' + ic('minus') + '</span>'
     : '<span class="tl-st ok" title="Done">' + ic('check') + '</span>';
 }
+/* The ONE place a call's state is decided; the headline's tense, the red
+   styling, the error line and the status glyph all read it. `ok === null`
+   is still running (or waiting on an approval), `false` failed or was
+   denied, and a card reconcileToolCards had to settle itself (`forced`: the
+   store never described it) is `unk` — never drawn as a success. */
+function toolState(m) {
+  return m.ok === null ? 'run' : m.ok === false ? 'err' : m.forced ? 'unk' : 'ok';
+}
 function toolCard(m) {
-  const running = m.ok === null;
-  const failed = m.ok === false;
+  const st = toolState(m);
+  const running = st === 'run';
+  const failed = st === 'err';
   const ms = running ? '' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '';
   /* `data-tool` is the raw id the drivers compare (turn-order.drive reads it);
      the same id is printed, visibly, inside the expanded part. */
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
-      + '<span class="nm">' + (running ? toolTense(toolLine(m), 'run') : failed ? toolTense(toolLine(m), 'err') : toolLine(m)) + '</span>'
+      + '<span class="nm">' + toolTense(toolLine(m), st) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
@@ -2211,7 +2232,7 @@ function toolCard(m) {
           : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
           : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
           : 'no trace for this call') + '">' + ms + '</span>'
-      + toolStatus(running ? 'run' : failed ? 'err' : 'ok')
+      + toolStatus(st)
       + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
     // The failure stays readable without opening the card.
@@ -2310,7 +2331,7 @@ function composer() {
      drivers read is kept — `.statusstrip` (+ gated / waiting / appstatus),
      the waiting strip's `.ann` / `.readout` / `.ob-help`, and
      `data-act="jump:appr"`. Calm (S3) dropped the busy strip (see below);
-     the turn's 100 ms ticker still counts S.elapsed but has no readout.
+     the turn's elapsed ticker and its phase word went with it.
      r2 (DMG feedback): no Stop pill on the busy or waiting strip. The one
      Stop is the composer's own button (sendButton: `.sendbtn.stop` whenever
      S.busy || S.pending), and ⌘ . still aborts while a steer is drafted. */
@@ -5626,16 +5647,11 @@ function startLiveTurn(text) {
   S.history.push({role:'user', content:text});
   S.reasonId = null;
   FZ.live = [];
-  S.busy = true; S.stick = true; S.elapsed = 0; S.phase = 'Thinking';
+  S.busy = true; S.stick = true;
   const streaming = {id:nid(), k:'assistant', text:''};
   S.streamId = streaming.id;
   S.log.push(streaming);
   clearInterval(ticker);
-  ticker = setInterval(() => {
-    S.elapsed++;
-    const n = document.querySelector('.statusstrip .tnum');
-    if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's';
-  }, 100);
   render();
   // The agent holds the session, so a turn sends the new message and the
   // session id — not a replay of everything said so far.
@@ -5855,7 +5871,6 @@ function onChatEvent(ev) {
       S.log.splice(S.log.indexOf(item), 0, block);
     }
     block.text += text;
-    S.phase = 'Thinking';
     render();
     return;
   }
@@ -5866,12 +5881,11 @@ function onChatEvent(ev) {
     const arg = pick(ev.payload, 'label') || '';
     const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId};
     S.log.splice(S.log.indexOf(item), 0, card);
-    S.phase = name;
     render();
     return;
   }
   if (ev.kind === 'delta') {
-    if (item) { item.text += ev.text; S.phase = 'Writing reply'; render(); }
+    if (item) { item.text += ev.text; render(); }
     return;
   }
   /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
@@ -6181,9 +6195,6 @@ function answerLive(req, key) {
      session (a scheduled task's) must not make THIS chat look busy. */
   if (key !== 'esc' && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
     S.busy = true;
-    // The tool is running now, so the strip names it — the same word the
-    // tool_progress frame would have put there had the call not been gated.
-    S.phase = approve ? (req.tool || 'Working') : 'Thinking';
   }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
     if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text:'could not resolve the approval: ' + esc(res.error || '')});
@@ -6244,7 +6255,6 @@ async function denyByProse(req, text, post) {
      running to report on. */
   if (landed && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
     S.busy = true;
-    S.phase = 'Thinking';
   }
   placeAfterRow(req, {id:nid(), k:'system', apprNote:true, text: landed
     ? 'that call was denied with your message as the reason'
@@ -12695,8 +12705,9 @@ function groupCard(run) {
   // the tooltip says when some are unmeasured, and a fold with no measured member prints nothing, never 0ms.
   const measured = run.filter((c) => c.msSource === 'trace' || c.observedMs);
   const ms = measured.reduce((n, c) => n + (c.msSource === 'trace' ? c.ms : c.observedMs), 0);
-  const bad = run.filter((c) => c.ok === false).length;
-  const pending = run.some((c) => c.ok === null);
+  const states = run.map(toolState);
+  const bad = states.filter((x) => x === 'err').length;
+  const pending = states.includes('run');
   // The title says where the numbers come from: a fold of live cards is window-observed until the store lands.
   const observed = measured.filter((c) => c.msSource !== 'trace').length;
   const duTitle = pending ? 'running'
@@ -12713,7 +12724,7 @@ function groupCard(run) {
     + '<span class="nm">' + esc(toolVerb(m.name)) + ' \u00b7 ' + run.length + ' times</span>'
     + (bad ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
-    + toolStatus(pending ? 'run' : bad ? 'err' : 'ok')
+    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('unk') ? 'unk' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
