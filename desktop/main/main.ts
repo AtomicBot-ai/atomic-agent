@@ -5070,8 +5070,10 @@ async function hfAndDeltaTest(
     "hf: the Settings route into the branch enters the LLM tab properly - the Local pane behind it is loaded, not empty",
     obHf.settings && obHf.pane === "llm" && obHf.mode === "local" && obHf.branch
       && obHf.polling && obHf.refreshed && obHf.rows >= 0
-      && obHf.body.includes("a add from hugging face"),
-    `pane=${obHf.pane} polling=${obHf.polling} refreshed=${obHf.refreshed} rows=${obHf.rows}`,
+      // Calm (S5): the "a add from hugging face" key-hint row left; the Local
+      // pane's own "Add from Hugging Face" button is what a person reads.
+      && /Add from Hugging Face/.test(obHf.body),
+    `pane=${obHf.pane} polling=${obHf.polling} refreshed=${obHf.refreshed} rows=${obHf.rows} button=${/Add from Hugging Face/.test(obHf.body)}`,
   );
   await js<void>("window.__settingsClose()");
 
