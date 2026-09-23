@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import { describeFailedAttempts } from "../llm/fallback/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -6,6 +7,7 @@ import {
 import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
+import { reduceMemoryHealthWarning } from "./reduce-memory-health-warning.js";
 import { formatFeedLine } from "./format-event.js";
 import {
   formatFusionWorkerLine,
@@ -561,6 +563,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         },
       );
     }
+    case "memory_health_warning":
+      return reduceMemoryHealthWarning(state, event);
     case "loop_failed": {
       // A user-initiated abort is not a failure and must not dress like
       // one: the operator pressed stop (the chip, Esc, Ctrl+C or
@@ -615,6 +619,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           ),
           llamaUrl: state.session.llamaUrl,
         },
+        describeFailedAttempts(event.error),
       );
       // The wait ran out and the turn died with it. Keep the outage on
       // screen: the next message the operator sends will fail the same
@@ -747,6 +752,29 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         kind: "runtime_info",
         stepIndex: event.stepIndex,
         line: `» the model's output could not be read as a tool call (${reason}) — trying again (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
+    }
+    case "empty_completion_recovered":
+      // Same reason as above, and more so: an empty completion produces
+      // literally nothing, so without this line the feed shows a step
+      // that never happened.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the model returned an empty reply — trying again (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
+    case "profile_clipped": {
+      // Issue #407: the clip used to show only as a `[truncated]` inside
+      // a prompt nobody reads. The loop fires this once per session, and
+      // again only when the pinned count changes, so it cannot fill the
+      // feed.
+      const noun = event.dropped === 1 ? "fact" : "facts";
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» profile: ${event.dropped} ${noun} left out of the prompt (${event.pinnedDropped} pinned) — memory.profile.maxTokens ${event.maxTokens} is too small`,
         color: "yellow",
       });
     }

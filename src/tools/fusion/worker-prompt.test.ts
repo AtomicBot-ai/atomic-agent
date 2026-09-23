@@ -50,7 +50,7 @@ describe("renderWorkerBrief", () => {
   it("names the approval refusal so the model recognises the result", () => {
     const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
     expect(brief).toContain(FUSION_WORKER_APPROVAL_MARKER);
-    expect(brief).toMatch(/exactly what must be run or written/);
+    expect(brief).toMatch(/exactly what was blocked and where/);
   });
 
   it("says the reply is the whole handover, and bounds it", () => {

@@ -26,11 +26,23 @@ export interface BudgetCheckResult {
  */
 export function estimateTokens(text: string): number {
   if (text.length === 0) return 0;
-  const chars = text.length;
-  const words = text.trim().split(/\s+/).length;
-  const charBased = Math.ceil(chars / 3.6);
-  const wordBased = Math.ceil(words * 1.4);
-  return Math.max(charBased, wordBased);
+  return estimateTokensFromCounts(
+    text.length,
+    text.trim().split(/\s+/).length,
+  );
+}
+
+/**
+ * The formula behind {@link estimateTokens}, over counts a caller has
+ * already summed. Lets a line-at-a-time packer price a candidate
+ * without re-scanning everything it has accepted so far.
+ */
+export function estimateTokensFromCounts(
+  chars: number,
+  words: number,
+): number {
+  if (chars === 0) return 0;
+  return Math.max(Math.ceil(chars / 3.6), Math.ceil(words * 1.4));
 }
 
 /**

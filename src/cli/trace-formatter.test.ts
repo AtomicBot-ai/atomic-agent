@@ -30,6 +30,85 @@ function render(events: readonly TraceEvent[]): string {
   return formatTraceChronology(events);
 }
 
+describe("formatTraceChronology error", () => {
+  const row = {
+    type: "error" as const,
+    seq: 9,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    message: "fetch failed",
+    category: "transport" as const,
+  };
+
+  it("prints the message alone when no fallback link failed first", () => {
+    expect(render([row])).toMatch(/ message=fetch failed$/);
+  });
+
+  it("names the links that failed before the last one", () => {
+    expect(
+      render([
+        {
+          ...row,
+          fallbackFailures: [
+            {
+              providerId: "openrouter",
+              reason: "openai provider 404: No endpoints found",
+            },
+          ],
+        },
+      ]),
+    ).toMatch(
+      / message=fetch failed \(after "openrouter" failed: openai provider 404: No endpoints found\)$/,
+    );
+  });
+});
+
+describe("formatTraceChronology profile rows (issue #407)", () => {
+  const ts = Date.parse("2026-09-01T10:00:00.000Z");
+
+  it("prints a clip's counts on one line", () => {
+    expect(
+      render([
+        {
+          type: "profile_clipped",
+          seq: 4,
+          sessionId: "s-1",
+          ts,
+          turnIndex: 2,
+          stepIndex: 0,
+          rendered: 21,
+          dropped: 67,
+          pinnedDropped: 48,
+          maxTokens: 512,
+        },
+      ]),
+    ).toBe(
+      "[2026-09-01T10:00:00.000Z] #4 profile_clipped turn=2 step=0 rendered=21 dropped=67 pinnedDropped=48 maxTokens=512",
+    );
+  });
+
+  it("prints an eviction with the keys it removed", () => {
+    expect(
+      render([
+        {
+          type: "profile_facts_evicted",
+          seq: 5,
+          sessionId: "s-1",
+          ts,
+          maxEntries: 500,
+          activeUnpinned: 500,
+          evicted: 2,
+          ids: [3, 8],
+          keys: ["deploy_cmd", "ci_url"],
+        },
+      ]),
+    ).toBe(
+      "[2026-09-01T10:00:00.000Z] #5 profile_facts_evicted evicted=2 maxEntries=500 activeUnpinned=500 keys=deploy_cmd,ci_url",
+    );
+  });
+});
+
 describe("formatTraceChronology completion_truncated", () => {
   it("prints the cause, the counts and the retry on one line", () => {
     const out = render([
@@ -152,5 +231,73 @@ describe("formatTraceChronology parse_failure_recovered", () => {
   it("truncates a reason that quotes the model's own output", () => {
     const line = render([{ ...event, reason: "x".repeat(400) }]);
     expect(line.length).toBeLessThan(300);
+  });
+});
+
+describe("formatTraceChronology empty_completion_recovered", () => {
+  const event: TraceEvent = {
+    type: "empty_completion_recovered",
+    seq: 12,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    stepIndex: 2,
+    attempt: 1,
+    budget: 1,
+  };
+
+  it("says which step came back empty and how far into the budget", () => {
+    // The row a post-mortem of Sentry CLI-BA needs: an empty completion
+    // leaves nothing else in the trace — no tool call, no text, no
+    // error — so this line is the only evidence the step happened at
+    // all, and the only way to tell a turn that spent its retry from
+    // one that failed on the first empty.
+    const line = render([event]);
+    expect(line).toContain("#12 empty_completion_recovered");
+    expect(line).toContain("step=2 attempt=1/1");
+  });
+
+  it("carries no reason — there was no output to have rejected", () => {
+    const line = render([event]);
+    expect(line).not.toContain("reason=");
+    expect(line).not.toContain("undefined");
+    // One row, one line: the chronology stays greppable.
+    expect(line.trim().split("\n")).toHaveLength(1);
+  });
+});
+
+describe("formatTraceChronology memory_health_warning", () => {
+  const event: TraceEvent = {
+    type: "memory_health_warning",
+    seq: 20,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 4,
+    kind: "rewriter",
+    outcome: "timeout",
+    consecutive: 3,
+    setting: "memory.retrieve.rewriter.timeoutMs",
+  };
+
+  it("names the sub-call, the streak and the setting the operator was pointed at", () => {
+    const line = render([event]);
+    expect(line).toContain("#20 memory_health_warning");
+    expect(line).toContain(
+      "turn=4 kind=rewriter outcome=timeout consecutive=3 setting=memory.retrieve.rewriter.timeoutMs",
+    );
+    expect(line).not.toContain("reason=");
+  });
+
+  it("quotes a failure reason, truncated", () => {
+    const line = render([
+      {
+        ...event,
+        outcome: "failed",
+        setting: "memory.retrieve.rewriter.enabled",
+        reason: "y".repeat(400),
+      },
+    ]);
+    expect(line).toContain("reason=yyy");
+    expect(line.length).toBeLessThan(400);
   });
 });

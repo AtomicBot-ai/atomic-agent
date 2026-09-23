@@ -1,10 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import {
+  describeFailedAttempts,
+  readFailedAttempts,
+} from "./failed-attempts.js";
 import { runWithFallback } from "./run-with-fallback.js";
 import { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import type { ProviderSwitchNotice } from "./provider-fallback-chain.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
-import { GrammarError, TransportError } from "../reliability/llm-failures.js";
+import { GrammarError } from "../reliability/llm-failures.js";
+import {
+  classifyFailure,
+  isNetworkError,
+  isRequestSizeRejection,
+} from "../reliability/index.js";
+import { shouldAdvance } from "./should-advance.js";
 
 function makeChain(
   ids: string[],
@@ -79,35 +89,197 @@ describe("runWithFallback", () => {
     expect(attempts).toBe(2); // tried both links this turn
   });
 
-  /* The chain always ends in the configured llama-server provider, which
-     on a cloud-only install is a daemon that has never run. Reporting the
-     LAST failure therefore answered "why did my message fail?" with a
-     socket error from a backend the operator never picked, and threw away
-     the cloud provider's own sentence — the 402 that said, in words, to
-     add credits or ask for fewer tokens. The head of the chain is the
-     provider named in the composer chip; its failure is the answer. */
-  it("reports the provider the operator is on, not the dead tail of the chain", async () => {
-    const chain = makeChain(["openrouter", "local-llama"]);
-    const refused = http(402);
-    const localDown = new TransportError("fetch failed", null, "");
-    const seen: string[] = [];
-    await expect(
-      runWithFallback(chain, async (id) => {
-        seen.push(id);
-        throw id === "openrouter" ? refused : localDown;
-      }),
-    ).rejects.toBe(refused);
-    expect(seen).toEqual(["openrouter", "local-llama"]);
+  describe("an exhausted chain [cloud 404, local fetch failed]", () => {
+    // The field shape: OpenRouter answers 404 for a retired model, and the
+    // auto-appended llama-server is not running.
+    const cloud404 = (): OpenAiHttpError =>
+      new OpenAiHttpError(
+        'openai provider 404: {"error":{"message":"No endpoints found for z-ai/glm-5.3-flash.","code":404}}',
+        404,
+        "https://openrouter.ai/api/v1/chat/completions",
+        false,
+        null,
+        "openrouter",
+      );
+
+    async function exhaust(): Promise<unknown> {
+      const chain = makeChain(["openrouter", "local"]);
+      const localDown = new TypeError("fetch failed");
+      try {
+        await runWithFallback(chain, async (id) => {
+          throw id === "openrouter" ? cloud404() : localDown;
+        });
+      } catch (err) {
+        expect(err).toBe(localDown);
+        return err;
+      }
+      throw new Error("expected the chain to be exhausted");
+    }
+
+    it("throws the last link's error, classified exactly as a bare one", async () => {
+      const thrown = await exhaust();
+      const bare = new TypeError("fetch failed");
+      expect(thrown).toBeInstanceOf(TypeError);
+      expect((thrown as Error).message).toBe("fetch failed");
+      expect(Object.keys(thrown as object)).toEqual(Object.keys(bare));
+      expect(classifyFailure(thrown)).toBe(classifyFailure(bare));
+      expect(classifyFailure(thrown)).toBe("transport");
+      expect(shouldAdvance(thrown)).toEqual(shouldAdvance(bare));
+      expect(isRequestSizeRejection(thrown)).toBe(false);
+      expect(isNetworkError(thrown)).toBe(true);
+    });
+
+    it("carries the primary's failure beside the error it throws", async () => {
+      const thrown = await exhaust();
+      expect(readFailedAttempts(thrown).map((a) => a.providerId)).toEqual([
+        "openrouter",
+      ]);
+      expect(describeFailedAttempts(thrown)).toBe(
+        ' (after "openrouter" failed: openai provider 404: {"error":{"message":"No endpoints found for z-ai/glm-5.3-flash.","code":404}})',
+      );
+    });
   });
 
-  it("still reports the only failure when nothing falls over", async () => {
-    const chain = makeChain(["solo"]);
-    const only = http(402);
+  it("a single-link failure carries no note", async () => {
+    const chain = makeChain(["only"]);
+    const err = new TypeError("fetch failed");
     await expect(
       runWithFallback(chain, async () => {
-        throw only;
+        throw err;
       }),
-    ).rejects.toBe(only);
+    ).rejects.toBe(err);
+    expect(readFailedAttempts(err)).toEqual([]);
+    expect(describeFailedAttempts(err)).toBe("");
+  });
+
+  describe("a call that starts on the sticky fallback", () => {
+    // A clock below the probe throttle: once on the override, later calls
+    // stay there instead of probing the primary.
+    function stickyChain(): ProviderFallbackChain {
+      return new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["primary", "backup"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        now: () => 1_000,
+      });
+    }
+
+    it("still names the primary's failure when the fallback fails", async () => {
+      const chain = stickyChain();
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "primary" ? http(404) : new TypeError("fetch failed");
+        }),
+      ).rejects.toBeInstanceOf(TypeError);
+
+      // What every retry of a parked turn looks like: the primary is not
+      // tried, only the fallback, and it is still down.
+      const seen: string[] = [];
+      const again = new TypeError("fetch failed");
+      await expect(
+        runWithFallback(chain, async (id) => {
+          seen.push(id);
+          throw again;
+        }),
+      ).rejects.toBe(again);
+      expect(seen).toEqual(["backup"]);
+      expect(describeFailedAttempts(again)).toBe(
+        ' (after "primary" failed: boom)',
+      );
+    });
+
+    it("forgets the primary's failure once a probe brings it back", async () => {
+      let now = 1_000;
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["primary", "backup"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        now: () => now,
+      });
+      await runWithFallback(chain, async (id) => {
+        if (id === "primary") throw http(404);
+        return id;
+      });
+      expect(chain.overrideCause()?.providerId).toBe("primary");
+
+      now += DEFAULT_FALLBACK_TIMING.probeThrottleMs;
+      await expect(runWithFallback(chain, async (id) => id)).resolves.toBe(
+        "primary",
+      );
+      expect(chain.overrideCause()).toBeNull();
+    });
+  });
+
+  describe("logging", () => {
+    it("warns on every advance with the failed link's status and message", async () => {
+      const warn = vi.fn();
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["cloud", "cloud2", "local"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        logger: { warn },
+      });
+      const last = new TypeError("fetch failed");
+
+      await expect(
+        runWithFallback(
+          chain,
+          async (id) => {
+            if (id === "cloud") throw http(404);
+            if (id === "cloud2") throw http(503);
+            throw last;
+          },
+          "s-1",
+        ),
+      ).rejects.toBe(last);
+
+      // Two advances; the exhausted last link is the turn's own error.
+      expect(warn.mock.calls).toEqual([
+        [
+          "provider failed; falling over to the next link",
+          {
+            from: "cloud",
+            to: "cloud2",
+            status: 404,
+            reason: "boom",
+            sessionId: "s-1",
+          },
+        ],
+        [
+          "provider failed; falling over to the next link",
+          {
+            from: "cloud2",
+            to: "local",
+            status: 503,
+            reason: "boom",
+            sessionId: "s-1",
+          },
+        ],
+      ]);
+      expect(describeFailedAttempts(last)).toBe(
+        ' (after "cloud" failed: boom; "cloud2" failed: boom)',
+      );
+    });
+
+    it("does not warn about a failure that does not advance", async () => {
+      const warn = vi.fn();
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["primary", "backup"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        logger: { warn },
+      });
+      await expect(
+        runWithFallback(chain, async () => {
+          throw new GrammarError("bad", "");
+        }),
+      ).rejects.toBeInstanceOf(GrammarError);
+      expect(warn).not.toHaveBeenCalled();
+    });
   });
 
   it("rethrows immediately without switching on a non-fallover error", async () => {
@@ -123,5 +295,6 @@ describe("runWithFallback", () => {
     ).rejects.toBe(grammar);
     expect(attempts).toBe(1); // never advanced
     expect(notices).toHaveLength(0);
+    expect(describeFailedAttempts(grammar)).toBe("");
   });
 });

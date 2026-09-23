@@ -40,7 +40,8 @@ export interface WorkerRunnerDeps {
   ) => Promise<RunTurnResult>;
   /** `runtime.createEphemeralSession` — in-memory, never persisted. */
   createEphemeralSession: (meta: FusionWorkerMeta) => SessionState;
-  approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy">;
+  approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
+    Partial<Pick<ApprovalGate, "fanoutScopes">>;
   /** Progress into the PARENT session's frame. */
   emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
   workingDir: string;
@@ -62,6 +63,14 @@ export interface RunWorkerTasksOptions {
   workerModel: string;
   workerMaxSteps: number;
   workerTimeoutMs: number;
+  /**
+   * Directories these workers may write in without asking, as approved
+   * by the operator on this fan-out's own prompt. Empty means nothing
+   * was authorised — the workers then hit the refuse policy on every
+   * write, exactly as they did before the fan-out prompt existed, and
+   * the operator sees it as every task returning `needs_orchestrator`.
+   */
+  writeScope?: readonly string[];
   signal: AbortSignal;
 }
 
@@ -187,6 +196,15 @@ async function runOneTask(
     onPrompt: "refuse",
     reason: FUSION_WORKER_APPROVAL_REFUSED,
   });
+  // …and the half that lets it work at all. The operator answered one
+  // question at the fan-out naming these directories; inside them this
+  // worker writes unprompted. The refuse policy above still catches
+  // everything else, so straying outside the scope comes back as
+  // `needs_orchestrator` — a task to re-delegate, not a dead worker.
+  const writeScope = options.writeScope ?? [];
+  if (writeScope.length > 0) {
+    deps.approvals.fanoutScopes?.grant(session.id, writeScope);
+  }
 
   let result: WorkerTaskResult;
   try {
@@ -240,6 +258,7 @@ async function runOneTask(
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
+    deps.approvals.fanoutScopes?.clear(session.id);
   }
 
   // Keep the feed paired: a turn that died before it ever stepped never

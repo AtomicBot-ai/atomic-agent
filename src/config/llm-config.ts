@@ -76,9 +76,13 @@ export type UserLlmProviderEntry = {
    */
   promptCache?: "auto" | "off" | "explicit-markers";
   /**
-   * Vendor routing preferences (e.g. OpenRouter's `provider` block).
-   * Same status as `promptCache`: carried through config, not yet read
-   * by any provider.
+   * OpenRouter provider routing — `order`, `only`, `ignore`,
+   * `allow_fallbacks`, `require_parameters`, `sort`, `data_collection`,
+   * … — sent verbatim as the chat body's `provider` object on every
+   * completion an `openrouter` entry makes: turns, sub-calls and vision.
+   * Other kinds ignore it. OpenRouter owns the vocabulary, so nothing
+   * here checks it beyond "an object". An explicit `extraBody.provider`
+   * still wins, since `extraBody` is merged last.
    */
   providerPreferences?: Record<string, unknown>;
   /**
@@ -95,6 +99,20 @@ export type UserLlmProviderEntry = {
    * after the merge and cannot be overridden from config.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Emit OpenAI strict function tools for this provider —
+   * `tools[].function.strict: true`, with every tool schema rewritten
+   * into the subset strict mode accepts. Added in config v63.
+   *
+   * Off by default and deliberately so: strict mode is an OpenAI
+   * extension, and a service that does not implement it rejects the
+   * entire request rather than ignoring the field. Turn it on for a
+   * model that only calls tools reliably under constrained decoding
+   * (the reported case was Inception Labs' Mercury). This cannot be
+   * done through `extraBody` — `strict` is a field on each tool and
+   * `tools` is a reserved key that is re-applied after that merge.
+   */
+  strictTools?: boolean;
   /**
    * Hand-written model metadata for this provider. `resolveModel`
    * reads it as its highest-priority source (userModels > bundled
@@ -115,6 +133,10 @@ export type UserLlmProviderEntry = {
  * Note `supportsTools` here is a support *level*, not the boolean of
  * the same name on the provider entry: a model can advertise strict or
  * parallel tool calling independently of whether the transport does.
+ * `"strict"` is the one level with a wire effect — it asks the provider
+ * to constrain the decode to the tool schemas, per tool and only where
+ * the schema can be expressed strictly. See AGENTS.md §"Strict tool
+ * schemas".
  */
 export type UserModelEntry = {
   id: string;
@@ -308,6 +330,17 @@ export function parseLlmProviderEntry(
       `${field}.providerPreferences`,
     ),
     extraBody: parseOptionalPlainObject(obj.extraBody, `${field}.extraBody`),
+    strictTools:
+      obj.strictTools === undefined
+        ? undefined
+        : typeof obj.strictTools === "boolean"
+          ? obj.strictTools
+          : (() => {
+              throw new ConfigValidationError(
+                `${field}.strictTools`,
+                "expected boolean",
+              );
+            })(),
     userModels: parseOptionalUserModels(obj.userModels, `${field}.userModels`),
     subscriptionCli: parseSubscriptionCliOptions(
       obj.subscriptionCli,

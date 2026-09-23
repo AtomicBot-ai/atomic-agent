@@ -78,7 +78,26 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     const title = "title" in msg.chat ? msg.chat.title : undefined;
     const replyFrom = msg.reply_to_message?.from;
     const update: InboundTextUpdate = {
-      ...(gctx.from ? { from: { id: gctx.from.id } } : {}),
+      // The name fields feed the `[from]` identity line in a group.
+      // Copied field by field (rather than spreading `gctx.from`) so
+      // nothing else from the platform payload can drift into the
+      // prompt unnoticed.
+      ...(gctx.from
+        ? {
+            from: {
+              id: gctx.from.id,
+              ...(typeof gctx.from.first_name === "string"
+                ? { first_name: gctx.from.first_name }
+                : {}),
+              ...(typeof gctx.from.last_name === "string"
+                ? { last_name: gctx.from.last_name }
+                : {}),
+              ...(typeof gctx.from.username === "string"
+                ? { username: gctx.from.username }
+                : {}),
+            },
+          }
+        : {}),
       chat: {
         id: msg.chat.id,
         type: msg.chat.type,

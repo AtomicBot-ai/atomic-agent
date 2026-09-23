@@ -8,6 +8,8 @@ export type {
   TraceParseRetry,
   TracePromptCaptured,
   TracePromptTokens,
+  TraceProfileClipped,
+  TraceProfileFactsEvicted,
   TraceSessionStarted,
   TraceStepFinished,
   TraceStepStarted,

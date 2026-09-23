@@ -76,11 +76,19 @@ export class RunModeOrchestrator {
     let leg: string | null;
     let fusion: RunModeChangeOptions["fusion"] = opts.fusion;
     if (mode === "fusion") {
+      // Cloud orchestrator is the DEFAULT, not the rule. An explicit pin
+      // wins whatever its kind — a local orchestrator driving cloud
+      // workers is a pairing an operator may well want (cheap planning,
+      // capable execution), and the runtime has no business overruling
+      // it. Without a pin the preference order is: the provider already
+      // active, then the first usable cloud one, then whatever the
+      // resolver last had.
       leg =
         opts.fusion?.orchestratorProvider ??
         (activeIsCloud ? resolved.activeTextProvider : null) ??
         this.firstUsableCloudProvider(resolved) ??
-        rm.orchestratorProviderId;
+        rm.orchestratorProviderId ??
+        resolved.activeTextProvider;
       if (leg === null || leg === undefined) {
         this.refuse(
           describeRunModeDegradation({
@@ -90,10 +98,15 @@ export class RunModeOrchestrator {
         );
         return;
       }
-      if (rm.workerProviderId === null) {
+      const workerLeg =
+        opts.fusion?.workerProvider ??
+        (rm.workerProviderId !== leg ? rm.workerProviderId : null) ??
+        resolved.providers.find((p) => p.id !== leg)?.id ??
+        null;
+      if (workerLeg === null) {
         this.refuse(
           describeRunModeDegradation({
-            reason: "no-local-provider",
+            reason: "no-second-provider",
             requested: mode,
           }),
         );
@@ -107,7 +120,7 @@ export class RunModeOrchestrator {
       fusion = {
         ...fusion,
         orchestratorProvider: leg,
-        workerProvider: opts.fusion?.workerProvider ?? rm.workerProviderId,
+        workerProvider: workerLeg,
       };
     } else if (mode === "cloud") {
       leg = activeIsCloud
@@ -173,6 +186,46 @@ export class RunModeOrchestrator {
         void this.deps.localModels.startDaemon();
       }
     }
+  }
+
+  /**
+   * Trade the two legs: the orchestrator provider becomes the worker
+   * provider and back. One write, through `setMode`, so the pins and
+   * `llm.activeTextProvider` move together — the active provider must
+   * follow the orchestrator or the next read drops out of fusion.
+   *
+   * The informational model pins ride along. They are per-leg labels
+   * (`orchestratorModel` / `workerModel`), so leaving them where they
+   * were would make both halves of the composer name the wrong side.
+   * The TUI never writes them, but a hand-edited config may.
+   */
+  async swapLegs(): Promise<void> {
+    const resolved = resolveLlmConfig(getConfig());
+    const rm = resolveRunMode(resolved);
+    if (rm.stored !== "fusion") {
+      this.refuse("swap needs fusion — pick it first (`/runmode fusion`)");
+      return;
+    }
+    const orchestrator = rm.orchestratorProviderId;
+    const worker = rm.workerProviderId;
+    if (orchestrator === null || worker === null || orchestrator === worker) {
+      this.refuse(
+        describeRunModeDegradation({
+          reason: "no-second-provider",
+          requested: "fusion",
+        }),
+      );
+      return;
+    }
+    const pinned = resolved.runMode?.fusion;
+    await this.setMode("fusion", {
+      fusion: {
+        orchestratorProvider: worker,
+        workerProvider: orchestrator,
+        orchestratorModel: pinned?.workerModel,
+        workerModel: pinned?.orchestratorModel,
+      },
+    });
   }
 
   /**

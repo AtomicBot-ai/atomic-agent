@@ -285,6 +285,39 @@ export function setProviderDefaultChatModelInConfig(
   resetConfigCache();
 }
 
+/**
+ * Put one provider's `defaultChatModel` back to a previous value —
+ * including *unset*, which {@link setProviderDefaultChatModelInConfig}
+ * cannot express (it rejects an empty id).
+ *
+ * This exists for callers that must write the model *before* an
+ * operation that can still fail — rebuilding the provider from the
+ * now-current config reads it off disk, so it cannot be written after.
+ * Without an undo, a failed rebuild leaves the config pinning a model
+ * that nothing ever accepted while the caller reports a failure, and
+ * the next reader (a `/model` report, the TUI's LLM pane) shows the
+ * rejected id as the provider's model. Unknown provider id is a no-op:
+ * a rollback path must not throw a second error over the first.
+ */
+export function restoreProviderDefaultChatModelInConfig(
+  providerId: string,
+  previous: string | undefined,
+): void {
+  const path = getConfig().paths.userConfigFile;
+  const file = ensureUserConfigFileSync(path);
+  const llm = readLlmBlockOrDefault(file);
+  const providers = llm.providers.map((provider) => {
+    if (provider.id !== providerId) return provider;
+    if (previous === undefined) {
+      const { defaultChatModel: _dropped, ...rest } = provider;
+      return rest;
+    }
+    return { ...provider, defaultChatModel: previous };
+  });
+  writeUserConfigFileSync(path, { ...file, llm: { ...llm, providers } });
+  resetConfigCache();
+}
+
 export function setProviderDefaultEmbeddingModelInConfig(
   providerId: string,
   modelId: string,

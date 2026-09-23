@@ -72,9 +72,39 @@ describe("renderProfileSection", () => {
       ],
       { userMessage: "How do I deploy this branch?" },
     );
+    // Pinned before contextual, whatever the keys (issue #407).
     expect(out).toBe(
-      ["- deploy_cmd: pnpm run deploy", "- language: ru"].join("\n"),
+      ["- language: ru", "- deploy_cmd: pnpm run deploy"].join("\n"),
     );
+  });
+
+  it("orders pinned facts first, then contextual, each group by key", () => {
+    const out = renderProfileSection(
+      [
+        contextual("b_ci_url", "https://ci.example", ["ci"]),
+        pinned("z_security", "no destructive commands"),
+        contextual("a_deploy_cmd", "pnpm run deploy", ["ci"]),
+        pinned("m_language", "ru"),
+      ],
+      { userMessage: "run ci" },
+    );
+    expect(out).toBe(
+      [
+        "- m_language: ru",
+        "- z_security: no destructive commands",
+        "- a_deploy_cmd: pnpm run deploy",
+        "- b_ci_url: https://ci.example",
+      ].join("\n"),
+    );
+  });
+
+  it("does not reorder the caller's array", () => {
+    const facts = [
+      contextual("a_deploy_cmd", "pnpm run deploy", ["ci"]),
+      pinned("z_security", "no destructive commands"),
+    ];
+    renderProfileSection(facts, { userMessage: "ci" });
+    expect(facts.map((f) => f.key)).toEqual(["a_deploy_cmd", "z_security"]);
   });
 
   it("matches keywords as whole words (case-insensitive)", () => {
@@ -107,8 +137,9 @@ describe("renderProfileSection", () => {
       ],
       { contextualKeywordGate: false },
     );
+    // Gate off still renders pinned facts first.
     expect(out).toBe(
-      ["- deploy_cmd: pnpm run deploy", "- language: ru"].join("\n"),
+      ["- language: ru", "- deploy_cmd: pnpm run deploy"].join("\n"),
     );
   });
 

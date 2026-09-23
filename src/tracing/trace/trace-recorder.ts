@@ -2,8 +2,20 @@ import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import type { StepEvent } from "../../agent/step-executor.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 
-import type { TraceEvent } from "./trace-event.js";
+// The module, not the fallback barrel: it has no imports of its own, so
+// tracing does not pull the provider clients in behind it.
+import { summarizeFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+
+import type { TraceError, TraceEvent } from "./trace-event.js";
 import type { TraceSink } from "./trace-bus.js";
+
+/** The `fallbackFailures` field of an `error` row, or nothing. */
+function fallbackFailuresOf(
+  error: unknown,
+): Pick<TraceError, "fallbackFailures"> {
+  const failures = summarizeFailedAttempts(error);
+  return failures.length > 0 ? { fallbackFailures: failures } : {};
+}
 
 export interface TraceRecorderOptions {
   sessionId: string;
@@ -93,6 +105,18 @@ export interface TraceRecorder {
       | "timeout"
       | "failed";
     reason?: string;
+  }): void;
+  /**
+   * Issue #407. Emit a `profile_facts_evicted` row: a profile write
+   * pushed the active unpinned facts over `memory.profile.maxEntries`.
+   * Called from the store's eviction listener, outside the loop's event
+   * stream, so the recorder owns `seq` here as it does for votes.
+   */
+  recordProfileFactsEvicted(payload: {
+    maxEntries: number;
+    activeUnpinned: number;
+    ids: readonly number[];
+    keys: readonly string[];
   }): void;
 }
 
@@ -227,6 +251,7 @@ export function createTraceRecorder(
           message: inner.error.message,
           ...(inner.error.stack ? { stack: inner.error.stack } : {}),
           category: inner.category,
+          ...fallbackFailuresOf(inner.error),
         });
         return;
       default:
@@ -300,6 +325,19 @@ export function createTraceRecorder(
         ts: now(),
         outcome: payload.outcome,
         ...(payload.reason ? { reason: payload.reason } : {}),
+      });
+    },
+    recordProfileFactsEvicted(payload) {
+      push({
+        type: "profile_facts_evicted",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        maxEntries: payload.maxEntries,
+        activeUnpinned: payload.activeUnpinned,
+        evicted: payload.keys.length,
+        ids: [...payload.ids],
+        keys: [...payload.keys],
       });
     },
     beginSession(info) {
@@ -394,6 +432,18 @@ export function createTraceRecorder(
             reason: event.reason,
           });
           return;
+        case "empty_completion_recovered":
+          push({
+            type: "empty_completion_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+          });
+          return;
         case "provider_waiting":
           push({
             type: "provider_waiting",
@@ -457,6 +507,20 @@ export function createTraceRecorder(
             ...(event.read !== undefined ? { read: event.read } : {}),
           });
           return;
+        case "profile_clipped":
+          push({
+            type: "profile_clipped",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            rendered: event.rendered,
+            dropped: event.dropped,
+            pinnedDropped: event.pinnedDropped,
+            maxTokens: event.maxTokens,
+          });
+          return;
         case "loop_failed":
           push({
             type: "error",
@@ -470,6 +534,21 @@ export function createTraceRecorder(
             message: event.error.message,
             ...(event.error.stack ? { stack: event.error.stack } : {}),
             category: event.category,
+            ...fallbackFailuresOf(event.error),
+          });
+          return;
+        case "memory_health_warning":
+          push({
+            type: "memory_health_warning",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            kind: event.kind,
+            outcome: event.outcome,
+            consecutive: event.consecutive,
+            setting: event.setting,
+            ...(event.reason !== undefined ? { reason: event.reason } : {}),
           });
           return;
         case "llm_event":

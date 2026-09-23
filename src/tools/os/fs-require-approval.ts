@@ -115,6 +115,19 @@ export async function requireFsApproval(
       ? { trustConfigPaths: request.trustConfigPaths }
       : {}),
   });
+  // A fan-out the operator authorised once covers every write its
+  // workers make inside the directory that prompt named — except the
+  // agent's own trust surface. `trust_config` is never grantable by any
+  // other route either (`GRANTABLE_CATEGORY`), and a fan-out whose scope
+  // happens to contain `config.json` or `.env` must not become the way
+  // around that: the operator approved a directory of work, not a
+  // change to what the agent is allowed to do next.
+  if (
+    category !== "trust_config" &&
+    options.approvals.fanoutScopes.allows(request.sessionId, request.paths)
+  ) {
+    return { category };
+  }
   const outcome = await requireApproval(
     options,
     {

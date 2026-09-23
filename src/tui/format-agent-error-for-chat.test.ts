@@ -67,6 +67,47 @@ describe("formatAgentErrorForChat", () => {
     ).toBe("Turn failed [transport]: upstream HTTP 503");
   });
 
+  describe("with a fallback note", () => {
+    const cloud = { activeProviderIsLocal: false, llamaUrl: "http://127.0.0.1:19091" };
+    const note =
+      ' (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)';
+
+    it("follows the last link's message on the same line", () => {
+      expect(
+        formatAgentErrorForChat("transport", "fetch failed", cloud, note),
+      ).toBe(`Turn failed [transport]: fetch failed${note}`);
+    });
+
+    it("is never judged by the HTML wall, which is about the last link", () => {
+      const htmlNote =
+        ' (after "openrouter" failed: openai provider 404: <!DOCTYPE html><html><body>Not Found</body></html>)';
+      expect(
+        formatAgentErrorForChat("transport", "fetch failed", cloud, htmlNote),
+      ).toBe(`Turn failed [transport]: fetch failed${htmlNote}`);
+    });
+
+    it("leaves the drop hint keyed on what the last link said", () => {
+      const text = formatAgentErrorForChat("transport", "terminated", cloud, note);
+      expect(text.split("\n")[0]).toBe(`Turn failed [transport]: terminated${note}`);
+      expect(text).toContain(
+        "the connection to the model dropped before the reply finished",
+      );
+    });
+
+    it("sits above the llama-server hint on a local route", () => {
+      const text = formatAgentErrorForChat(
+        "transport",
+        "fetch failed",
+        { ...cloud, activeProviderIsLocal: true },
+        note,
+      );
+      expect(text.split("\n")[0]).toBe(`Turn failed [transport]: fetch failed${note}`);
+      expect(text).toContain(
+        "llama-server is not reachable at http://127.0.0.1:19091",
+      );
+    });
+  });
+
   // The reported failure: a multi-step research turn whose LLM call died
   // mid-body on a cloud provider. undici's bare word for it is
   // `terminated`, and that single word was the entire message the

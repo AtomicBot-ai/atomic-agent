@@ -69,6 +69,13 @@ export function formatAgentErrorForChat(
   category: string,
   message: string,
   local?: LocalProviderErrorContext,
+  /**
+   * `describeFailedAttempts(error)`: the fallback links that failed before
+   * the one `message` came from, or `""`. Appended after the capped body
+   * and read by neither the wall nor the drop predicate — both judge what
+   * the last link said.
+   */
+  fallbackNote = "",
 ): string {
   // One normalisation, used for both the body and the drop predicate, so
   // the two can never disagree about what the transport said. Before,
@@ -99,7 +106,7 @@ export function formatAgentErrorForChat(
   if (body.length > MAX_CHARS) {
     body = `${body.slice(0, MAX_CHARS)}…`;
   }
-  const base = `Turn failed [${category}]: ${body}`;
+  const base = `Turn failed [${category}]: ${body}${fallbackNote}`;
   if (category === "transport") {
     // The local arm wins the overlap on purpose, and stays byte-identical
     // to what it has always emitted. A socket that dies on a local route

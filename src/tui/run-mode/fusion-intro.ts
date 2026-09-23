@@ -15,38 +15,44 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
  * different orchestrator, say) — see `RunModeOrchestrator.setMode`.
  */
 /**
- * The mark that opens the intro: two bodies bound into one core.
+ * The mark that opens the intro: a tree, because that is the shape of
+ * the thing — one model on top deciding, several underneath doing.
  *
- * Built from glyphs the TUI already relies on elsewhere (`●`, `○`, `⇄`
- * and box drawing), so it renders on the same terminals the rest of the
- * chrome does — a fancier mark drawn from block or geometric shapes
- * risks double-width cells, and a mark that reflows is worse than no
- * mark. Four lines: big enough to read as a device, small enough that it
- * does not push the instructions off a short pane.
+ * The old mark drew two nodes side by side labelled `cloud` and
+ * `local`, which stopped being true the day either seat could hold
+ * either kind. Nothing here encodes where a model runs: `●` is the one
+ * that plans, `○` are the ones that execute, and the count is an emblem
+ * rather than a readout — a fan-out sizes itself per job.
+ *
+ * Built from box-drawing and geometric glyphs the TUI already relies on
+ * elsewhere, so it renders on the same terminals the rest of the chrome
+ * does; nothing here is double-width, so it cannot reflow.
  */
 export const FUSION_MARK = [
-  "        ╭───╮",
-  "  ●─────┤ ⇄ ├─────○",
-  "        ╰───╯",
-  "  cloud           local",
+  "        \u25cf  orchestrator",
+  "        \u2502",
+  "   \u250c\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2510",
+  "   \u25cb    \u25cb    \u25cb  workers",
 ].join("\n");
 
 export function describeFusionIntro(rm: ResolvedRunMode): string {
   const orchestrator =
     rm.orchestratorModel ?? rm.orchestratorProviderId ?? "your cloud provider";
-  const worker = rm.workerModel ?? "the local model";
-  const workers = rm.workers;
+  const worker = rm.workerModel ?? rm.workerProviderId ?? "the local model";
   return [
     FUSION_MARK,
     "",
-    "Fusion is on. Two models run this chat: a cloud one that thinks, and local ones that do the bulk.",
+    "Fusion splits the work between two models: one decides, the other does.",
     "",
-    `Orchestrator — ${orchestrator}. It plans, writes the instructions for each part, then reviews and merges what comes back.`,
-    `Workers — ${workers} × ${worker}, on your machine, in parallel. Each takes one self-contained part (reading files, first drafts, boilerplate, tests, searches) and reports back. They cannot reach you or ask for approval; anything that needs a person comes back up to the orchestrator.`,
+    `Right now \u2014 ${orchestrator} plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.`,
+    `${worker} executes: each worker takes one part and reports. They cannot reach you or ask for approval, so anything needing a person comes back up.`,
     "",
-    "Pick both models with ctrl+r: Provider and Model set the cloud orchestrator, Workers sets the local model and how many run at once.",
-    "Change the count there or with /runmode workers N (1-8). It also sets the llama-server slot count, so restart the local daemon to apply it — without the slots, extra workers just queue.",
+    "How many run at once is not a setting. The orchestrator sizes each fan-out to the job at hand, up to what this machine can serve.",
     "",
-    "/runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.",
+    "Either seat takes either kind, and the pairing is the interesting part. Cloud planning with local workers is the usual one: sharp judgement, cheap bulk. Invert it and a local model plans while cloud workers execute \u2014 your reasoning never leaves the machine and you rent only the lifting. Two cloud models work as well, a careful one directing a fast one; so does a big local model directing a small one.",
+    "",
+    "Worth playing with: a result is only as good as the model that did the work, and only as sensible as the model that planned it. Move that line and the output changes character.",
+    "",
+    "ctrl+r picks both seats \u2014 each row says whether it runs local or in the cloud. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.",
   ].join("\n");
 }

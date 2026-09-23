@@ -215,6 +215,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
 | **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
 | **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
+| **[Composio](https://composio.dev)** | Connect 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) with OAuth handled for you. Set up from the Integrations tab; tools arrive as `mcp.composio.*` and every write to a real account stays approval-gated. |
 
 ### Memory That Grows Outside the Prompt
 
@@ -433,6 +434,8 @@ atomic-agent serve \
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
+`serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot that has a token — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
+
 </details>
 
 <details>
@@ -474,6 +477,8 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 
 The TUI can store the token, start the channel, open pairing mode, and show status. Approvals arrive as inline buttons in your DM. Telegram is intentionally single-user.
 
+The channel belongs to the runtime, not to the TUI: `atomic-agent serve` boots it exactly the same way, so the bot keeps answering with no terminal UI open. Only one process may hold a channel — it is guarded by a lockfile in the state dir — and the process that loses the race leaves that channel down with `already running in another atomic-agent (pid N)` (shown as an ordinary state, not an error, in the Integrations pane) and does not retry, so start the bot from `serve` or from the TUI, not from both.
+
 While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
 
 Send the bot a photo, document, voice note or any other file and it is saved under `~/.atomic-agent/inbox/telegram/`; the agent gets the path together with your caption and reads it with its file and vision tools. Albums arrive as one message. Telegram lets bots fetch files up to 20 MB; anything larger gets a clear "could not receive" reply.
@@ -481,6 +486,29 @@ Send the bot a photo, document, voice note or any other file and it is saved und
 Ask for a file and you get a file: when the agent attaches something to its reply (a report it wrote, a screenshot, a converted document) it arrives as a Telegram message right after the text — images inline, everything else as a document, up to Telegram's 50 MB bot limit.
 
 Scheduled tasks can report back to the same chat: create a cron job with `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or ask the agent to schedule with `notify: "telegram"`), and each run posts its final result to your paired DM when it finishes. Reporting is strictly per-task opt-in, and the report's result text is sent to Telegram's servers; when the channel is down or unpaired the report is skipped with a logged warning and the task itself is unaffected.
+
+</details>
+
+<details>
+<summary><b>Composio toolkits</b> (1500+ SaaS apps)</summary>
+
+[Composio](https://composio.dev) is a hosted catalogue of 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) that also brokers each app's OAuth, so you never register an OAuth client yourself.
+
+Open the **Integrations** tab in the TUI and follow the setup, or drop a key into `<stateDir>/.env`:
+
+```sh
+COMPOSIO_API_KEY=ck-your-key
+```
+
+The key is the real gate: with no key the runtime opens no connection and registers no tool. Set `"composio": { "enabled": false }` in `config.json` to keep the key on disk with the toolkits off.
+
+Under the hood this is not a new subsystem. Composio's tool router speaks Streamable HTTP MCP and authenticates with a static header, which is exactly the transport the MCP client already supports, so the agent treats it as one more MCP server. Tools land as `mcp.composio.*`.
+
+Rather than loading 1500 toolkits into the prompt, the session exposes four meta-tools: the agent searches for a tool by use case, fetches its schema, then executes. Discovery is annotated read-only and flows without prompting; `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_MANAGE_CONNECTIONS` are marked destructive, so every write to a real account still hits the approval gate.
+
+Connected accounts are scoped by a random install id minted once and stored in `config.json`, never your email. Losing it means re-authorising every connected app.
+
+Note that Composio is a hosted service: your OAuth tokens for connected apps live on Composio's infrastructure, and tool calls are executed through their servers rather than from your machine.
 
 </details>
 
@@ -582,6 +610,40 @@ Cloud models are **uncapped by default** — the service applies the model's own
 Reasoning models spend that same budget on thinking, so a low ceiling can be used up before any answer appears.
 
 Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `8192`). Set it to `0` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
+
+</details>
+
+<details>
+<summary><b>Models that need strict tool schemas</b> (<code>strictTools</code>)</summary>
+
+Some models call tools reliably only when the provider constrains decoding to the tool's schema — OpenAI's **strict mode**. Set `strictTools` on the provider entry to send every function as `strict`:
+
+```json
+"llm": { "providers": [{ "id": "mercury", "kind": "openai-compatible", "strictTools": true }] }
+```
+
+Off by default, and only for OpenAI-compatible kinds (`openai-compatible`, `qwen-openai-compatible`, `openrouter`, `aimlapi`, `gemini`). `strict` is a field on each tool, so `extraBody` cannot reach it — `tools` is a reserved key that is re-applied after that merge.
+
+With the flag on, every tool schema is rewritten into the subset strict mode accepts: objects are closed, every property is listed in `required` (an optional one becomes nullable instead of being omitted), and value-range keywords the runtime validators enforce anyway (`minItems`, `minLength`, `pattern`, `format`, `default`, …) are stripped. A handful of tools take a free-form map — `os.http.request`'s headers and body, `mcp.prompt.get`'s arguments — and those cannot be expressed strictly; they are sent unconstrained (`strict: false`) rather than silently losing their arguments.
+
+Because optionals become nullable, a strict model sends `"pinned": null` where it used to omit the key; on these providers a top-level `null` argument is dropped again before the call runs, so tools that check for presence behave as they always did.
+
+The flag also sends `parallel_tool_calls: false`. Strict decoding and parallel calls do not compose — OpenAI's guidance is that a parallel call "may not match supplied schemas" — so a provider asked for strict tools is asked for one call per response. `agent.maxParallelToolCalls` still governs how the runtime executes a batch.
+
+Turn it on only for a service that implements strict mode: one that does not will reject the whole request, not just the field.
+
+</details>
+
+<details>
+<summary><b>Choosing OpenRouter's upstream host</b> (<code>providerPreferences</code>)</summary>
+
+OpenRouter serves most models from several hosts and picks one per request. To steer that — pin a host, forbid fallbacks, skip hosts that keep your data — set `providerPreferences` on an `openrouter` entry. It is sent unchanged as the request's `provider` routing object:
+
+```json
+"llm": { "providers": [{ "id": "openrouter", "kind": "openrouter", "providerPreferences": { "order": ["z-ai"], "allow_fallbacks": false } }] }
+```
+
+It applies to every chat completion the entry makes — turns, memory sub-calls and `vision.describe` — and other kinds ignore it. The pre-save key check does not send it: that check asks the cheapest paid model for one token, and a host pinned for your model may not serve that one. If you already set `extraBody.provider`, that keeps winning.
 
 </details>
 

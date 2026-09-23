@@ -157,11 +157,14 @@ export function parseVoteOutput(
 /**
  * Parse the Structured Outputs JSON shape:
  *
- *   { "kind": "none" }
+ *   { "kind": "none", "votes": [] }
  *   { "kind": "votes",
  *     "votes": [
  *       { target_kind, target_id, direction }, ...
  *     ] }
+ *
+ * Strict mode makes `votes` present on both branches. It is ignored
+ * under `none`, and an empty array under `votes` is `none` as well.
  *
  * Returns `null` on any structural / type mismatch so the caller can
  * fall back to the legacy text-grammar parser. The same allowlist /

@@ -264,7 +264,7 @@ describe("tuiCommand mouse wiring", () => {
     writeMouseConfig(false);
     const app = await bootTui();
     expect(app.renderOptions).toMatchObject({
-      incrementalRendering: true,
+      incrementalRendering: false,
       exitOnCtrlC: false,
     });
     await app.stop();

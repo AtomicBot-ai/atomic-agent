@@ -84,6 +84,17 @@ export interface FallbackSeamDeps extends LinkAttemptDeps {
  * chosen for. A pinned failure is rethrown as-is — the orchestrator is
  * the retry authority, and the chain's breaker state stays untouched by
  * a link it did not pick.
+ *
+ * **A request its caller aborted fails as a cancellation.** The unary
+ * clients do not surface an abort in one shape: `LlamaServerClient` wraps
+ * it as a `status: null` `LlamaServerError`, and `runOpenAiWithRetry`
+ * throws an `OpenAiHttpError` when it sees the signal already aborted —
+ * both classify `transport`, which `shouldAdvance` treats as an immediate
+ * provider-down signal. A memory sub-call whose timeout fired would then
+ * trip the breaker and flip the sticky override for a link that was fine.
+ * Rethrowing the signal's reason (abort-shaped by construction) makes it
+ * `cancelled`, which never advances — the same rule
+ * `OpenAiProvider.completeStream` applies on the streaming path.
  */
 export function createFallbackCompleter(
   deps: FallbackSeamDeps,
@@ -92,11 +103,13 @@ export function createFallbackCompleter(
     providerId: string,
     params: LlmStreamParams,
   ): Promise<CompletionResult> => {
-    const { result, transport } = await completeOnLink(
-      deps,
-      params,
-      providerId,
-    );
+    let served: Awaited<ReturnType<typeof completeOnLink>>;
+    try {
+      served = await completeOnLink(deps, params, providerId);
+    } catch (err) {
+      throw params.signal?.aborted ? cancellationOf(params.signal, err) : err;
+    }
+    const { result, transport } = served;
     deps.recordUnaryUsage(params, result, providerId);
     return { ...result, servedTransport: transport };
   };
@@ -156,6 +169,15 @@ export function createFallbackStreamer(
     }
     return run();
   };
+}
+
+/**
+ * The error an aborted request fails with: the signal's own reason, or
+ * the original error for signal doubles that never populate `reason`.
+ */
+function cancellationOf(signal: AbortSignal, fallback: unknown): unknown {
+  const reason: unknown = signal.reason;
+  return reason ?? fallback;
 }
 
 /**

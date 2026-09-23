@@ -7,6 +7,13 @@
  * the global `WebSocket`.
  */
 
+/**
+ * The backoff lives in `../reconnect-backoff.ts`, shared with the
+ * Telegram poller. Re-exported so the gateway, its tests and the
+ * package index keep importing it from here unchanged.
+ */
+export { MAX_BACKOFF_MS, backoffMs } from "../reconnect-backoff.js";
+
 /** The slice of the WebSocket API the gateway client uses. */
 export interface WebSocketLike {
   send(data: string): void;
@@ -18,22 +25,6 @@ export interface WebSocketLike {
     cb: (ev: { code: number; reason: string }) => void,
   ): void;
   addEventListener(type: "error", cb: (ev: unknown) => void): void;
-}
-
-/** Backoff ceiling. Discord's session-start budget is per-day, so a
- * flapping network must not be allowed to spin. */
-export const MAX_BACKOFF_MS = 60_000;
-
-/**
- * Full-jitter exponential backoff.
- *
- * Full jitter rather than plain exponential because every atomic-agent
- * install pointed at the same bot would otherwise retry in lockstep
- * after a Discord incident and hammer the gateway on recovery.
- */
-export function backoffMs(attempt: number, random = Math.random): number {
-  const ceiling = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempt, 6));
-  return Math.floor(random() * ceiling) + 500;
 }
 
 export function defaultSocket(url: string): WebSocketLike {

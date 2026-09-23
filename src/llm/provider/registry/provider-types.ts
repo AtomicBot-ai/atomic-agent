@@ -39,6 +39,11 @@ export type LlmProviderConfigEntry = {
   supportsVision?: boolean;
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
+  /**
+   * OpenRouter provider routing, sent as the chat body's `provider`
+   * object. Only the `openrouter` factory forwards it; an explicit
+   * `extraBody.provider` still wins (see `openai-build-body.ts`).
+   */
   providerPreferences?: Record<string, unknown>;
   /**
    * Vendor-specific fields merged into the OpenAI-compatible chat
@@ -54,6 +59,16 @@ export type LlmProviderConfigEntry = {
   extraBody?: Record<string, unknown>;
   /** Per-provider output ceiling; absent means the model's own maximum. */
   maxOutputTokens?: number;
+  /**
+   * Emit OpenAI strict function tools — `tools[].function.strict: true`
+   * — for this provider. Off by default because strict mode is not
+   * universal: a service that does not implement it rejects the whole
+   * request. Turn it on for a model that only calls tools reliably
+   * under constrained decoding. `extraBody` cannot express this:
+   * `strict` lives on each tool and `tools` is a reserved key. The
+   * schema rewrite lives in `openai/openai-strict-tools.ts`.
+   */
+  strictTools?: boolean;
   /**
    * Settings for a `subscription-cli` provider — which vendor CLI to
    * drive and how to invoke it. Absent on every other kind.

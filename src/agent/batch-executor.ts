@@ -1,4 +1,9 @@
 import { checkPlanMode } from "./plan-mode.js";
+import {
+  checkFusionOrchestrator,
+  emptyFusionOrchestratorState,
+  type FusionOrchestratorState,
+} from "./fusion-orchestrator-mode.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import {
   compressToolResult,
@@ -6,6 +11,10 @@ import {
 } from "../compressor/result-compressor.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { CancelledError } from "../llm/index.js";
+import {
+  runWithApprovalLedger,
+  type ToolApprovalRecord,
+} from "../approval/approval-ledger.js";
 import {
   isParallelWithinGroup,
   resourceClassFor,
@@ -127,6 +136,17 @@ export interface BatchExecutionContext {
    * the operator flips it mid-session. Absent ⇒ plan mode is off.
    */
   isPlanMode?: () => boolean;
+  /**
+   * True while this turn is the ORCHESTRATOR's turn in fusion mode (not
+   * a worker's, not another run mode). When it is, mutations are held
+   * back until the turn has fanned work out at least once — see
+   * `fusion-orchestrator-mode.ts`.
+   */
+  isFusionOrchestrator?: () => boolean;
+  /** What this turn has delegated and what came back — see `fusion-orchestrator-mode.ts`. */
+  fusionState?: () => FusionOrchestratorState;
+  /** Called with a `fusion.delegate` result so the turn's ledger can fold it in. */
+  onDelegated?: (result: CompressedToolResult) => void;
   /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
@@ -291,6 +311,25 @@ export async function executeBatch(
       });
       continue;
     }
+    // Then fusion's division of labour, for the same reason in the same
+    // order: a mutation held back until the turn has delegated must not
+    // spend a slot in the loop tracker either.
+    const fusion = runFusionOrchestratorGate(input, registry, ctx);
+    if (!fusion.proceed && fusion.vetoResult) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: fusion.vetoResult,
+        durationMs: 0,
+      };
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: fusion.vetoResult,
+        durationMs: 0,
+      });
+      continue;
+    }
     const gate = runSyncLoopGate(input, ctx, loopSignals);
     if (!gate.proceed && gate.vetoResult) {
       ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
@@ -351,13 +390,19 @@ export async function executeBatch(
     ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
     const startedAt = Date.now();
     let compressed: CompressedToolResult;
+    // Collects the approvals this call raises, whatever async context the
+    // verdict arrives from (an HTTP resolve, a Telegram button). A denial
+    // throws out of the tool, so the ledger is read after the catch too.
+    const approvals: ToolApprovalRecord[] = [];
     try {
-      compressed = await registry.invoke(input.call.tool, input.call.args, {
-        workingDir: ctx.workingDir,
-        sessionId: ctx.sessionId,
-        stepIndex: ctx.stepIndex,
-        signal: ctx.signal,
-      });
+      compressed = await runWithApprovalLedger(approvals, () =>
+        registry.invoke(input.call.tool, input.call.args, {
+          workingDir: ctx.workingDir,
+          sessionId: ctx.sessionId,
+          stepIndex: ctx.stepIndex,
+          signal: ctx.signal,
+        }),
+      );
     } catch (err) {
       if (ctx.signal.aborted) {
         // Cooperative cancellation: the tool honoured the signal and
@@ -378,12 +423,21 @@ export async function executeBatch(
         details: { errorName: cause.name },
       });
     }
+    if (approvals.length > 0) {
+      compressed = { ...compressed, approvals: [...approvals] };
+    }
     const durationMs = Date.now() - startedAt;
     slots[input.batchIndex] = {
       ...slots[input.batchIndex]!,
       compressed,
       durationMs,
     };
+    // A fan-out that came back is folded into the turn's ledger: how
+    // many tasks a worker handed up is what decides whether the
+    // orchestrator may run anything itself. The result is passed whole
+    // rather than a flag, so the ledger reads the same per-task
+    // statuses the model is about to read.
+    if (input.call.tool === "fusion.delegate") ctx.onDelegated?.(compressed);
     // Record the real outcome so the next step's gate sees a completed
     // (args + result) entry. Terminal verbs are not tracked.
     if (ctx.tracker && input.resourceClass !== "terminal") {
@@ -542,6 +596,27 @@ function runPlanModeGate(
 ): { proceed: boolean; vetoResult?: CompressedToolResult } {
   if (!ctx.isPlanMode?.()) return { proceed: true };
   const verdict = checkPlanMode(input.call.tool, registry);
+  if (verdict.allowed) return { proceed: true };
+  return { proceed: false, vetoResult: verdict.refusal! };
+}
+
+/**
+ * Fusion's division of labour. Sits beside the plan-mode gate because it
+ * answers the same kind of question — is this call going to run at all —
+ * and it runs after it: plan mode is the operator's explicit "not yet",
+ * and that outranks a mode's internal shape.
+ */
+function runFusionOrchestratorGate(
+  input: BatchCallInput,
+  registry: ToolRegistry,
+  ctx: BatchExecutionContext,
+): { proceed: boolean; vetoResult?: CompressedToolResult } {
+  if (!ctx.isFusionOrchestrator?.()) return { proceed: true };
+  const verdict = checkFusionOrchestrator(
+    input.call.tool,
+    registry,
+    ctx.fusionState?.() ?? emptyFusionOrchestratorState(),
+  );
   if (verdict.allowed) return { proceed: true };
   return { proceed: false, vetoResult: verdict.refusal! };
 }

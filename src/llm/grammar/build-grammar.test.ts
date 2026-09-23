@@ -97,6 +97,45 @@ describe("buildGrammar", () => {
   });
 });
 
+describe("fusion.delegate in the local-model grammar", () => {
+  /**
+   * The grammar is the local model's ENTIRE vocabulary of tool names: a
+   * name that is not in it cannot be sampled, whatever the catalog says.
+   *
+   * This went unnoticed for as long as the orchestrator was always a
+   * cloud provider, which carries a native `tools` payload and no
+   * grammar. The moment the legs swap and a local model orchestrates,
+   * the one tool the whole mode depends on was the one it could not
+   * emit: the trace shows it reasoning "I need to call fusion.delegate"
+   * and then emitting `finish`, reporting a fan-out that never ran.
+   */
+  it("admits the fan-out a local orchestrator has to call", async () => {
+    for (const profile of [
+      PLAIN_INSTRUCT_PROFILE,
+      QWEN_THINK_PROFILE,
+      GEMMA4_THINK_PROFILE,
+    ]) {
+      const grammar = await buildGrammar(profile);
+      const toolName =
+        grammar.split("\n").find((l) => l.startsWith("tool-name ::=")) ?? "";
+      expect(toolName, profile.id).toContain("fusion-tool");
+      expect(grammar, profile.id).toMatch(
+        /^fusion-tool ::= "\\"fusion\.delegate\\""$/m,
+      );
+    }
+  });
+
+  it("keeps it out of the browser rule, so disabling the browser cannot take it away", async () => {
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, undefined, {
+      browserEnabled: false,
+    });
+    const toolName =
+      grammar.split("\n").find((l) => l.startsWith("tool-name ::=")) ?? "";
+    expect(toolName).toContain("fusion-tool");
+    expect(toolName).not.toContain("browser-tool");
+  });
+});
+
 describe("os-tool names the local-model grammar admits", () => {
   it("includes the agent's e-mail tools — a descriptor the grammar cannot emit is a tool local models cannot call", () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
@@ -109,6 +148,34 @@ describe("os-tool names the local-model grammar admits", () => {
       grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
     for (const name of ["email.inbox", "email.send", "notify", "web.fetch"]) {
       expect(osToolLine).toContain(`"${name}"`);
+    }
+  });
+
+  it("includes the git WRITE tools, not just the read half", () => {
+    // Same class of bug as the missing `fusion.delegate`: the local-first
+    // git tools were registered and described, and the grammar still only
+    // named the read half — so a local model could inspect a repository
+    // and never commit to one, with nothing in the logs saying why.
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const grammar = readFileSync(
+      resolve(__dirname, "../../../grammars/tool-call.gbnf"),
+      "utf8",
+    );
+    const osToolLine =
+      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    for (const name of [
+      "git.init",
+      "git.add",
+      "git.commit",
+      "git.checkout",
+      "git.clone",
+      "git.remote",
+      "git.fetch",
+      "git.pull",
+      "git.push",
+    ]) {
+      expect(osToolLine, name).toContain(`"${name}"`);
     }
   });
 });

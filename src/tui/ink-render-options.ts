@@ -33,67 +33,44 @@ export function buildInkRenderOptions(
     stdout: input.stdout,
     stderr: input.stderr,
     exitOnCtrlC: false,
-    // Repaint only the lines that changed.
+    // Full-frame repaints, deliberately.
     //
-    // Ink's default rewrites the entire frame on every state change:
-    // erase every line, print every line, for a screenful of rows. A
-    // running turn asks for that about ten times a second whether or not
-    // the model is saying anything — the spinner and the elapsed label
-    // are enough on their own.
+    // Ink's `incrementalRendering` writes only the lines whose rendered
+    // string differs from the previous frame's, and anchors that diff
+    // by counting rows up from the bottom of the last block
+    // (`cursorUp(previousLines.length - 1)` in ink/log-update). It was
+    // switched on for the blink it removes — the default erases and
+    // rewrites every line of the frame, several times a second while a
+    // turn runs, which a terminal without DEC 2026 synchronized output
+    // paints.
     //
-    // Measured over a PTY against a build of current main, 30 s of a turn
-    // streaming text into the transcript:
+    // It is off again because the anchor does not survive a session
+    // swap. Driven over a PTY at 120x34 into a pyte grid, counting the
+    // cells that carry a non-default background — the sidebar's fill
+    // and the composer's frame — before and after `ctrl+g n`:
     //
-    //           110x34                      80x24
-    //           before      after           before      after
-    //   bytes   1,578,957   402,572         1,592,102   161,860
-    //   CSI K       9,724     1,825             9,648     1,074
-    //   cur-up      9,438       391             9,246       396
-    //   updates       286       391               402       396
-    //   frame       5,497       237             3,971       154   (median)
+    //   painted rows          before the swap   after the swap
+    //   incremental: true          33                 1
+    //   incremental: false         33                33
     //
-    // The repaint *rate* is what it always was — this changes what a
-    // repaint costs, not how often one happens. The median frame drops
-    // 23x; the total drops less (4x at 110x34, 10x at 80x24) because
-    // arriving text genuinely dirties many lines at once, and a frame
-    // where everything changed costs what it always did.
+    // The rail's background stops being drawn, and the rows it used to
+    // own keep the fill under the composer. Both are the same fault:
+    // the renderer believes lines it never repainted are still where it
+    // left them, and after a swap they are not — the transcript, the
+    // rail and the meta bar are all replaced in one commit.
     //
-    // On a terminal that implements DEC 2026 synchronized output the
-    // erase is hidden; on one that does not (Apple Terminal among them)
-    // it is painted, and the UI visibly blinks. With incremental
-    // rendering an unchanged line is skipped instead of rewritten, so a
-    // spinner tick costs the spinner's line.
+    // `instance.clear()` on the session change was tried first, so the
+    // next frame would be written against an empty cache. It fires (the
+    // callback was instrumented to prove it) and the screen is still
+    // wrong, so the desync is not something the app can resync from
+    // above. The option is Ink's, marked experimental, and the honest
+    // place to turn it off is here.
     //
-    // Ink marks the mode experimental, so the frame it produces was
-    // checked rather than assumed: driven over a PTY into a pyte grid and
-    // compared character for character against the default renderer, at
-    // 110x34, 80x24 and 40x16, across startup, the composer, a turn
-    // streaming text into the transcript, the Esc menu and its submenus,
-    // every Manage tab, the session and model pickers, the update modal,
-    // a mouse drag and wheel, a transcript scrolled past the viewport,
-    // resizes that grow and shrink in each dimension separately, and
-    // teardown — where the last bytes on the wire (ESU, cursor, mouse,
-    // alt screen) are identical byte for byte.
-    //
-    // The transcript is the surface with the most to lose here, since it
-    // is the one that grows and scrolls while deltas arrive, so it was
-    // driven against a stub that emits a fixed number of deltas and then
-    // holds the socket open: the screen settles on the same final state
-    // in both runs, and the two grids match exactly — mid-stream, after a
-    // scroll up, after a scroll back, and after an abort.
-    //
-    // The two ways an incremental renderer can desynchronise from the
-    // screen are both covered — Ink re-syncs its line cache through
-    // `log.clear()`/`log.sync()` on the console-passthrough, width-shrink
-    // and clear-terminal paths (a height shrink reaches the last of those
-    // via `shouldClearTerminalForFrame`), and this app writes its own
-    // escape sequences (alt screen, mouse tracking) only outside a
-    // rendered block.
-    //
-    // Not covered: the approval modal, which needs a model that asks for
-    // a tool. The update modal, which is the same overlay machinery, was
-    // driven and matched.
-    incrementalRendering: true,
+    // What is NOT reverted with it: the elapsed-time tick in
+    // `ThinkingIndicator` stays at 1000 ms. That was three of every four
+    // wake-ups producing the identical string, and it is the larger
+    // share of the repaints a running turn asked for.
+    incrementalRendering: false,
     // `disambiguateEscapeCodes` alone: it is what makes Shift+Enter a
     // distinct keystroke (`ESC [ 13 ; 2 u`). `reportAllKeysAsEscapeCodes`
     // would reroute ordinary typing through CSI u as well, putting the

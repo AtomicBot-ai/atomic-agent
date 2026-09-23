@@ -46,10 +46,19 @@ export function isWorkerVisibleTool(name: string): boolean {
  * showing the orchestrator's session — so the tool result tells the
  * model to hand the exact action back up rather than park the turn on a
  * question nobody will answer.
+ *
+ * "Back up" no longer means "the orchestrator does it". The orchestrator
+ * is refused every mutating tool for the whole turn, so the only thing
+ * it can do with a blocked path is name it in the next fan-out, where
+ * the operator is asked to widen the scope. The wording says so, because
+ * a worker that reports "the orchestrator must run this" is describing a
+ * step that will never happen.
  */
 export const FUSION_WORKER_APPROVAL_REFUSED =
   "this step needs operator approval, which a worker cannot request. " +
-  "Stop and, in your reply, state exactly what must be run or written so the orchestrator can do it.";
+  "It is outside the directories this fan-out was authorised for. Stop and, in your reply, " +
+  "name the exact path so the orchestrator can send the task out again with that path in `files` — " +
+  "it cannot run the action itself.";
 
 /**
  * The stable substring of the refusal that survives rewording of the

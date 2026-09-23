@@ -1,4 +1,9 @@
+import { FanoutScopeRegistry } from "./fanout-scope.js";
 import { randomUUID } from "node:crypto";
+import {
+  currentApprovalLedger,
+  type ToolApprovalRecord,
+} from "./approval-ledger.js";
 import {
   clampApprovalLevel,
   isAutoApprovedAt,
@@ -112,6 +117,13 @@ interface PendingEntry {
    * closure over its `request` (which carries the command preview).
    */
   detach: () => void;
+  /**
+   * The ledger of the tool call that asked (see `approval-ledger.ts`),
+   * captured in the caller's async context when the prompt goes out. The
+   * verdict is written to it on `resolve`, so the transcript can say where
+   * in the turn the operator was asked and what they answered.
+   */
+  ledger: ToolApprovalRecord[] | undefined;
 }
 
 /**
@@ -150,6 +162,18 @@ export class ApprovalGate {
   >();
   /** Per-session prompt policies, keyed like the grants. See `SessionApprovalPolicy`. */
   private readonly policiesBySession = new Map<string, SessionApprovalPolicy>();
+
+  /**
+   * Directories a session may write in without asking — see
+   * `fanout-scope.ts`. Lives on the gate because every caller that can
+   * ask for an approval already holds the gate, so nothing new has to be
+   * threaded through the fs tools to reach it.
+   *
+   * Read by `requireFsApproval`, not by `request()`: the scope is about
+   * paths, and paths are known one layer up, where the fs funnel has
+   * already resolved them.
+   */
+  readonly fanoutScopes = new FanoutScopeRegistry();
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -259,7 +283,12 @@ export class ApprovalGate {
       const detach = (): void => {
         signal?.removeEventListener("abort", onAbort);
       };
-      this.pending.set(approvalId, { resolve, request, detach });
+      this.pending.set(approvalId, {
+        resolve,
+        request,
+        detach,
+        ledger: currentApprovalLedger(),
+      });
       // An already-aborted signal never fires `abort`, so check before
       // subscribing rather than hanging until the turn is torn down.
       if (signal?.aborted) {
@@ -304,6 +333,11 @@ export class ApprovalGate {
     if (!entry) return false;
     this.pending.delete(decision.approvalId);
     entry.detach();
+    entry.ledger?.push({
+      verdict: decision.approved ? "approved" : "denied",
+      category: entry.request.category,
+      at: Date.now(),
+    });
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);
     }

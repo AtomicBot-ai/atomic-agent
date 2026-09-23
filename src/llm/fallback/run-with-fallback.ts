@@ -1,3 +1,4 @@
+import { attachFailedAttempts, type FailedAttempt } from "./failed-attempts.js";
 import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
 
 /**
@@ -9,28 +10,24 @@ import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
  * fallover-worthy failure advance to the next chain link and retry the
  * SAME work.
  *
- * When every link has failed, the error rethrown is the FIRST one — the
- * failure of the provider the operator actually chose, which is the id
- * the composer chip and Settings name. It is rethrown untouched, so the
- * existing `loop_failed` classification and humanized messaging are
- * preserved exactly as they were.
+ * When every link has failed, the error thrown is the LAST link's, byte
+ * for byte: it decides classification, fallover and the outage wait, and
+ * those match on its class, cause, status and an anchored `fetch failed`.
  *
- * It used to be the LAST error, and that is a much worse answer than it
- * sounds. `resolveFallbackChain` appends the configured `llama-server`
- * provider to the tail of every chain, whether or not a local model has
- * ever been downloaded, so the tail link on a cloud-only installation is
- * a daemon that is not running. A cloud provider that answers — say
- * OpenRouter refusing with `402 … requires more credits, or fewer
- * max_tokens` — was therefore reported to the operator as the tail
- * link's `fetch failed`: a socket error, from a backend they never
- * picked, naming nothing they could act on, while the provider's own
- * sentence (which said exactly what to do) was dropped on the floor.
- * The tail's failure is an accident of the chain; the head's is the
- * answer to "why did my message not go through".
+ * The tail is often an accident of the chain — `resolveFallbackChain`
+ * appends the configured `llama-server` provider whether or not a local
+ * model was ever downloaded — so its `fetch failed` alone would answer
+ * "why did my message not go through" with a socket error from a backend
+ * the operator never picked, while the provider in their composer chip
+ * had refused in words (`402 … requires more credits`).
  *
- * Nothing about the switching itself changes: every link is still tried
- * in order and every failure is still registered with the breaker, so
- * quarantine and probe behaviour are untouched.
+ * Untouched, but not alone: the links that failed before it are recorded
+ * beside the error (`attachFailedAttempts`), so a failure line can say
+ * that the primary answered 404 before the local fallback turned out not
+ * to be running. The last link still decides everything else — its error
+ * is the one classified, and the link the turn waits on. A host that shows
+ * one sentence per failed turn (the HTTP stream the desktop reads) names
+ * the first recorded link instead: see `buildStreamEventHook`.
  *
  * Shared by both the non-stream (`llmComplete`) and stream-opening
  * (`llmCompleteStream`) seams. For streaming, `attempt` must resolve only
@@ -52,13 +49,12 @@ export async function runWithFallback<T>(
     return attempt(currentId);
   }
 
-  // The failure of the link the operator is on. Held from the first
-  // catch so that an exhausted chain reports the provider they picked
-  // rather than whatever the tail of the chain happened to be. When
-  // nothing falls over this IS the only error, so the single-attempt
-  // path is byte-for-byte what it always was.
-  let primaryError: unknown;
-  let havePrimaryError = false;
+  // A call that starts on a sticky override never touches the primary.
+  // Every retry of a parked turn is such a call, so without the cause the
+  // turn ends on the fallback's `fetch failed` alone, five minutes after
+  // the primary's real refusal was last mentioned anywhere.
+  const cause = pick.isProbe ? null : chain.overrideCause(partitionKey);
+  const failed: FailedAttempt[] = cause ? [cause] : [];
 
   for (;;) {
     try {
@@ -66,12 +62,12 @@ export async function runWithFallback<T>(
       chain.recordSuccess(currentId, wasProbe, partitionKey);
       return result;
     } catch (err) {
-      if (!havePrimaryError) {
-        primaryError = err;
-        havePrimaryError = true;
-      }
       const nextId = chain.advanceFrom(currentId, err, partitionKey);
-      if (nextId === null) throw primaryError;
+      if (nextId === null) {
+        attachFailedAttempts(err, failed);
+        throw err;
+      }
+      failed.push({ providerId: currentId, error: err });
       currentId = nextId;
       // Only the very first pick can be a probe; every advance is a real
       // fallover on the working path.

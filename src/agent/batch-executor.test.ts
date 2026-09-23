@@ -1170,3 +1170,98 @@ describe("test-repeat gate (issue #118)", () => {
     ).toBeUndefined();
   });
 });
+
+describe("the fusion orchestrator gate in the executor", () => {
+  const ctrl = new AbortController();
+
+  it("fills a held-back mutation's slot instead of dispatching it", async () => {
+    // The refusal has to arrive as this call's RESULT: the model reads
+    // tool results, not runtime state, and a dropped call would leave it
+    // waiting for an answer that never comes.
+    const run = vi.fn(async () => okResult("os.fs.write"));
+    const registry = buildRegistry({ "os.fs.write": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+      registry,
+      {
+        ...ctx(ctrl.signal),
+        isFusionOrchestrator: () => true,
+        fusionState: () => ({ delegations: 0 }),
+      },
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(out.results[0]?.compressed?.status).toBe("error");
+    expect(out.results[0]?.compressed?.summary).toContain("fusion.delegate");
+  });
+
+  it("keeps refusing after a fan-out — there is no circumstance", async () => {
+    // The gate had two escapes before this: a latch on any completed
+    // fan-out, then an allowance for tasks a worker handed up. At
+    // approval level 1 four of six tasks came back handed up, so the
+    // second escape was the main road. Neither exists now.
+    const run = vi.fn(async () => okResult("os.fs.write"));
+    const registry = buildRegistry({ "os.fs.write": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+      registry,
+      {
+        ...ctx(ctrl.signal),
+        isFusionOrchestrator: () => true,
+        fusionState: () => ({ delegations: 3 }),
+      },
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(out.results[0]?.compressed?.status).toBe("error");
+  });
+
+  it("leaves reads alone while the turn is still planning", async () => {
+    const run = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": run }, true);
+    await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      {
+        ...ctx(ctrl.signal),
+        isFusionOrchestrator: () => true,
+        fusionState: () => ({ delegations: 0 }),
+      },
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the fan-out's own result to the turn's ledger", async () => {
+    // The result, not a flag: what unlocks a mutation is how many tasks
+    // came back `needs_orchestrator`, and the ledger must read the same
+    // per-task statuses the model is about to read.
+    let seen: unknown = null;
+    const registry = buildRegistry(
+      { "fusion.delegate": async () => okResult("fusion.delegate") },
+      false,
+    );
+    await executeBatch(
+      toBatchInputs([{ tool: "fusion.delegate", args: { tasks: [] } }]),
+      registry,
+      {
+        ...ctx(ctrl.signal),
+        isFusionOrchestrator: () => true,
+        fusionState: () => ({ delegations: 0 }),
+        onDelegated: (result) => {
+          seen = result;
+        },
+      },
+    );
+    expect(seen).toMatchObject({ tool: "fusion.delegate" });
+  });
+
+  it("gates nothing when the turn is not the orchestrator's", async () => {
+    // A worker's own turn, and every non-fusion run mode.
+    const run = vi.fn(async () => okResult("os.fs.write"));
+    const registry = buildRegistry({ "os.fs.write": run }, false);
+    await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+      registry,
+      { ...ctx(ctrl.signal), isFusionOrchestrator: () => false },
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});

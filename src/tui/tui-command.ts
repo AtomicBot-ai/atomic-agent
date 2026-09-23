@@ -560,6 +560,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.runMode.setMode(mode, opts),
         onFusionWorkersChangeRequested: (workers) =>
           orchestrator.runMode.setWorkers(workers),
+        onFusionLegsSwapRequested: () => void orchestrator.runMode.swapLegs(),
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>

@@ -10,6 +10,7 @@ import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
+import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type {
   CompletionResult,
@@ -46,6 +47,30 @@ function makeCompletion(
     cacheHitTokens: 0,
     slotId: 0,
     modelId,
+  };
+}
+
+/**
+ * A completion as a native-tools provider returns one: everything in
+ * `tool_calls`, nothing in `content`. Called with no arguments it is the
+ * wholly-empty completion behind Sentry CLI-BA — no content, no
+ * reasoning, no calls.
+ */
+function makeNativeCompletion(
+  toolCalls?: Array<{ name: string; arguments: string }>,
+): CompletionResult {
+  return {
+    ...makeCompletion("", "openai/gpt-5.5"),
+    slotId: -1,
+    ...(toolCalls === undefined
+      ? {}
+      : {
+          toolCalls: toolCalls.map((call, index) => ({
+            id: `call-${index}`,
+            type: "function" as const,
+            function: call,
+          })),
+        }),
   };
 }
 
@@ -2255,6 +2280,554 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect((last as { text: string }).text).toContain(
       "Nothing from it took effect",
     );
+  });
+
+  it("recovers a wholly empty native-tools completion by spending a step", async () => {
+    // Sentry CLI-BA: on `native_tools` a completion with nothing in any
+    // channel has no parse to retry and no repair to run, so before this
+    // it ended the turn on the first inference and the operator had to
+    // notice the silence and type "try again".
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const prompts: string[] = [];
+    const recoveries: Array<{ attempt: number; budget: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async (params) => {
+        llmCalls += 1;
+        prompts.push(params.prompt);
+        return llmCalls === 1
+          ? makeNativeCompletion()
+          : makeNativeCompletion([
+              { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+            ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered")
+          recoveries.push({ attempt: event.attempt, budget: event.budget });
+      },
+    });
+    const session = createEmptySessionState({ id: "s-empty-nt", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(recoveries).toEqual([
+      { attempt: 1, budget: EMPTY_COMPLETION_RECOVERY_BUDGET },
+    ]);
+    // The retry is a different request, not a replay: the step that
+    // follows is told its predecessor came back empty.
+    expect(prompts[1] ?? "").toContain("completely empty");
+    expect(prompts[1] ?? "").toContain("Nothing has happened yet");
+    const replies = result.session.turns.filter(
+      (t) => t.kind === "assistant_reply",
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ text: "done" });
+  });
+
+  it("ends the turn on the second empty native-tools completion, saying so", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const failures: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_failed")
+          failures.push({
+            category: event.category,
+            message: event.error.message,
+          });
+      },
+    });
+    const session = createEmptySessionState({ id: "s-empty-nt2", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    // One recovery, then terminal — the budget is not a retry loop.
+    expect(llmCalls).toBe(EMPTY_COMPLETION_RECOVERY_BUDGET + 1);
+    expect(failures[0]?.category).toBe("model");
+    expect(failures[0]?.message).toContain("twice in a row");
+  });
+
+  it("does not announce an empty-completion retry it has no step left to spend", async () => {
+    // A leg of one: the retry would land on the leg boundary, where a
+    // leg that produced nothing usable stops the task. Announcing the
+    // retry there would burn the step with ZERO extra inference and
+    // swallow the model diagnosis into "ran out of steps" — the
+    // operator would read "trying again (1/1)" for a try that never
+    // happened, and Sentry would never see the failure.
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const recoveries: number[] = [];
+    const failures: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered")
+          recoveries.push(event.stepIndex);
+        if (event.type === "loop_failed")
+          failures.push({
+            category: event.category,
+            message: event.error.message,
+          });
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-leg", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 1,
+        taskMaxSteps: 50,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(recoveries).toEqual([]);
+    expect(llmCalls).toBe(1);
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    // The model diagnosis survives — and it does not claim a second
+    // attempt that never ran.
+    expect(failures[0]?.category).toBe("model");
+    expect(failures[0]?.message).toContain("empty");
+    expect(failures[0]?.message).not.toContain("twice in a row");
+  });
+
+  it("gives a fresh empty-completion retry to an empty that follows a working step", async () => {
+    // The budget counts empties IN A ROW. A model that answered a step
+    // and then went quiet has just proved the link works, so it gets
+    // the same one nudge the first empty got — and the terminal
+    // "twice in a row" message is never printed over a working step.
+    const registry = buildDefaultToolRegistry();
+    registry.register(osFsReadTool);
+    writeFileSync(join(workingDir, "src.ts"), "line 1\n", "utf8");
+    const script: Array<CompletionResult> = [
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "os.fs.read", arguments: JSON.stringify({ path: "src.ts" }) },
+      ]),
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+      ]),
+    ];
+    let llmCalls = 0;
+    const recoveries: Array<{ stepIndex: number; attempt: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        const completion = script[llmCalls] ?? makeNativeCompletion();
+        llmCalls += 1;
+        return completion;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered")
+          recoveries.push({
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+          });
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-gap", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 8,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(llmCalls).toBe(4);
+    // Two recoveries, each the FIRST of its run — the working step in
+    // between cleared the count.
+    expect(recoveries).toEqual([
+      { stepIndex: 0, attempt: 1 },
+      { stepIndex: 2, attempt: 1 },
+    ]);
+  });
+
+  it("still spends the empty-completion retry when the leg is going to continue", async () => {
+    // The other side of the guard above: the retry lands on a leg
+    // boundary, but the leg produced something usable, so the boundary
+    // continues the task and the retry really does happen. The guard
+    // must be about the `no_progress` break, not about boundaries.
+    const registry = buildDefaultToolRegistry();
+    registry.register(osFsReadTool);
+    writeFileSync(join(workingDir, "src.ts"), "line 1\n", "utf8");
+    const script: Array<CompletionResult> = [
+      makeNativeCompletion([
+        { name: "os.fs.read", arguments: JSON.stringify({ path: "src.ts" }) },
+      ]),
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+      ]),
+    ];
+    let llmCalls = 0;
+    const recoveries: Array<{ stepIndex: number; attempt: number }> = [];
+    let continued = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        const completion = script[llmCalls] ?? makeNativeCompletion();
+        llmCalls += 1;
+        return completion;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered")
+          recoveries.push({
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+          });
+        if (event.type === "task_continued") continued += 1;
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-boundary", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 2,
+        taskMaxSteps: 50,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(recoveries).toEqual([{ stepIndex: 1, attempt: 1 }]);
+    expect(continued).toBe(1);
+    expect(llmCalls).toBe(3);
+    expect(result.reason).toBe("reply");
+  });
+
+  it("does not announce a parse-failure retry it has no step left to spend", async () => {
+    // Same leg-boundary guard on the parse path, which had the same
+    // hazard: the retry announced on the last step of a barren leg is
+    // never performed, and the operator was handed "ran out of steps"
+    // in place of the grammar diagnosis.
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const recoveries: number[] = [];
+    const failures: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeCompletion('[{"tool":"reply","args":{"text":');
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "parse_failure_recovered")
+          recoveries.push(event.stepIndex);
+        if (event.type === "loop_failed")
+          failures.push({
+            category: event.category,
+            message: event.error.message,
+          });
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-parse-leg", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 1,
+        taskMaxSteps: 50,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(recoveries).toEqual([]);
+    // One inference and its in-step repair, and no third.
+    expect(llmCalls).toBe(2);
+    expect(result.reason).toBe("failed");
+    expect(failures[0]?.category).toBe("grammar");
+  });
+
+  it("reports the doubled empty when the announced retry lands on the final allowed step", async () => {
+    // The retry is announced at step `stepCeiling - 2` and spent at
+    // `stepCeiling - 1`, which is the finalization step — and a
+    // finalization failure normally ends the turn `max_steps`/`stalled`
+    // with `runError` dropped. That would be a REGRESSION: without the
+    // recovery this scenario fails on the first empty carrying the
+    // model's diagnosis, so swallowing it would hand the operator "ran
+    // out of steps" for a promise the turn made and kept, and drop the
+    // error report with it. `run --max-steps 2` is the smallest window
+    // that reaches it.
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    let recovered = 0;
+    const failures: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "empty_completion_recovered") recovered += 1;
+        if (event.type === "loop_failed")
+          failures.push({
+            category: event.category,
+            message: event.error.message,
+          });
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-final", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 2,
+        autoContinue: false,
+        signal: new AbortController().signal,
+      },
+    );
+    // The retry really happened — this is not the "no step left" guard.
+    expect(recovered).toBe(1);
+    expect(llmCalls).toBe(2);
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.category).toBe("model");
+    expect(failures[0]?.message).toContain("twice in a row");
+  });
+
+  it("reports the doubled empty when the announced retry lands past the duration ceiling", async () => {
+    // The other way a retry lands on a finalization step: the step
+    // ceiling is nowhere near, but `agent.task.maxDurationMs` is
+    // crossed by the first attempt, so the retry starts `outOfTime`.
+    // Same swallow, same fix — and this one is unreachable by the
+    // `stepCeiling` arithmetic alone, which is why the guard is on the
+    // failure, not on the step count.
+    let clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const registry = buildDefaultToolRegistry();
+      let llmCalls = 0;
+      let recovered = 0;
+      const failures: Array<{ category: string; message: string }> = [];
+      const loop = new AgentLoop({
+        registry,
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        llmComplete: async () => {
+          llmCalls += 1;
+          // Each attempt burns twice the task's whole time budget, so
+          // the step after the first one starts past the ceiling.
+          clock += 60_000;
+          return makeNativeCompletion();
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        onEvent: (event) => {
+          if (event.type === "empty_completion_recovered") recovered += 1;
+          if (event.type === "loop_failed")
+            failures.push({
+              category: event.category,
+              message: event.error.message,
+            });
+        },
+      });
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-empty-nt-time", workingDir }),
+        {
+          userMessage: "go",
+          maxSteps: 40,
+          taskMaxSteps: 40,
+          taskMaxDurationMs: 30_000,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(recovered).toBe(1);
+      expect(llmCalls).toBe(2);
+      expect(result.reason).toBe("failed");
+      expect(result.session.status).toBe("failed");
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.category).toBe("model");
+      expect(failures[0]?.message).toContain("twice in a row");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("lets a rejected completion between two empties buy the second one its own retry", async () => {
+    // The parse-recovery reset. A body that failed to parse is still
+    // tokens on the wire, so the empty that follows it is the FIRST of
+    // a new run, not the second of the old one — it gets its own nudge,
+    // and the terminal message never says "twice in a row" over a
+    // completion that carried something.
+    const registry = buildDefaultToolRegistry();
+    const script: CompletionResult[] = [
+      makeNativeCompletion(),
+      // Bad arguments twice: the first is the step's own one-shot
+      // repair, the second is what makes the step fail to parse.
+      makeNativeCompletion([{ name: "reply", arguments: "{ not json" }]),
+      makeNativeCompletion([{ name: "reply", arguments: "{ still not" }]),
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+      ]),
+    ];
+    let llmCalls = 0;
+    const events: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        const completion = script[llmCalls] ?? makeNativeCompletion();
+        llmCalls += 1;
+        return completion;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "empty_completion_recovered" ||
+          event.type === "parse_failure_recovered"
+        )
+          events.push(event.type);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-parse-reset", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 10,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(events).toEqual([
+      "empty_completion_recovered",
+      "parse_failure_recovered",
+      "empty_completion_recovered",
+    ]);
+    expect(llmCalls).toBe(5);
+    expect(result.reason).toBe("reply");
+  });
+
+  it("lets a cut reply between two empties buy the second one its own retry", async () => {
+    // The truncation-retry reset, same argument as the parse one: a
+    // reply the server cut short is a link that answered.
+    const registry = buildDefaultToolRegistry();
+    const script: CompletionResult[] = [
+      makeNativeCompletion(),
+      {
+        ...makeNativeCompletion(),
+        stop: false,
+        truncated: true,
+        usage: {
+          promptTokens: 6_000,
+          completionTokens: 8_192,
+          totalTokens: 14_192,
+        },
+      },
+      makeNativeCompletion(),
+      makeNativeCompletion([
+        { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+      ]),
+    ];
+    let llmCalls = 0;
+    const events: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        const completion = script[llmCalls] ?? makeNativeCompletion();
+        llmCalls += 1;
+        return completion;
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "empty_completion_recovered" ||
+          event.type === "completion_truncated"
+        )
+          events.push(event.type);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-empty-nt-trunc-reset", workingDir }),
+      {
+        userMessage: "go",
+        maxSteps: 10,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(events).toEqual([
+      "empty_completion_recovered",
+      "completion_truncated",
+      "empty_completion_recovered",
+    ]);
+    expect(llmCalls).toBe(4);
+    expect(result.reason).toBe("reply");
   });
 
   it("does not recover a request the model server itself rejected", async () => {

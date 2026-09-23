@@ -24,7 +24,7 @@ interface ServeArgs {
 
 const HELP =
   [
-    "atomic-agent serve — start the OpenAI-compatible HTTP API",
+    "atomic-agent serve — start the OpenAI-compatible HTTP API and any enabled remote channels",
     "",
     "Usage:",
     "  atomic-agent serve [options]",
@@ -36,6 +36,16 @@ const HELP =
     "  --api-key <k>       Require this bearer token on all routes except /health and /v1/models",
     "                      (falls back to env ATOMIC_AGENT_API_KEY when flag is omitted)",
     "  --no-approval       Force approval level 5: auto-approve every dangerous tool call (dev / trusted use only)",
+    "",
+    "Remote channels:",
+    "  serve boots the same runtime the TUI does, so an enabled Telegram or Discord",
+    "  channel — and every enabled swarm bot that has a token — runs in this process too.",
+    "  This is how the bots keep answering with no TUI open; nothing here restarts the",
+    "  process for you.",
+    "  A channel is single-instance: the first process to start it takes a lockfile in the",
+    "  state dir, and a second one reports that channel as 'already running in another",
+    "  atomic-agent (pid N)' and stays down without retrying — the bot itself keeps working,",
+    "  it is just served from the other process.",
     "",
     "Endpoints (authenticated unless noted):",
     "  POST /v1/chat/completions                OpenAI Chat Completions API (stream or sync)",

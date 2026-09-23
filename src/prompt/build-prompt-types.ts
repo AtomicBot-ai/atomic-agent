@@ -1,6 +1,7 @@
 import type { ModelProfile } from "../llm/model-profile.js";
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import type { ProfileClipStats } from "./clip-profile-section.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
   CapabilitiesSummary,
@@ -149,4 +150,9 @@ export interface BuiltPrompt {
    * memoised, so this is close to free.
    */
   pairCosts: number[];
+  /**
+   * Present only when `memory.profile.maxTokens` left facts out of
+   * `### profile` (issue #407). Counts, never values.
+   */
+  profileClip?: ProfileClipStats;
 }

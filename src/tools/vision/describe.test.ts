@@ -80,7 +80,7 @@ describe("buildVisionDescribeTool", () => {
     expect(result.summary).toMatch(/vision is not available/i);
   });
 
-  it("rejects unsupported file extensions", async () => {
+  it("rejects a file that is neither a known extension nor known bytes", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
     const path = join(tmp, "note.txt");
     await writeFile(path, "not an image");
@@ -91,7 +91,30 @@ describe("buildVisionDescribeTool", () => {
     });
     const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
     expect(result.status).toBe("error");
-    expect(result.summary).toMatch(/unsupported image extension/i);
+    expect(result.summary).toMatch(/unsupported image/i);
+  });
+
+  // A chat client names the file; only the bytes know what it is. A PNG
+  // screenshot that arrives from Telegram as `photo.jpg` must reach the
+  // provider labelled `image/png`, or the request comes back a 400.
+  it("labels an image by its bytes, not by a lying extension", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const path = join(tmp, "photo.jpg");
+    await writeFile(
+      path,
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+    );
+    const provider = fakeProvider();
+    const tool = buildVisionDescribeTool({
+      provider,
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
+    expect(result.status).toBe("ok");
+    const call = (provider.describeImage as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as VisionRequest;
+    expect(call.images[0]!.mimeType).toBe("image/png");
   });
 
   it("forwards loaded image bytes to the provider and returns its text", async () => {
@@ -212,4 +235,42 @@ describe("buildVisionDescribeTool", () => {
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/maxImageBytes/);
   });
+
+  // Typing the file from its bytes means every path the agent names is
+  // opened, so the tool has to hand `loadImageFile` its cap and let the
+  // stat reject an over-size file before the read allocates it.
+  it("passes maxImageBytes down so an over-cap file is never read", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    // `.log` used to be rejected on its extension without ever being
+    // opened; nothing but the size guard stops it being slurped now.
+    const path = join(tmp, "install.log");
+    await writeFile(path, Buffer.alloc(4096, 0x61));
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider(),
+      maxImagesPerCall: 2,
+      maxImageBytes: 64,
+    });
+    const result = await tool.run({ prompt: "describe", path }, ctx(tmp));
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/maxImageBytes=64/);
+    expect(result.summary).toMatch(/4096 bytes on disk/);
+    // Not wrapped as `failed to load image: …` — the rejection is ours.
+    expect(result.summary).not.toMatch(/failed to load image/);
+  });
+
+  it("refuses a character device instead of reading it forever", async () => {
+    if (process.platform === "win32") return;
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider(),
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      { prompt: "describe", path: "/dev/zero" },
+      ctx(tmp),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/not a regular file/);
+  }, 2000);
 });

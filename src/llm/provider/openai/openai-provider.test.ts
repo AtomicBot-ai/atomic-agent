@@ -155,3 +155,110 @@ describe("OpenAiProvider qwen tagged-tool compatibility", () => {
     });
   });
 });
+
+/**
+ * The `strictTools` entry flag, end to end through the provider.
+ *
+ * The transform, the body builder and the config parser each have their
+ * own unit coverage; what had none was the wiring between them — the
+ * two `buildOpenAiChatBody` call sites that must pass `this.strictTools`
+ * and the constructor branch that must wrap the tool-call adapter.
+ * Deleting either left every test in the repo green, so the feature
+ * could be silently removed by a refactor. These assert the observable
+ * ends: the bytes on the wire, and the args a parsed call carries.
+ */
+describe("OpenAiProvider strictTools wiring", () => {
+  function strictProvider(
+    fetchImpl: typeof fetch,
+    strictTools: boolean | undefined,
+  ): OpenAiProvider {
+    return new OpenAiProvider({
+      id: "test",
+      baseUrl: "https://example.invalid",
+      apiKey: "",
+      defaultChatModel: "qwen-test",
+      fetchImpl,
+      ...(strictTools === undefined ? {} : { strictTools }),
+    });
+  }
+
+  const sentBody = (fetchImpl: ReturnType<typeof fakeFetch>, index = 0) =>
+    JSON.parse(
+      String((fetchImpl.mock.calls[index]?.[1] as RequestInit).body),
+    ) as Record<string, unknown>;
+
+  it("reaches the non-streaming request body", async () => {
+    const fetchImpl = fakeFetch({ role: "assistant", content: "ok" });
+    await strictProvider(fetchImpl as unknown as typeof fetch, true).complete({
+      prompt: "read",
+      tools,
+    });
+    const body = sentBody(fetchImpl);
+    const fn = (body.tools as Array<{ function: Record<string, unknown> }>)[0]
+      .function;
+    expect(fn.strict).toBe(true);
+    expect(fn.parameters).toEqual({
+      type: "object",
+      properties: { path: { type: ["string", "null"] } },
+      required: ["path"],
+      additionalProperties: false,
+    });
+    // Strict decoding is only guaranteed with parallel calls off.
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("reaches the streaming request body", async () => {
+    const fetchImpl = fakeStreamFetch("ok");
+    const stream = strictProvider(
+      fetchImpl as unknown as typeof fetch,
+      true,
+    ).completeStream({ prompt: "read", tools });
+    while (!(await stream.next()).done) {
+      /* drain */
+    }
+    const body = JSON.parse(
+      String((fetchImpl.mock.calls[0]?.[1] as RequestInit).body),
+    ) as Record<string, unknown>;
+    const fn = (body.tools as Array<{ function: Record<string, unknown> }>)[0]
+      .function;
+    expect(fn.strict).toBe(true);
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("leaves the body untouched when the flag is absent or false", async () => {
+    for (const flag of [undefined, false] as const) {
+      const fetchImpl = fakeFetch({ role: "assistant", content: "ok" });
+      await strictProvider(
+        fetchImpl as unknown as typeof fetch,
+        flag,
+      ).complete({ prompt: "read", tools });
+      const body = sentBody(fetchImpl);
+      expect(body.tools).toEqual(tools);
+      expect(body.parallel_tool_calls).toBe(true);
+    }
+  });
+
+  it("wraps the tool-call adapter so parsed calls lose top-level nulls", () => {
+    const call = [
+      {
+        id: "call_1",
+        type: "function" as const,
+        function: {
+          name: "memory__profile__set",
+          arguments: '{"key":"k","value":"v","pinned":null}',
+        },
+      },
+    ];
+    const on = strictProvider(fakeFetch({}) as unknown as typeof fetch, true);
+    expect(on.toolCallAdapter?.toolCallsToBatch(call).calls[0]?.args).toEqual({
+      key: "k",
+      value: "v",
+    });
+    const off = strictProvider(fakeFetch({}) as unknown as typeof fetch, false);
+    expect(off.toolCallAdapter?.toolCallsToBatch(call).calls[0]?.args).toEqual({
+      key: "k",
+      value: "v",
+      pinned: null,
+    });
+  });
+});

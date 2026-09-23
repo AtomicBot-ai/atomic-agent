@@ -1,5 +1,6 @@
 import { withReportHint } from "./format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
+import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -522,6 +523,34 @@ describe("reduceTuiState", () => {
       (m) => m.role === "system" && m.variant === "warn",
     );
     expect(errMsg?.text).toBe(withReportHint("Turn failed [tool]: boom"));
+  });
+
+  it("names the primary's failure in the chat line when the fallback chain fell over first", () => {
+    const error = new TypeError("fetch failed");
+    attachFailedAttempts(error, [
+      {
+        providerId: "openrouter",
+        error: new Error(
+          "openai provider 404: No endpoints found for z-ai/glm-5.3-flash.",
+        ),
+      },
+    ]);
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: { type: "loop_failed", error, category: "transport" },
+      },
+    ]);
+    // The status line and the run history keep the last link's own words.
+    expect(next.lastRunStatus).toBe("failed [transport]: fetch failed");
+    expect(next.runHistory[0]?.reason).toBe("fetch failed");
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text.split("\n")[0]).toBe(
+      'Turn failed [transport]: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
+    );
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
@@ -1175,6 +1204,82 @@ describe("parse-failure recovery", () => {
       row.line.includes("could not be read as a tool call"),
     );
     expect(lines).toHaveLength(2);
+  });
+});
+
+describe("profile clip", () => {
+  it("puts one yellow runtime line in the feed with the counts", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "profile_clipped",
+        stepIndex: 0,
+        rendered: 21,
+        dropped: 67,
+        pinnedDropped: 48,
+        maxTokens: 512,
+      },
+    });
+    const row = next.feed.at(-1);
+    expect(row?.kind).toBe("runtime_info");
+    expect(row?.color).toBe("yellow");
+    expect(row?.line).toBe(
+      "» profile: 67 facts left out of the prompt (48 pinned) — memory.profile.maxTokens 512 is too small",
+    );
+  });
+});
+
+describe("empty-completion recovery", () => {
+  const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "empty_completion_recovered",
+      stepIndex: 3,
+      attempt: 1,
+      budget: 1,
+      ...over,
+    } as never,
+  });
+
+  it("says the reply was empty and that the turn is trying again", () => {
+    // The whole point of the line: an empty completion produces no tool
+    // call, no text and no error, so a feed without it shows a step
+    // that appears never to have happened.
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered(),
+    );
+    const row = next.feed.at(-1);
+    expect(row?.kind).toBe("runtime_info");
+    expect(row?.line ?? "").toContain("empty reply");
+    expect(row?.line ?? "").toContain("trying again");
+    expect(row?.line ?? "").toContain("(1/1)");
+    expect(row?.color).toBe("yellow");
+    // Attributed to the step it happened on, not to the turn.
+    expect(row?.stepIndex).toBe(3);
+  });
+
+  it("does not read as a step boundary", () => {
+    // The recovery is a failure inside the step that was already
+    // running; the status line and the step counter belong to it.
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 3 } },
+    ]);
+    const next = reduceTuiState(running, recovered());
+    expect(next.status).toBe(running.status);
+    expect(next.currentStep).toBe(3);
+  });
+
+  it("leaves one line per recovery, and says which attempt each is", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      recovered(),
+      recovered({ stepIndex: 7, attempt: 1, budget: 1 }),
+    ]);
+    const lines = next.feed
+      .filter((row) => row.line.includes("empty reply"))
+      .map((row) => row.line);
+    expect(lines).toHaveLength(2);
+    expect(lines.every((line) => line.includes("(1/1)"))).toBe(true);
   });
 });
 

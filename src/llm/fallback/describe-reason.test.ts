@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeReason } from "./provider-fallback-chain.js";
+import { describeReason } from "./describe-reason.js";
 
 /**
  * The reason text is what an operator reads on a fallover notice and in

@@ -125,6 +125,31 @@ describe("createQueryRewriterRunner", () => {
     expect(out).toBe("FTS5 ranking details");
   });
 
+  it("calls the LLM on its own `rewriter:` fallback partition", async () => {
+    // The fallback chain partitions breaker state by this id; on the bare
+    // session id a provider refusing the rewriter moved the turn's provider.
+    const seen: string[] = [];
+    const traced: Array<{ sessionId: string; outcome: string }> = [];
+    const runner = createQueryRewriterRunner({
+      llmComplete: async (p) => {
+        seen.push(p.sessionId);
+        return completion(envelope("BM25 in FTS5"));
+      },
+      timeoutMs: 1000,
+      gate: createAlwaysGate(),
+      emitTrace: (event) => traced.push(event),
+    });
+    await runner.maybeRewrite({
+      sessionId: "s1",
+      userMessage: "and what about it",
+      history: [{ role: "user", text: "what is BM25" }],
+      signal: new AbortController().signal,
+    });
+    expect(seen).toEqual(["rewriter:s1"]);
+    // Trace (and metrics) stay on the real session id.
+    expect(traced).toEqual([{ sessionId: "s1", outcome: "ok" }]);
+  });
+
   it("falls back to the raw message on parse failure (no envelope)", async () => {
     const llm: RewriterLlmComplete = async () =>
       completion("raw text without an envelope");

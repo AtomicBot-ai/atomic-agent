@@ -19,7 +19,8 @@
  *    are untouched.
  *  - `rewriter-aware-recall-provider` — decorator over
  *    `MemoryContextProvider`. Pulls history from
- *    `input.recentTurns` populated by the agent loop.
+ *    `input.recentTurns` populated by the agent loop, and asks the
+ *    runner at most once per turn (per session + message + history).
  */
 
 export {
@@ -57,6 +58,7 @@ export {
   type RewriterOutcome,
 } from "./query-rewriter-runner.js";
 export {
+  REWRITE_MEMO_MAX_SESSIONS,
   createRewriterAwareMemoryContextProvider,
   type RewriterAwareProviderOptions,
 } from "./rewriter-aware-recall-provider.js";

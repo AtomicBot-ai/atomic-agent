@@ -427,4 +427,63 @@ describe("local model rows during a pull", () => {
       }),
     );
   });
+  it("names a LOCAL orchestrator by its model, not by the provider id", () => {
+    // The legs are one click apart now (the composer's ⇄), so this is an
+    // everyday shape rather than a hand-edited config. A llama-server row
+    // carries no `chatModel`, and the label used to fall through to the
+    // provider id: `local-llama ⇄ anthropic/claude-opus-5`.
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "managed" as const,
+        activeModelId: "qwen-3.5-4b" as LocalModelDef["id"],
+      },
+      providersPanel: {
+        ...base.providersPanel,
+        runMode: {
+          stored: "fusion" as const,
+          effective: "fusion" as const,
+          orchestratorProviderId: "local-llama",
+          orchestratorModel: null,
+          workerProviderId: "openrouter",
+          workerModel: null,
+          workers: 2,
+          workerMaxSteps: 40,
+          workerTimeoutMs: 600_000,
+          primaryProviderId: "local-llama",
+          degraded: null,
+        },
+        rows: [
+          {
+            id: "local-llama",
+            kind: "llama-server" as const,
+            isActiveText: true,
+            isActiveEmbedding: false,
+            hasApiKey: false,
+            baseUrl: null,
+            subscriptionCli: null,
+            chatModel: null,
+            embeddingModel: null,
+          },
+          {
+            id: "openrouter",
+            kind: "openrouter" as const,
+            isActiveText: false,
+            isActiveEmbedding: false,
+            hasApiKey: true,
+            baseUrl: null,
+            subscriptionCli: null,
+            chatModel: "openai/gpt-4o-mini",
+            embeddingModel: null,
+          },
+        ],
+      },
+    };
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "qwen-3.5-4b ⇄ openai/gpt-4o-mini",
+      provider: "local-llama",
+    });
+  });
 });
