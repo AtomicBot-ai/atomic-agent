@@ -129,6 +129,36 @@ describe("buildLlamaServerArgs", () => {
     expect(slotsFor({ completionMaxTokens: 16_384 }, 131_072)).toBe("4");
   });
 
+  it("gives an orchestrating local leg one slot, and leaves every other launch alone", () => {
+    const slotsFor = (
+      opts: Partial<DaemonStartOptions>,
+      contextSize?: number,
+    ): string | undefined => {
+      const args = buildLlamaServerArgs(
+        { ...baseOpts, ...opts },
+        "/tmp/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+        "qwen-3.5-4b",
+        contextSize,
+      );
+      return args[args.indexOf("--parallel") + 1];
+    };
+    // Workers in the cloud: one local stream, one slot. A second slot is
+    // not free — it halves the per-slot KV budget and lets llama.cpp's
+    // longest-common-prefix selection bounce the single stream between
+    // slots.
+    expect(slotsFor({ parallel: "auto", localLegRole: "orchestrator" }, 131_072)).toBe("1");
+    // Workers on this machine: the memory fit, unchanged — ~4.8 tok/s on
+    // one active stream against ~9.5 tok/s aggregate across two on
+    // gemma-4-26b-a4b, so slots are worth having.
+    expect(slotsFor({ parallel: "auto", localLegRole: "workers" }, 131_072)).toBe("4");
+    expect(slotsFor({ parallel: "auto" }, 131_072)).toBe("4");
+    // A pinned number is the operator's, whichever way fusion points.
+    expect(slotsFor({ parallel: 4, localLegRole: "orchestrator" }, 131_072)).toBe("4");
+    // And an omitted `parallel` is still the embedder's historical 2,
+    // role or no role.
+    expect(slotsFor({ localLegRole: "orchestrator" })).toBe("2");
+  });
+
   it("appends --ctx-size when an effective context size is provided", () => {
     const args = buildLlamaServerArgs(
       baseOpts,

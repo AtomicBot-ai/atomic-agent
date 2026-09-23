@@ -73,6 +73,8 @@ export {
 } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
 import { roundTokensPerSecond } from "../prompt/fusion-machine-facts.js";
+import { resolveLocalLegRole, resolveRunMode } from "../llm/run-mode/index.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import {
   describeProjectorSkipped,
   followDownloadJob,
@@ -526,6 +528,19 @@ export async function runLocalModelsStart(): Promise<number> {
     `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}\n`,
   );
 
+  // Which direction fusion is pointing decides what `parallel: "auto"`
+  // means for this launch (see `resolveLocalLegRole`). Resolved here
+  // because the run mode is a layer `src/local-llm/**` may not import,
+  // and from the config this command already read, so it is the state
+  // the daemon is actually being started in.
+  const resolvedLlm = resolveLlmConfig(cfg);
+  const localLegRole = resolveLocalLegRole(
+    resolvedLlm,
+    resolveRunMode(resolvedLlm, {
+      managedModelId: cfg.localModels.managed.modelId,
+    }),
+  );
+
   const startWithDevice = (dev: string | undefined) =>
     startChatAndEmbeddingDaemons({
       chat: {
@@ -534,6 +549,7 @@ export async function runLocalModelsStart(): Promise<number> {
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
         parallel: cfg.localModels.managed.parallel,
+        localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),

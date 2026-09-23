@@ -83,6 +83,33 @@ export const MAX_AUTO_SLOTS = 8;
 /** What a launch with nothing known falls back to — the historical default. */
 export const DEFAULT_SLOTS = 2;
 
+/**
+ * Which half of a fusion pairing the local daemon is serving.
+ *
+ * Fusion runs in two directions and they want opposite slot counts, so
+ * one number for both is wrong in one of them:
+ *
+ * - `"workers"` — the cloud leg orchestrates and the daemon serves the
+ *   fan-out. Aggregate throughput is what matters, and concurrent slots
+ *   buy it: gemma-4-26b-a4b measured ~4.8 tok/s with a single active
+ *   stream against ~9.5 tok/s aggregate across two, so for a write-heavy
+ *   fan-out more slots is strictly better as long as the context holds
+ *   them. That is what the memory fit above counts.
+ * - `"orchestrator"` — the workers are in the cloud and the daemon runs
+ *   exactly one stream, the orchestrating one. A second slot cannot be
+ *   used by anyone, and it is not free: under llama.cpp's slot
+ *   accounting it halves the per-slot share of the KV budget, and the
+ *   server's longest-common-prefix slot selection can hand the single
+ *   stream a *different*, empty slot between turns — the orchestrator
+ *   bounces and re-ingests a prefix the other slot still holds. One slot
+ *   cannot bounce.
+ *
+ * Omitted means `"workers"`, which is what `"auto"` has always done, so
+ * plain `local` mode and a cloud-orchestrated fusion both keep their
+ * existing launch byte-for-byte.
+ */
+export type LocalLegRole = "workers" | "orchestrator";
+
 export interface WorkerSlotsInput {
   /**
    * The context the daemon is being launched with, in tokens. `null`
@@ -97,6 +124,12 @@ export interface WorkerSlotsInput {
    * footprint. Omitted (or `0`) uses `DEFAULT_WORKER_COMPLETION_TOKENS`.
    */
   completionMaxTokens?: number;
+  /**
+   * What the local leg is doing in this run mode (see `LocalLegRole`).
+   * Omitted is `"workers"` — the historical assumption, and the only
+   * thing `local` and `cloud` modes can mean.
+   */
+  localLegRole?: LocalLegRole;
 }
 
 /**
@@ -113,8 +146,15 @@ export interface WorkerSlotsInput {
  * CPU-only is always one: concurrent slots there share the same cores,
  * so two workers do not finish sooner than two in a row — they finish at
  * the same time, both late, having doubled the memory traffic.
+ *
+ * An orchestrating local leg is always one for a different reason: there
+ * is only ever one stream to serve, and the second slot costs it half
+ * the KV budget and lets the slot selector bounce it (see
+ * `LocalLegRole`). Checked before the context fit, because no context is
+ * large enough to make a slot nobody can use worth having.
  */
 export function resolveWorkerSlots(input: WorkerSlotsInput): number {
+  if (input.localLegRole === "orchestrator") return 1;
   if (input.cpuOnly) return 1;
   const ctx = input.contextSize;
   if (ctx === null || !Number.isFinite(ctx) || ctx <= 0) return DEFAULT_SLOTS;
@@ -125,7 +165,10 @@ export function resolveWorkerSlots(input: WorkerSlotsInput): number {
 /**
  * Resolve the configured value, where `"auto"` means "ask the machine".
  * A number the operator pinned is honoured as written — the escape hatch
- * for an external server, an unusual model, or a benchmark.
+ * for an external server, an unusual model, or a benchmark — and that
+ * holds whatever the local leg is doing: `input.localLegRole` only ever
+ * reaches `resolveWorkerSlots`, so pinning `parallel: 2` keeps two slots
+ * even while the daemon orchestrates.
  */
 export function resolveConfiguredSlots(
   configured: number | "auto",

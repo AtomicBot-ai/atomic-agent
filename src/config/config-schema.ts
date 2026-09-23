@@ -1453,8 +1453,14 @@ export interface UserManagedLocalLlmConfig {
    * prompt cannot serve one (see `worker-slots.ts`). That makes the
    * number a property of the machine, which is the party that knows it.
    *
-   * A pinned number is honoured as written: an external server, an
-   * unusual model, a benchmark. Applied on the next daemon start.
+   * `"auto"` also reads which way fusion is pointing. With the legs
+   * swapped — a local orchestrator and cloud workers — the daemon serves
+   * exactly one stream, so it launches with one slot: a second one
+   * cannot be used and is not free (see `local-leg-role.ts`).
+   *
+   * A pinned number is honoured as written, in either direction: an
+   * external server, an unusual model, a benchmark. Applied on the next
+   * daemon start.
    */
   parallel: number | "auto";
   /**
