@@ -832,6 +832,7 @@ const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row win
    schema default when the user file has no key): the user file from GET
    /api/config when it carries the key, else `atag config get
    analytics.enabled`; null until either has answered. */
+const READ_SCOPES = [['working-dir', 'Ask first', 'Ask before reading outside the working folder'], ['unrestricted', 'Read anywhere', 'Read anywhere without asking']];
 const PRIV = { busy:false, message:null, lastError:null, effective:null, effectiveBusy:false, chain:Promise.resolve(), pending:0 }; // chain/pending: the analytics write queue
 /* The TUI's ctrl+g chord layer (menu-popup.tsx `ctrl+g <key>`): ctrl+g
    arms a 1.5 s prefix, the next key runs the menu node with that chord. */
@@ -1299,9 +1300,13 @@ const CATS = [
   ['shell','shell command',4],
   ['script','skill script',4],
   ['proc_kill','process kill',4],
+  ['publish','publish · GitHub',4],
+  ['git_remote','git · remote',4],
   ['fusion_fanout','fusion · fan-out',4],
   ['browser_nonweb','browser · non-web URL',5],
   ['trust_config','agent trust config',5],
+  ['email','e-mail send',5],
+  ['fs_read_outside','read outside the working directory',5],
   ['other','uncategorised',5],
 ];
 
@@ -2041,6 +2046,11 @@ function apprCard(m) {
       + '<dt>preview</dt><dd><div class="previewblk">' + esc(m.preview) + '</div></dd>'
       + '<dt>affects</dt><dd><span class="pathchip">' + ic('file') + '<b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
     + '</dl>'
+    /* B3: the one approval that outlives its call. Approving a read outside
+       the working folder also lets the agent read under that folder for the
+       rest of this chat (ReadScopeGrants), so the card says so up front. */
+    + (m.cat === 'fs_read_outside' && m.state == null
+        ? '<div class="apprscope">' + ic('info') + '<span>Approving lets the agent read <span class="mono">' + esc(m.readRoot || m.affectsDir + m.affectsBase) + '</span> for the rest of this chat.</span></div>' : '')
     + '<div class="apprbtns"><div class="apprgrp">'
       + '<button class="btn sm btn-white' + (isTrust ? ' dg' : '') + '" data-appr="y">Approve' + keycaps('Y') + '</button>'
       + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
@@ -3485,10 +3495,21 @@ function privacyPane() {
         + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
           + (!known || PRIV.busy ? ' disabled' : '') + ' title="a: analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
+      /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
+         config cache, which a CLI write does not reset in a running
+         `atag serve` (checked live: a write with the chat open still asked),
+         so the change takes the restart notice above. */
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Reading outside the working folder</div>'
+          + '<div class="d">' + esc(READ_SCOPES.find((r) => r[0] === readScopeValue())[2]) + '. The agent can always read the working folder and any path you name in the chat.</div></div>'
+        + '<div class="tk-seg set-seg" role="group" aria-label="Reading outside the working folder">'
+          + READ_SCOPES.map(([v, label, long]) => '<button class="' + (v === readScopeValue() ? 'on' : '') + '" aria-pressed="' + (v === readScopeValue())
+            + '" title="' + esc(long) + '" data-act="privacy:readscope:' + v + '"' + (PRIV.busy || !LIVE_CONFIG ? ' disabled' : '') + '>' + esc(label) + '</button>').join('')
+        + '</div>'
+      + '</div>'
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Session grants</div>'
-          + '<div class="d">The desktop answers each approval once, allow or deny, so a session holds no standing grants.</div></div>'
-        + '<span class="tk-chip tk-chip--sm tk-chip--line">none active</span>'
+          + '<div class="d">Each approval is answered once, allow or deny. One exception: approving a read outside the working folder lets the agent read that folder for the rest of that chat.</div></div>'
       + '</div>'
     + '</div>'
     + '<div class="set-privgrid">'
@@ -3498,6 +3519,26 @@ function privacyPane() {
     + tuiHints([['a: analytics ' + (on ? 'off' : 'on'), 'privacy:analytics', {disabled: !known || PRIV.busy}], ['r: refresh', 'privacy:refresh']])
     + '</div>';
 }
+/* B3: `agent.readScope` — the user file's value, else the schema default. */
+function readScopeValue() {
+  const a = LIVE_CONFIG && LIVE_CONFIG.agent;
+  return a && a.readScope === 'unrestricted' ? 'unrestricted' : 'working-dir';
+}
+async function readScopeSet(value) {
+  if (!BR || !LIVE_CONFIG || PRIV.busy || value === readScopeValue()) return;
+  const run = async () => {
+    PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
+    const res = await BR.configSet('agent.readScope', value);
+    if (!res || res.ok === false) PRIV.lastError = 'could not change where the agent reads: ' + ((res && res.error) || 'unknown error');
+    else PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder';
+    await refreshLiveConfig();
+    PRIV.busy = false; render();
+  };
+  PRIV.pending++;
+  PRIV.chain = PRIV.chain.then(run, run);
+  try { await PRIV.chain; } finally { PRIV.pending--; }
+}
+
 /* The value the TUI shows: the user file's key when set, else the
    effective value `atag config get analytics.enabled` printed (the schema
    default). null = not known yet / the CLI read failed. */
@@ -3769,6 +3810,7 @@ function act(a) {
   if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
+  if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
   // at all. It copies the reply now, and says so honestly when there is none.
   if (a === 'copy:reply') {
@@ -5750,6 +5792,10 @@ function onApprovalEvent(payload) {
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,
+    /* B3: a read outside the working folder names the directory the agent
+       widens its read roots to when this is approved (read-scope-approval.ts
+       `affectedResources: [root]`) — allow-once over HTTP still widens it. */
+    readRoot: payload.category === 'fs_read_outside' ? String(first) : '',
     // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
     // and it is the one attention signal that works for a turn this window did
     // not start (a scheduled task's, say).
@@ -5801,6 +5847,9 @@ const CATEGORY_LABEL = {
   fs_trash:'move to Trash', http:'HTTP request', shell:'shell command',
   script:'skill script', proc_kill:'process kill', browser_nonweb:'browser · non-web URL',
   trust_config:'agent trust config', fusion_fanout:'fusion · fan-out', other:'uncategorised',
+  // agent 0.6.0 / 0.6.3 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
+  publish:'publish · GitHub', git_remote:'git · remote', email:'e-mail send',
+  fs_read_outside:'read outside the working directory',
 };
 
 function answerLive(req, key) {

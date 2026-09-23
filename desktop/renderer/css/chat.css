@@ -174,6 +174,11 @@
 .pathchip svg{width:13px;height:13px}
 .pathchip b{font-weight:600;overflow-wrap:anywhere}
 .appr .pathchip .cap{font-size:11.5px;color:inherit;opacity:.75;overflow-wrap:anywhere}
+/* B3: what approving a read outside the working folder also grants */
+.apprscope{display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-radius:var(--r-well);background:var(--glass-soft);
+  color:var(--on-strong);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.apprscope svg{width:15px;height:15px;flex:none;margin-top:2px;color:var(--caution-on-indigo)}
+.apprscope .mono{font-size:12px}
 .apprbtns{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .apprgrp{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .appr .apprabort{margin-left:auto;color:var(--on-strong)}

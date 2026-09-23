@@ -4175,7 +4175,8 @@ async function settingsTest(
   // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it.
   await js<void>("window.__settingsOpen('privacy')");
   const priv = await js<string>("window.__settingsBody()");
-  const privacyCopy = ["Anonymous usage analytics", "Product analytics + crash reports, fully anonymous.", "Session grants", "none active"]
+  const privacyCopy = ["Anonymous usage analytics", "Product analytics + crash reports, fully anonymous.", "Session grants",
+    "Reading outside the working folder", "Ask first", "Read anywhere"]
     .every((s) => priv.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
   check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
