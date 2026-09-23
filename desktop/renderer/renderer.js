@@ -1393,6 +1393,9 @@ const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
 const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
 const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/events
 const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
+/* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
+   See the top of onChatEvent. */
+const STREAM_ERR = new Map();
 const RUNNING = new Map();               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
@@ -1789,6 +1792,7 @@ function item(m, end) {
        copy/retry buttons — those belong to the message, this belongs to the
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
+    + (pausedOffer(m) ? pausedBarHTML(m) : '')
     + '</div></div>';
   /* F2 — the one action that helps, on the row that reports the problem.
      A person told their provider is not answering has exactly one useful
@@ -3760,6 +3764,7 @@ function act(a) {
     return;
   }
   if (a === 'send') { close(); submit(); return; }
+  if (a === 'turn:continue') { close(); continueTurn(); return; }
   /* r5 item 4: this verb used to toast "Retrying last turn" and retry nothing.
      It is an orphan — no palette row, menu node, slash entry or markup reaches
      it — but shipping a real retry button beside a fake retry verb is not
@@ -5444,6 +5449,33 @@ function turnFailureLine(ev) {
 }
 
 function onChatEvent(ev) {
+  /* B5 — a named `event: error` frame (it arrives with `payload`) is not
+     always the end of the turn. The agent's one error emitter also sends a
+     step's failure, and since 0.6.3 an out-of-credit refusal is exactly that:
+     the step fails, the task PAUSES, and the paused reply ("(paused: …)
+     say `continue`") and `finish_reason: length` follow in the same stream.
+     Ending the turn on the frame dropped that reply and printed "not
+     answering" for a provider that had answered. Every named frame is
+     followed by `done` in its stream (agent-client.ts), so the verdict waits
+     for it: work after the frame means the turn went on; nothing after it
+     means it failed, drawn exactly as before. Errors without `payload` (the
+     request itself failed) still end the turn at once. */
+  if (ev && ev.turnId && STREAM_ERR.has(ev.turnId)) {
+    const held = STREAM_ERR.get(ev.turnId);
+    if (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress') held.after = true;
+    if (ev.kind === 'done') {
+      STREAM_ERR.delete(ev.turnId);
+      if (!held.after) ev = Object.assign({}, held.ev, {kind:'error', turnId:ev.turnId, deferred:true});
+    }
+    if (ev.kind === 'aborted' || (ev.kind === 'error' && !ev.payload)) STREAM_ERR.delete(ev.turnId);
+  }
+  if (ev && ev.kind === 'error' && ev.payload && ev.turnId && !ev.deferred) {
+    const held = STREAM_ERR.get(ev.turnId);
+    // The first failure names what went wrong, unless the turn recovered
+    // from it and failed again later — then the later one is the story.
+    if (!held || held.after) STREAM_ERR.set(ev.turnId, {ev, after:false});
+    return;
+  }
   /* item 6 — the running dot, bookkept BEFORE the turnId guard below.
      A turn keeps streaming after the user opens another chat, and its
      done/aborted/error is the only truthful end-of-run signal there is:
@@ -5633,7 +5665,11 @@ function onChatEvent(ev) {
     return;
   }
   if (ev.kind === 'done' || ev.kind === 'finish' || ev.kind === 'aborted' || ev.kind === 'error') {
-    if (ev.kind === 'finish') return;
+    /* B5: the finish reason is kept on the reply. `length` is how the agent
+       ends a task it PAUSED (step or time ceiling, no progress, out of
+       credit — agent-loop.ts formatTaskStoppedReply) rather than finished;
+       the reply row then offers to continue. */
+    if (ev.kind === 'finish') { if (item && ev.reason) item.finish = String(ev.reason); return; }
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
@@ -11104,6 +11140,52 @@ async function executePlan(mode) {
   S.draft = EXECUTE_PLAN_MESSAGE;
   const e = $('#entry');
   if (e) { e.value = EXECUTE_PLAN_MESSAGE; autosize(e); }
+  submit();
+}
+
+/* B5 — a paused task. The agent ends a task it stopped at a ceiling (steps,
+   time, no progress) or because the provider is out of credit with a reply
+   that opens "(paused:" and finish_reason `length`, and asks for `continue`
+   (agent-loop.ts formatTaskStoppedReply). The desktop offers that as a
+   button under the reply, only on the chat's latest reply while nothing
+   runs. A reopened chat has no finish reason, so the reply's own opening
+   decides there. */
+function pausedKind(m) {
+  if (!m || m.k !== 'assistant' || m.placeholder) return '';
+  const t = String(m.text || '').trim();
+  if (!t.startsWith('(paused:')) return '';
+  if (m.finish && m.finish !== 'length') return '';
+  return /out of credit/.test(t.slice(0, 400)) ? 'credit' : 'ceiling';
+}
+function pausedOffer(m) {
+  if (S.busy || S.pending || !pausedKind(m)) return false;
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const c = S.log[i];
+    if (c.k === 'user' || c.k === 'assistant') return c.id === m.id;
+  }
+  return false;
+}
+function pausedBarHTML(m) {
+  return '<div class="pausebar">'
+    + '<button class="btn sm btn-p" data-act="turn:continue" title="send \u201ccontinue\u201d so the agent picks up where it stopped">' + ic('play') + 'Continue</button>'
+    + (pausedKind(m) === 'credit' ? '<button class="btn sm btn-s" data-sel-open="provider">Switch provider</button>' : '')
+    + '</div>';
+}
+function continueTurn() {
+  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
+    toast('The microphone is open', 'finish or cancel the dictation, then continue', 'bad');
+    return;
+  }
+  const e = $('#entry');
+  const draft = String((e ? e.value : S.draft) || '').trim();
+  if (draft && draft !== 'continue') {
+    toast('Your draft is in the way', 'send or clear the composer, then continue', 'bad');
+    if (e) e.focus();
+    return;
+  }
+  S.draft = 'continue';
+  if (e) { e.value = 'continue'; autosize(e); }
   submit();
 }
 

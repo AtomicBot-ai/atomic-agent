@@ -309,3 +309,9 @@
    running commentary; the final reply below it stays the turn's message. */
 .tk-interim{padding:1px 0 1px 12px;border-left:2px solid var(--bd-2)}
 .tk-interim .prose{font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+
+/* ---------------- paused task (B5) ----------------
+   Under a reply that opens "(paused:": Continue sends `continue`; a credit
+   pause also offers Switch provider. */
+.pausebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.pausebar .btn svg{width:13px;height:13px}
