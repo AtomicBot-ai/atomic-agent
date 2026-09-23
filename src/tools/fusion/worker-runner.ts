@@ -17,7 +17,14 @@ import {
   renderWorkerBrief,
   WORKER_REPLY_CHAR_BUDGET,
 } from "./worker-prompt.js";
-import { WorkerRunCollector, type WorkerTaskResult } from "./worker-result.js";
+import {
+  WorkerRunCollector,
+  WORKER_HINT_QUEUED,
+  WORKER_HINT_UNSERVED,
+  WORKER_QUEUED_NOTE,
+  type WorkerTaskResult,
+} from "./worker-result.js";
+import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_TOOL_ROLE,
@@ -74,6 +81,89 @@ export function estimateWorkerTimeoutMs(input: {
     (tokens / tokensPerSecond) * WORKER_TIMEOUT_SAFETY_FACTOR * 1000;
   const floor = Math.min(WORKER_TIMEOUT_FLOOR_MS, ceilingMs);
   return Math.round(Math.max(floor, Math.min(ceilingMs, estimateMs)));
+}
+
+/**
+ * How much of its own budget a worker may spend waiting for its first
+ * token. A third: long enough that a busy two-slot server still serves
+ * a queued worker rather than failing it, short enough that a worker
+ * which never gets a slot reports back with two thirds of its deadline
+ * unspent, so the orchestrator can re-plan inside the same turn.
+ */
+export const WORKER_QUEUE_BUDGET_DIVISOR = 3;
+
+/**
+ * Events that prove the server answered THIS worker, ending its queue
+ * wait. Deliberately not `prompt_built`, `turn_started` or
+ * `step_started`: all three fire before the request is answered, and a
+ * queued worker reaches every one of them.
+ */
+const SERVED_EVENTS: ReadonlySet<string> = new Set([
+  "assistant_delta",
+  "reasoning_delta",
+  "reasoning",
+  "llm_completed",
+  "llm_raw_completion",
+  "tool_call_parsed",
+  // A tool that RAN is a tool the model asked for: the tokens carrying
+  // that call arrived, whatever the provider chose to stream.
+  "tool_call_executed",
+  "assistant_reply",
+]);
+
+/**
+ * How far above the configured default a single task may be sized by
+ * the orchestrator. Four: a task the planner judges big gets real room
+ * (60 steps -> 240, 45 min -> 3 h) while a runaway still ends within a
+ * working afternoon rather than never.
+ *
+ * The factor applies to the CONFIGURED default, not to whatever the
+ * orchestrator asked for, so raising the default in config raises the
+ * ceiling with it and the multiplier is never applied twice.
+ */
+export const WORKER_BUDGET_CEILING_FACTOR = 4;
+
+/**
+ * A per-task budget the orchestrator asked for, clamped into what the
+ * install allows. Clamped rather than refused: the number is the
+ * planner's estimate of the work, and a refusal would cost a whole
+ * regeneration to correct one integer. `clamped` is what the result
+ * tells the orchestrator, so a plan built on a bigger number is not
+ * silently run on a smaller one.
+ */
+export function clampTaskBudget(
+  requested: number | undefined,
+  configured: number,
+): { value: number; clamped: boolean } {
+  if (requested === undefined) return { value: configured, clamped: false };
+  const ceiling = configured * WORKER_BUDGET_CEILING_FACTOR;
+  const value = Math.max(1, Math.min(Math.floor(requested), ceiling));
+  return { value, clamped: value !== Math.floor(requested) };
+}
+
+/**
+ * The wait for a first token, bounded by the worker's own budget.
+ *
+ * `localModels.firstTokenTimeoutMs` defaults to 30 minutes because a
+ * queued request is a healthy request — but that number was set for a
+ * turn with no deadline of its own. A worker has one, and giving it a
+ * first-token budget it cannot outlive is what let a queued worker burn
+ * 45 minutes producing nothing.
+ */
+export function resolveQueueBudgetMs(
+  timeoutMs: number,
+  firstTokenTimeoutMs?: number,
+): number {
+  const configured =
+    firstTokenTimeoutMs ?? getConfig().localModels.firstTokenTimeoutMs;
+  const share = Math.floor(timeoutMs / WORKER_QUEUE_BUDGET_DIVISOR);
+  const bounded = Math.min(
+    typeof configured === "number" && Number.isFinite(configured) && configured > 0
+      ? configured
+      : share,
+    share,
+  );
+  return Math.max(1, bounded);
 }
 
 /** Tools whose success counts as "the worker wrote something". */
@@ -417,32 +507,87 @@ async function runOneTask(
     ...(options.contract === undefined ? {} : { contract: options.contract }),
   });
   const declaredFiles = task.files?.length ?? 0;
+  // Per-task budgets the orchestrator sized itself, clamped into what
+  // this install allows. A task that asked for nothing keeps the
+  // configured defaults, byte for byte as before.
+  const stepBudget = clampTaskBudget(task.maxSteps, options.workerMaxSteps);
+  const timeBudget = clampTaskBudget(task.timeoutMs, options.workerTimeoutMs);
+  const budgetNotes: string[] = [];
+  if (stepBudget.clamped) {
+    budgetNotes.push(
+      `maxSteps ${task.maxSteps} was clamped to ${stepBudget.value} (${WORKER_BUDGET_CEILING_FACTOR}x the configured ${options.workerMaxSteps})`,
+    );
+  }
+  if (timeBudget.clamped) {
+    budgetNotes.push(
+      `timeoutMs ${task.timeoutMs} was clamped to ${timeBudget.value} (${WORKER_BUDGET_CEILING_FACTOR}x the configured ${options.workerTimeoutMs})`,
+    );
+  }
   // Sized from the work and the machine when the leg is local and has
-  // been measured; the configured ceiling otherwise.
+  // been measured; the task's own ceiling otherwise. A task that named
+  // a `timeoutMs` is stating what the work needs, so it is the ceiling
+  // the estimate is taken against.
   const timeoutMs = estimateWorkerTimeoutMs({
     briefChars: brief.length,
     declaredFiles,
     tokensPerSecond: options.localTokensPerSecond,
-    ceilingMs: options.workerTimeoutMs,
+    ceilingMs: timeBudget.value,
   });
 
   // The worker's own clock, kept apart from the operator's signal: when
   // it is the one that fired, the worker ran out of time — a ceiling,
-  // reported as `max_steps` — rather than being cancelled by anybody.
+  // reported as `timeout` — rather than being cancelled by anybody.
   // This is the hard bound: it fires mid-generation by design, because
   // a worker stuck in one endless step has nothing else to end it. A
   // plain timer rather than `AbortSignal.timeout` so a test clock can
   // drive it; the reason is the `TimeoutError` Node would have raised.
+  //
+  // **It does not start until the server answers.** Arming it here used
+  // to mean the clock ran while the request sat in llama-server's queue
+  // behind busy slots, and that wait is long by design: the first-token
+  // budget is 30 minutes (`localModels.firstTokenTimeoutMs`) precisely
+  // because queueing is legitimate, and `first-token-stall` cannot end
+  // it while the other slots are genuinely working. A 45-minute worker
+  // could therefore burn two thirds of its budget without being served
+  // and die reporting zero steps. Measured in the field: a 4-task
+  // fan-out on a 2-slot server lost its last two workers that way, each
+  // after 45 minutes with no tool call at all.
+  //
+  // So there are two clocks. The queue watchdog bounds the wait for the
+  // FIRST token; the wall timer bounds the work, and only starts once
+  // that token has arrived.
   const timeLimitController = new AbortController();
   const timeLimit = timeLimitController.signal;
-  const wallTimer = setTimeout(() => {
+  const abortForTime = (): void => {
     timeLimitController.abort(
       new DOMException("The operation was aborted due to timeout", "TimeoutError"),
     );
-  }, timeoutMs);
-  wallTimer.unref?.();
+  };
+  const queueBudgetMs = resolveQueueBudgetMs(timeoutMs);
+  let queuedOut = false;
+  let servedAt: number | null = null;
+  let wallTimer: ReturnType<typeof setTimeout> | undefined;
+  const queueTimer = setTimeout(() => {
+    queuedOut = true;
+    abortForTime();
+  }, queueBudgetMs);
+  queueTimer.unref?.();
+  /**
+   * The server produced something for this worker: the queue is over and
+   * the worker's real budget starts now. Idempotent — every token after
+   * the first lands here too.
+   */
+  const markServed = (): void => {
+    if (servedAt !== null) return;
+    servedAt = Date.now();
+    clearTimeout(queueTimer);
+    wallTimer = setTimeout(abortForTime, timeoutMs);
+    wallTimer.unref?.();
+  };
   const hitTimeLimit = (): boolean =>
-    timeLimit.aborted && !options.signal.aborted;
+    timeLimit.aborted && !options.signal.aborted && !queuedOut;
+  const hitQueueLimit = (): boolean =>
+    queuedOut && !options.signal.aborted;
 
   // D4 / F42 / F46: a task that declared output files and has written
   // none by half its step budget (and is stalled — `detectStall`) or by
@@ -458,7 +603,7 @@ async function runOneTask(
   const handBack = new AbortController();
   const stepThreshold = Math.max(
     HAND_BACK_MIN_COMPLETED_STEPS,
-    Math.floor(options.workerMaxSteps / 2),
+    Math.floor(stepBudget.value / 2),
   );
   const halfTimeMs = Math.floor(timeoutMs / 2);
   let stepsFinished = 0;
@@ -490,14 +635,16 @@ async function runOneTask(
   // threshold); that worker finished, and its reply stands — the
   // ground-truth check below classifies it, not the hand-back.
   let stoppedByHandBack = false;
+  let queuedOutcome = false;
+  let timedOutOutcome = false;
 
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(session, brief, {
       origin: "fusion",
       providerId: options.providerId,
-      maxSteps: options.workerMaxSteps,
-      taskMaxDurationMs: timeoutMs,
+      maxSteps: stepBudget.value,
+      taskMaxDurationMs: timeoutMs + queueBudgetMs,
       toolFilter: isWorkerVisibleTool,
       toolRole: WORKER_TOOL_ROLE,
       ...(options.workerReasoning === undefined
@@ -508,6 +655,14 @@ async function runOneTask(
         : { maxOutputTokens: options.workerMaxOutputTokens }),
       signal: AbortSignal.any([options.signal, timeLimit, handBack.signal]),
       eventHook: (event) => {
+        // The first token — not `turn_started`, which fires before the
+        // request is even sent — is what ends the queue wait.
+        if (event.type === "llm_event" && SERVED_EVENTS.has(event.event.type)) {
+          markServed();
+        }
+        // Backstop for a provider that emits none of the above: by the
+        // time a step has finished, tokens demonstrably arrived.
+        if (event.type === "step_finished") markServed();
         if (event.type === "turn_started") announceStart();
         if (event.type === "step_finished") {
           // `step_finished`, not `step_started`: a started step is a
@@ -549,6 +704,8 @@ async function runOneTask(
       },
     });
     const timedOut = turn.reason === "cancelled" && hitTimeLimit();
+    timedOutOutcome = timedOut;
+    queuedOutcome = turn.reason === "cancelled" && hitQueueLimit();
     stoppedByHandBack = turn.reason === "cancelled" && handedBack();
     const stopCause = timedOut ? "time_ceiling" : turn.stopCause;
     result = collector.finish({
@@ -567,9 +724,12 @@ async function runOneTask(
     });
   } catch (error) {
     const timedOut = hitTimeLimit();
-    stoppedByHandBack = !timedOut && handedBack();
+    timedOutOutcome = timedOut;
+    queuedOutcome = hitQueueLimit();
+    stoppedByHandBack = !timedOut && !queuedOutcome && handedBack();
     const aborted =
       !timedOut &&
+      !queuedOutcome &&
       (options.signal.aborted || stoppedByHandBack || isAbortError(error));
     result = collector.finish({
       id: task.id,
@@ -587,12 +747,61 @@ async function runOneTask(
         : { error: error instanceof Error ? error.message : String(error) }),
     });
   } finally {
-    clearTimeout(wallTimer);
+    clearTimeout(queueTimer);
+    if (wallTimer !== undefined) clearTimeout(wallTimer);
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(session.id);
     deps.approvals.fanoutScopes?.clear(session.id);
     deps.declaredInputs?.clear(session.id);
+  }
+
+  // How long the server took to say anything. The one number that tells
+  // a queued worker from one nothing ever answered — see `queueWaitMs`.
+  result = {
+    ...result,
+    queueWaitMs: servedAt === null ? null : servedAt - startedAt,
+  };
+
+  // Out of time, not out of steps. Only this function knows whose clock
+  // fired — `classifyWorkerStatus` sees a `cancelled` turn with a
+  // `time_ceiling` cause and deliberately keeps `cancelled` ahead of it,
+  // because an operator who cancelled a worker cancelled it. Here the
+  // worker's OWN timer is what ended the turn, and the orchestrator's
+  // remedy for that is a longer deadline, not a bigger step budget.
+  if (timedOutOutcome) {
+    result = { ...result, status: "timeout" };
+  }
+
+  // A budget the orchestrator asked for and did not get is something it
+  // has to know: it planned the task against the bigger number.
+  if (budgetNotes.length > 0) {
+    result = { ...result, notes: [...(result.notes ?? []), ...budgetNotes] };
+  }
+
+  // A worker that never got a slot is not a worker that failed, ran out
+  // of steps or was cancelled: it produced nothing because the machine
+  // had nothing to give it. Saying so is the whole row — and it is the
+  // fan-out's WIDTH that has to change, not the task or its budget, so
+  // the status carries that hint rather than a bigger-deadline one.
+  if (queuedOutcome) {
+    const { error: _dropped, ...rest } = result;
+    // Was there anything to queue behind? A worker running alone that
+    // still got no token was not queued — nothing answered it.
+    const ranAlone = options.maxWorkers <= 1 || options.tasks.length <= 1;
+    result = {
+      ...rest,
+      status: "queued",
+      reply: WORKER_QUEUED_NOTE,
+      stepCount: 0,
+      hint: ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED,
+      notes: [
+        ...(result.notes ?? []),
+        ranAlone
+          ? `no first token within ${Math.round(queueBudgetMs / 60_000)} min, and it was the only worker on the leg — nothing was occupying the server`
+          : `no first token within ${Math.round(queueBudgetMs / 60_000)} min of being sent, while its own budget was ${Math.round(timeoutMs / 60_000)} min — up to ${options.maxWorkers} workers were sharing the server`,
+      ],
+    };
   }
 
   // A hand-back is neither a cancellation nor a failure: the worker was
@@ -606,7 +815,7 @@ async function runOneTask(
     const completed = result.stepCount > 0 ? result.stepCount : stepsFinished;
     const summary = formatEarlyHandBack({
       stepsTaken: completed,
-      stepBudget: options.workerMaxSteps,
+      stepBudget: stepBudget.value,
       elapsedMs: result.durationMs,
       timeoutMs,
       findings: collector.findings(),

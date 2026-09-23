@@ -28,7 +28,26 @@ export type WorkerTaskStatus =
   | "failed"
   | "cancelled"
   | "needs_orchestrator"
-  | "max_steps";
+  | "max_steps"
+  /**
+   * The worker ran out of WALL TIME rather than steps. Set by
+   * `runOneTask`, which is the only caller that knows whose clock
+   * fired: `classifyWorkerStatus` deliberately keeps `cancelled` ahead
+   * of a `time_ceiling` stop cause, because an operator who cancelled a
+   * worker that also passed a ceiling cancelled it. Kept apart from
+   * `max_steps` because the orchestrator's remedy differs: a task that
+   * ran out of steps needs a bigger step budget (or splitting), one that
+   * ran out of time needs a longer deadline. Relabelling a timeout as
+   * `max_steps` told it to raise the wrong one.
+   */
+  | "timeout"
+  /**
+   * The worker never got a server slot: it sat in llama-server's queue
+   * behind busy slots and produced no token at all. Not the worker's
+   * fault and not a ceiling it hit — a scheduling outcome, so the remedy
+   * is a narrower fan-out, not a bigger budget.
+   */
+  | "queued";
 
 /**
  * The order the head line counts statuses in: what was delivered first,
@@ -40,6 +59,8 @@ export const WORKER_STATUS_ORDER: readonly WorkerTaskStatus[] = [
   "no_changes",
   "needs_orchestrator",
   "max_steps",
+  "timeout",
+  "queued",
   "failed",
   "cancelled",
 ];
@@ -92,6 +113,23 @@ export interface WorkerTaskResult {
   reply: string;
   stepCount: number;
   durationMs: number;
+  /**
+   * How long the worker waited between being started and the server's
+   * first token, in ms. `null` when no token ever arrived.
+   *
+   * Recorded because the transcript could not tell two very different
+   * failures apart: a worker queued behind busy slots, and a worker whose
+   * request never reached the server at all. Both arrived as a task with
+   * zero steps and a duration equal to its whole budget, and separating
+   * them in the field took four delegations plus reading the
+   * llama-server log alongside the trace to see the server had recorded
+   * nothing.
+   *
+   * With this on the row, `durationMs` minus `queueWaitMs` is the time
+   * the worker actually had, and a `null` on a fan-out of one points at
+   * the daemon rather than at the fan-out's width.
+   */
+  queueWaitMs?: number | null;
   tools: WorkerToolStats;
   usage?: CompletionUsage;
   /**
@@ -375,6 +413,34 @@ export function classifyWorkerStatus(
   if (reason === "max_steps" || stopCause !== undefined) return "max_steps";
   return "ok";
 }
+
+/**
+ * What a `queued` worker reports. It produced nothing, so there is no
+ * reply to summarise; the remedy belongs to the fan-out's width, not to
+ * the task, and saying so is the whole content of the row.
+ */
+export const WORKER_QUEUED_NOTE =
+  "produced no token at all: the request was sent and nothing came back";
+
+/**
+ * Two hints, because the same silence means opposite things.
+ *
+ * With other workers running alongside, a worker that never got a token
+ * was queued behind them and the fan-out is too wide. ALONE on the leg
+ * it is the opposite: there was nothing to queue behind, so a silent
+ * worker means the request never reached the server or the server never
+ * answered it — a client or daemon fault, and telling the orchestrator
+ * to "use fewer workers" there sends it to narrow a fan-out of one.
+ *
+ * Measured: four solo delegations died at 45 minutes with zero tool
+ * calls while the llama-server log recorded nothing at all for the whole
+ * window, the server having gone silent to this client after an earlier
+ * generation was cancelled. A restart cleared it.
+ */
+export const WORKER_HINT_QUEUED =
+  "the local server had no free slot: run fewer workers at once, or split the fan-out into smaller waves";
+export const WORKER_HINT_UNSERVED =
+  "this worker ran alone and still got no token, so the local server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
 
 export const WORKER_HINT_CONTEXT =
   "the local server ran out of context: use fewer workers at once or shorter briefs";

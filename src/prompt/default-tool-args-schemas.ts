@@ -715,7 +715,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         tasks: {
           type: "array",
           minItems: 1,
-          maxItems: 8,
+          maxItems: 16,
           items: obj(
             {
               id: stringSchema,
@@ -724,6 +724,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               instructions: stringSchema,
               deliverable: stringSchema,
               files: { ...stringArraySchema, maxItems: 32 },
+              // Per-task budgets. No upper bound here: the runner
+              // clamps them to a multiple of the configured default and
+              // says so in the result, because a number too big is the
+              // planner's estimate of the work, not a malformed call.
+              maxSteps: { type: "integer", minimum: 1 },
+              timeoutMs: { type: "integer", minimum: 1 },
             },
             ["id", "instructions"],
           ),
