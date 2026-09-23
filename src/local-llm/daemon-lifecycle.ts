@@ -1,4 +1,5 @@
 import { getConfig } from "../config/index.js";
+import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
@@ -99,6 +100,17 @@ export interface DaemonStartOptions {
    * `--parallel 2` so an embedder's launch stays byte-identical.
    */
   parallel?: number | "auto";
+  /**
+   * What the local leg does in the run mode this launch belongs to —
+   * serve fusion's workers, or run the single orchestrating stream while
+   * the workers are in the cloud (see `worker-slots.ts`). Only `"auto"`
+   * slots read it; a pinned `parallel` still wins. Resolved by the
+   * caller, per launch, because the run mode lives a layer above this
+   * one (`src/llm/**` imports `src/local-llm/**`, never the reverse) and
+   * because an operator can switch direction between a stop and a start.
+   * Undefined means `"workers"`, the historical behaviour.
+   */
+  localLegRole?: LocalLegRole;
   /**
    * `localModels.completionMaxTokens` — the reply part of the worker
    * footprint `"auto"` slots are counted in (see `worker-slots.ts`).
@@ -378,6 +390,9 @@ export function buildLlamaServerArgs(
             ...(opts.completionMaxTokens === undefined
               ? {}
               : { completionMaxTokens: opts.completionMaxTokens }),
+            ...(opts.localLegRole === undefined
+              ? {}
+              : { localLegRole: opts.localLegRole }),
           }),
     ),
     "-kvu",

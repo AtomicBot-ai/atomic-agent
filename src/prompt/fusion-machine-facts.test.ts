@@ -25,6 +25,7 @@ function config(over: {
   modelId?: string | null;
   workerModel?: string;
   workerProvider?: string;
+  orchestratorProvider?: string;
   providers?: Providers;
 }): AtomicAgentConfig {
   return {
@@ -51,6 +52,9 @@ function config(over: {
           ...(over.workerProvider === undefined
             ? {}
             : { workerProvider: over.workerProvider }),
+          ...(over.orchestratorProvider === undefined
+            ? {}
+            : { orchestratorProvider: over.orchestratorProvider }),
         },
       },
     },
@@ -137,6 +141,60 @@ describe("resolveFusionMachineFacts", () => {
       resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 0 }))
         .workerSlots,
     ).toBeNull();
+  });
+
+  it("states no local slot count when the local daemon is the orchestrator", () => {
+    // The legs swapped: the llama-server entry is PINNED as the
+    // orchestrator, so the local daemon runs the one orchestrating
+    // stream and `resolveLocalLegRole` launches it with `--parallel 1`.
+    // An unpinned worker leg then resolves to a cloud provider, and
+    // stating `managed.parallel` here would state a number about a
+    // fan-out that does not exist on this machine.
+    const providers = [
+      { id: "local-llama", kind: "llama-server", model: "entry-3b" },
+      { id: "openrouter", kind: "openai-compatible", defaultChatModel: "gpt-x" },
+    ] as unknown as Providers;
+    const swapped = resolveFusionMachineFacts(
+      config({
+        parallel: "auto",
+        contextSize: 131_072,
+        orchestratorProvider: "local-llama",
+        providers,
+      }),
+    );
+    expect(swapped.workerLeg).toBe("cloud");
+    expect(swapped.workerSlots).toBeNull();
+    expect(swapped.workerTokenBudget).toBeNull();
+    // Nothing in the config names the worker model — the leg was never
+    // pinned — and the module invents no string. Before this it named
+    // the managed daemon's GGUF, which is the model doing the
+    // orchestrating, not the one running the workers.
+    expect(swapped.workerModel).toBeNull();
+    // Not even the server's own observation: it would be the
+    // orchestrator's pool, not the workers'.
+    expect(
+      resolveFusionMachineFacts(
+        config({
+          parallel: "auto",
+          contextSize: 131_072,
+          orchestratorProvider: "local-llama",
+          providers,
+        }),
+        { workerSlots: 5 },
+      ).workerSlots,
+    ).toBeNull();
+    // A cloud orchestrator is the usual direction and is untouched: the
+    // same config with the legs the right way round still states four.
+    expect(
+      resolveFusionMachineFacts(
+        config({
+          parallel: "auto",
+          contextSize: 131_072,
+          orchestratorProvider: "openrouter",
+          providers,
+        }),
+      ).workerSlots,
+    ).toBe(4);
   });
 
   it("sizes each local worker's share of the context from the reply cap", () => {

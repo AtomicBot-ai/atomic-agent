@@ -30,6 +30,7 @@
  */
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
+import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
 import {
   resolveWorkerSlots,
   workerSlotFootprint,
@@ -133,12 +134,33 @@ export function resolveFusionMachineFacts(
     fusion?.workerProvider === undefined
       ? undefined
       : providers.find((p) => p.id === fusion.workerProvider);
+  // Fusion runs in both directions, and with the legs swapped — the
+  // orchestrator PINNED to the llama-server entry — the local daemon is
+  // the one orchestrating, so the workers are not on this machine.
+  // `resolveRunMode` fills an unpinned worker leg with the first
+  // llama-server that is not already the orchestrator, and with the only
+  // one taken that is a cloud provider. Without this the unpinned branch
+  // below would call the worker leg "local" and state a slot count from
+  // `managed.parallel` for a daemon `resolveLocalLegRole` launches with
+  // exactly one slot — the stated number and the launched number must
+  // not disagree.
+  const pinnedOrchestrator =
+    fusion?.orchestratorProvider === undefined
+      ? undefined
+      : providers.find((p) => p.id === fusion.orchestratorProvider);
+  const unpinnedWorkerLeg: FusionWorkerLeg =
+    pinnedOrchestrator?.kind !== LOCAL_PROVIDER_KIND ||
+    providers.some(
+      (p) => p.kind === LOCAL_PROVIDER_KIND && p.id !== pinnedOrchestrator.id,
+    )
+      ? "local"
+      : "cloud";
   const workerLeg: FusionWorkerLeg | null =
     fusion?.workerProvider === undefined
-      ? "local"
+      ? unpinnedWorkerLeg
       : pinnedWorker === undefined
         ? null
-        : pinnedWorker.kind === "llama-server"
+        : pinnedWorker.kind === LOCAL_PROVIDER_KIND
           ? "local"
           : "cloud";
   const workersAreLocal = workerLeg === "local";
@@ -157,7 +179,11 @@ export function resolveFusionMachineFacts(
     workersAreLocal && local.mode === "managed" ? local.managed.parallel : null;
   const pinnedContext = local.mode === "managed" ? local.managed.contextSize : 0;
   // Same inputs `buildLlamaServerArgs` counts slots from, so the number
-  // stated here is the number the daemon launches with.
+  // stated here is the number the daemon launches with. `localLegRole`
+  // is spelled out rather than left to default: `configured` is only
+  // non-null where the workers are local, which is exactly the
+  // `"workers"` role, and saying so keeps the two counts tied together
+  // if either side moves again.
   const configuredSlots =
     configured === null
       ? null
@@ -167,6 +193,7 @@ export function resolveFusionMachineFacts(
               contextSize: pinnedContext,
               cpuOnly: local.managed.device === "cpu",
               completionMaxTokens: local.completionMaxTokens,
+              localLegRole: "workers",
             })
           : null
         : configured;
