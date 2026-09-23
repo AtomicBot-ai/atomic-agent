@@ -95,7 +95,8 @@ describe("inspectContractProvides", () => {
         { task: "lost", kind: "symbol", name: "Y" },
       ],
     };
-    const findings = await inspectContractProvides(contract, tasks, dir);
+    const { findings, providesSkipped } = await inspectContractProvides(contract, tasks, dir);
+    expect(providesSkipped).toBeUndefined();
     expect(findings.map((f) => [f.name, f.present, f.where])).toEqual([
       ["HD.Ship.reset", true, ["js/ship.js"]],
       ["HD.Ship.fire", false, ["js/ship.js"]],
@@ -118,8 +119,79 @@ describe("inspectContractProvides", () => {
       owners: { "index.html": "ship", "js/ship.js": "ship" },
       provides: [{ task: "ship", kind: "symbol", name: "HD.Ship" }],
     };
-    const [finding] = await inspectContractProvides(contract, tasks, dir);
-    expect(finding).toMatchObject({ present: true, where: ["index.html", "js/ship.js"] });
+    const { findings } = await inspectContractProvides(contract, tasks, dir);
+    expect(findings[0]).toMatchObject({ present: true, where: ["index.html", "js/ship.js"] });
+  });
+
+  // The run2 failure: a 34-minute fan-out ended with all four tasks
+  // cancelled, three of them after 0 steps, and the summary still led
+  // with "9 missing — symbol Cam not in scenes/js/camera.js". Nobody
+  // had written those files because nobody had started.
+  const missingProvides: DelegateContract = {
+    provides: [
+      { task: "ship", kind: "symbol", name: "HD.Ship.fire", in: "js/ship.js" },
+      { task: "ship", kind: "file", name: "js/hud.js" },
+      { task: "main", kind: "symbol", name: "HD.Cam", in: "js/nope.js" },
+    ],
+  };
+
+  it("says nothing about a provide whose task was cancelled or never started", async () => {
+    const { findings, providesSkipped } = await inspectContractProvides(
+      missingProvides,
+      tasks,
+      dir,
+      // `main` is absent from the rows entirely: its wave never began.
+      { results: [row({ id: "ship", status: "cancelled" })] },
+    );
+    expect(findings).toEqual([]);
+    expect(providesSkipped).toBe("3 provides not checked — tasks ship, main did not run");
+  });
+
+  it("still reports a task that ran and genuinely did not provide", async () => {
+    const { findings, providesSkipped } = await inspectContractProvides(
+      missingProvides,
+      tasks,
+      dir,
+      {
+        results: [
+          // Ran, ended badly, wrote nothing: exactly what the scan is for.
+          row({ id: "ship", status: "failed" }),
+          row({ id: "main", status: "cancelled" }),
+        ],
+      },
+    );
+    expect(findings.map((f) => [f.task, f.name, f.present])).toEqual([
+      ["ship", "HD.Ship.fire", false],
+      ["ship", "js/hud.js", false],
+    ]);
+    expect(providesSkipped).toBe("1 provide not checked — task main did not run");
+  });
+
+  it("blames the cancelled turn rather than the tasks when the whole turn was aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { findings, providesSkipped } = await inspectContractProvides(
+      missingProvides,
+      tasks,
+      dir,
+      {
+        results: [row({ id: "ship", status: "cancelled" }), row({ id: "main", status: "cancelled" })],
+        signal: controller.signal,
+      },
+    );
+    expect(findings).toEqual([]);
+    // The sibling's voice: `runContractChecks` says the same thing.
+    expect(providesSkipped).toBe("3 provides not checked — the turn was cancelled");
+  });
+
+  it("assesses every provide when no results are handed in", async () => {
+    const { findings, providesSkipped } = await inspectContractProvides(
+      missingProvides,
+      tasks,
+      dir,
+    );
+    expect(findings.map((f) => f.present)).toEqual([false, false, false]);
+    expect(providesSkipped).toBeUndefined();
   });
 });
 
@@ -268,6 +340,25 @@ describe("renderContractLine", () => {
     );
     expect(renderContractLine({ findings: [present], checks: [] })).toBe(
       "contract: all 1 provide present",
+    );
+  });
+
+  it("says why provides went unchecked instead of leaving the line silent", () => {
+    expect(
+      renderContractLine({
+        findings: [],
+        checks: [],
+        providesSkipped: "9 provides not checked — the turn was cancelled",
+      }),
+    ).toBe("contract: 9 provides not checked — the turn was cancelled");
+    expect(
+      renderContractLine({
+        findings: [missing],
+        checks: [],
+        providesSkipped: "2 provides not checked — task hud did not run",
+      }),
+    ).toBe(
+      "contract: 1 missing — [b] symbol HD.Ship.reset not in js/ship.js; 2 provides not checked — task hud did not run",
     );
   });
 

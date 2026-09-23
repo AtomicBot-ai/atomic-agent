@@ -859,6 +859,46 @@ describe("fusion.delegate", () => {
       }
     });
 
+    it("does not accuse cancelled tasks of missing their provides", async () => {
+      // Live, run2-attempt0: a 34.5-minute fan-out ended `all_failed`
+      // with every task cancelled — three of them after 0 steps — and
+      // the summary still led with "9 missing — symbol Cam not in
+      // scenes/js/camera.js". The files were absent because nobody had
+      // started, which is the turn's story, not the workers'.
+      const dir = fixture();
+      const controller = new AbortController();
+      controller.abort();
+      try {
+        const tool = buildFusionDelegateTool(
+          deps({
+            workingDir: dir,
+            runTurn: async () => {
+              const err = new Error("This operation was aborted");
+              err.name = "AbortError";
+              throw err;
+            },
+          }),
+        );
+        const result = await tool.run(
+          { tasks: TASKS, contract: CONTRACT },
+          ctx({ workingDir: dir, signal: controller.signal }),
+        );
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.every((r) => r.status === "cancelled")).toBe(true);
+        const line = result.summary
+          .split("\n")
+          .find((l) => l.startsWith("contract: "))!;
+        expect(line).not.toContain("missing");
+        expect(line).toContain("3 provides not checked — the turn was cancelled");
+        // And no `contract:` note lands on a row that never ran.
+        for (const row of rows) expect(row.notes ?? []).toEqual([]);
+        const report = result.details.contract as { findings: unknown[] };
+        expect(report.findings).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("reports declared checks as not run when no runner is wired, and never fails a task on them", async () => {
       const dir = fixture();
       try {

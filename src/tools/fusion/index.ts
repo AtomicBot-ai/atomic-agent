@@ -57,6 +57,7 @@ export type {
   ContractCheckResult,
   ContractCheckRunner,
   ContractFinding,
+  ContractProvideReport,
   ContractReport,
 } from "./contract-checks.js";
 export {
