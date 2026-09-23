@@ -19,6 +19,11 @@ import type { TruncationDetail } from "../llm/index.js";
  *  - `output_limit`: the provider clamps this model's output below our
  *    cap. A bigger cap is refused or clamped again, a smaller prompt
  *    changes nothing — no retry; the message names the limit.
+ *  - `provider_limit`: the request carried no cap and the provider
+ *    stopped at its own limit. The retry sends one — the fallback cap
+ *    raised like a spent cap — which bounds the attempt and, with the
+ *    notice, asks for a shorter reply. Seen live: a no-cap cut at 33,678
+ *    tokens retried under 32,768 and succeeded in 12 s.
  *  - `unknown`: no usage came back. Treated as the cap — one wasted
  *    generation if it was the window, and the second cut ends the turn
  *    with a message that says so.
@@ -80,10 +85,8 @@ export function planTruncationRetry(
     if (contextWindow <= 0) return null;
     return { detail, retry: { kind: "fit_window", contextWindow } };
   }
-  const requested =
-    detail.requestedMaxTokens > 0
-      ? detail.requestedMaxTokens
-      : input.fallbackMaxTokens;
+  const sent = detail.requestedMaxTokens ?? 0;
+  const requested = sent > 0 ? sent : input.fallbackMaxTokens;
   if (requested <= 0) return null;
   let raised = Math.min(
     TRUNCATION_RETRY_CAP_CEILING,

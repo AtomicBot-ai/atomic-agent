@@ -1,13 +1,28 @@
 import {
   emptyFusionOrchestratorState,
   recordDelegation,
+  wouldRefuse as fusionGateWouldRefuse,
 } from "./fusion-orchestrator-mode.js";
+import {
+  createReviewStallState,
+  observeReviewStep,
+  reviewStallSignal,
+  reviewStallToolSet,
+  takeReviewStallNotice,
+  type ReviewStallSignal,
+  type ReviewStallState,
+} from "./review-stall.js";
+import { DEFAULT_FUSION_REVIEW_STALL_STEPS } from "../config/llm-run-mode-config.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 import type {
   CompletionResult,
   StreamChunk,
 } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
-import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type {
+  ReasoningEffort,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
 import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
 import {
   PLAIN_INSTRUCT_PROFILE,
@@ -23,6 +38,11 @@ import {
   classifyFailure,
   isRequestSizeRejection,
 } from "../llm/index.js";
+import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
+import {
+  composeSizeRejectionNotice,
+  planSizeRejectionRepack,
+} from "./size-rejection-recovery.js";
 import type {
   LlmFailureCategory,
   TruncationCause,
@@ -30,7 +50,17 @@ import type {
 } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
 import { incrementTurnCount, recordTurn } from "../session/session-state.js";
-import { assistantReplyTurn, userTurn } from "../session/conversation-turn.js";
+import {
+  assistantReplyTurn,
+  isFinalReplyTurn,
+  steeredUserTurn,
+  userTurn,
+} from "../session/conversation-turn.js";
+import {
+  createProgressNoteNoticeState,
+  formatProgressNoteStepSummary,
+  isProgressNoteResult,
+} from "./progress-note-reply.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -43,11 +73,21 @@ import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import type { MemoryHealthWarning } from "../memory/health/index.js";
 import { executeStep } from "./step-executor.js";
-import type { LlmStreamParams, StepEvent } from "./step-executor.js";
+import {
+  FINALIZATION_REQUEST_DEADLINE_MS,
+  createRequestDeadline,
+} from "./request-deadline.js";
+import type {
+  LlmStreamParams,
+  StepApprovalPostureSource,
+  StepEvent,
+} from "./step-executor.js";
 import {
   ToolLoopTracker,
+  OUTCOME_REPEAT_WARNING_THRESHOLD,
   READ_REPEAT_WARNING_THRESHOLD,
   TEST_REPEAT_WARNING_THRESHOLD,
+  formatOutcomeRepeatNotice,
   formatReadRepeatNotice,
   formatRepeatNotice,
   formatTestRepeatNotice,
@@ -93,6 +133,14 @@ export interface AgentLoopDependencies {
    */
   isPlanMode?: () => boolean;
   /**
+   * The live approval gate, read by the step when a batch of
+   * approval-gated calls arrives: if nothing in it would ask a human
+   * (e.g. `--no-approval`), the batch runs in emitted order instead of
+   * being trimmed to its first call. Absent (embedders, tests) keeps the
+   * trim.
+   */
+  approvalPosture?: StepApprovalPostureSource;
+  /**
    * Whether the run mode resolves to fusion right now. Read per turn,
    * for the reason `isPlanMode` is read per call: the operator can flip
    * the mode between turns and the next turn should honour it. Absent
@@ -127,6 +175,15 @@ export interface AgentLoopDependencies {
    * reflected without restarting the loop.
    */
   contextWindow?: () => number | null;
+  /**
+   * The local worker leg's request-slot count as the server reported it
+   * (`SlotManager.observedPoolSize`), `null` until a `/props` answer has
+   * sized the pool. Read per step; it reaches the `### fusion` machine
+   * facts for an external llama-server whose `--parallel` the config
+   * cannot state. Moves once — when the pool is first observed — and the
+   * prefix moves with it, the same cost as a config write.
+   */
+  liveWorkerSlots?: () => number | null;
   /**
    * The model server just revealed its real context window: a reply
    * stopped `context_window`-truncated after this many prompt + reply
@@ -454,14 +511,39 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Why a task stopped without the model closing it. The three ceilings
+ * are the loop's own; `credit_exhausted` is the provider's — the account
+ * cannot pay for the next request, so the turn parks where it is and
+ * resumes after a top-up, the same way as after a ceiling.
+ */
+export type TaskStopCause =
+  | "step_ceiling"
+  | "time_ceiling"
+  | "no_progress"
+  | "credit_exhausted";
+
 export function formatTaskStoppedReply(input: {
-  cause: "step_ceiling" | "time_ceiling" | "no_progress";
+  cause: TaskStopCause;
   stepsTaken: number;
   stepCeiling: number;
   elapsedMs: number;
+  /** For `credit_exhausted`: who said so, and what they said. */
+  credit?: { provider: string; detail: string };
 }): string {
   const minutes = Math.max(1, Math.round(input.elapsedMs / 60_000));
   const spent = `${input.stepsTaken} steps over ~${minutes} min`;
+  if (input.cause === "credit_exhausted") {
+    const who = input.credit?.provider ?? "the provider";
+    const said =
+      input.credit?.detail !== undefined && input.credit.detail.length > 0
+        ? ` (${input.credit.detail})`
+        : "";
+    return (
+      `(paused: "${who}" reports the account is out of credit${said}, after ${spent}.) ` +
+      "Here is where I got to — the work so far is kept in this session. Top up the account, then say `continue` to pick up from here."
+    );
+  }
   const head =
     input.cause === "time_ceiling"
       ? `(paused: this task hit its time limit after ${spent}.)`
@@ -506,6 +588,26 @@ export interface RunTurnOptions {
   /** Optional new user message to append before stepping. */
   userMessage?: string;
   /**
+   * The operator's request behind this turn, as the runtime records it
+   * for the workers' briefs (`pickOriginalRequest`). Reaches every step's
+   * prompt as `### request` once the packer has dropped the user turn
+   * that carried it, so a repair turn still sees the spec. Absent in
+   * test / legacy wiring, where nothing is pinned.
+   */
+  originalRequest?: string;
+  /**
+   * Reasoning effort for every completion of this turn, mapped per
+   * provider family by the body builder. A fusion worker's
+   * `workerReasoning`; absent, the provider's default.
+   */
+  reasoningEffort?: ReasoningEffort;
+  /**
+   * Output ceiling for every completion of this turn, below the
+   * provider's own. A fusion worker's `workerMaxOutputTokens`; the
+   * truncation retry's per-step cap still wins over it.
+   */
+  maxOutputTokens?: number;
+  /**
    * Pin every completion of this turn to one configured provider id.
    * The step is built for that link's transport (via
    * `AgentLoopDependencies.resolveLlmSlice`) and the request bypasses
@@ -534,6 +636,15 @@ export interface RunTurnOptions {
    * or writing memory.
    */
   toolFilter?: (name: string) => boolean;
+  /**
+   * The turn's tool role (`src/tools/tool-roles.ts`): which tools the
+   * prompt describes in full, the native wire carries and the local
+   * grammar admits without a `tool.view` first. A fusion worker passes
+   * `builder`. Absent, an orchestrator turn in fusion mode is
+   * `orchestrator` and every other turn is `full` — the whole catalog,
+   * byte-identical to before roles existed.
+   */
+  toolRole?: ToolRole;
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -578,6 +689,35 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The provider's error body says the account cannot pay
+       * (`credit_balance_exhausted`, `insufficient_credits`, a 402
+       * naming credit). The turn stops where it is, resumable after a
+       * top-up — `loop_completed` follows with `max_steps` and the
+       * session records `task_stopped:credit_exhausted`. `provider` is
+       * the link that said so.
+       */
+      type: "credit_exhausted";
+      provider: string;
+      code: string;
+      message: string;
+    }
+  | {
+      /**
+       * The provider refused the request for step `stepIndex` as too
+       * large for its context window; the window was learned
+       * (`source: "provider"` from the body's own number, `"estimate"`
+       * from the prompt estimate) and the same step is being retried
+       * with the conversation packed to it. Fired once per step; a
+       * second refusal fails the turn with the provider's sentence.
+       */
+      type: "prompt_repacked";
+      stepIndex: number;
+      contextWindow: number;
+      source: "provider" | "estimate";
+      promptTokens: number;
+    }
+  | {
+      /**
        * The completion for step `stepIndex` came back cut off, and the
        * same step is being retried with a different request: a larger
        * reply cap, or a prompt re-packed to the context window the
@@ -589,7 +729,8 @@ export type AgentLoopEvent =
       cause: TruncationCause;
       completionTokens: number;
       promptTokens: number;
-      requestedMaxTokens: number;
+      /** The cap the cut request carried; absent when it carried none. */
+      requestedMaxTokens?: number;
       retry: TruncationRetry;
     }
   | {
@@ -676,6 +817,18 @@ export type AgentLoopEvent =
       stepIndex: number;
       summary: string;
       durationMs: number;
+      /**
+       * The step kept a `reply` batched with work tools as a progress
+       * note and the turn went on (`progress-note-reply.ts`).
+       */
+      progressNote?: true;
+      /**
+       * The step ran under a stalled Fusion review (`review-stall.ts`):
+       * `steps` read-only steps had passed without a fan-out, and the
+       * step carried the notice (`notice`) or admitted only
+       * `fusion.delegate` / `reply` / `finish` (`cut`).
+       */
+      reviewStall?: ReviewStallSignal;
     }
   | { type: "llm_event"; event: StepEvent }
   | {
@@ -697,7 +850,8 @@ export type AgentLoopEvent =
         | "no_progress"
         | "wandering"
         | "test_repeat"
-        | "read_repeat";
+        | "read_repeat"
+        | "outcome_repeat";
       /**
        * `read_repeat` only: the resolved file, the range that read
        * returned, and the fingerprint on either side of it (equal ⇒ the
@@ -751,6 +905,18 @@ export interface RunTurnResult {
   session: SessionState;
   reason: AgentLoopReason;
   stepCount: number;
+  /**
+   * Set when a ceiling — not the model — ended the task: always on
+   * `max_steps`, and on a `reply` / `finish` produced by the forced
+   * finalization step (the last step the step or time ceiling allows,
+   * where only the terminal tools are offered). A reply written there
+   * summarises how far the work got; it is not evidence the work
+   * finished. Absent when the model ended the turn on an ordinary step,
+   * and on `cancelled` / `failed`. A fusion worker reads it to report
+   * `max_steps` rather than `ok` for a worker that ran out of steps and
+   * said so in its reply.
+   */
+  stopCause?: TaskStopCause;
   /**
    * Steering messages that were pushed but never reached a step — the
    * turn ended (or was cancelled) before the loop could drain them.
@@ -909,12 +1075,44 @@ export class AgentLoop {
     const fusionOrchestratorTurn =
       (this.deps.isFusionMode?.() ?? false) && options.ephemeral !== true;
     let fusionState = emptyFusionOrchestratorState();
+    // A review that only reads is made to choose (F41): consecutive
+    // read-only steps without a fan-out are counted per turn, the
+    // planner is told once at N to delegate or reply, and at 2N the
+    // step admits only those exits. `null` off an orchestrator turn.
+    // Read from the config per turn, like the task ceilings.
+    let reviewStall: ReviewStallState | null = fusionOrchestratorTurn
+      ? createReviewStallState(
+          getConfig().llm?.runMode?.fusion?.reviewStallSteps ??
+            DEFAULT_FUSION_REVIEW_STALL_STEPS,
+          options.userMessage,
+        )
+      : null;
     // A fan-out approval stands for the turn that asked for it and no
     // longer. Cleared here rather than when the turn ends so an aborted
     // or crashed turn cannot leave authority behind for the next one.
     if (fusionOrchestratorTurn) {
       this.deps.clearFanoutTurnGrant?.(session.id);
     }
+    // The tool role is per turn: a worker's `builder`, the orchestrator's
+    // `orchestrator`, everything else `full`. It shapes the stable prefix
+    // (per role, so it is stable within the turn), the native wire and
+    // the per-request grammar — see `tool-roles.ts`.
+    const toolRole: ToolRole =
+      options.toolRole ?? (fusionOrchestratorTurn ? "orchestrator" : "full");
+    // Claims need evidence, once per turn: a reply that reports a check
+    // nothing ran is held back and noticed the first time only
+    // (`claim-evidence.ts`); the second is delivered and marked.
+    let claimNoticeGiven = false;
+    const claimEvidence = {
+      noticed: () => claimNoticeGiven,
+      markNoticed: () => {
+        claimNoticeGiven = true;
+      },
+    };
+    // Same shape for the progress-note notice: a `reply` batched with
+    // work is kept as a note and the turn goes on; the model is told
+    // why once per turn (`progress-note-reply.ts`).
+    const progressNotes = createProgressNoteNoticeState();
 
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
@@ -942,8 +1140,21 @@ export class AgentLoop {
      * and "made no progress for a whole leg" are different things to
      * tell someone, and the old single `max_steps` string said neither.
      */
-    let stopCause: "step_ceiling" | "time_ceiling" | "no_progress" =
-      "step_ceiling";
+    let stopCause: TaskStopCause = "step_ceiling";
+    /** Set with `stopCause = "credit_exhausted"`: who refused, and what they said. */
+    let creditStop: { provider: string; detail: string } | null = null;
+    /**
+     * The duration ceiling fired inside a completion request (F15). The
+     * next iteration is the finalization step whatever the clock says —
+     * the request was abandoned, so the wall must not be re-argued.
+     */
+    let ceilingFiredMidRequest = false;
+    /**
+     * The model's `reply` / `finish` came on the forced finalization
+     * step, so a ceiling ended the task even though the model closed it.
+     * Surfaced as `RunTurnResult.stopCause`.
+     */
+    let endedOnFinalizationStep = false;
     /** Set by any step in the current leg that produced a usable result. */
     let legMadeProgress = false;
     // Provider-outage parking. A transport failure means "this link is
@@ -977,6 +1188,10 @@ export class AgentLoop {
       /** The truncation that started the retry, for the message if the retry is refused. */
       original: Error;
     } | null;
+    /** The step index already retried after a request-size refusal. */
+    let sizeRepackRetry: { stepIndex: number } | null = null;
+    /** The loop's own estimate of the last prompt built, for the repack fallback. */
+    let lastPromptTokens = 0;
     /**
      * The step index whose leg boundary already ran. A retried step
      * (outage or truncation) re-enters the loop at the same index; the
@@ -1138,7 +1353,8 @@ export class AgentLoop {
       const started = Date.now();
       // Mid-turn steering: anything the user sent since the previous
       // step boundary joins this step's prompt. It is recorded as a
-      // real `user` turn (the transcript must reflect what was said,
+      // real `user` turn, marked `steered` (the transcript must reflect
+      // what was said, and that it joined a turn already under way,
       // and `packConversation` always keeps the last user turn visible)
       // AND repeated in `### notice`, which is the tail-most block the
       // model reads before `### respond`. `composeSteerNotice` appends
@@ -1146,7 +1362,7 @@ export class AgentLoop {
       // rather than overwriting it — both nudges matter.
       const steered = this.deps.steeringInbox?.drain(state.id) ?? [];
       for (const text of steered) {
-        state = recordTurn(state, userTurn(text));
+        state = recordTurn(state, steeredUserTurn(text));
         this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
       }
       if (steered.length > 0) {
@@ -1157,20 +1373,71 @@ export class AgentLoop {
           count: steered.length,
         });
       }
-      const noticeForThisStep = pendingNotice;
+      let noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
-      // On the final allowed step the tool catalog collapses to the two
-      // terminal tools, so a long coding session ends with a summary of
-      // what was changed instead of being cut off mid-edit.
+      // On the final allowed step only the two terminal tools may run, so
+      // a long coding session ends with a summary of what was changed
+      // instead of being cut off mid-edit. The catalog in the prompt is
+      // NOT narrowed for it: `### tools` is stable-prefix bytes, and a
+      // narrowed catalog moved the session to a cold slot for its last
+      // step. The restriction travels as `terminalOnly` — the batch
+      // executor answers a non-terminal call with a refusal, and the
+      // local grammar is built from the same flag.
       // One step is always reserved for a summary, whichever ceiling is
       // about to bite — being cut off mid-edit is what made the old
       // stop unreadable.
-      const outOfTime = Date.now() - taskStartedAt >= durationCeilingMs;
+      const elapsedMs = Date.now() - taskStartedAt;
+      const outOfTime =
+        ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
       if (outOfTime) stopCause = "time_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime;
+      // The stalled-review phase this step runs under, read before the
+      // prompt is built (`review-stall.ts`): the notice joins the step's
+      // `### notice` — inside `noticeForThisStep`, so a retry of the
+      // step carries it like every other notice — and the cut narrows
+      // the step's tool set. Not on the reserved final step, which is
+      // narrower already.
+      let stallSignal: ReviewStallSignal | null = null;
+      if (reviewStall !== null && !finalizationStep) {
+        stallSignal = reviewStallSignal(reviewStall);
+        if (stallSignal !== null) {
+          const taken = takeReviewStallNotice(reviewStall, stallSignal);
+          reviewStall = taken.state;
+          if (taken.notice !== null) {
+            noticeForThisStep =
+              noticeForThisStep === undefined
+                ? taken.notice
+                : `${noticeForThisStep}\n\n${taken.notice}`;
+            this.deps.logger?.info("fusion review stalled", {
+              sessionId: state.id,
+              stepIndex: i,
+              readOnlySteps: stallSignal.steps,
+              phase: stallSignal.phase,
+            });
+          }
+        }
+      }
+      const effectiveTransport: ToolCallTransport =
+        pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
       const finalizationNotice =
         "This is the final allowed step. Do not call any non-terminal tool; " +
         "summarize the completed work with reply, or end the session with finish.";
+      // The ceiling holds while waiting on a provider: the step's
+      // completion request gets the task's remaining time as a deadline
+      // (composed with the user's signal), so a turn parked in a queue
+      // or a long prompt evaluation cannot run past its window. The
+      // summary step gets at least its own five minutes — it is
+      // reserved whichever ceiling bit, and llama-server keeps decoding
+      // the abandoned request until it notices the closed connection.
+      const requestDeadline = createRequestDeadline(
+        options.signal,
+        finalizationStep
+          ? Math.max(
+              durationCeilingMs - elapsedMs,
+              FINALIZATION_REQUEST_DEADLINE_MS,
+            )
+          : durationCeilingMs - elapsedMs,
+      );
       try {
         // `profileFactsProvider` is a raw `profileStore.list()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
@@ -1198,15 +1465,12 @@ export class AgentLoop {
         const outcome = await executeStep(
           {
             session: state,
-            toolDescriptors: finalizationStep
-              ? visibleToolDescriptors().filter(
-                  ({ name }) => name === "reply" || name === "finish",
-                )
-              : visibleToolDescriptors(),
+            toolDescriptors: visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
             signal: options.signal,
+            requestSignal: requestDeadline.signal,
             ...(finalizationStep || noticeForThisStep !== undefined
               ? {
                   transientNotice: [
@@ -1218,6 +1482,11 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
+            ...(stallSignal?.phase === "cut"
+              ? { toolSet: reviewStallToolSet() }
+              : {}),
+            ...(options.toolFilter ? { toolFilter: options.toolFilter } : {}),
+            toolRole,
             ...(truncationRetry?.stepIndex === i &&
             truncationRetry.maxTokens !== undefined
               ? { maxTokens: truncationRetry.maxTokens }
@@ -1226,11 +1495,23 @@ export class AgentLoop {
             ...(options.userMessage !== undefined
               ? { userMessage: options.userMessage }
               : {}),
+            ...(options.originalRequest !== undefined
+              ? { originalRequest: options.originalRequest }
+              : {}),
+            ...(options.reasoningEffort !== undefined
+              ? { reasoningEffort: options.reasoningEffort }
+              : {}),
+            ...(options.maxOutputTokens !== undefined
+              ? { maxOutputTokens: options.maxOutputTokens }
+              : {}),
           },
           {
             registry: this.deps.registry,
             ...(this.deps.isPlanMode
               ? { isPlanMode: this.deps.isPlanMode }
+              : {}),
+            ...(this.deps.approvalPosture
+              ? { approvalPosture: this.deps.approvalPosture }
               : {}),
             ...(fusionOrchestratorTurn
               ? {
@@ -1241,16 +1522,18 @@ export class AgentLoop {
                   },
                 }
               : {}),
+            claimEvidence,
+            progressNotes,
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
               : {}),
-            toolTransport:
-              pinnedSlice?.toolTransport ??
-              this.deps.toolTransport ??
-              "grammar",
+            ...(this.deps.liveWorkerSlots
+              ? { liveWorkerSlots: this.deps.liveWorkerSlots }
+              : {}),
+            toolTransport: effectiveTransport,
             toolCallAdapter:
               pinnedSlice?.toolCallAdapter ?? this.deps.toolCallAdapter ?? null,
             supportsSlotAffinity:
@@ -1276,10 +1559,15 @@ export class AgentLoop {
                     this.deps.profileManager?.observeCompletionModelId(
                       completion.modelId,
                     ),
+                  fusionTokensPerSecond: () =>
+                    this.deps.profileManager?.getTokensPerSecond() ?? null,
                 }
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              if (event.type === "prompt_built") {
+                lastPromptTokens = event.prompt.tokens.total;
+              }
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,
               // which already warned, and would repeat it per worker.
@@ -1302,6 +1590,7 @@ export class AgentLoop {
             tracker: loopTracker,
           },
         );
+        requestDeadline.dispose();
         const durationMs = Date.now() - started;
         if (awaitingRecovery) {
           // The step that came back after the wait. Say so once, then
@@ -1321,6 +1610,16 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         stepsTaken += 1;
+        // A completed step is what the review-stall count observes: a
+        // fan-out resets it, a step of reading (or of refusals) adds
+        // one. The mutation predicate is the orchestrator gate's own.
+        if (reviewStall !== null) {
+          reviewStall = observeReviewStep(reviewStall, {
+            results: outcome.toolResults,
+            mutates: (tool) =>
+              fusionGateWouldRefuse(tool, { registry: this.deps.registry }),
+          });
+        }
         // A completion the step could act on. Whatever run of empty
         // completions was in progress is over: the link has just proved
         // it answers, so an empty one later in this turn is a fresh
@@ -1357,18 +1656,27 @@ export class AgentLoop {
         // succeeded moved the task forward. What it excludes is a leg
         // whose every call failed — a dead tool, a dead network, a
         // rejected approval loop — which is the case worth stopping on.
-        if (outcome.toolResults.some((r) => r.status === "ok")) {
+        // A progress note is a kept reply, not a tool that ran, so it
+        // is not the evidence this check is after.
+        if (
+          outcome.toolResults.some(
+            (r) => r.status === "ok" && !isProgressNoteResult(r),
+          )
+        ) {
           legMadeProgress = true;
         }
         // Feed summary mirrors the legacy single-call shape for solo
         // steps; for a batch we render `N tools: t1, t2, …` so the TUI
-        // and trace consumer see at a glance that this was a batch.
+        // and trace consumer see at a glance that this was a batch. A
+        // step that kept a progress note says so.
         const summary =
-          outcome.toolResults.length === 1
-            ? outcome.toolResults[0]!.summary
-            : `${outcome.toolResults.length} tools: ${outcome.toolResults
-                .map((r) => `${r.tool}[${r.status}]`)
-                .join(", ")}`;
+          outcome.progressNote !== undefined
+            ? formatProgressNoteStepSummary(outcome.toolResults)
+            : outcome.toolResults.length === 1
+              ? outcome.toolResults[0]!.summary
+              : `${outcome.toolResults.length} tools: ${outcome.toolResults
+                  .map((r) => `${r.tool}[${r.status}]`)
+                  .join(", ")}`;
         this.deps.metrics?.recordStep({
           sessionId: state.id,
           stepIndex: i,
@@ -1381,14 +1689,27 @@ export class AgentLoop {
           stepIndex: i,
           summary,
           durationMs,
+          ...(outcome.progressNote !== undefined ? { progressNote: true } : {}),
+          ...(stallSignal !== null ? { reviewStall: stallSignal } : {}),
         });
         if (outcome.terminal === "session") {
           reason = "finish";
+          endedOnFinalizationStep = finalizationStep;
           state = { ...state, status: "completed" };
           break;
         }
         if (outcome.terminal === "turn") {
           reason = "reply";
+          endedOnFinalizationStep = finalizationStep;
+          break;
+        }
+        // The reserved final step ran and the model still did not close
+        // the turn: its non-terminal calls were refused at dispatch
+        // (`final step: only reply or finish run here`), nothing more
+        // may execute, and the ceiling that made the step final is what
+        // ends the turn — `stopCause` already names it.
+        if (finalizationStep) {
+          reason = "max_steps";
           break;
         }
         // A trimmed-batch step (auto-split: approval-gated solo) seeds
@@ -1436,12 +1757,17 @@ export class AgentLoop {
           }
         }
 
-        // Breaker: the model ignored repeated vetoes of the same call.
+        // Breaker: the model ignored repeated vetoes of the same call, or
+        // a wandering spread crossed the escalation cap.
         // Force a graceful synthetic reply (NOT a `loop_failed` — the
         // turn ends with a best-effort answer, the session stays usable).
         const breaker = loopSignals.find((s) => s.kind === "breaker");
         if (breaker) {
-          const replyText = formatForcedLoopReply(breaker.tool, breaker.count);
+          const replyText = formatForcedLoopReply(
+            breaker.tool,
+            breaker.count,
+            breaker.detector,
+          );
           state = recordTurn(state, assistantReplyTurn(replyText));
           this.deps.onEvent?.({
             type: "llm_event",
@@ -1456,12 +1782,13 @@ export class AgentLoop {
             detector: breaker.detector,
           });
           this.deps.logger?.warn(
-            "no-progress loop breaker tripped; forcing graceful reply",
+            "loop breaker tripped; forcing graceful reply",
             {
               sessionId: state.id,
               stepIndex: i,
               tool: breaker.tool,
               count: breaker.count,
+              detector: breaker.detector,
             },
           );
           reason = "reply";
@@ -1514,7 +1841,13 @@ export class AgentLoop {
                     sig.count,
                     READ_REPEAT_WARNING_THRESHOLD,
                   )
-                : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
+                : sig.detector === "outcome_repeat"
+                  ? loopTracker.shouldEmitWarning(
+                      sig.warningKey,
+                      sig.count,
+                      OUTCOME_REPEAT_WARNING_THRESHOLD,
+                    )
+                  : loopTracker.shouldEmitWarning(sig.warningKey, sig.count);
           if (!emit) {
             continue;
           }
@@ -1525,7 +1858,9 @@ export class AgentLoop {
                 ? formatTestRepeatNotice(sig)
                 : sig.detector === "read_repeat" && sig.read !== undefined
                   ? formatReadRepeatNotice({ count: sig.count, ...sig.read })
-                  : formatRepeatNotice(sig);
+                  : sig.detector === "outcome_repeat"
+                    ? formatOutcomeRepeatNotice(sig)
+                    : formatRepeatNotice(sig);
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: sig.tool,
@@ -1568,8 +1903,15 @@ export class AgentLoop {
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
       } catch (err) {
+        requestDeadline.dispose();
         runError = err instanceof Error ? err : new Error(String(err));
         let category = classifyFailure(err);
+        // The task's duration ceiling fired inside the request. It
+        // surfaces as an abort — the same shape as Ctrl+C — but it is
+        // the task's clock, not the user, so it is read first and never
+        // as a cancellation.
+        const ceilingFired =
+          requestDeadline.fired() && !options.signal.aborted;
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -1577,9 +1919,45 @@ export class AgentLoop {
         // (issue #107 — cancellation semantics remain unchanged), not
         // be relabelled `max_steps`.
         const cancelled =
-          err instanceof CancelledError ||
-          (err instanceof LlmFailure && err.category === "cancelled") ||
-          category === "cancelled";
+          !ceilingFired &&
+          (err instanceof CancelledError ||
+            (err instanceof LlmFailure && err.category === "cancelled") ||
+            category === "cancelled");
+        if (ceilingFired) {
+          if (!finalizationStep) {
+            // Abandon the request and take the reserved summary step
+            // now: the next iteration is the finalization step on its
+            // own deadline. Nothing ran, so nothing is replayed.
+            stopCause = "time_ceiling";
+            ceilingFiredMidRequest = true;
+            this.deps.logger?.warn(
+              "task time ceiling reached mid-request; running the summary step",
+              {
+                sessionId: state.id,
+                stepIndex: i,
+                elapsedMs: Date.now() - taskStartedAt,
+                durationCeilingMs,
+              },
+            );
+            runError = null;
+            i -= 1;
+            continue;
+          }
+          // The summary step itself overran its own deadline. A failed
+          // finalization must not execute more work — same outcome the
+          // finalization guard below preserves.
+          this.deps.logger?.warn(
+            "finalization step exceeded its deadline; preserving max-steps outcome",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              deadlineMs: FINALIZATION_REQUEST_DEADLINE_MS,
+            },
+          );
+          stepsTaken += 1;
+          reason = "max_steps";
+          break;
+        }
         // The reply was cut short. Retry the step with a request the wall
         // does not apply to — a larger cap, or a prompt packed to the
         // window the server just revealed. Same replay argument as the
@@ -1628,7 +2006,9 @@ export class AgentLoop {
             cause: detail.cause,
             completionTokens: detail.completionTokens,
             promptTokens: detail.promptTokens,
-            requestedMaxTokens: detail.requestedMaxTokens,
+            ...(detail.requestedMaxTokens !== undefined
+              ? { requestedMaxTokens: detail.requestedMaxTokens }
+              : {}),
             retry,
           });
           this.deps.logger?.warn("completion truncated; retrying the step", {
@@ -1637,7 +2017,8 @@ export class AgentLoop {
             cause: detail.cause,
             completionTokens: detail.completionTokens,
             promptTokens: detail.promptTokens,
-            requestedMaxTokens: detail.requestedMaxTokens,
+            // `null` in the log: the request carried no cap at all.
+            requestedMaxTokens: detail.requestedMaxTokens ?? null,
             retry: retry.kind,
             ...(retry.kind === "raise_cap"
               ? { maxTokens: retry.maxTokens }
@@ -1807,21 +2188,106 @@ export class AgentLoop {
         if (repeatedEmptyAfterAnnouncedRetry) {
           runError = repeatedEmptyCompletionError(err);
         }
+        // The provider refused the request for its size. The window it
+        // named (or, failing that, most of the prompt just estimated)
+        // becomes the learned window, the conversation is packed to it,
+        // and the step runs again with a notice. Once per step: a second
+        // refusal ends the turn with the provider's own sentence.
+        const repack = cancelled
+          ? null
+          : planSizeRejectionRepack({
+              error: err,
+              alreadyRetried: sizeRepackRetry?.stepIndex === i,
+              raisedCapRefused:
+                truncationRetry?.stepIndex === i &&
+                truncationRetry.maxTokens !== undefined,
+              transport: effectiveTransport,
+              promptTokens: lastPromptTokens,
+              contextWindow: this.deps.contextWindow?.() ?? null,
+              canFitWindow: this.deps.onContextWindowObserved !== undefined,
+            });
+        if (repack !== null) {
+          sizeRepackRetry = { stepIndex: i };
+          this.deps.onContextWindowObserved?.(repack.contextWindow);
+          pendingNotice = composeSizeRejectionNotice(noticeForThisStep);
+          this.deps.onEvent?.({
+            type: "prompt_repacked",
+            stepIndex: i,
+            contextWindow: repack.contextWindow,
+            source: repack.source,
+            promptTokens: lastPromptTokens,
+          });
+          this.deps.logger?.warn(
+            "provider refused the request as too large; repacking to its window and retrying the step",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              contextWindow: repack.contextWindow,
+              source: repack.source,
+              promptTokens: lastPromptTokens,
+              rejection: runError.message,
+            },
+          );
+          runError = null;
+          i -= 1;
+          continue;
+        }
+        // What the provider's error body says, as opposed to its
+        // status: exhausted credit is neither an outage to wait out nor
+        // a request to fall over — nothing changes until someone tops
+        // up. The turn stops where it is, resumable, and the operator
+        // is told which provider refused. (A fallback link, when the
+        // chain has one, has already been tried by the time the error
+        // reaches here.)
+        const verdict = cancelled ? null : readProviderErrorVerdict(err);
+        if (verdict?.kind === "credit_exhausted") {
+          stopCause = "credit_exhausted";
+          creditStop = { provider: verdict.provider, detail: verdict.detail };
+          reason = "max_steps";
+          this.deps.onEvent?.({
+            type: "credit_exhausted",
+            provider: verdict.provider,
+            code: verdict.code,
+            message: verdict.detail,
+          });
+          this.deps.logger?.warn(
+            "provider reports exhausted credit; pausing the task",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              provider: verdict.provider,
+              code: verdict.code,
+              error: verdict.detail,
+            },
+          );
+          runError = null;
+          break;
+        }
         // The provider is not answering. Park the turn instead of
         // killing it: nothing of this step has been committed (a
         // completion failure throws before any tool is dispatched —
         // tool failures come back as results, not throws), so retrying
         // the same index replays nothing and duplicates no side effect.
+        // A provider that asked for a cooldown (`retry-after`, "retry in
+        // 120 s", OpenRouter's `in_flight_budget_exhausted` — a 402 the
+        // outage predicate would otherwise refuse) is waited for as
+        // long as it asked, within the same budget.
+        const retryHint =
+          verdict?.kind === "retry_after" ? verdict : null;
         if (
           category === "transport" &&
           !cancelled &&
           providerWaitCfg.enabled &&
-          isWaitableOutage(err) &&
+          (isWaitableOutage(err) || retryHint !== null) &&
           outageWaitedMs < providerWaitCfg.maxWaitMs
         ) {
           const nextRetryMs = Math.min(
-            PROVIDER_WAIT_MAX_BACKOFF_MS,
-            PROVIDER_WAIT_BASE_MS * 2 ** outageAttempts,
+            retryHint !== null
+              ? Math.max(1, retryHint.delayMs)
+              : Math.min(
+                  PROVIDER_WAIT_MAX_BACKOFF_MS,
+                  PROVIDER_WAIT_BASE_MS * 2 ** outageAttempts,
+                ),
             // Never sleep past the budget: the last wait ends exactly at
             // it, so the operator's configured ceiling is the truth.
             Math.max(1, providerWaitCfg.maxWaitMs - outageWaitedMs),
@@ -1987,6 +2453,7 @@ export class AgentLoop {
         stepsTaken,
         stepCeiling,
         elapsedMs: Date.now() - taskStartedAt,
+        ...(creditStop !== null ? { credit: creditStop } : {}),
       });
       state = recordTurn(state, assistantReplyTurn(synthetic));
       this.deps.onEvent?.({
@@ -2002,7 +2469,10 @@ export class AgentLoop {
         state = {
           ...state,
           status: "stalled",
-          lastError: `task_stopped:${stopCause}: ${stepsTaken} steps without reply`,
+          lastError:
+            creditStop !== null
+              ? `task_stopped:${stopCause}: "${creditStop.provider}" is out of credit after ${stepsTaken} steps`
+              : `task_stopped:${stopCause}: ${stepsTaken} steps without reply`,
         };
       }
     } else if (reason === "reply") {
@@ -2169,6 +2639,9 @@ export class AgentLoop {
       session: state,
       reason,
       stepCount: stepsTaken,
+      ...(reason === "max_steps" || endedOnFinalizationStep
+        ? { stopCause }
+        : {}),
       undelivered: this.flushSteering(state.id),
     };
   }
@@ -2224,7 +2697,7 @@ function invokeLessonLifecycle(
 function findLastAssistantReply(state: SessionState): string | null {
   for (let i = state.turns.length - 1; i >= 0; i -= 1) {
     const turn = state.turns[i];
-    if (turn?.kind === "assistant_reply") return turn.text;
+    if (isFinalReplyTurn(turn)) return turn.text;
   }
   return null;
 }
@@ -2346,7 +2819,7 @@ function collectLastUserAssistantPairs(
       // correction alone. Join them in order instead.
       pendingUser =
         pendingUser === null ? turn.text : `${pendingUser}\n\n${turn.text}`;
-    } else if (turn.kind === "assistant_reply" && pendingUser !== null) {
+    } else if (isFinalReplyTurn(turn) && pendingUser !== null) {
       pairs.push({ user: pendingUser, assistant: turn.text });
       pendingUser = null;
     }
@@ -2378,7 +2851,7 @@ function collectRecentUserAssistantTurns(
         continue;
       }
       rows.push({ role: "user", text: turn.text });
-    } else if (turn.kind === "assistant_reply") {
+    } else if (isFinalReplyTurn(turn)) {
       rows.push({ role: "assistant", text: turn.text });
     }
   }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Key } from "ink";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { resetConfigCache } from "../../config/index.js";
+import { getConfig, resetConfigCache } from "../../config/index.js";
 import { arrowKey, plainKey, returnKey } from "../mouse/synthetic-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { fakeSession } from "../test-fixtures.js";
@@ -149,6 +149,34 @@ describe("handleOnboardingStepKey", () => {
       modelId: first.pick.id,
     });
     expect(driven.pulls).toEqual([first.pick.id]);
+    // The commit is where managed mode lands — before the pull, so a
+    // Ctrl+C mid-download keeps the choice.
+    resetConfigCache();
+    expect(getConfig().localModels.mode).toBe("managed");
+  });
+
+  it("choose: Enter on Local only opens the list — no config write until a pick", () => {
+    const driven = drive(stateAt("choose", { cursor: 0 }));
+    expect(driven.handle("", returnKey())).toBe(true);
+    expect(driven.actions).toContainEqual({
+      type: "onboarding_step_set",
+      step: "local_pick",
+    });
+    resetConfigCache();
+    expect(getConfig().localModels.mode).toBe("external");
+  });
+
+  it("propose_second: accepting the local offer only opens the list", () => {
+    const driven = drive(
+      stateAt("propose_second", { offer: "local", outcome: "cloud" }),
+    );
+    expect(driven.handle("", returnKey())).toBe(true);
+    expect(driven.actions).toContainEqual({
+      type: "onboarding_step_set",
+      step: "local_pick",
+    });
+    resetConfigCache();
+    expect(getConfig().localModels.mode).toBe("external");
   });
 
   it("local_download: c opens the meanwhile wizard, ctrl+c does not", () => {
@@ -226,6 +254,9 @@ describe("handleOnboardingStepKey", () => {
     // The pull is handed the id the catalog write minted.
     expect(driven.pulls).toHaveLength(1);
     expect(driven.pulls[0]).toContain("custom");
+    // A Hugging Face pick commits managed mode exactly like a curated one.
+    resetConfigCache();
+    expect(getConfig().localModels.mode).toBe("managed");
   });
 
   it("cloud: routes into the wizard's own key handler", () => {

@@ -24,6 +24,34 @@ describe("turnsToMessages", () => {
     });
   });
 
+  it("keeps a steered user row marked, so the reply is not drawn as its answer", () => {
+    // A message sent while the weather turn ran, folded in at step 0:
+    // the model went on answering the weather request.
+    const messages = turnsToMessages([
+      { kind: "user", text: "what's the weather in Tokyo", at: 1 },
+      { kind: "user", text: "Test", steered: true, at: 2 },
+      {
+        kind: "assistant_tool_call",
+        tool: "os.web.search",
+        args: { query: "weather Tokyo" },
+        at: 3,
+      },
+      {
+        kind: "tool_result",
+        tool: "os.web.search",
+        status: "ok",
+        summary: "cloudy",
+        at: 3,
+      },
+      { kind: "assistant_reply", text: "Cloudy in Tokyo.", at: 4 },
+    ]);
+    expect(messages.map((m) => [m.role, m.text, m.steered])).toEqual([
+      ["user", "what's the weather in Tokyo", undefined],
+      ["user", "Test", true],
+      ["assistant", "Cloudy in Tokyo.", undefined],
+    ]);
+  });
+
   it("folds a user -> tool -> reply turn into user + assistant messages", () => {
     const turns: ConversationTurn[] = [
       { kind: "user", text: "run lint", at: 100 },

@@ -11,6 +11,7 @@ import { parseReflectionOutput } from "./reflection-parser.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
 import type { LlmStreamParams } from "../../agent/step-executor.js";
+import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 import { buildReflectionPrompt } from "./reflection-prompt.js";
 
 export interface ReflectionInput {
@@ -141,9 +142,11 @@ export interface ReflectionRunnerDeps {
   /**
    * Dedicated reflection slot. Passed straight to llama-server. `-1`
    * means "no slot affinity / no cache reuse" — still safe because the
-   * main agent slot is never touched.
+   * main agent slot is never touched. A thunk is resolved per call, so a
+   * runner built before the managed daemon's slot count was known lands
+   * on the reservation once the pool has room for one.
    */
-  reflectionSlotId: number;
+  reflectionSlotId: SlotIdSource;
   /** Hard timeout per reflection call. */
   timeoutMs: number;
   /** Upper bound on facts written per reflection call. */
@@ -355,7 +358,7 @@ export function createReflectionRunner(
           : await deps.llmComplete({
               prompt,
               grammar: REFLECTION_GRAMMAR,
-              slotId: deps.reflectionSlotId,
+              slotId: resolveSlotId(deps.reflectionSlotId),
               sessionId: `reflection:${input.sessionId}`,
               signal: controller.signal,
             });

@@ -244,7 +244,12 @@ export function formatAgentEvent(
 interface ChatLoopOptions {
   runtime: AgentRuntime;
   initialSession: SessionState;
-  maxSteps: number;
+  /**
+   * `--max-steps`, when given: a hard ceiling for each task. Absent, no
+   * `maxSteps` is passed and the runtime runs legs of `agent.maxSteps`
+   * up to the `agent.task.maxSteps` ceiling.
+   */
+  maxSteps?: number;
   controller: AbortController;
 }
 
@@ -264,9 +269,12 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     let reply: string | null = null;
     return {
       onEvent: (event) => {
+        // One stdout line per turn: the reply that ended it, never a
+        // progress note the model batched with work along the way.
         if (
           event.type === "llm_event" &&
-          event.event.type === "assistant_reply"
+          event.event.type === "assistant_reply" &&
+          event.event.progressNote !== true
         ) {
           reply = event.event.text;
         }
@@ -278,7 +286,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
   const driveTurn = async (message: string): Promise<void> => {
     const collector = collectReply();
     const result = await opts.runtime.runTurn(session, message, {
-      maxSteps: opts.maxSteps,
+      ...(opts.maxSteps === undefined ? {} : { maxSteps: opts.maxSteps }),
       signal: opts.controller.signal,
       origin: "cli",
       eventHook: collector.onEvent,
@@ -449,7 +457,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     const finalSession = await runChatLoop({
       runtime,
       initialSession: session,
-      maxSteps: parsed.maxSteps ?? config.agent.maxSteps,
+      // Only `--max-steps` becomes a ceiling. Filling in `agent.maxSteps`
+      // (the leg length) made every task stop at the first leg.
+      ...(parsed.maxSteps === null ? {} : { maxSteps: parsed.maxSteps }),
       controller,
     });
     runtime.sessionStore.save(finalSession);

@@ -108,6 +108,16 @@ describe("PROVIDER_PRESETS", () => {
     expect(preset?.baseUrl).toBe("http://localhost:11434");
   });
 
+  it("offers local Atomic Chat on its Local API Server, marked local", () => {
+    // The desktop app binds 127.0.0.1:1337 under `/v1` and only checks a
+    // key when one is set in its settings, so no key screen.
+    const preset = findProviderPreset("atomic-chat");
+    expect(preset?.label).toBe("Atomic Chat (local)");
+    expect(preset?.local).toBe(true);
+    expect(preset?.baseUrl).toBe("http://127.0.0.1:1337");
+    expect(preset?.envVar).toBe("ATOMIC_CHAT_API_KEY");
+  });
+
   it("keeps local Ollama separate from the hosted Ollama Cloud", () => {
     // Same vendor, different services: one is the operator's own machine
     // with no key, the other is a hosted endpoint keyed by its own var.

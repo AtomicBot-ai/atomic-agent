@@ -7,6 +7,11 @@ import {
   type CreditLimitLogger,
   type CreditLimitRetryPlan,
 } from "./plan-credit-limit-retry.js";
+import {
+  parseProviderErrorBody,
+  readProviderErrorReason,
+  type ProviderErrorBody,
+} from "./parse-provider-error-body.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -64,14 +69,36 @@ export class OpenAiHttpError extends Error {
      * apart in a postmortem.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown },
+    options?: {
+      cause?: unknown;
+      body?: ProviderErrorBody;
+      generationId?: string;
+    },
   ) {
     super(message);
     this.name = "OpenAiHttpError";
     if (options?.cause !== undefined) {
       (this as { cause?: unknown }).cause = options.cause;
     }
+    if (options?.body !== undefined) this.body = options.body;
+    if (options?.generationId !== undefined) {
+      this.generationId = options.generationId;
+    }
   }
+
+  /**
+   * The error body read for its reason (`parseProviderErrorBody`):
+   * exhausted credit and cooldown hints live there, not in the status.
+   * Absent on network failures and on errors built without a body.
+   */
+  readonly body?: ProviderErrorBody;
+
+  /**
+   * The SSE generation id (`id` on the chunks) of a stream that failed
+   * after it had started — a 504 after 10,000 streamed tokens is still
+   * billed, and the id is what recovers the cost from the provider.
+   */
+  readonly generationId?: string;
 }
 
 /**
@@ -304,8 +331,9 @@ export async function openAiPostJson(
   path: string,
   body: Record<string, unknown>,
   request: { signal?: AbortSignal },
+  onSend?: OnOpenAiRequestBody,
 ): Promise<Record<string, unknown>> {
-  return withCreditLimitRetry(deps, body, (attemptBody) =>
+  return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
     runOpenAiWithRetry(deps, path, request.signal, async () => {
       const res = await openAiFetch(
         deps,
@@ -385,19 +413,31 @@ async function readJsonBody(
  * is untouched, and any failure this declines to handle propagates
  * unchanged so the fallback chain classifies it exactly as before.
  */
+/**
+ * Told which body a request is about to go out with. The credit-limit
+ * retry re-sends with a lower `max_tokens`, so the body the caller built
+ * is not necessarily the one that produced the response — and the cap
+ * that response ran under is what a truncation has to be judged against.
+ */
+export type OnOpenAiRequestBody = (body: Record<string, unknown>) => void;
+
 async function withCreditLimitRetry<T>(
   deps: OpenAiHttpDeps,
   body: Record<string, unknown>,
+  onSend: OnOpenAiRequestBody | undefined,
   send: (body: Record<string, unknown>) => Promise<T>,
 ): Promise<T> {
   try {
+    onSend?.(body);
     return await send(body);
   } catch (err) {
     if (!(err instanceof OpenAiHttpError)) throw err;
     const plan = planCreditLimitRetry(err);
     if (!plan) throw err;
     warnCreditLimitRetry(deps, plan);
-    return await send({ ...body, max_tokens: plan.retryMaxTokens });
+    const retryBody = { ...body, max_tokens: plan.retryMaxTokens };
+    onSend?.(retryBody);
+    return await send(retryBody);
   }
 }
 
@@ -435,11 +475,12 @@ export async function openAiStartStream(
   body: Record<string, unknown>,
   request: { signal?: AbortSignal },
   budget?: OpenAiAttemptBudget,
+  onSend?: OnOpenAiRequestBody,
 ): Promise<Response & { body: NonNullable<Response["body"]> }> {
   // The credit-limit retry wraps the open, not the stream: a 402 is
   // refused before any bytes exist, so re-sending with a lower ceiling
   // cannot duplicate output — the same argument the open-retry makes.
-  return withCreditLimitRetry(deps, body, (attemptBody) =>
+  return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
     runOpenAiWithRetry(
       deps,
       path,
@@ -591,6 +632,8 @@ async function httpErrorFromResponse(
     false,
     retryAfterMs,
     deps.label,
+    undefined,
+    { body: parseProviderErrorBody(text) },
   );
 }
 
@@ -605,7 +648,23 @@ function isRetryableOpenAiError(err: unknown): boolean {
   if (!(err instanceof OpenAiHttpError)) return false;
   if (err.timedOut) return false;
   if (err.status === null) return true;
+  // A 429 whose body says the account is out of credit is not
+  // throttling: the same request fails the same way until someone tops
+  // up, and three fast retries only multiply the refusals (42 per
+  // worker, once).
+  if (isCreditExhausted(err)) return false;
   return err.status >= 500 || err.status === 429 || err.status === 408;
+}
+
+function isCreditExhausted(err: OpenAiHttpError): boolean {
+  return (
+    readProviderErrorReason({
+      status: err.status,
+      body: err.body,
+      message: err.message,
+      retryAfterMs: err.retryAfterMs,
+    })?.kind === "credit_exhausted"
+  );
 }
 
 /**

@@ -2,6 +2,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-types.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 
 import { LINK_GENERATOR_GRAMMAR } from "./link-generator-grammar.js";
 import { LINK_GENERATOR_RESPONSE_FORMAT } from "./link-generator-response-format.js";
@@ -95,8 +96,8 @@ export type LinkGeneratorLlmComplete = (params: {
 export interface LinkGeneratorRunnerDeps {
   llmComplete: LinkGeneratorLlmComplete;
   linkStore: LinkStore;
-  /** Same slot as reflection — invariant 2. */
-  reflectionSlotId: number;
+  /** Same slot as reflection — invariant 2. Resolved per call. */
+  reflectionSlotId: SlotIdSource;
   /** Hard timeout per generation call. */
   timeoutMs: number;
   /** Upper bound on persisted links per call. Default 4. */
@@ -219,7 +220,7 @@ export function createLinkGeneratorRunner(
         prompt,
         grammar: LINK_GENERATOR_GRAMMAR,
         responseFormat: LINK_GENERATOR_RESPONSE_FORMAT,
-        slotId: deps.reflectionSlotId,
+        slotId: resolveSlotId(deps.reflectionSlotId),
         sessionId: `link-gen:${input.sessionId}`,
         signal: controller.signal,
       });

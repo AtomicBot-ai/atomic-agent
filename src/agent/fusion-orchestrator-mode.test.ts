@@ -1,10 +1,31 @@
 import { describe, expect, it } from "vitest";
+import type { ApprovalGate } from "../approval/approval-gate.js";
+import { buildVerifyRunTool, verifySyntaxTool } from "../tools/verify/index.js";
 import {
   checkFusionOrchestrator,
   emptyFusionOrchestratorState,
   recordDelegation,
   refusalFor,
+  refusedToolNames,
+  wouldRefuse,
 } from "./fusion-orchestrator-mode.js";
+
+/** The flag as the shipped definition carries it; the gate never runs the tool here. */
+const verifyRunReadonly = buildVerifyRunTool({
+  approvals: {} as ApprovalGate,
+  approvalRequired: false,
+  config: {
+    browser: {
+      enabled: false,
+      channel: "chrome",
+      headless: true,
+      cdpUrl: null,
+      executablePath: null,
+      noSandbox: false,
+      launchTimeoutMs: 1_000,
+    },
+  },
+}).readonly;
 
 /** The two facts the gate reads off a tool: does it exist, does it mutate. */
 function registryWith(
@@ -63,6 +84,19 @@ describe("the fusion orchestrator gate", () => {
     expect(
       checkFusionOrchestrator("fusion.delegate", REGISTRY, BEFORE).allowed,
     ).toBe(true);
+  });
+
+  it("lets the orchestrator verify — read-only checks are review, not building (D1)", () => {
+    // The real definitions, not a fixture: the gate reads `readonly`
+    // off the registry, so this pins the flag the tools actually ship.
+    const registry = registryWith({
+      "verify.syntax": { readonly: verifySyntaxTool.readonly },
+      "verify.run": { readonly: verifyRunReadonly },
+    });
+    for (const tool of ["verify.syntax", "verify.run"]) {
+      expect(checkFusionOrchestrator(tool, registry, BEFORE).allowed).toBe(true);
+      expect(checkFusionOrchestrator(tool, registry, AFTER).allowed).toBe(true);
+    }
   });
 
   it("never gates the terminal verbs", () => {
@@ -134,5 +168,89 @@ describe("recordDelegation", () => {
     expect(
       checkFusionOrchestrator("os.fs.write", REGISTRY, state).allowed,
     ).toBe(false);
+  });
+});
+
+describe("wouldRefuse / refusedToolNames — the gate's verdict ahead of dispatch", () => {
+  const CTX = { registry: REGISTRY };
+
+  it("answers exactly what checkFusionOrchestrator would, before anything is emitted", () => {
+    for (const tool of Object.keys({
+      "mcp.notion.search": 1,
+      "os.fs.read": 1,
+      "os.fs.write": 1,
+      "os.shell.run": 1,
+      "fusion.delegate": 1,
+      reply: 1,
+      finish: 1,
+      "os.fs.wirte": 1,
+    })) {
+      expect(wouldRefuse(tool, CTX), tool).toBe(
+        !checkFusionOrchestrator(tool, REGISTRY, BEFORE).allowed,
+      );
+      // The ledger shapes the refusal text only, never the verdict.
+      expect(wouldRefuse(tool, CTX), tool).toBe(
+        !checkFusionOrchestrator(tool, REGISTRY, AFTER).allowed,
+      );
+    }
+  });
+
+  it("refuses the mutating tools and every MCP tool; keeps reads, the fan-out, the terminals and unknown names", () => {
+    const refused = refusedToolNames(
+      [
+        "os.fs.read",
+        "os.fs.write",
+        "os.shell.run",
+        "mcp.notion.search",
+        "fusion.delegate",
+        "reply",
+        "finish",
+        "os.fs.wirte",
+      ],
+      CTX,
+    );
+    expect([...refused].sort()).toEqual([
+      "mcp.notion.search",
+      "os.fs.write",
+      "os.shell.run",
+    ]);
+  });
+});
+
+describe("wouldRefuse (the shared predicate)", () => {
+  // One predicate behind the dispatch gate, the batch trim and the
+  // per-request grammar: if they disagreed, the trim could keep a call
+  // the gate then refuses — which is exactly what happened in run 14.
+  const ctx = { registry: REGISTRY };
+
+  it("answers the same as the dispatch gate for every tool", () => {
+    for (const tool of Object.keys({
+      "mcp.notion.search": 0,
+      "os.fs.read": 0,
+      "os.fs.write": 0,
+      "os.shell.run": 0,
+      "fusion.delegate": 0,
+      reply: 0,
+      finish: 0,
+      "os.fs.wirte": 0,
+    })) {
+      expect(wouldRefuse(tool, ctx)).toBe(
+        !checkFusionOrchestrator(tool, REGISTRY, BEFORE).allowed,
+      );
+    }
+  });
+
+  it("never refuses the fan-out, the terminals, reads or unknown names", () => {
+    expect(wouldRefuse("fusion.delegate", ctx)).toBe(false);
+    expect(wouldRefuse("reply", ctx)).toBe(false);
+    expect(wouldRefuse("finish", ctx)).toBe(false);
+    expect(wouldRefuse("os.fs.read", ctx)).toBe(false);
+    expect(wouldRefuse("os.fs.wirte", ctx)).toBe(false);
+  });
+
+  it("refuses mutations and every MCP tool, whatever it claims", () => {
+    expect(wouldRefuse("os.fs.write", ctx)).toBe(true);
+    expect(wouldRefuse("os.shell.run", ctx)).toBe(true);
+    expect(wouldRefuse("mcp.notion.search", ctx)).toBe(true);
   });
 });

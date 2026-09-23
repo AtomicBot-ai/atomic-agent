@@ -27,11 +27,13 @@ export type TraceEvent =
   | TraceLlmCompletion
   | TraceToolInvocation
   | TraceParseRetry
+  | TraceBatchTrimmed
   | TraceLoopDetected
   | TraceTaskContinued
   | TraceProviderWaiting
   | TraceProviderRecovered
   | TraceCompletionTruncated
+  | TracePromptRepacked
   | TraceParseFailureRecovered
   | TraceEmptyCompletionRecovered
   | TraceLessonDeprecated
@@ -91,6 +93,14 @@ export interface TraceStepFinished extends TraceEventBase {
   stepIndex: number;
   summary: string;
   durationMs: number;
+  /** The step kept a `reply` batched with work as a progress note. */
+  progressNote?: true;
+  /**
+   * The step ran under a stalled Fusion review (F41): `steps` read-only
+   * steps without a fan-out; the step carried the notice, or was cut to
+   * `fusion.delegate` / `reply` / `finish`.
+   */
+  reviewStall?: { steps: number; phase: "notice" | "cut" };
 }
 
 export interface TracePromptTokens {
@@ -132,10 +142,19 @@ export interface TraceLlmCompletion extends TraceEventBase {
   content: string;
   reasoningContent?: string;
   timing?: TraceLlmTiming;
+  /**
+   * Reasoning the completion carried, in `localModels.reasoningBudgetTokens`
+   * units (four characters per token — an estimate from the text, not
+   * the server's count). A step cut by the budget shows `>= budget`.
+   * Absent on traces recorded before F49.
+   */
+  reasoningTokens?: number;
   cacheHitTokens: number;
   modelId: string | null;
   stop: boolean;
   truncated: boolean;
+  /** The provider's generation id, when it sent one. */
+  generationId?: string;
 }
 
 export interface TraceToolInvocation extends TraceEventBase {
@@ -169,6 +188,28 @@ export interface TraceParseRetry extends TraceEventBase {
   stepIndex: number;
   attempt: number;
   reason: string;
+}
+
+/**
+ * The model emitted several calls in one completion and the runtime ran
+ * only `kept`: the batch held approval-gated tools that would have asked
+ * someone, so it was cut to the first of them. Everything in `dropped`
+ * was generated and never executed — without this row a post-mortem sees
+ * one `tool_invocation` and no trace of the rest of the output.
+ */
+export interface TraceBatchTrimmed extends TraceEventBase {
+  type: "batch_trimmed";
+  turnIndex: number;
+  stepIndex: number;
+  /** Calls the model emitted. Always >= 2. */
+  originalSize: number;
+  /** The one tool that ran. */
+  kept: string;
+  /** Tools that never ran, in emitted order. */
+  dropped: string[];
+  /** Tools the turn's policy would have refused anyway; omitted when none. */
+  refused?: string[];
+  reason: "approval-gated-batched";
 }
 
 /**
@@ -241,12 +282,31 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   type: "completion_truncated";
   turnIndex: number;
   stepIndex: number;
-  cause: "reply_cap" | "context_window" | "output_limit" | "unknown";
+  cause:
+    | "reply_cap"
+    | "context_window"
+    | "output_limit"
+    | "provider_limit"
+    | "unknown";
   completionTokens: number;
   promptTokens: number;
-  requestedMaxTokens: number;
+  /** The cap the cut request carried; absent when it carried none. */
+  requestedMaxTokens?: number;
   retry: "raise_cap" | "fit_window";
   retryValue: number;
+}
+
+/**
+ * The provider refused the request for its size; the window was learned
+ * and the step is being retried with the conversation packed to it.
+ */
+export interface TracePromptRepacked extends TraceEventBase {
+  type: "prompt_repacked";
+  turnIndex: number;
+  stepIndex: number;
+  contextWindow: number;
+  source: "provider" | "estimate";
+  promptTokens: number;
 }
 
 export interface TraceLoopDetected extends TraceEventBase {
@@ -269,7 +329,8 @@ export interface TraceLoopDetected extends TraceEventBase {
     | "no_progress"
     | "wandering"
     | "test_repeat"
-    | "read_repeat";
+    | "read_repeat"
+    | "outcome_repeat";
   /**
    * `read_repeat` only (issue #114): the canonical file the reads landed
    * on, the line range the triggering read returned, and the content
@@ -491,6 +552,12 @@ export interface TraceError extends TraceEventBase {
   stepIndex?: number;
   message: string;
   stack?: string;
+  /**
+   * The provider's generation id when the failure came from a stream
+   * that had already produced output — the tokens are billed, and the
+   * id is what recovers the cost.
+   */
+  generationId?: string;
   /**
    * Canonical LLM failure taxonomy tag
    * (`transport` / `grammar` / `model` / `tool` / `cancelled`). Missing

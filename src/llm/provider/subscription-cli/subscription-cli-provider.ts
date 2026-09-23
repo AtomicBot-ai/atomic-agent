@@ -15,7 +15,6 @@ import type {
 } from "../llm-provider.js";
 import { VisionUnsupportedError } from "../llm-provider.js";
 import type { ToolCallAdapter } from "../adapters/tool-call-adapter.js";
-import { openAiToolCallAdapter } from "../openai/openai-tool-call-adapter.js";
 import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
@@ -65,16 +64,18 @@ export class SubscriptionCliProvider implements LlmProvider {
   readonly name: string;
   readonly capabilities: ProviderCapabilities;
   /**
-   * We never return `tool_calls`, yet the transport is `native_tools`
-   * and the adapter is present on purpose. On the grammar transport a
-   * format drift throws out of `parseToolCalls` and costs a second full
-   * CLI invocation on the repair path; on the native transport an empty
-   * `toolCalls` sends step-executor down its guarded recovery ladder,
-   * which parses the tool-call JSON out of `content` inside a
-   * try/catch and otherwise wraps the prose as a `reply`. Same result
-   * when the model complies, no extra process when it does not.
+   * The tools are never forwarded to the CLI (no `tools` payload, no
+   * MCP), so the transport it really serves is the text one: the prompt
+   * asks for the JSON-array tool call and `parseToolCalls` reads it out
+   * of `content`. It used to declare `native_tools` — which made the
+   * persona say "never write tool-call JSON as text" to a model that
+   * had no other way to call a tool, while Codex's steering text asked
+   * for the JSON array. The price is that a format drift now takes the
+   * parser's one-shot retry (a second CLI invocation) instead of the
+   * native recovery ladder; the gain is a prompt that agrees with the
+   * wire. See F32.
    */
-  readonly toolCallAdapter: ToolCallAdapter = openAiToolCallAdapter;
+  readonly toolCallAdapter: ToolCallAdapter | null = null;
   /** Streaming is owned end to end here; that seam consumes SSE bytes. */
   readonly streamConsumer = null;
 
@@ -111,7 +112,7 @@ export class SubscriptionCliProvider implements LlmProvider {
     this.capabilities = {
       vision: false,
       visionSource: "config-disabled",
-      toolTransport: "native_tools",
+      toolTransport: "grammar",
       contextWindow: descriptor.contextWindow,
       supportsParallelTools: false,
       // Every completion is a fresh process; there is no slot to pin.

@@ -188,6 +188,9 @@ export function runSlashCommand(
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();
   }
+  if (result.triggerOnboardingRerun) {
+    runOnboardingRerun(state, dispatch, callbacks);
+  }
   // Swap the active palette before dispatching `theme_set` so the forced
   // re-render reads the new colours through the theme proxy, then persist the
   // choice to the user config (`/theme <name>` direct path).
@@ -327,6 +330,29 @@ export function runSlashCommand(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
   }
+}
+
+/**
+ * `/onboarding` only opens on an idle session. The flow replaces the
+ * whole app — no composer, no stop button, no approval prompt — so
+ * mounting it over a running turn would hide the one thing that turn
+ * may be waiting on. Refused rather than queued: a setup that springs
+ * open whenever the turn happens to end would land on someone mid-read.
+ */
+function runOnboardingRerun(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  if (!canAcceptMessage(state)) {
+    if (!canTypeMessage(state)) return;
+    const text =
+      "setup can't open while a turn is running — wait for it or /abort, then /onboarding";
+    dispatch({ type: "runtime_info", line: text });
+    dispatch({ type: "system_message", text });
+    return;
+  }
+  callbacks.onOnboardingRerunRequested?.();
 }
 
 /**

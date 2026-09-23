@@ -152,3 +152,59 @@ describe("OpenRouterProvider — providerPreferences", () => {
     expect(vision.bodies[0]).not.toHaveProperty("provider");
   });
 });
+
+describe("OpenRouterProvider — cache-capable routes for Google models", () => {
+  const GOOGLE = "google/gemini-3.8-flash";
+  const CACHE_ROUTES = {
+    order: ["Google AI Studio", "Google"],
+    allow_fallbacks: true,
+  };
+
+  it("pins a Google model to its caching routes by default, unary and streamed", async () => {
+    const { bodies, fetchImpl } = capture(unaryReply);
+    const provider = openRouter(fetchImpl, { defaultChatModel: GOOGLE });
+    await provider.complete(request);
+    expect(bodies[0]?.provider).toEqual(CACHE_ROUTES);
+
+    const streamed = capture(streamReply);
+    await drain(
+      openRouter(streamed.fetchImpl, { defaultChatModel: GOOGLE }).completeStream(request),
+    );
+    expect(streamed.bodies[0]?.provider).toEqual(CACHE_ROUTES);
+  });
+
+  it("lets the operator's own providerPreferences win", async () => {
+    const { bodies, fetchImpl } = capture(unaryReply);
+    await openRouter(fetchImpl, {
+      defaultChatModel: GOOGLE,
+      providerPreferences: PREFERENCES,
+    }).complete(request);
+    expect(bodies[0]?.provider).toEqual(PREFERENCES);
+  });
+
+  it("sends nothing when preferCacheRoutes is off, or the model is not Google's", async () => {
+    const off = capture(unaryReply);
+    await openRouter(off.fetchImpl, {
+      defaultChatModel: GOOGLE,
+      preferCacheRoutes: false,
+    }).complete(request);
+    expect(off.bodies[0]).not.toHaveProperty("provider");
+
+    const other = capture(unaryReply);
+    await openRouter(other.fetchImpl).complete(request);
+    expect(other.bodies[0]).not.toHaveProperty("provider");
+  });
+});
+
+describe("OpenRouterProvider — reasoning effort (F20)", () => {
+  it("sends `reasoning: { effort }` on both paths, and only when asked", async () => {
+    const { bodies, fetchImpl } = capture(unaryReply);
+    const provider = openRouter(fetchImpl);
+    await provider.complete({ ...request, reasoningEffort: "low" });
+    await drain(provider.completeStream({ ...request, reasoningEffort: "high" }));
+    await provider.complete(request);
+    expect(bodies[0]?.reasoning).toEqual({ effort: "low" });
+    expect(bodies[1]?.reasoning).toEqual({ effort: "high" });
+    expect(bodies[2]).not.toHaveProperty("reasoning");
+  });
+});

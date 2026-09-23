@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
+import {
+  createOpenAiStreamConsumer,
+  OpenAiSseError,
+} from "./openai-stream-consumer.js";
+import { readGenerationId } from "./generation-id.js";
 import type { StreamFinalResult } from "../completion-types.js";
 
 function sseFrame(payload: Record<string, unknown>): string {
@@ -237,5 +241,141 @@ describe("openai stream consumer tool-call assembly", () => {
       "call_a",
       "call_b",
     ]);
+  });
+});
+
+describe("openai stream consumer: text beside a tool-call delta", () => {
+  it("keeps the text of a chunk that also carries a tool-call delta", async () => {
+    // Gemini's compatibility layer and Anthropic shims put the model's
+    // prose and its call in one event; the prose used to be dropped.
+    const consumer = createOpenAiStreamConsumer("auto");
+    const iterator = consumer.consume(
+      bodyOf(
+        sseFrame({
+          model: "test-model",
+          choices: [
+            {
+              index: 0,
+              delta: {
+                content: "Reading the file. ",
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "os__fs__read", arguments: '{"path":"a"}' },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        }) + DONE,
+      ),
+      undefined,
+    );
+    const deltas: string[] = [];
+    let final: StreamFinalResult | undefined;
+    for (;;) {
+      const step = await iterator.next();
+      if (step.done) {
+        final = step.value as StreamFinalResult;
+        break;
+      }
+      deltas.push(step.value.delta);
+    }
+    expect(deltas.join("")).toBe("Reading the file. ");
+    expect(final?.content).toBe("Reading the file. ");
+    expect(final?.toolCalls).toMatchObject([
+      { function: { name: "os__fs__read", arguments: '{"path":"a"}' } },
+    ]);
+  });
+
+  it("reads reasoning from any of the three fields under `auto`", async () => {
+    for (const field of ["reasoning", "reasoning_content", "thinking"]) {
+      const consumer = createOpenAiStreamConsumer("auto");
+      const iterator = consumer.consume(
+        bodyOf(
+          sseFrame({
+            model: "test-model",
+            choices: [{ index: 0, delta: { [field]: "hmm" }, finish_reason: null }],
+          }) + DONE,
+        ),
+        undefined,
+      );
+      let final: StreamFinalResult | undefined;
+      for (;;) {
+        const step = await iterator.next();
+        if (step.done) {
+          final = step.value as StreamFinalResult;
+          break;
+        }
+      }
+      expect(final?.reasoningContent).toBe("hmm");
+    }
+  });
+});
+
+describe("openai stream consumer generation id (F29)", () => {
+  it("carries the chunks' id on the final result", async () => {
+    const result = await drain(
+      sseFrame({
+        id: "gen-abc123",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "hi" }, finish_reason: null }],
+      }) + DONE,
+    );
+    expect(result.generationId).toBe("gen-abc123");
+    expect(result.content).toBe("hi");
+  });
+
+  it("throws a typed error on a mid-stream error event, with the id and what streamed before it", async () => {
+    // OpenRouter, run 14: `504 Upstream idle timeout` after 10,528 tokens.
+    const body =
+      sseFrame({
+        id: "gen-504",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }],
+      }) +
+      sseFrame({
+        id: "gen-504",
+        error: { code: 504, message: "Upstream idle timeout" },
+        choices: [{ index: 0, delta: {}, finish_reason: "error" }],
+      });
+    const consumer = createOpenAiStreamConsumer("delta_reasoning");
+    const iterator = consumer.consume(bodyOf(body), undefined);
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    const err = await iterator.next().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenAiSseError);
+    expect((err as OpenAiSseError).status).toBe(504);
+    expect((err as OpenAiSseError).message).toBe("Upstream idle timeout");
+    expect((err as OpenAiSseError).generationId).toBe("gen-504");
+    expect(readGenerationId(err)).toBe("gen-504");
+  });
+
+  it("attaches the id to a body that died after output", async () => {
+    const chunk = new TextEncoder().encode(
+      sseFrame({
+        id: "gen-dead",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "some" }, finish_reason: null }],
+      }),
+    );
+    const dying = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+      },
+      pull(controller) {
+        controller.error(new Error("terminated"));
+      },
+    });
+    const consumer = createOpenAiStreamConsumer("delta_reasoning");
+    const iterator = consumer.consume(dying, undefined);
+    await iterator.next();
+    const err = await iterator.next().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("terminated");
+    expect(readGenerationId(err)).toBe("gen-dead");
   });
 });

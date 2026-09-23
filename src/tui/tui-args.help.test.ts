@@ -19,6 +19,7 @@ describe("parseTuiArgs --help", () => {
       "--max-steps",
       "--no-approval",
       "--skip-llama-setup",
+      "--onboarding",
     ]) {
       expect(TUI_HELP).toContain(flag);
     }

@@ -5,9 +5,16 @@ import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 // The module, not the fallback barrel: it has no imports of its own, so
 // tracing does not pull the provider clients in behind it.
 import { summarizeFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+import { readGenerationId } from "../../llm/provider/openai/generation-id.js";
 
 import type { TraceError, TraceEvent } from "./trace-event.js";
 import type { TraceSink } from "./trace-bus.js";
+
+/** The `generationId` field of an `error` row, or nothing. */
+function generationIdOf(error: unknown): Pick<TraceError, "generationId"> {
+  const id = readGenerationId(error);
+  return id === undefined ? {} : { generationId: id };
+}
 
 /** The `fallbackFailures` field of an `error` row, or nothing. */
 function fallbackFailuresOf(
@@ -184,6 +191,9 @@ export function createTraceRecorder(
           attempt: inner.attempt,
           content: completion.content,
           ...(reasoning !== undefined ? { reasoningContent: reasoning } : {}),
+          ...(inner.reasoningTokens !== undefined
+            ? { reasoningTokens: inner.reasoningTokens }
+            : {}),
           ...(completion.timing
             ? {
                 timing: {
@@ -198,6 +208,9 @@ export function createTraceRecorder(
           modelId: completion.modelId,
           stop: completion.stop,
           truncated: completion.truncated,
+          ...(completion.generationId !== undefined
+            ? { generationId: completion.generationId }
+            : {}),
         });
         return;
       }
@@ -240,6 +253,21 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
+      case "batch_trimmed":
+        push({
+          type: "batch_trimmed",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          originalSize: inner.originalSize,
+          kept: inner.kept,
+          dropped: [...inner.dropped],
+          ...(inner.refused !== undefined ? { refused: [...inner.refused] } : {}),
+          reason: inner.reason,
+        });
+        return;
       case "step_error":
         push({
           type: "error",
@@ -251,6 +279,7 @@ export function createTraceRecorder(
           message: inner.error.message,
           ...(inner.error.stack ? { stack: inner.error.stack } : {}),
           category: inner.category,
+          ...generationIdOf(inner.error),
           ...fallbackFailuresOf(inner.error),
         });
         return;
@@ -403,6 +432,10 @@ export function createTraceRecorder(
             stepIndex: event.stepIndex,
             summary: event.summary,
             durationMs: event.durationMs,
+            ...(event.progressNote === true ? { progressNote: true } : {}),
+            ...(event.reviewStall !== undefined
+              ? { reviewStall: event.reviewStall }
+              : {}),
           });
           currentStepIndex = null;
           pendingCalls = new Map();
@@ -482,12 +515,27 @@ export function createTraceRecorder(
             cause: event.cause,
             completionTokens: event.completionTokens,
             promptTokens: event.promptTokens,
-            requestedMaxTokens: event.requestedMaxTokens,
+            ...(event.requestedMaxTokens !== undefined
+              ? { requestedMaxTokens: event.requestedMaxTokens }
+              : {}),
             retry: event.retry.kind,
             retryValue:
               event.retry.kind === "raise_cap"
                 ? event.retry.maxTokens
                 : event.retry.contextWindow,
+          });
+          return;
+        case "prompt_repacked":
+          push({
+            type: "prompt_repacked",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            contextWindow: event.contextWindow,
+            source: event.source,
+            promptTokens: event.promptTokens,
           });
           return;
         case "loop_detected":
@@ -534,6 +582,7 @@ export function createTraceRecorder(
             message: event.error.message,
             ...(event.error.stack ? { stack: event.error.stack } : {}),
             category: event.category,
+            ...generationIdOf(event.error),
             ...fallbackFailuresOf(event.error),
           });
           return;

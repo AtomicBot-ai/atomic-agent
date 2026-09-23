@@ -117,15 +117,21 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── os.shell ─────────────────────────────────────────────────────────────
   [
     "os.shell.run",
-    obj(
-      {
-        cmd: stringSchema,
-        args: stringArraySchema,
-        cwd: stringSchema,
-        timeoutMs: numberSchema,
-      },
-      ["cmd", "args"],
-    ),
+    // Four forms share one schema: `{cmd, args, …}` runs a command;
+    // `{wait}`, `{kill}` and `{jobs}` act on a job the default timeout
+    // detached (F47). Nothing is required at the schema level because
+    // each form requires a different key; the tool refuses a call that
+    // mixes them or names none.
+    obj({
+      cmd: stringSchema,
+      args: stringArraySchema,
+      cwd: stringSchema,
+      timeoutMs: numberSchema,
+      keep: booleanSchema,
+      wait: integerSchema,
+      kill: integerSchema,
+      jobs: booleanSchema,
+    }),
   ],
 
   // ── os.fs ────────────────────────────────────────────────────────────────
@@ -149,10 +155,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         path: stringSchema,
         content: stringSchema,
         mode: { type: "string", enum: ["replace", "append"] },
+        // F51: the only way past the input refusal (`fs-input-guard.ts`).
+        overwrite: booleanSchema,
       },
       ["path", "content"],
     ),
   ],
+  ["os.fs.restore", obj({ path: stringSchema }, ["path"])],
   ["os.fs.trash", obj({ paths: stringArraySchema }, ["paths"])],
   [
     "os.fs.list",
@@ -206,6 +215,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
           anyOf: [stringSchema, stringArraySchema],
         },
         type: stringSchema,
+        literal: booleanSchema,
         caseInsensitive: booleanSchema,
         multiline: booleanSchema,
         outputMode: {
@@ -709,20 +719,119 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
           items: obj(
             {
               id: stringSchema,
+              // Optional since F44: the tool defaults it to the id.
               title: stringSchema,
               instructions: stringSchema,
               deliverable: stringSchema,
               files: { ...stringArraySchema, maxItems: 32 },
             },
-            ["id", "title", "instructions"],
+            ["id", "instructions"],
           ),
         },
         // No upper bound: the orchestrator sizes its own fan-out and
         // the tool bounds the number by the task count and the server's
         // request slots. See `delegate-args.ts`.
         maxWorkers: { type: "integer", minimum: 1 },
+        // The interface between the parts (`contract.ts`). `checks`
+        // items are `verify.run` specs plus a `task`, so they stay open.
+        contract: obj({
+          // F51: the operator's own files; workers edit them in place.
+          inputs: { ...stringArraySchema, maxItems: 32 },
+          owners: {
+            type: "object",
+            additionalProperties: { type: "string" },
+          },
+          provides: {
+            type: "array",
+            maxItems: 64,
+            items: obj(
+              {
+                task: stringSchema,
+                kind: {
+                  type: "string",
+                  enum: [
+                    "symbol",
+                    "file",
+                    "id",
+                    "endpoint",
+                    "env",
+                    "flag",
+                    "other",
+                  ],
+                },
+                name: stringSchema,
+                in: stringSchema,
+              },
+              ["task", "kind", "name"],
+            ),
+          },
+          requires: {
+            type: "array",
+            items: obj({ task: stringSchema, name: stringSchema }, [
+              "task",
+              "name",
+            ]),
+          },
+          checks: {
+            type: "array",
+            maxItems: 16,
+            items: objOpen({ task: stringSchema }),
+          },
+        }),
       },
       ["tasks"],
+    ),
+  ],
+  ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],
+  [
+    "verify.run",
+    obj(
+      {
+        kind: { type: "string", enum: ["command", "service", "page"] },
+        cwd: stringSchema,
+        // A map of arbitrary keys, like `os.http.request.headers`; the
+        // strict converter refuses it, knowingly.
+        env: { type: "object", additionalProperties: { type: "string" } },
+        timeoutMs: numberSchema,
+        network: booleanSchema,
+        cmd: stringSchema,
+        args: stringArraySchema,
+        start: obj({ cmd: stringSchema, args: stringArraySchema }, ["cmd"]),
+        ready: obj({ port: integerSchema, url: stringSchema, timeoutMs: numberSchema }),
+        requests: {
+          type: "array",
+          items: obj({
+            method: stringSchema,
+            path: stringSchema,
+            url: stringSchema,
+            body: stringSchema,
+            expectStatus: integerSchema,
+            expectBody: stringSchema,
+          }),
+        },
+        path: stringSchema,
+        url: stringSchema,
+        script: {
+          type: "array",
+          items: obj(
+            {
+              action: { type: "string", enum: ["click", "key", "type", "wait"] },
+              selector: stringSchema,
+              key: stringSchema,
+              text: stringSchema,
+              ms: numberSchema,
+            },
+            ["action"],
+          ),
+        },
+        seconds: numberSchema,
+        probes: {
+          type: "array",
+          items: obj({ name: stringSchema, expr: stringSchema }, ["name", "expr"]),
+        },
+        checks: stringArraySchema,
+      },
+      ["kind"],
     ),
   ],
 

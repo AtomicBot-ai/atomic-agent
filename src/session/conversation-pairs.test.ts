@@ -96,13 +96,29 @@ describe("counting macro-turns", () => {
 });
 
 describe("packing by pairs", () => {
-  it("keeps exactly the last N tasks", () => {
+  it("keeps exactly the last N tasks when the cut is not chunked", () => {
     const turns = [...task("a"), ...task("b"), ...task("c"), ...task("d")];
-    const out = packConversation(turns, NO_TOKEN_PRESSURE, { maxPairs: 2 });
+    const out = packConversation(turns, NO_TOKEN_PRESSURE, {
+      maxPairs: 2,
+      lowWater: 1,
+    });
     expect(out.visiblePairs).toBe(2);
     expect(out.droppedPairs).toBe(2);
     expect(out.visibleTurns).toHaveLength(8);
     expect(out.visibleTurns[0]).toEqual(turns[8]);
+  });
+
+  it("drops to the low-water share of the cap by default, so the cut holds", () => {
+    // Past the cap the transcript falls to `floor(cap × 0.65)` tasks —
+    // one here — and stays there while tasks are appended, instead of
+    // dropping one task per task and moving the prompt's first line
+    // every time (see `conversation-pack-start.test.ts`).
+    const turns = [...task("a"), ...task("b"), ...task("c"), ...task("d")];
+    const out = packConversation(turns, NO_TOKEN_PRESSURE, { maxPairs: 2 });
+    expect(out.visiblePairs).toBe(1);
+    expect(out.droppedPairs).toBe(3);
+    expect(out.boundBy).toBe("pairs");
+    expect(out.packStart).toEqual({ index: 12, at: turns[12]!.at, boundBy: "pairs" });
   });
 
   it("cuts on a task boundary, never mid-task", () => {

@@ -34,8 +34,22 @@ export interface ProviderHealthResult {
 
 export type ToolsSupportLevel = "none" | "basic" | "parallel" | "strict";
 
+/**
+ * Which field of an OpenAI-compatible message/delta carries the model's
+ * reasoning. `auto` (the provider default) reads whichever of
+ * `reasoning`, `reasoning_content` and `thinking` is present — OpenRouter,
+ * DeepSeek-style servers and Anthropic-compatible shims each use a
+ * different one, and a stream whose field is not the configured one used
+ * to lose its reasoning silently. The named formats pin one field for a
+ * model whose server also writes a *different* field with something that
+ * is not reasoning.
+ */
 export type ReasoningFormat =
-  "none" | "delta_reasoning" | "delta_thinking" | "delta_reasoning_content";
+  | "auto"
+  | "none"
+  | "delta_reasoning"
+  | "delta_thinking"
+  | "delta_reasoning_content";
 
 /**
  * Snapshot of what a provider can do. `toolTransport` drives whether

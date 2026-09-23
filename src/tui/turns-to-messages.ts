@@ -46,6 +46,7 @@ export function turnsToMessages(
           id: `msg-user-${i}-${at}`,
           role: "user",
           text: asText(turn.text),
+          ...(turn.steered === true ? { steered: true } : {}),
           timestamp: at,
         });
         break;

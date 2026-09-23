@@ -169,7 +169,8 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "import",
-    description: "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
+    description:
+      "open the Import tab (Hermes, OpenClaw, Claude Code, Codex, Pi or Oh-My-Pi)",
   },
   {
     name: "privacy",
@@ -225,6 +226,13 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "runmode",
     description:
       "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+  },
+  // The way back into first-run setup once it was skipped or finished.
+  {
+    name: "onboarding",
+    description:
+      "run first-time setup again from the start — keeps your providers, keys, sessions and memory",
+    aliases: ["setup"],
   },
   {
     name: "uninstall",

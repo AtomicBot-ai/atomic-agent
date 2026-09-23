@@ -121,8 +121,16 @@ export function appendChatMessage(
 }
 
 /** Append a user chat message and mirror it into `inputHistory`. */
-export function appendUserMessage(state: TuiState, text: string): TuiState {
-  const withMessage = appendChatMessage(state, { role: "user", text });
+export function appendUserMessage(
+  state: TuiState,
+  text: string,
+  options: { steered?: boolean } = {},
+): TuiState {
+  const withMessage = appendChatMessage(state, {
+    role: "user",
+    text,
+    ...(options.steered ? { steered: true } : {}),
+  });
   const history = pushRing(state.inputHistory, text, state.ringBufferSize);
   // History-navigation state is deliberately left alone: this event also
   // fires in the BACKGROUND when a parked queue message drains into a
@@ -138,10 +146,36 @@ export function appendUserMessage(state: TuiState, text: string): TuiState {
   };
 }
 
-export function lastUserMessage(state: TuiState): string {
+/**
+ * The request the latest turn was opened with: the newest user message
+ * that is not a steer. Both callers name the turn by it — the stopped
+ * notice's `retryText` and the run-history entry — and a steer is a
+ * correction folded into that turn, not what it was asked to do.
+ * Re-sending only the steer (`Test`) as a fresh turn would drop the
+ * request it corrected.
+ *
+ * Walking back past a steer stops at the previous turn's final reply:
+ * when the running turn's opening message is not in the list (a turn
+ * opened over Telegram or HTTP, or a switch-back replay that dropped its
+ * oldest events), the request above that reply belongs to a finished
+ * turn, and offering to re-run it would be wrong. Interim progress
+ * notes are not a boundary. The result is then "" and no retry is
+ * offered.
+ */
+export function lastTurnRequest(state: TuiState): string {
+  let passedSteer = false;
   for (let i = state.messages.length - 1; i >= 0; i -= 1) {
     const msg = state.messages[i];
-    if (msg?.role === "user") return msg.text;
+    if (msg?.role === "user") {
+      if (msg.steered !== true) return msg.text;
+      passedSteer = true;
+    } else if (
+      passedSteer &&
+      msg?.role === "assistant" &&
+      msg.progressNote !== true
+    ) {
+      return "";
+    }
   }
   return "";
 }
@@ -273,7 +307,7 @@ function withRunHistoryEntry(
   },
 ): TuiState {
   const entry: RunHistoryEntry = {
-    message: lastUserMessage(state),
+    message: lastTurnRequest(state),
     outcome: params.outcome,
     reason: params.reason,
     stepCount: params.stepCount,

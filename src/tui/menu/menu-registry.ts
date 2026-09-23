@@ -354,7 +354,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "import",
       description:
-        "open the Import tab (Hermes, OpenClaw, Claude Code or Codex)",
+        "open the Import tab (Hermes, OpenClaw, Claude Code, Codex, Pi or Oh-My-Pi)",
       rank: 31,
     },
     section: "manage",
@@ -602,6 +602,21 @@ export const MENU: readonly MenuNode[] = [
       description:
         "switch the UI theme: `/theme <name>` | `/theme list` (classic-dark, classic-light, toxic-green, khorne-red, …)",
       rank: 3,
+    },
+  },
+  {
+    kind: "action",
+    id: "setup.onboarding",
+    label: "Run first-time setup again…",
+    group: "setup",
+    // No chord: every free key is worth more to a verb used daily, and
+    // this one is used once in a while — the palette finds it by name.
+    slash: {
+      name: "onboarding",
+      description:
+        "run first-time setup again from the start — keeps your providers, keys, sessions and memory",
+      aliases: ["setup"],
+      rank: 43,
     },
   },
   {

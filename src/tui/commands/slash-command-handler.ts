@@ -129,6 +129,12 @@ export interface SlashDispatchResult {
    */
   readonly triggerUninstallPlan?: boolean;
   /**
+   * `/onboarding`: clear the first-run stamps and open the flow from its
+   * splash. The caller refuses it while a turn is running — the flow
+   * takes over the whole terminal, approval prompts included.
+   */
+  readonly triggerOnboardingRerun?: boolean;
+  /**
    * `/runmode <mode>` picks a run mode, `/runmode status` prints what it
    * resolves to. Both need the live state / orchestrator, which only the
    * caller (`submit-handler.ts`) can reach.
@@ -229,6 +235,10 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([{ type: "uninstall_opened" }], {
         triggerUninstallPlan: true,
       });
+    case "onboarding":
+      // The flow is the feedback, like `/report`'s popup: no system line
+      // behind a surface that replaces the chat.
+      return pureActions([], { triggerOnboardingRerun: true });
     case "debug":
       return pureActions([{ type: "ui_mode_toggled" }]);
     case "context":

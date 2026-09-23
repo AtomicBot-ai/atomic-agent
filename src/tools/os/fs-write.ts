@@ -1,8 +1,26 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { categorizeFsMutation } from "./fs-approval-scope.js";
+import { checkChangedFile } from "./fs-content-check.js";
+import {
+  checkInputReplacement,
+  refuseInputReplacement,
+} from "./fs-input-guard.js";
+import { PARSE_CHECK_MAX_CHARS, withParseWarning } from "./fs-parse-check.js";
+import {
+  NO_REPLACE_NOTE,
+  countLines,
+  formatBytes,
+  formatLines,
+  formatNumber,
+  guardReplacedFile,
+  readPriorFile,
+  withReplaceNotes,
+  type PriorFile,
+} from "./fs-replace-guard.js";
+import type { FileRestoreStore } from "./fs-restore-store.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
@@ -38,7 +56,31 @@ export function buildOsFsWriteTool(
         typeof rawArgs.mode === "string" && rawArgs.mode === "append"
           ? "append"
           : "replace";
+      const overwrite = rawArgs.overwrite === true;
       const absolute = resolveUserPath(path, ctx.workingDir);
+
+      // A file the request names as an input is not replaced without
+      // `overwrite: true` (F51, `fs-input-guard.ts`). Decided on the
+      // model's own target before the operator is asked, so no prompt is
+      // raised for a write that will not run; a target the operator
+      // moves the write to from the prompt is their choice.
+      if (mode === "replace") {
+        const existing = await readPriorFile(absolute);
+        if (existing !== null) {
+          const refused = await checkInputReplacement({
+            store: options.restore,
+            sessionId: ctx.sessionId,
+            absolute,
+            display: path,
+            prior: existing,
+            after: content,
+            request: options.resolveOriginalRequest?.(ctx.sessionId),
+            declaredInputs: options.declaredInputs?.inputsOf(ctx.sessionId),
+            overwrite,
+          });
+          if (refused !== null) return refuseInputReplacement("os.fs.write", refused);
+        }
+      }
 
       const preview =
         content.length > 400 ? `${content.slice(0, 400)}…` : content;
@@ -99,6 +141,10 @@ export function buildOsFsWriteTool(
         if (nextCategory === outcome.category) break;
       }
 
+      // What is there now, read before it is gone: the line counts the
+      // result reports, and — for a user's file about to be replaced —
+      // the content the restore copy is taken from.
+      const prior = await readPriorFile(target);
       await mkdir(dirname(target), { recursive: true });
       if (mode === "append") {
         const { appendFile } = await import("node:fs/promises");
@@ -106,23 +152,126 @@ export function buildOsFsWriteTool(
       } else {
         await writeFile(target, content, "utf8");
       }
+      const guard =
+        prior === null
+          ? await noteCreated(options.restore, ctx.sessionId, target)
+          : mode === "replace"
+            ? await guardReplacedFile({
+                store: options.restore,
+                sessionId: ctx.sessionId,
+                workingDir: ctx.workingDir,
+                absolute: target,
+                display: target === absolute ? path : target,
+                tool: "os.fs.write",
+                change: "replace",
+                prior,
+                after: content,
+              })
+            : NO_REPLACE_NOTE;
+      const parseWarning = await parseWarningAfterWrite(
+        target,
+        mode,
+        content,
+        ctx.workingDir,
+      );
+      const linesAfter = countLines(content);
       // The path is echoed in `output` (not just `details`) so a model
       // that had its target moved reads where the file actually landed
       // and keeps working against the right path.
-      return compressToolResult({
-        tool: "os.fs.write",
-        status: "ok",
-        output:
-          target === absolute
-            ? `wrote ${content.length} bytes to ${target} (${mode})`
-            : `wrote ${content.length} bytes to ${target} (${mode}); the operator moved this write from ${absolute}`,
-        details: {
-          path: target,
-          bytes: content.length,
-          mode,
-          ...(target === absolute ? {} : { requestedPath: absolute }),
-        },
-      });
+      const wording = describeWrite(mode, prior, linesAfter);
+      return withReplaceNotes(
+        withParseWarning(
+          compressToolResult({
+            tool: "os.fs.write",
+            status: "ok",
+            output:
+              target === absolute
+                ? `wrote ${content.length} bytes to ${target} (${wording})`
+                : `wrote ${content.length} bytes to ${target} (${wording}); the operator moved this write from ${absolute}`,
+            details: {
+              path: target,
+              bytes: content.length,
+              mode,
+              lines: linesAfter,
+              existed: prior !== null,
+              ...(overwrite ? { overwrite: true } : {}),
+              ...(prior === null ? {} : { previousBytes: prior.bytes }),
+              ...(prior?.lines === undefined || prior.lines === null
+                ? {}
+                : { previousLines: prior.lines }),
+              ...(target === absolute ? {} : { requestedPath: absolute }),
+            },
+          }),
+          parseWarning,
+        ),
+        [guard],
+      );
     },
   };
+}
+
+/**
+ * The parenthetical after "wrote N bytes to path": `(replace)` used to
+ * be all a model read when it overwrote a 2,401-line dataset with 10
+ * lines, so the counts ride along — `(replace, 2,401 lines → 10)`,
+ * `(replace, new file, 10 lines)`, `(replace, 12.3 MB → 10 lines)` for
+ * a file too large to read. An append is judged on the chunk only.
+ */
+function describeWrite(
+  mode: "append" | "replace",
+  prior: PriorFile | null,
+  linesAfter: number,
+): string {
+  if (mode === "append") return "append";
+  if (prior === null) return `replace, new file, ${formatLines(linesAfter)}`;
+  if (prior.lines === null) {
+    return `replace, ${formatBytes(prior.bytes)} → ${formatLines(linesAfter)}`;
+  }
+  return `replace, ${formatLines(prior.lines)} → ${formatNumber(linesAfter)}`;
+}
+
+/** Remember that this session created `target`, so replacing it later is not a loss. Best effort. */
+async function noteCreated(
+  store: FileRestoreStore | undefined,
+  sessionId: string,
+  target: string,
+): Promise<typeof NO_REPLACE_NOTE> {
+  if (store !== undefined) {
+    try {
+      await store.recordCreated(sessionId, target);
+    } catch {
+      // The write already landed; a manifest that could not be written
+      // only means a later replacement is announced when it need not be.
+    }
+  }
+  return NO_REPLACE_NOTE;
+}
+
+/**
+ * Check what now sits at `target` (see `fs-parse-check.ts` and
+ * `fs-content-check.ts`). An append is judged on the whole file, not the
+ * chunk. Any failure to check is silence: the write already succeeded
+ * and is reported as such.
+ */
+async function parseWarningAfterWrite(
+  target: string,
+  mode: "append" | "replace",
+  content: string,
+  workingDir: string,
+): Promise<string | null> {
+  try {
+    let written = content;
+    if (mode === "append") {
+      if ((await stat(target)).size > PARSE_CHECK_MAX_CHARS) return null;
+      written = await readFile(target, "utf8");
+    }
+    return checkChangedFile({
+      absolute: target,
+      workingDir,
+      change: "write",
+      after: written,
+    });
+  } catch {
+    return null;
+  }
 }

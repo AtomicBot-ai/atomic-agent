@@ -682,6 +682,60 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.worldSnapshotMaxTokens).toBe(4_000);
   });
 
+  it("defaults conversationLowWater to 0.65 and bounds it to (0, 1]", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).agent
+        .conversationLowWater,
+    ).toBe(0.65);
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { conversationLowWater: 1 },
+      }).agent.conversationLowWater,
+    ).toBe(1);
+    for (const bad of [0, 1.5, -0.2]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { conversationLowWater: bad },
+        }),
+      ).toThrow(/agent.conversationLowWater/);
+    }
+  });
+
+  it("defaults agent.readScope to working-dir and accepts only the two scopes (v67)", () => {
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).agent.readScope,
+    ).toBe("working-dir");
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { readScope: "unrestricted" },
+      }).agent.readScope,
+    ).toBe("unrestricted");
+    // `null` is "absent" here, as for every other `agent.*` field.
+    for (const bad of ["everywhere", "", 1, true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { readScope: bad },
+        }),
+      ).toThrow(/agent.readScope/);
+    }
+  });
+
+  it("upgrades a v66 file to v67 with the confined read scope", () => {
+    // The default-behaviour change: an older file has no field and takes
+    // `working-dir`; what it did carry is kept.
+    const parsed = parseUserConfigFile({
+      version: 66,
+      agent: { toolTimeoutMs: 45_000 },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.agent.readScope).toBe("working-dir");
+    expect(parsed.agent.toolTimeoutMs).toBe(45_000);
+  });
+
   it("accepts conversationMaxTokens: 0 as the auto sentinel", () => {
     // `0` is not a request for a zero-token transcript: it is "let the
     // window decide", the same sentinel `localModels.managed.contextSize`
@@ -700,6 +754,29 @@ describe("parseUserConfigFile", () => {
         agent: { conversationMaxTokens: -1 },
       }),
     ).toThrow(/agent.conversationMaxTokens/);
+  });
+
+  it("ships the transcript on auto and two hundred pairs, bounded to [1, 1000]", () => {
+    // The shipped caps: the window decides the token cap (`0` = auto),
+    // and the pair cap is high enough that the token cap binds first on
+    // any real hardware. Pinned as literals so neither can drift silently.
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.agent.conversationMaxTokens).toBe(0);
+    expect(parsed.agent.conversationMaxPairs).toBe(200);
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { conversationMaxPairs: 1000 },
+      }).agent.conversationMaxPairs,
+    ).toBe(1000);
+    for (const bad of [0, 1001, -5]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { conversationMaxPairs: bad },
+        }),
+      ).toThrow(/agent.conversationMaxPairs/);
+    }
   });
 
   it("rejects non-object root", () => {
@@ -942,6 +1019,28 @@ describe("parseUserConfigFile", () => {
       localModels: { managed: { tensorSplit: [3, 1] } },
     });
     expect(parsed.localModels.managed.tensorSplit).toEqual([3, 1]);
+  });
+
+  it("defaults localModels.managed.swaFull to auto and validates the enum", () => {
+    expect(USER_CONFIG_DEFAULTS.localModels.managed.swaFull).toBe("auto");
+    expect(
+      parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed
+        .swaFull,
+    ).toBe("auto");
+    for (const value of ["on", "off", "auto"] as const) {
+      expect(
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          localModels: { managed: { swaFull: value } },
+        }).localModels.managed.swaFull,
+      ).toBe(value);
+    }
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { swaFull: "yes" } },
+      }),
+    ).toThrow(/localModels\.managed\.swaFull/);
   });
 
   it("defaults localModels.managed.parallel to auto (the machine decides)", () => {
@@ -1462,6 +1561,70 @@ describe("parseUserConfigFile", () => {
         projects: { roots: "~/dev" },
       }),
     ).toThrow(/projects\.roots/);
+  });
+
+  it("accepts a v66 file and fills in the tools.shell defaults transparently", () => {
+    // v67: an existing file has no `tools` block; it takes the defaults so
+    // an omitted `timeoutMs` detaches at ten minutes from the next start,
+    // a detached job dies within the hour, and three may run at once.
+    const parsed = parseUserConfigFile({ version: 66 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tools).toEqual({
+      shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 },
+    });
+  });
+
+  it("preserves explicit tools.shell.jobMaxMs and maxJobs, and rejects non-positive ones", () => {
+    const pinned = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { jobMaxMs: 7_200_000, maxJobs: 1 } },
+    });
+    expect(pinned.tools.shell.jobMaxMs).toBe(7_200_000);
+    expect(pinned.tools.shell.maxJobs).toBe(1);
+    // A ceiling of 0 would be "kill at once" and a job limit of 0 "never
+    // detach" — neither is what the fields mean, so both are refused.
+    for (const field of ["jobMaxMs", "maxJobs"] as const) {
+      for (const value of [0, -1, 1.5, Infinity, NaN, "many", true]) {
+        expect(() =>
+          parseUserConfigFile({
+            version: USER_CONFIG_VERSION,
+            tools: { shell: { [field]: value } },
+          }),
+        ).toThrow(new RegExp(`tools\\.shell\\.${field}`));
+      }
+    }
+  });
+
+  it("keeps the shell default timeout at ten minutes or more", () => {
+    // A long install or test suite has to fit; the timeout message tells
+    // the model what to pass for longer, so the default must not shrink.
+    expect(
+      USER_CONFIG_DEFAULTS.tools.shell.defaultTimeoutMs,
+    ).toBeGreaterThanOrEqual(600_000);
+  });
+
+  it("preserves an explicit tools.shell.defaultTimeoutMs, including 0 (no default)", () => {
+    const pinned = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { defaultTimeoutMs: 1_800_000 } },
+    });
+    expect(pinned.tools.shell.defaultTimeoutMs).toBe(1_800_000);
+    const unbounded = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { defaultTimeoutMs: 0 } },
+    });
+    expect(unbounded.tools.shell.defaultTimeoutMs).toBe(0);
+  });
+
+  it("rejects a tools.shell.defaultTimeoutMs that is not a non-negative finite integer", () => {
+    for (const defaultTimeoutMs of [-1, 1.5, Infinity, NaN, "soon", true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          tools: { shell: { defaultTimeoutMs } },
+        }),
+      ).toThrow(/tools\.shell\.defaultTimeoutMs/);
+    }
   });
 
   it("preserves an explicit telegram.progressIndicator=false", () => {
@@ -2056,6 +2219,106 @@ describe("localModels.completionMaxTokens (config v60)", () => {
   it("leaves an older file on its positive default", () => {
     expect(
       parseUserConfigFile({ version: 51 }).localModels.completionMaxTokens,
-    ).toBe(8192);
+    ).toBe(16_384);
+  });
+});
+
+describe("localModels.useServerTemplate / thinking (F31)", () => {
+  it("defaults both to auto", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.useServerTemplate).toBe("auto");
+    expect(parsed.localModels.thinking).toBe("auto");
+    expect(USER_CONFIG_DEFAULTS.localModels.useServerTemplate).toBe("auto");
+  });
+
+  it("reads on/off and rejects anything else, naming the field", () => {
+    const set = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { useServerTemplate: "on", thinking: "off" },
+    });
+    expect(set.localModels.useServerTemplate).toBe("on");
+    expect(set.localModels.thinking).toBe("off");
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { thinking: "maybe" },
+      }),
+    ).toThrow(/localModels\.thinking/);
+  });
+
+  it("fills an older file that lacks the fields", () => {
+    const parsed = parseUserConfigFile({ version: 60 });
+    expect(parsed.localModels.useServerTemplate).toBe("auto");
+    expect(parsed.localModels.thinking).toBe("auto");
+  });
+});
+
+describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
+  it("defaults to 1500 tokens", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens).toBe(1500);
+  });
+
+  it("accepts 0 (unbounded) and an integer in [64, 32768], naming the field otherwise", () => {
+    const set = (reasoningBudgetTokens: unknown) =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { reasoningBudgetTokens },
+      }).localModels.reasoningBudgetTokens;
+    expect(set(0)).toBe(0);
+    expect(set(64)).toBe(64);
+    expect(set(6000)).toBe(6000);
+    expect(set(32_768)).toBe(32_768);
+    for (const bad of [-1, 12, 32_769, 2.5, "lots"]) {
+      expect(() => set(bad), String(bad)).toThrow(
+        /localModels\.reasoningBudgetTokens/,
+      );
+    }
+  });
+
+  it("fills a v67 file that predates the field with the default", () => {
+    const parsed = parseUserConfigFile({
+      version: 67,
+      localModels: { thinking: "off" },
+    });
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(parsed.localModels.thinking).toBe("off");
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+  });
+});
+
+describe("llm.runMode.fusion.reviewStallSteps (F41, config v69)", () => {
+  const llm = {
+    activeTextProvider: "openrouter",
+    providers: [
+      { id: "openrouter", kind: "openrouter", apiKey: "k" },
+      { id: "local-llama", kind: "llama-server", baseUrl: "http://127.0.0.1:8080" },
+    ],
+  };
+
+  it("round-trips the field and leaves it absent when not set", () => {
+    const set = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: { ...llm, runMode: { mode: "fusion", fusion: { reviewStallSteps: 4 } } },
+    });
+    expect(set.llm?.runMode?.fusion?.reviewStallSteps).toBe(4);
+    const unset = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: { ...llm, runMode: { mode: "fusion", fusion: { workers: 2 } } },
+    });
+    expect(unset.llm?.runMode?.fusion).toEqual({ workers: 2 });
+  });
+
+  it("upgrades a v68 file without touching its fusion block", () => {
+    const parsed = parseUserConfigFile({
+      version: 68,
+      llm: { ...llm, runMode: { mode: "fusion", fusion: { workers: 3 } } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.llm?.runMode).toEqual({
+      mode: "fusion",
+      fusion: { workers: 3 },
+    });
   });
 });

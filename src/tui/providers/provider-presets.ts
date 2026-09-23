@@ -111,6 +111,17 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Claude models through Anthropic's OpenAI-compatible endpoint",
   },
   {
+    id: "atomic-chat",
+    label: "Atomic Chat (local)",
+    // The desktop app's Local API Server binds 127.0.0.1:1337 under `/v1`
+    // and checks a key only when one is set in its settings (empty by
+    // default). 127.0.0.1, not localhost: that is the address it binds.
+    baseUrl: "http://127.0.0.1:1337",
+    envVar: "ATOMIC_CHAT_API_KEY",
+    local: true,
+    note: "the Local API Server Atomic Chat runs on your machine; no API key needed",
+  },
+  {
     id: "cerebras",
     label: "Cerebras",
     baseUrl: "https://api.cerebras.ai",

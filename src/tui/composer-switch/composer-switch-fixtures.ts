@@ -130,6 +130,7 @@ export function resolvedFusion(
     workerProviderId: "local-llama",
     workerModel: "qwen-3.5-4b",
     workers: 2,
+    workersPinned: false,
     workerMaxSteps: 40,
     workerTimeoutMs: 600_000,
     primaryProviderId: "openrouter",

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { planSegments } from "./download-segments.js";
+import {
+  planSegments,
+  streamIntoSegment,
+  type Segment,
+  type SegmentContext,
+} from "./download-segments.js";
 
 const MIN = 8;
 
@@ -66,5 +71,50 @@ describe("planSegments", () => {
     const odd = planSegments([[0, 51]], 2, MIN);
     expect(odd.at(-1)).toEqual({ start: 26, end: 51, written: 0 });
     expect(odd.reduce((n, s) => n + (s.end - s.start), 0)).toBe(51);
+  });
+});
+
+describe("streamIntoSegment", () => {
+  it("does not count a chunk past a cut that landed while it was being written", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let entered!: () => void;
+    const inWrite = new Promise<void>((resolve) => (entered = resolve));
+    const writes: Array<[number, number]> = [];
+    const handle = {
+      write: async (
+        buffer: Uint8Array,
+        _offset: number,
+        length: number,
+        position: number,
+      ) => {
+        writes.push([position, length]);
+        entered();
+        await gate;
+        return { bytesWritten: length, buffer };
+      },
+    };
+    const seg: Segment = { start: 0, end: 32, written: 0 };
+    const ctx = {
+      handle,
+      attemptSignal: new AbortController().signal,
+      stallTimeoutMs: 0,
+      slowCheckMs: 0,
+      onBytes: () => undefined,
+    } as unknown as SegmentContext;
+    const done = streamIntoSegment(
+      new Response(new Uint8Array(32), { status: 206 }),
+      seg,
+      ctx,
+      new AbortController(),
+    );
+    await inWrite;
+    // An idle connection takes 10..32 while the 32-byte chunk is on its
+    // way to disk (`download-rebalance.ts`).
+    seg.end = 10;
+    release();
+    await done;
+    expect(writes).toEqual([[0, 32]]);
+    expect(seg.written).toBe(10);
   });
 });

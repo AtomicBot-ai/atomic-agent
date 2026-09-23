@@ -76,6 +76,22 @@ function parked(data: Buffer): ReadableStream {
   });
 }
 
+/** Body that sends `bytes` every `everyMs` — alive, never silent, slow. */
+function paced(data: Buffer, everyMs: number, bytes: number): ReadableStream {
+  let at = 0;
+  return new ReadableStream({
+    async pull(controller) {
+      if (at >= data.length) {
+        controller.close();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, everyMs));
+      controller.enqueue(data.subarray(at, Math.min(at + bytes, data.length)));
+      at += bytes;
+    },
+  });
+}
+
 function parseRange(
   header: string | null,
   total: number,
@@ -479,6 +495,215 @@ describe("download-file parallel segments", () => {
     await downloadFile(URL, dest, { ...FAST, connections: 4 });
     expect(calls.map((c) => c.range)).toEqual(["bytes=64-"]);
     expect(readFileSync(dest).equals(DATA)).toBe(true);
+  });
+  /** A `206` for `range` whose body is shaped by `body`. */
+  const shaped = (
+    slice: Buffer,
+    [start, end]: [number, number],
+    body: (slice: Buffer) => ReadableStream,
+  ): Response =>
+    new Response(body(slice), {
+      status: 206,
+      headers: {
+        "content-range": `bytes ${start}-${end - 1}/${DATA.length}`,
+        etag: ETAG,
+      },
+    });
+  /** The lead's `200`, shaped the same way. */
+  const shapedLead = (
+    slice: Buffer,
+    body: (slice: Buffer) => ReadableStream,
+  ): Response =>
+    new Response(body(slice), {
+      status: 200,
+      headers: {
+        "content-length": String(DATA.length),
+        etag: ETAG,
+        "accept-ranges": "bytes",
+      },
+    });
+
+  it("reconnects a connection that trickles far below its peer instead of waiting on it", async () => {
+    const { calls, fn } = rangeServer({
+      override: {
+        // ~500 B/s: sets the download's peak rate.
+        1: (_req, slice) => shapedLead(slice, (b) => paced(b, 10, 5)),
+        // ~50 B/s, a byte in every window — never silent, so the stall
+        // watchdog would not help, and 640 ms to finish on its own.
+        2: (_req, slice, range) => shaped(slice, range, (b) => paced(b, 20, 1)),
+      },
+    });
+    globalThis.fetch = fn;
+    const retries: string[] = [];
+    const startedAt = Date.now();
+
+    await downloadFile(URL, dest, {
+      ...FAST,
+      // Two pieces of 32; a remainder under 34 is too small to split, so
+      // only the pace check can rescue it.
+      minSegmentBytes: 17,
+      connections: 2,
+      slowCheckMs: 60,
+      onRetry: (info) => retries.push(info.error.message),
+    });
+
+    expect(calls[1]!.range).toBe("bytes=32-63");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]!.range).toMatch(/^bytes=3\d-63$/);
+    expect(calls[2]!.ifRange).toBe(ETAG);
+    // A swapped connection is not an outage: nothing reports a retry,
+    // so the download chip never flashes "waiting for the network".
+    expect(retries).toEqual([]);
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(readFileSync(dest).equals(DATA)).toBe(true);
+  });
+
+  it("leaves a link that is equally slow on every connection alone", async () => {
+    const { calls, fn } = rangeServer({
+      override: {
+        1: (_req, slice) => shapedLead(slice, (b) => paced(b, 20, 1)),
+        2: (_req, slice, range) => shaped(slice, range, (b) => paced(b, 20, 1)),
+      },
+    });
+    globalThis.fetch = fn;
+
+    await downloadFile(URL, dest, {
+      ...FAST,
+      minSegmentBytes: 17,
+      connections: 2,
+      slowCheckMs: 60,
+    });
+
+    expect(calls.map((c) => c.range)).toEqual([null, "bytes=32-63"]);
+    expect(readFileSync(dest).equals(DATA)).toBe(true);
+  });
+
+  it("stops judging a slice after three reconnects that did not help", async () => {
+    const { calls, fn } = rangeServer({
+      override: {
+        1: (_req, slice) => shapedLead(slice, (b) => paced(b, 10, 5)),
+      },
+    });
+    // Every other connection runs at a steady ~50 B/s: no reconnect can
+    // ever reach the lead's pace, so reconnecting is pure cost.
+    const honest = fn;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const res = await honest(url as string, init);
+      if (res.status !== 206) return res;
+      const buf = Buffer.from(await res.arrayBuffer());
+      return new Response(paced(buf, 20, 1), {
+        status: 206,
+        headers: res.headers,
+      });
+    }) as typeof fetch;
+
+    await downloadFile(URL, dest, {
+      ...FAST,
+      minSegmentBytes: 17,
+      connections: 2,
+      slowCheckMs: 60,
+    });
+
+    const ranges = calls.map((c) => c.range);
+    expect(ranges[1]).toBe("bytes=32-63");
+    expect(ranges).toHaveLength(2 + 3);
+    expect(readFileSync(dest).equals(DATA)).toBe(true);
+  });
+
+  it("keeps reconnecting while each new connection starts fast and is then throttled", async () => {
+    const { calls, fn } = rangeServer({
+      override: {
+        1: (_req, slice) => shapedLead(slice, (b) => paced(b, 10, 5)),
+      },
+    });
+    // A per-connection token bucket: 4 bytes over the first ~40 ms, then
+    // a byte every 400 ms. A reconnect budget that never refilled would
+    // run out after three and leave ~7 s of trickle.
+    const honest = fn;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const res = await honest(url as string, init);
+      if (res.status !== 206) return res;
+      const buf = Buffer.from(await res.arrayBuffer());
+      let at = 0;
+      const body = new ReadableStream({
+        async pull(controller) {
+          if (at >= buf.length) {
+            controller.close();
+            return;
+          }
+          await new Promise((resolve) =>
+            setTimeout(resolve, at < 4 ? 10 : 400),
+          );
+          controller.enqueue(buf.subarray(at, at + 1));
+          at += 1;
+        },
+      });
+      return new Response(body, { status: 206, headers: res.headers });
+    }) as typeof fetch;
+    const startedAt = Date.now();
+
+    await downloadFile(URL, dest, {
+      ...FAST,
+      minSegmentBytes: 17,
+      connections: 2,
+      slowCheckMs: 60,
+    });
+
+    expect(calls.length).toBeGreaterThan(2 + 3);
+    expect(Date.now() - startedAt).toBeLessThan(4_000);
+    expect(readFileSync(dest).equals(DATA)).toBe(true);
+  });
+
+  it("hands an idle connection the back half of a slow slice and counts every byte once", async () => {
+    const { calls, fn } = rangeServer({
+      override: {
+        2: (_req, slice, [start, end]) =>
+          new Response(paced(slice, 25, 1), {
+            status: 206,
+            headers: {
+              "content-range": `bytes ${start}-${end - 1}/${DATA.length}`,
+              etag: ETAG,
+            },
+          }),
+      },
+    });
+    globalThis.fetch = fn;
+    const seen: Array<[number, number, number]> = [];
+    const startedAt = Date.now();
+
+    await downloadFile(URL, dest, {
+      ...FAST,
+      connections: 2,
+      slowCheckMs: 0,
+      onProgress: (p, t, tot) => seen.push([p, t, tot]),
+    });
+
+    // The lead finishes 0..31 at once, then keeps taking the back half of
+    // the throttled 32..63 slice until what is left is under two minimum
+    // pieces; the throttled request stops at each cut.
+    expect(calls.slice(0, 2).map((c) => c.range)).toEqual([
+      null,
+      "bytes=32-63",
+    ]);
+    const cuts = calls.slice(2).map((c) => {
+      const m = /^bytes=(\d+)-(\d+)$/.exec(c.range ?? "");
+      expect(m).not.toBeNull();
+      expect(c.ifRange).toBe(ETAG);
+      return [Number(m![1]), Number(m![2])] as const;
+    });
+    expect(cuts.length).toBeGreaterThanOrEqual(1);
+    // Nested inside the throttled slice, back to front, never overlapping.
+    expect(cuts[0]![1]).toBe(63);
+    for (const [i, [from, to]] of cuts.entries()) {
+      expect(from).toBeGreaterThan(32);
+      if (i > 0) expect(to).toBe(cuts[i - 1]![0] - 1);
+    }
+    // The throttled connection sent far fewer than its 32 bytes.
+    expect(Date.now() - startedAt).toBeLessThan(32 * 25);
+    expect(readFileSync(dest).equals(DATA)).toBe(true);
+    expect(seen.every(([, t]) => t <= 64)).toBe(true);
+    expect(seen.at(-1)).toEqual([100, 64, 64]);
+    expect(existsSync(resolvePartialMetaPath(dest))).toBe(false);
   });
 });
 

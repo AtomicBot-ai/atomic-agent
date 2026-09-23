@@ -50,6 +50,9 @@ function promptFor(
 
 function nativeRequestFields(params: LlmStreamParams) {
   return {
+    // The structured prompt goes to a native link only: a grammar link
+    // renders the flat text through its own template and GBNF prelude.
+    ...(params.messages ? { messages: params.messages } : {}),
     ...(params.tools ? { tools: params.tools } : {}),
     ...(params.toolChoice !== undefined
       ? { toolChoice: params.toolChoice }
@@ -64,7 +67,37 @@ function grammarRequestFields(params: LlmStreamParams) {
   return {
     grammar: params.grammar,
     slotId: params.slotId,
-    cachePrompt: params.slotId >= 0,
+    // An explicit flag wins: the main loop's first request is a pending
+    // `-1` that still wants `cache_prompt` (llama-server then picks the
+    // slot by prefix similarity and keeps the prompt). A side call on
+    // `-1` says nothing and gets no caching, as before (F13).
+    cachePrompt: params.cachePrompt ?? params.slotId >= 0,
+    // A grammar link that can honour a Structured Outputs envelope
+    // (the subscription CLIs stage it as `--json-schema`) still gets
+    // it; llama-server ignores it in favour of the grammar.
+    ...(params.responseFormat
+      ? { responseFormat: params.responseFormat }
+      : {}),
+    // The prefix/tail split for a link that renders through the model's
+    // own template (F31). Built by the step executor only when the
+    // primary is a grammar link, so it always matches `params.prompt`.
+    ...(params.chat ? { chat: params.chat } : {}),
+  };
+}
+
+/**
+ * The turn's own settings, forwarded on both transports: the output
+ * ceiling caps llama-server's `n_predict` as much as a cloud
+ * `max_tokens`, and the effort is mapped (or dropped) per provider.
+ */
+function turnRequestFields(params: LlmStreamParams) {
+  return {
+    ...(typeof params.maxOutputTokens === "number"
+      ? { maxOutputTokens: params.maxOutputTokens }
+      : {}),
+    ...(params.reasoningEffort !== undefined
+      ? { reasoningEffort: params.reasoningEffort }
+      : {}),
   };
 }
 
@@ -87,6 +120,7 @@ export async function completeOnLink(
     ...(typeof params.maxTokens === "number"
       ? { maxTokens: params.maxTokens }
       : {}),
+    ...turnRequestFields(params),
     ...(params.signal ? { signal: params.signal } : {}),
   };
   const result =
@@ -129,6 +163,7 @@ export async function openStreamOnLink(
     ...(typeof params.maxTokens === "number"
       ? { maxTokens: params.maxTokens }
       : {}),
+    ...turnRequestFields(params),
     ...(params.signal ? { signal: params.signal } : {}),
   };
   const stream =

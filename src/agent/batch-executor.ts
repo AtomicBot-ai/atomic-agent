@@ -4,12 +4,24 @@ import {
   emptyFusionOrchestratorState,
   type FusionOrchestratorState,
 } from "./fusion-orchestrator-mode.js";
+import {
+  toolSetAdmits,
+  toolSetRefusal,
+  type StepToolSet,
+} from "./step-tool-set.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import {
   compressToolResult,
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { ToolRole } from "../tools/tool-roles.js";
+import { describeArgumentError } from "../tools/argument-error-hint.js";
+import {
+  describeCorruptedCall,
+  findControlMarkers,
+} from "../tools/control-marker-guard.js";
+import { findUnknownArguments } from "../tools/unknown-argument-guard.js";
 import { CancelledError } from "../llm/index.js";
 import {
   runWithApprovalLedger,
@@ -105,6 +117,12 @@ export interface BatchExecutionContext {
   stepIndex: number;
   signal: AbortSignal;
   /**
+   * The paths the user named in this session's messages, for the read
+   * scope (`ToolContext.readRoots`). Computed by the step from the
+   * transcript and handed to every call of the batch unchanged.
+   */
+  readRoots?: readonly string[];
+  /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
    * serialised group that is batch-index order; across concurrent
@@ -128,6 +146,21 @@ export interface BatchExecutionContext {
    */
   tracker?: ToolLoopTracker;
   /**
+   * The loop's reserved final step: only `reply` / `finish` may run. A
+   * non-terminal call is answered with {@link FINAL_STEP_REFUSAL} in its
+   * slot and never reaches the registry; a tail terminal still runs.
+   * Enforced here rather than by narrowing the prompt's tool catalog,
+   * which is stable-prefix bytes.
+   */
+  terminalOnly?: boolean;
+  /**
+   * The only names this step may run (`step-tool-set.ts`): the final
+   * step's restriction with the names supplied. A non-terminal call
+   * outside the set is answered with `toolSetRefusal` in its slot and
+   * never reaches the registry; terminals are exempt as everywhere.
+   */
+  toolSet?: StepToolSet;
+  /**
    * Plan mode, read at dispatch time rather than passed as a boolean.
    *
    * A getter for the same reason `dangerous.approvalRequired` is one
@@ -147,6 +180,8 @@ export interface BatchExecutionContext {
   fusionState?: () => FusionOrchestratorState;
   /** Called with a `fusion.delegate` result so the turn's ledger can fold it in. */
   onDelegated?: (result: CompressedToolResult) => void;
+  /** The turn's tool role, forwarded to every `ToolContext` (see `tool-roles.ts`). */
+  toolRole?: ToolRole;
   /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
@@ -291,7 +326,26 @@ export async function executeBatch(
       };
       continue;
     }
-    // Plan mode first: a call that is not going to run should not spend
+    // The final step first: nothing but a terminal runs on it, whatever
+    // the other gates would say. A per-step tool set is the same
+    // restriction with other names and rides the same gate.
+    const final = runFinalStepGate(input, ctx);
+    if (!final.proceed && final.vetoResult) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: final.vetoResult,
+        durationMs: 0,
+      };
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: final.vetoResult,
+        durationMs: 0,
+      });
+      continue;
+    }
+    // Plan mode next: a call that is not going to run should not spend
     // a slot in the loop tracker's history either. Recording it would
     // let a refused-and-retried tool trip the loop breaker, and end the
     // turn over an argument the model was never allowed to try.
@@ -379,30 +433,19 @@ export async function executeBatch(
 
   const groups = planBatch(toInvoke);
 
-  const invokeOne = async (input: BatchCallInput): Promise<void> => {
-    if (ctx.signal.aborted) {
-      slots[input.batchIndex] = {
-        ...slots[input.batchIndex]!,
-        cancelled: true,
-      };
-      return;
-    }
-    ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
-    const startedAt = Date.now();
-    let compressed: CompressedToolResult;
-    // Collects the approvals this call raises, whatever async context the
-    // verdict arrives from (an HTTP resolve, a Telegram button). A denial
-    // throws out of the tool, so the ledger is read after the catch too.
-    const approvals: ToolApprovalRecord[] = [];
+  /** The registry call itself; a thrown error becomes an error result. */
+  const invokeRegistry = async (
+    input: BatchCallInput,
+  ): Promise<CompressedToolResult> => {
     try {
-      compressed = await runWithApprovalLedger(approvals, () =>
-        registry.invoke(input.call.tool, input.call.args, {
-          workingDir: ctx.workingDir,
-          sessionId: ctx.sessionId,
-          stepIndex: ctx.stepIndex,
-          signal: ctx.signal,
-        }),
-      );
+      return await registry.invoke(input.call.tool, input.call.args, {
+        workingDir: ctx.workingDir,
+        sessionId: ctx.sessionId,
+        stepIndex: ctx.stepIndex,
+        signal: ctx.signal,
+        ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
+        ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
+      });
     } catch (err) {
       if (ctx.signal.aborted) {
         // Cooperative cancellation: the tool honoured the signal and
@@ -416,13 +459,59 @@ export async function executeBatch(
             );
       }
       const cause = err instanceof Error ? err : new Error(String(err));
-      compressed = compressToolResult({
+      // An argument error names the key the tool wanted; the model also
+      // needs the keys it actually sent (`patternes`, `"path"`) and the
+      // closest accepted one, or it retries the same call blind. Keys
+      // only — never values.
+      const hint = describeArgumentError({
+        tool: input.call.tool,
+        args: input.call.args,
+        message: cause.message,
+      });
+      return compressToolResult({
         tool: input.call.tool,
         status: "error",
-        output: cause.message,
-        details: { errorName: cause.name },
+        output: hint?.message ?? cause.message,
+        details: {
+          errorName: cause.name,
+          ...(hint !== null
+            ? {
+                receivedKeys: hint.receivedKeys,
+                expectedKeys: hint.expectedKeys,
+              }
+            : {}),
+        },
       });
     }
+  };
+
+  const invokeOne = async (input: BatchCallInput): Promise<void> => {
+    if (ctx.signal.aborted) {
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        cancelled: true,
+      };
+      return;
+    }
+    ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+    const startedAt = Date.now();
+    let compressed: CompressedToolResult;
+    // A call that is not what the model meant never reaches the
+    // registry — see `refuseBeforeDispatch`. Terminals are exempt for
+    // the reason every gate exempts them: a reply's text is shown, not
+    // run, and the turn must be able to close.
+    const refusal =
+      input.resourceClass === "terminal"
+        ? null
+        : refuseBeforeDispatch(input.call);
+    // Collects the approvals this call raises, whatever async context the
+    // verdict arrives from (an HTTP resolve, a Telegram button). A denial
+    // throws out of the tool and `invokeRegistry` turns it into an error
+    // result, so the ledger is read after that too.
+    const approvals: ToolApprovalRecord[] = [];
+    compressed =
+      refusal ??
+      (await runWithApprovalLedger(approvals, () => invokeRegistry(input)));
     if (approvals.length > 0) {
       compressed = { ...compressed, approvals: [...approvals] };
     }
@@ -441,7 +530,24 @@ export async function executeBatch(
     // Record the real outcome so the next step's gate sees a completed
     // (args + result) entry. Terminal verbs are not tracked.
     if (ctx.tracker && input.resourceClass !== "terminal") {
-      ctx.tracker.recordOutcome(input.call.tool, input.call.args, compressed);
+      const outcome = ctx.tracker.recordOutcome(
+        input.call.tool,
+        input.call.args,
+        compressed,
+      );
+      // Outcome-repeat detector (F25): the same result for the Nth time,
+      // whatever the arguments were. Post-hoc and warn-only like the
+      // read-coverage detector below — the call has already run, and a
+      // legitimate poll or re-test looks exactly like this.
+      if (outcome.repeat) {
+        loopSignals.push({
+          kind: "warn",
+          tool: input.call.tool,
+          count: outcome.count,
+          detector: "outcome_repeat",
+          warningKey: `outcome_repeat:${outcome.fingerprint}`,
+        });
+      }
       observeReadCoverage(input, compressed, ctx.tracker, loopSignals);
     }
     ctx.onCallFinished?.({
@@ -550,6 +656,53 @@ export async function executeBatch(
 }
 
 /**
+ * The error result a call gets instead of running when its arguments
+ * are not what the model meant, or `null` when the call is clean.
+ *
+ * Two checks, in this order. A value carrying the model's own control
+ * markup (F37): a `path` holding `<|channel>` is a thought block that
+ * fell into the call, and the tool would run on the garbage (it listed
+ * an ENAMETOOLONG path as "empty" once, and the model overwrote the
+ * input file on that reading). Then a top-level key the tool's schema
+ * does not know (F40): `os.shell.run {"cmd":"python3","-e":"<script>"}`
+ * used to run a bare `python3` — exit 0, nothing done — with the script
+ * silently dropped, and the worker reported the work as done; a tool
+ * with no schema is exempt, and F33's key normalisation runs first so a
+ * quoted or fused key that means a schema key is not refused.
+ *
+ * Either refusal is an ordinary error result — recorded in the loop
+ * tracker like any other, on the trace row via `details.corrupted` /
+ * `details.unknownKeys` — that the model reads on its next step; no
+ * parse-recovery budget is spent.
+ */
+function refuseBeforeDispatch(
+  call: ToolCallPayload,
+): CompressedToolResult | null {
+  const markers = findControlMarkers(call.args, call.tool);
+  if (markers.length > 0) {
+    return compressToolResult({
+      tool: call.tool,
+      status: "error",
+      output: describeCorruptedCall(markers),
+      details: { corrupted: true, markers },
+    });
+  }
+  const unknown = findUnknownArguments(call.tool, call.args);
+  if (unknown !== null) {
+    return compressToolResult({
+      tool: call.tool,
+      status: "error",
+      output: unknown.message,
+      details: {
+        unknownKeys: unknown.unknownKeys,
+        expectedKeys: unknown.expectedKeys,
+      },
+    });
+  }
+  return null;
+}
+
+/**
  * If `input` is a `skill.view` whose target name is already present in
  * `ctx.loadedSkillNames`, return a terse synthetic result so the executor
  * can skip the real invocation. The result carries NO `skillLoaded`
@@ -581,6 +734,43 @@ function skillAlreadyLoadedResult(
  * no-progress streak (the streak then plateaus at `criticalThreshold`).
  * Terminal verbs and tracker-less steps always proceed unchanged.
  */
+/** The tool result a non-terminal call gets on the loop's final step. */
+export const FINAL_STEP_REFUSAL = "final step: only reply or finish run here";
+
+/**
+ * Refuse a non-terminal call on the loop's reserved final step, or one
+ * outside the step's tool set (`step-tool-set.ts`). The prompt's
+ * `### notice` already said so; this is what makes it true without
+ * narrowing the tool catalog (stable-prefix bytes) for one step. A solo
+ * `[reply]` never reaches this gate — terminals are split off before
+ * phase 1 — and a `[tool, reply]` batch keeps its reply.
+ */
+function runFinalStepGate(
+  input: BatchCallInput,
+  ctx: BatchExecutionContext,
+): { proceed: boolean; vetoResult?: CompressedToolResult } {
+  if (input.resourceClass === "terminal") return { proceed: true };
+  if (ctx.terminalOnly) {
+    return {
+      proceed: false,
+      vetoResult: {
+        tool: input.call.tool,
+        status: "error",
+        summary: FINAL_STEP_REFUSAL,
+        details: { final_step: true, tool: input.call.tool },
+        truncated: false,
+      },
+    };
+  }
+  if (ctx.toolSet !== undefined && !toolSetAdmits(ctx.toolSet, input.call.tool)) {
+    return {
+      proceed: false,
+      vetoResult: toolSetRefusal(input.call.tool, ctx.toolSet),
+    };
+  }
+  return { proceed: true };
+}
+
 /**
  * Refuse a mutating call while plan mode is on.
  *
@@ -635,6 +825,7 @@ function runSyncLoopGate(
   // turn gracefully (the redirect notice did not land). It rides the same
   // breaker path as the consecutive-veto streak.
   const wanderingEscalated = ctx.tracker.isWanderingEscalated(tool, args);
+  const spreadAtGate = ctx.tracker.wanderingSpread(tool, args);
   const verdict = ctx.tracker.check(tool, args);
   ctx.tracker.recordCall(tool, args);
 
@@ -671,11 +862,20 @@ function runSyncLoopGate(
       },
     });
     ctx.tracker.recordOutcome(tool, args, vetoResult);
+    // The signal names what ended the turn. When the escalation alone
+    // forced the breaker, that is the wandering cap even if THIS call is a
+    // verbatim repeat (a parallel batch can carry the spread past the cap
+    // before anything is refused, and the window keeps it there). Taking
+    // the repeat verdict here would end the turn on "a no-progress loop
+    // after 0 blocked attempts". The veto body above keeps the repeat
+    // wording: it describes the call, this describes the stop.
+    const stoppedByWandering =
+      wanderingEscalated && !breakerTripped && verdict.level !== "critical";
     loopSignals.push({
       kind: forceBreaker ? "breaker" : "critical",
       tool,
-      count,
-      detector,
+      count: stoppedByWandering ? spreadAtGate : count,
+      detector: stoppedByWandering ? "wandering" : detector,
       warningKey: verdict.warningKey,
     });
     return { proceed: false, vetoResult };

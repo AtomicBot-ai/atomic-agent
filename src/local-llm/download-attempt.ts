@@ -21,12 +21,13 @@ import {
   writePartialMeta,
   type ByteRange,
 } from "./download-partial.js";
+import { splitLargestSegment } from "./download-rebalance.js";
 import { describeResume, finalize } from "./download-resume.js";
 import {
   linkedAbort,
   planSegments,
   runSegment,
-  runSegmentQueue,
+  type Segment,
   type SegmentContext,
 } from "./download-segments.js";
 import { resolveDownloadConnections } from "./download-settings.js";
@@ -45,6 +46,8 @@ export interface AttemptOptions {
   retryDelayMs: number;
   maxRetryDelayMs: number;
   stallTimeoutMs: number;
+  /** Pace-check window for a connection among several; `0` disables. */
+  slowCheckMs: number;
   connections?: number;
   minSegmentBytes: number;
   /** Set once a server ignored a segment's `Range`; one stream from then on. */
@@ -298,6 +301,9 @@ export async function downloadAttempt(
       // segment among several re-requests only its own remainder.
       retryInPlace: rangesSupported && segments.length > 1,
       stallTimeoutMs: opts.stallTimeoutMs,
+      slowCheckMs: opts.slowCheckMs,
+      parallel: connections > 1,
+      pace: { peakBps: 0 },
       maxRetries: opts.maxRetries,
       retryDelayMs: opts.retryDelayMs,
       maxRetryDelayMs: opts.maxRetryDelayMs,
@@ -320,17 +326,39 @@ export async function downloadAttempt(
         attemptAbort.abort();
         throw error;
       });
+    // Segments a connection is working on right now: the pool an idle
+    // connection may cut the back half from once the queue is empty.
+    const running = new Set<Segment>();
+    const track = async (
+      seg: Segment,
+      initial?: Parameters<typeof runSegment>[2],
+    ): Promise<void> => {
+      running.add(seg);
+      try {
+        await runSegment(seg, ctx, initial);
+      } finally {
+        running.delete(seg);
+      }
+    };
+    const nextSegment = (): Segment | null => {
+      const queued = queue.shift();
+      if (queued) return queued;
+      if (!ctx.retryInPlace) return null;
+      const piece = splitLargestSegment(running, opts.minSegmentBytes);
+      // A new piece counts toward progress and the sidecar like any other.
+      if (piece) segments.push(piece);
+      return piece;
+    };
+    const drain = async (): Promise<void> => {
+      for (let seg = nextSegment(); seg; seg = nextSegment()) await track(seg);
+    };
     // The lead joins the pool once its own slice is done, so a plan with
     // more pieces than connections (a fragmented partial resumed on one
     // stream, say) still drains every hole.
     const workers = [
-      guard(
-        runSegment(lead, ctx, { res, abort: leadAbort }).then(() =>
-          runSegmentQueue(queue, ctx),
-        ),
-      ),
+      guard(track(lead, { res, abort: leadAbort }).then(drain)),
       ...Array.from({ length: Math.min(connections - 1, queue.length) }, () =>
-        guard(runSegmentQueue(queue, ctx)),
+        guard(drain()),
       ),
     ];
     try {

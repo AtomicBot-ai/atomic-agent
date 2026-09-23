@@ -1,6 +1,7 @@
 import type { Key } from "ink";
 import { addCustomModel } from "../../config/custom-models-store.js";
 import { buildCustomModelDef } from "../../local-llm/index.js";
+import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import type { OnboardingKeyContext } from "./onboarding-step-keys.js";
 import type { OnboardingUiState } from "./onboarding-state.js";
 
@@ -60,6 +61,9 @@ function startHuggingFacePull(
     // through the catalog registry, and the registry is loaded from the
     // file this call writes.
     addCustomModel(def);
+    // Committed to a model: record managed mode now, before the pull, so
+    // a Ctrl+C mid-download keeps the choice (same as a curated pick).
+    persistUserLocalModelsConfig({ mode: "managed" });
     ctx.dispatch({ type: "onboarding_local_model_picked", modelId: def.id });
     ctx.callbacks.onLocalModelsPullRequested?.(def.id);
   } catch (err) {

@@ -1,16 +1,36 @@
 import type { StreamConsumer } from "../adapters/stream-consumer.js";
 import type {
+  CompletionEarlyStop,
   CompletionUsage,
   OpenAiToolCall,
   StreamFinalResult,
 } from "../completion-types.js";
 import type { ReasoningFormat } from "../llm-provider.js";
+import { createFabricatedTranscriptWatcher } from "../../reliability/fabricated-tool-transcript.js";
+import { normaliseOpenAiUsage } from "./openai-normalise-response.js";
 import { createReasoningExtractor } from "./reasoning-extractor.js";
 import {
   parseOpenAiSseEvent,
   type OpenAiToolCallDelta,
 } from "./parse-sse-chunk.js";
 import { extractPartialReplyTextFromToolArguments } from "./tool-arguments-stream-parser.js";
+import { attachGenerationId } from "./generation-id.js";
+
+/**
+ * A provider reported an error inside the SSE stream itself. Thrown by
+ * the consumer; the provider turns it into an `OpenAiHttpError` with
+ * the request's url and label, keeping the generation id.
+ */
+export class OpenAiSseError extends Error {
+  constructor(
+    readonly status: number | null,
+    message: string,
+    readonly generationId: string | null,
+  ) {
+    super(message);
+    this.name = "OpenAiSseError";
+  }
+}
 
 type MutableToolCall = {
   /** Position in the final array. See `orderFor`. */
@@ -65,6 +85,7 @@ export function createOpenAiStreamConsumer(
       let finishReason: string | null = null;
       let modelId: string | null = null;
       let usage: CompletionUsage | undefined;
+      let generationId: string | null = null;
       // A trustworthy terminal signal: an explicit provider finish_reason
       // on any chunk, or a parser-recognized terminal event (`[DONE]`).
       // Some OpenAI-compatible providers send a final finish_reason and
@@ -74,6 +95,12 @@ export function createOpenAiStreamConsumer(
       // arguments may be mid-stream.
       let terminalObserved = false;
       const toolCalls = createToolCallAccumulator();
+      // A model that writes atag's text transcript (`assistant_tool_call:`
+      // / `tool_result[...]:` lines) instead of calling tools does not
+      // stop on its own — one ran 297 s and 33,678 tokens to the provider's
+      // limit. Plain `content` only; the reasoning channel is scratch space.
+      const fabrication = createFabricatedTranscriptWatcher();
+      let earlyStop: CompletionEarlyStop | undefined;
       try {
         while (true) {
           if (signal?.aborted) break;
@@ -96,6 +123,16 @@ export function createOpenAiStreamConsumer(
               reasoning,
               toolArgsBuffer,
             );
+            generationId = chunk.id ?? generationId;
+            if (chunk.error !== null) {
+              // Whatever streamed before this is billed under the id;
+              // the error carries it so the trace can say so.
+              throw new OpenAiSseError(
+                chunk.error.status,
+                chunk.error.message,
+                generationId,
+              );
+            }
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
             if (chunk.finishReason !== null) terminalObserved = true;
@@ -111,6 +148,7 @@ export function createOpenAiStreamConsumer(
                 finishReason,
                 modelId,
                 usage,
+                generationId,
                 toolCalls,
                 terminalObserved: true,
               });
@@ -119,15 +157,21 @@ export function createOpenAiStreamConsumer(
               toolArgsBuffer = chunk.toolArgsBuffer;
               const replyText =
                 extractPartialReplyTextFromToolArguments(toolArgsBuffer);
-              if (replyText.length > 0) {
+              // Text the event carried beside its tool-call delta is
+              // shown as it is; reply text still streaming inside the
+              // call's arguments is shown as it becomes readable.
+              const textDelta =
+                chunk.delta +
+                (replyText.length > 0
+                  ? replyText.slice(chunk.emittedReplyLength)
+                  : "");
+              if (
+                replyText.length > 0 ||
+                textDelta.length > 0 ||
+                chunk.reasoningDelta.length > 0
+              ) {
                 yield {
-                  delta: replyText.slice(chunk.emittedReplyLength),
-                  reasoningDelta: chunk.reasoningDelta,
-                  done: false,
-                };
-              } else if (chunk.reasoningDelta.length > 0) {
-                yield {
-                  delta: "",
+                  delta: textDelta,
                   reasoningDelta: chunk.reasoningDelta,
                   done: false,
                 };
@@ -139,10 +183,31 @@ export function createOpenAiStreamConsumer(
                 done: false,
               };
             }
+            if (chunk.delta.length > 0) {
+              const fabricated = fabrication.push(chunk.delta);
+              if (fabricated !== null) {
+                earlyStop = { reason: "fabricated_transcript", ...fabricated };
+                break;
+              }
+            }
             boundary = buffer.indexOf("\n\n");
+          }
+          if (earlyStop !== undefined) {
+            // Abort the upstream request. Cancelling a fetch body aborts
+            // the fetch, which closes the connection; a routing provider
+            // (OpenRouter) cancels generation — and billing, where the
+            // upstream supports it — when its client goes away. A body
+            // that is already closed makes this a no-op.
+            await reader.cancel(FABRICATED_TRANSCRIPT_STOP).catch(() => {});
+            break;
           }
           if (done) break;
         }
+      } catch (err) {
+        // A body that died after output (`Error: terminated`, a 504 in
+        // the stream) still cost the tokens it streamed. The id travels
+        // on the error so the trace row can name the generation.
+        throw attachGenerationId(err, generationId);
       } finally {
         reader.releaseLock();
       }
@@ -153,11 +218,34 @@ export function createOpenAiStreamConsumer(
         finishReason,
         modelId,
         usage,
+        generationId,
         toolCalls,
         terminalObserved,
+        ...(earlyStop !== undefined ? { earlyStop } : {}),
       });
     },
   };
+}
+
+/**
+ * The finish reason a completion this consumer cut short reports, so
+ * traces and raw-completion events say why it ended. Neither `length`
+ * (not a truncation) nor absent (not a dropped stream).
+ */
+export const FABRICATED_TRANSCRIPT_STOP = "fabricated_transcript";
+
+/**
+ * Tool-call arguments that finished arriving: a JSON object or array
+ * that parses. A call still streaming when the completion was cut has a
+ * prefix that does not, and running it would run half a call.
+ */
+function argumentsComplete(args: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(args);
+    return typeof parsed === "object" && parsed !== null;
+  } catch {
+    return false;
+  }
 }
 
 function applyToolCallDeltas(
@@ -265,21 +353,34 @@ function buildFinalResult(args: {
   finishReason: string | null;
   modelId: string | null;
   usage?: CompletionUsage;
+  generationId: string | null;
   toolCalls: ToolCallAccumulator;
   terminalObserved: boolean;
+  earlyStop?: CompletionEarlyStop;
 }): StreamFinalResult {
   const sortedToolCalls = [...args.toolCalls.slots.values()]
     .sort((a, b) => a.order - b.order)
     .map((call) => toOpenAiToolCall(call))
-    .filter((call): call is OpenAiToolCall => call !== null);
+    .filter((call): call is OpenAiToolCall => call !== null)
+    // Cut short: only calls that had fully arrived are real calls.
+    .filter(
+      (call) =>
+        args.earlyStop === undefined ||
+        argumentsComplete(call.function.arguments),
+    );
   return {
     content: args.content,
     reasoningContent: args.reasoningContent,
-    finishReason: args.finishReason,
+    finishReason:
+      args.earlyStop !== undefined
+        ? FABRICATED_TRANSCRIPT_STOP
+        : args.finishReason,
     modelId: args.modelId,
     terminalObserved: args.terminalObserved,
     ...(args.usage ? { usage: args.usage } : {}),
+    ...(args.generationId !== null ? { generationId: args.generationId } : {}),
     ...(sortedToolCalls.length > 0 ? { toolCalls: sortedToolCalls } : {}),
+    ...(args.earlyStop !== undefined ? { earlyStop: args.earlyStop } : {}),
   };
 }
 
@@ -299,9 +400,5 @@ function normaliseUsage(
   raw: Record<string, unknown> | null,
 ): CompletionUsage | undefined {
   if (!raw) return undefined;
-  return {
-    promptTokens: Number(raw.prompt_tokens ?? 0),
-    completionTokens: Number(raw.completion_tokens ?? 0),
-    totalTokens: Number(raw.total_tokens ?? 0),
-  };
+  return normaliseOpenAiUsage(raw);
 }

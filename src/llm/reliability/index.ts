@@ -16,6 +16,10 @@ export {
 export type { LlmFailureOptions, ModelErrorOptions } from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
+export {
+  readProviderErrorVerdict,
+  type ProviderErrorVerdict,
+} from "./provider-error-verdict.js";
 // `looksLikeDroppedConnection` is deliberately NOT re-exported: it is the
 // classifier's own key, used inside `network-error.ts` by `isNetworkError`
 // and asserted directly by that module's test, with no consumer outside
@@ -36,3 +40,13 @@ export type {
   DetectModelFailureOptions,
   DetectedModelFailure,
 } from "./detect-model-failure.js";
+export {
+  FABRICATED_TRANSCRIPT_MIN_LINES,
+  STREAM_FABRICATION_ABORT_MIN_LINES,
+  createFabricatedTranscriptWatcher,
+  detectFabricatedToolTranscript,
+} from "./fabricated-tool-transcript.js";
+export type {
+  FabricatedToolTranscript,
+  FabricatedTranscriptWatcher,
+} from "./fabricated-tool-transcript.js";

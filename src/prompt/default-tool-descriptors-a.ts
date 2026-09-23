@@ -43,9 +43,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.shell.run",
     summary:
-      "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed.",
+      "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.",
     argsSchema:
-      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number }",
+      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
   },
   {
     name: "os.fs.read",
@@ -56,8 +56,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.write",
-    summary: "Write or append to a file (may require approval).",
-    argsSchema: `{ path: string, content: string, mode?: "replace" | "append" }`,
+    summary:
+      "Write or append to a file (may require approval). The result says when it replaced a pre-existing file and with what line counts; a replaced pre-existing file can be brought back with os.fs.restore. A file the request names as an input is refused without overwrite: true — edit it in place instead.",
+    argsSchema: `{ path: string, content: string, mode?: "replace" | "append", overwrite?: boolean /* only when the user asked for that named file to be replaced */ }`,
+  },
+  {
+    name: "os.fs.restore",
+    summary:
+      "Bring back the previous content of a file that os.fs.write / os.fs.edit / os.fs.patch replaced or shrank in this working directory, by this session or another — the result of that call said it was saved (may require approval).",
+    argsSchema: "{ path: string }",
+    tier: "rare",
   },
   {
     name: "os.fs.trash",
@@ -91,7 +99,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     summary:
       "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.",
     argsSchema:
-      "{ pattern: string, path?: string, glob?: string | string[], type?: string, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
+      "{ pattern: string, path?: string, glob?: string | string[], type?: string, literal?: boolean, caseInsensitive?: boolean, multiline?: boolean, outputMode?: 'content' | 'files_with_matches' | 'count', contextBefore?: number, contextAfter?: number, contextAround?: number, headLimit?: number, offset?: number, showLineNumbers?: boolean, timeoutMs?: number }",
   },
   {
     name: "os.fs.edit",

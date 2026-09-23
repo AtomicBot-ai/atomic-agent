@@ -27,6 +27,11 @@ import {
 } from "../local-llm/huggingface-endpoint.js";
 import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
+  isSwaFullPreference,
+  SWA_FULL_PREFERENCES,
+  type SwaFullPreference,
+} from "../local-llm/swa-full.js";
+import {
   PRE_V65_SUBCALL_TIMEOUT_DEFAULTS,
   resolveSubcallTimeoutMs,
 } from "./subcall-timeout-migration.js";
@@ -191,11 +196,25 @@ export interface AtomicAgentConfig {
     /**
      * For a unary `complete()`, the whole-request budget. For
      * `completeStream()`, an **idle** budget: how long llama-server may
-     * stay silent between bytes. A healthy generation refreshes it on
-     * every chunk, so it never caps how long an answer may be — see
-     * `streamTotalTimeoutMs` for that.
+     * stay silent between bytes once the reply has started. A healthy
+     * generation refreshes it on every chunk, so it never caps how long
+     * an answer may be — see `streamTotalTimeoutMs` for that — and it
+     * does not bound the wait for the first byte — see
+     * `firstTokenTimeoutMs`.
      */
     requestTimeoutMs: number;
+    /**
+     * How long a `completeStream()` may wait for its FIRST byte, from the
+     * moment the request is sent. That wait is queueing behind busy slots
+     * plus prompt evaluation — on one GPU shared by several fusion
+     * workers, legitimately many minutes — so it has its own budget
+     * rather than `requestTimeoutMs`: at 300 s a queued worker whose slot
+     * had not evaluated a single token was cancelled as if the server
+     * were dead. Never shorter than `requestTimeoutMs` in effect.
+     * Env-only, like the other local-LLM timeouts:
+     * `ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS`.
+     */
+    firstTokenTimeoutMs: number;
     /**
      * Absolute cap on one streaming response, measured from the moment
      * response headers arrive. `requestTimeoutMs` only bounds silence,
@@ -219,6 +238,12 @@ export interface AtomicAgentConfig {
     defaultSlotId: number;
     /** `external` uses `url`; `managed` overrides runtime `url` to localhost + `managed.port`. */
     mode: LocalLlmMode;
+    /** Mirrors `UserConfigFile.localModels.useServerTemplate`. */
+    useServerTemplate: LocalTemplateSetting;
+    /** Mirrors `UserConfigFile.localModels.thinking`. */
+    thinking: LocalTemplateSetting;
+    /** Mirrors `UserConfigFile.localModels.reasoningBudgetTokens`. */
+    reasoningBudgetTokens: number;
     managed: UserManagedLocalLlmConfig;
     /**
      * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
@@ -311,6 +336,8 @@ export interface AtomicAgentConfig {
       autoContinue: boolean;
     };
     toolTimeoutMs: number;
+    /** Where reads may go: the working directory and user-named paths, or anywhere. */
+    readScope: ReadScope;
     /**
      * Boot value for the five-step approval ladder (1 = ask for
      * everything … 5 = approve everything). The live value is owned by
@@ -345,6 +372,14 @@ export interface AtomicAgentConfig {
      * ceiling underneath it.
      */
     conversationMaxPairs: number;
+    /**
+     * Share of a limit the transcript drops to when that limit
+     * overflows, `(0, 1]`. The cut then holds until the next overflow,
+     * so between cuts the prompt only grows at its end and a local
+     * model's KV cache is reused instead of re-read. `1` cuts just
+     * enough every step (the old behaviour).
+     */
+    conversationLowWater: number;
     /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
@@ -483,6 +518,25 @@ export interface AtomicAgentConfig {
    */
   projects: {
     roots: string[];
+  };
+  /**
+   * Per-tool operator settings. Mirrors `UserConfigFile.tools`.
+   */
+  tools: {
+    shell: {
+      /**
+       * Wall-clock wait for an `os.shell.run` call whose `timeoutMs`
+       * the model omitted; a command still running then is detached as
+       * a job, not killed. `0` = no default (the command runs until it
+       * exits or the turn is cancelled). An explicit `timeoutMs`,
+       * including `0`, always wins over this — and kills at its limit.
+       */
+      defaultTimeoutMs: number;
+      /** Absolute ceiling for a detached job, from its start. */
+      jobMaxMs: number;
+      /** Detached jobs running per session; the next detach evicts the oldest. */
+      maxJobs: number;
+    };
   };
   log: {
     level: LogLevel;
@@ -950,6 +1004,12 @@ export interface AtomicAgentConfig {
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       /**
+       * Native-tools request layout: `native` (default) sends a system
+       * message plus the history as assistant `tool_calls` / `tool`
+       * results; `flat` sends the one user message of transcript text.
+       */
+      messageShape?: "native" | "flat";
+      /**
        * OpenRouter provider routing (`order`, `only`, `ignore`,
        * `allow_fallbacks`, `require_parameters`, `sort`,
        * `data_collection`, …), sent verbatim as the chat body's
@@ -993,6 +1053,7 @@ export interface AtomicAgentConfig {
         supportsTools?: "none" | "basic" | "parallel" | "strict";
         supportsPromptCache?: boolean;
         reasoningFormat?:
+          | "auto"
           | "none"
           | "delta_reasoning"
           | "delta_thinking"
@@ -1003,6 +1064,11 @@ export interface AtomicAgentConfig {
           cacheRead?: number;
           cacheWrite?: number;
         };
+        /**
+         * Wire parameters for this model, merged into every chat body
+         * after the provider's `extraBody`. Reserved keys still win.
+         */
+        params?: Record<string, unknown>;
       }>;
     }>;
     toolTransport: "auto" | "grammar" | "native_tools";
@@ -1034,6 +1100,15 @@ export interface AtomicAgentConfig {
      * `src/llm/run-mode/resolve-run-mode.ts`.
      */
     runMode?: UserLlmRunModeConfig;
+    /**
+     * Settings for every `openrouter` entry at once.
+     * `preferCacheRoutes` (default `true`) pins `google/…` models to the
+     * routes that honour prompt caching unless the entry configured
+     * `providerPreferences` itself.
+     */
+    openrouter?: {
+      preferCacheRoutes?: boolean;
+    };
   };
 }
 
@@ -1241,6 +1316,54 @@ export type HttpApprovalMode = "never" | "writes" | "always";
 
 export type LocalLlmMode = "external" | "managed";
 
+/**
+ * A three-way local-template switch: `auto` lets the runtime decide per
+ * model family, `on` / `off` force it. Used by
+ * `localModels.useServerTemplate` and `localModels.thinking`.
+ */
+export type LocalTemplateSetting = "auto" | "on" | "off";
+
+export function parseLocalTemplateSetting(
+  raw: unknown,
+  field: string,
+): LocalTemplateSetting {
+  if (raw === "auto" || raw === "on" || raw === "off") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected auto|on|off, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * Where a session's tools may READ (config v67).
+ *
+ *  - `working-dir`: the working directory plus every absolute or
+ *    `~`-prefixed path the user named in this session's own messages
+ *    read unasked; anything else asks through the approval ladder
+ *    (`fs_read_outside`, silent at level 5) and a yes widens the
+ *    session's roots (see `src/tools/read-scope/`). The default.
+ *  - `unrestricted`: the pre-v67 behaviour — reads anywhere on disk,
+ *    never asked about.
+ *
+ * Fusion workers are confined regardless (and more narrowly).
+ */
+export type ReadScope = "working-dir" | "unrestricted";
+
+export const READ_SCOPES: readonly ReadScope[] = ["working-dir", "unrestricted"];
+
+export function parseReadScope(raw: unknown, field: string): ReadScope {
+  if (
+    typeof raw === "string" &&
+    (READ_SCOPES as readonly string[]).includes(raw)
+  ) {
+    return raw as ReadScope;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected ${READ_SCOPES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
 export interface UserManagedLocalLlmConfig {
   modelId: string | null;
   port: number;
@@ -1319,6 +1442,18 @@ export interface UserManagedLocalLlmConfig {
    * unusual model, a benchmark. Applied on the next daemon start.
    */
   parallel: number | "auto";
+  /**
+   * `--swa-full` for a sliding-window model (Gemma 4 and kin): keep the
+   * whole context in the sliding layers so a partially matching prompt
+   * reuses its matching prefix instead of re-reading everything — at a
+   * several-fold KV cost for those layers.
+   *   - `"auto"` (default) — on when the full-SWA KV estimate fits the
+   *     launch's memory budget (see `swa-full.ts`), else off.
+   *   - `"on"` / `"off"` — always / never.
+   * Models without sliding-window layers ignore it. Applied on the next
+   * daemon start.
+   */
+  swaFull: SwaFullPreference;
   /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
@@ -1406,6 +1541,36 @@ export interface UserConfigFile {
      * this file value (operator override).
      */
     completionMaxTokens: number;
+    /**
+     * Render local prompts through the model's own chat template
+     * (llama-server `POST /apply-template`) instead of atag's hand-built
+     * framing. `auto` (default) uses the template for every family
+     * without a hand-built profile — everything but Gemma and Qwen —
+     * so Llama, GLM, Mistral and other GGUFs get their turn markers.
+     * `on` forces it for every model, `off` keeps the raw framing.
+     * The GBNF grammar applies either way. Added in config v66.
+     */
+    useServerTemplate: LocalTemplateSetting;
+    /**
+     * The template's thinking switch (`chat_template_kwargs:
+     * {enable_thinking}`) on server-templated prompts, for families
+     * whose template reads it. `auto` (default) leaves the template's
+     * own default; `on` / `off` set it. Added in config v66. Since v68
+     * `off` also reaches the hand-built prompt of a `qwen-think` model:
+     * the prompt ends with the template's own disabled marker and the
+     * grammar drops the reasoning prelude.
+     */
+    thinking: LocalTemplateSetting;
+    /**
+     * How many tokens a local reasoning model may spend thinking before
+     * a tool call, on the grammar path. The GBNF prelude bounds the
+     * think block at `reasoningBudgetTokens × 4` characters; past that
+     * the sampler admits only the close sentinel, so the model is forced
+     * to close the block and emit the call. `0` leaves the prelude
+     * unbounded. The forced final step (`reply` / `finish`) is never
+     * cut. Range `0` or [64, 32768]. Added in config v68.
+     */
+    reasoningBudgetTokens: number;
     managed: UserManagedLocalLlmConfig;
     /**
      * Memory-v2 phase 1B. Optional second managed daemon for
@@ -1442,6 +1607,13 @@ export interface UserConfigFile {
     };
     toolTimeoutMs: number;
     /**
+     * Where a session's reads may go (config v67). `working-dir` (the
+     * default) confines filesystem reads and shell path arguments to the
+     * working directory and the paths the user named in the conversation;
+     * `unrestricted` is the pre-v67 behaviour.
+     */
+    readScope: ReadScope;
+    /**
      * Five-step approval ladder (config v37). Replaces the binary
      * `approvalRequired`; the legacy key is still read once for
      * migration (see `resolveApprovalLevel`) and never written back.
@@ -1462,6 +1634,16 @@ export interface UserConfigFile {
      * limit bites first wins.
      */
     conversationMaxPairs: number;
+    /**
+     * Share of a limit the transcript keeps after a cut, `(0, 1]`.
+     * History is dropped in chunks — down to this share of the token
+     * budget or of `conversationMaxPairs`, whichever overflowed — and
+     * the cut then holds until the next overflow, so the prompt is
+     * append-only in between and a local model reuses its KV cache. A
+     * model with no partial prefix reuse (sliding-window attention) is
+     * held to at most `0.5`. `1` restores cutting just enough per step.
+     */
+    conversationLowWater: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -1484,6 +1666,36 @@ export interface UserConfigFile {
    */
   projects: {
     roots: string[];
+  };
+  /**
+   * Per-tool operator settings (config v67).
+   */
+  tools: {
+    shell: {
+      /**
+       * Wall-clock wait, in milliseconds, for an `os.shell.run` call
+       * whose `timeoutMs` the model omitted. Default 600 000 (10 min).
+       * A command still running then is not killed: it is detached as a
+       * job the model can `wait` for or `kill`, with its output so far
+       * in the result. `0` = no default, which is the pre-v67 behaviour.
+       * The model can still pass an explicit `timeoutMs` per call (`0`
+       * for none); that always wins and kills at its limit. A
+       * non-negative integer.
+       */
+      defaultTimeoutMs: number;
+      /**
+       * Absolute ceiling, in milliseconds, for a detached job, counted
+       * from its start — kept or not, waited on or not. Default
+       * 3 600 000 (1 h). A positive integer.
+       */
+      jobMaxMs: number;
+      /**
+       * Detached jobs that may run at once per session. Default 3. The
+       * next detach stops the oldest un-kept job first and says so. A
+       * positive integer.
+       */
+      maxJobs: number;
+    };
   };
   tracing: {
     trace: {
@@ -2139,7 +2351,73 @@ export interface UserConfigFile {
 // timeout costs one wait, not one per step). A pre-v65 file whose value
 // is the old default (which the schema wrote, not the operator) takes
 // the new one; any other number is read as a deliberate pin and kept.
-export const USER_CONFIG_VERSION = 65;
+// v66: `agent.conversationLowWater` — the share of a limit the prompt's
+// transcript keeps after a cut (default 0.65), so the cut holds and the
+// prompt only grows at its end between cuts. Additive: an older file has
+// no field and takes the default.
+// v66: provider entries accept `messageShape` (`native` | `flat`, the
+// layout of a native-tools request), `userModels[].params` (per-model
+// wire parameters merged over `extraBody`) and `userModels[].reasoningFormat`
+// accepts `auto`; a new `llm.openrouter` block carries `preferCacheRoutes`
+// (default `true`). All additive: an older file parses with every field
+// absent, which is the native layout, no extra parameters, `auto`
+// reasoning and the cache-capable routes for Google models.
+// v66: three additive `llm.runMode.fusion` fields — `cloudWorkers`
+// (1..32, default 4: the fan-out cap when the worker leg has no slot
+// pool), `workerReasoning` (low|medium|high, unset by default: the
+// reasoning effort sent with every worker completion) and
+// `workerMaxOutputTokens` (unset by default: the per-step output cap for
+// worker completions). An older file parses with all three absent and
+// behaves as before, except that a cloud fan-out is now bounded at 4.
+// v66: `localModels.useServerTemplate` and `localModels.thinking`
+// (`auto|on|off`, both default `auto`) — render local prompts through
+// the model's own chat template (llama-server `/apply-template`) for
+// families without a hand-built profile, and set the template's
+// thinking switch. Additive: an older file inherits `auto` for both.
+// v66: `localModels.managed.swaFull` (`"auto"` | `"on"` | `"off"`, default
+// `"auto"`) — whether a sliding-window model (Gemma 4 and kin) is
+// launched with `--swa-full` so a partially matching prompt reuses its
+// matching prefix (see `swa-full.ts`). Additive: an older file has no
+// field and gets `"auto"`, which is off unless the full-SWA KV estimate
+// fits the launch's memory budget.
+// v67: session-boundary fields.
+// `tools.shell.defaultTimeoutMs` (default 600 000) — the wall-clock
+// wait for an `os.shell.run` call whose `timeoutMs` the model omitted.
+// Before v67 an omitted `timeoutMs` meant no limit at all, and a
+// recursive grep over a home directory ran for twenty minutes until a
+// person killed it; `agent.toolTimeoutMs` never applied to the shell.
+// A command still running when the default elapses is detached as a
+// job (`src/tools/os/shell-jobs.ts`) rather than killed; the model
+// reaches it through the `wait` / `kill` / `jobs` forms of the tool.
+// `0` keeps the old unbounded behaviour; an explicit per-call
+// `timeoutMs` (including `0`) always wins and kills at its limit.
+// `tools.shell.jobMaxMs` (default 3 600 000) — the absolute ceiling for
+// a detached job, from its start. `tools.shell.maxJobs` (default 3) —
+// detached jobs running at once per session; the next detach evicts the
+// oldest un-kept one. All three additive: an older file has no field
+// and takes the default.
+// `agent.readScope` (`"working-dir"` | `"unrestricted"`, default
+// `"working-dir"`) — a session's filesystem reads and shell path
+// arguments are confined to the working directory and the paths the user
+// named in the conversation (`src/tools/read-scope/`). A DEFAULT-BEHAVIOUR
+// CHANGE: an older file has no field and takes `"working-dir"`; the
+// pre-v67 behaviour is one line away (`agent.readScope: "unrestricted"`).
+// v68: `localModels.reasoningBudgetTokens` (default 1500, `0` =
+// unbounded) — the GBNF prelude of a local reasoning model is bounded at
+// `budget × 4` characters, after which only the close sentinel is
+// admitted; the forced final step keeps an unbounded prelude. Additive:
+// an older file has no field and takes the default. In the same step
+// `localModels.thinking: "off"` is honoured on the hand-built prompt of a
+// `qwen-think` model (disabled marker at the generation point, plain
+// grammar root) — no new field, the existing switch reaches one more path.
+// v69: `llm.runMode.fusion.reviewStallSteps` (default 6, `0` = off) — the
+// number of consecutive read-only orchestrator steps without a
+// `fusion.delegate` after which the planner is told to delegate or reply,
+// and at twice which the step admits only `fusion.delegate`, `reply` and
+// `finish` (F41, `src/agent/review-stall.ts`). Additive: an older file
+// has no field, the fusion block stays as it was, and the default applies
+// at read time like the other optional fusion fields.
+export const USER_CONFIG_VERSION = 69;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2293,6 +2571,10 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   62,
   63,
   64,
+  65,
+  66,
+  67,
+  68,
   USER_CONFIG_VERSION,
 ];
 
@@ -2301,7 +2583,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   localModels: {
     url: "http://127.0.0.1:8080",
     mode: "external",
-    completionMaxTokens: 8192,
+    completionMaxTokens: 16384,
+    useServerTemplate: "auto",
+    thinking: "auto",
+    reasoningBudgetTokens: 1500,
     managed: {
       modelId: null,
       port: 19091,
@@ -2313,6 +2598,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       contextSize: 0,
       tensorSplit: [],
       parallel: "auto",
+      swaFull: "auto",
     },
     embeddings: {
       enabled: false,
@@ -2348,9 +2634,13 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       autoContinue: true,
     },
     toolTimeoutMs: 60_000,
+    readScope: "working-dir",
     approvalLevel: 1,
-    conversationMaxTokens: 32_000,
-    conversationMaxPairs: 20,
+    // `0` = let the model's context window decide (CONVERSATION_CAP_AUTO);
+    // the fixed 32K fallback applies only when no window is known.
+    conversationMaxTokens: 0,
+    conversationMaxPairs: 200,
+    conversationLowWater: 0.65,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -2391,6 +2681,20 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   projects: {
     roots: [],
+  },
+  tools: {
+    shell: {
+      // Ten minutes: long enough for an install or a test suite, short
+      // enough that a runaway scan is reported the same hour it started.
+      // The detach notice tells the model how to wait for or stop it.
+      defaultTimeoutMs: 600_000,
+      // An hour: a build or a download that has not finished by then is
+      // not going to, and nobody is watching it any more.
+      jobMaxMs: 3_600_000,
+      // Three concurrent jobs is a server, a watcher and a build; more
+      // is a model that has stopped waiting for anything.
+      maxJobs: 3,
+    },
   },
   tracing: {
     trace: {
@@ -2646,6 +2950,19 @@ export const ENV_DEFAULTS = {
   HEALTH_TIMEOUT_MS: 3000,
   REQUEST_TIMEOUT_MS: 300_000,
   /**
+   * 30 minutes. How long a local stream may wait for its first byte — see
+   * `AtomicAgentConfig.localModels.firstTokenTimeoutMs`.
+   *
+   * Sized for the slowest honest wait fusion produces, not for one
+   * request on an idle server: several workers on one GPU queue behind
+   * each other's prompt evals, and a queued worker whose slot had not
+   * yet evaluated a token was cancelled at the 300 s idle budget. A wait
+   * that is really stuck still ends on the caller's own bounds (the
+   * worker's turn timeout, Esc). Raise it with
+   * `ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS`.
+   */
+  FIRST_TOKEN_TIMEOUT_MS: 30 * 60 * 1_000,
+  /**
    * 6 hours. The backstop on a single streaming response — see
    * `AtomicAgentConfig.localModels.streamTotalTimeoutMs`.
    *
@@ -2698,7 +3015,7 @@ export const ENV_DEFAULTS = {
   /** Soft cap on tool calls per inference step. Hard upper bound is 16 (grammar). */
   MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
-  BATCH_TOOL_RESULT_CHAR_CAP: 16_000,
+  BATCH_TOOL_RESULT_CHAR_CAP: 32_000,
   /** Args-only repeat count that injects a no-progress `### notice`. */
   LOOP_WARNING_THRESHOLD: 3,
   /** Identical args+result streak that vetoes a call before dispatch. */
@@ -2742,6 +3059,17 @@ export function parseBackendVariant(
   throw new ConfigValidationError(
     field,
     `expected ${BACKEND_VARIANT_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseSwaFullPreference(
+  raw: unknown,
+  field: string,
+): SwaFullPreference {
+  if (isSwaFullPreference(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected ${SWA_FULL_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -2962,6 +3290,19 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
   const value = coerceIntLike(raw);
   if (value === 0) return 0;
   return parseBoundedPositiveInt(raw, field, 64, 131_072);
+}
+
+/**
+ * `localModels.reasoningBudgetTokens` — the think-block bound of a local
+ * reasoning model, in tokens. `0` means unbounded; anything else is an
+ * integer in [64, 32768]. The upper bound keeps the grammar llama.cpp
+ * expands server-side (`{0,N}` becomes N nested optional rules, four
+ * per token) at a size it parses in milliseconds.
+ */
+export function parseReasoningBudgetTokens(raw: unknown, field: string): number {
+  const value = coerceIntLike(raw);
+  if (value === 0) return 0;
+  return parseBoundedPositiveInt(raw, field, 64, 32_768);
 }
 
 export function parseBoundedPositiveInt(
@@ -4043,6 +4384,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
   const web = (obj.web as Record<string, unknown> | undefined) ?? {};
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
+  const tools = (obj.tools as Record<string, unknown> | undefined) ?? {};
+  const toolsShell = (tools.shell as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchProvider = parseWebSearchProviderName(
@@ -4178,6 +4521,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       "localModels.managed.tensorSplit",
     ),
     parallel: resolveManagedParallel(version, rawManaged.parallel),
+    swaFull: parseSwaFullPreference(
+      rawManaged.swaFull ?? USER_CONFIG_DEFAULTS.localModels.managed.swaFull,
+      "localModels.managed.swaFull",
+    ),
   };
 
   const rawEmbeddings =
@@ -4259,6 +4606,20 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
         "localModels.completionMaxTokens",
       ),
+      useServerTemplate: parseLocalTemplateSetting(
+        localModels.useServerTemplate ??
+          USER_CONFIG_DEFAULTS.localModels.useServerTemplate,
+        "localModels.useServerTemplate",
+      ),
+      thinking: parseLocalTemplateSetting(
+        localModels.thinking ?? USER_CONFIG_DEFAULTS.localModels.thinking,
+        "localModels.thinking",
+      ),
+      reasoningBudgetTokens: parseReasoningBudgetTokens(
+        localModels.reasoningBudgetTokens ??
+          USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens,
+        "localModels.reasoningBudgetTokens",
+      ),
       managed,
       embeddings: embeddingsDaemon,
       download,
@@ -4285,6 +4646,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
         "agent.toolTimeoutMs",
       ),
+      // The upgrade step for a pre-v67 file: no field, the default.
+      readScope: parseReadScope(
+        agent.readScope ?? USER_CONFIG_DEFAULTS.agent.readScope,
+        "agent.readScope",
+      ),
       approvalLevel: resolveApprovalLevel(
         agent.approvalLevel,
         agent.approvalRequired,
@@ -4306,7 +4672,14 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
         "agent.conversationMaxPairs",
         1,
-        100,
+        1000,
+      ),
+      // `(0, 1]`: `1` is a real setting (cut just enough, every step),
+      // `0` would drop the whole transcript at the first overflow.
+      conversationLowWater: parseHalfOpenUnitInterval(
+        agent.conversationLowWater ??
+          USER_CONFIG_DEFAULTS.agent.conversationLowWater,
+        "agent.conversationLowWater",
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??
@@ -4440,6 +4813,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           projects.roots ?? USER_CONFIG_DEFAULTS.projects.roots,
           "projects.roots",
         ) ?? [],
+    },
+    tools: {
+      shell: {
+        // Non-negative rather than positive: `0` is "no default", the
+        // behaviour every pre-v67 file had.
+        defaultTimeoutMs: parseNonNegativeInt(
+          toolsShell.defaultTimeoutMs ??
+            USER_CONFIG_DEFAULTS.tools.shell.defaultTimeoutMs,
+          "tools.shell.defaultTimeoutMs",
+        ),
+        jobMaxMs: parsePositiveInt(
+          toolsShell.jobMaxMs ?? USER_CONFIG_DEFAULTS.tools.shell.jobMaxMs,
+          "tools.shell.jobMaxMs",
+        ),
+        maxJobs: parsePositiveInt(
+          toolsShell.maxJobs ?? USER_CONFIG_DEFAULTS.tools.shell.maxJobs,
+          "tools.shell.maxJobs",
+        ),
+      },
     },
     tracing: {
       trace: {

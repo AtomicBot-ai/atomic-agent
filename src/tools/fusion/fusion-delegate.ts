@@ -7,11 +7,29 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
 import type { StructuredLogger } from "../../tracing/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
+import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
+import {
+  applyCheckOutcomes,
+  applyContractFindings,
+  inspectContractProvides,
+  renderContractLine,
+  runContractChecks,
+  type ContractCheckRunner,
+  type ContractReport,
+} from "./contract-checks.js";
+import {
+  contractForWave,
+  dependencyWarnings,
+  planWaves,
+} from "./contract-waves.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
 import {
+  delegateOutcome,
+  fanoutSpend,
   formatDelegateOutput,
+  type WorkerPricing,
   type WorkerTaskResult,
 } from "./worker-result.js";
 
@@ -34,6 +52,37 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   /** Budget for the rendered result block. */
   outputCharCap: number;
   logger: StructuredLogger;
+  /**
+   * The operator's request behind the turn now running on `sessionId`
+   * (the orchestrator's session), quoted into every worker brief. The
+   * runtime records it when the turn starts; absent, the briefs carry
+   * only the orchestrator's instructions, as they did before.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /**
+   * Runs a contract's `checks` (`verify.run` specs) after the fan-out —
+   * the verify tool family's `runChecks`, wired by the runtime. Absent,
+   * declared checks are reported as not run; they are never assumed to
+   * have passed.
+   */
+  runChecks?: ContractCheckRunner;
+  /**
+   * Pricing for the worker model on the worker leg, when any is known
+   * (`resolveModelPricingFor`). Present, the status table header states
+   * the fan-out's spend; a local leg resolves to nothing.
+   */
+  resolveWorkerPricing?: (
+    providerId: string,
+    modelId: string,
+  ) => WorkerPricing | undefined;
+  /**
+   * The local leg's measured generation speed
+   * (`LlamaServerClient.measuredTokensPerSecond`), read per fan-out so a
+   * worker's time limit follows the machine's current load. Only
+   * consulted for a slot-affine (local) leg; `null` before any
+   * completion has been measured.
+   */
+  localTokensPerSecond?: () => number | null;
 }
 
 function error(
@@ -68,13 +117,16 @@ function error(
  *     Manage → LLM leaves fusion on the next read (§"Run modes"), and a
  *     tool that kept fanning out would be spending on a leg the operator
  *     just walked away from.
- *  3. **Only on valid args.** See `parseDelegateArgs`.
+ *  3. **Only on valid args.** See `parseDelegateArgs`: the refusal
+ *     names every problem of the call at once, so a slow local
+ *     orchestrator regenerates once, not once per field.
  *
- * Once the call runs it returns `status: "ok"` even when every worker
- * failed. Per-task status lives in the output and in
- * `details.tasks` — an orchestrator that gets a bare error learns
- * nothing about which parts survived, and partial results are the whole
- * value of a fan-out.
+ * Once the call runs, its status summarises its tasks
+ * (`details.outcome`): `ok` while any task delivered anything — partial
+ * results are the whole value of a fan-out, and an orchestrator handed
+ * a bare error learns nothing about which parts survived — and `error`
+ * only when every task failed or was cancelled. Per-task status lives
+ * in the output and in `details.tasks` either way.
  *
  * **Width is the model's call.** `args.maxWorkers` is honoured as asked;
  * `llm.runMode.fusion.workers` only fills in for a call that named
@@ -116,7 +168,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. Args: { tasks: [{ id, title, instructions, deliverable?, files? }], maxWorkers? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, instructions, title?, deliverable?, files? }], maxWorkers?, contract? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -153,7 +205,8 @@ export function buildFusionDelegateTool(
         });
       }
 
-      const poolSize = deps.workerSupportsSlotAffinity(workerProviderId)
+      const slotAffine = deps.workerSupportsSlotAffinity(workerProviderId);
+      const poolSize = slotAffine
         ? Math.max(1, deps.slotManager.poolSize())
         : Number.POSITIVE_INFINITY;
       // The ORCHESTRATOR decides the width. It is the party that knows
@@ -165,21 +218,32 @@ export function buildFusionDelegateTool(
       // on a slot-affine leg you cannot run more than the server has
       // request slots (the rest would queue and evict each other's KV
       // cache rather than run).
-      // A call that named no width gets the machine's capacity, not a
-      // number from a config file. The operator is not the party that
-      // knows how divisible this particular job is, and the slot pool is
-      // already the honest ceiling — `runMode.fusion.workers` survives
-      // only as a pin for someone who deliberately wrote one.
+      // A call that named no width on a LOCAL leg runs one worker at a
+      // time unless the operator pinned `runMode.fusion.workers`: the
+      // slots share one GPU, and the benchmark measured two local
+      // workers at 2.6-2.9 tok/s each against 6.4 for one — parallel is
+      // not faster there until a measurement says so, while a fan-out
+      // that overflows the shared context loses every worker at once.
+      // A cloud leg has no such pool and takes the configured default.
       const requested =
         parsed.maxWorkers ??
-        (Number.isFinite(poolSize) ? (poolSize as number) : mode.workers);
+        (slotAffine ? (mode.workersPinned ? mode.workers : 1) : mode.workers);
       const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
-      const maxWorkers = Math.max(1, Math.min(wanted, poolSize));
+      // A cloud leg has no slot pool, so nothing physical bounds the
+      // width — only the bill. `cloudWorkers` is that bound: a
+      // `maxWorkers` above it is clamped, and the result says so, since
+      // the orchestrator is the party that can re-plan around it.
+      const cloudCap = Number.isFinite(poolSize)
+        ? Number.POSITIVE_INFINITY
+        : (mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS);
+      const maxWorkers = Math.max(1, Math.min(wanted, poolSize, cloudCap));
+      const cloudCapIsBinding = maxWorkers < wanted && maxWorkers === cloudCap;
       // The pool held this fan-out down when it ran fewer at a time than
       // there was work for — whether the orchestrator asked for a wider
       // number or simply had more tasks than the machine has slots.
       const poolIsBinding =
-        maxWorkers < wanted || maxWorkers < parsed.tasks.length;
+        !cloudCapIsBinding &&
+        (maxWorkers < wanted || maxWorkers < parsed.tasks.length);
 
       // Labels, never guesses: the resolver's pin when it has one, the
       // provider id when it does not. Both legs are read from the same
@@ -250,18 +314,67 @@ export function buildFusionDelegateTool(
         );
       }
 
+      // The orchestrator's brief is a summary, and summaries were thin
+      // enough that workers built the wrong thing or scavenged the disk
+      // for the missing spec. Every worker also gets what was asked.
+      const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
+      // A local worker's time limit is sized from the machine's measured
+      // speed (F19); a cloud leg has no such measurement and keeps the
+      // configured ceiling.
+      const localTokensPerSecond = Number.isFinite(poolSize)
+        ? (deps.localTokensPerSecond?.() ?? null)
+        : null;
+
+      // The order the contract imposes (F45): a task that requires what
+      // a sibling provides runs in a later wave than that sibling, so it
+      // is not sent to wait for a file that does not exist yet. Without
+      // a contract, or without a satisfiable `requires`, the plan is one
+      // wave holding every task — the fan-out as it always ran.
+      const plan = planWaves(
+        parsed.tasks.map((t) => t.id),
+        parsed.contract,
+      );
+      const ordered = plan.dependencies.size > 0;
+      // What the waves add to the contract's own warnings: a cycle, and
+      // every provider that had not delivered when its dependent ran.
+      // Each wave's block carries everything known so far; the result's
+      // `contract:` line carries all of it.
+      const waveWarnings: string[] = plan.cycle === undefined ? [] : [plan.cycle];
+
       let results: WorkerTaskResult[];
       try {
-        results = await runWorkerTasks(deps, {
-          parentSessionId: ctx.sessionId,
-          tasks: parsed.tasks,
-          maxWorkers,
-          providerId: workerProviderId,
-          workerModel,
-          workerMaxSteps: mode.workerMaxSteps,
-          workerTimeoutMs: mode.workerTimeoutMs,
-          writeScope,
-          signal: ctx.signal,
+        const finished = new Map<string, WorkerTaskResult>();
+        for (const wave of plan.waves) {
+          waveWarnings.push(
+            ...dependencyWarnings(wave, plan.dependencies, finished),
+          );
+          const contract = contractForWave(parsed.contract, waveWarnings);
+          const waveResults = await runWorkerTasks(deps, {
+            ...(originalRequest === undefined ? {} : { originalRequest }),
+            ...(contract === undefined ? {} : { contract }),
+            parentSessionId: ctx.sessionId,
+            tasks: parsed.tasks.filter((t) => wave.includes(t.id)),
+            maxWorkers,
+            providerId: workerProviderId,
+            workerModel,
+            workerMaxSteps: mode.workerMaxSteps,
+            workerTimeoutMs: mode.workerTimeoutMs,
+            localTokensPerSecond,
+            ...(mode.workerReasoning === undefined
+              ? {}
+              : { workerReasoning: mode.workerReasoning }),
+            ...(mode.workerMaxOutputTokens === undefined
+              ? {}
+              : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
+            writeScope,
+            signal: ctx.signal,
+          });
+          for (const result of waveResults) finished.set(result.id, result);
+        }
+        // In the caller's task order, whatever wave each ran in.
+        results = parsed.tasks.flatMap((t) => {
+          const result = finished.get(t.id);
+          return result === undefined ? [] : [result];
         });
       } catch (err) {
         // `runWorkerTasks` is written not to throw; if it ever does, the
@@ -271,6 +384,42 @@ export function buildFusionDelegateTool(
           { reason: "fan-out-failed" },
         );
       }
+
+      // The contract's verdict, from the disk and the check runner, folded
+      // into the rows BEFORE the head line counts them: a task whose
+      // declared check failed is `failed` in the table the orchestrator
+      // reads, not `ok` with a footnote.
+      let contract: ContractReport | undefined;
+      if (parsed.contract !== undefined) {
+        const findings = await inspectContractProvides(
+          parsed.contract,
+          parsed.tasks,
+          ctx.workingDir,
+        );
+        results = applyContractFindings(results, findings);
+        const checks = await runContractChecks(
+          parsed.contract.checks ?? [],
+          deps.runChecks,
+          { workingDir: ctx.workingDir, signal: ctx.signal },
+        );
+        results = applyCheckOutcomes(results, checks.outcomes);
+        // What the call was run with despite the contract — a require
+        // nobody provides, a provide nothing can check, a cycle in the
+        // requires, a provider that had not delivered when its dependent
+        // ran. The workers read it in their block; the orchestrator
+        // reads it here, on the line and in the details.
+        const warnings = [...(parsed.contract.warnings ?? []), ...waveWarnings];
+        contract = {
+          findings,
+          checks: checks.outcomes,
+          ...(checks.checksSkipped === undefined
+            ? {}
+            : { checksSkipped: checks.checksSkipped }),
+          ...(warnings.length === 0 ? {} : { warnings }),
+        };
+      }
+      const contractLine =
+        contract === undefined ? undefined : renderContractLine(contract);
 
       // …and takes the turn back. One line, so the operator can see the
       // spend return to the cloud leg instead of guessing which of the
@@ -292,18 +441,40 @@ export function buildFusionDelegateTool(
       // all three things it needs: what was wanted, what actually ran
       // concurrently, and the config key that changes the second number.
       const hint = poolIsBinding
-        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — llama-server divides its context between slots (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
-        : "";
+        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — every slot draws on one shared llama-server context pool (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
+        : cloudCapIsBinding
+          ? `\n\nNote: maxWorkers ${wanted} was clamped to ${maxWorkers}, the cloud worker cap (\`llm.runMode.fusion.cloudWorkers\`); the rest queued behind them.`
+          : "";
+      // The call's own status is the tasks' summary: a fan-out where
+      // every worker failed used to come back `ok`, and an orchestrator
+      // reading only the status merged nothing as if it were something.
+      const outcome = delegateOutcome(results);
+      // What the fan-out cost on the worker leg, when its model is priced
+      // (a cloud leg with a catalogue entry); a local leg resolves to no
+      // pricing and the header says nothing.
+      const pricing = deps.resolveWorkerPricing?.(workerProviderId, workerModel);
+      const spend =
+        pricing === undefined ? null : fanoutSpend(results, pricing, workerModel);
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
-          status: "ok",
-          output: `${formatDelegateOutput(results, deps.outputCharCap)}${hint}`,
+          status: outcome === "all_failed" ? "error" : "ok",
+          output: `${formatDelegateOutput(results, deps.outputCharCap, {
+            ...(contractLine === undefined ? {} : { contractLine }),
+            spend,
+            ...(ordered ? { waves: plan.waves } : {}),
+          })}${hint}`,
           details: {
             tasks: results,
+            outcome,
             maxWorkers,
             requestedWorkers: requested,
             ...(Number.isFinite(poolSize) ? { slotPoolSize: poolSize } : {}),
+            // The wave plan, for the orchestrator and the trace's tool
+            // row alike — only when the contract ordered anything.
+            ...(ordered ? { waves: plan.waves } : {}),
+            ...(contract === undefined ? {} : { contract }),
+            ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
           },
         },
         { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },

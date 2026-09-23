@@ -14,7 +14,13 @@ import { join } from "node:path";
  * the price of a probe that opens databases is paying the full read on
  * every launch that reaches the check.
  */
-export type ImportAgentId = "hermes" | "openclaw" | "claude-code" | "codex";
+export type ImportAgentId =
+  | "hermes"
+  | "openclaw"
+  | "claude-code"
+  | "codex"
+  | "pi"
+  | "oh-my-pi";
 
 export interface DetectedImportAgent {
   id: ImportAgentId;
@@ -37,6 +43,8 @@ export const IMPORT_AGENT_LABELS: Record<ImportAgentId, string> = {
   openclaw: "OpenClaw",
   "claude-code": "Claude Code",
   codex: "Codex",
+  pi: "Pi",
+  "oh-my-pi": "Oh-My-Pi",
 };
 
 /** Resolve the state dir an agent would be imported from. */
@@ -55,6 +63,13 @@ export function importAgentDir(
       return env.CLAUDE_CODE_STATE_DIR ?? join(home, ".claude");
     case "codex":
       return env.CODEX_STATE_DIR ?? join(home, ".codex");
+    // Both dirs are the products' `agent/` subtree, where the importable
+    // artefacts live. The `*_STATE_DIR` names follow this codebase's own
+    // override convention; Pi's native equivalent is PI_CODING_AGENT_DIR.
+    case "pi":
+      return env.PI_STATE_DIR ?? join(home, ".pi", "agent");
+    case "oh-my-pi":
+      return env.OMP_STATE_DIR ?? join(home, ".omp", "agent");
   }
 }
 
@@ -100,6 +115,16 @@ function hasImportableState(id: ImportAgentId, dir: string): boolean {
         existsSync(join(dir, "skills")) ||
         existsSync(join(dir, "auth.json")) ||
         existsSync(join(dir, "AGENTS.md"))
+      );
+    case "pi":
+      return (
+        existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions"))
+      );
+    case "oh-my-pi":
+      return (
+        existsSync(join(dir, "skills")) ||
+        existsSync(join(dir, "sessions")) ||
+        existsSync(join(dir, "mcp.json"))
       );
   }
 }

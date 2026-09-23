@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { refreshOpenRouterChatCatalogFromApi } from "../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import type { ResolvedLlmConfig } from "../llm/provider/registry/index.js";
 
@@ -66,5 +67,45 @@ describe("resolveModelPricingFor", () => {
       resolveModelPricingFor(resolved, "shared-model", "ghost"),
     ).toBeUndefined();
     expect(resolveModelPricingFor(resolved, null, "cloud")).toBeUndefined();
+  });
+});
+
+describe("resolveModelPricingFor — OpenRouter live catalog (F30)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const resolved: ResolvedLlmConfig = {
+    activeTextProvider: "or",
+    activeEmbeddingProvider: "local-llama-embed",
+    toolTransport: "auto",
+    providers: [{ id: "or", kind: "openrouter", defaultChatModel: "acme/new-model" }],
+  };
+
+  it("takes context_length from the live list for a model neither configured nor bundled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: "acme/new-model",
+              name: "New",
+              context_length: 65_536,
+              pricing: { prompt: "0.000001", completion: "0.000002" },
+              supported_parameters: ["tools"],
+            },
+          ],
+        }),
+      })),
+    );
+    expect(await refreshOpenRouterChatCatalogFromApi()).toBe(true);
+    const model = resolveModelPricingFor(resolved, "acme/new-model");
+    expect(model?.source).toBe("live");
+    expect(model?.contextWindow).toBe(65_536);
+    expect(model?.pricing).toEqual({ input: 1, output: 2 });
+    // Still unknown: not in the live list either.
+    expect(resolveModelPricingFor(resolved, "acme/other")?.source).toBe("default");
   });
 });

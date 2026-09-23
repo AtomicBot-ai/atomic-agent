@@ -30,7 +30,7 @@ function gatedRegistry(gate: ApprovalGate): ToolRegistry {
             tool: "os.fs.read",
             category: "shell",
             reason: "test",
-            preview: String(args.label),
+            preview: String(args.path),
           },
           ctx.signal,
         );
@@ -40,7 +40,7 @@ function gatedRegistry(gate: ApprovalGate): ToolRegistry {
         }
         throw err;
       }
-      return compressToolResult({ tool: "os.fs.read", status: "ok", output: `ran ${String(args.label)}` });
+      return compressToolResult({ tool: "os.fs.read", status: "ok", output: `ran ${String(args.path)}` });
     },
   });
   return registry;
@@ -76,8 +76,8 @@ describe("approval ledger", () => {
     });
     const outcome = await executeBatch(
       toBatchInputs([
-        { tool: "os.fs.read", args: { label: "A" } },
-        { tool: "os.fs.read", args: { label: "B" } },
+        { tool: "os.fs.read", args: { path: "A" } },
+        { tool: "os.fs.read", args: { path: "B" } },
       ]),
       gatedRegistry(gate),
       batchCtx(),
@@ -93,7 +93,7 @@ describe("approval ledger", () => {
   it("records nothing for a request nobody was asked (auto-approved)", async () => {
     const gate = new ApprovalGate({ emit: () => { throw new Error("must not prompt"); }, level: 5 });
     const outcome = await executeBatch(
-      toBatchInputs([{ tool: "os.fs.read", args: { label: "A" } }]),
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "A" } }]),
       gatedRegistry(gate),
       batchCtx(),
     );

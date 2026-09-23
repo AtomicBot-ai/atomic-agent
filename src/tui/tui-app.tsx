@@ -33,6 +33,7 @@ import {
   type ReactElement,
 } from "react";
 import { reduceTuiState } from "./agent-event-reducer.js";
+import { deriveHerdrReport, type HerdrReporter } from "./herdr-reporter.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
@@ -214,6 +215,11 @@ export interface TuiAppCallbacks {
   onSessionDeleteConfirmed?(sessionId: string): void;
   /** `/uninstall` or the menu's last entry: measure the install. */
   onUninstallPlanRequested?(): void;
+  /**
+   * `/onboarding` or Setup → "Run first-time setup again…": clear the
+   * first-run stamps and open the flow. Only called on an idle session.
+   */
+  onOnboardingRerunRequested?(): void;
   /** The word was typed and Enter pressed. */
   onUninstallConfirmed?(): void;
   onAbort(): void;
@@ -729,6 +735,13 @@ export interface TuiAppProps {
    * simply never fires.
    */
   mouse?: MouseSource;
+  /**
+   * Self-report channel for the herdr agent runtime. `tui-command.ts`
+   * creates it when the herdr env markers are present and holds on to
+   * it so the release call survives exit paths that never unmount the
+   * tree; null (and in tests, omitted) everywhere else.
+   */
+  herdrReporter?: HerdrReporter | null;
 }
 
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
@@ -779,6 +792,7 @@ export function TuiApp({
   maxVisibleRows = DEFAULT_MAX_VISIBLE_ROWS,
   initialLayout,
   mouse,
+  herdrReporter = null,
 }: TuiAppProps): ReactElement {
   const [state, dispatch] = useReducer(
     reduceTuiState,
@@ -791,6 +805,26 @@ export function TuiApp({
       ),
   );
   const app = useApp();
+  // Inside a herdr pane the label is ours to claim: report lifecycle
+  // transitions as they happen and hand the label back on unmount.
+  // Outside herdr the reporter prop is null and all of this is inert.
+  // (Quit paths that skip the unmount are covered by the release call
+  // in tui-command.ts, and `release()` is idempotent.)
+  useEffect(() => {
+    if (!herdrReporter) return;
+    const report = deriveHerdrReport({
+      status: state.status,
+      pendingApproval: state.pendingApproval,
+      planHandoff: state.planHandoff,
+    });
+    herdrReporter.report(report.state, report.message);
+  }, [herdrReporter, state.status, state.pendingApproval, state.planHandoff]);
+  useEffect(() => {
+    if (!herdrReporter) return;
+    return () => {
+      herdrReporter.release();
+    };
+  }, [herdrReporter]);
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
   const [menuLeaderArmed, setMenuLeaderArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);

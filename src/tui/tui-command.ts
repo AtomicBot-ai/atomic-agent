@@ -50,6 +50,11 @@ import { restoreTerminalNow } from "./terminal-restore.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
+  ONBOARDING_RERUN_RESET,
+  reopenOnboarding,
+} from "./onboarding/rerun-onboarding.js";
+import { persistOnboardingState } from "./persist-onboarding-state.js";
+import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
@@ -57,6 +62,7 @@ import { openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
+import { createHerdrReporter } from "./herdr-reporter.js";
 import {
   detectTerminalBackground,
   resolveStartupTheme,
@@ -135,8 +141,20 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const skipOnboarding =
     parsed.skipLlamaSetup ||
     process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
-  const onboarding =
-    !skipOnboarding && needsOnboarding()
+  // `--onboarding` is `/onboarding` from the shell: the flow opens
+  // whatever `decideOnboarding` would have said. It beats the
+  // SKIP_LLAMA_SETUP env var on purpose — a flag typed on this launch is
+  // more specific than an ambient variable a harness or profile exports;
+  // only the two *flags* together are refused (`parseTuiArgs`), since
+  // that pair is a contradiction on one command line. `rerun` is read
+  // before the stamp reset, which itself waits until just before the
+  // first render, so a launch that dies while the runtime boots clears
+  // nothing.
+  const onboarding = parsed.onboarding
+    ? createOnboardingState(getConfig().localModels.url, {
+        rerun: !needsOnboarding(),
+      })
+    : !skipOnboarding && needsOnboarding()
       ? createOnboardingState(getConfig().localModels.url)
       : null;
   // TUI owns its own llama-server health UX (footer indicator +
@@ -170,7 +188,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
     parsed.noApproval,
     config.agent.approvalLevel,
   );
-  const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
+  // `--max-steps` is the operator's ceiling for a whole task. Without it
+  // nothing is passed on, so the runtime applies its own defaults:
+  // `agent.maxSteps` is the leg length and `agent.task.maxSteps` the
+  // ceiling. Filling the config value in here turned the leg into a hard
+  // ceiling and quietly stopped every TUI turn at 25 steps.
+  const maxSteps = parsed.maxSteps ?? undefined;
   const bus = makeTuiEventBus();
   // Set when the user presses a key on the post-self-update restart prompt.
   // Honoured after the Ink app unmounts and the runtime shuts down: we
@@ -234,7 +257,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     browserChannel: config.browser.channel,
     browserHeadless: config.browser.headless,
     approvalLevel,
-    maxSteps,
+    // Shown in the session facts: the operator's ceiling when given,
+    // otherwise the leg length the runtime will use.
+    maxSteps: maxSteps ?? config.agent.maxSteps,
     completionMaxTokens: config.localModels.completionMaxTokens,
     skillCount: runtime.skillCatalog.length,
     // Read after the startup gate, so a local model picked in the wizard
@@ -398,11 +423,20 @@ export async function tuiCommand(args: string[]): Promise<number> {
     });
   };
 
+  // Created out here rather than inside the app so the goodbye call
+  // survives quit paths that tear the process down without unmounting
+  // the React tree; null outside a herdr pane.
+  const herdrReporter = createHerdrReporter();
+
+  // `--onboarding`'s stamp reset, deferred to here from the decision
+  // above: the runtime is up and the next line mounts the flow.
+  if (parsed.onboarding) persistOnboardingState(ONBOARDING_RERUN_RESET);
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
       bus,
       ...(initialLayout ? { initialLayout } : {}),
+      ...(herdrReporter ? { herdrReporter } : {}),
       callbacks: {
         onAbort: () => orchestrator.abortCurrentTurn(),
         onQuit: () => orchestrator.quit(),
@@ -459,6 +493,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
           void loadUninstallPreview(bus, config.paths.stateDir),
+        onOnboardingRerunRequested: () =>
+          reopenOnboarding((action) => bus.emit(action)),
         onUninstallConfirmed: () => {
           uninstallRequested = true;
           orchestrator.quit();
@@ -831,6 +867,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   try {
     await ink.waitUntilExit();
   } finally {
+    // Tell herdr the pane label is free again before anything else in
+    // the teardown can throw; idempotent with the unmount-time call.
+    herdrReporter?.release();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     process.off("SIGHUP", onSignal);

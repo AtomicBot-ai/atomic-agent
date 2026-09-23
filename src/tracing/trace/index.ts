@@ -6,6 +6,7 @@ export type {
   TraceLlmTiming,
   TraceLoopDetected,
   TraceParseRetry,
+  TraceBatchTrimmed,
   TracePromptCaptured,
   TracePromptTokens,
   TraceProfileClipped,

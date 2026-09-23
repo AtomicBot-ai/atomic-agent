@@ -635,6 +635,135 @@ describe("reduceTuiState", () => {
     );
   });
 
+  it("names a steered turn by its opening request, not by the steer", () => {
+    // `Test` was folded into the running `count the stars` turn. Stopping
+    // that turn must offer to re-run `count the stars`; re-sending `Test`
+    // alone would open a turn on the correction without the request.
+    const steered = (extra: TuiAction[]): TuiState =>
+      apply(createInitialTuiState(fakeSession()), [
+        {
+          type: "agent_event",
+          event: { type: "user_message", text: "count the stars" },
+        },
+        { type: "message_submitted" },
+        { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+        {
+          type: "agent_event",
+          event: { type: "steer_applied", text: "Test", stepIndex: 0 },
+        },
+        ...extra,
+      ]);
+
+    const stopped = steered([
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = stopped.messages.find((m) => m.role === "system");
+    expect(notice?.text).toBe("Agent stopped by user.");
+    expect(notice?.retryText).toBe("count the stars");
+    expect(stopped.runHistory[0]?.message).toBe("count the stars");
+
+    const completed = steered([
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
+    ]);
+    expect(completed.runHistory[0]?.outcome).toBe("completed");
+    expect(completed.runHistory[0]?.message).toBe("count the stars");
+  });
+
+  it("does not reach past a finished turn for the request of a steered one", () => {
+    // The running turn was opened outside this chat list (Telegram, HTTP,
+    // or a replay that dropped its oldest events); only its steer is
+    // here. `OLD` belongs to a turn that already finished and must not be
+    // offered as this turn's retry.
+    const stopped = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "OLD" } },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "old answer" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "finish" },
+      },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 1 } },
+      {
+        type: "agent_event",
+        event: { type: "steer_applied", text: "Test", stepIndex: 1 },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    const notice = stopped.messages.find(
+      (m) => m.role === "system" && m.text === "Agent stopped by user.",
+    );
+    expect(stopped.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "system",
+    ]);
+    expect(notice?.retryText).toBeUndefined();
+    expect(stopped.runHistory.at(-1)?.message).toBe("");
+  });
+
+  it("walks past an interim progress note to the steered turn's request", () => {
+    const stopped = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "counting…",
+            progressNote: true,
+          },
+        },
+      },
+      {
+        type: "agent_event",
+        event: { type: "steer_applied", text: "Test", stepIndex: 1 },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("This operation was aborted"),
+          category: "cancelled",
+        },
+      },
+    ]);
+    expect(
+      stopped.messages.some((m) => m.role === "assistant" && m.progressNote),
+    ).toBe(true);
+    const notice = stopped.messages.find((m) => m.role === "system");
+    expect(notice?.retryText).toBe("count the stars");
+    expect(stopped.runHistory[0]?.message).toBe("count the stars");
+  });
+
   it("leaves retryText off the stopped notice when no user message exists to re-run", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
@@ -1064,6 +1193,12 @@ describe("reduceTuiState", () => {
     const last = next.messages[next.messages.length - 1];
     expect(last?.role).toBe("user");
     expect(last?.text).toBe("use the staging db");
+    // ...marked as folded into the turn, so the reply that follows is
+    // not drawn as its answer. The prompt that opened the turn is not.
+    expect(last?.steered).toBe(true);
+    expect(
+      next.messages.find((m) => m.text === "deploy")?.steered,
+    ).toBeUndefined();
     // ...with a feed line tying it to the step it reached.
     expect(next.feed.length).toBe(feedBefore + 1);
     expect(next.feed[next.feed.length - 1]?.line).toContain("step 1");
@@ -1141,6 +1276,59 @@ describe("truncated completion", () => {
     expect(line).toContain("reply cut off at 8192 tokens");
     expect(line).toContain("step 4");
     expect(line).toContain("32768-token cap");
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
+  it("says no cap was sent when the provider stopped at its own limit", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        promptTokens: 21_000,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("reply cut off at 33678 tokens (no cap sent)");
+    expect(line).toContain("32768-token cap");
+    expect(line).not.toContain("undefined");
+  });
+
+  it("explains a size-rejection repack in the operator's terms (F30)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "prompt_repacked",
+        stepIndex: 2,
+        contextWindow: 8_192,
+        source: "provider",
+        promptTokens: 9_100,
+      },
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("rejected the request as too large");
+    expect(line).toContain("~8192 tokens (from its reply)");
+    expect(line).toContain("retrying step 3");
+    expect(next.feed.at(-1)?.color).toBe("yellow");
+  });
+
+  it("names the provider that ran out of credit (F29)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "credit_exhausted",
+        provider: "openrouter",
+        code: "credit_balance_exhausted",
+        message: "Your credit balance is too low",
+      },
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toBe(
+      '» "openrouter" is out of credit (credit_balance_exhausted) — task paused; top up, then say continue',
+    );
     expect(next.feed.at(-1)?.color).toBe("yellow");
   });
 
@@ -1788,5 +1976,39 @@ describe("a fallover away from the primary is said in the chat, not only the fee
     ]);
     expect(s.messages).toHaveLength(before);
     expect(s.feed.some((f) => f.line.includes("recovered primary"))).toBe(true);
+  });
+});
+
+describe("reduceTuiState step line under a stalled Fusion review (F41)", () => {
+  it("appends the cut reason to the cut step's line and nothing to a noticed step's", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 6 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "step_finished",
+          stepIndex: 6,
+          summary: "os.fs.read",
+          durationMs: 5,
+          reviewStall: { steps: 6, phase: "notice" },
+        },
+      },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 12 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "step_finished",
+          stepIndex: 12,
+          summary: "os.fs.read[error]",
+          durationMs: 5,
+          reviewStall: { steps: 12, phase: "cut" },
+        },
+      },
+    ]);
+    const lines = state.feed.map((f) => f.line);
+    expect(lines).toContain("[step 6] os.fs.read (5ms)");
+    expect(lines).toContain(
+      "[step 12] os.fs.read[error] (5ms) — review stalled: delegate or reply",
+    );
   });
 });

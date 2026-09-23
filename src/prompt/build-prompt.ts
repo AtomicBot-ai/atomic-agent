@@ -1,5 +1,6 @@
-import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
+import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
+import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
 import { clipProfileSection } from "./clip-profile-section.js";
 import {
   renderMemoryIndexSection,
@@ -11,7 +12,9 @@ import {
   packConversation,
   pairTokenCosts,
 } from "../session/conversation-turn.js";
+import type { PromptMessages } from "../llm/provider/completion-types.js";
 import {
+  packedConversationTurns,
   renderPackedConversation,
   renderWorldSnapshotSection,
 } from "./build-prompt-world-conversation.js";
@@ -21,14 +24,17 @@ import type {
   BuiltPromptTruncationFlags,
 } from "./build-prompt-types.js";
 import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
+import { renderRequestSection, requestInView } from "./request-section.js";
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
+import { partitionByRole } from "../tools/tool-roles.js";
 import { renderTaskPolicy } from "./render-task-policy.js";
 import {
   checkBudget,
   computeEffectiveConversationCap,
   CONVERSATION_CAP_AUTO,
+  CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
   estimateTokens,
   truncateToTokens,
@@ -63,7 +69,9 @@ export type {
 /**
  * Assembles the prompt with the stable prefix at the top (persona + tools +
  * capabilities + skill catalog) and the variable tail at the bottom
- * (`### loaded-skills` / `### session-facts` / memory / world / conversation).
+ * (memory / `### session-facts` / world / conversation, then the sections
+ * a step can change: `### profile`, lessons, procedures,
+ * `### loaded-skills`, `### loaded-tools`).
  *
  * Budgeting:
  *  - `tokenBudget` caps `### loaded-skills` + `### session-facts` (shared) via
@@ -91,6 +99,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const conversationCapAuto = conversationMaxTokens <= CONVERSATION_CAP_AUTO;
   const conversationMaxPairs =
     input.conversationMaxPairs ?? config.agent.conversationMaxPairs;
+  // A model with no partial prefix reuse re-reads the whole prompt at
+  // every cut, so it cuts deeper and less often; an operator who set the
+  // share lower still keeps their own number.
+  const configuredLowWater =
+    input.conversationLowWater ?? config.agent.conversationLowWater;
+  const conversationLowWater =
+    input.profile?.prefixReuse === "none"
+      ? Math.min(configuredLowWater, 0.5)
+      : configuredLowWater;
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
   const completionMaxTokens =
@@ -109,7 +126,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // window decide" must never quietly mean "assume a tiny window".
   const limits = defaultBudget(budgetTotal, {
     conversation: conversationCapAuto
-      ? USER_CONFIG_DEFAULTS.agent.conversationMaxTokens
+      ? CONVERSATION_CAP_AUTO_FALLBACK
       : conversationMaxTokens,
     worldSnapshot: worldSnapshotMaxTokens,
   });
@@ -134,8 +151,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     // Only read when the `### fusion` block actually renders. Config
     // values, so they move only when the operator writes the config
     // file — the same event that already flips the fusion descriptor
-    // gate and drops the KV cache once.
-    fusion: resolveFusionMachineFacts(config),
+    // gate and drops the KV cache once. The observed slot count moves
+    // once, when first observed; the measured decode speed is per daemon
+    // instance and moves only on a restart, which drops the local cache
+    // anyway.
+    fusion: resolveFusionMachineFacts(config, {
+      workerSlots: input.liveWorkerSlots ?? null,
+      tokensPerSecond: input.fusionTokensPerSecond ?? null,
+    }),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }
       : {}),
@@ -145,6 +168,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(input.toolTransport !== undefined
       ? { toolTransport: input.toolTransport }
       : {}),
+    ...(input.toolRole !== undefined ? { toolRole: input.toolRole } : {}),
   });
 
   const sessionParts = buildSessionSectionParts(input.session, limits.session);
@@ -156,9 +180,19 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const loadedToolsMaxTokens =
     input.loadedToolsMaxTokens ?? config.agent.loadedToolsMaxTokens;
+  // A loaded tool the prefix already describes in full for this role
+  // (an out-of-role load from an earlier turn under another role, or a
+  // frequent tool loaded by hand) is not rendered twice: the tail copy
+  // would cost tokens and say nothing the prefix does not.
+  const describedInFull = new Set(
+    partitionByRole(input.toolRole, input.toolDescriptors)
+      .inRole.filter((d) => d.tier !== "rare")
+      .map((d) => d.name),
+  );
   const loadedToolsRendered = renderLoadedToolsSection(
     input.session,
     loadedToolsMaxTokens,
+    { skip: describedInFull },
   );
   const loadedToolsTokens = loadedToolsRendered.tokens;
 
@@ -166,13 +200,18 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
   const contextualKeywordGate =
     input.contextualKeywordGate ?? config.memory.profile.contextualKeywordGate;
+  const profileFilterThreshold =
+    input.profileFilterThreshold ??
+    config.memory.voting.profileFilterThreshold;
   // Whole fact lines, pinned first; `clip` carries the counts whenever a
-  // fact was left out, so the loop can warn (issue #407).
+  // fact was left out, so the loop can warn (issue #407). The vote
+  // filter runs before the clip, so a downvoted fact never takes a line.
   const profileSection =
     input.profileFacts !== undefined
       ? clipProfileSection(input.profileFacts, {
           userMessage: input.userMessage ?? null,
           contextualKeywordGate,
+          profileFilterThreshold,
           maxTokens: profileMaxTokens,
         })
       : null;
@@ -265,16 +304,45 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     completionMaxTokens,
   });
 
-  const packed = packConversation(
+  // One option set for every pack of this build: the `### request`
+  // re-pack below must cut under the same low-water mark and from the
+  // same remembered start, or the two packs could disagree about where
+  // the transcript begins.
+  const packOptions = {
+    maxPairs: conversationMaxPairs,
+    lowWater: conversationLowWater,
+    ...(input.session.macroTurnStarts
+      ? { macroTurnStarts: input.session.macroTurnStarts }
+      : {}),
+    ...(input.session.conversationPackStart
+      ? { packStart: input.session.conversationPackStart }
+      : {}),
+  };
+  let packed = packConversation(
     input.session.turns,
     conversationCapEffective,
-    {
-      maxPairs: conversationMaxPairs,
-      ...(input.session.macroTurnStarts
-        ? { macroTurnStarts: input.session.macroTurnStarts }
-        : {}),
-    },
+    packOptions,
   );
+  // The operator's request, pinned only once the packer has dropped the
+  // turn that carried it. It then takes its room out of the conversation
+  // cap — a second pack, and only on that path — so the tail still fits
+  // the window; the carrier stays dropped under the smaller cap, so the
+  // decision cannot flip.
+  const request = input.originalRequest?.trim() ?? "";
+  const requestSection =
+    request.length > 0 && !requestInView(request, packed.visibleTurns)
+      ? renderRequestSection(request)
+      : null;
+  if (requestSection !== null) {
+    const requestTokens = estimateTokens(requestSection);
+    if (requestTokens < conversationCapEffective) {
+      packed = packConversation(
+        input.session.turns,
+        conversationCapEffective - requestTokens,
+        packOptions,
+      );
+    }
+  }
   const conversation = renderPackedConversation(packed);
   const taskPolicy = renderTaskPolicy({
     userMessage: input.userMessage ?? null,
@@ -283,44 +351,56 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const taskPolicyTokens =
     taskPolicy === null ? 0 : estimateTokens(taskPolicy.body);
 
-  const tailParts: string[] = [];
-  if (loadedForTail !== null) {
-    tailParts.push("### loaded-skills", loadedForTail, ``);
-  }
-  if (loadedToolsRendered.body !== null) {
-    tailParts.push("### loaded-tools", loadedToolsRendered.body, ``);
-  }
-  if (profile !== null) {
-    tailParts.push("### profile", profile, ``);
-  }
-  if (lessons !== null) {
-    tailParts.push("### lessons", lessons, ``);
-  }
-  if (procedures !== null) {
-    tailParts.push("### procedures", procedures, ``);
-  }
+  // Tail order is by what can change WITHIN a turn. Everything ahead of
+  // `### conversation` is fixed for the turn (the memory sections are
+  // refreshed once, before the first step); everything that a step can
+  // change — a `tool.view` adds to loaded-tools, a `skill.view` to
+  // loaded-skills, a `memory.profile.set` to the profile — sits after
+  // it, so a change lands in the part of the prompt that is re-read
+  // anyway rather than ahead of a transcript the model would otherwise
+  // have reused from its KV cache.
+  // The tail is assembled in two halves around `### conversation`. The
+  // flat text joins all three; the structured form (`messages`) sends the
+  // conversation as real chat messages and the two halves as one final
+  // user message.
+  const tailBefore: string[] = [];
   if (memoryIndex !== null) {
-    tailParts.push("### memory-index", memoryIndex, ``);
+    tailBefore.push("### memory-index", memoryIndex, ``);
   }
   if (factsForTail !== null) {
-    tailParts.push("### session-facts", factsForTail, ``);
+    tailBefore.push("### session-facts", factsForTail, ``);
   }
   if (recalled !== null) {
-    tailParts.push("### recalled", recalled, ``);
+    tailBefore.push("### recalled", recalled, ``);
   }
-  tailParts.push(
-    `### world`,
-    worldSnapshot,
-    ``,
-    `### conversation`,
-    conversation,
-    ``,
-  );
+  tailBefore.push(`### world`, worldSnapshot, ``);
+  // The operator's request, immediately before the conversation, only
+  // while the packer has the turn that carried it out of view.
+  if (requestSection !== null) {
+    tailBefore.push(`### request`, requestSection, ``);
+  }
+  const conversationParts = [`### conversation`, conversation, ``];
+  const tailAfter: string[] = [];
+  if (profile !== null) {
+    tailAfter.push("### profile", profile, ``);
+  }
+  if (lessons !== null) {
+    tailAfter.push("### lessons", lessons, ``);
+  }
+  if (procedures !== null) {
+    tailAfter.push("### procedures", procedures, ``);
+  }
+  if (loadedForTail !== null) {
+    tailAfter.push("### loaded-skills", loadedForTail, ``);
+  }
+  if (loadedToolsRendered.body !== null) {
+    tailAfter.push("### loaded-tools", loadedToolsRendered.body, ``);
+  }
   if (taskPolicy !== null) {
-    tailParts.push(`### task-policy`, taskPolicy.body, ``);
+    tailAfter.push(`### task-policy`, taskPolicy.body, ``);
   }
   if (input.transientNotice && input.transientNotice.length > 0) {
-    tailParts.push(`### notice`, input.transientNotice, ``);
+    tailAfter.push(`### notice`, input.transientNotice, ``);
   }
   // Current date lives in the variable tail (not the stable prefix) so it
   // sits close to the generation point where the model actually attends to
@@ -328,7 +408,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // the model kept anchoring on its training-era year. Rendered as a bold
   // standalone line so it stands out. Omitted when not provided.
   if (input.currentDate) {
-    tailParts.push(
+    tailAfter.push(
       `CURRENT DATE: ${input.currentDate} — this is today. Use it for any time-relative reasoning; never assume an earlier year.`,
       ``,
     );
@@ -339,7 +419,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // loops (e.g. "I will write the response. I will check the response."
   // observed when the only trailing directive lived ~13k tokens upstream).
   // Byte-stable and short, so it does not meaningfully hurt cache reuse.
-  tailParts.push(`### respond`, `Respond now.`, ``);
+  tailAfter.push(`### respond`, `Respond now.`, ``);
+  // The structured form stops here: the framing and prefill below are
+  // text-completion artifacts a chat transport never sees (they are
+  // suppressed for it anyway — `suppressReasoningPrefill`).
+  const messages: PromptMessages = {
+    system: stablePrefix,
+    droppedSummary: packed.droppedSummary,
+    turns: packedConversationTurns(packed),
+    tail: [...tailBefore, ...tailAfter].join("\n"),
+  };
+  const tailParts: string[] = [...tailBefore, ...conversationParts, ...tailAfter];
   if (turnFraming !== undefined) {
     // Gemma 4 turn-framing: close the system turn and open the model turn.
     // The model emits its own `<|channel>thought` block — we do NOT prefill
@@ -355,7 +445,20 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.profile?.requiresPromptThinkPrefix &&
     input.profile.reasoningStyle !== "none"
   ) {
-    tailParts.push(input.profile.reasoningOpenTag.trimEnd(), ``);
+    const disabledMarker = input.profile.promptThinkingDisabledMarker;
+    const thinking = input.thinking ?? config.localModels.thinking;
+    if (
+      disabledMarker !== undefined &&
+      thinkingDisabledOnBuiltPrompt(thinking, input.profile)
+    ) {
+      // `thinking: off` (F49): the template's own disabled rendering —
+      // an empty, closed think block — at the generation point, so the
+      // model starts on the tool call. The request grammar drops its
+      // prelude to match (`withoutReasoningPrelude`).
+      tailParts.push(disabledMarker.trimEnd(), ``, ``);
+    } else {
+      tailParts.push(input.profile.reasoningOpenTag.trimEnd(), ``);
+    }
   }
   const tail = tailParts.join("\n");
 
@@ -387,6 +490,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     text,
     stablePrefix,
     tail,
+    messages,
     tokens: {
       stablePrefix: budgetResult.perSection.stablePrefix,
       loadedSkills: budgetResult.perSection.loadedSkills,
@@ -428,6 +532,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     droppedPairs: packed.droppedPairs,
     conversationPairsCap: conversationMaxPairs,
     conversationBoundBy: packed.boundBy,
+    conversationPackStart: packed.packStart,
     pairCosts: pairTokenCosts(
       input.session.turns,
       input.session.macroTurnStarts,

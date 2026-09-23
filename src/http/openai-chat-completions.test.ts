@@ -720,6 +720,107 @@ describe("POST /v1/chat/completions undelivered steers", () => {
   });
 });
 
+/**
+ * F50: a `reply` the model batched with work is a progress note, not the
+ * end of the turn. On this route it is never content — the client's
+ * message holds the reply that ended the turn, and the note rides out as
+ * `event: progress_note` for hosts that opted into extensions.
+ */
+describe("POST /v1/chat/completions with a progress note mid-turn", () => {
+  const NOTE_STEP = JSON.stringify([
+    { tool: "os.fs.read", args: { path: "notes.txt" } },
+    { tool: "reply", args: { text: "(reading first)" } },
+  ]);
+  const FINAL_STEP = JSON.stringify([
+    { tool: "reply", args: { text: "final answer" } },
+  ]);
+
+  function scriptedBodies(bodies: string[]) {
+    const queue = [...bodies];
+    return async (): Promise<CompletionResult> => ({
+      content: queue.shift() ?? FINAL_STEP,
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 0, predictedMs: 0, promptTokens: 4, predictedTokens: 2 },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    });
+  }
+
+  it("streams the final reply as the only content and the note as a progress event", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedBodies([NOTE_STEP, FINAL_STEP]),
+    });
+    try {
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          model: "atomic-agent",
+          stream: true,
+          messages: [{ role: "user", content: "build it" }],
+        },
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      const contents = [...text.matchAll(/"content":"((?:[^"\\]|\\.)*)"/g)].map(
+        (m) => JSON.parse(`"${m[1]}"`) as string,
+      );
+      expect(contents).toEqual(["final answer"]);
+      const notes = text.match(/event: progress_note\n/g) ?? [];
+      expect(notes).toHaveLength(1);
+      expect(text).toMatch(/"object":"chat\.completion\.progress_note"/);
+      expect(text).toMatch(/"text":"\(reading first\)"/);
+      expect(text).toMatch(/data: \[DONE\]/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps the OpenAI-clean stream free of the note when extensions are off", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedBodies([NOTE_STEP, FINAL_STEP]),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        messages: [{ role: "user", content: "build it" }],
+      });
+      const text = await readAllText(response);
+      expect(text).not.toMatch(/progress_note/);
+      expect(text).not.toMatch(/reading first/);
+      const contents = [...text.matchAll(/"content":"((?:[^"\\]|\\.)*)"/g)].map(
+        (m) => JSON.parse(`"${m[1]}"`) as string,
+      );
+      expect(contents).toEqual(["final answer"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("returns the final reply, not the note, as the non-stream message", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedBodies([NOTE_STEP, FINAL_STEP]),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        messages: [{ role: "user", content: "build it" }],
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      expect(body.choices[0]?.message.content).toBe("final answer");
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
+
 async function readAllText(response: Response): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();

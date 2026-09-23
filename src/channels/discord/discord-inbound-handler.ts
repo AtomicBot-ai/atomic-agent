@@ -551,7 +551,13 @@ async function dispatchToRuntime(
   let replyAttachments: ReadonlyArray<string> = [];
   let failure: { error: Error; category: LlmFailureCategory } | null = null;
   const eventHook = (event: AgentLoopEvent): void => {
-    if (event.type === "llm_event" && event.event.type === "assistant_reply") {
+    // A progress note is an interim reply; the one that ends the turn
+    // follows it and is what the channel posts.
+    if (
+      event.type === "llm_event" &&
+      event.event.type === "assistant_reply" &&
+      event.event.progressNote !== true
+    ) {
       reply = event.event.text;
       replyAttachments = event.event.attachments ?? [];
     }

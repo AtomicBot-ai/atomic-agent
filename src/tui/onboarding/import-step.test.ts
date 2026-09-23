@@ -84,6 +84,22 @@ describe("buildImportOptionRows", () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.agent === "codex")).toBe(true);
   });
+
+  it("carries the Pi-family registries, which have no secrets row", () => {
+    const agents = buildImportAgentRows([
+      { id: "pi", label: "Pi", dir: "/p" },
+      { id: "oh-my-pi", label: "Oh-My-Pi", dir: "/o" },
+    ]).map((row) => ({ ...row, enabled: true }));
+    const rows = buildImportOptionRows(agents);
+    expect(rows.map((r) => `${r.agent}:${r.option}`)).toEqual([
+      "pi:skills",
+      "pi:sessions",
+      "oh-my-pi:skills",
+      "oh-my-pi:mcp",
+      "oh-my-pi:sessions",
+    ]);
+    expect(rows.every((r) => r.enabled && !r.secret)).toBe(true);
+  });
 });
 
 describe("summarizeImportReport", () => {

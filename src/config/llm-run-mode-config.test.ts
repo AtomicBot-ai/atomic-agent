@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "./config-validation-error.js";
 import {
+  DEFAULT_FUSION_REVIEW_STALL_STEPS,
   DEFAULT_FUSION_WORKERS,
+  FUSION_REVIEW_STALL_STEPS_MAX,
   FUSION_WORKERS_MAX,
   FUSION_WORKERS_MIN,
   parseLlmRunModeConfig,
@@ -51,6 +53,7 @@ describe("parseLlmRunModeConfig", () => {
       workerProvider: "local-llama",
       workerModel: "qwen-3.5-4b",
       workers: 4,
+      cloudWorkers: 6,
       workerMaxSteps: 25,
       workerTimeoutMs: 120_000,
     };
@@ -198,5 +201,91 @@ describe("scrubRunModeProviderPins", () => {
       mode: "fusion",
       fusion: { orchestratorProvider: "openrouter", workers: 3 },
     });
+  });
+});
+
+describe("cloudWorkers (F21)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("is optional and bounded 1..32", () => {
+    expect(
+      parseLlmRunModeConfig({ fusion: { cloudWorkers: 8 } }, providers, "llm.runMode")
+        .fusion?.cloudWorkers,
+    ).toBe(8);
+    expect(
+      parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion
+        ?.cloudWorkers,
+    ).toBeUndefined();
+    for (const bad of [0, 33, 2.5, "4"]) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { cloudWorkers: bad } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(/llm\.runMode\.fusion\.cloudWorkers/);
+    }
+  });
+});
+
+describe("workerReasoning / workerMaxOutputTokens (F20)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("are optional, and validated when present", () => {
+    const parsed = parseLlmRunModeConfig(
+      { fusion: { workerReasoning: "low", workerMaxOutputTokens: 12_000 } },
+      providers,
+      "llm.runMode",
+    );
+    expect(parsed.fusion).toEqual({ workerReasoning: "low", workerMaxOutputTokens: 12_000 });
+    expect(parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion).toEqual({});
+    expect(() =>
+      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode"),
+    ).toThrow(/llm\.runMode\.fusion\.workerReasoning/);
+    for (const bad of [0, -1, 2.5, "8192", 1_000_001]) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { workerMaxOutputTokens: bad } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(/llm\.runMode\.fusion\.workerMaxOutputTokens/);
+    }
+  });
+});
+
+describe("reviewStallSteps (F41)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("is optional, accepts 0 (off) and an integer up to the ceiling, and names the field otherwise", () => {
+    expect(
+      parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion
+        ?.reviewStallSteps,
+    ).toBeUndefined();
+    for (const good of [0, 1, 6, FUSION_REVIEW_STALL_STEPS_MAX]) {
+      expect(
+        parseLlmRunModeConfig(
+          { fusion: { reviewStallSteps: good } },
+          providers,
+          "llm.runMode",
+        ).fusion?.reviewStallSteps,
+      ).toBe(good);
+    }
+    for (const bad of [-1, 2.5, "6", FUSION_REVIEW_STALL_STEPS_MAX + 1]) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { reviewStallSteps: bad } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(/llm\.runMode\.fusion\.reviewStallSteps/);
+    }
+    expect(DEFAULT_FUSION_REVIEW_STALL_STEPS).toBe(6);
   });
 });

@@ -91,7 +91,12 @@ const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
 export const MAX_QUEUED_MESSAGES = 20;
 
 export interface ChatOrchestratorOptions {
-  maxSteps: number;
+  /**
+   * The operator's `--max-steps`: a hard ceiling for each task. Absent —
+   * the normal case — turns pass no `maxSteps`, so the runtime runs legs
+   * of `agent.maxSteps` up to the `agent.task.maxSteps` ceiling.
+   */
+  maxSteps?: number;
   /** Initial llama-server base URL for the footer health poller. */
   llamaUrl: string;
   /**
@@ -1171,7 +1176,11 @@ export class ChatOrchestrator {
     this.steeredAhead = 0;
     try {
       const result = await this.runtime.runTurn(this.session, text, {
-        maxSteps: this.options.maxSteps,
+        // Only an operator-given ceiling. Absent, the runtime takes the
+        // leg length and the task ceiling from config.
+        ...(this.options.maxSteps === undefined
+          ? {}
+          : { maxSteps: this.options.maxSteps }),
         signal: controller.signal,
         origin: "tui",
       });

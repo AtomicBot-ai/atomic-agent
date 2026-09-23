@@ -7,7 +7,12 @@ import {
   reasoningOpenEmittedByModel,
   type ModelProfile,
 } from "../model-profile.js";
+import {
+  DEFAULT_REASONING_BUDGET_TOKENS,
+  reasoningBudgetChars,
+} from "../reasoning-budget.js";
 import { applyMcpToolNameRule } from "../../mcp/mcp-grammar-builder.js";
+import { buildReasoningPreludeRules, quoteGbnf } from "./reasoning-prelude.js";
 
 function resolveDefaultGrammarsDir(): string {
   const nextToBinary = join(dirname(process.execPath), "grammars");
@@ -38,6 +43,15 @@ export interface BuildGrammarOptions {
    * untouched (byte-stable KV cache).
    */
   browserEnabled?: boolean;
+  /**
+   * `localModels.reasoningBudgetTokens`: how far the reasoning prelude
+   * may run before the grammar admits only the close sentinel, in
+   * tokens (`× 4` characters in the rule — see `reasoning-budget.ts`).
+   * `0` leaves the prelude unbounded; omitted means the config default.
+   * A plain profile has no prelude and ignores it. The forced final
+   * step lifts the bound per request (`withUnboundedReasoningPrelude`).
+   */
+  reasoningBudgetTokens?: number;
 }
 
 export async function buildGrammar(
@@ -64,53 +78,160 @@ export async function buildGrammar(
   // This avoids the GBNF first-token bias toward `{` that small models
   // exhibit even when their `<think>` block reasoned about parallelism.
   const rootRule = `root ::= ${ruleStem}-prelude tool-call-array`;
-  const withPreludeRoot = withMcp.replace(/^root ::= .*$/m, rootRule);
+  const withPreludeRoot = hardenStringRule(
+    withMcp.replace(/^root ::= .*$/m, rootRule),
+  );
   // When the model emits its own reasoning open tag (Gemma 4 turn-framing),
   // the prelude must force that opener — the prompt no longer prefills it.
   const openSentinel = reasoningOpenEmittedByModel(profile)
     ? profile.reasoningOpenTag
     : undefined;
-  const preludeRules = buildUntilSentinelRules(
+  // The prelude body is bounded by the reasoning budget (F49): past it
+  // the sampler admits only the close sentinel, so a model that would
+  // think for 22 minutes is made to close the block and emit the call.
+  const preludeRules = buildReasoningPreludeRules(
     ruleStem,
     profile.reasoningCloseTag,
     openSentinel,
+    reasoningBudgetChars(
+      options.reasoningBudgetTokens ?? DEFAULT_REASONING_BUDGET_TOKENS,
+    ),
   );
   return `${withPreludeRoot.trimEnd()}\n${preludeRules}\n`;
 }
 
-function buildUntilSentinelRules(
-  ruleStem: string,
-  sentinel: string,
-  openSentinel?: string,
+/** The base grammar's string-body rule, `string ::= "\"" chars "\""`. */
+const CHARS_RULE_RE = /^chars ::= char\*$/m;
+
+/**
+ * The string body for a reasoning profile: valid JSON with the
+ * two-character sequences `<|` and `|>` excluded (F37). The model's own
+ * control markers open with one and close with the other (`<|channel>`,
+ * `<channel|>`, `<|turn>`, `<turn|>`, `<|im_start|>`), and the grammar
+ * admits those bytes nowhere but inside a JSON string — so a thought
+ * block that opens mid-call lands in an argument value, and the tool
+ * runs on it. With the sequences gone from the sampler's vocabulary the
+ * marker cannot be emitted there at all; `control-marker-guard.ts`
+ * still refuses whatever arrives another way (an escaped `<|`, a
+ * provider without grammars).
+ *
+ * A three-state automaton over the last character — neutral, after
+ * `<`, after `|` — rather than the tempting `"<" [^|] | "|" [^>]`
+ * alternatives: those let `<<|` and `||>` through (the first `<` pairs
+ * with the second, freeing the `|`). Every alternative is decided by
+ * one character, so the sampler carries one stack per string, and the
+ * right recursion is the same shape llama.cpp expands `char*` into.
+ * Only the reasoning profiles get it; the plain profile's grammar stays
+ * byte-identical to `grammars/tool-call.gbnf`.
+ */
+const HARDENED_STRING_RULES = [
+  "chars ::= str-neutral",
+  'str-neutral ::= ( str-plain str-neutral | "<" str-after-lt | "|" str-after-bar )?',
+  'str-after-lt ::= ( str-plain str-neutral | "<" str-after-lt )?',
+  'str-after-bar ::= ( str-plain-not-gt str-neutral | "<" str-after-lt | "|" str-after-bar )?',
+  'str-plain ::= [^"\\\\\\x00-\\x1f<|] | "\\\\" escape',
+  'str-plain-not-gt ::= [^"\\\\\\x00-\\x1f<|>] | "\\\\" escape',
+].join("\n");
+
+function hardenStringRule(grammar: string): string {
+  return grammar.replace(CHARS_RULE_RE, HARDENED_STRING_RULES);
+}
+
+/** The one rule a per-request grammar rewrites. */
+const TOOL_NAME_RULE_RE = /^tool-name ::= .*$/m;
+
+/** Terminal verb every restricted grammar keeps: a step must be able to exit. */
+const GRAMMAR_EXIT_TOOL = "reply";
+
+/**
+ * Bound on cached per-request grammars per base grammar. The name sets a
+ * session cycles through are few (a role, the same role minus the gate's
+ * refusals, the two terminals), so the cache is small in practice; the
+ * bound only stops a pathological caller from growing it without limit.
+ */
+const GRAMMAR_CACHE_PER_BASE = 64;
+/**
+ * Bases seen at once: the live profile's grammar and its two per-request
+ * prelude variants (unbounded for the final step, prelude-less under
+ * `thinking: off` — `reasoning-prelude.ts`), plus a refresh or two.
+ */
+const GRAMMAR_CACHE_BASES = 8;
+
+const perRequestGrammarCache = new Map<string, Map<string, string>>();
+
+/**
+ * The grammar for ONE request: `baseGrammar` (a `buildGrammar` product —
+ * root, reasoning prelude, MCP rule and all) with its `tool-name` rule
+ * replaced by a flat alternation over exactly `names`. Everything else is
+ * byte-identical to the base, so the reasoning prelude and the JSON body
+ * rules the profile invariants pin are untouched.
+ *
+ * This is how a step narrows what a local model can emit without touching
+ * the prompt: the grammar travels with each request and is not part of the
+ * KV-cached prefix, so a tool can vanish from the sampler's vocabulary while
+ * its descriptor stays in `### tools`. Three callers: an orchestrator turn
+ * (everything minus what the fusion gate would refuse — a refusal the model
+ * cannot generate is one it cannot spend 20 minutes writing), the final
+ * step (`reply` / `finish` only) and a worker or role-restricted turn.
+ *
+ * `reply` is always present: a grammar with no exit would trap the step in
+ * the only thing it can still emit. The rewritten rule is sorted and
+ * deduplicated, and the result is cached by the sorted name list, so the
+ * same set costs one string build per base grammar.
+ */
+export function buildGrammarForTools(
+  baseGrammar: string,
+  names: Iterable<string>,
 ): string {
-  const preludeRule = `${ruleStem}-prelude`;
-  const bodyRule = `${ruleStem}-body`;
-  const fragmentRule = `${ruleStem}-fragment`;
-  const fragments = [`[^${escapeCharClass(sentinel[0]!)}]+`];
-  const openLiteral =
-    openSentinel !== undefined ? `${quoteGbnf(openSentinel)} ` : "";
-
-  for (let idx = 0; idx < sentinel.length - 1; idx += 1) {
-    const prefix = sentinel.slice(0, idx + 1);
-    const nextChar = sentinel[idx + 1]!;
-    fragments.push(`${quoteGbnf(prefix)} [^${escapeCharClass(nextChar)}]`);
+  const sorted = Array.from(new Set([...names, GRAMMAR_EXIT_TOOL])).sort();
+  const key = sorted.join("\n");
+  let perBase = perRequestGrammarCache.get(baseGrammar);
+  if (perBase === undefined) {
+    if (perRequestGrammarCache.size >= GRAMMAR_CACHE_BASES) {
+      const oldest = perRequestGrammarCache.keys().next();
+      if (!oldest.done) perRequestGrammarCache.delete(oldest.value);
+    }
+    perBase = new Map();
+    perRequestGrammarCache.set(baseGrammar, perBase);
   }
+  const cached = perBase.get(key);
+  if (cached !== undefined) return cached;
+  const rule = `tool-name ::= ${sorted.map(quoteToolNameLiteral).join(" | ")}`;
+  const built = TOOL_NAME_RULE_RE.test(baseGrammar)
+    ? baseGrammar.replace(TOOL_NAME_RULE_RE, rule)
+    : // A base without the rule (an older grammar file): a later
+      // definition wins in GBNF, so appending still restricts.
+      `${baseGrammar.trimEnd()}\n${rule}\n`;
+  if (perBase.size >= GRAMMAR_CACHE_PER_BASE) {
+    const oldest = perBase.keys().next();
+    if (!oldest.done) perBase.delete(oldest.value);
+  }
+  perBase.set(key, built);
+  return built;
+}
 
-  // Bounded trailing whitespace between the reasoning-close sentinel and
-  // the start of `tool-call-array` (`[`). The global `ws` rule is
-  // unbounded (`[ \t\n\r]*`) which is fine inside JSON but on this seam
-  // it lets small reasoning-capable models (e.g. Gemma 4 26B-A4B) slide
-  // into a whitespace-only degenerate loop after a long `<think>` /
-  // `<|channel>thought` block: the sampler keeps emitting newlines until
-  // `max_tokens` instead of converging on the `[`. Eight characters is
-  // enough for any natural " " / "\n" / "  " gap and short enough to
-  // bound the failure mode.
-  return [
-    `${preludeRule} ::= ${openLiteral}${bodyRule} ${quoteGbnf(sentinel)} prelude-trail-ws`,
-    `${bodyRule} ::= ${fragmentRule}*`,
-    `${fragmentRule} ::= ${fragments.join(" | ")}`,
-    `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,
-  ].join("\n");
+/**
+ * The tool names a grammar's `tool-name` rule admits when that rule is a
+ * flat alternation of literals (the shape `buildGrammarForTools` writes).
+ * `null` for the static base grammar, whose rule is composed of sub-rules.
+ * A test helper more than a runtime one.
+ */
+export function grammarToolNames(grammar: string): string[] | null {
+  const match = grammar.match(TOOL_NAME_RULE_RE);
+  if (!match) return null;
+  const body = match[0].slice("tool-name ::= ".length);
+  const names: string[] = [];
+  for (const alt of body.split("|")) {
+    const literal = alt.trim().match(/^"\\"(.*)\\""$/);
+    if (!literal) return null;
+    names.push(literal[1]!);
+  }
+  return names;
+}
+
+/** `os.fs.read` → `"\"os.fs.read\""` — a JSON string literal inside a GBNF one. */
+function quoteToolNameLiteral(name: string): string {
+  return quoteGbnf(`"${name}"`);
 }
 
 /**
@@ -128,17 +249,4 @@ function removeBrowserToolRule(grammar: string): string {
       .filter((alt) => alt.length > 0 && alt !== "browser-tool");
     return `${prefix}${alternatives.join(" | ")}`;
   });
-}
-
-function quoteGbnf(text: string): string {
-  return `"${text
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t")
-    .replace(/"/g, '\\"')}"`;
-}
-
-function escapeCharClass(char: string): string {
-  return char.replace(/\\/g, "\\\\").replace(/]/g, "\\]").replace(/-/g, "\\-");
 }

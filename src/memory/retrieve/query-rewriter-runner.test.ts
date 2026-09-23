@@ -102,7 +102,37 @@ describe("createQueryRewriterRunner", () => {
     expect(traced).toEqual([{ sessionId: "s-rw", outcome: "ok" }]);
   });
 
-  it("calls the LLM with slotId=-1 (load-bearing invariant)", async () => {
+  it("rides the reserved reflection slot when given one, resolved per call", async () => {
+    // The thunk models bootstrap's `slotManager.sideCallSlotId`: `-1`
+    // until the managed daemon's `/props` widens the pool, the reserved
+    // slot afterwards — without rebuilding the runner.
+    const seen: number[] = [];
+    let reserved = -1;
+    const llm: RewriterLlmComplete = async (p) => {
+      seen.push(p.slotId);
+      return completion(envelope("FTS5 ranking details"));
+    };
+    const runner = createQueryRewriterRunner({
+      llmComplete: llm,
+      timeoutMs: 1000,
+      slotId: () => reserved,
+    });
+    const input = {
+      sessionId: "s",
+      userMessage: "and what about it",
+      history: [
+        { role: "user" as const, text: "what is BM25" },
+        { role: "assistant" as const, text: "ranking algorithm used by FTS5" },
+      ],
+      signal: new AbortController().signal,
+    };
+    await runner.maybeRewrite(input);
+    reserved = 3;
+    await runner.maybeRewrite(input);
+    expect(seen).toEqual([-1, 3]);
+  });
+
+  it("calls the LLM with slotId=-1 when no slot is given (load-bearing invariant)", async () => {
     let capturedSlot = NaN;
     const llm: RewriterLlmComplete = async (p) => {
       capturedSlot = p.slotId;

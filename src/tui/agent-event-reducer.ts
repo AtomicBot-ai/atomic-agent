@@ -25,7 +25,7 @@ import {
   finishRun,
   finishRunWithoutHistory,
   finishTurn,
-  lastUserMessage,
+  lastTurnRequest,
   pushRing,
   startNewRun,
   upsertReasoning,
@@ -404,6 +404,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: "yellow",
         }),
         event.text,
+        { steered: true },
       );
     case "turn_started":
       return {
@@ -472,6 +473,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             stepIndex: event.stepIndex,
             summary: event.summary,
             durationMs: event.durationMs,
+            ...(event.reviewStall !== undefined
+              ? { reviewStall: { phase: event.reviewStall.phase } }
+              : {}),
           }),
           color: "gray",
         }),
@@ -584,7 +588,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // the window is exactly the abort the operator asked for.
       if (event.category === "cancelled" || state.aborting) {
         const lastRunStatus = "stopped by user";
-        const prompt = lastUserMessage(state);
+        const prompt = lastTurnRequest(state);
         return finishRun(
           appendChatMessage(
             appendFeed(state, {
@@ -668,6 +672,25 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           })
         : next;
     }
+    case "prompt_repacked":
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» the model rejected the request as too large — window learned as ~${event.contextWindow} tokens (${
+          event.source === "provider" ? "from its reply" : "estimated"
+        }), trimming the conversation to fit and retrying step ${event.stepIndex + 1}`,
+        color: "yellow",
+      });
+    case "credit_exhausted":
+      // The turn is about to close `max_steps` with a synthetic reply
+      // that says the same; this is the one-line version for the feed,
+      // and the line that names the provider.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» "${event.provider}" is out of credit (${event.code}) — task paused; top up, then say continue`,
+        color: "yellow",
+      });
     case "provider_recovered":
       return appendFeed(
         { ...state, providerOutage: null },
@@ -688,9 +711,13 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.completionTokens > 0
           ? `reply cut off at ${event.completionTokens} tokens`
           : "reply cut off";
+      const cap =
+        event.requestedMaxTokens !== undefined
+          ? `cap ${event.requestedMaxTokens}`
+          : "no cap sent";
       const line =
         event.retry.kind === "raise_cap"
-          ? `» ${cut} (cap ${event.requestedMaxTokens}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
+          ? `» ${cut} (${cap}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
           : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
       return appendFeed(state, {
         kind: "runtime_info",
@@ -949,6 +976,7 @@ function reduceStepEvent(
       const withMessage = appendChatMessage(state, {
         role: "assistant",
         text: event.text,
+        ...(event.progressNote === true ? { progressNote: true } : {}),
         toolSteps: state.currentTurnToolSteps,
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
         ...(reasoningForTurn.length > 0
@@ -985,7 +1013,9 @@ function reduceStepEvent(
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: event.stepIndex,
-        line: `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason})`,
+        line:
+          `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason}` +
+          `${event.refused && event.refused.length > 0 ? `; ${event.refused.length} refused by the turn policy` : ""})`,
         color: "yellow",
       });
     case "batch_wave_split":

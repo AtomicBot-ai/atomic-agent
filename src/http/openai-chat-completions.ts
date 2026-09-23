@@ -328,6 +328,11 @@ async function handleStream(
  *    A terminal `assistant_reply` whose text the same step already streamed
  *    as deltas is skipped (no duplicate body); one that was never streamed
  *    — a stop message, a non-streamed retry — is sent.
+ *  - an `assistant_reply` flagged `progressNote` — a reply the model
+ *    batched with work, kept while the turn went on — is never content:
+ *    it goes out as `event: progress_note` (extensions opt-in only), so
+ *    the client's message holds the reply that ended the turn and nothing
+ *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
@@ -352,6 +357,7 @@ export function buildStreamEventHook(
      non-streamed retry — and left the turn looking cut off at whatever
      preamble had streamed last. */
   let turnStreamed = false;
+  let stepIndex = -1;
   let stepStreamed = "";
   const writeContent = (content: string): void => {
     sse.writeEvent(
@@ -367,6 +373,7 @@ export function buildStreamEventHook(
   return (event) => {
     if (sse.closed) return;
     if (event.type === "step_started") {
+      stepIndex = event.stepIndex;
       stepStreamed = "";
       return;
     }
@@ -403,6 +410,22 @@ export function buildStreamEventHook(
           text: inner.text,
         });
       } else if (inner.type === "assistant_reply") {
+        if (inner.progressNote === true) {
+          if (!env.request.extensionsEnabled) return;
+          sse.writeEvent("progress_note", {
+            id: env.completionId,
+            object: "chat.completion.progress_note",
+            created: env.created,
+            model: env.request.model,
+            session_id: env.session.id,
+            step_index: stepIndex,
+            text: inner.text,
+          });
+          // Deltas the note streamed must not be read as the start of
+          // the reply that ends the turn.
+          stepStreamed = "";
+          return;
+        }
         const streamed = stepStreamed;
         stepStreamed = "";
         const text = inner.text;

@@ -27,11 +27,15 @@ describe("default tool argsJsonSchema map", () => {
     expect(missing).toEqual([]);
   });
 
-  it("pins os.shell.run schema shape (cmd + args required, args is string[])", () => {
+  it("pins os.shell.run schema shape (four forms, nothing required, args is string[])", () => {
+    // `{cmd, args}` runs a command; `{wait}`, `{kill}`, `{jobs}` act on a
+    // job the default timeout detached (F47). Nothing can be required at
+    // the schema level because each form requires a different key; the
+    // tool refuses a call that mixes them or names none.
     const schema = getDefaultArgsJsonSchema("os.shell.run");
     expect(schema).toMatchObject({
       type: "object",
-      required: ["cmd", "args"],
+      required: [],
       additionalProperties: false,
     });
     const properties = (schema as { properties: Record<string, unknown> })
@@ -41,6 +45,10 @@ describe("default tool argsJsonSchema map", () => {
       type: "array",
       items: { type: "string" },
     });
+    expect(properties.wait).toEqual({ type: "integer" });
+    expect(properties.kill).toEqual({ type: "integer" });
+    expect(properties.jobs).toEqual({ type: "boolean" });
+    expect(properties.keep).toEqual({ type: "boolean" });
   });
 
   it("pins memory.profile.set schema (key + value required, keywords is string[])", () => {

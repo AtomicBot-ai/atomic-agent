@@ -20,6 +20,20 @@ export function looksLikeOllamaUrl(url: string): boolean {
 }
 
 /**
+ * True when `url` points at Atomic Chat's Local API Server port. The
+ * server 404s `/health` and answers `/v1/models` OpenAI-shape, so it
+ * gets the same `openai-compat` verdict Ollama does. Jan, which Atomic
+ * Chat forks, uses the same port and the same server contract.
+ */
+export function looksLikeAtomicChatUrl(url: string): boolean {
+  try {
+    return new URL(url).port === "1337";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * One operator-actionable line per probe verdict, shared by every
  * surface that saves an external llama.cpp URL (LLM tab External pane,
  * first-run wizard). Stub-verified failure shapes each map to what the
@@ -51,6 +65,15 @@ export function describeLlamaHealthFailure(
               `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
               `openai-compatible, base URL ${url} (any API key value ` +
               `passes — a stock Ollama has no auth).`;
+      }
+      // Same reasoning as Ollama: the preset row saves its own
+      // 127.0.0.1:1337, so name it only for a server on this machine.
+      if (looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url)) {
+        return (
+          `${url} answers like Atomic Chat's Local API Server, not ` +
+          `llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › ` +
+          `n › Atomic Chat (local), base URL ${url}.`
+        );
       }
       return (
         `${url} answers like an OpenAI-compatible server, not llama.cpp. ` +

@@ -45,13 +45,13 @@ function buildOptions(overrides: Record<string, unknown> = {}) {
 }
 
 describe("SubscriptionCliProvider capabilities", () => {
-  it("declares the native transport with no vision and no slot affinity", () => {
+  it("declares the text (JSON-array) transport with no vision and no slot affinity", () => {
     const provider = makeProvider();
-    // native_tools, despite never returning tool_calls: it routes
-    // step-executor down its guarded recovery ladder instead of the
-    // repair path, which would cost a second CLI invocation.
-    expect(provider.capabilities.toolTransport).toBe("native_tools");
-    expect(provider.toolCallAdapter).not.toBeNull();
+    // The tools are never forwarded to the CLI, so the prompt must ask
+    // for the JSON-array tool call rather than tell the model never to
+    // write tool JSON as text (F32).
+    expect(provider.capabilities.toolTransport).toBe("grammar");
+    expect(provider.toolCallAdapter).toBeNull();
     expect(provider.streamConsumer).toBeNull();
     expect(provider.capabilities.vision).toBe(false);
     expect(provider.capabilities.supportsSlotAffinity).toBe(false);

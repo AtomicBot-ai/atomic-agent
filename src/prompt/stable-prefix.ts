@@ -4,6 +4,7 @@ import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
+import { partitionByRole, type ToolRole } from "../tools/tool-roles.js";
 
 /**
  * `frequent` — full `args` + optional `examples` in the stable prefix.
@@ -104,17 +105,41 @@ export interface StablePrefixInput {
    * left unsaid rather than guessed.
    */
   fusion?: FusionMachineFacts;
+  /**
+   * The turn's tool role (`tool-roles.ts`). Under `builder` or
+   * `orchestrator` the `### tools` block describes the role's tools as
+   * today (frequent in full, rare as one-liners) and lists every other
+   * descriptor on ONE line of names, "also available via tool.view".
+   * The prefix is therefore per role — stable within a turn, one cold
+   * read on a role change. Omitted or `"full"` keeps the block
+   * byte-identical to before roles existed.
+   */
+  toolRole?: ToolRole;
 }
+
+/** Header of the out-of-role names line — pinned by tests, read by the model. */
+export const ALSO_AVAILABLE_VIA_TOOL_VIEW = "# also available via `tool.view`:";
 
 /**
  * Persona lines shared verbatim between the grammar and native-tools
  * variants. Only the emission mandate (line 1), the bias-toward-action
- * phrasing (line 2), and the reply-discipline line (line 4, see
+ * phrasing (line 2), and the reply-discipline line (line 5, see
  * `REPLY_DISCIPLINE_LINE_*`) differ per transport; everything else is
  * transport-neutral. Extracted so the two personas cannot drift apart.
  */
 const SYSTEM_PERSONA_TERMINALS_LINE =
   "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.";
+
+/**
+ * Right after the bias-toward-action line in both personas (F51). Live,
+ * five first attempts across two local models rewrote the file the
+ * request named as the input from memory; `os.fs.write` now refuses that
+ * without `overwrite: true` (`fs-input-guard.ts`), and this is the model
+ * told the rule before it reaches for the tool. Pinned by
+ * `stable-prefix.test.ts`.
+ */
+export const SYSTEM_PERSONA_INPUTS_LINE =
+  "Files that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. If the user asked for a rewrite, say so and pass overwrite: true.";
 
 /** Byte-identical to the pre-#285 line (KV-cache safe). */
 const REPLY_DISCIPLINE_LINE_GRAMMAR =
@@ -146,6 +171,7 @@ const SYSTEM_PERSONA_SHARED_LINES = [
 export const DEFAULT_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step emits exactly one JSON array matching the tool grammar — no other prose.",
   "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool-call array quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the array.",
+  SYSTEM_PERSONA_INPUTS_LINE,
   SYSTEM_PERSONA_TERMINALS_LINE,
   REPLY_DISCIPLINE_LINE_GRAMMAR,
   ...SYSTEM_PERSONA_SHARED_LINES,
@@ -164,6 +190,7 @@ export const DEFAULT_SYSTEM_PERSONA = [
 export const NATIVE_TOOLS_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step calls tools through the native function-calling interface — never write tool-call JSON into the text of your answer, and never put your answer in the reasoning channel.",
   "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool call quickly instead of long deliberation. Keep any reasoning or thinking to a few words (or effectively empty), then make the call.",
+  SYSTEM_PERSONA_INPUTS_LINE,
   SYSTEM_PERSONA_TERMINALS_LINE,
   REPLY_DISCIPLINE_LINE_NATIVE,
   ...SYSTEM_PERSONA_SHARED_LINES,
@@ -217,14 +244,26 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     input.systemPersona ??
     (nativeTools ? NATIVE_TOOLS_SYSTEM_PERSONA : DEFAULT_SYSTEM_PERSONA);
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
+  // A role splits the catalog: its own tools render as they always
+  // have, the rest collapse to one line of names. `full` (or no role)
+  // puts everything on the inside, so the block below is byte-identical
+  // to the pre-role output — `outside` is empty and adds no line.
+  const { inRole, outside } = partitionByRole(
+    input.toolRole,
+    input.toolDescriptors,
+  );
   const frequent: ToolDescriptor[] = [];
   const rare: ToolDescriptor[] = [];
-  for (const d of input.toolDescriptors) {
+  for (const d of inRole) {
     if (d.tier === "rare") rare.push(d);
     else frequent.push(d);
   }
   const commonBlock = frequent.map(formatToolFrequent).join("\n");
   const extrasBlock = rare.map(formatToolRare).join("\n");
+  const outsideLine =
+    outside.length > 0
+      ? `${ALSO_AVAILABLE_VIA_TOOL_VIEW} ${outside.map((d) => d.name).join(", ")}`
+      : null;
   const caps = formatCapabilities(input.capabilities);
   const skills =
     input.skillCatalog.length > 0
@@ -267,6 +306,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ``,
     `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`,
     extrasBlock,
+    ...(outsideLine !== null ? [outsideLine] : []),
     ``,
     `### capabilities`,
     caps,
@@ -289,7 +329,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       ? [
           `Call tools now, through the native function-calling interface (the \`tools\` your API request carries) — do NOT write tool-call JSON as text. The \`### tools\` catalog above is reference documentation for those same tools (tiers, examples, \`tool.view\`). For the final user-facing answer call \`reply\`, or answer in plain text.`,
           `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), emit up to ${maxParallelToolCalls} tool calls in the SAME response — they run in parallel and cut wall time by ~Nx.`,
-          `Emit a single tool call (no others alongside) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+          `Emit a single tool call (no others alongside) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.restore\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
         ]
       : [
           `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call. Use \`reply\` for natural-language answers to the user.`,
@@ -297,7 +337,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
           `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
           `  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]`,
           `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,
-          `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+          `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.restore\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
         ]),
     ``,
   ].join("\n");

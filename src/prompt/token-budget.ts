@@ -182,6 +182,12 @@ export const CONVERSATION_CAP_FLOOR = 512;
 export const CONVERSATION_CAP_AUTO = 0;
 
 /**
+ * The conversation cap under `CONVERSATION_CAP_AUTO` when no context window
+ * is known (a cloud model with no published length): the pre-auto default.
+ */
+export const CONVERSATION_CAP_AUTO_FALLBACK = 32_000;
+
+/**
  * Resolve the actual cap enforced on the `### conversation` section for
  * a given prompt-build. When the runtime knows the model's physical
  * `contextWindow` (from `llama-server /props`), clamp the user-chosen

@@ -169,6 +169,10 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS",
         ENV_DEFAULTS.REQUEST_TIMEOUT_MS,
       ),
+      firstTokenTimeoutMs: readInt(
+        "ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS",
+        ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS,
+      ),
       streamTotalTimeoutMs: readInt(
         "ATOMIC_AGENT_LLAMA_STREAM_TOTAL_TIMEOUT_MS",
         ENV_DEFAULTS.STREAM_TOTAL_TIMEOUT_MS,
@@ -194,6 +198,9 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.DEFAULT_SLOT_ID,
       ),
       mode: user.localModels.mode,
+      useServerTemplate: user.localModels.useServerTemplate,
+      thinking: user.localModels.thinking,
+      reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
       download: { ...user.localModels.download },
@@ -217,12 +224,14 @@ export function loadConfig(): AtomicAgentConfig {
       providerWait: user.agent.providerWait,
       task: user.agent.task,
       toolTimeoutMs: user.agent.toolTimeoutMs,
+      readScope: user.agent.readScope,
       approvalLevel: user.agent.approvalLevel,
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
       conversationMaxTokens: user.agent.conversationMaxTokens,
       conversationMaxPairs: user.agent.conversationMaxPairs,
+      conversationLowWater: user.agent.conversationLowWater,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
@@ -334,6 +343,13 @@ export function loadConfig(): AtomicAgentConfig {
     },
     projects: {
       roots: [...user.projects.roots],
+    },
+    tools: {
+      shell: {
+        defaultTimeoutMs: user.tools.shell.defaultTimeoutMs,
+        jobMaxMs: user.tools.shell.jobMaxMs,
+        maxJobs: user.tools.shell.maxJobs,
+      },
     },
     log: { level: logLevel },
     tasks: {

@@ -7,6 +7,8 @@ import {
   categorizeFsMutation,
   type FsMutationKind,
 } from "./fs-approval-scope.js";
+import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
+import type { FileRestoreStore } from "./fs-restore-store.js";
 
 /**
  * `DangerousToolOptions` plus the injected trust-config surface every
@@ -23,6 +25,28 @@ export interface FsDangerousToolOptions extends DangerousToolOptions {
    * derived inside the tools layer.
    */
   trustConfigPaths?: readonly string[];
+  /**
+   * Where a replaced user file's previous content is kept — shared by
+   * every session on the same working directory — and which files each
+   * session created (`fs-replace-guard.ts`). Built by `registerOsTools`
+   * from `stateDir`; omitted (embedders, tests) turns the replace guard
+   * off and leaves `os.fs.restore` with nothing to restore.
+   */
+  restore?: FileRestoreStore;
+  /**
+   * The operator's request behind the turn now running on a session —
+   * the record `executeTurn` keeps for the workers' briefs — read by
+   * `os.fs.write` to tell an input the request names from any other
+   * file (`fs-input-guard.ts`). Omitted (embedders, tests) turns that
+   * refusal off; the F36 guard is unaffected.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /**
+   * The files a fan-out's contract declared as inputs for a worker
+   * session (`fs-declared-inputs.ts`), which `os.fs.write` never
+   * replaces. Omitted declares nothing.
+   */
+  declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
 }
 
 /**

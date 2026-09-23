@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isRequestSizeRejection } from "./request-size-rejection.js";
+import {
+  isRequestSizeRejection,
+  readContextLengthFromRejection,
+  requestSizeRejectionNamesContext,
+} from "./request-size-rejection.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
 import { TransportError } from "./llm-failures.js";
@@ -88,5 +92,42 @@ describe("isRequestSizeRejection", () => {
       isRequestSizeRejection(new TransportError("max_tokens", null, "")),
     ).toBe(false);
     expect(isRequestSizeRejection(new Error("max_tokens"))).toBe(false);
+  });
+});
+
+describe("readContextLengthFromRejection / requestSizeRejectionNamesContext (F30)", () => {
+  const wrapped = (body: string) =>
+    new TransportError('"vendor" rejected the request (400).', 400, "u", {
+      cause: new OpenAiHttpError(`openai provider 400: ${body}`, 400, "u"),
+    });
+
+  it.each([
+    [
+      "This model's maximum context length is 8192 tokens. However, you requested 9134 tokens",
+      8_192,
+    ],
+    [
+      "This endpoint's maximum context length is 131,072 tokens. However, you requested about 140210 tokens",
+      131_072,
+    ],
+    ["the model has a context length of only 4096 tokens", 4_096],
+    ["prompt does not fit the 32768-token context window", 32_768],
+    ["context window: 200000", 200_000],
+  ])("reads the window out of %s", (body, expected) => {
+    expect(readContextLengthFromRejection(wrapped(body))).toBe(expected);
+    expect(requestSizeRejectionNamesContext(wrapped(body))).toBe(true);
+  });
+
+  it("never mistakes the requested count or the reply cap for the window", () => {
+    expect(
+      readContextLengthFromRejection(
+        wrapped("the request exceeds the available context size. you requested 9000 tokens"),
+      ),
+    ).toBeNull();
+    const cap = wrapped(
+      "max_tokens is too large: 32768. This model supports at most 16384 completion tokens",
+    );
+    expect(readContextLengthFromRejection(cap)).toBeNull();
+    expect(requestSizeRejectionNamesContext(cap)).toBe(false);
   });
 });

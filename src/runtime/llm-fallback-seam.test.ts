@@ -141,6 +141,38 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
     expect(seen).toEqual([32_768, undefined]);
   });
 
+  it("forwards the turn's reasoning effort and output ceiling on both transports (F20)", async () => {
+    const seen: Array<{ effort?: string; cap?: number }> = [];
+    const observe = async (request: { reasoningEffort?: string; maxOutputTokens?: number }) => {
+      seen.push({
+        ...(request.reasoningEffort === undefined ? {} : { effort: request.reasoningEffort }),
+        ...(request.maxOutputTokens === undefined ? {} : { cap: request.maxOutputTokens }),
+      });
+    };
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        fakeProvider("cloud", "native_tools", async (request) => {
+          await observe(request);
+          return answer("cloud");
+        }),
+      ],
+      [
+        "local",
+        fakeProvider("local", "grammar", async (request) => {
+          await observe(request);
+          return answer("local");
+        }),
+      ],
+    ]);
+    const streamer = createFallbackStreamer(seamDeps(providers));
+    const complete = createFallbackCompleter(seamDeps(providers));
+    await drain(streamer({ ...baseParams, reasoningEffort: "low", maxOutputTokens: 12_000 }));
+    await complete({ ...baseParams, providerId: "local", reasoningEffort: "high", maxOutputTokens: 9_000 });
+    await drain(streamer(baseParams));
+    expect(seen).toEqual([{ effort: "low", cap: 12_000 }, { effort: "high", cap: 9_000 }, {}]);
+  });
+
   async function drain(
     gen: AsyncGenerator<StreamChunk, CompletionResult, void>,
   ): Promise<CompletionResult> {

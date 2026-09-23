@@ -210,6 +210,11 @@ describe("AgentLoop mid-turn steering", () => {
       "deploy",
       "and use the staging db",
     ]);
+    // Only the steer is marked: it joined the turn "deploy" opened.
+    expect(userTurns.map((t) => (t as { steered?: true }).steered)).toEqual([
+      undefined,
+      true,
+    ]);
     expect(events).toContainEqual({
       type: "steer_applied",
       text: "and use the staging db",

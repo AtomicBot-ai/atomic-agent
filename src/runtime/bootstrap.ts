@@ -62,14 +62,24 @@ import { replyTool } from "../tools/conversation/index.js";
 import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import { registerOsTools } from "../tools/os/index.js";
+import {
+  DeclaredInputsRegistry,
+  registerOsTools,
+  ShellJobRegistry,
+} from "../tools/os/index.js";
+import { registerVerifyTools, runChecks } from "../tools/verify/index.js";
 import { registerGithubTools } from "../tools/github/index.js";
 import { resolveGithubToken } from "../github/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
-import { buildFusionDelegateTool } from "../tools/fusion/index.js";
+import {
+  buildFusionDelegateTool,
+  pickOriginalRequest,
+} from "../tools/fusion/index.js";
+import { confineReads } from "../tools/read-scope/index.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import {
@@ -90,6 +100,8 @@ import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
+import type { ReasoningEffort } from "../llm/provider/completion-types.js";
+import { LearnedContextWindows } from "./learned-context-windows.js";
 import {
   ProviderFallbackChain,
   resolveFallbackChain,
@@ -126,6 +138,9 @@ import {
 import {
   getEmbeddingModelDef,
   isKnownEmbeddingModelId,
+  readLaunchRecord,
+  readRunningPid,
+  readThroughputRecord,
 } from "../local-llm/index.js";
 import {
   createReflectionRunner,
@@ -543,6 +558,12 @@ export interface AgentRuntime {
        * `fusion.delegate` narrows a worker's catalog with it.
        */
       toolFilter?: (name: string) => boolean;
+      /** The turn's tool role (see `RunTurnOptions.toolRole`); a worker is a `builder`. */
+      toolRole?: ToolRole;
+      /** See `RunTurnOptions.reasoningEffort` — a fusion worker's setting. */
+      reasoningEffort?: ReasoningEffort;
+      /** See `RunTurnOptions.maxOutputTokens` — a fusion worker's cap. */
+      maxOutputTokens?: number;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -567,6 +588,9 @@ export interface AgentRuntime {
       providerId?: string;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -1427,13 +1451,23 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
-  // Drop a session's trace recorder when the session itself is deleted, so
-  // the map shrinks on teardown instead of relying on the cap to push
-  // entries out. Wrapped here rather than at each call site (the TUI and the
+  // The commands `os.shell.run` detached at the default timeout (F47).
+  // One registry for the runtime, so the turn-end (`executeTurn`),
+  // session-delete and shutdown paths below can stop what a session
+  // left running.
+  const shellJobs = new ShellJobRegistry({
+    jobMaxMs: config.tools.shell.jobMaxMs,
+    maxJobs: config.tools.shell.maxJobs,
+  });
+  // Drop a session's trace recorder — and stop its detached shell jobs,
+  // kept ones included — when the session itself is deleted, so the map
+  // shrinks on teardown instead of relying on the cap to push entries
+  // out. Wrapped here rather than at each call site (the TUI and the
   // HTTP route both delete sessions) so every caller gets it.
   const deleteSession = sessionStore.delete.bind(sessionStore);
   sessionStore.delete = (id: string): void => {
     dropRecorder(id);
+    shellJobs.endSession(id);
     deleteSession(id);
   };
 
@@ -1445,10 +1479,30 @@ export async function createAgentRuntime(
       toolRegistry.register(tool);
     }
   }
+  // What the operator asked for, per session, for the turn now running
+  // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
+  // and read by `os.fs.write` to tell an input the request names from
+  // any other file (`fs-input-guard.ts`). Set and cleared by
+  // `executeTurn` around the loop; a worker's record is its brief, whose
+  // ORIGINAL REQUEST block is the operator's words. Only that turn can
+  // call a tool on the session (the controller runs one turn per
+  // session), so a read always finds its own turn's request.
+  const turnRequests = new Map<string, string>();
+  // The files a fan-out's contract declared as inputs, per worker
+  // session: the worker runner declares them, `os.fs.write` refuses to
+  // replace them (`fs-declared-inputs.ts`).
+  const declaredInputs = new DeclaredInputsRegistry();
   registerOsTools(toolRegistry, {
     ...dangerous,
-    config: { http: config.http, web: config.web, projects: config.projects },
+    config: {
+      http: config.http,
+      web: config.web,
+      projects: config.projects,
+      tools: config.tools,
+    },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
+    resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+    declaredInputs,
     // The trust surface (`config.json` + `.env`) is resolved once, here,
     // and injected into the fs tools — the tools layer must not know
     // where it lives. Pinned by the level-4 `trust_config` case in
@@ -1466,6 +1520,15 @@ export async function createAgentRuntime(
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
     },
+    shellJobs,
+  });
+  // The read-only `verify.*` family: syntax per file, and (below) a
+  // command / service / page run against a throwaway copy of the
+  // working directory. Registered next to the OS tools because it is
+  // the review half of what they build.
+  registerVerifyTools(toolRegistry, {
+    ...dangerous,
+    config: { browser: config.browser },
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The
@@ -1501,6 +1564,7 @@ export async function createAgentRuntime(
 
   let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
     browserEnabled: config.browser.enabled,
+    reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
   });
   const grammarViolations = checkProfileGrammarAligned(profile, grammar);
   if (grammarViolations.length > 0) {
@@ -1522,6 +1586,7 @@ export async function createAgentRuntime(
         initialModelId: modelAlias,
         grammarsDir: config.paths.grammarsDir,
         browserEnabled: config.browser.enabled,
+        reasoningBudgetTokens: config.localModels.reasoningBudgetTokens,
         onTotalSlots: (discovered) => {
           if (discovered === slotManager.getSlotCount()) return;
           logger.info("slot pool resized from /props", {
@@ -1530,11 +1595,36 @@ export async function createAgentRuntime(
           });
           slotManager.resize(discovered);
         },
+        // The managed daemon's start-time throughput probe leaves its
+        // reading next to the pid file; the pid check keeps a previous
+        // daemon's figure from describing this one. An external server
+        // was never probed, so nothing is read for it.
+        ...(config.localModels.mode === "managed"
+          ? {
+              readThroughput: () => {
+                const dataDir = config.paths.localModelsDataDir;
+                return (
+                  readThroughputRecord(dataDir, readRunningPid(dataDir))
+                    ?.tokensPerSecond ?? null
+                );
+              },
+              // Whether the live daemon runs `--swa-full` — what turns a
+              // sliding-window model's `prefixReuse` back to `partial`.
+              swaFullActive: () => {
+                const dataDir = config.paths.localModelsDataDir;
+                return (
+                  readLaunchRecord(dataDir, readRunningPid(dataDir))?.swaFull ===
+                  true
+                );
+              },
+            }
+          : {}),
         logger,
       })
     : undefined;
 
   const getLiveProfile = () => profileManager?.getProfile() ?? profile;
+  const getLiveModelId = () => profileManager?.getModelId() ?? modelAlias;
 
   // Issue #112. The manager above is built either way — construction is
   // pure field assignment, no I/O — because deleting it on a cloud boot
@@ -1576,6 +1666,7 @@ export async function createAgentRuntime(
     config,
     llamaClient: llama,
     getProfile: getLiveProfile,
+    getModelId: getLiveModelId,
     logger,
   });
 
@@ -1682,32 +1773,25 @@ export async function createAgentRuntime(
    * mid-session is picked up by the next prompt.
    */
   /**
-   * Context windows the model server revealed by cutting a reply short
-   * — `completion_truncated` with cause `context_window`, where prompt +
-   * reply tokens is the window. Keyed by provider and model, kept for the
-   * life of the process: the same server keeps the same window, and a
+   * Context windows the model server revealed — by cutting a reply short
+   * (`completion_truncated` with cause `context_window`, where prompt +
+   * reply tokens is the window) or by refusing a request as too large
+   * (`prompt_repacked`). Keyed by provider and model, kept for the life
+   * of the process: the same server keeps the same window, and a
    * restart may well change it (llama.cpp `-c`, Lemonade's auto-sizing).
    * A demonstrated window overrides the catalogue's nominal 128k default
    * and clamps a real catalogue entry, since a server can run a model
-   * with less context than the model supports.
+   * with less context than the model supports. A window only moves
+   * towards what the server demonstrated — see `LearnedContextWindows`.
    */
-  const observedContextWindows = new Map<string, number>();
+  const observedContextWindows = new LearnedContextWindows();
   const activeModelKey = (): string =>
     `${resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName()}`;
   const observeContextWindow = (contextWindow: number): void => {
-    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return;
-    const key = activeModelKey();
-    const known = observedContextWindows.get(key);
-    observedContextWindows.set(
-      key,
-      known === undefined ? contextWindow : Math.min(known, contextWindow),
-    );
+    observedContextWindows.observe(activeModelKey(), contextWindow);
   };
-  const forgetContextWindowBelow = (tokens: number): void => {
-    const key = activeModelKey();
-    const known = observedContextWindows.get(key);
-    if (known !== undefined && tokens > known)
-      observedContextWindows.delete(key);
+  const raiseContextWindowTo = (tokens: number): void => {
+    observedContextWindows.raise(activeModelKey(), tokens);
   };
   const resolveCatalogContextWindow = (): number | null => {
     const observed = observedContextWindows.get(activeModelKey());
@@ -2090,8 +2174,9 @@ export async function createAgentRuntime(
     config.memory.links.enabled &&
     config.memory.links.autoGenerate
   ) {
-    const reservedSlot = slotManager.reserveReflectionSlot();
-    const reflectionSlotId = reservedSlot ?? -1;
+    // Resolved per call: in managed mode the pool is one slot until the
+    // first `/props`, so a reservation taken here would never exist.
+    const reflectionSlotId = () => slotManager.sideCallSlotId();
     const linkGenLlmComplete: LinkGeneratorLlmComplete = abortableSubcall(
       llmComplete,
       (params: Parameters<LinkGeneratorLlmComplete>[0]) => ({
@@ -2154,8 +2239,7 @@ export async function createAgentRuntime(
   // from `memory-context-provider` and `LessonStore.recall` —
   // anti-feedback-loop guardrail (invariant 18).
   if (reflectionRunner && voteStore) {
-    const reservedSlot = slotManager.reserveReflectionSlot();
-    const voteSlotId = reservedSlot ?? -1;
+    const voteSlotId = () => slotManager.sideCallSlotId();
     const voteLlmComplete: VoteRunnerLlmComplete = abortableSubcall(
       llmComplete,
       (params: Parameters<VoteRunnerLlmComplete>[0]) => ({
@@ -2279,8 +2363,9 @@ export async function createAgentRuntime(
 
   // v2.5 heuristic-gated query rewriter (Phase A, config v18).
   // When enabled, wrap the default provider with a decorator that
-  // rewrites referential follow-ups via an LLM call on `slotId=-1`
-  // before delegating recall. Disabled-by-default contract: when the
+  // rewrites referential follow-ups via an LLM call on the reserved
+  // reflection slot (`-1` while the pool has none to spare) before
+  // delegating recall. Disabled-by-default contract: when the
   // flag is off, `memoryContextProvider` is byte-identical to the
   // pre-v18 chain.
   let memoryContextProvider = baseMemoryContextProvider;
@@ -2323,6 +2408,7 @@ export async function createAgentRuntime(
     const rewriterRunner = createQueryRewriterRunner({
       llmComplete: rewriterLlmComplete,
       timeoutMs: rewriterCfg.timeoutMs,
+      slotId: () => slotManager.sideCallSlotId(),
       gate,
       logger,
       metrics,
@@ -2365,6 +2451,10 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    // The gate itself, not a copied level: a batch of approval-gated calls
+    // runs in order when nothing in it would ask (`--no-approval`), and the
+    // step must see the level the operator has now, not at boot.
+    approvalPosture: approvals,
     // The same live resolution the `fusion.delegate` descriptor gate
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
@@ -2381,8 +2471,11 @@ export async function createAgentRuntime(
     capabilities,
     profile,
     contextWindow: resolveCatalogContextWindow,
+    // The local leg's slot count once `/props` has answered — what the
+    // `### fusion` facts state for an external server.
+    liveWorkerSlots: () => slotManager.observedPoolSize(),
     onContextWindowObserved: observeContextWindow,
-    onContextWindowExceeded: forgetContextWindowBelow,
+    onContextWindowExceeded: raiseContextWindowTo,
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
@@ -2505,6 +2598,9 @@ export async function createAgentRuntime(
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
+    // Every detached shell job, kept or not: nothing will wait on it
+    // once this process is gone, and its ceiling timer dies with us.
+    shellJobs.endAll();
     // Cancel any in-flight reflection before tearing down the profile
     // store — otherwise a late-arriving completion could try to write
     // into a closed SQLite connection.
@@ -2671,6 +2767,7 @@ export async function createAgentRuntime(
     config: getConfig(),
     llamaClient: llama,
     getProfile: getLiveProfile,
+    getModelId: getLiveModelId,
     logger,
   };
 
@@ -2682,6 +2779,7 @@ export async function createAgentRuntime(
       config: fresh,
       llamaClient: llama,
       getProfile: getLiveProfile,
+      getModelId: getLiveModelId,
       logger,
     });
     if (added.length > 0) {
@@ -2697,6 +2795,7 @@ export async function createAgentRuntime(
       config: fresh,
       llamaClient: llama,
       getProfile: getLiveProfile,
+      getModelId: getLiveModelId,
       logger,
     });
     logger.info("llm: provider refreshed", { id });
@@ -2756,7 +2855,16 @@ export async function createAgentRuntime(
     providerId?: string;
     taskMaxDurationMs?: number;
     toolFilter?: (name: string) => boolean;
+    toolRole?: ToolRole;
+    reasoningEffort?: ReasoningEffort;
+    maxOutputTokens?: number;
   }) => ({
+    ...(runOptions.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: runOptions.reasoningEffort }),
+    ...(runOptions.maxOutputTokens === undefined
+      ? {}
+      : { maxOutputTokens: runOptions.maxOutputTokens }),
     maxSteps: Math.min(
       config.agent.maxSteps,
       runOptions.maxSteps ?? config.agent.maxSteps,
@@ -2773,6 +2881,9 @@ export async function createAgentRuntime(
     ...(runOptions.toolFilter === undefined
       ? {}
       : { toolFilter: runOptions.toolFilter }),
+    ...(runOptions.toolRole === undefined
+      ? {}
+      : { toolRole: runOptions.toolRole }),
     signal: runOptions.signal ?? new AbortController().signal,
   });
 
@@ -2853,6 +2964,9 @@ export async function createAgentRuntime(
       providerId?: string;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -2863,15 +2977,22 @@ export async function createAgentRuntime(
     if (worker) {
       return turnContext.run({ sessionId: session.id }, async () => {
         try {
+          // The worker's request is its brief: the operator's words sit
+          // in its ORIGINAL REQUEST block, which is what the input guard
+          // reads (`quotedRequestText`).
+          turnRequests.set(session.id, userMessage);
           return await loop.runTurn(session, {
             userMessage,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
           });
         } finally {
+          turnRequests.delete(session.id);
           // The prompt_captured hook still records the worker's window
           // occupancy under its id; nothing persists it, so drop it.
           lastTurnContextUsage.delete(session.id);
+          // A worker's turn is its whole life: nothing waits on its jobs.
+          shellJobs.endSession(session.id);
         }
       });
     }
@@ -2896,6 +3017,14 @@ export async function createAgentRuntime(
     };
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
+        // Recorded for `fusion.delegate`, which quotes it to the workers.
+        const turnRequest = pickOriginalRequest({
+          current: userMessage,
+          earlierTurns: session.turns,
+        });
+        if (turnRequest !== undefined) {
+          turnRequests.set(session.id, turnRequest);
+        }
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -2904,6 +3033,9 @@ export async function createAgentRuntime(
         // at the first checkpoint.
         const result = await loop.runTurn(session, {
           userMessage,
+          // The same record the workers' briefs quote, pinned into the
+          // orchestrator's own prompt once the packer drops its carrier.
+          ...(turnRequest !== undefined ? { originalRequest: turnRequest } : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
@@ -2922,9 +3054,17 @@ export async function createAgentRuntime(
           },
         };
         sessionStore.save(finished);
+        // `finish` ended the whole session: its kept jobs go with it.
+        if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };
       } finally {
+        // The turn is over, however it ended: the shell jobs it started
+        // and did not `keep` are stopped here — the one choke point
+        // every turn passes through (§"A turn is a task, not a step
+        // budget").
+        shellJobs.endTurn(session.id);
         lastTurnContextUsage.delete(session.id);
+        turnRequests.delete(session.id);
         activeTraceSessions.delete(session.id);
         // A delete that arrived mid-turn was deferred to keep the pin honest;
         // complete it now that nothing is writing through the recorder.
@@ -2971,6 +3111,9 @@ export async function createAgentRuntime(
       providerId?: string;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
+      toolRole?: ToolRole;
+      reasoningEffort?: ReasoningEffort;
+      maxOutputTokens?: number;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after
@@ -3100,6 +3243,17 @@ export async function createAgentRuntime(
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
+      resolveOriginalRequest: (sessionId) => turnRequests.get(sessionId),
+      declaredInputs,
+      // The worker leg's pricing, when the catalogue or a hand-priced
+      // entry knows it — the status table's spend line.
+      resolveWorkerPricing: (providerId, modelId) =>
+        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)
+          ?.pricing,
+      // The same client the llama-server provider serves workers with,
+      // so the speed a worker's time limit is sized from is the speed
+      // its own completions run at.
+      localTokensPerSecond: () => llama.measuredTokensPerSecond(),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,
@@ -3114,9 +3268,34 @@ export async function createAgentRuntime(
       emitEvent: emitAgentLoopEventFor,
       workingDir,
       outputCharCap: config.agent.batchToolResultCharCap,
+      // A contract's declared `checks` run through the verify family,
+      // each on a throwaway copy of the workspace, so a fan-out is judged
+      // by what its output does, never by what a worker's reply says.
+      runChecks: (specs, ctx) =>
+        runChecks(specs, {
+          workingDir: ctx.workingDir,
+          signal: ctx.signal,
+          config,
+        }),
       logger,
     }),
   );
+  // Every session reads inside its working directory and the paths the
+  // user named unasked, by default (`agent.readScope`,
+  // `src/tools/read-scope/`); a read outside that asks through the
+  // ladder as `fs_read_outside` — the same gate and surfaces as every
+  // other gated action — and a `y` widens the session's roots. A fusion
+  // worker is confined more narrowly still — its working directory and
+  // its fan-out's write scope, never the brief's — and refused, since
+  // nobody is at the other end of its prompt. The shell gets the same
+  // scope as a token check. Installed here, after every native
+  // filesystem tool and the shell are registered. The scope is re-read
+  // per call, so `agent.readScope: "unrestricted"` needs no restart.
+  confineReads(toolRegistry, {
+    grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
+    readScope: () => getConfig().agent.readScope,
+    approvals: dangerous,
+  });
 
   const scheduler =
     config.tasks.enabled && config.tasks.schedulerEnabled
@@ -3151,11 +3330,10 @@ export async function createAgentRuntime(
     // all event types within a tick. The consolidator does not run
     // through a per-session recorder, so we own the `seq` here.
     let consolidatorSeq = 0;
-    // Reserve (or piggy-back on) the reflection slot for the distill
-    // call. The slot is per-runtime, not per-job, so calling
-    // `reserveReflectionSlot` again here is idempotent — the slot
-    // manager returns the same id.
-    const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
+    // Piggy-back on the reflection slot for the distill call. The slot
+    // is per-runtime, not per-job, and resolved per call — the slot
+    // manager reserves once and returns the same id afterwards.
+    const distillSlot = () => slotManager.sideCallSlotId();
     const distillLlmComplete: ReflectionLlmComplete = abortableSubcall(
       llmComplete,
       (params: Parameters<ReflectionLlmComplete>[0]) => ({
@@ -3647,14 +3825,12 @@ function buildReflectionRunner(args: {
 }): ReflectionRunner | undefined {
   const memory = args.config.memory;
   if (!memory.profile.enabled || !memory.reflection.enabled) return undefined;
-  const reservedSlot = args.slotManager.reserveReflectionSlot();
-  const reflectionSlotId = reservedSlot ?? -1;
-  if (reservedSlot === null) {
-    args.logger.warn(
-      "reflection slot unavailable; reflection will run without slot affinity",
-      { fallbackSlotId: reflectionSlotId },
-    );
-  }
+  // Resolved per call rather than reserved here: a managed daemon's
+  // slot count is not known at boot (the pool is one slot until the
+  // first `/props`), and a reservation taken now would be `-1` forever
+  // — every reflection call would then let llama-server pick any idle
+  // slot, the main loop's included.
+  const reflectionSlotId = () => args.slotManager.sideCallSlotId();
   const reflectionLlmComplete: ReflectionLlmComplete = abortableSubcall(
     args.llmComplete,
     ({ signal: _signal, ...rest }: Parameters<ReflectionLlmComplete>[0]) =>

@@ -48,6 +48,16 @@ export type ApprovalCategory =
    * unrelated prompt should be able to silence it.
    */
   | "fusion_fanout"
+  /**
+   * A filesystem read (or a shell command naming a path) outside the
+   * session's working directory and the paths the user named
+   * (`src/tools/read-scope/`). Pinned at level 5: wandering reads are
+   * what the scope exists to stop, so nothing short of full trust runs
+   * them unasked. A `y` at the prompt also widens the session's read
+   * roots to the directory it named (`ReadScopeGrants`), so one answer
+   * covers the reads that follow under it.
+   */
+  | "fs_read_outside"
   | "other";
 
 /**
@@ -67,8 +77,8 @@ export type ApprovalCategory =
  *    stricter than the escape hatch. The remote-sync switch
  *    (`git.remoteSync`) is checked before this ladder is consulted.
  *  - level 5 (full trust): everything, including browser navigation to
- *    non-web URLs, writes to the agent's own trust config, and
- *    uncategorised requests.
+ *    non-web URLs, writes to the agent's own trust config, reads outside
+ *    the working directory, and uncategorised requests.
  *
  * `trust_config` is deliberately pinned at 5: a write to the file that
  * holds `agent.approvalLevel` (or the `.env` holding API tokens) is the
@@ -91,6 +101,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   browser_nonweb: 5,
   trust_config: 5,
   email: 5,
+  fs_read_outside: 5,
   other: 5,
 };
 
@@ -154,6 +165,10 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // A session grant would let the agent mail anyone for the rest of
   // the session; each mail is its own decision.
   email: false,
+  // "Read anywhere this session" is a legitimate answer for an operator
+  // who would otherwise set `agent.readScope: unrestricted`; the
+  // narrower answer, one directory, is the prompt's plain `y`.
+  fs_read_outside: true,
   other: true,
 };
 
@@ -182,6 +197,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   browser_nonweb: "browser · non-web URL",
   trust_config: "agent trust config",
   email: "e-mail send",
+  fs_read_outside: "read outside the working directory",
   other: "uncategorised",
 };
 

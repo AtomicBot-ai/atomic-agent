@@ -5,6 +5,10 @@ import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import { USER_CONFIG_DEFAULTS } from "../config/index.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
+import {
+  CONVERSATION_CAP_AUTO,
+  CONVERSATION_CAP_AUTO_FALLBACK,
+} from "./token-budget.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -66,10 +70,19 @@ describe("the transcript cap under auto", () => {
     const built = build({ conversationMaxTokens: 0 });
     expect(built.contextWindow).toBeNull();
     expect(built.conversationCapAuto).toBe(true);
-    expect(built.conversationCapEffective).toBe(
-      USER_CONFIG_DEFAULTS.agent.conversationMaxTokens,
-    );
+    // The pre-auto fixed cap, not the schema default — that is `0` now.
+    expect(CONVERSATION_CAP_AUTO_FALLBACK).toBe(32_000);
+    expect(built.conversationCapEffective).toBe(CONVERSATION_CAP_AUTO_FALLBACK);
     expect(built.conversationCapEffective).toBeGreaterThan(10_000);
+  });
+
+  it("is the shipped default, so an untouched config takes the same path", () => {
+    expect(USER_CONFIG_DEFAULTS.agent.conversationMaxTokens).toBe(
+      CONVERSATION_CAP_AUTO,
+    );
+    const built = build({});
+    expect(built.conversationCapAuto).toBe(true);
+    expect(built.conversationCapEffective).toBe(CONVERSATION_CAP_AUTO_FALLBACK);
   });
 
   it("is never worse than the fixed cap it replaced", () => {
@@ -115,7 +128,9 @@ describe("where the window comes from", () => {
 
 describe("what the prompt reports about pairs", () => {
   it("counts the tasks it carried and the cap in force", () => {
-    const built = build({ conversationMaxPairs: 2 });
+    // `conversationLowWater: 1` cuts to the cap itself; the shipped
+    // default cuts below it so the cut can hold (see below).
+    const built = build({ conversationMaxPairs: 2, conversationLowWater: 1 });
     expect(built.conversationPairsCap).toBe(2);
     expect(built.conversationPairs).toBe(2);
     expect(built.droppedPairs).toBe(1);
@@ -134,21 +149,40 @@ describe("what the prompt reports about pairs", () => {
  * it can never drift silently.
  */
 describe("the shipped default", () => {
-  it("carries twenty tasks and no more", () => {
+  it("carries two hundred tasks and no more", () => {
     const many: ConversationTurn[] = [];
-    for (let i = 0; i < 30; i += 1) many.push(...task(i));
+    for (let i = 0; i < 200; i += 1) many.push(...task(i));
     const built = buildPrompt({
       session: sessionWith(many),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
     });
-    expect(built.conversationPairsCap).toBe(
-      USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
-    );
-    expect(built.conversationPairs).toBe(20);
-    expect(built.droppedPairs).toBe(10);
-    expect(built.text).not.toContain("ask 0");
-    expect(built.text).toContain("ask 29");
+    expect(USER_CONFIG_DEFAULTS.agent.conversationMaxPairs).toBe(200);
+    expect(built.conversationPairsCap).toBe(200);
+    expect(built.conversationPairs).toBe(200);
+    expect(built.droppedPairs).toBe(0);
+    expect(built.text).toContain("ask 0\n");
+    expect(built.text).toContain("ask 199");
+  });
+
+  it("past two hundred, drops to 130 — 65 % of the cap — and holds there", () => {
+    // The cut is chunked so it can hold: dropping exactly one task per
+    // new task would move the transcript's first line on every task and
+    // re-read the prompt on a model with no partial prefix reuse.
+    const many: ConversationTurn[] = [];
+    for (let i = 0; i < 300; i += 1) many.push(...task(i));
+    const built = buildPrompt({
+      session: sessionWith(many),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(USER_CONFIG_DEFAULTS.agent.conversationLowWater).toBe(0.65);
+    expect(built.conversationPairs).toBe(130);
+    expect(built.droppedPairs).toBe(170);
+    expect(built.text).not.toContain("ask 169\n");
+    expect(built.text).toContain("ask 170\n");
+    expect(built.text).toContain("ask 299");
   });
 });

@@ -1,4 +1,5 @@
 import type { CompletionResult } from "../../llm/llama-server-client.js";
+import { resolveSlotId, type SlotIdSource } from "../../llm/slot-manager.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
@@ -19,8 +20,13 @@ import { createHeuristicGate, type RewriterGate } from "./rewriter-gate.js";
  * the LLM call based on the heuristic gate, and folds every failure
  * mode into "use the raw user message". The runner is fire-safe by
  * construction: it never throws, never blocks the recall path beyond
- * its hard `timeoutMs`, and never touches the main agent slot's or
- * the reflection slot's KV cache (it pins `slotId = -1`).
+ * its hard `timeoutMs`, and never touches the main agent slot's KV
+ * cache: it rides the reserved reflection slot (`deps.slotId`, the
+ * same one reflection, link generation and voting share) and falls
+ * back to `slotId = -1` when the pool has no slot to spare. A `-1`
+ * with `cache_prompt` unset lets llama-server pick any idle slot,
+ * which on a busy server could be the main loop's — the reservation
+ * is what keeps the rewriter off it.
  *
  * Outcome taxonomy (mirrored in metrics):
  *   - `ok`                       — LLM produced a usable rewrite.
@@ -55,8 +61,8 @@ export interface QueryRewriterTraceEvent {
 /**
  * Single completion call. Mirrors `ReflectionLlmComplete` shape so
  * bootstrap can construct one with the same underlying llama-server
- * client. **Must always be called with `slotId = -1`** — pinned by
- * the runner; tests assert it.
+ * client. Called with `deps.slotId` resolved per call, or
+ * `REWRITER_SLOT_ID` (`-1`) when none was given — pinned by tests.
  */
 export type RewriterLlmComplete = (params: {
   prompt: string;
@@ -76,6 +82,13 @@ export interface QueryRewriterRunnerDeps {
   llmComplete: RewriterLlmComplete;
   /** Hard cap per call (ms). */
   timeoutMs: number;
+  /**
+   * Slot the rewrite runs on — bootstrap passes the slot manager's
+   * `sideCallSlotId` thunk so the call lands on the reserved reflection
+   * slot when the pool has one and on `-1` otherwise. Defaults to
+   * `REWRITER_SLOT_ID`.
+   */
+  slotId?: SlotIdSource;
   /** Referential gate. Defaults to {@link createHeuristicGate}. */
   gate?: RewriterGate;
   logger?: StructuredLogger;
@@ -104,7 +117,10 @@ export interface QueryRewriterRunner {
   }): Promise<string>;
 }
 
-/** Slot affinity for the rewriter — always `-1` (no KV cache reuse). */
+/**
+ * Slot the rewriter falls back to when no `slotId` dep is given — `-1`,
+ * no KV cache reuse and no reservation.
+ */
 export const REWRITER_SLOT_ID = -1;
 
 export function createQueryRewriterRunner(
@@ -167,7 +183,10 @@ export function createQueryRewriterRunner(
             prompt,
             grammar: QUERY_REWRITER_GRAMMAR,
             responseFormat: QUERY_REWRITER_RESPONSE_FORMAT,
-            slotId: REWRITER_SLOT_ID,
+            slotId:
+              deps.slotId === undefined
+                ? REWRITER_SLOT_ID
+                : resolveSlotId(deps.slotId),
             // Own fallback partition, like `reflection:` / `vote:`. The
             // chain partitions breaker state by this id; on the bare id a
             // provider refusing the rewriter's request flipped the TURN's

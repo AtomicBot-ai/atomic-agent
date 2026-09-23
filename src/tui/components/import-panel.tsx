@@ -160,9 +160,9 @@ function SourceRow({
       {IMPORT_SOURCE_IDS.map((id, index) => (
         <Box key={id}>
           {index > 0 ? <Text color={theme.colors.muted}> / </Text> : null}
-          {/* Each name is its own target: the row reads as four choices,
-              so clicking one picks it outright rather than stepping the
-              cycle the arrows walk. */}
+          {/* Each name is its own target: the row reads as separate
+              choices, so clicking one picks it outright rather than
+              stepping the cycle the arrows walk. */}
           <ImportClick
             onClick={importRowClick("sourceType", (ctx) =>
               ctx.dispatch({ type: "import_source_set", source: id }),

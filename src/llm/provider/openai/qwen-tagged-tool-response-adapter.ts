@@ -15,18 +15,40 @@ type OfferedTool = {
   required: ReadonlySet<string>;
 };
 
-type TaggedCall = {
-  name: string;
-  parameters: Array<{ name: string; value: string }>;
-};
+/**
+ * One `<tool_call>` block, in either dialect the parser accepts:
+ *  - Qwen's XML-ish form, `<function=NAME><parameter=K>V</parameter>…`,
+ *    whose values are strings the schema coerces (`parameters`);
+ *  - the Hermes / ChatML form, `{"name": NAME, "arguments": {…}}`, whose
+ *    values are already typed JSON (`args`).
+ */
+type TaggedCall =
+  | {
+      name: string;
+      parameters: Array<{ name: string; value: string }>;
+    }
+  | { name: string; args: Record<string, unknown> };
 
-const TOOL_CALL_RE =
-  /\s*<tool_call>\s*<function=([^>\n]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/gy;
+const TOOL_CALL_BLOCK_RE = /\s*<tool_call>([\s\S]*?)<\/tool_call>/gy;
+const QWEN_FUNCTION_RE = /^\s*<function=([^>\n]+)>([\s\S]*?)<\/function>\s*$/;
 const PARAMETER_RE = /\s*<parameter=([^>\n]+)>([\s\S]*?)<\/parameter>/gy;
+
+export interface TaggedToolAdaptOptions {
+  /**
+   * Also read a tagged call out of `reasoning_content` when `content`
+   * holds none (#105 — Qwen thinking models put the call there). The
+   * adapter's own default, and what the Qwen kind sends; every other
+   * kind passes `false`, because on those services the reasoning channel
+   * is scratch space and a call quoted while the model thinks is not a
+   * call.
+   */
+  fromReasoning?: boolean;
+}
 
 export function adaptQwenTaggedToolResponse(
   response: Record<string, unknown>,
   request: Pick<CompletionRequest, "tools">,
+  options: TaggedToolAdaptOptions = {},
 ): Record<string, unknown> {
   const choices = response.choices as
     Array<Record<string, unknown>> | undefined;
@@ -49,7 +71,9 @@ export function adaptQwenTaggedToolResponse(
   // (`[]`) takes the same reasoning path, so `fromReasoning` covers both.
   const fromReasoning = contentCalls === null || contentCalls.length === 0;
   const toolCalls = fromReasoning
-    ? parseSource(message.reasoning_content, offered)
+    ? options.fromReasoning === false
+      ? null
+      : parseSource(message.reasoning_content, offered)
     : contentCalls;
   if (!toolCalls || toolCalls.length === 0) return response;
 
@@ -79,6 +103,7 @@ export function adaptQwenTaggedToolResponse(
 export function adaptQwenCompletionResult(
   result: CompletionResult,
   request: Pick<CompletionRequest, "tools">,
+  options: TaggedToolAdaptOptions = {},
 ): CompletionResult {
   const wire = {
     choices: [
@@ -92,7 +117,10 @@ export function adaptQwenCompletionResult(
       },
     ],
   };
-  const adapted = adaptQwenTaggedToolResponse(wire, request);
+  const adapted = adaptQwenTaggedToolResponse(wire, request, options);
+  // Declined: the completion is exactly what the provider returned, and
+  // rebuilding it would turn an absent `toolCalls` into an empty array.
+  if (adapted === wire) return result;
   const choice = (adapted.choices as Array<Record<string, unknown>>)[0];
   const message = choice?.message as Record<string, unknown> | undefined;
   if (!message) return result;
@@ -181,7 +209,10 @@ function parseSource(
   for (const taggedCall of tagged) {
     const tool = offered.get(taggedCall.name.trim());
     if (!tool) return null;
-    const args = coerceArguments(taggedCall.parameters, tool);
+    const args =
+      "args" in taggedCall
+        ? coerceTypedArguments(taggedCall.args, tool)
+        : coerceArguments(taggedCall.parameters, tool);
     if (!args) return null;
     calls.push({
       id: `call_qwen_tagged_${calls.length}`,
@@ -195,19 +226,107 @@ function parseSource(
   return calls;
 }
 
+/**
+ * Every `<tool_call>` block in `source`, which must consist of nothing
+ * else: text before, between or after the blocks makes the whole thing a
+ * reply that quotes the syntax, and `null` says so.
+ */
 function parseTaggedCalls(source: string): TaggedCall[] | null {
   const calls: TaggedCall[] = [];
   let offset = 0;
   while (offset < source.length) {
-    TOOL_CALL_RE.lastIndex = offset;
-    const match = TOOL_CALL_RE.exec(source);
+    TOOL_CALL_BLOCK_RE.lastIndex = offset;
+    const match = TOOL_CALL_BLOCK_RE.exec(source);
     if (!match) return source.slice(offset).trim().length === 0 ? calls : null;
-    const parameters = parseParameters(match[2] ?? "");
-    if (!parameters) return null;
-    calls.push({ name: match[1] ?? "", parameters });
-    offset = TOOL_CALL_RE.lastIndex;
+    const call = parseTaggedCallBody(match[1] ?? "");
+    if (!call) return null;
+    calls.push(call);
+    offset = TOOL_CALL_BLOCK_RE.lastIndex;
   }
   return calls;
+}
+
+/** The inside of one block, in whichever dialect it is written. */
+function parseTaggedCallBody(body: string): TaggedCall | null {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) return null;
+  const qwen = QWEN_FUNCTION_RE.exec(trimmed);
+  if (qwen) {
+    const parameters = parseParameters(qwen[2] ?? "");
+    if (!parameters) return null;
+    return { name: qwen[1] ?? "", parameters };
+  }
+  if (!trimmed.startsWith("{")) return null;
+  // Hermes / ChatML: `{"name": …, "arguments": {…}}`. Some fine-tunes
+  // write `parameters` for the arguments object; a bare name with no
+  // arguments object at all is a call with none.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  const record = asRecord(parsed);
+  if (!record || typeof record.name !== "string") return null;
+  const args = asRecord(record.arguments) ?? asRecord(record.parameters);
+  if (
+    args === null &&
+    record.arguments !== undefined &&
+    record.parameters !== undefined
+  ) {
+    return null;
+  }
+  return { name: record.name, args: args ?? {} };
+}
+
+/**
+ * Hermes arguments arrive typed, so only a string standing where the
+ * schema wants something else is coerced — the same reading the Qwen
+ * form gets for every value — and the result is validated the same way.
+ */
+function coerceTypedArguments(
+  raw: Record<string, unknown>,
+  tool: OfferedTool,
+): Record<string, unknown> | null {
+  const args = Object.create(null) as Record<string, unknown>;
+  try {
+    for (const [name, value] of Object.entries(raw)) {
+      if (!Object.hasOwn(tool.properties, name)) {
+        throw new Error("invalid parameter");
+      }
+      const schema = tool.properties[name] ?? {};
+      args[name] =
+        typeof value === "string" && !admitsString(schema)
+          ? coerceJsonSchemaValue(value, schema)
+          : value;
+    }
+    for (const name of tool.required) {
+      if (!Object.hasOwn(args, name))
+        throw new Error("missing required parameter");
+    }
+    if (!validateJsonSchemaValue(args, tool.schema)) {
+      throw new Error("arguments do not match offered schema");
+    }
+    return args;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a property schema takes a string as it is. */
+function admitsString(schema: Record<string, unknown>): boolean {
+  const type = schema.type;
+  if (type === undefined) return true;
+  if (type === "string") return true;
+  if (Array.isArray(type) && type.includes("string")) return true;
+  const anyOf = schema.anyOf;
+  if (Array.isArray(anyOf)) {
+    return anyOf.some((branch) => {
+      const record = asRecord(branch);
+      return record !== null && admitsString(record);
+    });
+  }
+  return false;
 }
 
 function parseParameters(
@@ -230,7 +349,7 @@ function parseParameters(
 }
 
 function coerceArguments(
-  parameters: TaggedCall["parameters"],
+  parameters: Array<{ name: string; value: string }>,
   tool: OfferedTool,
 ): Record<string, unknown> | null {
   const args = Object.create(null) as Record<string, unknown>;

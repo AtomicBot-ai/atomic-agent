@@ -4,7 +4,7 @@ import {
   type ToolContext,
   type ToolDefinition,
 } from "./tool-registry.js";
-import { coerceToolArgs } from "./coerce-tool-args.js";
+import { coerceToolArgs, normalizeKey } from "./coerce-tool-args.js";
 
 const ctx: ToolContext = {
   workingDir: "/w",
@@ -241,5 +241,60 @@ describe("ToolRegistry.invoke integration", () => {
     await expect(
       registry.invoke("nope.missing", { a: "1" }, ctx),
     ).rejects.toThrow(/tool not registered/);
+  });
+});
+
+describe("coerceToolArgs — mangled keys (F33)", () => {
+  it("unquotes a key wrapped in its own quotes", async () => {
+    // A cloud worker sent `"path"` (quotes included) to os.fs.read.
+    const seen = await invokeWith("os.fs.read", { '"path"': "a.txt" });
+    expect(seen).toEqual({ path: "a.txt" });
+  });
+
+  it("keeps the real key of a fused label fragment", async () => {
+    const seen = await invokeWith("os.fs.read", {
+      path: "a.txt",
+      "<label>limit</label>,limit": 20,
+    });
+    expect(seen).toEqual({ path: "a.txt", limit: 20 });
+  });
+
+  it("still coerces the value under a repaired key", async () => {
+    const seen = await invokeWith("os.fs.read", {
+      path: "a.txt",
+      "'limit'": "20",
+    });
+    expect(seen).toEqual({ path: "a.txt", limit: 20 });
+  });
+
+  it("never overwrites a key the model also sent cleanly", async () => {
+    const args = { path: "a.txt", '"path"': "b.txt" };
+    expect(await invokeWith("os.fs.read", args)).toEqual(args);
+  });
+
+  it("leaves a key alone when its cleaned form is not in the schema", async () => {
+    const args = { path: "a.txt", '"nope"': 1 };
+    expect(await invokeWith("os.fs.read", args)).toEqual(args);
+  });
+
+  it("returns the same object when nothing needed repair", () => {
+    const args = { path: "a.txt", limit: 3 };
+    expect(coerceToolArgs("os.fs.read", args)).toBe(args);
+  });
+});
+
+describe("normalizeKey", () => {
+  it.each([
+    ['"path"', "path"],
+    ["'path'", "path"],
+    ["`path`", "path"],
+    ['"\\"path\\""', "path"],
+    ["<label>…</label>,limit", "limit"],
+    ["  offset ", "offset"],
+    ["path,", null],
+    ["a b", null],
+    ["", null],
+  ])("%j → %j", (raw, expected) => {
+    expect(normalizeKey(raw)).toBe(expected);
   });
 });

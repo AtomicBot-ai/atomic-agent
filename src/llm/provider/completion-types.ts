@@ -6,14 +6,91 @@
 
 export type ToolCallTransport = "grammar" | "native_tools";
 
+/**
+ * How hard a reasoning model may think for one completion. Mapped per
+ * provider family in the body builder (OpenRouter `reasoning.effort`,
+ * OpenAI-compatible `reasoning_effort`); providers without a mapping
+ * ignore it.
+ */
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface CompletionUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * Prompt tokens the service served from its prompt cache
+   * (`prompt_tokens_details.cached_tokens` on OpenAI, OpenRouter and
+   * Gemini's compatibility layer). A subset of `promptTokens`, priced at
+   * the model's `cacheRead` rate when one is known. Absent — not zero —
+   * when the service did not report it.
+   */
+  cachedTokens?: number;
+}
+
+/**
+ * One turn of the packed conversation, as the prompt builder renders it:
+ * the same rows `### conversation` carries as text, with each
+ * tool-result body already capped exactly as the text form caps it.
+ * Provider-neutral on purpose — a native-tools provider lays these out as
+ * real chat messages, a grammar provider never reads them.
+ */
+export type PromptTurn =
+  | { kind: "user"; text: string }
+  | { kind: "assistant_reply"; text: string }
+  | { kind: "assistant_tool_call"; tool: string; args: Record<string, unknown> }
+  | {
+      kind: "tool_result";
+      tool: string;
+      status: "ok" | "error";
+      body: string;
+      truncated: boolean;
+    };
+
+/**
+ * The prompt as structure instead of as one string: the three zones a
+ * native-message request lays out as `system`, history and a final
+ * `user` message. `prompt` (the flat text) is always present beside it
+ * and is what every other transport sends; the two are built from the
+ * same packed conversation, so they cannot disagree about what the
+ * model sees.
+ */
+export interface PromptMessages {
+  /** The stable prefix, byte for byte. */
+  system: string;
+  /** The packer's one-line recap of dropped turns, or `null`. */
+  droppedSummary: string | null;
+  /** The visible conversation, oldest first. */
+  turns: ReadonlyArray<PromptTurn>;
+  /** The variable tail without `### conversation`: the final user message. */
+  tail: string;
+}
+
+/**
+ * The prompt as two messages, for a local provider that renders through
+ * the model's own chat template (`/apply-template`): the stable prefix
+ * as the system message, the tail as the user message. `prompt` stays
+ * the raw text for providers and paths that do not render.
+ */
+export interface ChatPromptParts {
+  system: string;
+  user: string;
+  /** Salted hash of `system`; the rendered prefix is cached by it. */
+  prefixHash: string;
+  /** `chat_template_kwargs.enable_thinking`; absent leaves the template's default. */
+  enableThinking?: boolean;
 }
 
 export interface CompletionRequest {
   prompt: string;
+  /**
+   * The same prompt as structure. Set only for main-turn requests built
+   * for a native-tools link; providers that lay history out as real
+   * messages read it, everything else ignores it and sends `prompt`.
+   */
+  messages?: PromptMessages;
+  /** See `ChatPromptParts`. Only grammar (llama-server) links receive it. */
+  chat?: ChatPromptParts;
   grammar?: string;
   slotId?: number;
   cachePrompt?: boolean;
@@ -22,6 +99,22 @@ export interface CompletionRequest {
   topP?: number;
   topK?: number;
   maxTokens?: number;
+  /**
+   * Output ceiling for the turn this request belongs to (a fusion
+   * worker's `workerMaxOutputTokens`). A per-step `maxTokens` — the
+   * truncation retry's raised cap — wins over it; absent both, the
+   * provider's own ceiling applies.
+   */
+  maxOutputTokens?: number;
+  /**
+   * How hard a reasoning model should think on this completion (the
+   * turn's `reasoningEffort`). Spelled per vendor by the body builder
+   * (`reasoning: { effort }` on OpenRouter, `reasoning_effort` on
+   * OpenAI-compatible services) and omitted for kinds that document
+   * neither. Ignored by grammar-only providers. Set by the fusion
+   * fan-out for its workers.
+   */
+  reasoningEffort?: ReasoningEffort;
   seed?: number;
   repeatPenalty?: number;
   repeatLastN?: number;
@@ -75,6 +168,23 @@ export interface CompletionTiming {
   predictedTokens: number;
 }
 
+/**
+ * Why the runtime ended a completion itself, before the provider did.
+ *
+ * `fabricated_transcript`: the plain content kept writing atag's own text
+ * transcript (`assistant_tool_call:` / `tool_result[...]:` lines) instead
+ * of calling tools, so the stream was aborted
+ * (`createFabricatedTranscriptWatcher`). `calls` / `results` are the
+ * transcript lines seen when it was cut. Not a truncation and not a
+ * provider failure: the completion is judged like one whose text was
+ * detected as fabricated after it finished.
+ */
+export interface CompletionEarlyStop {
+  reason: "fabricated_transcript";
+  calls: number;
+  results: number;
+}
+
 export interface CompletionResult {
   content: string;
   reasoningContent: string;
@@ -89,6 +199,16 @@ export interface CompletionResult {
   /** Raw OpenAI tool_calls when transport is native_tools. */
   toolCalls?: ReadonlyArray<OpenAiToolCall>;
   finishReason?: string | null;
+  /** Set when the runtime cut the completion short. See `CompletionEarlyStop`. */
+  earlyStop?: CompletionEarlyStop;
+  /**
+   * The output cap the request actually carried on the wire
+   * (`max_tokens`, or `max_completion_tokens` from a passthrough); `null`
+   * when it carried none, so any cut was the provider's own limit.
+   * Absent when the provider does not report it — callers then fall back
+   * to the cap they asked for.
+   */
+  sentMaxTokens?: number | null;
   /**
    * Tool-call transport of the provider that actually served this
    * completion. Providers never set it — it is stamped by the fallback
@@ -98,6 +218,12 @@ export interface CompletionResult {
    * authoritative.
    */
   servedTransport?: ToolCallTransport;
+  /**
+   * The provider's generation id (`id` on the response / SSE chunks),
+   * when it sends one. Recorded in the trace so a billed completion
+   * can be looked up at the provider.
+   */
+  generationId?: string;
 }
 
 export interface OpenAiToolCall {
@@ -133,6 +259,8 @@ export interface StreamFinalResult {
   finishReason?: string | null;
   usage?: CompletionUsage;
   modelId?: string | null;
+  /** See `CompletionResult.generationId`. */
+  generationId?: string;
   /**
    * Whether the underlying transport actually delivered a trustworthy
    * terminal signal — an explicit provider `finish_reason` on any chunk,
@@ -142,4 +270,9 @@ export interface StreamFinalResult {
    * not treat an absent value as confirmation of a clean completion.
    */
   terminalObserved?: boolean;
+  /**
+   * Set when the consumer ended the stream itself. The tool calls on the
+   * result are then only those whose arguments had fully arrived.
+   */
+  earlyStop?: CompletionEarlyStop;
 }

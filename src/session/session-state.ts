@@ -1,7 +1,11 @@
 import type { MemoryEntry, MemoryIndexEntry } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
-import { appendTurn, type ConversationTurn } from "./conversation-turn.js";
+import {
+  appendTurn,
+  type ConversationPackStart,
+  type ConversationTurn,
+} from "./conversation-turn.js";
 import type { ContextUsageState } from "./context-usage.js";
 import { appendMacroTurnStart } from "./macro-turn-starts.js";
 
@@ -115,6 +119,15 @@ export interface SessionState {
    * readers fall back to deriving what they can.
    */
   macroTurnStarts?: number[];
+  /**
+   * Where the prompt's `### conversation` last cut {@link turns}, so the
+   * steps after the cut keep that start and the prompt only grows at
+   * its end (a moving start re-reads the whole prompt on a model whose
+   * attention cannot roll back). Written by the step executor from each
+   * prompt build; absent while nothing has been dropped. Persisted with
+   * the session because the daemon's KV cache outlives the process.
+   */
+  conversationPackStart?: ConversationPackStart;
   /** Full conversation transcript in chronological order. */
   turns: ConversationTurn[];
   createdAt: number;
@@ -300,6 +313,32 @@ export function recordTurn(
     turns: appendTurn(state.turns, turn),
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * Remember (or forget) where the packer cut the transcript for the
+ * prompt just built. Returns `state` itself when nothing changed, so a
+ * step that held the previous cut does not churn the session object.
+ */
+export function rememberConversationPackStart(
+  state: SessionState,
+  packStart: ConversationPackStart | null,
+): SessionState {
+  const prev = state.conversationPackStart;
+  if (packStart === null) {
+    if (prev === undefined) return state;
+    const { conversationPackStart: _dropped, ...rest } = state;
+    return rest;
+  }
+  if (
+    prev !== undefined &&
+    prev.index === packStart.index &&
+    prev.at === packStart.at &&
+    prev.boundBy === packStart.boundBy
+  ) {
+    return state;
+  }
+  return { ...state, conversationPackStart: packStart };
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   LlamaServerClient,
   LlamaServerError,
   extractLlamaErrorDetail,
+  judgeSlotProgress,
 } from "./llama-server-client.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
@@ -13,6 +14,112 @@ function createMockFetch(handler: Handler): typeof fetch {
     return handler(url, init ?? {});
   }) as typeof fetch;
 }
+
+describe("LlamaServerClient n_predict from the turn's ceiling (F20)", () => {
+  function clientCapturing(bodies: Array<Record<string, unknown>>): LlamaServerClient {
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ content: "x", stop: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("caps n_predict from maxOutputTokens, under the per-step maxTokens", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const client = clientCapturing(bodies);
+    await client.complete({ prompt: "p", maxOutputTokens: 12_000 });
+    await client.complete({ prompt: "p", maxOutputTokens: 12_000, maxTokens: 32_000 });
+    expect(bodies[0]?.n_predict).toBe(12_000);
+    expect(bodies[1]?.n_predict).toBe(32_000);
+    // A reasoning effort means nothing to llama-server and is not sent.
+    await client.complete({ prompt: "p", reasoningEffort: "low" });
+    expect(JSON.stringify(bodies[2])).not.toContain("reasoning");
+  });
+});
+
+describe("LlamaServerClient.measuredTokensPerSecond (F19)", () => {
+  function clientWith(replies: Array<Record<string, unknown>>): LlamaServerClient {
+    let i = 0;
+    return new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        const reply = replies[Math.min(i, replies.length - 1)]!;
+        i += 1;
+        return new Response(JSON.stringify({ content: "x", stop: true, ...reply }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    });
+  }
+
+  it("is null until a completion reports timings, then a rolling mean", async () => {
+    const client = clientWith([
+      { timings: { predicted_per_second: 30 } },
+      // An older server: no rate, but a count and a duration.
+      { timings: { predicted_n: 100, predicted_ms: 10_000 } },
+      // Nothing usable: ignored, the mean stands.
+      { timings: { predicted_n: 0, predicted_ms: 0 } },
+      {},
+    ]);
+    expect(client.measuredTokensPerSecond()).toBeNull();
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(30);
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(20);
+    await client.complete({ prompt: "p" });
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(20);
+  });
+
+  it("keeps only the last eight completions, so it follows the load", async () => {
+    const client = clientWith([{ timings: { predicted_per_second: 100 } }]);
+    for (let i = 0; i < 3; i += 1) await client.complete({ prompt: "p" });
+    const slow = clientWith([{ timings: { predicted_per_second: 100 } }]);
+    void slow;
+    // Eight slow completions push the fast ones out of the window.
+    let n = 0;
+    const mixed = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        n += 1;
+        return new Response(
+          JSON.stringify({
+            content: "x",
+            stop: true,
+            timings: { predicted_per_second: n <= 2 ? 100 : 10 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    });
+    for (let i = 0; i < 10; i += 1) await mixed.complete({ prompt: "p" });
+    expect(mixed.measuredTokensPerSecond()).toBe(10);
+  });
+
+  it("reads the stream's final event too", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            'data: {"content":"ok","stop":false}\n\n' +
+              'data: {"content":"","stop":true,"timings":{"predicted_per_second":42}}\n\n',
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    let next = await iterator.next();
+    while (!next.done) next = await iterator.next();
+    expect(client.measuredTokensPerSecond()).toBe(42);
+  });
+});
 
 describe("LlamaServerClient.complete", () => {
   it("posts JSON to /completion with grammar and slot_id", async () => {
@@ -31,8 +138,12 @@ describe("LlamaServerClient.complete", () => {
               predicted_ms: 20,
               prompt_n: 40,
               predicted_n: 8,
+              cache_n: 30,
             },
-            tokens_cached: 30,
+            // The whole prompt, and the slot's occupancy after the
+            // request (prompt 70 + reply 8) — neither is the reused part.
+            tokens_evaluated: 70,
+            tokens_cached: 78,
             slot_id: 2,
             model: "qwen-test",
           }),
@@ -98,6 +209,90 @@ describe("LlamaServerClient.complete", () => {
 
     expect(result.timing.promptTokens).toBe(40);
     expect(result.cacheHitTokens).toBe(0);
+  });
+
+  /** One unary completion whose response carries `payload`'s usage fields. */
+  async function completeWith(payload: Record<string, unknown>) {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            JSON.stringify({ content: "ok", stop: true, slot_id: 0, ...payload }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    });
+    return client.complete({ prompt: "hello", maxTokens: 16 });
+  }
+
+  it("counts a warm-cache prompt once, from the timings split", async () => {
+    // A typical worker step: most of the prompt reused, a little
+    // evaluated, and `tokens_cached` reporting occupancy after the reply.
+    // The old sum (`prompt_n + tokens_cached`) made this 13,600.
+    const result = await completeWith({
+      timings: { prompt_n: 1_200, cache_n: 10_800, predicted_n: 400 },
+      tokens_evaluated: 12_000,
+      tokens_cached: 12_400,
+    });
+    expect(result.timing.promptTokens).toBe(12_000);
+    expect(result.cacheHitTokens).toBe(10_800);
+    expect(result.timing.predictedTokens).toBe(400);
+  });
+
+  it("matches the metering proxy's prompt count on the benchmark totals", async () => {
+    // Ground truth from a metering proxy: 433,110 prompt tokens, of
+    // which 35,635 evaluated and 397,475 reused. The old formula read the
+    // same fields as 499,542.
+    const result = await completeWith({
+      timings: { prompt_n: 35_635, cache_n: 397_475, predicted_n: 30_797 },
+      tokens_cached: 463_907,
+    });
+    expect(result.timing.promptTokens).toBe(433_110);
+    expect(result.cacheHitTokens).toBe(397_475);
+    expect(35_635 + 463_907).toBe(499_542);
+  });
+
+  it("reads tokens_evaluated as the whole prompt when timings are absent", async () => {
+    const result = await completeWith({
+      tokens_evaluated: 70,
+      tokens_cached: 78,
+      tokens_predicted: 8,
+    });
+    expect(result.timing.promptTokens).toBe(70);
+    // `tokens_cached` is occupancy, not reuse, so no reuse is claimed.
+    expect(result.cacheHitTokens).toBe(0);
+    expect(result.timing.predictedTokens).toBe(8);
+  });
+
+  it("derives the reused part when an older server sends prompt_n but no cache_n", async () => {
+    const result = await completeWith({
+      timings: { prompt_n: 40, predicted_n: 8 },
+      tokens_evaluated: 70,
+      tokens_cached: 78,
+    });
+    expect(result.timing.promptTokens).toBe(70);
+    expect(result.cacheHitTokens).toBe(30);
+  });
+
+  it("reads the same split from a stream's final event", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            'data: {"content":"ok","stop":false}\n\n' +
+              'data: {"content":"","stop":true,"timings":{"prompt_n":5,"cache_n":95,"predicted_n":1},"tokens_evaluated":100,"tokens_cached":101}\n\n',
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    let next = await iterator.next();
+    while (!next.done) next = await iterator.next();
+    if (!next.done) throw new Error("stream did not finish");
+    expect(next.value.timing.promptTokens).toBe(100);
+    expect(next.value.cacheHitTokens).toBe(95);
   });
 
   it("forwards explicit repeatPenalty / repeatLastN overrides", async () => {
@@ -584,19 +779,47 @@ describe("LlamaServerClient.completeStream deadlines", () => {
 
   function streamingClient(
     requestTimeoutMs: number,
-    options: { streamTotalTimeoutMs?: number; errorOnAbort?: boolean } = {},
+    options: {
+      streamTotalTimeoutMs?: number;
+      errorOnAbort?: boolean;
+      /** Defaults to `requestTimeoutMs`, so one number drives both deadlines. */
+      firstTokenTimeoutMs?: number;
+      /**
+       * Answers the progress watch's `GET /slots`. Default: 501, the
+       * answer of a server with the endpoint disabled — no verdict, so
+       * the timers alone decide, as before the watch existed.
+       */
+      slots?: (init: RequestInit) => Promise<Response>;
+      slotsPollIntervalMs?: number;
+      slotsPollTimeoutMs?: number;
+    } = {},
   ): {
     client: LlamaServerClient;
     opened: () => PushableStream;
+    slotsPolls: () => number;
   } {
     let handle: PushableStream | null = null;
+    let polls = 0;
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
       requestTimeoutMs,
+      firstTokenTimeoutMs: options.firstTokenTimeoutMs ?? requestTimeoutMs,
       ...(options.streamTotalTimeoutMs === undefined
         ? {}
         : { streamTotalTimeoutMs: options.streamTotalTimeoutMs }),
-      fetchImpl: createMockFetch(async (_url, init) => {
+      ...(options.slotsPollIntervalMs === undefined
+        ? {}
+        : { slotsPollIntervalMs: options.slotsPollIntervalMs }),
+      ...(options.slotsPollTimeoutMs === undefined
+        ? {}
+        : { slotsPollTimeoutMs: options.slotsPollTimeoutMs }),
+      fetchImpl: createMockFetch(async (url, init) => {
+        if (init.method === "GET" || url.endsWith("/slots")) {
+          polls += 1;
+          return options.slots
+            ? options.slots(init)
+            : new Response("slots endpoint disabled", { status: 501 });
+        }
         handle = pushableSse(init.signal, options.errorOnAbort ?? true);
         return handle.response;
       }),
@@ -610,6 +833,7 @@ describe("LlamaServerClient.completeStream deadlines", () => {
         if (!handle) throw new Error("stream not opened yet");
         return handle;
       },
+      slotsPolls: () => polls,
     };
   }
 
@@ -774,9 +998,9 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     // that user the server "stopped responding after starting the reply"
     // would just be a different piece of wrong advice.
     //
-    // This is also the test that covers the `keepAlive()` call at
-    // headers: delete it and the deadline is still the connect-phase
-    // `total` budget, so the error comes back with the unary wording.
+    // It also pins that a stream is on the `first-token` deadline from
+    // the moment it is sent: were it still on the connect-phase `total`
+    // budget, the error would come back with the unary wording.
     vi.useFakeTimers();
     const { client } = streamingClient(1_000);
     const iterator = client.completeStream({ prompt: "hi" });
@@ -805,6 +1029,128 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     expect(err.message).not.toContain("stopped responding");
     expect(err.message).not.toContain("after starting the reply");
     expect(err.message).not.toContain("exceeded requestTimeoutMs");
+  });
+
+  /** Drain a stream; `failure` resolves to the error it ended with, or `null`. */
+  function drain(
+    iterator: ReturnType<LlamaServerClient["completeStream"]>,
+    deltas: string[] = [],
+  ): { failure: Promise<unknown>; settled: () => boolean } {
+    let done = false;
+    const failure = (async (): Promise<unknown> => {
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) return null;
+          if (next.value.delta) deltas.push(next.value.delta);
+        }
+      } catch (err) {
+        return err;
+      } finally {
+        done = true;
+      }
+    })();
+    return { failure, settled: () => done };
+  }
+
+  it("waits out a queued or prompt-evaluating stream on the first-token budget", async () => {
+    // Fusion on one GPU: a worker's request waits behind the other slots'
+    // prompt evals and sends nothing for minutes. On the idle budget it
+    // was cancelled at exactly 300 s, its slot never having evaluated a
+    // token. Scaled down here: idle 1 s, first token 10 s.
+    vi.useFakeTimers();
+    const { client, opened } = streamingClient(1_000, {
+      firstTokenTimeoutMs: 10_000,
+    });
+    const deltas: string[] = [];
+    const { failure, settled } = drain(
+      client.completeStream({ prompt: "hi" }),
+      deltas,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    // Nine silent seconds: nine idle budgets, inside the first-token one.
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(settled()).toBe(false);
+    opened().push('data: {"content":"late start","stop":false}\n\n');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deltas.join("")).toBe("late start");
+    // Once the reply has started, silence is the idle budget's again.
+    await vi.advanceTimersByTimeAsync(1_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("sent no data for 1000ms");
+  });
+
+  it("names the first-token budget, and how to raise it, when that deadline fires", async () => {
+    vi.useFakeTimers();
+    const { client } = streamingClient(1_000, { firstTokenTimeoutMs: 10_000 });
+    const { failure, settled } = drain(client.completeStream({ prompt: "hi" }));
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(9_990);
+    expect(settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(20);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("sent no first token within 10000ms");
+    expect(err.message).toContain("queued behind other requests");
+    expect(err.message).toContain("ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS");
+    expect(err.message).not.toContain("raise localModels.requestTimeoutMs");
+  });
+
+  it("bounds the wait for response headers by the first-token budget as well", async () => {
+    // Some llama.cpp builds hold the headers back until the first result,
+    // which puts the queue and the prompt eval in front of them.
+    vi.useFakeTimers();
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 1_000,
+      firstTokenTimeoutMs: 10_000,
+      fetchImpl: createMockFetch(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" }),
+              );
+            });
+          }),
+      ),
+      completionRetries: 1,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    const { failure, settled } = drain(client.completeStream({ prompt: "hi" }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("sent no first token within 10000ms");
+  });
+
+  it("never gives the first token less time than the idle budget", async () => {
+    // Before the budgets were split, "raise requestTimeoutMs" was the
+    // advice for a slow prompt eval; an operator who took it keeps it.
+    vi.useFakeTimers();
+    const { client } = streamingClient(5_000, { firstTokenTimeoutMs: 1_000 });
+    const { failure, settled } = drain(client.completeStream({ prompt: "hi" }));
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_001);
+    const err = (await failure) as LlamaServerError;
+
+    expect(err.message).toContain("sent no first token within 5000ms");
   });
 
   it("caps one streaming response with streamTotalTimeoutMs even while chunks keep arriving", async () => {
@@ -890,6 +1236,175 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     expect(err.message).toContain("sent no first token within 1000ms");
     expect(err.message).not.toContain("sent no data for");
   });
+
+  describe("the /slots progress watch (F14)", () => {
+    const slotsJson = (slots: unknown[]) => async () =>
+      new Response(JSON.stringify(slots), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const idle = (id: number) => ({ id, id_task: -1, is_processing: false, next_token: { n_decoded: 0 } });
+    const busy = (id: number, decoded = 0) => ({ id, id_task: 7, is_processing: true, next_token: { n_decoded: decoded } });
+
+    it("aborts a first-token wait early when /slots keeps answering with nothing going on", async () => {
+      // Idle budget 60 s, first-token budget 30 min. A server that answers
+      // /slots every 15 s with every slot idle and unchanged is not
+      // processing the request; the wait ends after one idle budget, not
+      // thirty minutes.
+      vi.useFakeTimers();
+      const { client, slotsPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: slotsJson([idle(0), idle(1)]),
+      });
+      const stream = client.completeStream({
+        prompt: "p",
+        sessionId: "s",
+        slotId: 0,
+      });
+      const first = stream.next();
+      const failure = first.catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(slotsPolls()).toBe(3);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const err = await failure;
+      expect(err).toBeInstanceOf(LlamaServerError);
+      expect((err as LlamaServerError).timedOut).toBe(true);
+      expect((err as LlamaServerError).message).toContain("sent no first token");
+      expect((err as LlamaServerError).message).toContain("no progress for 60000ms");
+      expect((err as LlamaServerError).message).toContain("reuses this session's slot");
+    });
+
+    it("keeps waiting up to the first-token budget while this session's slot is processing", async () => {
+      vi.useFakeTimers();
+      const { client, opened, slotsPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 10 * 60_000,
+        slots: slotsJson([busy(0), idle(1)]),
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const first = stream.next();
+      // Nine minutes of "processing, nothing decoded yet" — prompt
+      // evaluation looks exactly like this — and nothing aborts.
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(slotsPolls()).toBeGreaterThan(30);
+      opened().push('data: {"content":"hi","stop":false}\n\n');
+      const chunk = await first;
+      expect(chunk.done).toBe(false);
+      expect((chunk.value as { delta: string }).delta).toBe("hi");
+      opened().close();
+    });
+
+    it("reads another slot's work as this request being queued, and a changed idle table as movement", async () => {
+      vi.useFakeTimers();
+      let tick = 0;
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 10 * 60_000,
+        slots: async () => {
+          tick += 1;
+          // Another slot busy for the first 8 polls, then the table
+          // changes (a task finished) — both count as progress.
+          const table = tick <= 8 ? [idle(0), busy(1, tick)] : [idle(0), { ...idle(1), id_task: 100 + tick }];
+          return new Response(JSON.stringify(table), { status: 200 });
+        },
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const first = stream.next();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      opened().push('data: {"content":"x","stop":false}\n\n');
+      expect((await first).done).toBe(false);
+      opened().close();
+    });
+
+    it("falls back to the first-token timer when /slots itself hangs (the busy-server case)", async () => {
+      // Measured: /slots does not answer while a slot evaluates a large
+      // prompt. A poll that times out is no verdict; the first-token
+      // budget is what ends the wait, exactly as before the watch.
+      vi.useFakeTimers();
+      let hung = 0;
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 5 * 60_000,
+        slots: (init) =>
+          new Promise<Response>((_, reject) => {
+            hung += 1;
+            init.signal?.addEventListener("abort", () =>
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+            );
+          }),
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const failure = stream.next().catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      expect(hung).toBeGreaterThan(10);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await failure;
+      expect((err as LlamaServerError).message).toContain("no first token within 300000ms");
+    });
+
+    it("stops polling once the first byte arrives", async () => {
+      vi.useFakeTimers();
+      const { client, opened, slotsPolls } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 10 * 60_000,
+        slots: slotsJson([busy(0)]),
+      });
+      const stream = client.completeStream({ prompt: "p", sessionId: "s", slotId: 0 });
+      const first = stream.next();
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(slotsPolls()).toBe(2);
+      opened().push('data: {"content":"a","stop":false}\n\n');
+      await first;
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(slotsPolls()).toBe(2);
+      opened().close();
+    });
+
+    it("is off entirely when progressWatch is false", async () => {
+      vi.useFakeTimers();
+      let polls = 0;
+      const client = new LlamaServerClient({
+        baseUrl: "http://127.0.0.1:9999",
+        requestTimeoutMs: 60_000,
+        firstTokenTimeoutMs: 120_000,
+        progressWatch: false,
+        fetchImpl: createMockFetch(async (_url, init) => {
+          if (init.method === "GET") {
+            polls += 1;
+            return new Response("[]", { status: 200 });
+          }
+          return pushableSse(init.signal).response;
+        }),
+        completionRetries: 1,
+        completionRetryBackoffMs: 0,
+        sleep: async () => {},
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(121_000);
+      expect(polls).toBe(0);
+      expect((await failure) as LlamaServerError).toBeInstanceOf(LlamaServerError);
+    });
+  });
+});
+
+describe("judgeSlotProgress", () => {
+  const idle = (id: number) => ({ id, id_task: -1, is_processing: false, next_token: { n_decoded: 0 } });
+
+  it("is progress while any slot processes, idle only when nothing moves twice", () => {
+    expect(judgeSlotProgress([{ ...idle(0), is_processing: true }], 0, null).kind).toBe("progress");
+    expect(judgeSlotProgress([idle(0), { ...idle(1), is_processing: true }], 0, null).kind).toBe("progress");
+    // An all-idle first answer is a baseline, not work.
+    const first = judgeSlotProgress([idle(0), idle(1)], 0, null);
+    expect(first.kind).toBe("idle");
+    const again = judgeSlotProgress([idle(0), idle(1)], 0, (first as { snapshot: string }).snapshot);
+    expect(again.kind).toBe("idle");
+    const moved = judgeSlotProgress([idle(0), { ...idle(1), id_task: 9 }], 0, (first as { snapshot: string }).snapshot);
+    expect(moved.kind).toBe("progress");
+  });
+
+  it("has no verdict on a body that is not a slot table", () => {
+    expect(judgeSlotProgress({ error: "no" }, 0, null).kind).toBe("unknown");
+    expect(judgeSlotProgress("x", -1, null).kind).toBe("unknown");
+  });
 });
 
 describe("extractLlamaErrorDetail", () => {
@@ -926,5 +1441,67 @@ describe("extractLlamaErrorDetail", () => {
     const out = extractLlamaErrorDetail(long);
     expect(out.length).toBe(300);
     expect(out.endsWith("…")).toBe(true);
+  });
+});
+
+describe("LlamaServerClient.applyTemplate (F31)", () => {
+  it("posts the messages and template kwargs to /apply-template and returns the prompt", async () => {
+    let captured: { url: string; body: Record<string, unknown> } | null = null;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (url, init) => {
+        captured = {
+          url,
+          body: JSON.parse(String(init.body)) as Record<string, unknown>,
+        };
+        return new Response(
+          JSON.stringify({
+            prompt: "<|im_start|>system\nS<|im_end|>\n<|im_start|>user\nU<|im_end|>\n<|im_start|>assistant\n",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    });
+    const prompt = await client.applyTemplate(
+      [
+        { role: "system", content: "S" },
+        { role: "user", content: "U" },
+      ],
+      { enable_thinking: false },
+    );
+    expect(prompt).toContain("<|im_start|>assistant\n");
+    expect(captured!.url).toBe("http://127.0.0.1:9999/apply-template");
+    expect(captured!.body).toEqual({
+      messages: [
+        { role: "system", content: "S" },
+        { role: "user", content: "U" },
+      ],
+      chat_template_kwargs: { enable_thinking: false },
+    });
+  });
+
+  it("omits chat_template_kwargs when none are given, and types a missing endpoint", async () => {
+    let body: Record<string, unknown> | null = null;
+    const ok = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ prompt: "p" }), { status: 200 });
+      }),
+    });
+    await ok.applyTemplate([{ role: "user", content: "U" }]);
+    expect(body).not.toHaveProperty("chat_template_kwargs");
+
+    const missing = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () => new Response("not found", { status: 404 }),
+      ),
+    });
+    const err = await missing
+      .applyTemplate([{ role: "user", content: "U" }])
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect((err as LlamaServerError).status).toBe(404);
   });
 });

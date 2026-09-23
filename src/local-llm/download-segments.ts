@@ -12,6 +12,12 @@ import {
   validatorsMatch,
 } from "./download-errors.js";
 import { sumRanges, type ByteRange } from "./download-partial.js";
+import {
+  MAX_SLOW_RECONNECTS,
+  SlowSegmentError,
+  watchSegmentPace,
+  type PaceRecord,
+} from "./download-slow-segment.js";
 
 /**
  * One slice of the file a single connection is responsible for. `end`
@@ -49,6 +55,16 @@ export interface SegmentContext {
    */
   retryInPlace: boolean;
   stallTimeoutMs: number;
+  /**
+   * Window of the pace check (`download-slow-segment.ts`); `0` turns it
+   * off. Only segments that can retry in place, of a download with more
+   * than one connection, are judged.
+   */
+  slowCheckMs: number;
+  /** More than one connection is allowed — there is a peer to compare with. */
+  parallel: boolean;
+  /** Best per-connection rate of this attempt, shared by its segments. */
+  pace: PaceRecord;
   maxRetries: number;
   retryDelayMs: number;
   maxRetryDelayMs: number;
@@ -159,8 +175,24 @@ export async function streamIntoSegment(
   seg: Segment,
   ctx: SegmentContext,
   abort: AbortController,
+  judgePace = false,
 ): Promise<void> {
   if (!res.body) throw new DownloadHttpError(res.status, "empty body");
+  // Assigned from the pace timer; spelled as a widened `null` so the
+  // checks below are not narrowed away.
+  let slow = null as SlowSegmentError | null;
+  const stopPace =
+    judgePace && ctx.slowCheckMs > 0
+      ? watchSegmentPace(
+          () => seg.written,
+          ctx.slowCheckMs,
+          ctx.pace,
+          (error) => {
+            slow = error;
+            abort.abort();
+          },
+        )
+      : null;
   let stalled = false;
   let stallTimer: NodeJS.Timeout | null = null;
   const armStallTimer = (): void => {
@@ -195,6 +227,7 @@ export async function streamIntoSegment(
       } catch (err) {
         reader.cancel().catch(() => undefined);
         if (ctx.attemptSignal.aborted) throw createAbortError();
+        if (slow) throw slow;
         if (stalled) throw new StalledError(ctx.stallTimeoutMs);
         throw err instanceof Error ? err : new Error(String(err));
       }
@@ -222,7 +255,12 @@ export async function streamIntoSegment(
             `Short write: ${bytesWritten} of ${chunk.byteLength} bytes at offset ${seg.start + seg.written}`,
           );
         }
-        seg.written += bytesWritten;
+        // An idle connection may have taken the back of this slice while
+        // the chunk was sized or written (`download-rebalance.ts`). Bytes
+        // past the new end are the same file at the same offsets — the
+        // validators pin it — so they are harmless on disk, but they
+        // belong to the other piece's count.
+        seg.written = Math.min(seg.written + bytesWritten, seg.end - seg.start);
         ctx.onBytes();
       }
       if (seg.start + seg.written >= seg.end) {
@@ -234,6 +272,7 @@ export async function streamIntoSegment(
     }
   } finally {
     if (stallTimer) clearTimeout(stallTimer);
+    stopPace?.();
   }
   if (Number.isFinite(seg.end) && seg.start + seg.written < seg.end) {
     // The body ended early (a CDN closing the connection is reported as
@@ -259,17 +298,33 @@ export async function runSegment(
 ): Promise<void> {
   let pending = initial;
   let failures = 0;
+  let slowReconnects = 0;
   for (;;) {
     const before = seg.written;
     try {
       const { res, abort } = pending ?? (await openSegment(seg, ctx));
       pending = undefined;
-      await streamIntoSegment(res, seg, ctx, abort);
+      await streamIntoSegment(
+        res,
+        seg,
+        ctx,
+        abort,
+        ctx.retryInPlace &&
+          ctx.parallel &&
+          slowReconnects < MAX_SLOW_RECONNECTS,
+      );
       return;
     } catch (err) {
       pending = undefined;
       const error = err instanceof Error ? err : new Error(String(err));
       if (ctx.attemptSignal.aborted) throw createAbortError();
+      if (error instanceof SlowSegmentError) {
+        // Not an outage: the link works, this connection does not. Swap
+        // it at once and say nothing — `onRetry` is what paints "waiting
+        // for the network" in the download chip and the worker log.
+        slowReconnects = error.helped ? 1 : slowReconnects + 1;
+        continue;
+      }
       if (!ctx.retryInPlace) throw error;
       if (
         error instanceof RangeRejectedError ||
@@ -323,17 +378,5 @@ async function openSegment(
     throw err;
   } finally {
     if (timer) clearTimeout(timer);
-  }
-}
-
-/** Drain `queue` one segment at a time; several of these run in parallel. */
-export async function runSegmentQueue(
-  queue: Segment[],
-  ctx: SegmentContext,
-): Promise<void> {
-  for (;;) {
-    const seg = queue.shift();
-    if (!seg) return;
-    await runSegment(seg, ctx);
   }
 }

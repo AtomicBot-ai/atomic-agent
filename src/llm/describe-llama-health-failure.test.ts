@@ -54,6 +54,25 @@ describe("describeLlamaHealthFailure", () => {
     expect(line).not.toContain("Ollama (local)");
   });
 
+  it("names the Atomic Chat preset for a local server on :1337", () => {
+    const line = describeLlamaHealthFailure(
+      result({ kind: "openai-compat", status: 404, error: "http 404" }),
+      "http://127.0.0.1:1337",
+    );
+    expect(line).toContain("Atomic Chat (local), base URL http://127.0.0.1:1337");
+  });
+
+  it("keeps a remote :1337 server on the manual compat row", () => {
+    // The preset row saves its own 127.0.0.1:1337, so a LAN host must go
+    // through the row that asks for the URL.
+    const line = describeLlamaHealthFailure(
+      result({ kind: "openai-compat", status: 404, error: "http 404" }),
+      "http://192.168.1.50:1337",
+    );
+    expect(line).toContain("openai-compatible, base URL http://192.168.1.50:1337");
+    expect(line).not.toContain("Atomic Chat (local)");
+  });
+
   it("says wait, not reconfigure, while the model is loading", () => {
     const line = describeLlamaHealthFailure(
       result({ kind: "llama-loading", status: 503 }),

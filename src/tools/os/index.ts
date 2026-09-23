@@ -1,8 +1,10 @@
+import { resolve } from "node:path";
 import type { ToolRegistry } from "../tool-registry.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { buildOsShellTool } from "./shell.js";
 import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
+import type { ShellJobRegistry } from "./shell-jobs.js";
 import { osFsReadTool } from "./fs-read.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
@@ -28,6 +30,9 @@ import { osNotifyTool } from "./notify.js";
 import { osFsHashTool } from "./fs-hash.js";
 import { osFsDiffTool } from "./fs-diff.js";
 import { buildOsFsPatchTool } from "./fs-patch.js";
+import { buildOsFsRestoreTool } from "./fs-restore.js";
+import { FileRestoreStore } from "./fs-restore-store.js";
+import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs-watch.js";
 import {
   osGitStatusTool,
@@ -77,6 +82,11 @@ export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs-hash.js";
 export { osFsDiffTool } from "./fs-diff.js";
 export { buildOsFsPatchTool } from "./fs-patch.js";
+export { buildOsFsRestoreTool } from "./fs-restore.js";
+export { FileRestoreStore } from "./fs-restore-store.js";
+export { checkInputReplacement, refuseInputReplacement } from "./fs-input-guard.js";
+export type { InputGuardInput, InputRefusal } from "./fs-input-guard.js";
+export { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 export { osFsWatchTool } from "./fs-watch.js";
 export {
   osGitStatusTool,
@@ -98,9 +108,32 @@ export {
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
 export type { ShellGuardPolicy } from "./shell-command-guard/index.js";
+export {
+  describeShellTimeoutDefault,
+  formatShellDetachNotice,
+  formatShellDuration,
+  formatShellElapsed,
+  formatShellTimeoutNotice,
+  resolveShellTimeout,
+} from "./shell-timeout.js";
+export type {
+  ResolvedShellTimeout,
+  ShellTimeoutSource,
+} from "./shell-timeout.js";
+export {
+  DEFAULT_SHELL_JOB_MAX_MS,
+  DEFAULT_SHELL_MAX_JOBS,
+  ShellJobRegistry,
+} from "./shell-jobs.js";
+export type {
+  ShellJobRecord,
+  ShellJobRegistryOptions,
+  ShellJobState,
+  ShellJobStopReason,
+} from "./shell-jobs.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
-  config: Pick<AtomicAgentConfig, "http" | "web" | "projects">;
+  config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;
   /**
    * Column-only recent-session projection for `os.fs.locate_project`
    * (`SessionStore.listRecentWorkingDirs`). A closure so the caller
@@ -119,10 +152,22 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
   /**
    * Absolute state directory (`config.paths.stateDir`), resolved by the
    * bootstrap and threaded into `os.web.search` so its result cache and
-   * provider cooldown can survive the process (#256). Omitted keeps both
-   * in-memory, which is what existing embedders and tests get.
+   * provider cooldown can survive the process (#256), and into the fs
+   * mutation tools as `<stateDir>/restore/` — where a replaced user
+   * file's previous content is kept for `os.fs.restore`. Omitted keeps
+   * the search cache in-memory and turns the replace guard off, which is
+   * what existing embedders and tests get.
    */
   stateDir?: string;
+  /**
+   * The operator's request behind the turn running on a session (the
+   * bootstrap's per-turn record the workers' briefs quote), for the
+   * input refusal of `os.fs.write` (`fs-input-guard.ts`). Omitted
+   * (embedders, tests) leaves only the F36 warn-and-save path.
+   */
+  resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /** A fan-out's declared inputs per worker session (`fs-declared-inputs.ts`); omitted declares nothing. */
+  declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
   /**
    * Operator policy for the shell guard — today the git remote-sync
    * switch. Predicates rather than values so a toggle flipped live in
@@ -130,6 +175,13 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * disables the policy layer (embedders, tests).
    */
   shellPolicy?: ShellGuardPolicy;
+  /**
+   * The registry of commands `os.shell.run` detached at the default
+   * timeout (F47). The bootstrap owns it so the turn-end, session-end
+   * and shutdown paths can stop the jobs; omitted (embedders, tests)
+   * the tool keeps a private one whose jobs die only at the ceiling.
+   */
+  shellJobs?: ShellJobRegistry;
 }
 
 export function registerOsTools(
@@ -140,13 +192,33 @@ export function registerOsTools(
     buildOsShellTool({
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
+      defaultTimeoutMs: options.config.tools.shell.defaultTimeoutMs,
       ...(options.shellPolicy === undefined
         ? {}
         : { shellPolicy: options.shellPolicy }),
+      ...(options.shellJobs === undefined ? {} : { jobs: options.shellJobs }),
     }),
   );
+  // One option bag for every tool that replaces file content, so the
+  // write, the edit, the patch and the restore share the store that
+  // remembers what each session created and what was replaced in each
+  // working directory (by any session — a fusion worker's included).
+  const fsMutation = {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    trustConfigPaths: options.trustConfigPaths,
+    ...(options.stateDir === undefined
+      ? {}
+      : { restore: new FileRestoreStore(resolve(options.stateDir, "restore")) }),
+    ...(options.resolveOriginalRequest === undefined
+      ? {}
+      : { resolveOriginalRequest: options.resolveOriginalRequest }),
+    ...(options.declaredInputs === undefined
+      ? {}
+      : { declaredInputs: options.declaredInputs }),
+  };
   registry.register(osFsReadTool);
-  registry.register(buildOsFsWriteTool(options));
+  registry.register(buildOsFsWriteTool(fsMutation));
   registry.register(buildOsFsTrashTool(options));
   registry.register(osFsListTool);
   registry.register(osFsGlobTool);
@@ -157,7 +229,7 @@ export function registerOsTools(
     }),
   );
   registry.register(buildOsFsGrepTool());
-  registry.register(buildOsFsEditTool(options));
+  registry.register(buildOsFsEditTool(fsMutation));
   registry.register(buildOsFsReadDocumentTool());
   registry.register(buildOsFsArchiveListTool());
   registry.register(buildOsFsArchiveReadEntryTool());
@@ -201,13 +273,8 @@ export function registerOsTools(
   );
   registry.register(osFsHashTool);
   registry.register(osFsDiffTool);
-  registry.register(
-    buildOsFsPatchTool({
-      approvals: options.approvals,
-      approvalRequired: options.approvalRequired,
-      trustConfigPaths: options.trustConfigPaths,
-    }),
-  );
+  registry.register(buildOsFsPatchTool(fsMutation));
+  registry.register(buildOsFsRestoreTool(fsMutation));
   registry.register(osFsWatchTool);
   registry.register(osGitStatusTool);
   registry.register(osGitLogTool);

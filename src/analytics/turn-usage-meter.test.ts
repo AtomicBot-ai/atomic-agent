@@ -211,3 +211,35 @@ describe("TurnUsageMeter", () => {
     });
   });
 });
+
+describe("TurnUsageMeter — cached prompt tokens", () => {
+  it("sums cachedTokens across calls and prices them at cacheRead", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    const model: ResolvedModel = {
+      ...pricedModel(3, 15),
+      pricing: { input: 3, output: 15, cacheRead: 0.3 },
+    };
+    meter.record({
+      sessionId: S,
+      usage: { ...usage(1_000_000, 0), cachedTokens: 800_000 },
+      model,
+    });
+    meter.record({
+      sessionId: S,
+      usage: { ...usage(1_000_000, 0), cachedTokens: 200_000 },
+      model,
+    });
+    const snap = meter.snapshot(S);
+    expect(snap.cachedTokens).toBe(1_000_000);
+    // (200k × 3 + 800k × 0.3) + (800k × 3 + 200k × 0.3), per million.
+    expect(snap.costUsd).toBeCloseTo(0.84 + 2.46, 9);
+  });
+
+  it("omits cachedTokens when no call reported the figure", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(10, 5), model: pricedModel(3, 15) });
+    expect(meter.snapshot(S)).not.toHaveProperty("cachedTokens");
+  });
+});

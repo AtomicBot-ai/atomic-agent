@@ -1,4 +1,5 @@
 import type { RunTurnResult } from "../agent/agent-loop.js";
+import { isFinalReplyTurn } from "../session/conversation-turn.js";
 
 /**
  * Builders for OpenAI-compatible `chat.completion` / `chat.completion.chunk`
@@ -93,14 +94,13 @@ export interface FinalMessagePayload {
  * non-streaming handler can return a standard `chat.completion`
  * response. If the loop ended via `cancelled` / `max_steps` we still
  * return whatever text the model (or fallback) produced, labelled with
- * the matching finish_reason.
+ * the matching finish_reason. A progress note — a reply the model batched
+ * with work while the turn went on — is not the answer and is skipped.
  */
 export function buildFinalAssistantPayload(
   result: RunTurnResult,
 ): FinalMessagePayload {
-  const lastReply = [...result.session.turns]
-    .reverse()
-    .find((t) => t.kind === "assistant_reply");
+  const lastReply = [...result.session.turns].reverse().find(isFinalReplyTurn);
   const content = lastReply?.text ?? "";
   let finishReason: FinalMessagePayload["finish_reason"] = "stop";
   if (result.reason === "cancelled") finishReason = "cancelled";

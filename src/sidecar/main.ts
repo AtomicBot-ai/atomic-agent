@@ -123,6 +123,7 @@ export async function bootstrapSidecar(): Promise<{
               inner.attachments.length > 0
                 ? { attachments: inner.attachments }
                 : {}),
+              ...(inner.progressNote === true ? { progressNote: true } : {}),
             });
           } else if (inner.type === "assistant_delta") {
             protocol.emitEvent("assistant_delta", {

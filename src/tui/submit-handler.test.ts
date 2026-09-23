@@ -302,6 +302,56 @@ describe("handleEditorSubmit while a turn is running", () => {
   });
 });
 
+describe("/onboarding", () => {
+  it("opens first-time setup on an idle session", () => {
+    const onOnboardingRerunRequested = vi.fn();
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "/onboarding",
+      createInitialTuiState(fakeSession()),
+      vi.fn(),
+      stubCallbacks({ onOnboardingRerunRequested, onMessageSubmitted }),
+    );
+    expect(onOnboardingRerunRequested).toHaveBeenCalledTimes(1);
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+  });
+
+  it.each(["running", "awaiting_approval"] as const)(
+    "refuses while the session is %s and says why",
+    (status) => {
+      // The flow replaces the whole app, approval prompt included, so
+      // opening it mid-turn would hide what that turn is waiting on.
+      const dispatched: Array<{ type: string; text?: string }> = [];
+      const onOnboardingRerunRequested = vi.fn();
+      const onMessageSubmitted = vi.fn();
+      handleEditorSubmit(
+        "/onboarding",
+        { ...createInitialTuiState(fakeSession()), status },
+        ((a: { type: string; text?: string }) => dispatched.push(a)) as never,
+        stubCallbacks({ onOnboardingRerunRequested, onMessageSubmitted }),
+      );
+      expect(onOnboardingRerunRequested).not.toHaveBeenCalled();
+      // Not parked as a message for the model either.
+      expect(onMessageSubmitted).not.toHaveBeenCalled();
+      const notice = dispatched.find((a) => a.type === "system_message");
+      expect(notice?.text).toContain("while a turn is running");
+    },
+  );
+
+  it("does nothing once the app is quitting", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onOnboardingRerunRequested = vi.fn();
+    handleEditorSubmit(
+      "/onboarding",
+      { ...createInitialTuiState(fakeSession()), status: "quitting" },
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onOnboardingRerunRequested }),
+    );
+    expect(onOnboardingRerunRequested).not.toHaveBeenCalled();
+    expect(dispatched.some((a) => a.type === "system_message")).toBe(false);
+  });
+});
+
 describe("/queue", () => {
   it("lists the parked messages in the transcript", () => {
     const state: TuiState = {

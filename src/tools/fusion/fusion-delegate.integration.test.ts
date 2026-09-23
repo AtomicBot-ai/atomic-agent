@@ -359,6 +359,83 @@ describe("fusion.delegate end to end", () => {
       expect(workerPrompt!.prompt).toContain(
         "worker agent executing one delegated task",
       );
+      // …and briefed with what the operator actually asked for, not
+      // only the orchestrator's summary of it. This is the runtime seam:
+      // the turn records its request, the tool reads it by session id.
+      expect(workerPrompt!.prompt).toContain(
+        "ORIGINAL REQUEST — context only; your task is below.",
+      );
+      expect(workerPrompt!.prompt).toContain("delegate one thing");
+    } finally {
+      await runtime.shutdown();
+    }
+  }, 30_000);
+
+  it("refuses a worker's read outside its working directory, through the real registry", async () => {
+    // A sibling project's file, beside the worker's tree rather than in it.
+    const outside = join(stateDir, "sibling-project.txt");
+    writeFileSync(outside, "SIBLING-SECRET\n", "utf8");
+    const events: AgentLoopEvent[] = [];
+    const workerPrompts: string[] = [];
+    const steps = new Map<string, number>();
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      handlers: { onAgentEvent: (event) => events.push(event) },
+      overrides: {
+        browserBackend: backend,
+        skipLlamaHealthCheck: true,
+        llamaComplete: async (params: LlmStreamParams) => {
+          const step = (steps.get(params.sessionId) ?? 0) + 1;
+          steps.set(params.sessionId, step);
+          if (params.providerId === LOCAL) {
+            workerPrompts.push(params.prompt);
+            if (step === 1) {
+              return completion(
+                JSON.stringify([{ tool: "os.fs.read", args: { path: outside } }]),
+              );
+            }
+            if (step === 2) {
+              return completion(
+                JSON.stringify([
+                  { tool: "os.fs.read", args: { path: "notes.txt" } },
+                ]),
+              );
+            }
+            return completion(replyCall("read what I was allowed to"));
+          }
+          return completion(
+            step === 1
+              ? delegateCall([
+                  { id: "t1", title: "Read", instructions: "Read notes.txt" },
+                ])
+              : replyCall("merged"),
+          );
+        },
+      },
+    });
+    try {
+      const parent = runtime.createSession();
+      await runtime.runTurn(parent, "read the notes", { maxSteps: 4 });
+      const delegateResults = events.flatMap((event) =>
+        event.type === "llm_event" &&
+        event.event.type === "tool_call_executed" &&
+        event.event.result.tool === "fusion.delegate"
+          ? [event.event.result]
+          : [],
+      );
+      expect(delegateResults).toHaveLength(1);
+      const rows = delegateResults[0]!.details.tasks as WorkerTaskResult[];
+      expect(rows[0]!.tools.byTool["os.fs.read"]).toBe(2);
+      // The outside read is the one error; the inside read ran.
+      expect(rows[0]!.tools.errors).toBe(1);
+      expect(rows[0]!.status).toBe("ok");
+      expect(
+        workerPrompts
+          .slice(1)
+          .some((p) => p.includes("outside this worker's working directory")),
+      ).toBe(true);
+      expect(workerPrompts.join("\n")).not.toContain("SIBLING-SECRET");
     } finally {
       await runtime.shutdown();
     }

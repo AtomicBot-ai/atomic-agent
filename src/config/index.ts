@@ -6,6 +6,7 @@ export type {
   LocalLlmMode,
   LogLevel,
   OnboardingState,
+  ReadScope,
   SessionRailConfig,
   TelegramConfig,
   NotificationsConfig,
@@ -22,9 +23,11 @@ export type {
 } from "./config-schema.js";
 export {
   ConfigValidationError,
+  READ_SCOPES,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
   parseOnboardingState,
+  parseReadScope,
   parseSessionRailConfig,
   parseUserConfigFile,
   parseWhileBusySubmit,
@@ -62,9 +65,11 @@ export {
   usesExternalCliAuth,
 } from "./provider-auth-mode.js";
 export {
+  DEFAULT_FUSION_REVIEW_STALL_STEPS,
   DEFAULT_FUSION_WORKERS,
   DEFAULT_FUSION_WORKER_MAX_STEPS,
   DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+  FUSION_REVIEW_STALL_STEPS_MAX,
   FUSION_WORKERS_MAX,
   FUSION_WORKERS_MIN,
   LOCAL_PROVIDER_KIND,

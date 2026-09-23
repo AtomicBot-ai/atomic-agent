@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeStep } from "./step-executor.js";
 import { ToolRegistry } from "../tools/tool-registry.js";
@@ -8,12 +10,32 @@ import {
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "../llm/model-profile.js";
-import { REPAIR_MAX_TOKENS } from "./step-executor.js";
+import {
+  REPAIR_MAX_TOKENS,
+  TRIM_REFUSED_BY_FUSION_GATE,
+  TRIM_REFUSED_BY_PLAN_MODE,
+  detectFabricatedToolTranscript,
+  formatFabricatedTranscriptNotice,
+  type LlmStreamParams,
+  trimBatchToFirstApprovalGated,
+  turnPolicyForTrim,
+  type StepApprovalPostureSource,
+  type StepEvent,
+} from "./step-executor.js";
 import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
-import { buildGrammar } from "../llm/grammar/build-grammar.js";
+import {
+  buildGrammar,
+  grammarToolNames,
+} from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
+import {
+  PLAIN_INSTRUCT_PROFILE as PLAIN_PROFILE_F31,
+  QWEN_THINK_PROFILE as QWEN_PROFILE_F31,
+} from "../llm/model-profile.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
+import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
+import { reviewStallToolSet } from "./review-stall.js";
 import { resetConfigCache } from "../config/index.js";
 import { buildOpenAiChatBody } from "../llm/provider/openai/openai-build-body.js";
 import type {
@@ -238,48 +260,51 @@ describe("executeStep batch handling", () => {
   });
 
   it("rejects a batch with a terminal verb NOT at the last position", async () => {
-    // `reply` at index 0 of a 2-call batch is invalid: the runtime
-    // cannot keep firing tools after the turn has been closed. Same
+    // `finish` at index 0 of a 2-call batch is invalid: the runtime
+    // cannot keep firing tools after the session has been closed. Same
     // body returned twice — both attempts fail validation, so the
     // executor surfaces the error as a GrammarError after the
-    // one-shot retry.
+    // one-shot retry. (A misplaced `reply` is no longer this case: it
+    // is taken out as a progress note — see `progress-note-reply.ts`.)
     const body = JSON.stringify([
-      { tool: "reply", args: { text: "done" } },
+      { tool: "finish", args: { summary: "done" } },
       { tool: "os.fs.read", args: { path: "a" } },
     ]);
     await expect(runWithBody(body)).rejects.toThrow(
-      /terminal verb 'reply' must be the last call in a batch/,
+      /terminal verb 'finish' must be the last call in a batch/,
     );
   });
 
-  it("executes a [tool, reply] tail-terminal batch in one inference", async () => {
-    // Validator allows `reply` as the last call of a batch; executor
-    // runs the read first, then the reply solo (terminal-tail
-    // barrier). Outcome is identical to a `reply`-only solo step:
-    // `terminal === "turn"` so the agent loop closes the turn.
+  it("keeps a [tool, reply] batch's reply as a progress note and leaves the turn open", async () => {
+    // F50: a `reply` batched with work is a note about the work, not
+    // the end of the turn. The read runs; the reply never does — its
+    // text is kept as an `ok` `reply` result flagged `progressNote`,
+    // and `terminal` stays `null` so the loop takes another step.
     const body = JSON.stringify([
       { tool: "os.fs.read", args: { path: "a" } },
-      { tool: "reply", args: { text: "all done" } },
+      { tool: "reply", args: { text: "reading first" } },
     ]);
     const outcome = await runWithBody(body);
-    expect(outcome.toolCalls).toHaveLength(2);
     expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
       "os.fs.read",
       "reply",
     ]);
-    expect(outcome.toolResults).toHaveLength(2);
     expect(outcome.toolResults[0]!.summary).toBe("read a");
-    expect(outcome.toolResults[1]!.status).toBe("ok");
-    expect(outcome.terminal).toBe("turn");
-    // Transcript: read's tool_call + tool_result pair, then a single
-    // assistant_reply that collapses the terminal call.
-    const turns = outcome.nextSession.turns;
-    const tail = turns.slice(-3);
+    expect(outcome.toolResults[1]).toMatchObject({
+      tool: "reply",
+      status: "ok",
+      details: { progressNote: true },
+    });
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.progressNote).toBe("reading first");
+    // Transcript: the read's pair, then the note as a flagged reply row.
+    const tail = outcome.nextSession.turns.slice(-3);
     expect(tail.map((t) => t.kind)).toEqual([
       "assistant_tool_call",
       "tool_result",
       "assistant_reply",
     ]);
+    expect(tail[2]).toMatchObject({ text: "reading first", progressNote: true });
   });
 
   it("native_tools: unparseable reasoning-only completion routes through parse_retry, never leaks CoT as a reply", async () => {
@@ -976,11 +1001,11 @@ describe("executeStep batch handling", () => {
       workingDir: "/w",
     });
     const prompts: string[] = [];
-    // Mid-batch terminal: invalid (`reply` must be last); the model is
+    // Mid-batch terminal: invalid (`finish` must be last); the model is
     // asked to re-emit. The repair attempt returns a clean solo reply.
     const bodies = [
       JSON.stringify([
-        { tool: "reply", args: { text: "done" } },
+        { tool: "finish", args: { summary: "done" } },
         { tool: "os.fs.read", args: { path: "a" } },
       ]),
       JSON.stringify({ tool: "reply", args: { text: "done" } }),
@@ -1027,7 +1052,7 @@ describe("executeStep batch handling", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("### tool-call-repair");
     expect(prompts[1]).toContain(
-      "terminal verb 'reply' must be the last call in a batch",
+      "terminal verb 'finish' must be the last call in a batch",
     );
     expect(prompts[1]).toContain("Use a length-1 array");
   });
@@ -1050,11 +1075,11 @@ describe("executeStep batch handling", () => {
       // emit the JSON body. The repair attempt has the same shape:
       // prompt ends with `<think>` (re-appended after strip), model
       // closes it and emits JSON.
-      // Mid-batch terminal: invalid (`reply` must be last); the model
+      // Mid-batch terminal: invalid (`finish` must be last); the model
       // recovers with a clean solo reply on the repair attempt.
       const bodies = [
         `</think>${JSON.stringify([
-          { tool: "reply", args: { text: "done" } },
+          { tool: "finish", args: { summary: "done" } },
           { tool: "os.fs.read", args: { path: "a" } },
         ])}`,
         `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
@@ -1234,17 +1259,17 @@ describe("executeStep batch handling", () => {
     "still routes a batch with a mid-position terminal verb through the " +
       "LLM repair path (mid-batch terminals are not trim-eligible)",
     async () => {
-      // `[reply, read]` puts the terminal verb at index 0 — invalid by
-      // the new tail-only rule. The trim shortcut only fires for
+      // `[finish, read]` puts the terminal verb at index 0 — invalid by
+      // the tail-only rule. The trim shortcut only fires for
       // approval-gated-only failures; a misplaced terminal goes
       // through repair. Both attempts return the same offending body,
       // surfacing the legacy GrammarError after the one-shot repair.
       const body = JSON.stringify([
-        { tool: "reply", args: { text: "done" } },
+        { tool: "finish", args: { summary: "done" } },
         { tool: "os.fs.read", args: { path: "a" } },
       ]);
       await expect(runWithBody(body)).rejects.toThrow(
-        /terminal verb 'reply' must be the last call in a batch/,
+        /terminal verb 'finish' must be the last call in a batch/,
       );
     },
   );
@@ -1613,7 +1638,10 @@ describe("executeStep pure-read wave splitting (#111)", () => {
   });
 
   it.each([
-    ["terminal mid-batch", [{ tool: "reply", args: { text: "hi" } }], 13],
+    // `finish`, not `reply`: a reply batched with work is taken out as a
+    // progress note before validation (F50), and `[reply, 13 reads]`
+    // then legitimately wave-splits.
+    ["terminal mid-batch", [{ tool: "finish", args: { summary: "hi" } }], 13],
     ["unknown class", [{ tool: "mystery.tool", args: {} }], 13],
   ] as const)(
     "routes an oversized batch containing %s to repair (no wave split, no trim)",
@@ -1631,6 +1659,567 @@ describe("executeStep pure-read wave splitting (#111)", () => {
       expect(outcome.toolCalls).toHaveLength(1);
     },
   );
+});
+
+function mockCompletion(
+  content: string,
+  extra: Partial<CompletionResult> = {},
+): CompletionResult {
+  return {
+    content,
+    reasoningContent: "",
+    stop: true,
+    truncated: false,
+    timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+    cacheHitTokens: 0,
+    slotId: 0,
+    modelId: "mock",
+    ...extra,
+  };
+}
+
+/** Registry whose tools log `start`/`end` so tests can see the dispatch order. */
+function orderLoggingRegistry(log: string[]): ToolRegistry {
+  const registry = new ToolRegistry();
+  const register = (name: string, delayMs = 0): void => {
+    registry.register({
+      name,
+      description: name,
+      readonly: false,
+      async run(args) {
+        const target = String(args.path ?? args.command ?? args.text ?? "");
+        log.push(`start ${name} ${target}`);
+        if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+        log.push(`end ${name} ${target}`);
+        return compressToolResult({
+          tool: name,
+          status: "ok",
+          output: `${name} ${target}`,
+        });
+      },
+    });
+  };
+  register("os.fs.read", 25);
+  register("os.fs.write", 5);
+  register("os.fs.edit");
+  register("os.shell.run");
+  register("reply");
+  return registry;
+}
+
+describe("executeStep approval-gated batches that would not prompt", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  async function run(
+    body: string,
+    approvalPosture?: StepApprovalPostureSource,
+  ): Promise<{
+    outcome: Awaited<ReturnType<typeof executeStep>>;
+    log: string[];
+    events: StepEvent[];
+  }> {
+    const log: string[] = [];
+    const events: StepEvent[] = [];
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-in-order", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry: orderLoggingRegistry(log),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => mockCompletion(body),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (event) => events.push(event),
+        ...(approvalPosture ? { approvalPosture } : {}),
+      },
+    );
+    return { outcome, log, events };
+  }
+
+  const LEVEL_5: StepApprovalPostureSource = { getLevel: () => 5 };
+
+  it("runs every call of a 5-write batch at level 5 instead of keeping the first", async () => {
+    const files = ["a.js", "b.js", "c.js", "d.js"];
+    const body = JSON.stringify([
+      ...files.map((path) => ({
+        tool: "os.fs.write",
+        args: { path, content: "x" },
+      })),
+      {
+        tool: "os.fs.edit",
+        args: { path: "a.js", oldString: "x", newString: "y" },
+      },
+    ]);
+    const { outcome, log, events } = await run(body, LEVEL_5);
+
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
+      "os.fs.write",
+      "os.fs.write",
+      "os.fs.write",
+      "os.fs.write",
+      "os.fs.edit",
+    ]);
+    expect(outcome.toolResults.every((r) => r.status === "ok")).toBe(true);
+    expect(log.filter((l) => l.startsWith("start"))).toEqual([
+      "start os.fs.write a.js",
+      "start os.fs.write b.js",
+      "start os.fs.write c.js",
+      "start os.fs.write d.js",
+      "start os.fs.edit a.js",
+    ]);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(0);
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+    const executed = events.flatMap((e) =>
+      e.type === "tool_call_executed" ? [[e.batchIndex, e.batchSize]] : [],
+    );
+    expect(executed).toEqual([
+      [0, 5],
+      [1, 5],
+      [2, 5],
+      [3, 5],
+      [4, 5],
+    ]);
+    expect(outcome.terminal).toBeNull();
+  });
+
+  it("dispatches each call only after the previous one settled, across resource classes", async () => {
+    // The read is the slowest call. Grouped execution would start the
+    // write alongside it; in-order execution must not.
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "x" } },
+      { tool: "os.fs.write", args: { path: "x", content: "1" } },
+      { tool: "os.fs.read", args: { path: "x" } },
+    ]);
+    const { log } = await run(body, LEVEL_5);
+    expect(log).toEqual([
+      "start os.fs.read x",
+      "end os.fs.read x",
+      "start os.fs.write x",
+      "end os.fs.write x",
+      "start os.fs.read x",
+      "end os.fs.read x",
+    ]);
+  });
+
+  it("runs the in-order batch whole and keeps its reply as a progress note", async () => {
+    // F50: the reply batched with the writes is a note, not the end of
+    // the turn — the writes still run in order, the reply never runs,
+    // and the interim reply the UI gets is flagged.
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.write", args: { path: "b", content: "2" } },
+      { tool: "reply", args: { text: "wrote a and b" } },
+    ]);
+    const { outcome, log, events } = await run(body, LEVEL_5);
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.progressNote).toBe("wrote a and b");
+    expect(log.filter((l) => l.startsWith("start"))).toEqual([
+      "start os.fs.write a",
+      "start os.fs.write b",
+    ]);
+    expect(events.filter((e) => e.type === "assistant_reply")).toEqual([
+      { type: "assistant_reply", text: "wrote a and b", progressNote: true },
+    ]);
+  });
+
+  it("still trims when a gated call could prompt (fs write below level 5)", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.write", args: { path: "b", content: "2" } },
+    ]);
+    const { outcome, log, events } = await run(body, { getLevel: () => 4 });
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(log).toEqual(["start os.fs.write a", "end os.fs.write a"]);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(1);
+    expect(outcome.trimmedBatchNotice).toContain(
+      "Dropped from the batch — retry",
+    );
+  });
+
+  it("still trims when no approval posture is wired", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+      { tool: "os.fs.write", args: { path: "b", content: "2" } },
+    ]);
+    const { outcome } = await run(body);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.trimmedBatchNotice).toBeDefined();
+  });
+
+  it("uses the session's category grants: a shell grant runs a shell batch whole, not a write", async () => {
+    const shellGrant: StepApprovalPostureSource = {
+      getLevel: () => 1,
+      sessionGrants: () => ({ categories: ["shell"] }),
+    };
+    const shells = JSON.stringify([
+      { tool: "os.shell.run", args: { command: "ls" } },
+      { tool: "os.shell.run", args: { command: "pwd" } },
+    ]);
+    const whole = await run(shells, shellGrant);
+    expect(whole.outcome.toolCalls).toHaveLength(2);
+    expect(whole.outcome.trimmedBatchNotice).toBeUndefined();
+
+    const mixed = JSON.stringify([
+      { tool: "os.shell.run", args: { command: "ls" } },
+      { tool: "os.fs.write", args: { path: "a", content: "1" } },
+    ]);
+    const trimmed = await run(mixed, shellGrant);
+    expect(trimmed.outcome.toolCalls).toHaveLength(1);
+    expect(trimmed.outcome.trimmedBatchNotice).toBeDefined();
+  });
+
+  it("does not run a gated batch past the wave-split ceiling, even at level 5", async () => {
+    const body = JSON.stringify(
+      Array.from({ length: 33 }, (_, i) => ({
+        tool: "os.fs.write",
+        args: { path: `f${i}`, content: "x" },
+      })),
+    );
+    await expect(run(body, LEVEL_5)).rejects.toThrow(/maxParallelToolCalls/);
+  });
+});
+
+describe("fabricated tool transcripts", () => {
+  const FABRICATED = [
+    "I'll write the scene module and test it.",
+    'assistant_tool_call: os.fs.write {"path":"js/scene.js","content":"export const x = 1;"}',
+    "tool_result[os.fs.write ok]: wrote 20 bytes to js/scene.js",
+    'assistant_tool_call: os.shell.run {"command":"node test.js"}',
+    "tool_result[os.shell.run ok]: ALL ASSERTIONS PASSED!",
+    "We are ready to provide the final reply.",
+  ].join("\n");
+
+  const NOTICE =
+    "Your last response contained 2 tool calls written as plain text. " +
+    "None of them ran and their results were invented. " +
+    "Call tools natively — nothing is done until a real tool result comes back.";
+
+  describe("detectFabricatedToolTranscript", () => {
+    it("counts transcript lines written as text", () => {
+      expect(detectFabricatedToolTranscript(FABRICATED)).toEqual({
+        calls: 2,
+        results: 2,
+      });
+    });
+
+    it("accepts a bare tool_call: prefix and error results", () => {
+      const text = [
+        'tool_call: os.fs.read {"path":"a"}',
+        "tool_result[os.fs.read error]: ENOENT",
+      ].join("\n");
+      expect(detectFabricatedToolTranscript(text)).toEqual({
+        calls: 1,
+        results: 1,
+      });
+    });
+
+    it("counts a transcript inside a fence that is never closed", () => {
+      const text = ["```", ...FABRICATED.split("\n")].join("\n");
+      expect(detectFabricatedToolTranscript(text)).toEqual({
+        calls: 2,
+        results: 2,
+      });
+    });
+
+    it.each([
+      [
+        "prose that quotes one line",
+        "The build passed.\ntool_result[os.shell.run ok]: 12 tests passed\nThat is the last run.",
+      ],
+      [
+        "inline mentions",
+        "The `tool_result[os.fs.write ok]:` line and the `assistant_tool_call: os.fs.write {…}` line\nare how history is rendered.",
+      ],
+      [
+        "bullets and quotes",
+        "- tool_result[os.fs.read ok]: a\n> tool_result[os.fs.read ok]: b\n* assistant_tool_call: os.fs.read {}",
+      ],
+      [
+        "a closed code fence quoting the format",
+        "History looks like this:\n```\nassistant_tool_call: os.fs.read {\"path\":\"a\"}\ntool_result[os.fs.read ok]: hello\n```\nThat is all.",
+      ],
+      [
+        "a JSON tool-call array",
+        JSON.stringify([
+          { tool: "os.fs.write", args: { path: "a", content: "tool_result[x ok]: y\nz" } },
+        ]),
+      ],
+      ["a call line without arguments", "assistant_tool_call: done\ntool_call: nothing here"],
+    ])("ignores %s", (_label, text) => {
+      expect(detectFabricatedToolTranscript(text)).toBeNull();
+    });
+
+    it("renders the notice, without claiming invented results when there were none", () => {
+      expect(formatFabricatedTranscriptNotice({ calls: 2, results: 2 })).toBe(
+        NOTICE,
+      );
+      expect(formatFabricatedTranscriptNotice({ calls: 3, results: 0 })).toBe(
+        "Your last response contained 3 tool calls written as plain text. None of them ran. " +
+          "Call tools natively — nothing is done until a real tool result comes back.",
+      );
+    });
+  });
+
+  describe("executeStep", () => {
+    function toolCall(id: string, name: string, args: Record<string, unknown>) {
+      return {
+        id,
+        type: "function" as const,
+        function: { name, arguments: JSON.stringify(args) },
+      };
+    }
+
+    async function runNative(
+      completion: CompletionResult,
+      approvalPosture?: StepApprovalPostureSource,
+    ): Promise<{
+      outcome: Awaited<ReturnType<typeof executeStep>>;
+      log: string[];
+      events: StepEvent[];
+    }> {
+      const log: string[] = [];
+      const events: StepEvent[] = [];
+      const outcome = await executeStep(
+        {
+          session: createEmptySessionState({ id: "s-fabricated", workingDir: "/w" }),
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "build the scene",
+        },
+        {
+          registry: orderLoggingRegistry(log),
+          slotManager: new SlotManager(2),
+          llmComplete: async () => completion,
+          grammar: "",
+          profile: PLAIN_INSTRUCT_PROFILE,
+          toolTransport: "native_tools",
+          toolCallAdapter: null,
+          supportsSlotAffinity: false,
+          onEvent: (event) => events.push(event),
+          ...(approvalPosture ? { approvalPosture } : {}),
+        },
+      );
+      return { outcome, log, events };
+    }
+
+    it("does not accept a native reply that follows an invented transcript", async () => {
+      const { outcome, log, events } = await runNative(
+        mockCompletion(FABRICATED, {
+          toolCalls: [
+            toolCall("c1", "reply", { text: "Implemented js/scene.js and verified it." }),
+          ],
+        }),
+      );
+      expect(outcome.terminal).toBeNull();
+      expect(log).toEqual([]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+      expect(outcome.toolResults[0]!.status).toBe("error");
+      expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+      expect(events.some((e) => e.type === "assistant_reply")).toBe(false);
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+      // The rejected reply is in the trace pair like any other call.
+      const parsed = events.flatMap((e) =>
+        e.type === "tool_call_parsed" ? [e.call.tool] : [],
+      );
+      const executed = events.flatMap((e) =>
+        e.type === "tool_call_executed" ? [e.result.status] : [],
+      );
+      expect(parsed).toEqual(["reply"]);
+      expect(executed).toEqual(["error"]);
+    });
+
+    it("still runs genuine non-terminal native calls from the same completion", async () => {
+      const { outcome, log } = await runNative(
+        mockCompletion(FABRICATED, {
+          toolCalls: [
+            toolCall("c1", "os__fs__read", { path: "js/scene.js" }),
+            toolCall("c2", "reply", { text: "done" }),
+          ],
+        }),
+      );
+      expect(log).toEqual(["start os.fs.read js/scene.js", "end os.fs.read js/scene.js"]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.read", "reply"]);
+      expect(outcome.toolResults.map((r) => r.status)).toEqual(["ok", "error"]);
+      expect(outcome.terminal).toBeNull();
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+    });
+
+    it("runs genuine native writes in order and drops only the reply at level 5", async () => {
+      const { outcome, log } = await runNative(
+        mockCompletion(FABRICATED, {
+          toolCalls: [
+            toolCall("c1", "os__fs__write", { path: "a.js", content: "1" }),
+            toolCall("c2", "os__fs__write", { path: "b.js", content: "2" }),
+            toolCall("c3", "reply", { text: "done" }),
+          ],
+        }),
+        { getLevel: () => 5 },
+      );
+      expect(log.filter((l) => l.startsWith("start"))).toEqual([
+        "start os.fs.write a.js",
+        "start os.fs.write b.js",
+      ]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
+        "os.fs.write",
+        "os.fs.write",
+        "reply",
+      ]);
+      expect(outcome.terminal).toBeNull();
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+    });
+
+    it("suppresses the reply synthesised from text-only content and clips it in the transcript", async () => {
+      const longText = `${FABRICATED}\n${"x".repeat(5000)}`;
+      const { outcome, log } = await runNative(mockCompletion(longText));
+      expect(log).toEqual([]);
+      expect(outcome.terminal).toBeNull();
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+      const text = String(outcome.toolCalls[0]!.args.text);
+      expect(text.length).toBeLessThan(600);
+      expect(text).toContain("more chars not delivered");
+      expect(outcome.trimmedBatchNotice).toBe(NOTICE);
+    });
+
+    it("accepts a reply whose prose quotes a single transcript line", async () => {
+      const { outcome, log } = await runNative(
+        mockCompletion(
+          "The last run said:\ntool_result[os.shell.run ok]: 12 tests passed",
+          { toolCalls: [toolCall("c1", "reply", { text: "All 12 tests pass." })] },
+        ),
+      );
+      expect(outcome.terminal).toBe("turn");
+      expect(log).toEqual(["start reply All 12 tests pass.", "end reply All 12 tests pass."]);
+      expect(outcome.trimmedBatchNotice).toBeUndefined();
+    });
+
+    describe("a stream the consumer cut short", () => {
+      const SIX_LINES = [
+        "I'll write the scene module and test it.",
+        'assistant_tool_call: os.fs.write {"path":"js/scene.js","content":"export const x = 1;"}',
+        "tool_result[os.fs.write ok]: wrote 20 bytes to js/scene.js",
+        'assistant_tool_call: os.shell.run {"command":"node test.js"}',
+        "tool_result[os.shell.run ok]: ALL ASSERTIONS PASSED!",
+        'assistant_tool_call: os.fs.write {"path":"js/main.js","content":"import x"}',
+        "tool_result[os.fs.write ok]: wrote 8 bytes to js/main.js",
+        "",
+      ].join("\n");
+      const EARLY_STOP = {
+        reason: "fabricated_transcript" as const,
+        calls: 3,
+        results: 3,
+      };
+
+      async function runStreamed(completion: CompletionResult): Promise<{
+        outcome: Awaited<ReturnType<typeof executeStep>>;
+        log: string[];
+        events: StepEvent[];
+      }> {
+        const log: string[] = [];
+        const events: StepEvent[] = [];
+        const outcome = await executeStep(
+          {
+            session: createEmptySessionState({ id: "s-cut", workingDir: "/w" }),
+            toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+            capabilities: CAPS,
+            skillCatalog: SKILLS,
+            stepIndex: 0,
+            signal: new AbortController().signal,
+            userMessage: "build the scene",
+          },
+          {
+            registry: orderLoggingRegistry(log),
+            slotManager: new SlotManager(2),
+            // No second request of any kind: the cut completion is judged
+            // as it stands, not repaired.
+            llmComplete: async () => {
+              throw new Error("a cut completion must not trigger another request");
+            },
+            llmCompleteStream: async function* () {
+              for (const line of completion.content.split(/(?<=\n)/)) {
+                yield { delta: line, reasoningDelta: "", done: false };
+              }
+              return completion;
+            },
+            grammar: "",
+            profile: PLAIN_INSTRUCT_PROFILE,
+            toolTransport: "native_tools",
+            toolCallAdapter: null,
+            supportsSlotAffinity: false,
+            onEvent: (event) => events.push(event),
+          },
+        );
+        return { outcome, log, events };
+      }
+
+      it("delivers no reply, runs nothing and injects the notice", async () => {
+        const { outcome, log, events } = await runStreamed(
+          mockCompletion(SIX_LINES, {
+            earlyStop: EARLY_STOP,
+            finishReason: "fabricated_transcript",
+          }),
+        );
+        expect(outcome.terminal).toBeNull();
+        expect(log).toEqual([]);
+        expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+        expect(outcome.toolResults[0]!.status).toBe("error");
+        expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+        expect(events.some((e) => e.type === "assistant_reply")).toBe(false);
+        expect(events.some((e) => e.type === "step_error")).toBe(false);
+        expect(outcome.trimmedBatchNotice).toBe(
+          "Your last response contained 3 tool calls written as plain text. " +
+            "None of them ran and their results were invented. " +
+            "Call tools natively — nothing is done until a real tool result comes back.",
+        );
+      });
+
+      it("still runs a native call that had fully arrived before the cut", async () => {
+        const { outcome, log } = await runStreamed(
+          mockCompletion(SIX_LINES, {
+            earlyStop: EARLY_STOP,
+            finishReason: "fabricated_transcript",
+            toolCalls: [toolCall("c1", "os__fs__read", { path: "js/scene.js" })],
+          }),
+        );
+        expect(log).toEqual([
+          "start os.fs.read js/scene.js",
+          "end os.fs.read js/scene.js",
+        ]);
+        expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.read"]);
+        expect(outcome.terminal).toBeNull();
+        expect(outcome.trimmedBatchNotice).toContain(
+          "3 tool calls written as plain text",
+        );
+      });
+
+      it("trusts the cut when the detector cannot see the lines in what came back", async () => {
+        const { outcome, log } = await runStreamed(
+          mockCompletion("Working on the scene now.\n", {
+            earlyStop: { reason: "fabricated_transcript", calls: 4, results: 2 },
+          }),
+        );
+        expect(log).toEqual([]);
+        expect(outcome.terminal).toBeNull();
+        expect(outcome.toolResults.map((r) => r.status)).toEqual(["error"]);
+        expect(outcome.trimmedBatchNotice).toBe(
+          "Your last response contained 4 tool calls written as plain text. " +
+            "None of them ran and their results were invented. " +
+            "Call tools natively — nothing is done until a real tool result comes back.",
+        );
+      });
+    });
+  });
 });
 
 describe("executeStep streaming reasoning accumulator", () => {
@@ -1769,6 +2358,80 @@ describe("executeStep streaming reasoning accumulator", () => {
     });
     expect(captured).not.toBeNull();
     expect(captured!.reasoningContent).toBe("server-authoritative reasoning");
+  });
+});
+
+describe("executeStep remembers the transcript cut", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  it("carries the packer's start on nextSession so the next step holds it", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return compressToolResult({
+          tool: "noop",
+          status: "ok",
+          output: "ok",
+          details: {},
+        });
+      },
+    });
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const base = createEmptySessionState({ id: "s-pack", workingDir: "/w" });
+    const turns: typeof base.turns = [];
+    for (let i = 0; i < 400; i += 1) {
+      turns.push(
+        { kind: "user", text: `ask ${i} ${"y".repeat(400)}`, at: 1 + i * 2 },
+        { kind: "assistant_reply", text: `answer ${i}`, at: 2 + i * 2 },
+      );
+    }
+    turns.push({ kind: "user", text: "now", at: 10_000 });
+    const session = { ...base, turns };
+    const complete = async () => ({
+      content: JSON.stringify({ tool: "noop", args: {} }),
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: "mock",
+    });
+    const deps = {
+      registry,
+      slotManager: new SlotManager(2),
+      llmComplete: complete,
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+    };
+    const ctx = {
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      signal: new AbortController().signal,
+      userMessage: "now",
+    };
+
+    const first = await executeStep(
+      { ...ctx, session, stepIndex: 0 },
+      deps,
+    );
+    expect(first.prompt.droppedTurns).toBeGreaterThan(0);
+    const start = first.prompt.conversationPackStart;
+    expect(start).not.toBeNull();
+    expect(first.nextSession.conversationPackStart).toEqual(start);
+
+    const second = await executeStep(
+      { ...ctx, session: first.nextSession, stepIndex: 1 },
+      deps,
+    );
+    expect(second.prompt.conversationPackStart).toEqual(start);
+    expect(second.nextSession.conversationPackStart).toEqual(start);
+    // Held: the second prompt's transcript is the first's plus this step.
+    expect(second.prompt.droppedTurns).toBe(first.prompt.droppedTurns);
   });
 });
 
@@ -3019,8 +3682,8 @@ describe("truncated completions", () => {
             finishReason: "length",
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
             toolCalls: [
               {
@@ -3130,8 +3793,8 @@ describe("truncated completions", () => {
             finishReason: "length",
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
             toolCalls: [
               {
@@ -3157,9 +3820,10 @@ describe("truncated completions", () => {
       stage: "initial",
       truncation: {
         cause: "reply_cap",
-        completionTokens: 8_192,
+        completionTokens: 16_384,
         promptTokens: 6_000,
-        requestedMaxTokens: 8_192,
+        // The config default `localModels.completionMaxTokens`.
+        requestedMaxTokens: 16_384,
       },
     });
   });
@@ -3272,8 +3936,8 @@ describe("truncated completions", () => {
             finishReason: "length",
             usage: {
               promptTokens: 6_100,
-              completionTokens: 8_192,
-              totalTokens: 14_292,
+              completionTokens: 16_384,
+              totalTokens: 22_484,
             },
           });
         },
@@ -3287,7 +3951,95 @@ describe("truncated completions", () => {
       name: "ModelError",
       reason: "truncated",
       stage: "repair",
-      truncation: { cause: "reply_cap", requestedMaxTokens: 8_192 },
+      truncation: { cause: "reply_cap", requestedMaxTokens: 16_384 },
+    });
+  });
+
+  it("native_tools: a cut with no cap on the wire is the provider's own limit, not our cap", async () => {
+    // Request cloud-00312: no `max_tokens`, cut by the provider at 33,678
+    // tokens, reported as "it spent the reply cap … of 8192" (the config
+    // cap of the day; it is 16384 now, and must stay out of the message).
+    const session = createEmptySessionState({
+      id: "s-trunc-nocap",
+      workingDir: "/w",
+    });
+    const error = await executeStep(ctxFor(session), {
+      registry: makeNativeRegistry(),
+      slotManager: new SlotManager(2),
+      async llmComplete() {
+        return nativeCompletion({
+          reasoningContent: "Let me write every file out first…",
+          stop: false,
+          truncated: true,
+          finishReason: "length",
+          sentMaxTokens: null,
+          usage: {
+            promptTokens: 21_000,
+            completionTokens: 33_678,
+            totalTokens: 54_678,
+          },
+        });
+      },
+      grammar: "",
+      profile: PLAIN_INSTRUCT_PROFILE,
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      supportsSlotAffinity: false,
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(error).toMatchObject({
+      name: "ModelError",
+      reason: "truncated",
+      truncation: { cause: "provider_limit", completionTokens: 33_678 },
+    });
+    expect(
+      (error as { truncation: Record<string, unknown> }).truncation,
+    ).not.toHaveProperty("requestedMaxTokens");
+    expect((error as Error).message).toContain(
+      "the provider stopped at its own output limit after 33678 tokens (no reply cap was sent)",
+    );
+    expect((error as Error).message).not.toContain("16384");
+    expect((error as Error).message).not.toContain("8192");
+  });
+
+  it("native_tools: judges a cut against the cap the provider reports it sent", async () => {
+    // The step asked for nothing (config cap 16384), but the provider entry
+    // carries a 12k ceiling — that is the cap the request ran under. Below
+    // the config cap on purpose: judged against 16384 instead, a 12,288
+    // reply would read as `context_window`, not `reply_cap`.
+    const session = createEmptySessionState({
+      id: "s-trunc-sent",
+      workingDir: "/w",
+    });
+    await expect(
+      executeStep(ctxFor(session), {
+        registry: makeNativeRegistry(),
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          return nativeCompletion({
+            reasoningContent: "thinking…",
+            stop: false,
+            truncated: true,
+            finishReason: "length",
+            sentMaxTokens: 12_288,
+            usage: {
+              promptTokens: 6_000,
+              completionTokens: 12_288,
+              totalTokens: 18_288,
+            },
+          });
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelError",
+      truncation: { cause: "reply_cap", requestedMaxTokens: 12_288 },
     });
   });
 });
@@ -3477,5 +4229,1368 @@ describe('strictTools wiring (supportsTools: "strict")', () => {
       expect(mixed.function.strict).toBe(true);
       expect(argsSeen["acme.mixed"]).toEqual({ key: "k", value: null });
     });
+  });
+});
+
+describe("executeStep per-request grammar (F17)", () => {
+  /**
+   * The grammar rides with each request and is not part of the KV-cached
+   * prefix, so a step can narrow what a local model may emit while the
+   * prompt — descriptors included — stays byte-identical.
+   */
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    const define = (name: string, readonly: boolean) =>
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.path ?? args.text ?? "")}`,
+          });
+        },
+      });
+    define("os.fs.read", true);
+    define("os.fs.write", false);
+    define("os.fs.edit", false);
+    define("fusion.delegate", false);
+    define("reply", true);
+    define("finish", true);
+    return registry;
+  }
+
+  async function runStep(
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]>,
+    depsExtra: Partial<Parameters<typeof executeStep>[1]>,
+  ) {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({
+      id: "s-grammar",
+      workingDir: "/w",
+    });
+    const seen: LlmStreamParams[] = [];
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          return {
+            content: JSON.stringify([
+              { tool: "reply", args: { text: "done" } },
+            ]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        ...depsExtra,
+      },
+    );
+    return { outcome, params: seen[0]!, baseGrammar: grammar };
+  }
+
+  it("sends the base grammar byte-identical when nothing narrows the step", async () => {
+    const { params, baseGrammar } = await runStep({}, {});
+    expect(params.grammar).toBe(baseGrammar);
+    expect(grammarToolNames(params.grammar)).toBeNull();
+  });
+
+  it("final step: the grammar admits reply and finish only", async () => {
+    const { params, baseGrammar } = await runStep({ terminalOnly: true }, {});
+    expect(grammarToolNames(params.grammar)).toEqual(["finish", "reply"]);
+    expect(params.grammar).not.toBe(baseGrammar);
+  });
+
+  it("orchestrator turn: the gate's refusals leave the grammar, their descriptors stay in the prompt", async () => {
+    const { params } = await runStep(
+      {},
+      { isFusionOrchestrator: () => true },
+    );
+    const names = grammarToolNames(params.grammar);
+    expect(names).not.toBeNull();
+    // Refused: everything the gate would veto — the writes.
+    expect(names).not.toContain("os.fs.write");
+    expect(names).not.toContain("os.fs.edit");
+    // Kept: reads, the fan-out, the terminals.
+    expect(names).toContain("os.fs.read");
+    expect(names).toContain("fusion.delegate");
+    expect(names).toContain("reply");
+    expect(names).toContain("finish");
+    // D2: a refusal, not a hidden descriptor — the prompt still carries
+    // the write tool in full, so the prefix bytes (and the KV cache)
+    // are exactly those of a non-orchestrator step.
+    expect(params.prompt).toContain("- os.fs.write —");
+    const plain = await runStep({}, {});
+    expect(params.prompt).toBe(plain.params.prompt);
+  });
+
+  it("worker turn: a toolFilter narrows the grammar, finish included", async () => {
+    const hidden = new Set(["finish", "fusion.delegate", "tasks.schedule"]);
+    const filter = (name: string) => !hidden.has(name);
+    const { params } = await runStep(
+      {
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS.filter((d) => filter(d.name)),
+        toolFilter: filter,
+      },
+      {},
+    );
+    const names = grammarToolNames(params.grammar);
+    expect(names).not.toBeNull();
+    for (const name of hidden) expect(names).not.toContain(name);
+    expect(names).toContain("os.fs.write");
+    expect(names).toContain("reply");
+  });
+
+  it("a step tool set (a stalled review's cut) narrows the grammar to its three names and leaves the prompt alone (F41)", async () => {
+    const { params, baseGrammar } = await runStep(
+      { toolSet: reviewStallToolSet(), toolRole: "orchestrator" },
+      { isFusionOrchestrator: () => true },
+    );
+    expect(grammarToolNames(params.grammar)).toEqual([
+      "finish",
+      "fusion.delegate",
+      "reply",
+    ]);
+    expect(params.grammar).not.toBe(baseGrammar);
+    // The catalog is stable-prefix bytes: the cut step's prompt is the
+    // prompt of any other orchestrator step.
+    const plain = await runStep(
+      { toolRole: "orchestrator" },
+      { isFusionOrchestrator: () => true },
+    );
+    expect(params.prompt).toBe(plain.params.prompt);
+    expect(params.prompt).toContain("- os.fs.read —");
+  });
+
+  it("a step tool set narrows the native tools payload to its descriptors (F41)", async () => {
+    const native = {
+      toolTransport: "native_tools" as const,
+      toolCallAdapter: openAiToolCallAdapter,
+      supportsSlotAffinity: false,
+      isFusionOrchestrator: () => true,
+    };
+    const wireNames = (params: LlmStreamParams): string[] =>
+      (params.tools ?? []).map(
+        (t) => (t as { function?: { name?: string } }).function?.name ?? "",
+      );
+    const { params } = await runStep(
+      { toolSet: reviewStallToolSet(), toolRole: "orchestrator" },
+      native,
+    );
+    expect(wireNames(params).sort()).toEqual([
+      "finish",
+      "fusion__delegate",
+      "reply",
+    ]);
+    const full = await runStep({ toolRole: "orchestrator" }, native);
+    expect(wireNames(full.params)).toContain("os__fs__read");
+    // The grammar a fallback llama-server link would get says the same.
+    expect(grammarToolNames(params.grammar)).toEqual([
+      "finish",
+      "fusion.delegate",
+      "reply",
+    ]);
+  });
+
+  it("the repair retry goes out under the same narrowed grammar", async () => {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-g-repair", workingDir: "/w" });
+    const seen: LlmStreamParams[] = [];
+    let calls = 0;
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        terminalOnly: true,
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          calls += 1;
+          return {
+            content:
+              calls === 1
+                ? "not json at all"
+                : JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    expect(seen).toHaveLength(2);
+    expect(grammarToolNames(seen[1]!.grammar)).toEqual(["finish", "reply"]);
+  });
+});
+
+describe("executeStep tool roles (F18)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["os.fs.write", false],
+      ["tasks.schedule", false],
+      ["reply", true],
+      ["finish", true],
+    ] as const) {
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.path ?? args.text ?? "")}`,
+          });
+        },
+      });
+    }
+    return registry;
+  }
+
+  async function runStep(
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]>,
+    depsExtra: Partial<Parameters<typeof executeStep>[1]>,
+  ) {
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const seen: LlmStreamParams[] = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-role", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry: makeRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          return {
+            content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        ...depsExtra,
+      },
+    );
+    return { params: seen[0]!, baseGrammar: grammar };
+  }
+
+  const wireNames = (params: LlmStreamParams): string[] =>
+    (params.tools ?? []).map(
+      (t) => (t as { function?: { name?: string } }).function?.name ?? "",
+    );
+
+  it("builder on native tools: only the role's schemas go on the wire, plus what is loaded", async () => {
+    const session = createEmptySessionState({ id: "s-role-w", workingDir: "/w" });
+    session.loadedTools = [
+      {
+        name: "tasks.schedule",
+        summary: "Schedule.",
+        argsSchema: "{}",
+        loadedAt: 1,
+        source: "explicit",
+      },
+    ];
+    const { params } = await runStep(
+      { toolRole: "builder", session },
+      { toolTransport: "native_tools", toolCallAdapter: null, supportsSlotAffinity: false },
+    );
+    const names = wireNames(params);
+    expect(names).toContain("os__fs__write");
+    expect(names).toContain("os__shell__run");
+    expect(names).toContain("reply");
+    // Loaded from outside the role: on the wire and callable.
+    expect(names).toContain("tasks__schedule");
+    // Outside the role and not loaded: name only, in the prompt.
+    expect(names).not.toContain("tasks__cron");
+    expect(names).not.toContain("browser__navigate");
+    expect(params.prompt).toContain("# also available via `tool.view`:");
+    expect(params.prompt).not.toContain("- browser.navigate —");
+    // Described once per transport: the wire has the schema, the prompt
+    // has the full text for the role's tools only.
+    expect(params.prompt).toContain("- os.fs.write —");
+  });
+
+  it("builder on the grammar transport: the grammar admits the role's names plus the loaded ones", async () => {
+    const session = createEmptySessionState({ id: "s-role-g", workingDir: "/w" });
+    session.loadedTools = [
+      {
+        name: "tasks.schedule",
+        summary: "Schedule.",
+        argsSchema: "{}",
+        loadedAt: 1,
+        source: "explicit",
+      },
+    ];
+    const { params, baseGrammar } = await runStep({ toolRole: "builder", session }, {});
+    expect(params.grammar).not.toBe(baseGrammar);
+    const names = grammarToolNames(params.grammar);
+    expect(names).not.toBeNull();
+    expect(names).toContain("os.fs.write");
+    expect(names).toContain("os.shell.run");
+    expect(names).toContain("reply");
+    expect(names).toContain("tasks.schedule");
+    expect(names).not.toContain("tasks.cron");
+    expect(names).not.toContain("finish");
+    expect(names).not.toContain("browser.navigate");
+  });
+
+  it("orchestrator role + gate: a loaded write is on the wire's descriptors but never in the grammar", async () => {
+    const session = createEmptySessionState({ id: "s-role-o", workingDir: "/w" });
+    session.loadedTools = [
+      {
+        name: "os.fs.write",
+        summary: "Write.",
+        argsSchema: "{}",
+        loadedAt: 1,
+        source: "explicit",
+      },
+    ];
+    const { params } = await runStep(
+      { toolRole: "orchestrator", session },
+      { isFusionOrchestrator: () => true },
+    );
+    const names = grammarToolNames(params.grammar);
+    expect(names).toContain("os.fs.read");
+    expect(names).toContain("reply");
+    expect(names).toContain("finish");
+    // Loaded, but the gate would refuse it — so the grammar drops it.
+    expect(names).not.toContain("os.fs.write");
+    expect(params.prompt).toContain("Write.");
+  });
+
+  it("full role is byte-identical to no role, prompt and grammar alike", async () => {
+    const a = await runStep({ toolRole: "full" }, {});
+    const b = await runStep({}, {});
+    expect(a.params.prompt).toBe(b.params.prompt);
+    expect(a.params.grammar).toBe(a.baseGrammar);
+    expect(b.params.grammar).toBe(b.baseGrammar);
+  });
+});
+
+describe("executeStep — the structured prompt on a native-tools link", () => {
+  const completion = (toolCalls?: CompletionResult["toolCalls"]): CompletionResult => ({
+    content: "",
+    reasoningContent: toolCalls ? "" : "thinking only",
+    stop: true,
+    truncated: false,
+    timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+    cacheHitTokens: 0,
+    slotId: -1,
+    modelId: "openai/gpt-5.5",
+    ...(toolCalls ? { toolCalls } : {}),
+  });
+  const replyCall: CompletionResult["toolCalls"] = [
+    { id: "c", type: "function", function: { name: "reply", arguments: JSON.stringify({ text: "ok" }) } },
+  ];
+
+  async function run(toolTransport: ToolCallTransport, answers: CompletionResult[]) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const base = createEmptySessionState({ id: `s-messages-${toolTransport}`, workingDir: "/w" });
+    const session = { ...base, turns: [{ kind: "user" as const, text: "hi", at: 1 }] };
+    const seen: Array<Parameters<NonNullable<Parameters<typeof executeStep>[1]["llmComplete"]>>[0]> = [];
+    let call = 0;
+    const grammar =
+      toolTransport === "grammar"
+        ? await buildGrammar(PLAIN_INSTRUCT_PROFILE, join(process.cwd(), "grammars"))
+        : "";
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete(params) {
+          seen.push(params);
+          const answer = answers[Math.min(call, answers.length - 1)]!;
+          call += 1;
+          return answer;
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport,
+        toolCallAdapter: null,
+        supportsSlotAffinity: toolTransport === "grammar",
+      },
+    );
+    return seen;
+  }
+
+  it("carries `messages` beside the flat prompt, built from the same packed conversation", async () => {
+    const [params] = await run("native_tools", [completion(replyCall)]);
+    expect(params?.messages).toBeDefined();
+    expect(params?.messages?.system).toBe(params?.prompt.slice(0, params.messages.system.length));
+    expect(params?.messages?.turns).toEqual([{ kind: "user", text: "hi" }]);
+    expect(params?.messages?.tail).not.toContain("### conversation");
+    expect(params?.prompt).toContain("### conversation\nuser: hi");
+  });
+
+  it("re-shapes the structured tail for the one-shot repair, notice included", async () => {
+    const seen = await run("native_tools", [completion(), completion(replyCall)]);
+    expect(seen).toHaveLength(2);
+    const repair = seen[1]!;
+    expect(repair.prompt).toContain("### tool-call-repair");
+    expect(repair.messages?.tail).toContain("### tool-call-repair");
+    expect(repair.messages?.tail).toContain("native function-calling interface");
+    expect(repair.messages?.system).toBe(seen[0]!.messages?.system);
+    expect(repair.messages?.turns).toEqual(seen[0]!.messages?.turns);
+  });
+
+  it("sends none on the grammar transport", async () => {
+    const grammarAnswer: CompletionResult = {
+      ...completion(),
+      reasoningContent: "",
+      content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+    };
+    const [params] = await run("grammar", [grammarAnswer]);
+    expect(params).not.toHaveProperty("messages");
+  });
+});
+
+describe("batch trim consults the turn policy (F8)", () => {
+  // Run 14, attempt 0, first step: the orchestrator emitted
+  // `[os.shell.run mkdir, fusion.delegate]`. The trim kept `mkdir` (first
+  // approval-gated call in emit order), the fusion gate then refused it,
+  // and the delegation — nine minutes of generation — was dropped for a
+  // retry. The survivor must be a call that can run.
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    const define = (name: string, readonly: boolean) =>
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ran (${JSON.stringify(args)})`,
+          });
+        },
+      });
+    define("os.fs.read", true);
+    define("os.fs.write", false);
+    define("os.fs.edit", false);
+    define("os.shell.run", false);
+    define("fusion.delegate", false);
+    return registry;
+  }
+
+  async function run(
+    body: string,
+    policy: { isPlanMode?: () => boolean; isFusionOrchestrator?: () => boolean },
+  ) {
+    const events: StepEvent[] = [];
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-f8", workingDir: "/w" });
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        ...policy,
+        ...(policy.isFusionOrchestrator
+          ? { fusionState: () => ({ delegations: 0 }) }
+          : {}),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: body,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (ev) => events.push(ev),
+      },
+    );
+    return { outcome, events };
+  }
+
+  it("keeps fusion.delegate on an orchestrator turn and names the refused call", async () => {
+    const body = JSON.stringify([
+      { tool: "os.shell.run", args: { cmd: "mkdir", args: ["-p", "js"] } },
+      {
+        tool: "fusion.delegate",
+        args: { tasks: [{ id: "a", title: "t", instructions: "i" }] },
+      },
+    ]);
+    const { outcome, events } = await run(body, {
+      isFusionOrchestrator: () => true,
+    });
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["fusion.delegate"]);
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    const trim = events.find((e) => e.type === "batch_trimmed");
+    expect(trim).toMatchObject({
+      kept: "fusion.delegate",
+      dropped: [],
+      refused: ["os.shell.run"],
+    });
+    expect(outcome.trimmedBatchNotice).toContain("`os.shell.run`");
+    expect(outcome.trimmedBatchNotice).toContain("refused by the fusion gate");
+    expect(outcome.trimmedBatchNotice).toContain("do not retry");
+    expect(outcome.trimmedBatchNotice).not.toContain("Dropped from the batch — retry");
+  });
+
+  it("prefers the fan-out over an earlier runnable write on an orchestrator turn", async () => {
+    // Even a call the gate would not refuse (none here — both mutate —
+    // but the preference is what is under test) yields to the fan-out.
+    const trim = trimBatchToFirstApprovalGated(
+      {
+        kind: "batch",
+        calls: [
+          { tool: "os.fs.read", args: { path: "a" } },
+          { tool: "fusion.delegate", args: { tasks: [] } },
+          { tool: "os.fs.write", args: { path: "b", content: "" } },
+        ],
+      },
+      { preferTool: "fusion.delegate" },
+    );
+    expect(trim?.kept.tool).toBe("fusion.delegate");
+    expect(trim?.dropped.map((c) => c.tool)).toEqual(["os.fs.read", "os.fs.write"]);
+    expect(trim?.refused).toEqual([]);
+  });
+
+  it("falls back to the first gated call when every gated call would be refused", async () => {
+    // Plan mode: `[write, edit, read]`. Nothing gated can run; the first
+    // is kept so the gate's own refusal — the instruction — is what the
+    // model reads, the second is named as refused, the read as a retry.
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+      { tool: "os.fs.edit", args: { path: "b", oldString: "x", newString: "y" } },
+      { tool: "os.fs.read", args: { path: "c" } },
+    ]);
+    const { outcome, events } = await run(body, { isPlanMode: () => true });
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
+    expect(outcome.toolResults[0]!.status).toBe("error");
+    expect(outcome.toolResults[0]!.details).toMatchObject({ plan_mode: true });
+    expect(events.find((e) => e.type === "batch_trimmed")).toMatchObject({
+      kept: "os.fs.write",
+      dropped: ["os.fs.read"],
+      refused: ["os.fs.edit"],
+    });
+    expect(outcome.trimmedBatchNotice).toContain("`os.fs.edit` (refused by plan mode)");
+    expect(outcome.trimmedBatchNotice).toContain("Dropped from the batch — retry: `os.fs.read`");
+  });
+
+  it("is byte-identical to the old trim when no policy is active", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+      { tool: "os.fs.edit", args: { path: "b", oldString: "x", newString: "y" } },
+    ]);
+    const { outcome, events } = await run(body, {});
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
+    const trim = events.find((e) => e.type === "batch_trimmed");
+    expect(trim).toMatchObject({ kept: "os.fs.write", dropped: ["os.fs.edit"] });
+    expect(trim).not.toHaveProperty("refused");
+    expect(outcome.trimmedBatchNotice).not.toContain("refused");
+  });
+
+  it("turnPolicyForTrim names the gate that would refuse, plan mode first", () => {
+    const registry = makeRegistry();
+    const both = turnPolicyForTrim({
+      registry,
+      isPlanMode: () => true,
+      isFusionOrchestrator: () => true,
+    });
+    expect(both.preferTool).toBe("fusion.delegate");
+    expect(both.refusedBy?.("os.fs.write")).toBe(TRIM_REFUSED_BY_PLAN_MODE);
+    expect(both.refusedBy?.("os.fs.read")).toBeNull();
+    expect(both.refusedBy?.("fusion.delegate")).toBe(TRIM_REFUSED_BY_PLAN_MODE);
+    const orchestrator = turnPolicyForTrim({
+      registry,
+      isFusionOrchestrator: () => true,
+    });
+    expect(orchestrator.refusedBy?.("os.shell.run")).toBe(TRIM_REFUSED_BY_FUSION_GATE);
+    expect(orchestrator.refusedBy?.("fusion.delegate")).toBeNull();
+    expect(turnPolicyForTrim({ registry })).toEqual({});
+  });
+});
+
+describe("claims need evidence (F9b)", () => {
+  // A reply that says a check ran, with no matching call this turn, is
+  // held back once with a notice; the second time it is delivered and
+  // marked. The forced final step never holds a reply.
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.shell.run",
+      description: "shell",
+      readonly: false,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "ok",
+          output: `$ ${String(args.cmd)}\nexit: 0`,
+        });
+      },
+    });
+    registry.register(replyTool);
+    return registry;
+  }
+
+  async function run(
+    body: string,
+    options: {
+      turns?: Array<{ tool: string; args: Record<string, unknown> }>;
+      noticed?: boolean;
+      terminalOnly?: boolean;
+      claimEvidence?: false;
+    } = {},
+  ) {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-f9", workingDir: "/w" });
+    session.turns.push({ kind: "user", text: "check the files", at: 1 });
+    for (const call of options.turns ?? []) {
+      session.turns.push({ kind: "assistant_tool_call", ...call, at: 2 });
+      session.turns.push({ kind: "tool_result", tool: call.tool, status: "ok", summary: "ok", at: 3 });
+    }
+    let noticed = options.noticed ?? false;
+    let marks = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "check the files",
+        ...(options.terminalOnly ? { terminalOnly: true } : {}),
+      },
+      {
+        registry,
+        ...(options.claimEvidence === false
+          ? {}
+          : {
+              claimEvidence: {
+                noticed: () => noticed,
+                markNoticed: () => {
+                  noticed = true;
+                  marks += 1;
+                },
+              },
+            }),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: body,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    return { outcome, marks: () => marks };
+  }
+
+  const CLAIM = JSON.stringify([
+    { tool: "reply", args: { text: "Ran node --check on all JavaScript files (all passed)." } },
+  ]);
+
+  it("holds a reply that claims a check nothing ran, once, with a notice", async () => {
+    const { outcome, marks } = await run(CLAIM);
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+    expect(outcome.toolResults[0]!.status).toBe("error");
+    expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      notDelivered: true,
+      unverifiedClaims: ["node --check"],
+    });
+    expect(outcome.trimmedBatchNotice).toContain('Your reply claims "node --check"');
+    expect(outcome.trimmedBatchNotice).toContain("no such check ran this turn");
+    expect(marks()).toBe(1);
+    // The transcript reads the held reply as a call that never delivered.
+    const last = outcome.nextSession.turns[outcome.nextSession.turns.length - 1];
+    expect(last?.kind).toBe("tool_result");
+  });
+
+  it("delivers the reply when a shell call this turn ran the claimed check", async () => {
+    const { outcome, marks } = await run(CLAIM, {
+      turns: [{ tool: "os.shell.run", args: { cmd: "node", args: ["--check", "js/a.js"] } }],
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unverifiedClaims");
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+    expect(marks()).toBe(0);
+  });
+
+  it("delivers a second claiming reply and marks it in the result details", async () => {
+    const { outcome, marks } = await run(CLAIM, { noticed: true });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      unverifiedClaims: ["node --check"],
+    });
+    expect(marks()).toBe(0);
+  });
+
+  it("never holds the forced final step's reply, but marks it", async () => {
+    const { outcome, marks } = await run(CLAIM, { terminalOnly: true });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      unverifiedClaims: ["node --check"],
+    });
+    expect(marks()).toBe(0);
+  });
+
+  it("does nothing when the loop passes no claim state", async () => {
+    const { outcome } = await run(CLAIM, { claimEvidence: false });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unverifiedClaims");
+  });
+});
+
+describe("the operator's request reaches the prompt (F22)", () => {
+  it("renders ### request when the step context carries it and the packer dropped its turn", async () => {
+    const grammarsDir = join(process.cwd(), "grammars");
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const spec = `Build it: ${"detail ".repeat(30_000)}`;
+    const session = createEmptySessionState({ id: "s-f22", workingDir: "/w" });
+    session.turns.push({ kind: "user", text: spec, at: 1 });
+    session.turns.push({ kind: "assistant_reply", text: "built", at: 2 });
+    session.turns.push({ kind: "user", text: "fix these bugs", at: 3 });
+    const run = (originalRequest?: string) =>
+      executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "fix these bugs",
+          ...(originalRequest === undefined ? {} : { originalRequest }),
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async () => ({
+            content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          }),
+          grammar,
+          profile: PLAIN_INSTRUCT_PROFILE,
+        },
+      );
+    const pinned = await run(spec);
+    expect(pinned.prompt.droppedTurns).toBeGreaterThan(0);
+    expect(pinned.prompt.tail).toContain("### request");
+    expect(pinned.prompt.tail.indexOf("### request")).toBeLessThan(
+      pinned.prompt.tail.indexOf("### conversation"),
+    );
+    const bare = await run();
+    expect(bare.prompt.tail).not.toContain("### request");
+  });
+});
+
+describe("the turn's reasoning effort and output ceiling reach the request (F20)", () => {
+  it("rides on llmParams from the step context; the per-step cap still wins", async () => {
+    const grammarsDir = join(process.cwd(), "grammars");
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const seen: Array<{ reasoningEffort?: string; maxOutputTokens?: number; maxTokens?: number }> = [];
+    const run = (over: { reasoningEffort?: "low"; maxOutputTokens?: number; maxTokens?: number }) =>
+      executeStep(
+        {
+          session: createEmptySessionState({ id: "s-f20", workingDir: "/w" }),
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "x",
+          ...over,
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async (params) => {
+            seen.push({
+              ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }),
+              ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }),
+              ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }),
+            });
+            return {
+              content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+              reasoningContent: "",
+              stop: true,
+              truncated: false,
+              timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+              cacheHitTokens: 0,
+              slotId: 0,
+              modelId: "mock",
+            };
+          },
+          grammar,
+          profile: PLAIN_INSTRUCT_PROFILE,
+        },
+      );
+    await run({ reasoningEffort: "low", maxOutputTokens: 12_000 });
+    await run({ maxOutputTokens: 12_000, maxTokens: 32_000 });
+    await run({});
+    expect(seen).toEqual([
+      { reasoningEffort: "low", maxOutputTokens: 12_000 },
+      { maxOutputTokens: 12_000, maxTokens: 32_000 },
+      {},
+    ]);
+  });
+});
+
+describe("executeStep — server chat template parts (F31)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function registryWithReply(): ToolRegistry {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args: Record<string, unknown>) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  async function runWith(profile: typeof PLAIN_PROFILE_F31 | typeof QWEN_PROFILE_F31) {
+    const grammar = await buildGrammar(profile, grammarsDir);
+    const seen: Array<Record<string, unknown>> = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-f31", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hello",
+      },
+      {
+        registry: registryWithReply(),
+        slotManager: new SlotManager(2),
+        toolTransport: "grammar",
+        llmComplete: async (params) => {
+          seen.push(params as unknown as Record<string, unknown>);
+          return {
+            content: JSON.stringify({ tool: "reply", args: { text: "hi" } }),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile,
+      },
+    );
+    return seen[0]!;
+  }
+
+  it("hands a plain-instruct link the prefix and a framing-free tail as chat parts (auto)", async () => {
+    const params = await runWith(PLAIN_PROFILE_F31);
+    const chat = params.chat as { system: string; user: string; prefixHash: string };
+    expect(chat).toBeDefined();
+    expect(chat.system.startsWith("### system")).toBe(true);
+    expect(chat.user).toContain("### respond");
+    expect(chat.prefixHash).toMatch(/^[0-9a-f]+$/);
+    // The raw text still travels for a link that cannot render.
+    expect(params.prompt).toBe(`${chat.system}\n${chat.user}`);
+    expect(params.grammar).toContain("root");
+  });
+
+  it("keeps the hand-built framing and sends no chat parts for a qwen link (auto)", async () => {
+    const params = await runWith(QWEN_PROFILE_F31);
+    expect(params.chat).toBeUndefined();
+    expect((params.prompt as string).trimEnd().endsWith("<think>")).toBe(true);
+  });
+});
+
+describe("executeStep slot pinning (F13)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  function replyRegistry(): ToolRegistry {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args: Record<string, unknown>) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  const replyBody = JSON.stringify([{ tool: "reply", args: { text: "ok" } }]);
+
+  it("sends a pending session's first request as id_slot -1 WITH cache_prompt, then pins the server's answer", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> = [];
+    const deps = {
+      registry,
+      slotManager,
+      llmComplete: async (params: { slotId: number; cachePrompt?: boolean }) => {
+        seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt });
+        // llama-server picked slot 2 by prefix similarity.
+        return mockCompletion(replyBody, { slotId: 2 });
+      },
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      supportsSlotAffinity: true,
+    };
+    let session = createEmptySessionState({ id: "s-pin", workingDir: "/w" });
+    const first = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      deps,
+    );
+    session = first.nextSession;
+    expect(seen[0]).toEqual({ slotId: -1, cachePrompt: true });
+    expect(slotManager.pinnedSlot("s-pin")).toBe(2);
+
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 1,
+        signal: new AbortController().signal,
+      },
+      deps,
+    );
+    // The retry of a later step names the pinned slot.
+    expect(seen[1]).toEqual({ slotId: 2, cachePrompt: true });
+  });
+
+  it("stays pending when the server did not name a slot, and asks again next step", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const slots: number[] = [];
+    const deps = {
+      registry,
+      slotManager,
+      llmComplete: async (params: { slotId: number }) => {
+        slots.push(params.slotId);
+        return mockCompletion(replyBody, { slotId: -1 });
+      },
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      supportsSlotAffinity: true,
+    };
+    const ctx = {
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      signal: new AbortController().signal,
+    };
+    let session = createEmptySessionState({ id: "s-nopin", workingDir: "/w" });
+    session = (
+      await executeStep({ ...ctx, session, stepIndex: 0, userMessage: "x" }, deps)
+    ).nextSession;
+    await executeStep({ ...ctx, session, stepIndex: 1 }, deps);
+    expect(slots).toEqual([-1, -1]);
+    expect(slotManager.pinnedSlot("s-nopin")).toBeNull();
+  });
+
+  it("runs the in-step repair on the slot the first completion was pinned to", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const slots: number[] = [];
+    const deps = {
+      registry,
+      slotManager,
+      llmComplete: async (params: { slotId: number }) => {
+        slots.push(params.slotId);
+        return slots.length === 1
+          ? // Unparseable, so the executor issues its one-shot repair.
+            mockCompletion("this is not a tool call", { slotId: 3 })
+          : mockCompletion(replyBody, { slotId: 3 });
+      },
+      grammar,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      supportsSlotAffinity: true,
+    };
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-repair", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      deps,
+    );
+    expect(outcome.toolResults[0]!.tool).toBe("reply");
+    expect(slots).toEqual([-1, 3]);
+    expect(slotManager.pinnedSlot("s-repair")).toBe(3);
+  });
+
+  it("keeps the pinned slot across a stable-prefix change instead of rotating", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    slotManager.pin("s-prefix", 1, "stale-hash");
+    const slots: number[] = [];
+    const cacheReused: boolean[] = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-prefix", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager,
+        llmComplete: async (params: { slotId: number }) => {
+          slots.push(params.slotId);
+          return mockCompletion(replyBody, { slotId: 1 });
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        supportsSlotAffinity: true,
+        onEvent: (event: StepEvent) => {
+          if (event.type === "prompt_captured") cacheReused.push(event.cacheReused);
+        },
+      },
+    );
+    expect(slots).toEqual([1]);
+    // Honest about the changed prefix, but the slot did not move.
+    expect(cacheReused).toEqual([false]);
+    expect(slotManager.pinnedSlot("s-prefix")).toBe(1);
+  });
+
+  it("never sets cache_prompt or pins on a link without slot affinity", async () => {
+    const registry = replyRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const slotManager = new SlotManager(4);
+    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> = [];
+    await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-cloud", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager,
+        llmComplete: async (params: { slotId: number; cachePrompt?: boolean }) => {
+          seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt });
+          return mockCompletion(replyBody, { slotId: 5 });
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        supportsSlotAffinity: false,
+      },
+    );
+    expect(seen).toEqual([{ slotId: -1, cachePrompt: undefined }]);
+    expect(slotManager.pinnedSlot("s-cloud")).toBeNull();
+  });
+});
+
+describe("executeStep reasoning budget and thinking: off (F49)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+  const CALL = JSON.stringify([{ tool: "reply", args: { text: "done" } }]);
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    for (const [name, readonly] of [
+      ["os.fs.read", true],
+      ["reply", true],
+      ["finish", true],
+    ] as const) {
+      registry.register({
+        name,
+        description: name,
+        readonly,
+        async run(args) {
+          return compressToolResult({
+            tool: name,
+            status: "ok",
+            output: `${name} ${String(args.text ?? "")}`,
+          });
+        },
+      });
+    }
+    return registry;
+  }
+
+  /** Run one step on a qwen grammar; `bodies` are the raw completions in order. */
+  async function runQwen(
+    bodies: string[],
+    ctxExtra: Partial<Parameters<typeof executeStep>[0]> = {},
+    budgetTokens?: number,
+  ) {
+    const grammar = await buildGrammar(
+      QWEN_THINK_PROFILE,
+      grammarsDir,
+      budgetTokens === undefined ? {} : { reasoningBudgetTokens: budgetTokens },
+    );
+    const session = createEmptySessionState({ id: "s-f49", workingDir: "/w" });
+    const seen: LlmStreamParams[] = [];
+    const events: StepEvent[] = [];
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+        ...ctxExtra,
+      },
+      {
+        registry: makeRegistry(),
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          seen.push(params);
+          const content = bodies[calls] ?? bodies[bodies.length - 1]!;
+          calls += 1;
+          return {
+            content,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    return { outcome, seen, events, baseGrammar: grammar };
+  }
+
+  /** Point the config at a temp state dir holding `localModels`; returns the restore. */
+  function withLocalModelsConfig(localModels: Record<string, unknown>): () => void {
+    const previous = process.env.ATOMIC_AGENT_STATE_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "f49-"));
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ localModels }));
+    process.env.ATOMIC_AGENT_STATE_DIR = dir;
+    resetConfigCache();
+    return () => {
+      if (previous === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
+      else process.env.ATOMIC_AGENT_STATE_DIR = previous;
+      resetConfigCache();
+    };
+  }
+
+  it("an ordinary step sends the bounded prelude byte-identical to the base grammar", async () => {
+    const { seen, baseGrammar } = await runQwen([`thinking</think>\n${CALL}`], {}, 2);
+    expect(seen[0]!.grammar).toBe(baseGrammar);
+    expect(seen[0]!.grammar).toContain("think-body ::= think-char{0,8}");
+  });
+
+  it("the forced final step lifts the bound: a reply or finish is never cut mid-thought", async () => {
+    const { seen, baseGrammar } = await runQwen(
+      [`thinking</think>\n${CALL}`],
+      { terminalOnly: true },
+      2,
+    );
+    expect(seen[0]!.grammar).not.toBe(baseGrammar);
+    expect(seen[0]!.grammar).toContain("think-body ::= think-char*");
+    expect(seen[0]!.grammar).not.toContain("think-char{0,8}");
+    expect(grammarToolNames(seen[0]!.grammar)).toEqual(["finish", "reply"]);
+    expect(seen[0]!.grammar).toMatch(/^root ::= think-prelude tool-call-array$/m);
+  });
+
+  it("llm_raw_completion carries the reasoning estimate in budget units, so a cut reads as >= budget", async () => {
+    const reasoning = "x".repeat(8);
+    const { events } = await runQwen([`${reasoning}</think>\n${CALL}`], {}, 2);
+    const raw = events.find((e) => e.type === "llm_raw_completion");
+    expect(raw).toMatchObject({ type: "llm_raw_completion", attempt: 1, reasoningTokens: 2 });
+    const reasoningEvent = events.find((e) => e.type === "reasoning");
+    expect(reasoningEvent).toMatchObject({ type: "reasoning", text: reasoning });
+  });
+
+  it("thinking: off — the prompt ends with the disabled marker, the grammar has the plain root, the call parses with no reasoning", async () => {
+    const restore = withLocalModelsConfig({ thinking: "off" });
+    try {
+      const { outcome, seen, events, baseGrammar } = await runQwen([CALL]);
+      expect(seen[0]!.prompt.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      expect(seen[0]!.grammar).not.toBe(baseGrammar);
+      expect(seen[0]!.grammar).toMatch(/^root ::= tool-call-array$/m);
+      expect(seen[0]!.grammar).not.toMatch(/^root ::= think-prelude/m);
+      expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
+      expect(events.find((e) => e.type === "reasoning")).toBeUndefined();
+      expect(events.find((e) => e.type === "llm_raw_completion")).toMatchObject({
+        reasoningTokens: 0,
+      });
+      expect(events.find((e) => e.type === "parse_retry")).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("thinking: off — the repair prompt strips and re-appends the disabled marker, never an open tag", async () => {
+    const restore = withLocalModelsConfig({ thinking: "off" });
+    try {
+      const { seen, outcome } = await runQwen(["not json at all", CALL]);
+      expect(seen).toHaveLength(2);
+      const repair = seen[1]!.prompt;
+      expect(repair).toContain("### tool-call-repair");
+      expect(repair.endsWith("<think>\n\n</think>\n\n")).toBe(true);
+      // One marker at the end; the original one was stripped before the notice.
+      expect(repair.match(/<think>/g)).toHaveLength(1);
+      expect(repair.indexOf("### tool-call-repair")).toBeLessThan(repair.indexOf("<think>"));
+      expect(seen[1]!.grammar).toMatch(/^root ::= tool-call-array$/m);
+      expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("thinking: on keeps the prefill, the prelude and the open-tag parse", async () => {
+    const restore = withLocalModelsConfig({ thinking: "on" });
+    try {
+      const { seen, events, baseGrammar } = await runQwen([`why</think>\n${CALL}`]);
+      expect(seen[0]!.prompt.endsWith("<think>\n")).toBe(true);
+      expect(seen[0]!.grammar).toBe(baseGrammar);
+      expect(events.find((e) => e.type === "reasoning")).toMatchObject({ text: "why" });
+    } finally {
+      restore();
+    }
   });
 });

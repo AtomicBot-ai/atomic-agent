@@ -7,7 +7,7 @@ import type {
   CommandResult,
 } from "../../sandbox/command-runner.js";
 import type { ToolContext } from "../tool-registry.js";
-import { buildOsFsGrepTool, parseRipgrepJson } from "./fs-grep.js";
+import { buildOsFsGrepTool, LITERAL_HINT, parseRipgrepJson } from "./fs-grep.js";
 
 // The grep runner is mocked in these tests, but the tool now stats the
 // requested path to decide the child process cwd, so the fixture must exist
@@ -404,5 +404,71 @@ describe("os.fs.grep", () => {
     expect(result.summary).toContain("does not exist");
     expect(result.summary).not.toContain("ENOTDIR");
     expect(ran).toBe(false);
+  });
+});
+
+describe("os.fs.grep literal search (F34)", () => {
+  it("passes -F to ripgrep when literal is set", async () => {
+    let capturedArgs: string[] = [];
+    const tool = buildOsFsGrepTool({
+      resolveRgPath: () => "/fake/rg",
+      runCommand: async (_cmd, args) => {
+        capturedArgs = args;
+        return makeCommandResult({ stdout: "" });
+      },
+    });
+    await tool.run({ pattern: ".add(", literal: true }, makeCtx());
+    expect(capturedArgs).toContain("-F");
+    expect(capturedArgs.slice(-2)).toEqual([".add(", "."]);
+  });
+
+  it("does not pass -F by default", async () => {
+    let capturedArgs: string[] = [];
+    const tool = buildOsFsGrepTool({
+      resolveRgPath: () => "/fake/rg",
+      runCommand: async (_cmd, args) => {
+        capturedArgs = args;
+        return makeCommandResult({ stdout: "" });
+      },
+    });
+    await tool.run({ pattern: "foo" }, makeCtx());
+    expect(capturedArgs).not.toContain("-F");
+  });
+
+  it("suggests literal: true on a ripgrep regex parse error", async () => {
+    // What `.add(` produced live: an unclosed group.
+    const stderr =
+      "regex parse error:\n    .add(\n        ^\nerror: unclosed group\n";
+    const tool = buildOsFsGrepTool({
+      resolveRgPath: () => "/fake/rg",
+      runCommand: async () => makeCommandResult({ exitCode: 2, stderr }),
+    });
+    const result = await tool.run({ pattern: ".add(" }, makeCtx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("unclosed group");
+    expect(result.summary).toContain(`hint: ${LITERAL_HINT}`);
+    expect(result.details.hint).toBe(LITERAL_HINT);
+  });
+
+  it("adds no literal hint to other ripgrep failures, or when literal is already set", async () => {
+    const other = buildOsFsGrepTool({
+      resolveRgPath: () => "/fake/rg",
+      runCommand: async () =>
+        makeCommandResult({ exitCode: 2, stderr: "rg: some.file: Permission denied" }),
+    });
+    const otherResult = await other.run({ pattern: "x" }, makeCtx());
+    expect(otherResult.summary).not.toContain("literal");
+    expect(otherResult.details.hint).toBeUndefined();
+
+    const literal = buildOsFsGrepTool({
+      resolveRgPath: () => "/fake/rg",
+      runCommand: async () =>
+        makeCommandResult({ exitCode: 2, stderr: "regex parse error: x" }),
+    });
+    const literalResult = await literal.run(
+      { pattern: "x", literal: true },
+      makeCtx(),
+    );
+    expect(literalResult.summary).not.toContain("hint:");
   });
 });

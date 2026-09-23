@@ -1,8 +1,32 @@
 export type ReasoningStyle = "none" | "think-tags" | "channel-tags";
 
+/**
+ * How much of a prompt the serving model can reuse from its KV cache
+ * when the prompt changes somewhere in the middle.
+ *  - `"partial"` (default): everything before the first changed token is
+ *    reused — dense attention, the ordinary llama-server case.
+ *  - `"none"`: a change anywhere re-reads the whole prompt — sliding-
+ *    window or hybrid/recurrent architectures (Gemma 4, Mamba-based),
+ *    whose layers cannot roll back. Set by the daemon from the GGUF
+ *    metadata; the packer then cuts history deeper and less often.
+ */
+export type PrefixReuse = "partial" | "none";
+
 interface BaseModelProfile {
   requiresPromptThinkPrefix: boolean;
   allowThinkPrelude: boolean;
+  /**
+   * How much of a cached prompt llama-server can reuse when a new one
+   * diverges from it — see `PrefixReuse`: `"partial"` (the default — the
+   * matching prefix is kept and the rest re-evaluated) or `"none"` (a
+   * sliding-window or hybrid/recurrent model launched without
+   * `--swa-full`, whose layers cannot be rolled back, so a changed prompt
+   * is a full re-read). Set from the model's GGUF header
+   * (`gguf-metadata.ts`) by the profile manager; the conversation packer
+   * cuts history less often and deeper when reuse is `"none"`. Absent
+   * means `"partial"`.
+   */
+  prefixReuse?: PrefixReuse;
   /**
    * Physical context window in tokens, read from `llama-server /props`
    * (`default_generation_settings.n_ctx`, with a root `n_ctx` fallback).
@@ -10,6 +34,13 @@ interface BaseModelProfile {
    * expose it — prompt-building then relies purely on configured caps.
    */
   contextWindow?: number;
+  /**
+   * The chat template reads `enable_thinking` (Qwen, Gemma 4, Nemotron
+   * and friends), so `chat_template_kwargs: { enable_thinking }` on a
+   * server-templated request switches reasoning on or off. Absent on
+   * templates that do not mention it. See `server-template-policy.ts`.
+   */
+  supportsThinkingSwitch?: boolean;
   /**
    * Multimodal (vision) capability snapshot derived from `/props`.
    *
@@ -87,6 +118,17 @@ export interface TaggedReasoningModelProfile extends BaseModelProfile {
    * reasoning-open prefill.
    */
   turnFraming?: ReasoningTurnFraming;
+  /**
+   * What the model's own chat template puts at the generation point
+   * when thinking is switched off — for Qwen, `<think>\n\n</think>\n\n`,
+   * an empty block the model reads as "do not reason". Present only
+   * where a prefilled marker really disables reasoning. Gemma 4 carries
+   * none: its disabled marker is the prefilled channel, which the turn
+   * framing above exists to avoid. `localModels.thinking: "off"` on the
+   * hand-built prompt path ends the prompt with this instead of the open
+   * tag and drops the grammar prelude (F49, `thinkingDisabledOnBuiltPrompt`).
+   */
+  promptThinkingDisabledMarker?: string;
 }
 
 export type ModelProfile = PlainModelProfile | TaggedReasoningModelProfile;
@@ -128,6 +170,10 @@ export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
   reasoningCloseTag: "</think>",
   requiresPromptThinkPrefix: true,
   allowThinkPrelude: true,
+  supportsThinkingSwitch: true,
+  // The Qwen template's `enable_thinking: false` rendering: an empty,
+  // closed think block at the generation point.
+  promptThinkingDisabledMarker: "<think>\n\n</think>\n\n",
   vision: VISION_ABSENT,
 };
 
@@ -148,6 +194,7 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
     turnClose: "<turn|>\n",
     assistantOpen: "<|turn>model\n",
   },
+  supportsThinkingSwitch: true,
   vision: VISION_ABSENT,
 };
 
@@ -168,7 +215,13 @@ export function detectModelProfile(
   );
   const contextWindow = readContextWindow(props);
   const vision = detectVisionSupport(props);
-  const enriched = { ...base, vision } as ModelProfile;
+  const enriched = {
+    ...base,
+    ...(templateLower.includes("enable_thinking")
+      ? { supportsThinkingSwitch: true }
+      : {}),
+    vision,
+  } as ModelProfile;
   if (contextWindow === null) return enriched;
   return { ...enriched, contextWindow };
 }

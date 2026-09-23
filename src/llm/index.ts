@@ -35,10 +35,20 @@ export type {
 } from "./model-profile-manager.js";
 export {
   buildGrammar,
+  buildGrammarForTools,
   loadToolCallGrammar,
   parseToolCall,
   ToolCallParseError,
+  withoutReasoningPrelude,
+  withUnboundedReasoningPrelude,
 } from "./grammar/index.js";
+export {
+  DEFAULT_REASONING_BUDGET_TOKENS,
+  REASONING_CHARS_PER_TOKEN,
+  estimateReasoningTokens,
+  reasoningBudgetChars,
+} from "./reasoning-budget.js";
+export { thinkingDisabledOnBuiltPrompt } from "./server-template-policy.js";
 export type { ToolCallPayload } from "./grammar/index.js";
 export {
   CancelledError,
@@ -49,13 +59,16 @@ export {
   TransportError,
   classifyFailure,
   classifyTruncation,
+  detectFabricatedToolTranscript,
   detectModelFailure,
+  FABRICATED_TRANSCRIPT_MIN_LINES,
   formatTruncatedMessage,
   isRequestSizeRejection,
 } from "./reliability/index.js";
 export type {
   DetectModelFailureOptions,
   DetectedModelFailure,
+  FabricatedToolTranscript,
   LlmFailureCategory,
   LlmFailureOptions,
   ModelErrorOptions,

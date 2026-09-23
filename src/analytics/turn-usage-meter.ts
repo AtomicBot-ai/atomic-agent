@@ -1,5 +1,6 @@
 import type { CompletionUsage } from "../llm/provider/completion-types.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
+import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 
 /**
  * Token + spend totals accumulated for a single turn.
@@ -18,14 +19,23 @@ import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 export interface TurnUsageSnapshot {
   promptTokens?: number;
   completionTokens?: number;
+  /**
+   * Prompt tokens the services served from a prompt cache, summed over
+   * the turn's calls. Present only when at least one call reported the
+   * figure: a provider that says nothing about caching yields no key,
+   * which is different from one that reports zero hits.
+   */
+  cachedTokens?: number;
   costUsd?: number;
 }
 
 interface TurnBucket {
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
   costUsd: number;
   sawUsage: boolean;
+  sawCachedUsage: boolean;
   sawPricedUsage: boolean;
 }
 
@@ -57,8 +67,10 @@ export class TurnUsageMeter {
     this.buckets.set(sessionId, {
       promptTokens: 0,
       completionTokens: 0,
+      cachedTokens: 0,
       costUsd: 0,
       sawUsage: false,
+      sawCachedUsage: false,
       sawPricedUsage: false,
     });
   }
@@ -82,13 +94,15 @@ export class TurnUsageMeter {
     bucket.sawUsage = true;
     bucket.promptTokens += usage.promptTokens;
     bucket.completionTokens += usage.completionTokens;
+    if (usage.cachedTokens !== undefined) {
+      bucket.sawCachedUsage = true;
+      bucket.cachedTokens += usage.cachedTokens;
+    }
 
     const pricing = params.model?.pricing;
     if (!pricing) return;
     bucket.sawPricedUsage = true;
-    bucket.costUsd +=
-      (usage.promptTokens / 1_000_000) * pricing.input +
-      (usage.completionTokens / 1_000_000) * pricing.output;
+    bucket.costUsd += estimateUsageCostUsd(usage, pricing);
   }
 
   /**
@@ -107,6 +121,7 @@ export class TurnUsageMeter {
     return {
       promptTokens: bucket.promptTokens,
       completionTokens: bucket.completionTokens,
+      ...(bucket.sawCachedUsage ? { cachedTokens: bucket.cachedTokens } : {}),
       ...(bucket.sawPricedUsage ? { costUsd: bucket.costUsd } : {}),
     };
   }

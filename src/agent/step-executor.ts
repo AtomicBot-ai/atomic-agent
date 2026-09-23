@@ -14,8 +14,43 @@ import {
   type BatchLoopSignal,
 } from "./batch-executor.js";
 import type { ToolLoopTracker } from "./loop-detector.js";
-import { isBatchable, resourceClassFor } from "./tool-resource-class.js";
+import { capBatchSummaries } from "./batch-summary-cap.js";
+import {
+  gatedCallRunsUnattended,
+  isBatchable,
+  resourceClassFor,
+  type BatchApprovalPosture,
+} from "./tool-resource-class.js";
+import { wouldRefuse as planModeWouldRefuse } from "./plan-mode.js";
+import { wouldRefuse as fusionGateWouldRefuse } from "./fusion-orchestrator-mode.js";
+import {
+  formatUnverifiedClaimNotice,
+  formatUnverifiedClaimRefusal,
+  turnToolCalls,
+  unverifiedClaims,
+  type CheckClaim,
+} from "./claim-evidence.js";
+import {
+  formatProgressNoteNotice,
+  progressNoteText,
+  recordProgressNote,
+  splitProgressNoteReply,
+  type ProgressNoteNoticeState,
+} from "./progress-note-reply.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
+import { buildGrammarForTools } from "../llm/grammar/build-grammar.js";
+import {
+  withoutReasoningPrelude,
+  withUnboundedReasoningPrelude,
+} from "../llm/grammar/reasoning-prelude.js";
+import { estimateReasoningTokens } from "../llm/reasoning-budget.js";
+import { refusedToolNames } from "./fusion-orchestrator-mode.js";
+import {
+  narrowDescriptorsToToolSet,
+  toolSetAdmits,
+  type StepToolSet,
+} from "./step-tool-set.js";
+import { descriptorsForRole, type ToolRole } from "../tools/tool-roles.js";
 import type {
   StreamParseEvent,
   StreamParser,
@@ -31,10 +66,19 @@ import {
   ToolExecutionError,
   TransportError,
   classifyFailure,
+  detectFabricatedToolTranscript,
   detectModelFailure,
   humanizeOpenAiHttpError,
   isRequestSizeRejection,
+  type FabricatedToolTranscript,
 } from "../llm/index.js";
+// The detector moved to the llm layer so the stream consumer can share its
+// rules; re-exported for existing importers.
+export {
+  FABRICATED_TRANSCRIPT_MIN_LINES,
+  detectFabricatedToolTranscript,
+} from "../llm/index.js";
+export type { FabricatedToolTranscript } from "../llm/index.js";
 import { getConfig } from "../config/index.js";
 import {
   getToolDescriptorByName,
@@ -66,6 +110,7 @@ import {
   recordLoadedTool,
   recordTurn,
   recordWorldSnapshot,
+  rememberConversationPackStart,
 } from "../session/session-state.js";
 import {
   assistantReplyTurn,
@@ -73,13 +118,22 @@ import {
   toolResultTurn,
 } from "../session/conversation-turn.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import { userNamedPaths } from "../tools/read-scope/index.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
+import {
+  NO_SERVER_TEMPLATE,
+  resolveServerTemplatePolicy,
+  thinkingDisabledOnBuiltPrompt,
+} from "../llm/server-template-policy.js";
+import type { ChatPromptParts } from "../llm/provider/completion-types.js";
 import {
   getReasoningTurnFraming,
   reasoningOpenEmittedByModel,
   type ModelProfile,
 } from "../llm/model-profile.js";
 import type {
+  PromptMessages,
+  ReasoningEffort,
   ResponseFormatJsonSchema,
   ToolCallTransport,
 } from "../llm/provider/completion-types.js";
@@ -97,6 +151,16 @@ export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
 export interface LlmStreamParams {
   prompt: string;
   /**
+   * The same prompt as structure — stable prefix, packed turns, tail —
+   * for a native-tools link that lays history out as real chat messages
+   * instead of one user message of transcript text (which Gemini Flash
+   * kept continuing as text instead of calling tools). Set only when the
+   * primary transport is `native_tools`; the seam forwards it on that
+   * transport alone, so a grammar fallback link still gets `prompt` /
+   * `grammarPrompt`.
+   */
+  messages?: PromptMessages;
+  /**
    * Lazy grammar-transport variant of `prompt`. Set when `prompt` was
    * built prefill-suppressed for a native-tools primary while the
    * profile still expects the reasoning prefill / turn framing at a
@@ -109,8 +173,23 @@ export interface LlmStreamParams {
    * implementations memoize.
    */
   grammarPrompt?: () => string;
+  /**
+   * The prompt as prefix + tail, for a grammar (llama-server) link that
+   * renders through the model's own chat template (F31). Set only when
+   * the primary is a grammar link and the server-template policy is on
+   * for its profile; the seam forwards it as `CompletionRequest.chat`.
+   */
+  chat?: ChatPromptParts;
   grammar: string;
   slotId: number;
+  /**
+   * `cache_prompt` for a llama-server request. Defaults to "when
+   * `slotId >= 0`". The main loop sets it `true` even on a pending
+   * `slotId: -1` — that pairing asks llama-server to pick the slot by
+   * prefix similarity and keep the prompt there — while a side call on
+   * `-1` (no pin, no reuse wanted) leaves it unset.
+   */
+  cachePrompt?: boolean;
   sessionId: string;
   /**
    * Optional `n_predict` cap for this completion. Falls through to
@@ -119,6 +198,14 @@ export interface LlmStreamParams {
    * failure mode (see `REPAIR_MAX_TOKENS` and the call-site comment).
    */
   maxTokens?: number;
+  /**
+   * The turn's output ceiling (`RunTurnOptions.maxOutputTokens`), below
+   * the per-step `maxTokens` above and above the provider's own. A
+   * fusion worker's `workerMaxOutputTokens` rides here.
+   */
+  maxOutputTokens?: number;
+  /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
+  reasoningEffort?: ReasoningEffort;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
@@ -171,6 +258,19 @@ export interface StepDependencies {
   isFusionOrchestrator?: () => boolean;
   fusionState?: () => import("./fusion-orchestrator-mode.js").FusionOrchestratorState;
   onDelegated?: (result: CompressedToolResult) => void;
+  /**
+   * Claims need evidence (`claim-evidence.ts`). Per-turn state held by
+   * the loop: whether this turn has already been told once that a reply
+   * claimed a check that never ran. Absent ⇒ replies are never held.
+   */
+  claimEvidence?: { noticed: () => boolean; markNoticed: () => void };
+  /**
+   * Per-turn state for the progress-note notice
+   * (`progress-note-reply.ts`): whether this turn was already told that
+   * a `reply` batched with work was kept as a note. Absent ⇒ the notice
+   * accompanies every note.
+   */
+  progressNotes?: ProgressNoteNoticeState;
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -194,12 +294,24 @@ export interface StepDependencies {
    * guessed window is worse than one that admits it has none.
    */
   contextWindow?: number | null;
+  /**
+   * The local worker leg's request-slot count as the server reported
+   * it, `null` until observed — forwarded to `buildPrompt` for the
+   * `### fusion` machine facts. See `AgentLoopDeps.liveWorkerSlots`.
+   */
+  liveWorkerSlots?: () => number | null;
   /** Effective transport for this runtime (grammar vs native OpenAI tools). */
   toolTransport: ToolCallTransport;
   /** Adapter for native_tools; null when grammar-only. */
   toolCallAdapter: ToolCallAdapter | null;
   /** When false, completions use slotId -1 (cloud providers). */
   supportsSlotAffinity: boolean;
+  /**
+   * The local daemon's measured decode speed for the `### fusion` machine
+   * facts (`ModelProfileManager.getTokensPerSecond`). Read per step;
+   * absent or `null` states nothing.
+   */
+  fusionTokensPerSecond?: () => number | null;
   /**
    * Provider capability: whether the active native-tools provider can
    * generate parallel tool calls in one response. When false (or the
@@ -238,6 +350,24 @@ export interface StepDependencies {
    * Absent ⇒ loop detection disabled for this step.
    */
   tracker?: ToolLoopTracker;
+  /**
+   * The session's live approval posture, read when a batch holds
+   * approval-gated calls. When every gated call in the batch would run
+   * without a prompt (see `gatedCallRunsUnattended`), the batch runs
+   * one call after another in emitted order instead of being trimmed to
+   * its first gated call. Absent ⇒ today's trim. The `ApprovalGate`
+   * satisfies this shape: `{ getLevel: () => gate.getLevel(),
+   * sessionGrants: (id) => gate.sessionGrants(id) }`.
+   */
+  approvalPosture?: StepApprovalPostureSource;
+}
+
+/** Where the step reads the approval posture from — structurally an `ApprovalGate`. */
+export interface StepApprovalPostureSource {
+  getLevel(): BatchApprovalPosture["level"];
+  sessionGrants?(sessionId: string): {
+    categories: NonNullable<BatchApprovalPosture["grantedCategories"]>;
+  };
 }
 
 export interface StepContext {
@@ -247,6 +377,14 @@ export interface StepContext {
   skillCatalog: readonly SkillCatalogEntry[];
   stepIndex: number;
   signal: AbortSignal;
+  /**
+   * Signal for the step's completion request(s) only: the user's
+   * `signal` composed with the task's remaining wall-clock time (see
+   * `request-deadline.ts`). Absent, the request runs on `signal`. Tool
+   * execution never sees it — the loop decides what a fired deadline
+   * means, and it means `time_ceiling`, not a cancelled tool.
+   */
+  requestSignal?: AbortSignal;
   /**
    * Optional one-shot notice to render in the prompt's `### notice`
    * section for this step only. The agent loop uses this to warn the
@@ -267,8 +405,50 @@ export interface StepContext {
    * continuation) — contextual facts stay suppressed.
    */
   userMessage?: string | null;
-  /** Restrict this step to the terminal reply/finish tools. */
+  /**
+   * The operator's request behind this turn (`RunTurnOptions.originalRequest`),
+   * pinned into the prompt as `### request` once the packer has dropped
+   * the turn that carried it. See `request-section.ts`.
+   */
+  originalRequest?: string;
+  /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
+  reasoningEffort?: ReasoningEffort;
+  /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
+  maxOutputTokens?: number;
+  /**
+   * Only the terminal `reply`/`finish` tools may run this step (the
+   * loop's reserved final step). The prompt's tool catalog is left as it
+   * is — it is stable-prefix bytes, and narrowing it for one step moved
+   * the session to a cold slot — so the restriction is enforced where a
+   * call would run: a non-terminal call gets a refusal as its tool
+   * result (`batch-executor.ts`), a tail terminal still lands.
+   */
   terminalOnly?: boolean;
+  /**
+   * The only tool names this step may emit or run (`step-tool-set.ts`)
+   * — `terminalOnly` with the names supplied. Narrows the per-request
+   * grammar and the native tools payload below the role's list, and the
+   * batch executor refuses a call outside it; the prompt's catalog is
+   * untouched. The loop sets it for a stalled Fusion review's cut step
+   * (`review-stall.ts`).
+   */
+  toolSet?: StepToolSet;
+  /**
+   * The turn's `RunTurnOptions.toolFilter`, when one is set. The loop has
+   * already applied it to `toolDescriptors`; the step applies it once
+   * more to the per-request grammar, so a hidden tool is not merely
+   * absent from the catalog but impossible for a local model to emit —
+   * `finish` included, which the static grammar lists unconditionally.
+   */
+  toolFilter?: (name: string) => boolean;
+  /**
+   * The turn's tool role (`tool-roles.ts`). Decides which of
+   * `toolDescriptors` the prompt describes in full (the rest become one
+   * line of names), which go on the native wire, and which the grammar
+   * admits — the role's own plus whatever the session has loaded through
+   * `tool.view`. Absent ⇒ `full`, byte-identical to before roles existed.
+   */
+  toolRole?: ToolRole;
   /**
    * Reply cap for this step's completions, in place of
    * `localModels.completionMaxTokens`. The agent loop sets it when the
@@ -317,13 +497,21 @@ export interface StepOutcome {
    */
   loopSignals: BatchLoopSignal[];
   /**
-   * Set when the step's parsed batch failed validation purely because
-   * it contained approval-gated tools. The runtime auto-split the batch
-   * to a length-1 execution (the first approval-gated call); this notice
-   * is meant to be injected into the next step's `transientNotice` so
-   * the model knows which calls were dropped and can retry them
-   * one-by-one. Distinct from `parse_retry` — no LLM round-trip
-   * happened for the trim.
+   * Next-step notice for a change the runtime made to this step's
+   * emission, meant to be injected into the next step's
+   * `transientNotice`. Set in two cases (joined when both happen):
+   *  - the parsed batch failed validation purely because it contained
+   *    approval-gated tools that could prompt, and the runtime auto-split
+   *    it to a length-1 execution (the first approval-gated call) — the
+   *    notice lists the dropped calls so the model can retry them
+   *    one-by-one. Distinct from `parse_retry`: no LLM round-trip.
+   *  - the completion wrote tool calls / results as plain text
+   *    (`detectFabricatedToolTranscript`): its `reply` / `finish` was not
+   *    accepted and the notice says none of that text ran.
+   *  - a `reply` batched with work tools was kept as a progress note
+   *    (`progressNote`), once per turn.
+   * The name predates the later cases; the agent loop already routes it
+   * to the next step, which is all any of them needs.
    */
   trimmedBatchNotice?: string;
   /**
@@ -335,6 +523,14 @@ export interface StepOutcome {
    * pending notice.
    */
   waveSplitNotice?: string;
+  /**
+   * The text of a `reply` the model batched with work tools this step.
+   * It was kept as a progress note — `toolResults` carries an `ok`
+   * `reply` result with `details.progressNote`, the transcript a flagged
+   * `assistant_reply` row — and `terminal` is `null`: the turn goes on
+   * (`progress-note-reply.ts`).
+   */
+  progressNote?: string;
 }
 
 /**
@@ -389,15 +585,54 @@ async function executeStepInner(
   ctx: StepContext,
   deps: StepDependencies,
 ): Promise<StepOutcome> {
-  const promptCarriesPrefill = promptCarriesReasoningPrefill(
-    deps.profile,
-    deps.toolTransport,
+  // Whether this step's local prompt goes through the model's own chat
+  // template. The template supplies the turn markers and the reasoning
+  // prelude, so the prompt is built framing-free, like a chat-transport
+  // prompt (F31).
+  const localModels = getConfig().localModels;
+  const serverTemplate =
+    deps.toolTransport === "native_tools"
+      ? NO_SERVER_TEMPLATE
+      : resolveServerTemplatePolicy(localModels, deps.profile);
+  const promptCarriesPrefill =
+    !serverTemplate.useServerTemplate &&
+    promptCarriesReasoningPrefill(deps.profile, deps.toolTransport);
+  // `localModels.thinking: "off"` on the hand-built prompt path (F49):
+  // the prompt ends with the template's disabled marker, the request
+  // grammar has no prelude, and the completion is parsed as starting
+  // outside a think block. Keyed off the profile and the switch, not the
+  // transport, so a native-tools primary's grammar fallback link gets the
+  // same pairing through `grammarPrompt`. The template path has its own
+  // switch (`chat_template_kwargs`) and is left to it.
+  const thinkingOff =
+    !serverTemplate.useServerTemplate &&
+    thinkingDisabledOnBuiltPrompt(localModels.thinking, deps.profile);
+  // The same catalog on every step, the final one included: `### tools`
+  // is stable-prefix bytes, and a catalog narrowed to reply/finish for
+  // the last step re-read the whole prompt on a cold slot. The final
+  // step is enforced by the batch gate and, locally, by the grammar
+  // (`resolveStepGrammar`), never by the catalog.
+  const stepToolDescriptors = ctx.toolDescriptors;
+  // What this step describes in full, puts on the native wire and admits
+  // in the grammar: the role's tools plus the ones the session has loaded
+  // through `tool.view`. Under `full` this IS `stepToolDescriptors`, same
+  // array — the adapter's memo keys on identity.
+  const loadedToolNames = new Set(
+    (ctx.session.loadedTools ?? []).map((t) => t.name),
   );
-  const stepToolDescriptors = ctx.terminalOnly
-    ? ctx.toolDescriptors.filter(
-        ({ name }) => name === "reply" || name === "finish",
-      )
-    : ctx.toolDescriptors;
+  const roleToolDescriptors = descriptorsForRole(
+    ctx.toolRole,
+    stepToolDescriptors,
+    loadedToolNames,
+  );
+  // A per-step tool set narrows what goes on the native wire and into
+  // the grammar below the role's list. One array feeds the request AND
+  // the parser (the adapter memoises on identity), and the batch gate
+  // gets the same names — see `step-tool-set.ts`.
+  const stepDescriptors =
+    ctx.toolSet !== undefined
+      ? narrowDescriptorsToToolSet(roleToolDescriptors, ctx.toolSet)
+      : roleToolDescriptors;
   const promptInput: BuildPromptInput = {
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
@@ -405,6 +640,8 @@ async function executeStepInner(
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
+    fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
     // The prefix must match the request shape: a native-tools link gets
     // native function-calling guidance instead of the text-JSON array
     // mandate (issue #285). Configured transport, not `servedTransport`:
@@ -414,10 +651,17 @@ async function executeStepInner(
       : {}),
     // Chat providers apply their own template server-side; a literal
     // reasoning prefill there is at best echoed noise and at worst
-    // corrupted in transit (Ollama Cloud, ollama/ollama#17248).
-    suppressReasoningPrefill: deps.toolTransport === "native_tools",
+    // corrupted in transit (Ollama Cloud, ollama/ollama#17248). The
+    // same holds for a local link rendering through its own template.
+    suppressReasoningPrefill:
+      deps.toolTransport === "native_tools" ||
+      serverTemplate.useServerTemplate,
+    thinking: localModels.thinking,
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
+      : {}),
+    ...(deps.liveWorkerSlots !== undefined
+      ? { liveWorkerSlots: deps.liveWorkerSlots() }
       : {}),
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
@@ -426,6 +670,9 @@ async function executeStepInner(
       ? { profileFacts: ctx.profileFacts }
       : {}),
     ...(ctx.userMessage !== undefined ? { userMessage: ctx.userMessage } : {}),
+    ...(ctx.originalRequest !== undefined
+      ? { originalRequest: ctx.originalRequest }
+      : {}),
   };
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -458,6 +705,7 @@ async function executeStepInner(
         prefixHash: hashPrefix(prompt.stablePrefix),
         firstSeenAt: Date.now(),
         cacheReused: false,
+        pending: false,
       };
   if (ctx.stepIndex === 0) {
     const promptViolations = checkProfilePromptAligned(
@@ -465,6 +713,7 @@ async function executeStepInner(
       prompt.text,
       {
         promptCarriesPrefill,
+        thinkingDisabled: thinkingOff,
       },
     );
     if (promptViolations.length > 0) {
@@ -498,18 +747,62 @@ async function executeStepInner(
 
   // The cap every completion of this step runs under. Named here so the
   // failure detector can say which wall a cut-off reply hit.
-  const replyCap = ctx.maxTokens ?? getConfig().localModels.completionMaxTokens;
+  const replyCap =
+    ctx.maxTokens ??
+    ctx.maxOutputTokens ??
+    getConfig().localModels.completionMaxTokens;
+  // The grammar for THIS request. Narrowed below the base grammar only
+  // when the step has fewer tools than the catalog (the final step, an
+  // orchestrator turn, a filtered worker); otherwise the base grammar
+  // goes out byte-identical. The prompt is not touched either way — the
+  // grammar rides with the request, outside the KV-cached prefix.
+  const stepGrammar = resolveStepGrammar(
+    ctx,
+    deps,
+    stepDescriptors,
+    thinkingOff,
+  );
   const llmParams: LlmStreamParams = {
     ...buildLlmStreamParams({
       promptText: prompt.text,
+      promptMessages: prompt.messages,
       deps,
+      grammar: stepGrammar,
       slotId: slot.slotId,
       sessionId: ctx.session.id,
-      toolDescriptors: stepToolDescriptors,
-      signal: ctx.signal,
+      toolDescriptors: stepDescriptors,
+      // The request's own signal: the user's abort composed with the
+      // task's remaining time (F15). Tools keep running on `ctx.signal`
+      // alone — the ceiling ends the request, the loop ends the task.
+      signal: ctx.requestSignal ?? ctx.signal,
     }),
+    // On a slot-affine link the prompt is always worth caching — a
+    // pending `-1` with `cache_prompt: true` is what lets llama-server
+    // pick the slot by prefix similarity and keep the prompt there.
+    ...(deps.supportsSlotAffinity ? { cachePrompt: true } : {}),
     ...(grammarPrompt ? { grammarPrompt } : {}),
+    ...(serverTemplate.useServerTemplate
+      ? {
+          chat: {
+            system: prompt.stablePrefix,
+            user: prompt.tail,
+            prefixHash: slot.prefixHash,
+            ...(serverTemplate.enableThinking !== undefined
+              ? { enableThinking: serverTemplate.enableThinking }
+              : {}),
+          },
+        }
+      : {}),
     ...(ctx.maxTokens !== undefined ? { maxTokens: ctx.maxTokens } : {}),
+    // The turn's own settings ride on every completion of the step; the
+    // repair retry spreads `llmParams`, so they inherit without a second
+    // wiring point.
+    ...(ctx.maxOutputTokens !== undefined
+      ? { maxOutputTokens: ctx.maxOutputTokens }
+      : {}),
+    ...(ctx.reasoningEffort !== undefined
+      ? { reasoningEffort: ctx.reasoningEffort }
+      : {}),
   };
 
   const firstAttempt = await runInitialCompletion({
@@ -518,7 +811,27 @@ async function executeStepInner(
     prompt,
     slot,
     llmParams,
+    thinkingOff,
   });
+  // The server named the slot it put a pending session's prompt in: pin
+  // it so every later request of the session — the repair retry below
+  // included — lands on the cache instead of asking again.
+  if (
+    slot.pending &&
+    deps.supportsSlotAffinity &&
+    firstAttempt.completion.slotId >= 0
+  ) {
+    deps.slotManager.pin(
+      ctx.session.id,
+      firstAttempt.completion.slotId,
+      slot.prefixHash,
+    );
+    llmParams.slotId = firstAttempt.completion.slotId;
+    deps.logger?.debug("slot pinned from completion", {
+      sessionId: ctx.session.id,
+      slotId: firstAttempt.completion.slotId,
+    });
+  }
   let completion = firstAttempt.completion;
 
   // Parse-side prefill assumption for a given completion: keyed off the
@@ -528,6 +841,7 @@ async function executeStepInner(
     completionAssumesOpenReasoning(
       deps.profile,
       parseDepsFor(c, deps).toolTransport,
+      thinkingOff,
     );
 
   // Prefer the dedicated `reasoning_content` channel when the server
@@ -554,7 +868,8 @@ async function executeStepInner(
   // the model may have thought but failed to emit a required tool call, and
   // the existing repair path can recover with a stricter one-shot prompt.
   const initialModelFailure = detectModelFailure(completion, {
-    requestedMaxTokens: replyCap,
+    requestedMaxTokens: replyCapSent(completion, replyCap),
+    defaultReplyCap: replyCap,
     stage: "initial",
     contextWindow: deps.contextWindow ?? null,
   });
@@ -620,19 +935,143 @@ async function executeStepInner(
   // than all-at-once.
   let waveSplitNotice: string | undefined;
 
+  // Set when a batch holding approval-gated calls is run whole, one call
+  // after another in emitted order, because nobody would be asked to
+  // approve any of them. See `batchRunsUnattended`.
+  let runInOrder = false;
+
+  /**
+   * Did this completion write tool calls and results out as text? Read
+   * before the batch is touched and again once it is final — the same
+   * scan, so the two cannot disagree.
+   */
+  const fabricationOf = (
+    result: CompletionResult,
+  ): FabricatedToolTranscript | null =>
+    detectFabricatedToolTranscript(
+      completionFreeText(result, deps.profile, assumesOpenReasoning(result)),
+    ) ?? fabricationFromEarlyStop(result);
+
+  // A `reply` batched with work tools is a progress note, not the end of
+  // the turn (`progress-note-reply.ts`). Taken out before validation so
+  // it is found in any position — `[reply, shell]` used to fail the
+  // tail-only rule and go to repair — and so `[shell, reply]` leaves a
+  // sole approval-gated call behind, which runs as one always did. The
+  // note comes from the batch that executes: a repair re-emission
+  // replaces whatever the first one carried. A completion that wrote an
+  // invented transcript keeps today's refusal instead — its reply
+  // reports work that never happened and is not kept as anything.
+  let progressNote: ToolCallPayload | null = null;
+  const takeProgressNote = (
+    batch: ToolCallBatch,
+    result: CompletionResult,
+  ): { batch: ToolCallBatch; note: ToolCallPayload | null } => {
+    if (fabricationOf(result) !== null) return { batch, note: null };
+    const split = splitProgressNoteReply(batch.calls, {
+      terminalOnly: ctx.terminalOnly === true,
+    });
+    if (split === null) return { batch, note: null };
+    deps.logger?.info("reply batched with work kept as a progress note", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      tools: split.calls.map((call) => call.tool),
+    });
+    return { batch: { ...batch, calls: split.calls }, note: split.note };
+  };
+
+  /**
+   * Does every approval-gated call in `batch` run without a prompt at the
+   * session's live approval posture? Only then may the batch run whole.
+   *
+   * The trim exists because a prompt per call cannot be answered for a
+   * batch: approving the first write says nothing about the four behind
+   * it, and a denial would leave later calls running against a state the
+   * operator refused. With no prompt in the picture that reason is gone,
+   * and trimming only throws generated work away — at level 5 on a local
+   * model that was a 5-file emission (20 minutes of decode) cut to its
+   * first file, then a 6-file retry cut to the one file already fine.
+   *
+   * Capped at `MAX_WAVE_SPLIT_CALLS` for the reason the wave split is: a
+   * derailed emission must not become dozens of mutations.
+   */
+  const batchRunsUnattended = (batch: ToolCallBatch): boolean => {
+    const source = deps.approvalPosture;
+    if (!source) return false;
+    if (batch.calls.length > MAX_WAVE_SPLIT_CALLS) return false;
+    let posture: BatchApprovalPosture;
+    try {
+      const granted = source.sessionGrants?.(ctx.session.id).categories;
+      posture = {
+        level: source.getLevel(),
+        ...(granted !== undefined ? { grantedCategories: granted } : {}),
+      };
+    } catch {
+      return false;
+    }
+    return batch.calls.every(
+      (call) =>
+        resourceClassFor(call.tool) !== "approval_gated" ||
+        gatedCallRunsUnattended(call.tool, posture),
+    );
+  };
+
   /**
    * Inline helper: if a `BatchValidationError` is purely about
-   * approval-gated tools batched together, trim the batch to the first
-   * approval-gated call (length-1), emit the observability event, and
-   * capture the notice for the next step. Returns the trimmed batch
-   * paired with a fresh `ok: true` parse result, or `null` if the
-   * failure is not trim-eligible (terminal verbs, oversized, unknown
-   * resource class — those still go through the LLM repair path).
+   * approval-gated tools batched together, either run the batch whole in
+   * emitted order (nobody would be prompted — `batchRunsUnattended`) or
+   * trim it to the first approval-gated call (length-1), emit the
+   * observability event, and capture the notice for the next step.
+   * Returns the batch to execute paired with a fresh `ok: true` parse
+   * result, or `null` if the failure is not eligible (terminal verbs,
+   * oversized, unknown resource class — those still go through the LLM
+   * repair path).
    */
   const tryTrimApprovalGated = (
     batch: ToolCallBatch,
     error: BatchValidationError,
   ): { ok: true; batch: ToolCallBatch } | null => {
+    if (!isApprovalGatedOnlyFailure(error)) return null;
+    // On the final step the tail terminal is the one call that can run:
+    // every non-terminal call is refused at dispatch, so keeping the
+    // first approval-gated call would lose the reply for a refusal.
+    if (ctx.terminalOnly) {
+      const tail = batch.calls[batch.calls.length - 1];
+      if (
+        tail !== undefined &&
+        batch.calls.length > 1 &&
+        resourceClassFor(tail.tool) === "terminal"
+      ) {
+        const dropped = batch.calls.slice(0, -1);
+        deps.onEvent?.({
+          type: "batch_trimmed",
+          stepIndex: ctx.stepIndex,
+          originalSize: batch.calls.length,
+          kept: tail.tool,
+          dropped: dropped.map((call) => call.tool),
+          reason: "approval-gated-batched",
+        });
+        deps.logger?.info("final step: batch trimmed to its tail terminal", {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          kept: tail.tool,
+          dropped: dropped.map((call) => call.tool),
+        });
+        return { ok: true, batch: { ...batch, calls: [tail] } };
+      }
+    }
+    if (batchRunsUnattended(batch)) {
+      runInOrder = true;
+      deps.logger?.info(
+        "approval-gated batch runs whole, in emitted order (no call would prompt)",
+        {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          size: batch.calls.length,
+          tools: batch.calls.map((call) => call.tool),
+        },
+      );
+      return { ok: true, batch };
+    }
     // An oversized batch is never trim-eligible, even when its only
     // per-call reason is approval-gated (e.g. `[os.fs.write, 13 reads]`
     // with a cap of 8). Trimming would keep the write solo and silently
@@ -641,8 +1080,7 @@ async function executeStepInner(
     if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
       return null;
     }
-    if (!isApprovalGatedOnlyFailure(error)) return null;
-    const trim = trimBatchToFirstApprovalGated(batch);
+    const trim = trimBatchToFirstApprovalGated(batch, turnPolicyForTrim(deps));
     if (trim === null) return null;
     trimmedBatchNotice = formatBatchTrimNotice(trim);
     deps.onEvent?.({
@@ -651,20 +1089,24 @@ async function executeStepInner(
       originalSize: trim.originalSize,
       kept: trim.kept.tool,
       dropped: trim.dropped.map((call) => call.tool),
+      ...(trim.refused.length > 0
+        ? { refused: trim.refused.map(({ call }) => call.tool) }
+        : {}),
       reason: "approval-gated-batched",
     });
     deps.metrics?.recordBatchTrimmed({
       sessionId: ctx.session.id,
       reason: "approval-gated-batched",
       originalSize: trim.originalSize,
-      droppedCount: trim.dropped.length,
+      droppedCount: trim.dropped.length + trim.refused.length,
     });
-    deps.logger?.info("batch trimmed to first approval-gated call", {
+    deps.logger?.info("batch trimmed to the first approval-gated call that can run", {
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
       originalSize: trim.originalSize,
       kept: trim.kept.tool,
       dropped: trim.dropped.map((call) => call.tool),
+      refused: trim.refused.map(({ call, reason }) => `${call.tool}: ${reason}`),
     });
     return {
       ok: true,
@@ -741,25 +1183,15 @@ async function executeStepInner(
     completion,
     deps.profile,
     parseDepsFor(completion, deps),
-    stepToolDescriptors,
+    // The list the REQUEST was built from — the strict-widened map must
+    // come from the same array the wire payload did.
+    stepDescriptors,
+    thinkingOff,
   );
-  if (ctx.terminalOnly && parsed.ok) {
-    const nonTerminal = parsed.batch.calls.find(
-      ({ tool }) => tool !== "reply" && tool !== "finish",
-    );
-    if (nonTerminal) {
-      parsed = {
-        ok: false,
-        error: new BatchValidationError(
-          "finalization step only accepts reply or finish",
-          [
-            `non-terminal tool is not allowed at the step budget: ${nonTerminal.tool}`,
-          ],
-        ),
-      };
-    }
-  }
   if (parsed.ok) {
+    const taken = takeProgressNote(parsed.batch, completion);
+    progressNote = taken.note;
+    parsed = { ok: true, batch: taken.batch };
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
       // Try the cheap mechanical fixes first, in order:
@@ -816,7 +1248,26 @@ async function executeStepInner(
         deps.profile,
         deps.toolTransport,
         promptCarriesPrefill,
+        thinkingOff,
       ),
+      // The structured prompt must be repair-shaped too, or a native
+      // link would replay the stale tail without the notice. The notice
+      // lands at the end of the final user message; the chat form never
+      // carried a prefill, so there is nothing to strip.
+      ...(llmParams.messages
+        ? {
+            messages: {
+              ...llmParams.messages,
+              tail: buildToolCallRepairPrompt(
+                llmParams.messages.tail,
+                repairError,
+                deps.profile,
+                deps.toolTransport,
+                false,
+              ),
+            },
+          }
+        : {}),
       // The grammar-link variant must be repair-shaped too — spreading
       // `llmParams` alone would hand a grammar fallback link the STALE
       // base prompt without the repair notice. It is repair-shaped for
@@ -831,6 +1282,7 @@ async function executeStepInner(
                 deps.profile,
                 "grammar",
                 true,
+                thinkingOff,
               ),
             ),
           }
@@ -860,6 +1312,11 @@ async function executeStepInner(
       maxTokens: repairReplyCap(deps.toolTransport, replyCap),
     });
     const retryDurationMs = Date.now() - retryStartedAt;
+    const retryReasoning = resolveReasoning(
+      completion,
+      deps.profile,
+      assumesOpenReasoning(completion),
+    );
     deps.onCompletion?.(completion);
     deps.onEvent?.({ type: "llm_completed", completion });
     deps.onEvent?.({
@@ -867,6 +1324,7 @@ async function executeStepInner(
       stepIndex: ctx.stepIndex,
       attempt: 2,
       completion,
+      reasoningTokens: estimateReasoningTokens(retryReasoning),
     });
     deps.metrics?.recordLlmCall({
       sessionId: ctx.session.id,
@@ -876,11 +1334,6 @@ async function executeStepInner(
       cacheReused: slot.cacheReused,
     });
 
-    const retryReasoning = resolveReasoning(
-      completion,
-      deps.profile,
-      assumesOpenReasoning(completion),
-    );
     if (retryReasoning.length > 0) {
       deps.onEvent?.({
         type: "reasoning",
@@ -895,7 +1348,11 @@ async function executeStepInner(
     // failure, not a grammar one — no point emitting `GrammarError` for
     // an empty body.
     const retryModelFailure = detectModelFailure(completion, {
-      requestedMaxTokens: repairReplyCap(deps.toolTransport, replyCap),
+      requestedMaxTokens: replyCapSent(
+        completion,
+        repairReplyCap(deps.toolTransport, replyCap),
+      ),
+      defaultReplyCap: repairReplyCap(deps.toolTransport, replyCap),
       stage: "repair",
       contextWindow: deps.contextWindow ?? null,
     });
@@ -940,24 +1397,12 @@ async function executeStepInner(
       deps.profile,
       retryParseDeps,
       stepToolDescriptors,
+      thinkingOff,
     );
-    if (ctx.terminalOnly && parsed.ok) {
-      const nonTerminal = parsed.batch.calls.find(
-        ({ tool }) => tool !== "reply" && tool !== "finish",
-      );
-      if (nonTerminal) {
-        parsed = {
-          ok: false,
-          error: new BatchValidationError(
-            "finalization step only accepts reply or finish",
-            [
-              `non-terminal tool is not allowed at the step budget: ${nonTerminal.tool}`,
-            ],
-          ),
-        };
-      }
-    }
     if (parsed.ok) {
+      const taken = takeProgressNote(parsed.batch, completion);
+      progressNote = taken.note;
+      parsed = { ok: true, batch: taken.batch };
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
         // Same mechanical-fix shortcuts for the post-repair attempt:
@@ -1013,8 +1458,82 @@ async function executeStepInner(
     }
   }
   const batch = parsed.batch;
-  const calls = batch.calls;
-  const batchSize = calls.length;
+
+  // A completion that wrote tool calls and their results out as TEXT —
+  // continuing the `assistant_tool_call:` / `tool_result[...]` lines the
+  // conversation section is rendered in — did none of that work. Its
+  // terminal (`reply` / `finish`) reports invented results as done, so it
+  // is not accepted; genuine non-terminal calls from the same completion
+  // still run, and the model is told on the next step why the turn did
+  // not close. A completion the stream consumer already cut short for
+  // this reason is the same case, reached before the provider's limit.
+  const fabricated = fabricationOf(completion);
+  let calls = batch.calls;
+  let suppressedTerminal: ToolCallPayload | null = null;
+  if (fabricated !== null) {
+    const notice = formatFabricatedTranscriptNotice(fabricated);
+    trimmedBatchNotice =
+      trimmedBatchNotice === undefined
+        ? notice
+        : `${trimmedBatchNotice}\n\n${notice}`;
+    const last = calls[calls.length - 1];
+    if (last !== undefined && resourceClassFor(last.tool) === "terminal") {
+      suppressedTerminal = last;
+      calls = calls.slice(0, -1);
+    }
+    deps.logger?.warn("completion wrote tool calls as plain text", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      textCalls: fabricated.calls,
+      textResults: fabricated.results,
+      suppressedTerminal: suppressedTerminal?.tool ?? null,
+      nativeCallsRun: calls.map((call) => call.tool),
+      streamAborted: completion.earlyStop?.reason === "fabricated_transcript",
+    });
+  }
+  // A `reply` that claims a check ran — "node --check", "tests pass",
+  // "verified" — with no matching call this turn is held back once, the
+  // same way an invented transcript is: the model gets a notice and one
+  // more step to run the check or drop the claim. The forced final step
+  // is exempt (it exists so a turn is never cut off without a summary),
+  // and the second time the claim is delivered and marked in the trace.
+  let unverified: CheckClaim[] = [];
+  let claimRefusal: string | null = null;
+  const tail = calls[calls.length - 1];
+  if (
+    deps.claimEvidence !== undefined &&
+    suppressedTerminal === null &&
+    tail !== undefined &&
+    tail.tool === "reply" &&
+    typeof tail.args?.text === "string"
+  ) {
+    unverified = unverifiedClaims(tail.args.text, [
+      ...turnToolCalls(ctx.session.turns),
+      ...calls.slice(0, -1).map((call) => ({ tool: call.tool, args: call.args ?? {} })),
+    ]);
+    if (unverified.length > 0 && ctx.terminalOnly !== true) {
+      if (!deps.claimEvidence.noticed()) {
+        deps.claimEvidence.markNoticed();
+        const notice = formatUnverifiedClaimNotice(unverified);
+        trimmedBatchNotice =
+          trimmedBatchNotice === undefined
+            ? notice
+            : `${trimmedBatchNotice}\n\n${notice}`;
+        claimRefusal = formatUnverifiedClaimRefusal(unverified);
+        suppressedTerminal = tail;
+        calls = calls.slice(0, -1);
+        deps.logger?.warn("reply claims a check that did not run; held once", {
+          sessionId: ctx.session.id,
+          stepIndex: ctx.stepIndex,
+          claims: unverified.map((claim) => claim.text),
+        });
+      }
+    }
+  }
+  const batchSize =
+    calls.length +
+    (suppressedTerminal !== null ? 1 : 0) +
+    (progressNote !== null ? 1 : 0);
 
   // Registry membership: surfaces as `ToolExecutionError` (category
   // `tool`) instead of `BatchValidationError`. A missing tool is a
@@ -1055,6 +1574,42 @@ async function executeStepInner(
       batchSize,
     });
   }
+  const suppressed =
+    suppressedTerminal !== null && fabricated !== null
+      ? suppressedTerminalRecord(suppressedTerminal, fabricated)
+      : suppressedTerminal !== null && claimRefusal !== null
+        ? {
+            call: suppressedTerminal,
+            result: compressToolResult({
+              tool: suppressedTerminal.tool,
+              status: "error",
+              output: claimRefusal,
+              details: {
+                notDelivered: true,
+                unverifiedClaims: unverified.map((claim) => claim.text),
+              },
+            }),
+          }
+        : null;
+  if (suppressed !== null) {
+    deps.onEvent?.({
+      type: "tool_call_parsed",
+      call: suppressed.call,
+      batchIndex: calls.length,
+      batchSize,
+    });
+  }
+  // The note is the last call of the step's events: parsed now, with
+  // the rest, and answered after the work ran (`recordProgressNote`).
+  const progressNoteIndex = calls.length + (suppressed !== null ? 1 : 0);
+  if (progressNote !== null) {
+    deps.onEvent?.({
+      type: "tool_call_parsed",
+      call: progressNote,
+      batchIndex: progressNoteIndex,
+      batchSize,
+    });
+  }
 
   const stepStartedAt = Date.now();
   const inputs = toBatchInputs(calls);
@@ -1062,12 +1617,20 @@ async function executeStepInner(
   // these is short-circuited inside `executeBatch` with a terse pointer
   // instead of re-reading and re-dumping the body.
   const loadedSkillNames = new Set(ctx.session.loadedSkills.map((s) => s.name));
-  const batchOutcome = await executeBatch(inputs, deps.registry, {
+  // The paths the user named so far, for the read scope: re-read from the
+  // transcript every step so a path named mid-turn (steering) counts on
+  // the next call, and nothing the model wrote ever widens it.
+  const readRoots = userNamedPaths(ctx.session.turns);
+  const runBatch = runInOrder ? executeCallsInOrder : executeBatch;
+  const batchOutcome = await runBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
+    ...(readRoots.length > 0 ? { readRoots } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
+    ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
+    ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
     ...(deps.isFusionOrchestrator
       ? {
@@ -1076,6 +1639,7 @@ async function executeStepInner(
           ...(deps.onDelegated ? { onDelegated: deps.onDelegated } : {}),
         }
       : {}),
+    ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     ...(batch.maxWaveSize !== undefined
       ? { maxWaveSize: batch.maxWaveSize }
       : {}),
@@ -1120,11 +1684,32 @@ async function executeStepInner(
       });
     },
   );
+  // A reply delivered with claims nothing backs (the turn was already
+  // told once, or this is the forced final step) is marked, so the trace
+  // and the transcript say the check was never seen to run.
+  if (unverified.length > 0 && suppressed === null) {
+    const last = toolResults.length - 1;
+    const reply = toolResults[last];
+    if (reply !== undefined && reply.tool === "reply") {
+      toolResults[last] = {
+        ...reply,
+        details: {
+          ...reply.details,
+          unverifiedClaims: unverified.map((claim) => claim.text),
+        },
+      };
+    }
+  }
 
-  let workSession: SessionState = {
-    ...ctx.session,
-    stepCount: ctx.session.stepCount + 1,
-  };
+  // The transcript cut this step's prompt was built on travels with the
+  // session so the next step holds it (`packConversation`).
+  let workSession: SessionState = rememberConversationPackStart(
+    {
+      ...ctx.session,
+      stepCount: ctx.session.stepCount + 1,
+    },
+    prompt.conversationPackStart,
+  );
 
   // Per-failed-rare autoload, applied in batch-index order. Successful
   // rare calls feed `recordLoadedTool` via `details.toolLoaded` in
@@ -1163,13 +1748,29 @@ async function executeStepInner(
     }
   }
 
+  // The suppressed terminal joins the step as a call that never ran: its
+  // error result is what the transcript, the trace and the loop see, so
+  // the model reads on the next step that its reply was not delivered.
+  if (suppressed !== null) {
+    deps.onEvent?.({
+      type: "tool_call_executed",
+      result: suppressed.result,
+      batchIndex: calls.length,
+      batchSize,
+    });
+  }
+  const stepCalls =
+    suppressed !== null ? [...calls, suppressed.call] : calls;
+  const stepResults =
+    suppressed !== null ? [...toolResults, suppressed.result] : toolResults;
+
   // Apply state effects in batch-index order. `recordLatestResult` is
   // called on every result (last writer wins, deterministic). World
   // snapshot updates from multiple results collapse to last writer
   // by index.
   let nextSession: SessionState = workSession;
-  for (let i = 0; i < toolResults.length; i += 1) {
-    const result = toolResults[i]!;
+  for (let i = 0; i < stepResults.length; i += 1) {
+    const result = stepResults[i]!;
     nextSession = recordLatestResult(nextSession, {
       tool: result.tool,
       status: result.status,
@@ -1183,29 +1784,59 @@ async function executeStepInner(
   // the validator guarantees a terminal verb can only appear at the
   // tail, and the executor enforces a barrier so the terminal call
   // runs after every other call. For solo steps `lastIdx === 0` and
-  // the behaviour is identical to the legacy path.
+  // the behaviour is identical to the legacy path. A suppressed
+  // terminal never closes anything, so the last call that actually ran
+  // decides instead (none ran ⇒ the step is not terminal).
   const lastIdx = calls.length - 1;
-  const terminal: StepTerminal = classifyTerminal(
-    calls[lastIdx]!,
-    toolResults[lastIdx]!,
-  );
+  const terminal: StepTerminal =
+    lastIdx >= 0 &&
+    (suppressed === null ||
+      resourceClassFor(calls[lastIdx]!.tool) !== "terminal")
+      ? classifyTerminal(calls[lastIdx]!, toolResults[lastIdx]!)
+      : null;
 
   nextSession = appendBatchedTurns({
     state: nextSession,
-    calls,
-    results: toolResults,
+    calls: stepCalls,
+    results: stepResults,
     reasoning,
     terminal,
     onEvent: deps.onEvent,
   });
+
+  // The progress note lands after the step's tool pairs, as the reply it
+  // was — flagged, so nothing reads it as the end of the macro-turn —
+  // and the model is told once per turn why the turn did not close.
+  let outcomeCalls = stepCalls;
+  let outcomeResults = stepResults;
+  if (progressNote !== null) {
+    const noted = recordProgressNote({
+      state: nextSession,
+      note: progressNote,
+      batchIndex: progressNoteIndex,
+      batchSize,
+      ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
+    });
+    nextSession = noted.state;
+    outcomeCalls = [...stepCalls, progressNote];
+    outcomeResults = [...stepResults, noted.result];
+    if (deps.progressNotes === undefined || !deps.progressNotes.noticed()) {
+      deps.progressNotes?.markNoticed();
+      const notice = formatProgressNoteNotice();
+      trimmedBatchNotice =
+        trimmedBatchNotice === undefined
+          ? notice
+          : `${trimmedBatchNotice}\n\n${notice}`;
+    }
+  }
 
   void stepDurationMs; // captured for future cross-call observability hooks
   if (batchOutcome.cancelled) {
     throw new CancelledError("batch cancelled mid-execution");
   }
   return {
-    toolCalls: calls,
-    toolResults,
+    toolCalls: outcomeCalls,
+    toolResults: outcomeResults,
     completion,
     prompt,
     nextSession,
@@ -1213,6 +1844,9 @@ async function executeStepInner(
     loopSignals: batchOutcome.loopSignals,
     ...(trimmedBatchNotice !== undefined ? { trimmedBatchNotice } : {}),
     ...(waveSplitNotice !== undefined ? { waveSplitNotice } : {}),
+    ...(progressNote !== null
+      ? { progressNote: progressNoteText(progressNote) }
+      : {}),
   };
 }
 
@@ -1222,6 +1856,8 @@ interface InitialCompletionArgs {
   prompt: BuiltPrompt;
   slot: { slotId: number; cacheReused: boolean };
   llmParams: LlmStreamParams;
+  /** `thinking: off` honoured on this step's built prompt (F49). */
+  thinkingOff: boolean;
 }
 
 /**
@@ -1231,7 +1867,7 @@ interface InitialCompletionArgs {
 async function runInitialCompletion(
   args: InitialCompletionArgs,
 ): Promise<{ completion: CompletionResult }> {
-  const { ctx, deps, prompt, slot, llmParams } = args;
+  const { ctx, deps, prompt, slot, llmParams, thinkingOff } = args;
   const startedAt = Date.now();
   const completion = deps.llmCompleteStream
     ? await consumeStream(
@@ -1239,10 +1875,26 @@ async function runInitialCompletion(
         ctx.stepIndex,
         deps.profile,
         deps.toolTransport,
+        thinkingOff,
         deps.onEvent,
       )
     : await deps.llmComplete(llmParams);
   const durationMs = Date.now() - startedAt;
+  // How much of the completion was thinking, in the budget's units, so
+  // a trace shows a step that hit `localModels.reasoningBudgetTokens`
+  // (`reasoningTokens >= budget`). Same extraction the reasoning event
+  // below uses, keyed off the link that served the completion.
+  const reasoningTokens = estimateReasoningTokens(
+    resolveReasoning(
+      completion,
+      deps.profile,
+      completionAssumesOpenReasoning(
+        deps.profile,
+        parseDepsFor(completion, deps).toolTransport,
+        thinkingOff,
+      ),
+    ),
+  );
   deps.onCompletion?.(completion);
   deps.onEvent?.({ type: "llm_completed", completion });
   deps.onEvent?.({
@@ -1250,6 +1902,7 @@ async function runInitialCompletion(
     stepIndex: ctx.stepIndex,
     attempt: 1,
     completion,
+    reasoningTokens,
   });
   deps.metrics?.recordLlmCall({
     sessionId: ctx.session.id,
@@ -1304,12 +1957,18 @@ function promptCarriesReasoningPrefill(
  *    reasoning. That holds even in the unsupported grammar-primary →
  *    native-link ordering, where the outbound prompt still (incorrectly)
  *    carries the literal prefill inside the chat message.
+ *  - **`thinking: off` on the built prompt (F49)** ends the prompt with
+ *    the template's closed, empty think block and sends the plain-root
+ *    grammar, so a grammar-served completion starts on the tool call:
+ *    nothing to re-open.
  */
 function completionAssumesOpenReasoning(
   profile: ModelProfile,
   parseTransport: ToolCallTransport,
+  thinkingOff: boolean,
 ): boolean {
   if (!profile.requiresPromptThinkPrefix) return false;
+  if (thinkingOff) return false;
   return parseTransport !== "native_tools";
 }
 
@@ -1484,10 +2143,12 @@ function tryParseToolCalls(
   // names have to be derived from the same input, or the undo on the
   // way in stops matching the rewrite on the way out.
   toolDescriptors: readonly ToolDescriptor[],
+  thinkingOff: boolean,
 ): ToolCallBatchParseResult {
   const assumeOpenReasoning = completionAssumesOpenReasoning(
     profile,
     deps.toolTransport,
+    thinkingOff,
   );
   try {
     if (deps.toolTransport === "native_tools") {
@@ -1673,17 +2334,99 @@ function replyFallbackBatch(
   };
 }
 
+/** The two terminal verbs — the only names the final step may emit. */
+const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
+
+/**
+ * The tool names this step's grammar admits, or `null` when nothing
+ * narrows it and the base grammar should go out untouched.
+ *
+ * Narrowing, in order of precedence:
+ *  - the final step (`terminalOnly`) admits `reply` and `finish` only;
+ *  - a per-step tool set (`toolSet`) admits its names only — the
+ *    descriptors handed in are already narrowed to them, so the filter
+ *    is a guard; what matters is that the grammar is rebuilt;
+ *  - a fusion ORCHESTRATOR turn drops every name the gate would refuse
+ *    (`wouldRefuse`) — the model keeps the descriptors and loses the
+ *    ability to spend a step on a call that ends in a refusal;
+ *  - a turn with a `toolFilter` (a fusion worker) drops what the filter
+ *    hides, `finish` included.
+ * The candidate set is the step's own descriptor list (`reply` and
+ * `finish` are descriptors too), so the grammar can never admit a name
+ * the prompt does not describe. The base grammar stays in charge of any
+ * unrestricted step: its grouped rules are what the static grammar tests
+ * pin, and a step that narrows nothing has no reason to rewrite them.
+ */
+function stepGrammarToolNames(
+  ctx: Pick<StepContext, "terminalOnly" | "toolSet" | "toolFilter" | "toolRole">,
+  deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator">,
+  descriptors: readonly ToolDescriptor[],
+): readonly string[] | null {
+  if (ctx.terminalOnly) return TERMINAL_TOOL_NAMES;
+  let names = descriptors.map((d) => d.name);
+  // A role other than `full` has already narrowed `descriptors` to the
+  // role's tools plus the loaded ones (`descriptorsForRole`); the grammar
+  // must follow, or the sampler could still emit what the prompt no
+  // longer describes in full.
+  let restricted = ctx.toolRole !== undefined && ctx.toolRole !== "full";
+  if (ctx.toolSet !== undefined) {
+    const set = ctx.toolSet;
+    names = names.filter((name) => toolSetAdmits(set, name));
+    restricted = true;
+  }
+  if (deps.isFusionOrchestrator?.()) {
+    const refused = refusedToolNames(names, { registry: deps.registry });
+    if (refused.size > 0) {
+      names = names.filter((name) => !refused.has(name));
+      restricted = true;
+    }
+  }
+  if (ctx.toolFilter) {
+    const filter = ctx.toolFilter;
+    names = names.filter((name) => filter(name));
+    restricted = true;
+  }
+  return restricted ? names : null;
+}
+
+/**
+ * The grammar for THIS request. The reasoning prelude first (F49): gone
+ * under `thinking: off` (the prompt ends with the template's disabled
+ * marker, so the completion starts on the call); unbounded on the forced
+ * final step — a `reply` / `finish` is never cut mid-thought; the base
+ * grammar's configured bound (`localModels.reasoningBudgetTokens`)
+ * otherwise. Then the tool names (`stepGrammarToolNames`). An
+ * unrestricted, non-final step under `thinking: on|auto` sends the base
+ * grammar byte-identical.
+ */
+function resolveStepGrammar(
+  ctx: Pick<StepContext, "terminalOnly" | "toolSet" | "toolFilter" | "toolRole">,
+  deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
+  descriptors: readonly ToolDescriptor[],
+  thinkingOff: boolean,
+): string {
+  const base = thinkingOff
+    ? withoutReasoningPrelude(deps.grammar)
+    : ctx.terminalOnly
+      ? withUnboundedReasoningPrelude(deps.grammar)
+      : deps.grammar;
+  const names = stepGrammarToolNames(ctx, deps, descriptors);
+  return names === null ? base : buildGrammarForTools(base, names);
+}
+
 function buildLlmStreamParams(args: {
   promptText: string;
+  promptMessages?: PromptMessages;
   deps: Pick<
     StepDependencies,
-    | "grammar"
     | "toolTransport"
     | "toolCallAdapter"
     | "supportsParallelTools"
     | "strictTools"
     | "providerId"
   >;
+  /** The grammar for this request — see `resolveStepGrammar`. */
+  grammar: string;
   slotId: number;
   sessionId: string;
   toolDescriptors: readonly ToolDescriptor[];
@@ -1691,7 +2434,7 @@ function buildLlmStreamParams(args: {
 }): LlmStreamParams {
   const base: LlmStreamParams = {
     prompt: args.promptText,
-    grammar: args.deps.grammar,
+    grammar: args.grammar,
     slotId: args.slotId,
     sessionId: args.sessionId,
     ...(args.signal ? { signal: args.signal } : {}),
@@ -1708,6 +2451,9 @@ function buildLlmStreamParams(args: {
   });
   return {
     ...base,
+    // The structured prompt rides only on the native path; the seam
+    // forwards it only to a native link (`llm-link-attempt.ts`).
+    ...(args.promptMessages ? { messages: args.promptMessages } : {}),
     // Keep `grammar` populated (not blanked) even on the native path: the
     // provider fallback chain may hand this request to a grammar-only
     // llama-server link, which needs the GBNF. Native (cloud) providers
@@ -1895,22 +2641,119 @@ export function isApprovalGatedOnlyFailure(
  */
 export interface BatchTrimResult {
   kept: ToolCallPayload;
+  /** Calls dropped for the model to retry, in batch-index order. */
   dropped: ToolCallPayload[];
+  /**
+   * Calls dropped because the turn's policy (plan mode, the fusion
+   * orchestrator gate) would have refused them anyway, each with the
+   * gate that would have refused it. Not to be retried: re-emitting
+   * them earns the same refusal.
+   */
+  refused: Array<{ call: ToolCallPayload; reason: string }>;
   /** Original batch size before trimming. Always >= 2. */
   originalSize: number;
 }
 
+/**
+ * The turn policy the trim consults before it picks a survivor.
+ *
+ * `refusedBy` runs the same predicates the batch executor's gates run
+ * at dispatch (`wouldRefuse` in `plan-mode.ts` /
+ * `fusion-orchestrator-mode.ts`) and names the gate, so the trim and
+ * the gate cannot disagree about a call. `preferTool` names the call
+ * that wins over emit order when it is present — on an orchestrator
+ * turn, `fusion.delegate`: the fan-out is what the turn exists to do,
+ * and a `mkdir` emitted ahead of it must not be the one that survives
+ * only to be refused (run 14: nine minutes of generation redone).
+ */
+export interface BatchTrimPolicy {
+  /** The gate that would refuse `tool`, or `null` when it may run. */
+  refusedBy?: (tool: string) => string | null;
+  preferTool?: string;
+}
+
+/** The fan-out tool an orchestrator turn prefers to keep. */
+const ORCHESTRATOR_PREFERRED_TOOL = "fusion.delegate";
+
+export const TRIM_REFUSED_BY_PLAN_MODE = "refused by plan mode";
+export const TRIM_REFUSED_BY_FUSION_GATE = "refused by the fusion gate";
+
+/**
+ * Build the trim policy from the step's dependencies — the same
+ * getters the batch context carries (`isPlanMode`, `isFusionOrchestrator`
+ * and the registry), read at trim time so a mode flipped mid-turn is
+ * honoured the way the gates honour it. Plan mode is named first when
+ * both would refuse, in the order the gates run.
+ */
+export function turnPolicyForTrim(
+  deps: Pick<StepDependencies, "registry" | "isPlanMode" | "isFusionOrchestrator">,
+): BatchTrimPolicy {
+  const planMode = deps.isPlanMode?.() ?? false;
+  const orchestrator = deps.isFusionOrchestrator?.() ?? false;
+  if (!planMode && !orchestrator) return {};
+  const ctx = { registry: deps.registry };
+  return {
+    refusedBy: (tool) =>
+      planMode && planModeWouldRefuse(tool, ctx)
+        ? TRIM_REFUSED_BY_PLAN_MODE
+        : orchestrator && fusionGateWouldRefuse(tool, ctx)
+          ? TRIM_REFUSED_BY_FUSION_GATE
+          : null,
+    ...(orchestrator ? { preferTool: ORCHESTRATOR_PREFERRED_TOOL } : {}),
+  };
+}
+
+/**
+ * Pick the survivor. Calls the turn policy would refuse are set aside
+ * first, so the kept call is one that can actually run; among the rest,
+ * `policy.preferTool` wins when present, else the first approval-gated
+ * call in emit order (writes typically precede the edits that depend on
+ * them). When every approval-gated call would be refused, the first one
+ * is kept anyway: it earns the gate's own refusal, which is the text
+ * that tells the model what to do instead.
+ */
 export function trimBatchToFirstApprovalGated(
   batch: ToolCallBatch,
+  policy: BatchTrimPolicy = {},
 ): BatchTrimResult | null {
   const calls = batch.calls;
-  const firstApprovalIdx = calls.findIndex(
-    (call) => resourceClassFor(call.tool) === "approval_gated",
-  );
-  if (firstApprovalIdx === -1) return null;
-  const kept = calls[firstApprovalIdx]!;
-  const dropped = calls.filter((_, idx) => idx !== firstApprovalIdx);
-  return { kept, dropped, originalSize: calls.length };
+  const isGated = (call: ToolCallPayload): boolean =>
+    resourceClassFor(call.tool) === "approval_gated";
+  if (!calls.some(isGated)) return null;
+  const refusedIdx = new Map<number, string>();
+  if (policy.refusedBy) {
+    calls.forEach((call, idx) => {
+      const reason = policy.refusedBy!(call.tool);
+      if (reason !== null) refusedIdx.set(idx, reason);
+    });
+  }
+  const runnable = (idx: number): boolean => !refusedIdx.has(idx);
+  let keptIdx = -1;
+  if (policy.preferTool !== undefined) {
+    keptIdx = calls.findIndex(
+      (call, idx) => call.tool === policy.preferTool && runnable(idx),
+    );
+  }
+  if (keptIdx === -1) {
+    keptIdx = calls.findIndex((call, idx) => isGated(call) && runnable(idx));
+  }
+  if (keptIdx === -1) {
+    // Every gated call is refused: keep the first and let the gate
+    // speak — its refusal is the instruction, and the notice names the
+    // rest as refused so the model does not retry them one by one.
+    keptIdx = calls.findIndex(isGated);
+    refusedIdx.delete(keptIdx);
+  }
+  const kept = calls[keptIdx]!;
+  const dropped: ToolCallPayload[] = [];
+  const refused: BatchTrimResult["refused"] = [];
+  calls.forEach((call, idx) => {
+    if (idx === keptIdx) return;
+    const reason = refusedIdx.get(idx);
+    if (reason === undefined) dropped.push(call);
+    else refused.push({ call, reason });
+  });
+  return { kept, dropped, refused, originalSize: calls.length };
 }
 
 /**
@@ -1924,13 +2767,31 @@ export function trimBatchToFirstApprovalGated(
  * stable prefix).
  */
 export function formatBatchTrimNotice(trim: BatchTrimResult): string {
-  const droppedNames = trim.dropped
-    .map((call) => `\`${call.tool}\``)
-    .join(", ");
-  return [
-    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\` and dropped the rest: ${droppedNames}.`,
-    "Retry the dropped calls now, one per step, each as a length-1 array. Do not re-batch them.",
-  ].join(" ");
+  const names = (calls: readonly ToolCallPayload[]): string =>
+    calls.map((call) => `\`${call.tool}\``).join(", ");
+  const parts = [
+    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\`.`,
+  ];
+  if (trim.dropped.length > 0) {
+    parts.push(
+      `Dropped from the batch — retry: ${names(trim.dropped)}. Retry them now, one per step, each as a length-1 array. Do not re-batch them.`,
+    );
+  }
+  if (trim.refused.length > 0) {
+    // Grouped by gate, so the model reads the same rule the gate's own
+    // refusal states — and does not retry a call that earns it again.
+    const byReason = new Map<string, ToolCallPayload[]>();
+    for (const { call, reason } of trim.refused) {
+      byReason.set(reason, [...(byReason.get(reason) ?? []), call]);
+    }
+    const groups = [...byReason]
+      .map(([reason, calls]) => `${names(calls)} (${reason})`)
+      .join("; ");
+    parts.push(
+      `Dropped because this turn's policy would refuse them — do not retry: ${groups}.`,
+    );
+  }
+  return parts.join(" ");
 }
 
 /**
@@ -1947,6 +2808,177 @@ export function formatWaveSplitNotice(
   waveCount: number,
 ): string {
   return `Your previous emission contained ${originalSize} reads that exceeded the parallel-call cap of ${cap}. The runtime executed all of them in ${waveCount} bounded wave${waveCount === 1 ? "" : "s"} — nothing was dropped. Do not re-emit those calls.`;
+}
+
+type ExecuteBatchArgs = Parameters<typeof executeBatch>;
+type BatchOutcome = Awaited<ReturnType<typeof executeBatch>>;
+
+/**
+ * Run a batch one call at a time, strictly in emitted order: each call is
+ * dispatched only after the previous one has settled, whatever its
+ * resource class. `executeBatch` groups by class and runs the groups
+ * concurrently, which is right for fan-out and wrong for "write the
+ * file, then edit it, then read it back" — so each call goes through its
+ * own length-1 `executeBatch` (same plan-mode / fusion / loop gates, same
+ * result folding as a solo step) and the indices are mapped back.
+ *
+ * Used for a batch holding approval-gated calls that would not prompt
+ * (`batchRunsUnattended`). An abort stops the sequence: the call in
+ * flight settles as `executeBatch` settles it and every later call is
+ * marked cancelled.
+ */
+async function executeCallsInOrder(
+  inputs: ExecuteBatchArgs[0],
+  registry: ExecuteBatchArgs[1],
+  ctx: ExecuteBatchArgs[2],
+): Promise<BatchOutcome> {
+  const batchSize = inputs.length;
+  const results: BatchOutcome["results"] = [];
+  const loopSignals: BatchOutcome["loopSignals"] = [];
+  let cancelled = false;
+  for (const input of inputs) {
+    if (cancelled || ctx.signal.aborted) {
+      cancelled = true;
+      results.push({
+        batchIndex: input.batchIndex,
+        call: input.call,
+        resourceClass: input.resourceClass,
+        durationMs: 0,
+        cancelled: true,
+      });
+      continue;
+    }
+    const { onCallStarted, onCallFinished } = ctx;
+    const one = await executeBatch([{ ...input, batchIndex: 0 }], registry, {
+      ...ctx,
+      ...(onCallStarted
+        ? {
+            onCallStarted: () =>
+              onCallStarted({ batchIndex: input.batchIndex, batchSize }),
+          }
+        : {}),
+      ...(onCallFinished
+        ? {
+            onCallFinished: (info) =>
+              onCallFinished({
+                ...info,
+                batchIndex: input.batchIndex,
+                batchSize,
+              }),
+          }
+        : {}),
+    });
+    results.push({ ...one.results[0]!, batchIndex: input.batchIndex });
+    loopSignals.push(...one.loopSignals);
+    if (one.cancelled) cancelled = true;
+  }
+  return { results, cancelled, loopSignals };
+}
+
+/**
+ * The transcript counts a stream consumer cut the completion short over
+ * (`CompletionEarlyStop`). Stands in when the detector finds nothing in
+ * the free text — the profile's reasoning extraction can strip text the
+ * consumer judged as plain content — because the stream was ended on
+ * those lines, and whatever came back is not an answer to deliver.
+ */
+function fabricationFromEarlyStop(
+  completion: CompletionResult,
+): FabricatedToolTranscript | null {
+  const stop = completion.earlyStop;
+  return stop?.reason === "fabricated_transcript"
+    ? { calls: stop.calls, results: stop.results }
+    : null;
+}
+
+/**
+ * The reply cap a completion actually ran under, for the failure
+ * detector. A provider that reports what went on the wire is believed,
+ * `null` included: no cap was sent, and a cut was the provider's own
+ * limit (request cloud-00312 carried no `max_tokens`, stopped at 33,678
+ * tokens, and was reported as having "spent the reply cap of 8192"). A
+ * provider that does not report keeps the old assumption — the cap the
+ * step asked for, which is what llama-server's `n_predict` resolves to.
+ */
+function replyCapSent(
+  completion: CompletionResult,
+  assumed: number,
+): number | null {
+  return completion.sentMaxTokens === undefined
+    ? assumed
+    : completion.sentMaxTokens;
+}
+
+/**
+ * The next-step notice for a completion that wrote tool calls as text.
+ * Blunt on purpose: the model believes that work is done.
+ */
+export function formatFabricatedTranscriptNotice(
+  fabricated: FabricatedToolTranscript,
+): string {
+  const count = Math.max(fabricated.calls, fabricated.results);
+  const noun = count === 1 ? "tool call" : "tool calls";
+  const outcome =
+    fabricated.results > 0
+      ? "None of them ran and their results were invented."
+      : "None of them ran.";
+  return `Your last response contained ${count} ${noun} written as plain text. ${outcome} Call tools natively — nothing is done until a real tool result comes back.`;
+}
+
+/**
+ * A completion's text as the user would see it: `content` with any
+ * inline reasoning block removed. The dedicated `reasoning_content`
+ * channel is never part of it.
+ */
+function completionFreeText(
+  completion: CompletionResult,
+  profile: ModelProfile,
+  assumeOpenReasoning: boolean,
+): string {
+  if (typeof completion.content !== "string" || completion.content === "") {
+    return "";
+  }
+  return extractReasoning(
+    normalizeContent(completion, profile, assumeOpenReasoning),
+    getReasoningTagOptions(profile),
+  ).body;
+}
+
+/** Longest string argument a suppressed terminal keeps in the transcript. */
+const SUPPRESSED_ARG_PREVIEW_CHARS = 400;
+
+/**
+ * The call/result pair that stands in for a `reply` / `finish` that was
+ * not accepted. The tool never runs. String arguments are clipped: when
+ * the reply was synthesised from the text itself, its `text` IS the
+ * fabricated transcript, and replaying 80k characters of invented tool
+ * results into the next prompt would teach the pattern again.
+ */
+function suppressedTerminalRecord(
+  call: ToolCallPayload,
+  fabricated: FabricatedToolTranscript,
+): { call: ToolCallPayload; result: CompressedToolResult } {
+  const args: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(call.args ?? {})) {
+    args[key] =
+      typeof value === "string" && value.length > SUPPRESSED_ARG_PREVIEW_CHARS
+        ? `${value.slice(0, SUPPRESSED_ARG_PREVIEW_CHARS)} … [${value.length - SUPPRESSED_ARG_PREVIEW_CHARS} more chars not delivered]`
+        : value;
+  }
+  const count = Math.max(fabricated.calls, fabricated.results);
+  return {
+    call: { ...call, args },
+    result: compressToolResult({
+      tool: call.tool,
+      status: "error",
+      output: `not delivered: the same response wrote ${count} tool call${count === 1 ? "" : "s"} as plain text instead of calling ${count === 1 ? "it" : "them"}, so the work it reports never happened. Do the work with real tool calls first.`,
+      details: {
+        notDelivered: true,
+        textToolCalls: fabricated.calls,
+        textToolResults: fabricated.results,
+      },
+    }),
+  };
 }
 
 /**
@@ -2007,6 +3039,7 @@ function buildToolCallRepairPrompt(
   profile?: ModelProfile,
   toolTransport?: ToolCallTransport,
   promptCarriedPrefill = true,
+  thinkingOff = false,
 ): string {
   // Strip the trailing reasoning open-tag prefill (e.g. `<think>` for
   // qwen-think, `<|channel>thought\n` for gemma4-think) before
@@ -2031,8 +3064,14 @@ function buildToolCallRepairPrompt(
   // transport, issue #283) there is nothing to strip — and nothing to
   // re-append either: adding `<think>` here would ship the literal tag
   // to the cloud endpoint the main prompt deliberately keeps it out of.
+  //
+  // Under `thinking: off` (F49) the prefill IS the closed, empty think
+  // block, and it is what comes back at the end: the repair runs under
+  // the same plain-root grammar as the failed attempt, which admits no
+  // reasoning, so re-opening a think block here would hand the model a
+  // block it cannot close.
   const baseText = promptCarriedPrefill
-    ? stripTrailingReasoningPrefill(promptText, profile)
+    ? stripTrailingReasoningPrefill(promptText, profile, thinkingOff)
     : promptText;
   const lines = [
     baseText.trimEnd(),
@@ -2076,7 +3115,7 @@ function buildToolCallRepairPrompt(
     );
   }
   const openReasoning = promptCarriedPrefill
-    ? renderOpenReasoningBlock(profile)
+    ? renderOpenReasoningBlock(profile, thinkingOff)
     : "";
   if (openReasoning.length > 0) {
     lines.push(openReasoning);
@@ -2087,9 +3126,18 @@ function buildToolCallRepairPrompt(
 function stripTrailingReasoningPrefill(
   promptText: string,
   profile: ModelProfile | undefined,
+  thinkingOff = false,
 ): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return promptText;
   if (profile.reasoningStyle === "none") return promptText;
+  const disabledMarker = profile.promptThinkingDisabledMarker;
+  if (thinkingOff && disabledMarker !== undefined) {
+    const marker = disabledMarker.trimEnd();
+    const trimmed = promptText.trimEnd();
+    return trimmed.endsWith(marker)
+      ? trimmed.slice(0, trimmed.length - marker.length)
+      : promptText;
+  }
   const framing = getReasoningTurnFraming(profile);
   if (framing) {
     // Gemma 4 turn-framing: strip the trailing `<turn|>\n<|turn>model` so the
@@ -2122,9 +3170,18 @@ function stripTrailingReasoningPrefill(
  * → JSON flow, just bounded by `REPAIR_MAX_TOKENS`. For `none` profiles
  * this is a no-op.
  */
-function renderOpenReasoningBlock(profile: ModelProfile | undefined): string {
+function renderOpenReasoningBlock(
+  profile: ModelProfile | undefined,
+  thinkingOff = false,
+): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return "";
   if (profile.reasoningStyle === "none") return "";
+  const disabledMarker = profile.promptThinkingDisabledMarker;
+  if (thinkingOff && disabledMarker !== undefined) {
+    // The template's own marker, verbatim — trailing newlines included,
+    // as the main prompt ends.
+    return disabledMarker;
+  }
   const framing = getReasoningTurnFraming(profile);
   if (framing) {
     // Re-close the system turn and re-open the model turn so the model emits
@@ -2244,6 +3301,7 @@ async function consumeStream(
   stepIndex: number,
   profile: ModelProfile,
   primaryTransport: ToolCallTransport,
+  thinkingOff: boolean,
   onEvent?: (event: StepEvent) => void,
 ): Promise<CompletionResult> {
   // The parser's pre-opened state depends on which link SERVES the
@@ -2264,6 +3322,7 @@ async function consumeStream(
         completionAssumesOpenReasoning(
           profile,
           servedTransport ?? primaryTransport,
+          thinkingOff,
         ) && !reasoningOpenEmittedByModel(profile),
       ...(profile.reasoningStyle !== "none"
         ? {
@@ -2451,10 +3510,11 @@ export function readReplyAttachments(
  * flag to close the session without any additional transcript magic.
  *
  * Per-batch char cap: when the combined summary text would exceed
- * `agent.batchToolResultCharCap`, oldest within-batch results get
- * truncated before being appended. This keeps the conversation
- * section bounded under pathological large-batch outputs without
- * losing the call/result pairing.
+ * `agent.batchToolResultCharCap`, the results share it evenly before
+ * being appended (`batch-summary-cap.ts`): none is erased, and each cut
+ * one says how to get the rest. This keeps the conversation section
+ * bounded under pathological large-batch outputs without losing the
+ * call/result pairing.
  */
 function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
   const { state, calls, results, reasoning, terminal, onEvent } = params;
@@ -2470,11 +3530,9 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
     const hasNonTerminal = terminalIdx > 0;
     let next = state;
     if (hasNonTerminal) {
-      const nonTerminalSummaries = results
-        .slice(0, terminalIdx)
-        .map((r) => r.summary);
       const renderedSummaries = capBatchSummaries(
-        nonTerminalSummaries,
+        results.slice(0, terminalIdx),
+        calls.slice(0, terminalIdx),
         getConfig().agent.batchToolResultCharCap,
       );
       for (let i = 0; i < terminalIdx; i += 1) {
@@ -2529,7 +3587,8 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
   }
 
   const renderedSummaries = capBatchSummaries(
-    results.map((r) => r.summary),
+    results,
+    calls,
     getConfig().agent.batchToolResultCharCap,
   );
 
@@ -2559,36 +3618,6 @@ function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionState {
     );
   }
   return next;
-}
-
-/**
- * Apply a soft per-batch char cap across all summaries in one step.
- * Truncates from the start of the list (oldest within-batch results
- * lose detail first) so the freshest results — typically the ones the
- * model will reason about next — keep their full text.
- */
-function capBatchSummaries(
-  summaries: readonly string[],
-  capChars: number,
-): string[] {
-  const total = summaries.reduce((acc, s) => acc + s.length, 0);
-  if (total <= capChars) return summaries.slice();
-  const out = summaries.slice();
-  let overshoot = total - capChars;
-  for (let i = 0; i < out.length && overshoot > 0; i += 1) {
-    const s = out[i]!;
-    if (s.length === 0) continue;
-    const drop = Math.min(s.length, overshoot);
-    const keep = s.length - drop;
-    if (keep <= 16) {
-      out[i] = "[truncated]";
-      overshoot -= s.length - "[truncated]".length;
-    } else {
-      out[i] = `${s.slice(0, keep)} … [truncated]`;
-      overshoot -= drop - " … [truncated]".length;
-    }
-  }
-  return out;
 }
 
 /**

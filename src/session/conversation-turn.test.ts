@@ -4,6 +4,8 @@ import {
   assistantReplyTurn,
   assistantToolCallTurn,
   findCurrentMacroTurnStart,
+  isFinalReplyTurn,
+  macroTurnBoundaries,
   packConversation,
   renderTurnForPrompt,
   toolResultTurn,
@@ -125,7 +127,7 @@ describe("conversation-turn helpers", () => {
   });
 
   it("caps oversized tool_result summaries at render time", () => {
-    const big = "x".repeat(10_000);
+    const big = "x".repeat(20_000);
     const rendered = renderTurnForPrompt(
       toolResultTurn({
         tool: "os.fs.read_document",
@@ -134,13 +136,64 @@ describe("conversation-turn helpers", () => {
         at: 5,
       }),
     );
-    // The cap is 4000 chars minus a tail for the truncation marker, so the
-    // rendered block stays below the full 10k summary.
+    // The cap is 8000 chars minus a tail for the truncation marker, so the
+    // rendered block stays below the full 20k summary.
     expect(rendered.length).toBeLessThan(big.length);
+    expect(rendered.length).toBeLessThanOrEqual(
+      "tool_result[os.fs.read_document ok]: ".length + 8000,
+    );
     expect(rendered.startsWith("tool_result[os.fs.read_document ok]: ")).toBe(
       true,
     );
     expect(rendered).toContain("[rendering-truncated");
+  });
+
+  it("cuts an oversized os.fs.read on a line boundary and names the range to read next", () => {
+    // ~26K chars against the 8000-char render cap, so the cut is certain.
+    const TOTAL_LINES = 600;
+    const fileLines = Array.from(
+      { length: TOTAL_LINES },
+      (_, i) => `const line${i + 1} = "${"x".repeat(24)}";`,
+    );
+    const summary = fileLines.join("\n");
+    expect(summary.length).toBeGreaterThan(3 * 8000);
+    const prefix = "tool_result[os.fs.read ok]: ";
+    const render = (readStartLine?: number) =>
+      renderTurnForPrompt(
+        toolResultTurn({ tool: "os.fs.read", status: "ok", summary, at: 5 }),
+        { readStartLine },
+      );
+
+    const fromTop = render(1);
+    const body = fromTop.slice(prefix.length).split("\n");
+    const hint = body.pop()!;
+    const shown = body.length;
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(TOTAL_LINES);
+    expect(fromTop.length).toBeLessThanOrEqual(prefix.length + 8000);
+    expect(body).toEqual(fileLines.slice(0, shown));
+    expect(hint).toContain(`${TOTAL_LINES - shown} more lines are not shown`);
+    expect(hint).toContain(`offset: ${shown + 1} and limit: ${shown}`);
+    expect(fromTop).not.toContain("[rendering-truncated");
+
+    expect(render(120)).toContain(`offset: ${120 + shown} and limit: ${shown}`);
+    expect(render()).toContain("the line after the last one shown as `offset`");
+  });
+
+  it("falls back to a character cut for an os.fs.read with no usable line break", () => {
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.fs.read",
+        status: "ok",
+        summary: "x".repeat(20_000),
+        at: 5,
+      }),
+      { readStartLine: 1 },
+    );
+    expect(rendered).toContain("[rendering-truncated");
+    expect(rendered.length).toBeLessThanOrEqual(
+      "tool_result[os.fs.read ok]: ".length + 8000,
+    );
   });
 
   it("renders fresh os.http.request results uncapped", () => {
@@ -158,8 +211,31 @@ describe("conversation-turn helpers", () => {
     expect(rendered).not.toContain("[rendering-truncated");
   });
 
+  it("renders a fresh fusion.delegate result whole and gives it the generic cap once aged", () => {
+    const summary = `3 tasks: 3 ok\n${"r".repeat(18_000)}`;
+    const turn = toolResultTurn({
+      tool: "fusion.delegate",
+      status: "ok",
+      summary,
+      at: 7,
+    });
+    expect(renderTurnForPrompt(turn, { inCurrentMacroTurn: true })).toBe(
+      `tool_result[fusion.delegate ok]: ${summary}`,
+    );
+    const aged = renderTurnForPrompt(turn, { inCurrentMacroTurn: false });
+    expect(aged).toContain("[rendering-truncated");
+    expect(aged.startsWith("tool_result[fusion.delegate ok]: 3 tasks: 3 ok")).toBe(true);
+    // The generic 8000-char cap, not the 400-char history cap of the other
+    // fresh tools.
+    expect(aged.length).toBeGreaterThan(6_000);
+    expect(aged.length).toBeLessThanOrEqual(
+      "tool_result[fusion.delegate ok]: ".length + 8000,
+    );
+  });
+
   it("gives fresh gog shell results a larger render budget", () => {
-    const body = "x".repeat(8_000);
+    // Over the generic 8000-char cap, under the 16,000-char gog one.
+    const body = "x".repeat(12_000);
     const summary = `$ gog --json --no-input gmail search is:unread\n${body}`;
     const rendered = renderTurnForPrompt(
       toolResultTurn({
@@ -312,6 +388,7 @@ describe("conversation-turn helpers", () => {
         visiblePairs: 0,
         droppedPairs: 0,
         boundBy: null,
+        packStart: null,
       });
     });
 
@@ -476,5 +553,41 @@ describe("packConversation memoisation (issue #121)", () => {
     expect(out.droppedCount).toBeGreaterThan(0);
     expect(out.droppedSummary).toMatch(/^summary: \d+ older turns dropped/);
     expect(out.visibleTurns.length).toBeGreaterThan(0);
+  });
+});
+
+describe("a progress note is a reply row that did not end the macro-turn", () => {
+  const note = assistantReplyTurn("(reading first)", { at: 2, progressNote: true });
+
+  it("carries the flag only when asked for", () => {
+    expect(note).toEqual({
+      kind: "assistant_reply",
+      text: "(reading first)",
+      at: 2,
+      progressNote: true,
+    });
+    expect(assistantReplyTurn("done", 3)).not.toHaveProperty("progressNote");
+    expect(isFinalReplyTurn(note)).toBe(false);
+    expect(isFinalReplyTurn(assistantReplyTurn("done", 3))).toBe(true);
+    expect(isFinalReplyTurn(userTurn("hi", 1))).toBe(false);
+    expect(isFinalReplyTurn(undefined)).toBe(false);
+  });
+
+  it("renders like any reply and is skipped by the macro-turn scans", () => {
+    expect(renderTurnForPrompt(note)).toBe("assistant: (reading first)");
+    const turns: ConversationTurn[] = [
+      userTurn("build it", 1),
+      note,
+      assistantToolCallTurn({ tool: "os.fs.read", args: { path: "a" }, at: 3 }),
+      toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "x", at: 4 }),
+      userTurn("also check b", 5),
+      assistantReplyTurn("done", 6),
+    ];
+    // The current macro-turn still opens at the user row, not after the note…
+    expect(findCurrentMacroTurnStart(turns.slice(0, 5))).toBe(0);
+    // …a reply that closed the turn is what the scan stops on…
+    expect(findCurrentMacroTurnStart(turns)).toBe(6);
+    // …and a steer after a note does not open a task of its own.
+    expect(macroTurnBoundaries(turns)).toEqual([0]);
   });
 });

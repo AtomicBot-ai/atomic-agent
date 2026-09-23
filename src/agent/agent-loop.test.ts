@@ -9,6 +9,8 @@ import { osFsReadTool } from "../tools/os/fs-read.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
+import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -161,6 +163,75 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(llmRawCompletions).toEqual([{ attempt: 1, stepIndex: 0 }]);
   });
 
+  it("pins RunTurnOptions.originalRequest into the prompt once its turn is dropped (F22)", async () => {
+    // The record the workers' briefs quote, now reaching the
+    // orchestrator's own prompt: a repair turn still sees the spec.
+    const registry = buildDefaultToolRegistry();
+    const tails: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } })),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "prompt_captured") {
+          tails.push(event.event.tail);
+        }
+      },
+    });
+    const spec = `Build it: ${"detail ".repeat(30_000)}`;
+    const session = createEmptySessionState({ id: "s-request", workingDir });
+    session.turns.push({ kind: "user", text: spec, at: 1 });
+    session.turns.push({ kind: "assistant_reply", text: "built", at: 2 });
+    await loop.runTurn(session, {
+      userMessage: "fix these bugs",
+      originalRequest: spec,
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    expect(tails).toHaveLength(1);
+    expect(tails[0]).toContain("### request");
+    expect(tails[0]!.indexOf("### request")).toBeLessThan(tails[0]!.indexOf("### conversation"));
+  });
+
+  it("passes RunTurnOptions.reasoningEffort / maxOutputTokens to every completion (F20)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const seen: Array<{ effort?: string; cap?: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        seen.push({
+          ...(params.reasoningEffort === undefined ? {} : { effort: params.reasoningEffort }),
+          ...(params.maxOutputTokens === undefined ? {} : { cap: params.maxOutputTokens }),
+        });
+        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-effort", workingDir });
+    await loop.runTurn(session, {
+      userMessage: "go",
+      reasoningEffort: "low",
+      maxOutputTokens: 12_000,
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    await loop.runTurn(session, {
+      userMessage: "again",
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    expect(seen).toEqual([{ effort: "low", cap: 12_000 }, {}]);
+  });
+
   it("keeps working past the leg length while the task is progressing", async () => {
     // The point of the change: `maxSteps` is a checkpoint, not the end
     // of the work. A task that is still getting usable results out of
@@ -262,11 +333,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("max_steps");
     // Six steps spent, of which the last is the reserved summary the
-    // model refused to write — so five tool steps landed in the session.
+    // model refused to write: its tool call was not run — it landed as
+    // a refusal in the transcript — so five tool calls ran.
     expect(result.session.lastError).toMatch(
       /task_stopped:step_ceiling: 6 steps/,
     );
-    expect(result.session.stepCount).toBe(5);
+    expect(result.session.stepCount).toBe(6);
+    const results = result.session.turns.filter(
+      (turn) => turn.kind === "tool_result",
+    );
+    expect(results).toHaveLength(6);
+    expect(results.slice(0, 5).every((turn) => turn.status === "ok")).toBe(
+      true,
+    );
+    expect(results.at(-1)).toMatchObject({
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
   });
 
   it("stops when a whole leg produced nothing usable", async () => {
@@ -426,8 +509,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -459,11 +542,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
     expect(result.reason).toBe("reply");
     expect(calls).toBe(2);
-    // The first completion ran under the config cap; the retry under 4×.
+    // The first completion ran under the config cap (16,384); the retry
+    // under 4× of it, clamped to the 32,768 ceiling.
     expect(capsSeen[0]).toBeUndefined();
     expect(capsSeen[1]).toBe(32_768);
     // The model is told why it is being asked again.
-    expect(prompts[1]).toContain("cut off after 8192 tokens");
+    expect(prompts[1]).toContain("cut off after 16384 tokens");
     expect(prompts[1]).toContain("Keep your reasoning brief");
     expect(prompts[0]).not.toContain("cut off after");
     // One event, carrying the cause and the retry; no failure.
@@ -472,14 +556,88 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         type: "completion_truncated",
         stepIndex: 0,
         cause: "reply_cap",
-        completionTokens: 8_192,
+        completionTokens: 16_384,
         promptTokens: 6_000,
-        requestedMaxTokens: 8_192,
+        requestedMaxTokens: 16_384,
         retry: { kind: "raise_cap", maxTokens: 32_768 },
       }),
     ]);
     // A retried step is one step.
     expect(result.session.stepCount).toBe(1);
+  });
+
+  it("retries a cut the provider made with no cap on the wire, without claiming a cap was spent", async () => {
+    // Request cloud-00312: no `max_tokens`, cut at 33,678 tokens, logged
+    // as "spent the reply cap … of 8192" with `requestedMaxTokens: 8192`.
+    // The retry that sent 32,768 then succeeded — so it stays.
+    const registry = buildDefaultToolRegistry();
+    const events: Array<{ type: string } & Record<string, unknown>> = [];
+    const capsSeen: Array<number | undefined> = [];
+    const prompts: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ maxTokens, prompt }) => {
+        calls += 1;
+        capsSeen.push(maxTokens);
+        prompts.push(prompt);
+        if (calls === 1) {
+          return {
+            ...makeCompletion(""),
+            reasoningContent: "Let me write every file out first",
+            stop: false,
+            truncated: true,
+            sentMaxTokens: null,
+            usage: {
+              promptTokens: 21_000,
+              completionTokens: 33_678,
+              totalTokens: 54_678,
+            },
+          };
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "short answer" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "completion_truncated" ||
+          event.type === "loop_failed"
+        ) {
+          events.push(event as { type: string } & Record<string, unknown>);
+        }
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-trunc-nocap", workingDir }),
+      {
+        userMessage: "write the module",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(capsSeen).toEqual([undefined, 32_768]);
+    expect(prompts[1]).toContain("cut off after 33678 tokens");
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "completion_truncated",
+        stepIndex: 0,
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        promptTokens: 21_000,
+        retry: { kind: "raise_cap", maxTokens: 32_768 },
+      }),
+    ]);
+    expect(events[0]).not.toHaveProperty("requestedMaxTokens");
   });
 
   it("retries a cut on a leg boundary instead of calling the leg unproductive", async () => {
@@ -519,8 +677,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -579,8 +737,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -625,8 +783,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -659,10 +817,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("reply");
     expect(prompts[0]).toContain("also add the tests");
     expect(prompts[1]).toContain("also add the tests");
-    expect(prompts[1]).toContain("cut off after 8192 tokens");
+    expect(prompts[1]).toContain("cut off after 16384 tokens");
   });
 
-  it("forgets a learned window the server just proved too small", async () => {
+  it("reports a completion that exceeded the learned window, so bootstrap can raise it", async () => {
     const registry = buildDefaultToolRegistry();
     const exceeded: number[] = [];
     const loop = new AgentLoop({
@@ -708,7 +866,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async ({ maxTokens }) => {
         calls += 1;
-        const cap = maxTokens ?? 8_192;
+        // No cap on the first call: the step runs under the config
+        // default (16,384); the retry carries the raised 32,768.
+        const cap = maxTokens ?? 16_384;
         return {
           ...makeCompletion(""),
           stop: false,
@@ -806,6 +966,127 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(calls).toBe(2);
   });
 
+  it("learns the window a native-tool provider names in its 400, repacks and retries once (F30)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    const repacks: Array<{ contextWindow: number; source: string }> = [];
+    const prompts: string[] = [];
+    let learned: number | null = null;
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async ({ prompt }) => {
+        calls += 1;
+        prompts.push(prompt);
+        if (calls === 1) {
+          throw new TransportError(
+            '"vendor" rejected the request (400).',
+            400,
+            "https://x/v1",
+            {
+              cause: new OpenAiHttpError(
+                "openai provider 400: This model's maximum context length is 8192 tokens. However, you requested 9134 tokens (7134 in the messages, 2000 in the completion).",
+                400,
+                "u",
+              ),
+            },
+          );
+        }
+        return makeNativeCompletion([
+          { name: "reply", arguments: JSON.stringify({ text: "fits now" }) },
+        ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => learned,
+      onContextWindowObserved: (contextWindow) => {
+        observed.push(contextWindow);
+        learned = contextWindow;
+      },
+      onEvent: (event) => {
+        if (event.type === "prompt_repacked") repacks.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-size-400", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(observed).toEqual([8_192]);
+    expect(repacks).toEqual([
+      expect.objectContaining({ contextWindow: 8_192, source: "provider", stepIndex: 0 }),
+    ]);
+    expect(prompts[1]).toContain("trimmed to fit this model's window");
+    // The same step, not a new one.
+    expect(result.session.stepCount).toBe(1);
+  });
+
+  it("packs to most of the prompt estimate when the 413 names no window, and fails on a second refusal (F30)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const observed: number[] = [];
+    const failures: string[] = [];
+    let promptTokens = 0;
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        calls += 1;
+        throw new TransportError(
+          '"vendor" rejected the request (413).',
+          413,
+          "https://x/v1",
+          {
+            cause: new OpenAiHttpError(
+              "openai provider 413: the request exceeds the available context size",
+              413,
+              "u",
+            ),
+          },
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      contextWindow: () => null,
+      onContextWindowObserved: (contextWindow) => observed.push(contextWindow),
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "prompt_built") {
+          promptTokens = event.event.prompt.tokens.total;
+        }
+        if (event.type === "loop_failed") failures.push(event.error.message);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-size-413", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(calls).toBe(2);
+    expect(promptTokens).toBeGreaterThan(0);
+    expect(observed).toEqual([Math.floor(promptTokens * 0.8)]);
+    expect(failures[0]).toContain("rejected the request (413)");
+  });
+
   it("fails with the truncation, not the 400, when the provider refuses the raised cap", async () => {
     const registry = buildDefaultToolRegistry();
     const failures: string[] = [];
@@ -823,8 +1104,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             truncated: true,
             usage: {
               promptTokens: 6_000,
-              completionTokens: 8_192,
-              totalTokens: 14_192,
+              completionTokens: 16_384,
+              totalTokens: 22_384,
             },
           };
         }
@@ -860,7 +1141,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("failed");
     expect(calls).toBe(2);
     expect(failures[0]).toContain(
-      "model: model response truncated at 8192 tokens",
+      "model: model response truncated at 16384 tokens",
     );
     expect(failures[0]).not.toContain("rejected the request");
   });
@@ -936,6 +1217,154 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
+  });
+
+  it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
+    // The Codex attempt: a 429 carrying `credit_balance_exhausted` was
+    // parked and retried as rate limiting, 42 times per worker.
+    const registry = buildDefaultToolRegistry();
+    const events: string[] = [];
+    let calls = 0;
+    const body = JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        code: 429,
+        metadata: {
+          raw: '{"error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low"}}',
+        },
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        throw new TransportError(
+          '"openrouter" is rate-limiting this key (429).',
+          429,
+          "https://openrouter.ai/api/v1",
+          {
+            cause: new OpenAiHttpError(
+              `openai provider 429: ${body}`,
+              429,
+              "https://openrouter.ai/api/v1/chat/completions",
+              false,
+              null,
+              "openrouter",
+              undefined,
+              { body: parseProviderErrorBody(body) },
+            ),
+          },
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (
+          event.type === "provider_waiting" ||
+          event.type === "credit_exhausted" ||
+          event.type === "loop_failed" ||
+          event.type === "loop_completed"
+        ) {
+          events.push(event.type);
+        }
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-credit", workingDir }),
+      {
+        userMessage: "keep going",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    // One request, no park, no failure: paused where it stood.
+    expect(calls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(events).toEqual(["credit_exhausted", "loop_completed"]);
+    expect(result.reason).toBe("max_steps");
+    expect(result.stopCause).toBe("credit_exhausted");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.lastError).toBe(
+      'task_stopped:credit_exhausted: "openrouter" is out of credit after 0 steps',
+    );
+    const last = result.session.turns.at(-1);
+    expect(last?.kind).toBe("assistant_reply");
+    expect((last as { text: string }).text).toContain(
+      '"openrouter" reports the account is out of credit',
+    );
+    expect((last as { text: string }).text).toContain("say `continue`");
+  });
+
+  it("waits as long as the provider asked, on a 402 the outage wait would otherwise refuse (F29)", async () => {
+    // OpenRouter's `in_flight_budget_exhausted` with a retry hint ended
+    // a cloud-only run at 2m19s as final. The hint is honoured instead.
+    const registry = buildDefaultToolRegistry();
+    const waits: Array<{ nextRetryMs: number }> = [];
+    let calls = 0;
+    const body = JSON.stringify({
+      error: {
+        code: "in_flight_budget_exhausted",
+        message: "Too many requests in flight for your balance; retry in 1 s",
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new TransportError(
+            '"openrouter" refused the request for lack of credit (402).',
+            402,
+            "https://openrouter.ai/api/v1",
+            {
+              cause: new OpenAiHttpError(
+                `openai provider 402: ${body}`,
+                402,
+                "https://openrouter.ai/api/v1/chat/completions",
+                false,
+                null,
+                "openrouter",
+                undefined,
+                { body: parseProviderErrorBody(body) },
+              ),
+            },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "budget freed" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-inflight", workingDir }),
+      {
+        userMessage: "busy balance",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(calls).toBe(2);
+    expect(waits).toHaveLength(1);
+    // The hint (1 s), not the 2 s backoff.
+    expect(waits[0]!.nextRetryMs).toBe(1_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(950);
+    expect(Date.now() - started).toBeLessThan(1_900);
   });
 
   it("gives up after the wait budget and fails the turn once", async () => {
@@ -1452,7 +1881,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.lastError ?? "").not.toMatch(/max_steps/);
   });
 
-  it("gives the finalization step one repair attempt, then preserves the stalled outcome", async () => {
+  it("refuses a non-terminal call on the final step with a tool result, then preserves the stalled outcome", async () => {
     const registry = buildDefaultToolRegistry();
     let noopRuns = 0;
     registry.register({
@@ -1477,7 +1906,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       // The model insists on a non-terminal tool even on the reserved
-      // final step and its repair attempt.
+      // final step.
       llmComplete: async () => {
         calls += 1;
         return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
@@ -1500,20 +1929,144 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     );
 
-    // Step 0 executes the tool; the finalization step burns its first
-    // completion plus exactly one repair round-trip, and neither may
-    // execute the non-terminal call.
-    expect(calls).toBe(3);
+    // Step 0 executes the tool; the finalization step's call is answered
+    // with a refusal instead of running — no repair round-trip, no
+    // second inference — and the turn stops at the ceiling.
+    expect(calls).toBe(2);
     expect(noopRuns).toBe(1);
-    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(1);
+    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(0);
     expect(result.reason).toBe("max_steps");
     expect(result.session.status).toBe("stalled");
     expect(result.session.lastError).toMatch(
       /task_stopped:step_ceiling: 2 steps/,
     );
+    expect(result.session.turns.at(-2)).toMatchObject({
+      kind: "tool_result",
+      tool: "noop",
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
       text: expect.stringContaining("step ceiling"),
+    });
+  });
+
+  it("keeps the full tool catalog and the same stable prefix on the final step", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
+      },
+      toolDescriptors: [
+        ...TOOLS,
+        { name: "noop", summary: "No-op.", argsSchema: "{}" },
+      ],
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-prefix", workingDir }),
+      {
+        userMessage: "verify",
+        maxSteps: 2,
+        taskMaxSteps: 2,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(prompts).toHaveLength(2);
+    // The stable prefix — everything ahead of the first tail section —
+    // is byte-identical between the ordinary step and the final one; a
+    // catalog narrowed to reply/finish used to change it and move the
+    // session to a cold slot for its last step.
+    const prefix = (p: string) => p.slice(0, p.indexOf("### world"));
+    expect(prefix(prompts[1]!)).toBe(prefix(prompts[0]!));
+    expect(prompts[1]).toContain("noop");
+    expect(prompts[1]).toContain("final allowed step");
+  });
+
+  it("lets a [tool, reply] batch on the final step keep its reply and refuse the tool", async () => {
+    // A real pure-read name, so the batch validator lets `[read, reply]`
+    // through to the dispatch gate (an unregistered name would be
+    // rejected as a batch member before any gate ran).
+    const registry = buildDefaultToolRegistry();
+    let readRuns = 0;
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      async run() {
+        readRuns += 1;
+        return {
+          tool: "os.fs.read",
+          status: "ok",
+          summary: "hello",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(
+          JSON.stringify([
+            { tool: "os.fs.read", args: { path: "notes.txt" } },
+            { tool: "reply", args: { text: "here is the summary" } },
+          ]),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize-tail", workingDir }),
+      {
+        userMessage: "verify",
+        maxSteps: 1,
+        taskMaxSteps: 1,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(readRuns).toBe(0);
+    expect(result.reason).toBe("reply");
+    expect(result.stopCause).toBe("step_ceiling");
+    expect(result.session.turns.at(-2)).toMatchObject({
+      kind: "tool_result",
+      tool: "os.fs.read",
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "here is the summary",
     });
   });
 
@@ -1565,16 +2118,23 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
 
     // With a budget of one, the single step IS the finalization step:
-    // the tool call is rejected before execution and the repair pass
-    // must produce the terminal reply.
+    // the tool call is refused at dispatch — it never runs, there is no
+    // repair pass — and the turn stops at the ceiling with the refusal
+    // on record.
     expect(prompts[0]).toContain("final allowed step");
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
     expect(noopRuns).toBe(0);
-    expect(result.reason).toBe("reply");
-    expect(result.session.status).toBe("pending");
+    expect(result.reason).toBe("max_steps");
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.turns.at(-2)).toMatchObject({
+      kind: "tool_result",
+      tool: "noop",
+      status: "error",
+      summary: "final step: only reply or finish run here",
+    });
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: "summary only",
+      text: expect.stringContaining("step ceiling"),
     });
   });
 
@@ -1720,6 +2280,77 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
   });
 
+  it("warns once the same result has come back three times, whatever the arguments (F25)", async () => {
+    // The outcome-repeat detector end to end: a probe that answers the
+    // same thing to three different questions. No argument-keyed
+    // detector can see it (three distinct signatures), the tool is not a
+    // read (no coverage), and no command is recognised as a test.
+    const registry = buildDefaultToolRegistry();
+    let runCount = 0;
+    registry.register({
+      name: "probe",
+      description: "probe",
+      readonly: true,
+      async run() {
+        runCount += 1;
+        return {
+          tool: "probe",
+          status: "error",
+          summary: "SyntaxError: Unexpected token } (line 128)",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const script = [
+      { tool: "probe", args: { n: 1 } },
+      { tool: "probe", args: { n: 2 } },
+      { tool: "probe", args: { n: 3 } },
+      { tool: "finish", args: { summary: "done" } },
+    ];
+    const prompts: string[] = [];
+    const detected: Extract<AgentLoopEvent, { type: "loop_detected" }>[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt }) => {
+        const step = prompts.length;
+        prompts.push(prompt);
+        return makeCompletion(
+          JSON.stringify(script[Math.min(step, script.length - 1)]),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") detected.push(event);
+      },
+    });
+    const session = createEmptySessionState({ id: "s-outcome-loop", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "check it",
+      maxSteps: 6,
+      signal: new AbortController().signal,
+    });
+    // Warn only: every probe ran and the turn ended on the model's own
+    // `finish`, not on a veto or a breaker.
+    expect(runCount).toBe(3);
+    expect(result.reason).toBe("finish");
+    expect(detected).toHaveLength(1);
+    expect(detected[0]).toMatchObject({
+      detector: "outcome_repeat",
+      level: "warn",
+      count: 3,
+      tool: "probe",
+    });
+    // The notice lands on the prompt AFTER the third identical result.
+    expect(prompts[3]).toContain("Same result three times from `probe`");
+    expect(prompts[3]).toContain("change approach or write");
+    expect(prompts.slice(0, 3).join("\n")).not.toContain("change approach or write");
+  });
+
   it("ends the turn with a graceful reply (not loop_failed) when the breaker trips", async () => {
     const registry = buildDefaultToolRegistry();
     let runCount = 0;
@@ -1789,6 +2420,83 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // Critical vetoes prevented the tool from running every step — the
     // veto plateau means `noop` ran far fewer times than the step budget.
     expect(runCount).toBeLessThan(12);
+  });
+
+  // Issue #458: a wandering escalation rides the breaker path, and the
+  // forced reply used to call a turn of distinct, successful fetches a
+  // "no-progress loop" with "blocked attempts".
+  it("words the forced reply for a wandering stop as a spread cap, not a repeat", async () => {
+    const registry = buildDefaultToolRegistry();
+    let runCount = 0;
+    registry.register({
+      name: "os.web.fetch",
+      description: "fetch",
+      readonly: true,
+      async run(args) {
+        runCount += 1;
+        const url = (args as { url?: string }).url ?? "";
+        return {
+          tool: "os.web.fetch",
+          status: "ok",
+          summary: `content of ${url}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const detected: Array<{ level?: string; detector?: string; count: number }> =
+      [];
+    let step = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        step += 1;
+        return makeCompletion(
+          JSON.stringify({
+            tool: "os.web.fetch",
+            args: { url: `https://example.com/file-${step}.ts` },
+          }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") {
+          detected.push({
+            level: event.level,
+            detector: event.detector,
+            count: event.count,
+          });
+        }
+      },
+    });
+    const session = createEmptySessionState({
+      id: "s-wandering-breaker",
+      workingDir,
+    });
+    // Default escalation is 12: eleven distinct fetches run, the twelfth
+    // reaches the cap and is vetoed, and the turn ends gracefully.
+    const result = await loop.runTurn(session, {
+      userMessage: "read these files",
+      maxSteps: 20,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(runCount).toBe(11);
+    expect(detected.at(-1)).toMatchObject({
+      level: "breaker",
+      detector: "wandering",
+      count: 12,
+    });
+    const last = result.session.turns.at(-1);
+    expect(last).toMatchObject({ kind: "assistant_reply" });
+    const text = (last as { text: string }).text;
+    expect(text).toContain("hit the limit on different arguments");
+    expect(text).toContain("12, counting the last call");
+    expect(text).not.toMatch(/no-progress|blocked attempts|repeated/i);
   });
 
   it("refreshes memory context between non-terminal tool steps", async () => {
@@ -2780,8 +3488,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         truncated: true,
         usage: {
           promptTokens: 6_000,
-          completionTokens: 8_192,
-          totalTokens: 14_192,
+          completionTokens: 16_384,
+          totalTokens: 22_384,
         },
       },
       makeNativeCompletion(),

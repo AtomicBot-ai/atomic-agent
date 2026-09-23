@@ -19,6 +19,8 @@ import {
   describeImageViaLlamaServer,
   resolveVisionCapabilities,
 } from "./llama-server-vision.js";
+import { ServerTemplateRenderer } from "./server-template-renderer.js";
+import type { StructuredLogger } from "../../../tracing/structured-logger.js";
 
 /**
  * Provider adapter for vision describe-style calls against an external
@@ -64,10 +66,18 @@ export class LlamaServerProvider implements LlmProvider {
       fetchImpl?: typeof fetch;
       baseUrlOverride?: string;
       requestTimeoutMs?: number;
+      /** The model whose template is in force; keys the rendered-prefix cache. */
+      getModelId?: () => string | null;
+      logger?: StructuredLogger;
     },
   ) {
     this.id = options.id ?? "local-llama";
     this.getProfile = options.getProfile;
+    this.getModelId = options.getModelId;
+    this.templates = new ServerTemplateRenderer({
+      applyTemplate: (messages, kwargs) => client.applyTemplate(messages, kwargs),
+      ...(options.logger ? { logger: options.logger } : {}),
+    });
     this.visionEnabledByConfig = options.visionEnabledByConfig;
     this.visionAutoDetect = options.visionAutoDetect;
     this.maxImageBytes = options.maxImageBytes;
@@ -78,6 +88,8 @@ export class LlamaServerProvider implements LlmProvider {
   }
 
   private readonly getProfile: () => ModelProfile;
+  private readonly getModelId: (() => string | null) | undefined;
+  private readonly templates: ServerTemplateRenderer;
   private readonly visionEnabledByConfig: boolean;
   private readonly visionAutoDetect: boolean;
   private readonly maxImageBytes: number;
@@ -87,13 +99,27 @@ export class LlamaServerProvider implements LlmProvider {
   private readonly requestTimeoutMs: number;
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    return this.client.complete(request);
+    return this.client.complete(await this.rendered(request));
   }
 
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    return yield* this.client.completeStream(request);
+    return yield* this.client.completeStream(await this.rendered(request));
+  }
+
+  /**
+   * A request that carries the prompt as `chat` parts is rendered
+   * through the model's own template (F31); anything else, and any
+   * render failure, sends the raw text as before. The grammar rides
+   * along either way.
+   */
+  private async rendered(request: CompletionRequest): Promise<CompletionRequest> {
+    if (request.chat === undefined) return request;
+    const modelKey = `${this.getProfile().id}/${this.getModelId?.() ?? ""}`;
+    const prompt = await this.templates.render(request.chat, modelKey);
+    if (prompt === null) return request;
+    return { ...request, prompt };
   }
 
   async health(): Promise<ProviderHealthResult> {

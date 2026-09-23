@@ -62,6 +62,34 @@ describe("describeRunMode", () => {
     expect(line).not.toContain("stored fusion, effective");
   });
 
+  it("says what will run when given the worker facts (F21)", () => {
+    // `workers` is only the default for a call that names no width; it
+    // read "2 workers" next to a 5-slot server. With the facts the line
+    // states the bound that actually applies.
+    expect(
+      describeRunMode(base, { workerLeg: "local", workerSlots: 5 }),
+    ).toContain("; workers: up to 5 local slots");
+    expect(
+      describeRunMode(base, { workerLeg: "local", workerSlots: null }),
+    ).toContain("; workers: local slots not observed yet");
+    expect(
+      describeRunMode({ ...base, cloudWorkers: 6 }, { workerLeg: "cloud", workerSlots: null }),
+    ).toContain("; workers: up to 6 cloud workers");
+    expect(
+      describeRunMode(base, { workerLeg: "cloud", workerSlots: null }),
+    ).toContain("; workers: up to 4 cloud workers");
+    expect(
+      describeRunMode(base, { workerLeg: null, workerSlots: null }),
+    ).not.toContain("workers:");
+    // A plain mode has no workers to describe.
+    expect(
+      describeRunMode(
+        { ...base, stored: null, effective: "local", primaryProviderId: "local-llama" },
+        { workerLeg: "local", workerSlots: 5 },
+      ),
+    ).toBe("Local — active provider local-llama");
+  });
+
   it("capitalises the mode words", () => {
     expect(["local", "cloud", "fusion"].map(runModeLabel)).toEqual([
       "Local",

@@ -7,3 +7,4 @@ export type {
 } from "./resolve-run-mode.js";
 export { describeRunModeDegradation } from "./run-mode-degradation.js";
 export { describeRunMode, runModeLabel } from "./run-mode-summary.js";
+export type { RunModeWorkerFacts } from "./run-mode-summary.js";

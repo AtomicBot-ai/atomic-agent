@@ -59,6 +59,14 @@ export type StepEvent =
       stepIndex: number;
       attempt: 1 | 2;
       completion: CompletionResult;
+      /**
+       * How much of the completion was reasoning — the text before the
+       * close sentinel (or the server's `reasoning_content`), in the
+       * budget's units of four characters per token (F49). A step that
+       * hit `localModels.reasoningBudgetTokens` shows `>= budget`.
+       * Set by the step executor; absent from hand-built events.
+       */
+      reasoningTokens?: number;
     }
   /**
    * Non-fatal: reasoning model emitted `<think>...</think>` blocks before
@@ -121,6 +129,13 @@ export type StepEvent =
        * the text; the TUI lists them under the bubble.
        */
       attachments?: readonly string[];
+      /**
+       * An interim message, not the end of the turn: the model batched
+       * this `reply` with work tools, the work ran and the step loop
+       * goes on (`progress-note-reply.ts`). Consumers that treat
+       * `assistant_reply` as the turn's answer should expect another.
+       */
+      progressNote?: true;
     }
   /**
    * Emitted once when the first `parseToolCall` threw and the executor
@@ -148,6 +163,12 @@ export type StepEvent =
       kept: string;
       /** Tool names of dropped calls in original batch-index order. */
       dropped: string[];
+      /**
+       * Tool names dropped because the turn's policy (plan mode, the
+       * fusion orchestrator gate) would have refused them — not to be
+       * retried. Omitted when none. Disjoint from `dropped`.
+       */
+      refused?: string[];
       /** Canonical trim cause. New reasons may be added over time. */
       reason: "approval-gated-batched";
     }

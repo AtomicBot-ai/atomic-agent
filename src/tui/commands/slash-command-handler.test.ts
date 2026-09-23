@@ -509,4 +509,23 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerQuit).toBe(false);
     expect(result.triggerAbort).toBe(false);
   });
+
+  it("/onboarding asks to re-run first-time setup, and /setup is the same verb", () => {
+    for (const line of ["/onboarding", "/setup"]) {
+      const result = dispatchSlashCommand(line);
+      expect(result.triggerOnboardingRerun, line).toBe(true);
+      // The flow is the feedback; it opens over the chat, so a system
+      // line would land behind it.
+      expect(result.systemMessage, line).toBeUndefined();
+      expect(result.actions, line).toEqual([]);
+      expect(result.triggerQuit, line).toBe(false);
+      expect(result.triggerSessionNew, line).toBe(false);
+    }
+  });
+
+  it("lists /onboarding in /help", () => {
+    expect(dispatchSlashCommand("/help").systemMessage).toContain(
+      "/onboarding (aliases: /setup) — run first-time setup again",
+    );
+  });
 });

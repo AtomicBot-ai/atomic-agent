@@ -1,5 +1,8 @@
 import { FanoutScopeRegistry } from "../../approval/fanout-scope.js";
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { RunTurnResult } from "../../agent/agent-loop.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
@@ -24,6 +27,7 @@ function fusionMode(over: Partial<ResolvedRunMode> = {}): ResolvedRunMode {
     workerProviderId: "local-llama",
     workerModel: "small",
     workers: 3,
+    workersPinned: true,
     workerMaxSteps: 7,
     workerTimeoutMs: 60_000,
     primaryProviderId: "openrouter",
@@ -169,6 +173,28 @@ describe("fusion.delegate", () => {
     expect(pins).toEqual(["local-llama", "other-llama"]);
   });
 
+  it("labels a task that named no title with its humanised id — in the table, the details and the feed", async () => {
+    // Every task of one live call lacked `title`; refusing it cost a
+    // ~5 tok/s orchestrator four minutes for a label.
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+      }),
+    );
+    const result = await tool.run(
+      { tasks: [{ id: "fix_main_sync", instructions: "Fix it." }] },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary.split("\n")[1]).toBe("- [fix_main_sync] ok — fix main sync");
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]).toMatchObject({ id: "fix_main_sync", title: "fix main sync" });
+    expect(
+      events.filter((e) => e.role === "worker").map((e) => e.title),
+    ).toEqual(["fix main sync", "fix main sync"]);
+  });
+
   it("brackets the fan-out with the orchestrator's own model", async () => {
     // Between these two lines every feed line belongs to a worker on the
     // local leg; the operator can otherwise only guess which model is
@@ -281,16 +307,60 @@ describe("fusion.delegate", () => {
     expect(result.summary).not.toContain("localModels.managed.parallel");
   });
 
-  it("falls back to what the machine serves when the call names no width", async () => {
-    // Not to `runMode.fusion.workers`: the operator is not the party
-    // that knows how divisible this job is, and the slot pool is already
-    // the honest ceiling. A call that named nothing gets the capacity.
+  it("runs one local worker at a time when the call names no width and nothing is pinned", async () => {
+    // Slots share one GPU: the benchmark measured two local workers at
+    // 2.6-2.9 tok/s each against 6.4 for one, and a fan-out that
+    // overflows the shared context loses every worker at once. So a
+    // call that named nothing on a slot-affine leg gets one worker
+    // unless the operator pinned `runMode.fusion.workers`.
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 8 },
+        resolveRunMode: () => fusionMode({ workers: 2, workersPinned: false }),
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(result.details.maxWorkers).toBe(1);
+    expect(result.details.requestedWorkers).toBe(1);
+  });
+
+  it("takes a pinned `runMode.fusion.workers` as the default width on a local leg", async () => {
+    // `workers: 3` is pinned in this fixture; six tasks on eight slots
+    // run three at a time.
     const tool = buildFusionDelegateTool(
       deps({ slotManager: { poolSize: () => 8 } }),
     );
     const result = await tool.run({ tasks: sixTasks() }, ctx());
-    expect(result.details.maxWorkers).toBe(6);
-    expect(result.details.requestedWorkers).toBe(8);
+    expect(result.details.maxWorkers).toBe(3);
+    expect(result.details.requestedWorkers).toBe(3);
+  });
+
+  it("takes the configured default on a cloud leg, pinned or not", async () => {
+    const tool = buildFusionDelegateTool(
+      deps({
+        workerSupportsSlotAffinity: () => false,
+        resolveRunMode: () => fusionMode({ workers: 4, workersPinned: false }),
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(result.details.maxWorkers).toBe(4);
+  });
+
+  it("honours an explicit maxWorkers on a local leg up to the pool", async () => {
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 4 },
+        resolveRunMode: () => fusionMode({ workers: 2, workersPinned: false }),
+      }),
+    );
+    expect(
+      (await tool.run({ tasks: sixTasks(), maxWorkers: 3 }, ctx())).details
+        .maxWorkers,
+    ).toBe(3);
+    expect(
+      (await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx())).details
+        .maxWorkers,
+    ).toBe(4);
   });
 
   it("never runs more workers than there are tasks", async () => {
@@ -332,12 +402,117 @@ describe("fusion.delegate", () => {
       deps({
         slotManager: { poolSize: () => 1 },
         workerSupportsSlotAffinity: () => false,
+        resolveRunMode: () => fusionMode({ cloudWorkers: 8 }),
       }),
     );
     const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
     expect(result.details.maxWorkers).toBe(6);
     expect(result.details.slotPoolSize).toBeUndefined();
     expect(result.summary).not.toContain("localModels.managed.parallel");
+    expect(result.summary).not.toContain("cloudWorkers");
+  });
+
+  it("hands the worker reasoning and cap to every worker turn, and prices the fan-out (F20)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (_session, _message, options) => {
+          seen.push({ ...options });
+          options.eventHook?.({
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                content: "",
+                reasoningContent: "",
+                stop: true,
+                truncated: false,
+                timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+                cacheHitTokens: 0,
+                slotId: 0,
+                modelId: "small",
+                usage: { promptTokens: 1_000_000, completionTokens: 250_000, totalTokens: 1_250_000 },
+              },
+            },
+          });
+          return turnResult();
+        },
+        resolveRunMode: () =>
+          fusionMode({ workerReasoning: "low", workerMaxOutputTokens: 12_000 }),
+        resolveWorkerPricing: (providerId, modelId) =>
+          providerId === "local-llama" && modelId === "small"
+            ? { input: 1, output: 4 }
+            : undefined,
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ reasoningEffort: "low", maxOutputTokens: 12_000 });
+    expect(result.summary).toContain("cloud spend $4.00 on small (2,000,000 in / 500,000 out)");
+    expect(result.details.workerSpendUsd).toBeCloseTo(4);
+  });
+
+  it("sends no reasoning or cap and no spend line when nothing is configured or priced (F20)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (_session, _message, options) => {
+          seen.push({ ...options });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(seen[0]).not.toHaveProperty("reasoningEffort");
+    expect(seen[0]).not.toHaveProperty("maxOutputTokens");
+    expect(result.summary).not.toContain("cloud spend");
+    expect(result.details).not.toHaveProperty("workerSpendUsd");
+  });
+
+  it("sizes a local worker's time limit from the measured speed, a cloud one from the ceiling (F19)", async () => {
+    const limits: Array<number | undefined> = [];
+    const capture = (over: Partial<FusionDelegateDeps>) =>
+      buildFusionDelegateTool(
+        deps({
+          runTurn: async (_s, _m, options) => {
+            limits.push(options.taskMaxDurationMs);
+            return turnResult();
+          },
+          resolveRunMode: () => fusionMode({ workerTimeoutMs: 2_700_000 }),
+          localTokensPerSecond: () => 10,
+          ...over,
+        }),
+      );
+    const task = { id: "t1", title: "One", instructions: "Do one", files: ["a.js", "b.js"] };
+    await capture({}).run({ tasks: [task] }, ctx());
+    expect(limits[0]).toBeGreaterThanOrEqual(600_000);
+    expect(limits[0]).toBeLessThan(2_700_000);
+    await capture({ workerSupportsSlotAffinity: () => false }).run({ tasks: [task] }, ctx());
+    expect(limits[1]).toBe(2_700_000);
+    await capture({ localTokensPerSecond: () => null }).run({ tasks: [task] }, ctx());
+    expect(limits[2]).toBe(2_700_000);
+  });
+
+  it("clamps a cloud fan-out to cloudWorkers and says so (F21)", async () => {
+    // A cloud leg has no slot pool, so before this the width was whatever
+    // the model asked for — three workers from a one-worker config, and
+    // no ceiling on forty. Default cap 4; the note names the knob.
+    const tool = buildFusionDelegateTool(
+      deps({
+        slotManager: { poolSize: () => 1 },
+        workerSupportsSlotAffinity: () => false,
+      }),
+    );
+    const result = await tool.run({ tasks: sixTasks(), maxWorkers: 6 }, ctx());
+    expect(result.details.maxWorkers).toBe(4);
+    expect(result.details.requestedWorkers).toBe(6);
+    expect(result.summary).toContain(
+      "maxWorkers 6 was clamped to 4, the cloud worker cap (`llm.runMode.fusion.cloudWorkers`)",
+    );
+    // A call that names nothing keeps `workers` as its default, under the cap.
+    const quiet = await tool.run({ tasks: sixTasks() }, ctx());
+    expect(quiet.details.maxWorkers).toBe(3);
+    expect(quiet.summary).not.toContain("cloudWorkers");
   });
 
   it("names both numbers and the knob when the pool is the binding constraint", async () => {
@@ -371,6 +546,31 @@ describe("fusion.delegate", () => {
     expect(pair.summary).toContain("1 request slot,");
   });
 
+  it("hands the parent turn's original request to every worker brief", async () => {
+    const briefs: string[] = [];
+    const asked: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        resolveOriginalRequest: (sessionId) => {
+          asked.push(sessionId);
+          return "Build the whole snake game";
+        },
+        runTurn: async (_session, userMessage) => {
+          briefs.push(userMessage);
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(asked).toEqual(["s-parent"]);
+    expect(briefs).toHaveLength(2);
+    for (const brief of briefs) {
+      expect(brief).toContain("ORIGINAL REQUEST — context only");
+      expect(brief).toContain("Build the whole snake game");
+    }
+  });
+
   it("stays status:ok with partial results when workers fail", async () => {
     // An orchestrator handed a bare error learns nothing about which
     // parts survived, and partial results are the value of a fan-out.
@@ -384,13 +584,104 @@ describe("fusion.delegate", () => {
     );
     const result = await tool.run({ tasks: TASKS }, ctx());
     expect(result.status).toBe("ok");
+    expect(result.details.outcome).toBe("partial");
     const rows = result.details.tasks as WorkerTaskResult[];
     expect(rows.map((r) => r.status)).toEqual(["failed", "ok"]);
+    expect(result.summary.split("\n")[0]).toBe("2 tasks: 1 ok, 1 failed");
     expect(result.summary).toContain("[t1] failed");
     expect(result.summary).toContain("[t2] ok");
   });
 
-  it("survives an aborted orchestrator turn without throwing", async () => {
+  it("reports all_ok when every task delivered", async () => {
+    const result = await buildFusionDelegateTool(deps()).run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.outcome).toBe("all_ok");
+  });
+
+  it("carries a worker's replaced input into the head line, the row and details.tasks (F43)", async () => {
+    // Live, 2026-09-15: the worker's write result warned that it had
+    // replaced the user's 2,401-row `sales.csv`; the orchestrator saw
+    // the warning only inside the worker's prose block and merged.
+    const replaced = {
+      path: "/repo/sales.csv",
+      display: "sales.csv",
+      bytesBefore: 60_000,
+      linesBefore: 2401,
+      linesAfter: 9,
+      shrunk: true,
+      headerChanged: false,
+      saved: "saved",
+      copy: "1-sales.csv",
+    };
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (session, _message, options) => {
+          if (session.id.endsWith("1")) {
+            options.eventHook?.({
+              type: "llm_event",
+              event: {
+                type: "tool_call_executed",
+                result: {
+                  tool: "os.fs.write",
+                  status: "ok",
+                  summary: "⚠ replaced the user's file `sales.csv` (2,401 lines → 9); …",
+                  details: { replaced },
+                  truncated: false,
+                },
+                batchIndex: 0,
+                batchSize: 1,
+              },
+            });
+          }
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "done" },
+          });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.outcome).toBe("all_ok");
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.replacedInputs).toEqual([
+      {
+        path: "sales.csv",
+        tool: "os.fs.write",
+        bytesBefore: 60_000,
+        linesBefore: 2401,
+        linesAfter: 9,
+        headerChanged: false,
+        saved: "saved",
+      },
+    ]);
+    expect(rows[1]?.replacedInputs).toBeUndefined();
+    const lines = result.summary.split("\n");
+    expect(lines[0]).toBe("2 tasks: 2 ok — 1 replaced input");
+    expect(lines[1]).toBe(
+      "- [t1] ok — One — replaced the user's file sales.csv (2,401 → 9 lines)",
+    );
+    expect(lines[2]).toBe("- [t2] ok — Two");
+  });
+
+  it("is status:error only when every task failed — the per-task rows still come back", async () => {
+    // A fan-out where every worker died used to return `ok`; an
+    // orchestrator reading the status merged nothing as something.
+    const tool = buildFusionDelegateTool(
+      deps({ runTurn: async () => Promise.reject(new Error("worker died")) }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.details.outcome).toBe("all_failed");
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows.map((r) => r.status)).toEqual(["failed", "failed"]);
+    expect(result.summary).toContain("2 tasks: 2 failed");
+    expect(result.summary).toContain("[t1] failed");
+    expect(result.summary).toContain("[t2] failed");
+  });
+
+  it("survives an aborted orchestrator turn without throwing, and reports it as every task cancelled", async () => {
     const controller = new AbortController();
     controller.abort();
     const tool = buildFusionDelegateTool(
@@ -406,7 +697,10 @@ describe("fusion.delegate", () => {
       { tasks: TASKS },
       ctx({ signal: controller.signal }),
     );
-    expect(result.status).toBe("ok");
+    // Nothing was delivered, so the call itself is an error — but a
+    // readable one, with the rows.
+    expect(result.status).toBe("error");
+    expect(result.details.outcome).toBe("all_failed");
     expect(
       (result.details.tasks as WorkerTaskResult[]).every(
         (r) => r.status === "cancelled",
@@ -470,6 +764,447 @@ describe("fusion.delegate", () => {
     expect(asked).toHaveLength(1);
   });
 
+  describe("with a contract", () => {
+    const CONTRACT = {
+      owners: { "js/ship.js": "t1", "index.html": "t2" },
+      provides: [
+        { task: "t1", kind: "symbol", name: "HD.Ship", in: "js/ship.js" },
+        { task: "t1", kind: "symbol", name: "HD.Ship.reset", in: "js/ship.js" },
+        { task: "t2", kind: "id", name: "btn-launch", in: "index.html" },
+      ],
+      requires: [{ task: "t2", name: "HD.Ship" }],
+      checks: [
+        { task: "t1", kind: "command", cmd: "node", args: ["--check", "js/ship.js"] },
+        { task: "t2", kind: "page", path: "index.html", checks: ["no errors"] },
+        { kind: "command", cmd: "npm", args: ["test"] },
+      ],
+    };
+
+    function fixture(): string {
+      const dir = mkdtempSync(join(tmpdir(), "fusion-delegate-contract-"));
+      mkdirSync(join(dir, "js"));
+      writeFileSync(join(dir, "js", "ship.js"), "HD.Ship = class {};");
+      writeFileSync(join(dir, "index.html"), '<button id="launch-btn"></button>');
+      return dir;
+    }
+
+    it("briefs every worker with it, checks presence on disk and runs the checks through the injected runner", async () => {
+      const dir = fixture();
+      try {
+        const briefs: string[] = [];
+        const runChecks = vi.fn(
+          async (specs: readonly Record<string, unknown>[], runCtx: { workingDir: string }) => ({
+            ok: false,
+            results: specs.map((spec) =>
+              spec.kind === "page"
+                ? { ok: false, summary: "no errors: 1 pageerror — ReferenceError: p is not defined" }
+                : { ok: true, summary: `${runCtx.workingDir}: exit 0` },
+            ),
+          }),
+        );
+        const tool = buildFusionDelegateTool(
+          deps({
+            workingDir: dir,
+            runChecks,
+            runTurn: async (_session, userMessage) => {
+              briefs.push(userMessage);
+              return turnResult();
+            },
+          }),
+        );
+        const result = await tool.run(
+          { tasks: TASKS, contract: CONTRACT },
+          ctx({ workingDir: dir }),
+        );
+        expect(briefs).toHaveLength(2);
+        expect(briefs[0]).toContain("CONTRACT — the interface between the parts");
+        expect(briefs[0]).toContain("You provide: symbol HD.Ship in js/ship.js; symbol HD.Ship.reset in js/ship.js");
+        expect(briefs[1]).toContain("You may rely on: HD.Ship (symbol from t1 in js/ship.js)");
+
+        // The runner sees the specs without their `task` key, and the call's cwd.
+        expect(runChecks).toHaveBeenCalledTimes(1);
+        expect(runChecks.mock.calls[0]![0]).toEqual([
+          { kind: "command", cmd: "node", args: ["--check", "js/ship.js"] },
+          { kind: "page", path: "index.html", checks: ["no errors"] },
+          { kind: "command", cmd: "npm", args: ["test"] },
+        ]);
+        expect(runChecks.mock.calls[0]![1].workingDir).toBe(dir);
+
+        // Presence: `HD.Ship.reset` was never written; the id is spelled the other way.
+        const lines = result.summary.split("\n");
+        // t2 requires what t1 provides, so t2 ran in a second wave (F45).
+        expect(lines[0]).toBe("2 tasks in 2 waves (t1 → t2): 1 ok, 1 failed");
+        expect(lines[1]).toBe(
+          "contract: 2 missing — [t1] symbol HD.Ship.reset not in js/ship.js; [t2] id btn-launch not in index.html; call-level checks: 1 of 1 passed",
+        );
+        expect(lines[2]).toBe(
+          "- [t1] ok — One — checks: 1 of 1 passed — contract: symbol HD.Ship.reset not in js/ship.js",
+        );
+        // The task whose declared check failed is `failed`, with the verdict as its error.
+        expect(lines[3]).toBe(
+          "- [t2] failed — Two — error: checks: no errors: 1 pageerror — ReferenceError: p is not defined — checks: 1 of 1 failed — contract: id btn-launch not in index.html",
+        );
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["ok", "failed"]);
+        const report = result.details.contract as { findings: unknown[]; checks: unknown[] };
+        expect(report.findings).toHaveLength(3);
+        expect(report.checks).toHaveLength(3);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("reports declared checks as not run when no runner is wired, and never fails a task on them", async () => {
+      const dir = fixture();
+      try {
+        const tool = buildFusionDelegateTool(deps({ workingDir: dir }));
+        const result = await tool.run(
+          { tasks: TASKS, contract: CONTRACT },
+          ctx({ workingDir: dir }),
+        );
+        expect(result.summary.split("\n")[1]).toContain("3 checks not run — no check runner is wired");
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["ok", "ok"]);
+        expect(rows[0]).not.toHaveProperty("checks");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("runs a contract whose require has no provider and whose provide cannot be checked, warning everyone instead of refusing", async () => {
+      // Live, 2026-09-15: the third and fourth consecutive refusals of
+      // one fan-out, ~4–5 minutes of local generation each, were these
+      // two. Neither stops a worker from working, so the call runs and
+      // the notes travel with it — into every brief, onto the
+      // `contract:` line, into the details.
+      const dir = fixture();
+      try {
+        const briefs: string[] = [];
+        const tool = buildFusionDelegateTool(
+          deps({
+            workingDir: dir,
+            runTurn: async (_session, userMessage) => {
+              briefs.push(userMessage);
+              return turnResult();
+            },
+          }),
+        );
+        const result = await tool.run(
+          {
+            tasks: [
+              { id: "t1", title: "One", instructions: "x" },
+              { id: "organize", instructions: "y" },
+            ],
+            contract: {
+              provides: [
+                { task: "t1", kind: "symbol", name: "HD.Ship", in: "js/ship.js" },
+                { task: "organize", kind: "other", name: "done" },
+              ],
+              requires: [{ task: "t1", name: "organized_files" }],
+            },
+          },
+          ctx({ workingDir: dir }),
+        );
+        const provideNote =
+          'provides "done" (task organize) cannot be checked: no `in`, no owned path, no declared files';
+        const requireNote =
+          'requires "organized_files" (task t1) has no provider — nothing produces it';
+        expect(result.status).toBe("ok");
+        expect(briefs).toHaveLength(2);
+        for (const brief of briefs) {
+          expect(brief).toContain(`contract: ${provideNote}`);
+          expect(brief).toContain(`contract: ${requireNote}`);
+          expect(brief).toContain("- [organize] other done");
+        }
+        expect(briefs[0]).toContain("You may rely on: nothing from the other parts");
+        const lines = result.summary.split("\n");
+        expect(lines[0]).toBe("2 tasks: 2 ok");
+        expect(lines[1]).toBe(
+          `contract: all 1 provide present; ${provideNote}; ${requireNote}`,
+        );
+        expect(lines[2]).toBe("- [t1] ok — One");
+        // The title-less task is labelled by its id.
+        expect(lines[3]).toBe("- [organize] ok — organize");
+        const report = result.details.contract as {
+          findings: unknown[];
+          warnings: string[];
+        };
+        // The uncheckable provide got no finding — nothing was searched.
+        expect(report.findings).toHaveLength(1);
+        expect(report.warnings).toEqual([provideNote, requireNote]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a malformed call with every problem named at once, before any worker runs", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn }));
+      const result = await tool.run(
+        {
+          tasks: [
+            { id: "a" },
+            { id: "b", instructions: "x", files: ["ok.js", 3] },
+          ],
+          contract: { provides: [{ task: "ghost", kind: "file", name: "x" }] },
+        },
+        ctx(),
+      );
+      expect(result.status).toBe("error");
+      expect(result.summary).toContain(
+        "validation: tasks[0].instructions must be a non-empty string; " +
+          "tasks[1].files[1] must be a non-empty string; " +
+          'contract.provides[0].task names unknown task "ghost"',
+      );
+      expect(runTurn).not.toHaveBeenCalled();
+    });
+
+    it("rejects a contract that does not bind the tasks, before any worker runs", async () => {
+      const runTurn = vi.fn(async () => turnResult());
+      const tool = buildFusionDelegateTool(deps({ runTurn }));
+      const result = await tool.run(
+        {
+          tasks: TASKS,
+          contract: { provides: [{ task: "ghost", kind: "file", name: "a" }] },
+        },
+        ctx(),
+      );
+      expect(result.status).toBe("error");
+      expect(result.summary).toContain('contract.provides[0].task names unknown task "ghost"');
+      expect(runTurn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("waves ordered by the contract (F45)", () => {
+    it("is byte-identical without a contract: one wave, no wave plan on the head line or in the details", async () => {
+      const tool = buildFusionDelegateTool(deps());
+      const result = await tool.run({ tasks: TASKS, maxWorkers: 2 }, ctx());
+      const rows = (result.details.tasks as WorkerTaskResult[]).map(
+        ({ durationMs: _ms, ...row }) => row,
+      );
+      expect(result.summary).toMatchInlineSnapshot(`
+        "2 tasks: 2 ok
+        - [t1] ok — One
+        - [t2] ok — Two
+        [t1] ok — One (1 steps, 0s, 0 tool calls, 0 errors)
+        (the worker produced no reply)
+        [t2] ok — Two (1 steps, 0s, 0 tool calls, 0 errors)
+        (the worker produced no reply)"
+      `);
+      expect(result.details).not.toHaveProperty("waves");
+      expect({ ...result.details, tasks: rows }).toMatchInlineSnapshot(`
+        {
+          "maxWorkers": 2,
+          "outcome": "all_ok",
+          "requestedWorkers": 2,
+          "slotPoolSize": 4,
+          "tasks": [
+            {
+              "id": "t1",
+              "reply": "",
+              "status": "ok",
+              "stepCount": 1,
+              "title": "One",
+              "tools": {
+                "byTool": {},
+                "calls": 0,
+                "errors": 0,
+                "writes": 0,
+              },
+            },
+            {
+              "id": "t2",
+              "reply": "",
+              "status": "ok",
+              "stepCount": 1,
+              "title": "Two",
+              "tools": {
+                "byTool": {},
+                "calls": 0,
+                "errors": 0,
+                "writes": 0,
+              },
+            },
+          ],
+        }
+      `);
+    });
+
+    /** The live pipeline: `analyze` provides the manifest both others require. */
+    const PIPELINE = [
+      { id: "analyze", title: "Analyze", instructions: "a", files: ["manifest.json"] },
+      { id: "organize", title: "Organize", instructions: "o" },
+      { id: "index", title: "Index", instructions: "i" },
+    ];
+    const PIPELINE_CONTRACT = {
+      provides: [{ task: "analyze", kind: "file", name: "manifest.json" }],
+      requires: [
+        { task: "organize", name: "manifest.json" },
+        { task: "index", name: "manifest.json" },
+      ],
+    };
+
+    /**
+     * A fake `runTurn` that records, for each worker, which siblings had
+     * already RESOLVED when it started, and how many were in flight.
+     */
+    function ordering(over: {
+      reasonFor?: (taskId: string) => RunTurnResult["reason"];
+      briefs?: string[];
+    } = {}) {
+      const started: string[] = [];
+      const resolvedBefore: Record<string, string[]> = {};
+      const resolved: string[] = [];
+      let inFlight = 0;
+      let peakInFlight = 0;
+      const runTurn: FusionDelegateDeps["runTurn"] = async (session, brief) => {
+        const taskId = (session.metadata as { fusionWorker: { taskId: string } })
+          .fusionWorker.taskId;
+        started.push(taskId);
+        over.briefs?.push(brief);
+        resolvedBefore[taskId] = [...resolved];
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        resolved.push(taskId);
+        return turnResult({ reason: over.reasonFor?.(taskId) ?? "reply" });
+      };
+      return { runTurn, started, resolvedBefore, peak: () => peakInFlight };
+    }
+
+    it("runs the dependents in a second wave, after the provider's turn resolved", async () => {
+      const fake = ordering();
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        { tasks: PIPELINE, contract: PIPELINE_CONTRACT, maxWorkers: 3 },
+        ctx(),
+      );
+      expect(fake.started).toEqual(["analyze", "organize", "index"]);
+      expect(fake.resolvedBefore.analyze).toEqual([]);
+      expect(fake.resolvedBefore.organize).toEqual(["analyze"]);
+      expect(fake.resolvedBefore.index).toEqual(["analyze"]);
+      // The second wave still ran two wide.
+      expect(fake.peak()).toBe(2);
+      expect(result.status).toBe("ok");
+      const lines = result.summary.split("\n");
+      expect(lines[0]).toBe("3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed");
+      expect(result.details.waves).toEqual([["analyze"], ["organize", "index"]]);
+      // Rows keep the caller's order, whatever wave each ran in.
+      expect((result.details.tasks as WorkerTaskResult[]).map((r) => r.id)).toEqual([
+        "analyze",
+        "organize",
+        "index",
+      ]);
+    });
+
+    it("bounds each wave by maxWorkers", async () => {
+      const fake = ordering();
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const tasks = [
+        ...PIPELINE,
+        { id: "report", title: "Report", instructions: "r" },
+      ];
+      const contract = {
+        ...PIPELINE_CONTRACT,
+        requires: [...PIPELINE_CONTRACT.requires, { task: "report", name: "manifest.json" }],
+      };
+      const result = await tool.run({ tasks, contract, maxWorkers: 2 }, ctx());
+      expect(fake.started).toEqual(["analyze", "organize", "index", "report"]);
+      expect(fake.resolvedBefore.report).toContain("analyze");
+      expect(fake.peak()).toBe(2);
+      expect(result.details.waves).toEqual([["analyze"], ["organize", "index", "report"]]);
+      expect(result.summary.split("\n")[0]).toBe(
+        "4 tasks in 2 waves (analyze → organize, index, report): 3 ok, 1 failed",
+      );
+    });
+
+    it("still runs a dependent whose provider did not deliver, warning it and the orchestrator", async () => {
+      const briefs: string[] = [];
+      const fake = ordering({
+        briefs,
+        reasonFor: (taskId) => (taskId === "analyze" ? "failed" : "reply"),
+      });
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        { tasks: PIPELINE, contract: PIPELINE_CONTRACT },
+        ctx(),
+      );
+      const organizeNote = "task organize depends on analyze, which ended failed";
+      const indexNote = "task index depends on analyze, which ended failed";
+      expect(fake.started).toEqual(["analyze", "organize", "index"]);
+      // The provider's own brief carried no such note; the dependents' do.
+      expect(briefs[0]).not.toContain("depends on");
+      expect(briefs[1]).toContain(`contract: ${organizeNote}`);
+      expect(briefs[1]).toContain(`contract: ${indexNote}`);
+      expect(briefs[2]).toContain(`contract: ${indexNote}`);
+      const lines = result.summary.split("\n");
+      expect(lines[0]).toBe("3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed");
+      expect(lines[1]).toBe(
+        `contract: 1 missing — [analyze] file manifest.json does not exist; ${organizeNote}; ${indexNote}`,
+      );
+      expect((result.details.tasks as WorkerTaskResult[]).map((r) => r.status)).toEqual([
+        "failed",
+        "ok",
+        "ok",
+      ]);
+      const report = result.details.contract as { warnings: string[] };
+      expect(report.warnings).toEqual([organizeNote, indexNote]);
+    });
+
+    it("runs a cyclic contract as one wave, in the order given, with a warning", async () => {
+      const briefs: string[] = [];
+      const fake = ordering({ briefs });
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        {
+          tasks: [
+            { id: "a", title: "A", instructions: "a" },
+            { id: "b", title: "B", instructions: "b" },
+          ],
+          contract: {
+            provides: [
+              { task: "a", kind: "file", name: "a.txt" },
+              { task: "b", kind: "file", name: "b.txt" },
+            ],
+            requires: [
+              { task: "a", name: "b.txt" },
+              { task: "b", name: "a.txt" },
+            ],
+          },
+          maxWorkers: 2,
+        },
+        ctx(),
+      );
+      const note =
+        "requires form a cycle (a → b → a), so the tasks run in one wave in the order given";
+      expect(fake.started).toEqual(["a", "b"]);
+      expect(fake.peak()).toBe(2);
+      for (const brief of briefs) expect(brief).toContain(`contract: ${note}`);
+      expect(result.details.waves).toEqual([["a", "b"]]);
+      const lines = result.summary.split("\n");
+      expect(lines[0]).toBe("2 tasks in 1 wave (a, b): 2 ok");
+      expect(lines[1]).toContain(note);
+      expect((result.details.contract as { warnings: string[] }).warnings).toEqual([note]);
+    });
+
+    it("orders nothing when the requires name nothing any task provides", async () => {
+      const fake = ordering();
+      const tool = buildFusionDelegateTool(deps({ runTurn: fake.runTurn }));
+      const result = await tool.run(
+        {
+          tasks: PIPELINE,
+          contract: { requires: [{ task: "organize", name: "ghost" }] },
+          maxWorkers: 3,
+        },
+        ctx(),
+      );
+      expect(fake.peak()).toBe(3);
+      expect(result.details).not.toHaveProperty("waves");
+      expect(result.summary.split("\n")[0]).toBe("3 tasks: 2 ok, 1 failed");
+    });
+  });
+
   it("asks again when a later fan-out reaches outside what was approved", async () => {
     const asked: string[] = [];
     const scopes = new FanoutScopeRegistry();
@@ -508,5 +1243,41 @@ describe("fusion.delegate", () => {
       ctx(),
     );
     expect(asked).toHaveLength(2);
+  });
+});
+
+describe("fusion.delegate — contract inputs (F51)", () => {
+  it("declares the contract's inputs to every worker session before its turn and clears them after", async () => {
+    const log: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        declaredInputs: {
+          declare: (sessionId, paths) =>
+            log.push(`declare ${sessionId} ${paths.join(",")}`),
+          clear: (sessionId) => log.push(`clear ${sessionId}`),
+        },
+        runTurn: async (session, userMessage) => {
+          log.push(
+            `turn ${session.id} ${userMessage.includes("never replace; os.fs.write on one is refused):\n- sales.csv") ? "briefed" : "unbriefed"}`,
+          );
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run(
+      { tasks: TASKS, contract: { inputs: ["sales.csv", "js/*.js"] } },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    const input = join("/repo", "sales.csv");
+    for (const id of ["s-w-1", "s-w-2"]) {
+      const declared = log.indexOf(`declare ${id} ${input}`);
+      const turned = log.indexOf(`turn ${id} briefed`);
+      const cleared = log.indexOf(`clear ${id}`);
+      expect(declared).toBeGreaterThanOrEqual(0);
+      expect(turned).toBeGreaterThan(declared);
+      expect(cleared).toBeGreaterThan(turned);
+    }
+    expect(log).toHaveLength(6);
   });
 });

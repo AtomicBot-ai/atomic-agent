@@ -125,6 +125,37 @@ describe("openAiPostJson", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it("does not retry a 429 whose body says the credit is exhausted, and keeps the body", async () => {
+    // Retried 42 times per worker in the field, as if it were throttling.
+    const body = JSON.stringify({
+      error: {
+        message: "Provider returned error",
+        code: 429,
+        metadata: {
+          raw: '{"error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low"}}',
+        },
+      },
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(errorResponse(429, body, { "retry-after": "0" }));
+    const err = await openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      {},
+      {},
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenAiHttpError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect((err as OpenAiHttpError).body).toMatchObject({
+      message: "Provider returned error",
+      code: "429",
+    });
+    expect((err as OpenAiHttpError).body?.text).toContain(
+      "credit_balance_exhausted",
+    );
+  });
+
   describe("structured RetryInfo metadata", () => {
     // Gemini's OpenAI-compatible endpoint sends its cooldown only in
     // the error JSON — google.rpc.RetryInfo with a protobuf Duration
@@ -473,6 +504,32 @@ describe("credit-limit (402) recovery", () => {
       ),
     ).rejects.toBeInstanceOf(OpenAiHttpError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the caller which body each attempt went out with", async () => {
+    // A truncation is judged against the cap the response ran under, and
+    // after a 402 that is the lowered one, not the one the caller built.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(402, CREDIT_BODY))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const sent: Array<Record<string, unknown>> = [];
+    await openAiPostJson(
+      { ...depsWith(fetchImpl as unknown as typeof fetch), logger: collectingLogger() },
+      "/x",
+      { max_tokens: 65536 },
+      {},
+      (body) => sent.push(body),
+    );
+    // Exactly the bodies that went on the wire, in order — the second one
+    // carrying the lowered cap the retry chose.
+    const onTheWire = fetchImpl.mock.calls.map(
+      (call) => JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>,
+    );
+    expect(sent).toEqual(onTheWire);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.max_tokens).toBe(65536);
+    expect(sent[1]!.max_tokens).toBeLessThan(65536);
   });
 
   it("announces the retry with the provider and both ceilings", async () => {

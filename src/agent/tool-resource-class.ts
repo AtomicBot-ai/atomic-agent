@@ -42,6 +42,13 @@
  * asserts that every entry in `DEFAULT_TOOL_DESCRIPTORS` has an
  * explicit class.
  */
+import {
+  isAutoApprovedAt,
+  isGrantableCategory,
+  type ApprovalCategory,
+  type ApprovalLevel,
+} from "../approval/approval-level.js";
+
 export type ResourceClass =
   | "pure_read"
   | "fs_write"
@@ -84,6 +91,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.fs.edit": "approval_gated",
   "os.fs.trash": "approval_gated",
   "os.fs.patch": "approval_gated",
+  "os.fs.restore": "approval_gated",
   "os.fs.archive.extract": "approval_gated",
 
   // os.git.* — read-only shell-outs
@@ -171,6 +179,15 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // stack the orchestrator's own fan-out on top of the fan-out.
   "fusion.delegate": "approval_gated",
 
+  // verify.* — read-only checks. `verify.syntax` spawns nothing that
+  // writes (node --check, tsc --noEmit, python compile(), bash -n), so
+  // several may run side by side.
+  "verify.syntax": "pure_read",
+  // `verify.run` executes a command, a server or a page — in a
+  // throwaway copy, so the workspace is untouched, but it still asks
+  // under the shell category below level 4, and it must be solo.
+  "verify.run": "approval_gated",
+
   // mcp.* discovery / read tools — pure_read regardless of per-server
   // trust because they only inspect the local catalog or fetch
   // declared resources/prompts. Per-server-tool calls go through
@@ -248,4 +265,137 @@ export function listKnownToolResourceClasses(): Readonly<
   Record<string, ResourceClass>
 > {
   return TOOL_RESOURCE_CLASS;
+}
+
+/** Every category an fs-write funnel call can land in (`categorizeFsMutation`). */
+const FS_WRITE_CATEGORIES: readonly ApprovalCategory[] = [
+  "fs_write_workspace",
+  "fs_write_home",
+  "trust_config",
+  "other",
+];
+
+/**
+ * Every `ApprovalCategory` an `approval_gated` tool's `requireApproval`
+ * call can name. The call site picks one at run time (a write inside the
+ * workspace is `fs_write_workspace`, the same write onto `config.json` is
+ * `trust_config`), and the batch planner cannot see that far ahead, so
+ * the list is the whole set and a call counts as unattended only when
+ * EVERY category in it would be. That is deliberately pessimistic: the
+ * fs writes carry `trust_config`, which is pinned at level 5, so below
+ * full trust a batched write still trims exactly as before.
+ *
+ * Kept next to `TOOL_RESOURCE_CLASS` because adding a gated tool means
+ * deciding both; `tool-resource-class.test.ts` fails when a static
+ * `approval_gated` entry has neither a row here nor a place in
+ * `SOLO_REGARDLESS_OF_APPROVAL`.
+ */
+const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
+  {
+    "os.shell.run": ["shell"],
+    // Same rung as a shell command: it runs one, in a copy.
+    "verify.run": ["shell"],
+    "os.fs.write": FS_WRITE_CATEGORIES,
+    "os.fs.edit": FS_WRITE_CATEGORIES,
+    "os.fs.patch": FS_WRITE_CATEGORIES,
+    // Puts a saved copy back: a write in every sense.
+    "os.fs.restore": FS_WRITE_CATEGORIES,
+    "os.fs.trash": ["fs_trash", "trust_config", "other"],
+    "os.fs.archive.extract": ["fs_write_home", "other"],
+    // Local git writes ride the fs funnel against the repository root.
+    "os.git.init": FS_WRITE_CATEGORIES,
+    "os.git.add": FS_WRITE_CATEGORIES,
+    "os.git.commit": FS_WRITE_CATEGORIES,
+    "os.git.checkout": FS_WRITE_CATEGORIES,
+    "os.git.remote": ["git_remote"],
+    "os.git.fetch": ["git_remote"],
+    "os.git.pull": ["git_remote"],
+    "os.git.push": ["git_remote"],
+    "os.git.clone": ["git_remote"],
+    "github.pr.create": ["publish"],
+    "github.issue.create": ["publish"],
+    "github.issue.comment": ["publish"],
+    "os.proc.kill": ["proc_kill"],
+    "os.http.request": ["http"],
+    "os.email.send": ["email"],
+    "skill.run_script": ["script"],
+  };
+
+/**
+ * `approval_gated` tools that must stay solo for a reason that has
+ * nothing to do with a prompt. `fusion.delegate` runs several worker
+ * turns concurrently inside one call, for minutes; no approval level
+ * makes it safe to line it up behind other calls.
+ */
+const SOLO_REGARDLESS_OF_APPROVAL: ReadonlySet<string> = new Set([
+  "fusion.delegate",
+]);
+
+/**
+ * The approval posture of the session a batch belongs to: the gate's
+ * live level plus the categories the session holds an `[s]` grant for.
+ * Shape grants (`[a]`) are not modelled — a shell call's binary is only
+ * known once the guard parses its command.
+ */
+export interface BatchApprovalPosture {
+  level: ApprovalLevel;
+  grantedCategories?: readonly ApprovalCategory[];
+}
+
+/**
+ * The categories an `approval_gated` call may ask under, or `null` when
+ * the runtime cannot say (an unlisted tool). MCP tools at the default
+ * trust ask as `other` (`mcp-tool-adapter.ts`).
+ */
+export function approvalCategoriesFor(
+  toolName: string,
+): readonly ApprovalCategory[] | null {
+  const listed = APPROVAL_CATEGORIES_BY_TOOL[toolName];
+  if (listed) return listed;
+  if (
+    toolName.startsWith("mcp.") &&
+    !(toolName in TOOL_RESOURCE_CLASS) &&
+    resourceClassFor(toolName) === "approval_gated"
+  ) {
+    return ["other"];
+  }
+  return null;
+}
+
+/**
+ * True when an `approval_gated` call would run without anyone being
+ * asked under `posture`: every category it could name is auto-approved
+ * at the level, or grantable and granted to the session. A tool the
+ * runtime cannot categorise, or one that is solo for other reasons,
+ * answers `false` — the caller keeps the batch solo.
+ *
+ * This decides whether a batch of gated calls may run in order instead
+ * of being trimmed to its first call. It does NOT approve anything: each
+ * call still goes through the gate when it runs.
+ */
+export function gatedCallRunsUnattended(
+  toolName: string,
+  posture: BatchApprovalPosture,
+): boolean {
+  if (SOLO_REGARDLESS_OF_APPROVAL.has(toolName)) return false;
+  const categories = approvalCategoriesFor(toolName);
+  if (categories === null) return false;
+  const granted = posture.grantedCategories ?? [];
+  return categories.every(
+    (category) =>
+      isAutoApprovedAt(posture.level, category) ||
+      (isGrantableCategory(category) && granted.includes(category)),
+  );
+}
+
+/** Read-only view of the gated-tool category table — for tests. */
+export function listApprovalCategoriesByTool(): Readonly<
+  Record<string, readonly ApprovalCategory[]>
+> {
+  return APPROVAL_CATEGORIES_BY_TOOL;
+}
+
+/** Whether a gated tool is solo for a reason other than approval — for tests. */
+export function isSoloRegardlessOfApproval(toolName: string): boolean {
+  return SOLO_REGARDLESS_OF_APPROVAL.has(toolName);
 }

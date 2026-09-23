@@ -7,8 +7,18 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
-import { executeBatch, planBatch, toBatchInputs } from "./batch-executor.js";
+import {
+  FINAL_STEP_REFUSAL,
+  executeBatch,
+  planBatch,
+  toBatchInputs,
+  type BatchLoopSignal,
+} from "./batch-executor.js";
 import { LOOP_VETO_DENIED_REASON, ToolLoopTracker } from "./loop-detector.js";
+import { reviewStallToolSet } from "./review-stall.js";
+import { toolSetRefusal } from "./step-tool-set.js";
+import { createTraceRecorder } from "../tracing/trace/trace-recorder.js";
+import type { TraceEvent } from "../tracing/trace/trace-event.js";
 
 function ctx(signal: AbortSignal) {
   return {
@@ -105,6 +115,34 @@ describe("executeBatch", () => {
     // Parallel: all four 80ms calls should fit well under 4 * 80 = 320ms.
     // Allow generous slack for CI scheduler jitter.
     expect(elapsed).toBeLessThan(250);
+  });
+
+  it("hands the step's readRoots to every call's tool context, unchanged", async () => {
+    // The read scope (`src/tools/read-scope/`) widens by what the user
+    // named; the step computes that once and the batch must not lose it.
+    const seen: (readonly string[] | undefined)[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (_args, toolCtx) => {
+        seen.push(toolCtx.readRoots);
+        return okResult("os.fs.read");
+      },
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const ctrl = new AbortController();
+    await executeBatch(inputs, registry, {
+      ...ctx(ctrl.signal),
+      readRoots: ["/named/one"],
+    });
+    expect(seen).toEqual([["/named/one"], ["/named/one"]]);
+    await executeBatch(inputs.slice(0, 1), registry, ctx(ctrl.signal));
+    expect(seen[2]).toBeUndefined();
   });
 
   it("chunks pure_read fan-out into bounded waves when maxWaveSize is set", async () => {
@@ -225,14 +263,16 @@ describe("executeBatch", () => {
       description: "click",
       readonly: false,
       run: async (args) => {
-        const idx = (args.idx as number) ?? -1;
+        // Fixtures carry their index under a key the tool's schema knows
+        // (`ref`, `offset`): an unknown key is refused before dispatch (F40).
+        const idx = (args.ref as number) ?? -1;
         return await make(idx)(args);
       },
     });
     const inputs = toBatchInputs([
-      { tool: "browser.click", args: { idx: 0 } },
-      { tool: "browser.click", args: { idx: 1 } },
-      { tool: "browser.click", args: { idx: 2 } },
+      { tool: "browser.click", args: { ref: 0 } },
+      { tool: "browser.click", args: { ref: 1 } },
+      { tool: "browser.click", args: { ref: 2 } },
     ]);
     const ctrl = new AbortController();
     const startedAt = Date.now();
@@ -253,7 +293,7 @@ describe("executeBatch", () => {
       readonly: true,
       run: async (args) => {
         await new Promise((r) => setTimeout(r, 60));
-        reads.push((args.idx as number) ?? -1);
+        reads.push((args.offset as number) ?? -1);
         return okResult("os.fs.read");
       },
     });
@@ -263,15 +303,15 @@ describe("executeBatch", () => {
       readonly: false,
       run: async (args) => {
         await new Promise((r) => setTimeout(r, 60));
-        clicks.push((args.idx as number) ?? -1);
+        clicks.push((args.ref as number) ?? -1);
         return okResult("browser.click");
       },
     });
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { idx: 0 } },
-      { tool: "browser.click", args: { idx: 1 } },
-      { tool: "os.fs.read", args: { idx: 2 } },
-      { tool: "browser.click", args: { idx: 3 } },
+      { tool: "os.fs.read", args: { offset: 0 } },
+      { tool: "browser.click", args: { ref: 1 } },
+      { tool: "os.fs.read", args: { offset: 2 } },
+      { tool: "browser.click", args: { ref: 3 } },
     ]);
     const ctrl = new AbortController();
     const startedAt = Date.now();
@@ -314,6 +354,62 @@ describe("executeBatch", () => {
     expect(out.cancelled).toBe(false);
   });
 
+  it("appends the received and expected keys to a thrown argument error (F33)", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "r",
+      readonly: true,
+      run: async () => {
+        throw new Error("os.fs.read: `path` must be a non-empty string");
+      },
+    });
+    // A misspelt key (`patth`) no longer reaches the tool at all — F40
+    // refuses it before dispatch — so the thrown path is exercised with
+    // a known key the tool rejects.
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "" } },
+    ]);
+    const out = await executeBatch(
+      inputs,
+      registry,
+      ctx(new AbortController().signal),
+    );
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("error");
+    expect(result.summary).toBe(
+      "os.fs.read: `path` must be a non-empty string — received keys: path; expected: path, maxBytes, offset, limit, lineNumbers",
+    );
+    expect(result.details.receivedKeys).toEqual(["path"]);
+    expect(result.details.expectedKeys).toEqual([
+      "path",
+      "maxBytes",
+      "offset",
+      "limit",
+      "lineNumbers",
+    ]);
+  });
+
+  it("leaves a thrown runtime error without a key report", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "r",
+      readonly: true,
+      run: async () => {
+        throw new Error("ENOENT: no such file or directory, open 'a'");
+      },
+    });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    const result = out.results[0]!.compressed!;
+    expect(result.summary).toBe("ENOENT: no such file or directory, open 'a'");
+    expect(result.details.receivedKeys).toBeUndefined();
+  });
+
   it("preserves batch-index order in the returned slots", async () => {
     const registry = new ToolRegistry();
     registry.register({
@@ -324,15 +420,15 @@ describe("executeBatch", () => {
         // Fast call when idx==2, slow otherwise — verifies that result
         // ordering is by batchIndex regardless of completion order.
         await new Promise((r) =>
-          setTimeout(r, (args.idx as number) === 2 ? 5 : 60),
+          setTimeout(r, (args.offset as number) === 2 ? 5 : 60),
         );
-        return okResult("os.fs.read", `done-${args.idx}`);
+        return okResult("os.fs.read", `done-${args.offset}`);
       },
     });
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { idx: 0 } },
-      { tool: "os.fs.read", args: { idx: 1 } },
-      { tool: "os.fs.read", args: { idx: 2 } },
+      { tool: "os.fs.read", args: { offset: 0 } },
+      { tool: "os.fs.read", args: { offset: 1 } },
+      { tool: "os.fs.read", args: { offset: 2 } },
     ]);
     const out = await executeBatch(
       inputs,
@@ -599,6 +695,83 @@ describe("executeBatch", () => {
     expect(out.loopSignals[0]!.detector).toBe("wandering");
   });
 
+  // Issue #458: a parallel batch is gated before any of its calls record,
+  // so the spread can pass the cap with nothing refused. A verbatim repeat
+  // after that is still vetoed by the escalation, but what ended the turn
+  // is the wandering cap: the breaker signal must say so with the spread,
+  // not hand the forced reply a repeat verdict with a count of 0.
+  it("reports the wandering cap, not a 0-count repeat, when a repeat is stopped past the cap", async () => {
+    const fn = vi.fn(async () => okResult("os.web.fetch"));
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 3,
+    });
+    // Four distinct fetches recorded: one past the cap of 3.
+    for (const url of ["u1", "u2", "u3", "u4"]) {
+      tracker.check("os.web.fetch", { url });
+      tracker.recordCall("os.web.fetch", { url });
+      tracker.recordOutcome(
+        "os.web.fetch",
+        { url },
+        okResult("os.web.fetch", url),
+      );
+    }
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args: { url: "u1" } }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    expect(fn).not.toHaveBeenCalled();
+    expect(out.loopSignals[0]).toMatchObject({
+      kind: "breaker",
+      detector: "wandering",
+      count: 4,
+    });
+    // The veto body still describes the call as the repeat it is.
+    expect(out.results[0]!.compressed!.summary).not.toContain(
+      "different attempts",
+    );
+  });
+
+  it("quotes the spread, not the cap, when a batch carried the spread past the cap", async () => {
+    const fn = vi.fn(async (args: unknown) =>
+      okResult("os.web.fetch", (args as { url: string }).url),
+    );
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 3,
+    });
+    tracker.check("os.web.fetch", { url: "u1" });
+    tracker.recordCall("os.web.fetch", { url: "u1" });
+    tracker.recordOutcome(
+      "os.web.fetch",
+      { url: "u1" },
+      okResult("os.web.fetch", "u1"),
+    );
+    const run = (urls: string[]) =>
+      executeBatch(
+        toBatchInputs(
+          urls.map((url) => ({ tool: "os.web.fetch", args: { url } })),
+        ),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+    // Every call in the batch is gated against the same recorded history,
+    // so all three run and the spread ends at 4, past the cap of 3.
+    await run(["u2", "u3", "u4"]);
+    expect(fn).toHaveBeenCalledTimes(3);
+    const out = await run(["u5"]);
+    expect(fn).toHaveBeenCalledTimes(3);
+    // The signal quotes the spread (5, counting u5), not the cap, which
+    // is why the forced reply does not call its count "the cap".
+    expect(out.loopSignals.find((s) => s.kind === "breaker")).toMatchObject({
+      detector: "wandering",
+      count: 5,
+    });
+  });
+
   // Issue #186: the veto body must name the invariant that held across
   // the blocked attempts and offer a concrete alternative.
   it("veto body names the repeated host and offers the search-first alternative", async () => {
@@ -747,16 +920,16 @@ describe("executeBatch", () => {
       readonly: false,
       run: async (args) => {
         await new Promise((r) => setTimeout(r, 30));
-        if ((args.idx as number) === 0) {
+        if ((args.ref as number) === 0) {
           ctrl.abort();
         }
         return okResult("browser.click");
       },
     });
     const inputs = toBatchInputs([
-      { tool: "browser.click", args: { idx: 0 } },
-      { tool: "browser.click", args: { idx: 1 } },
-      { tool: "browser.click", args: { idx: 2 } },
+      { tool: "browser.click", args: { ref: 0 } },
+      { tool: "browser.click", args: { ref: 1 } },
+      { tool: "browser.click", args: { ref: 2 } },
     ]);
     const out = await executeBatch(inputs, registry, ctx(ctrl.signal));
     expect(out.cancelled).toBe(true);
@@ -848,6 +1021,86 @@ describe("executeBatch — skill.view short-circuit", () => {
  * Plan mode at the seam that matters: not "does the predicate say no",
  * which `plan-mode.test.ts` covers, but "did the tool actually not run".
  */
+describe("executeBatch on the loop's final step (terminalOnly)", () => {
+  it("refuses every non-terminal call with a tool result and never dispatches it", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": read });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      terminalOnly: true,
+    });
+    expect(read).not.toHaveBeenCalled();
+    for (const slot of out.results) {
+      expect(slot.compressed?.status).toBe("error");
+      expect(slot.compressed?.summary).toBe(FINAL_STEP_REFUSAL);
+      expect(slot.compressed?.details).toMatchObject({ final_step: true });
+    }
+  });
+
+  it("still runs the tail terminal of a [tool, reply] batch", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply", "sent"));
+    const registry = buildRegistry({ "os.fs.read": read, reply });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "reply", args: { text: "done" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      terminalOnly: true,
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.summary).toBe(FINAL_STEP_REFUSAL);
+    expect(out.results[1]!.compressed?.status).toBe("ok");
+  });
+
+  it("outranks the other gates and leaves the loop tracker untouched", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const tracker = new ToolLoopTracker();
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a", content: "x" } }]),
+      registry,
+      {
+        ...ctx(new AbortController().signal),
+        terminalOnly: true,
+        isPlanMode: () => true,
+        tracker,
+      },
+    );
+    expect(write).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.summary).toBe(FINAL_STEP_REFUSAL);
+    expect(out.loopSignals).toEqual([]);
+    // Nothing was recorded: a refused call is not a repeat.
+    expect(
+      tracker.check("os.fs.write", { path: "a", content: "x" }).count,
+    ).toBe(0);
+  });
+
+  it("is inert off the final step", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": read });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+});
+
 describe("executeBatch under plan mode", () => {
   it("never dispatches a mutating tool", async () => {
     const write = vi.fn(async () => okResult("os.fs.write"));
@@ -1263,5 +1516,424 @@ describe("the fusion orchestrator gate in the executor", () => {
       { ...ctx(ctrl.signal), isFusionOrchestrator: () => false },
     );
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("executeBatch outcome-repeat detector (F25)", () => {
+  it("warns on the third identical result across differently-argued calls and never vetoes", async () => {
+    const calls = vi.fn(
+      async (_args: Record<string, unknown>): Promise<CompressedToolResult> =>
+        okResult("os.fs.glob", "src/a.ts src/b.ts"),
+    );
+    const registry = buildRegistry({ "os.fs.glob": calls });
+    const tracker = new ToolLoopTracker();
+    const signals: BatchLoopSignal[] = [];
+    for (const pattern of ["src/*.ts", "src/**/*.ts", "./src/*.ts"]) {
+      const out = await executeBatch(
+        toBatchInputs([{ tool: "os.fs.glob", args: { pattern } }]),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+      signals.push(...out.loopSignals);
+      // Never a veto: the call ran every time.
+      expect(out.results[0]!.compressed?.status).toBe("ok");
+    }
+    expect(calls).toHaveBeenCalledTimes(3);
+    const outcome = signals.filter((s) => s.detector === "outcome_repeat");
+    expect(outcome).toHaveLength(1);
+    expect(outcome[0]).toMatchObject({
+      kind: "warn",
+      tool: "os.fs.glob",
+      count: 3,
+    });
+    expect(outcome[0]!.warningKey.startsWith("outcome_repeat:os.fs.glob|ok|")).toBe(
+      true,
+    );
+  });
+});
+
+describe("executeBatch refuses a corrupted call (F37)", () => {
+  /** The live Gemma 4 call: a thought channel opened inside `path`. */
+  const LIVE_PATH = ".}}]<tool_call|>thought<|channel>thought---<channel|>";
+
+  it("does not run a call whose argument carries a control marker and answers with the error shape", async () => {
+    const run = vi.fn(async () => okResult("os.fs.list", "(empty)"));
+    const registry = buildRegistry({ "os.fs.list": run });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.list", args: { path: LIVE_PATH } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).not.toHaveBeenCalled();
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("error");
+    expect(result.summary).toBe(
+      'corrupted tool call: argument `path` contains a model control marker (`<tool_call|>` at char 4: ".}}]<tool_call|>thought<|channel…"). The call was not run — re-emit it with clean arguments.',
+    );
+    expect(result.details).toEqual({
+      corrupted: true,
+      markers: [
+        {
+          path: "path",
+          marker: "<tool_call|>",
+          index: 4,
+          excerpt: ".}}]<tool_call|>thought<|channel…",
+        },
+      ],
+    });
+    expect(out.cancelled).toBe(false);
+  });
+
+  it("lands details.corrupted on the tool_invocation trace row", async () => {
+    const registry = buildRegistry({
+      "os.fs.list": async () => okResult("os.fs.list"),
+    });
+    const events: TraceEvent[] = [];
+    const recorder = createTraceRecorder({
+      sessionId: "s1",
+      emit: (event) => events.push(event),
+      now: () => 0,
+    });
+    recorder.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    recorder.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    const call = { tool: "os.fs.list", args: { path: LIVE_PATH } };
+    recorder.onAgentEvent({
+      type: "llm_event",
+      event: { type: "tool_call_parsed", call, batchIndex: 0, batchSize: 1 },
+    });
+    await executeBatch(toBatchInputs([call]), registry, {
+      ...ctx(new AbortController().signal),
+      onCallFinished: ({ result, batchIndex, batchSize }) =>
+        recorder.onAgentEvent({
+          type: "llm_event",
+          event: { type: "tool_call_executed", result, batchIndex, batchSize },
+        }),
+    });
+    const row = events.find((e) => e.type === "tool_invocation");
+    expect(row).toMatchObject({
+      type: "tool_invocation",
+      tool: "os.fs.list",
+      status: "error",
+      args: { path: LIVE_PATH },
+      details: { corrupted: true },
+    });
+  });
+
+  it("counts toward the loop detector like any other error", async () => {
+    const run = vi.fn(async () => okResult("os.fs.list"));
+    const registry = buildRegistry({ "os.fs.list": run });
+    const tracker = new ToolLoopTracker({ criticalThreshold: 3 });
+    const signals: BatchLoopSignal[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const out = await executeBatch(
+        toBatchInputs([{ tool: "os.fs.list", args: { path: LIVE_PATH } }]),
+        registry,
+        { ...ctx(new AbortController().signal), tracker },
+      );
+      signals.push(...out.loopSignals);
+    }
+    expect(run).not.toHaveBeenCalled();
+    // The same refused call, repeated, is a no-progress loop: the
+    // refusals were recorded as outcomes and the gate eventually vetoes.
+    expect(signals.some((s) => s.kind === "critical")).toBe(true);
+  });
+
+  it("runs a write whose content mentions a marker mid-line, refuses one whose line starts with it", async () => {
+    const run = vi.fn(async () => okResult("os.fs.write", "wrote"));
+    const registry = buildRegistry({ "os.fs.write": run }, false);
+    const clean = await executeBatch(
+      toBatchInputs([
+        {
+          tool: "os.fs.write",
+          args: { path: "a.ts", content: "// wraps <think> tags\nconst x = 1;" },
+        },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(clean.results[0]!.compressed?.status).toBe("ok");
+
+    const corrupted = await executeBatch(
+      toBatchInputs([
+        {
+          tool: "os.fs.write",
+          args: { path: "a.ts", content: "const x = 1;\n<|channel>thought\n" },
+        },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(corrupted.results[0]!.compressed).toMatchObject({
+      status: "error",
+      details: { corrupted: true, markers: [{ path: "content", marker: "<|channel>" }] },
+    });
+  });
+
+  it("refuses only the corrupted call of a batch; its siblings and the tail reply run", async () => {
+    const list = vi.fn(async () => okResult("os.fs.list"));
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply"));
+    const registry = buildRegistry({
+      "os.fs.list": list,
+      "os.fs.read": read,
+      reply,
+    });
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.fs.read", args: { path: "README.md" } },
+        { tool: "os.fs.list", args: { path: LIVE_PATH } },
+        { tool: "reply", args: { text: "the tag is spelled <think>" } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(list).not.toHaveBeenCalled();
+    // A terminal's text is shown, not run; the turn must be able to close.
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results.map((r) => r.compressed?.status)).toEqual([
+      "ok",
+      "error",
+      "ok",
+    ]);
+  });
+});
+
+describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
+  /** The live Gemma 4 worker call: the script under a flag used as a key. */
+  const LIVE_CALL = {
+    tool: "os.shell.run",
+    args: { cmd: "python3", "-e": "import os\nos.rename('a', 'b')" },
+  };
+
+  it("does not run the call and answers with the error shape", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run", "$ python3\nexit: 0"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([LIVE_CALL]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).not.toHaveBeenCalled();
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("error");
+    expect(result.summary).toBe(
+      'unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, wait, kill, jobs; put the script in args: ["-c", "…"]) — the call was not run; re-emit it with the right keys',
+    );
+    expect(result.summary).not.toContain("rename");
+    expect(result.details).toEqual({
+      unknownKeys: ["-e"],
+      expectedKeys: ["cmd", "args", "cwd", "timeoutMs", "keep", "wait", "kill", "jobs"],
+    });
+    expect(out.cancelled).toBe(false);
+  });
+
+  it("names the key the model most likely meant", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([
+        {
+          tool: "os.shell.run",
+          args: { cmd: "python3", "-args": ["-c", "print(1)"] },
+        },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed!.summary).toBe(
+      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, wait, kill, jobs; did you mean `args`?) — the call was not run; re-emit it with the right keys",
+    );
+  });
+
+  it("lands details.unknownKeys on the tool_invocation trace row", async () => {
+    const registry = buildRegistry(
+      { "os.shell.run": async () => okResult("os.shell.run") },
+      false,
+    );
+    const events: TraceEvent[] = [];
+    const recorder = createTraceRecorder({
+      sessionId: "s1",
+      emit: (event) => events.push(event),
+      now: () => 0,
+    });
+    recorder.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    recorder.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    recorder.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: LIVE_CALL,
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    await executeBatch(toBatchInputs([LIVE_CALL]), registry, {
+      ...ctx(new AbortController().signal),
+      onCallFinished: ({ result, batchIndex, batchSize }) =>
+        recorder.onAgentEvent({
+          type: "llm_event",
+          event: { type: "tool_call_executed", result, batchIndex, batchSize },
+        }),
+    });
+    const row = events.find((e) => e.type === "tool_invocation");
+    expect(row).toMatchObject({
+      type: "tool_invocation",
+      tool: "os.shell.run",
+      status: "error",
+      details: { unknownKeys: ["-e"] },
+    });
+  });
+
+  it("counts toward the loop detector like any other error", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const tracker = new ToolLoopTracker({ criticalThreshold: 3 });
+    const signals: BatchLoopSignal[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const out = await executeBatch(toBatchInputs([LIVE_CALL]), registry, {
+        ...ctx(new AbortController().signal),
+        tracker,
+      });
+      signals.push(...out.loopSignals);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(signals.some((s) => s.kind === "critical")).toBe(true);
+  });
+
+  it("runs a valid call untouched", async () => {
+    const run = vi.fn(async () => okResult("os.shell.run", "$ ls -la\nexit: 0"));
+    const registry = buildRegistry({ "os.shell.run": run }, false);
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.shell.run", args: { cmd: "ls", args: ["-la"], cwd: "." } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith({ cmd: "ls", args: ["-la"], cwd: "." });
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("runs a tool without a registered schema whatever its keys", async () => {
+    const run = vi.fn(async () => okResult("mcp.srv.search"));
+    const registry = buildRegistry({ "mcp.srv.search": run });
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "mcp.srv.search", args: { query: "x", "-e": "y" } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(run).toHaveBeenCalledWith({ query: "x", "-e": "y" });
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("does not refuse a quoted key that F33 normalises at dispatch", async () => {
+    const run = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": run });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { '"path"': "a.txt" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    // The registry's own normalisation renamed the key before the tool ran.
+    expect(run).toHaveBeenCalledWith({ path: "a.txt" });
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("refuses only the unknown-key call of a batch; its siblings and the tail reply run", async () => {
+    const list = vi.fn(async () => okResult("os.fs.list"));
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply"));
+    const registry = buildRegistry({
+      "os.fs.list": list,
+      "os.fs.read": read,
+      reply,
+    });
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.fs.read", args: { path: "README.md" } },
+        { tool: "os.fs.list", args: { Path: "." } },
+        { tool: "reply", args: { text: "done", extra: "shown, not run" } },
+      ]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(list).not.toHaveBeenCalled();
+    // A terminal is never gated: the turn must be able to close.
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results.map((r) => r.compressed?.status)).toEqual([
+      "ok",
+      "error",
+      "ok",
+    ]);
+    expect(out.results[1]!.compressed!.summary).toContain(
+      "unknown argument `Path` for os.fs.list",
+    );
+  });
+});
+
+/**
+ * A per-step tool set at the seam that matters (F41): a call outside
+ * the set never reaches the registry, a call inside runs as usual.
+ */
+describe("executeBatch under a step tool set", () => {
+  it("refuses a call outside the set with the set's refusal and never dispatches it; a call inside runs", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const delegate = vi.fn(async () => okResult("fusion.delegate", "fanned out"));
+    const registry = buildRegistry({
+      "os.fs.read": read,
+      "fusion.delegate": delegate,
+    });
+    const set = reviewStallToolSet();
+    const signal = new AbortController().signal;
+    const refused = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      { ...ctx(signal), toolSet: set },
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(refused.results[0]!.compressed?.status).toBe("error");
+    expect(refused.results[0]!.compressed?.summary).toBe(
+      toolSetRefusal("os.fs.read", set).summary,
+    );
+    expect(refused.results[0]!.compressed?.details).toMatchObject({
+      tool_set: true,
+      admitted: ["fusion.delegate", "reply", "finish"],
+    });
+    const ran = await executeBatch(
+      toBatchInputs([{ tool: "fusion.delegate", args: { tasks: [] } }]),
+      registry,
+      { ...ctx(signal), toolSet: set },
+    );
+    expect(delegate).toHaveBeenCalledTimes(1);
+    expect(ran.results[0]!.compressed?.status).toBe("ok");
+  });
+
+  it("keeps the tail reply of a [read, reply] batch and leaves the loop tracker untouched", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const reply = vi.fn(async () => okResult("reply", "sent"));
+    const registry = buildRegistry({ "os.fs.read": read, reply });
+    const tracker = new ToolLoopTracker();
+    const out = await executeBatch(
+      toBatchInputs([
+        { tool: "os.fs.read", args: { path: "a" } },
+        { tool: "reply", args: { text: "done" } },
+      ]),
+      registry,
+      { ...ctx(new AbortController().signal), toolSet: reviewStallToolSet(), tracker },
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.details).toMatchObject({ tool_set: true });
+    expect(out.results[1]!.compressed?.status).toBe("ok");
+    expect(out.loopSignals).toEqual([]);
+    expect(tracker.check("os.fs.read", { path: "a" }).count).toBe(0);
   });
 });

@@ -1,3 +1,5 @@
+import type { ToolRole } from "../tool-roles.js";
+
 /**
  * What a fusion worker may and may not do.
  *
@@ -39,6 +41,17 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
 export function isWorkerVisibleTool(name: string): boolean {
   return !WORKER_EXCLUDED_TOOLS.has(name);
 }
+
+/**
+ * `RunTurnOptions.toolRole` for a worker turn: a worker builds. The role
+ * (see `tool-roles.ts`) decides what is described in full, put on the
+ * native wire and admitted by the grammar — files, shell, `verify.*`,
+ * the discovery tools, MCP tools, `reply`; everything else costs a
+ * `tool.view` first. The exclusion list above is the harder line
+ * underneath it: a hidden tool cannot be loaded back, a merely
+ * out-of-role one can.
+ */
+export const WORKER_TOOL_ROLE: ToolRole = "builder";
 
 /**
  * Reason a worker's approval-gated call is refused instead of prompting.

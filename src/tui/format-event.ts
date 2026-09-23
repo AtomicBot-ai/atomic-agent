@@ -1,3 +1,5 @@
+import { REVIEW_STALL_CUT_REASON } from "../agent/review-stall.js";
+
 /**
  * Pure formatters that turn discrete agent events into single-line,
  * display-ready strings. Kept separate from the reducer so both the TUI
@@ -11,6 +13,8 @@ export type FeedLineInput =
       stepIndex: number;
       summary: string;
       durationMs: number;
+      /** A stalled Fusion review's cut step says so on its line (F41). */
+      reviewStall?: { phase: "notice" | "cut" };
     }
   | {
       type: "prompt_captured";
@@ -54,8 +58,13 @@ export function formatFeedLine(input: FeedLineInput): string {
   switch (input.type) {
     case "step_started":
       return `[step ${input.stepIndex}] started`;
-    case "step_finished":
-      return `[step ${input.stepIndex}] ${clip(input.summary, SUMMARY_PREVIEW_LIMIT)} (${input.durationMs}ms)`;
+    case "step_finished": {
+      const stalled =
+        input.reviewStall?.phase === "cut"
+          ? ` — ${REVIEW_STALL_CUT_REASON}`
+          : "";
+      return `[step ${input.stepIndex}] ${clip(input.summary, SUMMARY_PREVIEW_LIMIT)} (${input.durationMs}ms)${stalled}`;
+    }
     case "prompt_captured": {
       const cache = input.cacheReused ? "cache hit" : "cache miss";
       return `[step ${input.stepIndex}] prompt ${input.total} tok (${input.stablePrefix} prefix, ${input.tail} tail, ${cache})`;

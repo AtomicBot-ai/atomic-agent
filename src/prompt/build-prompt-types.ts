@@ -1,7 +1,12 @@
 import type { ModelProfile } from "../llm/model-profile.js";
-import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type {
+  PromptMessages,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
+import type { ThinkingSetting } from "../llm/server-template-policy.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ProfileClipStats } from "./clip-profile-section.js";
+import type { ConversationPackStart } from "../session/conversation-turn.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
   CapabilitiesSummary,
@@ -9,6 +14,7 @@ import type {
   ToolDescriptor,
 } from "./stable-prefix.js";
 import type { TokenBudgetLimits } from "./token-budget.js";
+import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
   session: SessionState;
@@ -17,6 +23,13 @@ export interface BuildPromptInput {
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
   /**
+   * Single-stream decode speed of the local worker daemon (tokens per
+   * second), measured once at daemon start and held on the model profile
+   * manager. Rendered into the `### fusion` machine facts as "~N tok/s";
+   * `null` / absent says nothing. Read only when that block renders.
+   */
+  fusionTokensPerSecond?: number | null;
+  /**
    * Transport the serving link uses for tool calls. Forwarded into
    * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
    * emission mandate for native function-calling guidance (issue #285).
@@ -24,6 +37,14 @@ export interface BuildPromptInput {
    * the legacy output.
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * The turn's tool role (`tool-roles.ts`), forwarded into
+   * `buildStablePrefix` (per-role `### tools` block) and used to keep
+   * `### loaded-tools` free of tools the prefix already describes in
+   * full. Omitted or `"full"` keeps both byte-identical to the
+   * pre-role output.
+   */
+  toolRole?: ToolRole;
   /**
    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
    * `CURRENT DATE:` line in the variable tail just before `### respond`.
@@ -36,6 +57,12 @@ export interface BuildPromptInput {
   /** Overrides `agent.conversationMaxPairs` for this build. */
   conversationMaxPairs?: number;
   /**
+   * Overrides `agent.conversationLowWater` for this build: the share of
+   * a limit the transcript drops to when that limit overflows, so the
+   * cut holds for the steps that follow instead of moving every step.
+   */
+  conversationLowWater?: number;
+  /**
    * The model's context window, when something other than the profile
    * probe knows it.
    *
@@ -47,6 +74,20 @@ export interface BuildPromptInput {
    * UI can still tell a probed window from a catalogued one.
    */
   contextWindow?: number | null;
+  /**
+   * The local worker leg's request-slot count as the llama-server
+   * reported it, `null` (or absent) until observed. The `### fusion`
+   * machine facts state it for an external server, whose `--parallel`
+   * the config cannot know. See `resolveFusionMachineFacts`.
+   */
+  liveWorkerSlots?: number | null;
+  /**
+   * The operator's request behind the running turn, as the runtime
+   * recorded it (`pickOriginalRequest`). Rendered as `### request`
+   * before `### conversation` only when the packer has dropped the user
+   * turn that carried it — see `request-section.ts`.
+   */
+  originalRequest?: string;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;
@@ -67,10 +108,25 @@ export interface BuildPromptInput {
    * transport, where the local template expects the tag pre-typed.
    */
   suppressReasoningPrefill?: boolean;
+  /**
+   * `localModels.thinking` as it applies to the hand-built prompt (F49):
+   * `off` on a profile with a prompt-side disabled marker (`qwen-think`)
+   * ends the prompt with the template's own empty think block instead
+   * of the open-tag prefill; `on` / `auto` change nothing, and so does
+   * any value on a profile without a marker (Gemma 4's turn framing).
+   * Defaults to the config value. Ignored when the prefill is suppressed.
+   */
+  thinking?: ThinkingSetting;
   profileFacts?: readonly ProfileFact[];
   profileMaxTokens?: number;
   userMessage?: string | null;
   contextualKeywordGate?: boolean;
+  /**
+   * Hide profile facts with `voteScore <= -threshold`, pinned or not.
+   * Defaults to `config.memory.voting.profileFilterThreshold`; `0`
+   * disables the filter.
+   */
+  profileFilterThreshold?: number;
   recallPreviewChars?: number;
   recallMaxTokens?: number;
   memoryIndexMaxTokens?: number;
@@ -103,6 +159,13 @@ export interface BuiltPrompt {
   text: string;
   stablePrefix: string;
   tail: string;
+  /**
+   * The same prompt as structure — stable prefix, the packed turns, and
+   * the tail without its `### conversation` section — for a provider
+   * that sends history as real chat messages. Built from the same packed
+   * conversation as `text`, so the two never disagree.
+   */
+  messages: PromptMessages;
   tokens: {
     stablePrefix: number;
     loadedSkills: number;
@@ -140,6 +203,12 @@ export interface BuiltPrompt {
   conversationPairsCap: number;
   /** Which limit made the cut, when history was trimmed at all. */
   conversationBoundBy: "pairs" | "tokens" | null;
+  /**
+   * Where the transcript was cut, for the session to remember so the
+   * next build holds the same start (`SessionState.conversationPackStart`).
+   * `null` when nothing was dropped.
+   */
+  conversationPackStart: ConversationPackStart | null;
   /**
    * Token cost of each macro-turn, oldest first.
    *

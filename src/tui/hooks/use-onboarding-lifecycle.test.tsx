@@ -18,10 +18,11 @@ import { useOnboardingLifecycle } from "./use-onboarding-lifecycle.js";
 function Harness(props: {
   step: OnboardingStep;
   outcome?: OnboardingOutcome;
+  rerun?: boolean;
   onStep(step: string, outcome?: string): void;
 }): React.ReactElement {
   const onboarding: OnboardingUiState = {
-    ...createOnboardingState("http://127.0.0.1:8080"),
+    ...createOnboardingState("http://127.0.0.1:8080", { rerun: props.rerun }),
     step: props.step,
     outcome: props.outcome ?? null,
   };
@@ -38,6 +39,16 @@ describe("useOnboardingLifecycle step reporting", () => {
     const onStep = vi.fn();
     render(<Harness step="choose" onStep={onStep} />);
     expect(onStep).toHaveBeenCalledWith("choose");
+  });
+
+  it("reports nothing on a re-run, so /onboarding never re-enters the first-run funnel", () => {
+    const onStep = vi.fn();
+    const view = render(<Harness step="intro" rerun onStep={onStep} />);
+    view.rerender(<Harness step="choose" rerun onStep={onStep} />);
+    view.rerender(
+      <Harness step="finished" outcome="skipped" rerun onStep={onStep} />,
+    );
+    expect(onStep).not.toHaveBeenCalled();
   });
 
   it("reports each step once across re-renders of the same step", () => {

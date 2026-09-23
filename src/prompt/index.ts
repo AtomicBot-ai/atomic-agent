@@ -4,6 +4,7 @@ export {
   buildStablePrefix,
   DEFAULT_SYSTEM_PERSONA,
   NATIVE_TOOLS_SYSTEM_PERSONA,
+  SYSTEM_PERSONA_INPUTS_LINE,
   formatToolForLoadedTail,
 } from "./stable-prefix.js";
 export type {

@@ -69,7 +69,12 @@ export interface CommandResult {
  * Timeout semantics: when `timeoutMs` is omitted it falls back to 60s.
  * A non-positive or non-finite `timeoutMs` (e.g. `0`) disables the timeout
  * entirely — the command runs unbounded and is only stoppable via the abort
- * signal. Long-running tools (e.g. `brew install`) rely on this.
+ * signal. Long-running tools (e.g. `brew install`) rely on this. Whatever
+ * was captured before the stop is kept in the result.
+ *
+ * The stop is a tree-kill of the direct child. A command whose lifetime
+ * must outlast one `await` — the shell tool's detached jobs — goes
+ * through `startCommandJob` (command-job.ts) instead.
  */
 export async function runCommand(
   command: string,
@@ -117,6 +122,13 @@ export async function runCommand(
     const onAbort = () => killIt("abort");
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
+    /** One exit for every terminal path: timers off, listener off. */
+    const finish = () => {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+
     child.stdout.on("data", (chunk: Buffer) => {
       if (stdoutBytes + chunk.length > maxOutputBytes) {
         const slice = chunk.slice(0, Math.max(0, maxOutputBytes - stdoutBytes));
@@ -146,16 +158,12 @@ export async function runCommand(
 
     child.on("error", (err) => {
       if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
+      finish();
       reject(err);
     });
     child.on("close", (code, signal) => {
       if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
+      finish();
       resolve({
         command,
         args,
@@ -186,9 +194,7 @@ export async function runCommand(
         return;
       }
       if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
+      finish();
       reject(err);
     });
 

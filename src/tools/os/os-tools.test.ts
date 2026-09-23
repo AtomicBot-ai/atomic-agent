@@ -566,6 +566,9 @@ describe("registerOsTools", () => {
       approvals: gate,
       approvalRequired: false,
       config: {
+        tools: {
+          shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 },
+        },
         http: {
           enabled: true,
           approvalMode: "writes",
@@ -615,6 +618,7 @@ describe("registerOsTools", () => {
         "os.fs.patch",
         "os.fs.read",
         "os.fs.read_document",
+        "os.fs.restore",
         "os.fs.trash",
         "os.fs.watch",
         "os.fs.write",

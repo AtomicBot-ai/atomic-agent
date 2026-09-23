@@ -134,4 +134,43 @@ describe("os.fs.patch", () => {
     expect(result.details.mode).toBe("apply-refused");
     expect(await readFile(file, "utf8")).toBe("wrong content\n");
   });
+
+  it("warns when an applied patch leaves a JSON file unparseable", async () => {
+    const file = join(dir, "config.json");
+    const original = '{\n  "a": 1\n}\n';
+    const updated = '{\n  "a": 1\n  "b": 2\n}\n';
+    await writeFile(file, original, "utf8");
+    const patch = buildPatch("config.json", original, updated);
+    const tool = buildOsFsPatchTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
+    const result = await tool.run({ patch, apply: true }, makeCtx(dir));
+    // The patch still lands; the warning rides on top of the report.
+    expect(result.status).toBe("ok");
+    expect(result.details.mode).toBe("applied");
+    expect(await readFile(file, "utf8")).toBe(updated);
+    const warning = result.summary.split("\n")[0]!;
+    expect(warning).toMatch(
+      /^⚠ config\.json does not parse after this patch: SyntaxError: .*\(line 3 column 3\)\. It parsed before the patch/,
+    );
+    expect(result.details.parseWarning).toBe(warning);
+    expect(result.summary).toContain("patch applied:");
+  });
+
+  it("stays silent when an applied patch keeps a JS file parsing", async () => {
+    const file = join(dir, "app.js");
+    const original = "function a() {\n  return 1;\n}\n";
+    const updated = "function a() {\n  return 2;\n}\n";
+    await writeFile(file, original, "utf8");
+    const patch = buildPatch("app.js", original, updated);
+    const tool = buildOsFsPatchTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+    });
+    const result = await tool.run({ patch, apply: true }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.summary).not.toContain("⚠");
+    expect(result.details.parseWarning).toBeUndefined();
+  });
 });

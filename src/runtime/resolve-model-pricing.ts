@@ -1,9 +1,12 @@
 import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import {
   resolveModel,
+  type ModelCatalogEntry,
   type ResolvedModel,
 } from "../llm/provider/model-resolver.js";
+import type { LlmProviderConfigEntry } from "../llm/provider/registry/provider-types.js";
 import type { ResolvedLlmConfig } from "../llm/provider/registry/index.js";
+import { getCachedOpenRouterChatPicks } from "../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 
 /**
  * Pricing for a model id on one provider, when any is known.
@@ -31,5 +34,21 @@ export function resolveModelPricingFor(
   const id = providerId ?? resolved.activeTextProvider;
   const entry = resolved.providers.find((p) => p.id === id);
   if (!entry) return undefined;
-  return resolveModel(entry, modelId, catalogForProvider(entry));
+  const model = resolveModel(entry, modelId, catalogForProvider(entry));
+  if (model.source !== "default") return model;
+  // Nothing configured and nothing bundled: OpenRouter's live model list
+  // (fetched for the picker, cached for an hour) still knows the row's
+  // `context_length` and prices. Better than the nominal 128k default,
+  // against which every prompt would be mis-sized until the first 400.
+  const live = liveOpenRouterEntry(entry, modelId);
+  return live === undefined ? model : { ...live, source: "live" };
+}
+
+function liveOpenRouterEntry(
+  entry: LlmProviderConfigEntry,
+  modelId: string,
+): ModelCatalogEntry | undefined {
+  if (entry.kind !== "openrouter") return undefined;
+  return getCachedOpenRouterChatPicks()?.find((pick) => pick.id === modelId)
+    ?.entry;
 }

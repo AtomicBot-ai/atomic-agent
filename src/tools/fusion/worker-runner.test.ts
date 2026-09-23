@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-loop.js";
+import {
+  WORKER_HINT_CONTEXT,
+  WORKER_HINT_SATURATED,
+} from "./worker-result.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import type { SessionState } from "../../session/session-state.js";
 import {
@@ -9,7 +16,10 @@ import {
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
+  detectStall,
+  estimateWorkerTimeoutMs,
   runWorkerTasks,
+  WORKER_TIMEOUT_FLOOR_MS,
   WORKER_TOOL_LINES_PER_TASK,
   type WorkerRunnerDeps,
 } from "./worker-runner.js";
@@ -101,6 +111,8 @@ describe("runWorkerTasks", () => {
       providerId: "local-llama",
       maxSteps: 7,
       taskMaxDurationMs: 60_000,
+      // The role is the policy module's too: a worker builds.
+      toolRole: "builder",
     });
     // The catalog narrowing is the policy module's, not a local copy.
     expect(calls[0]!.options.toolFilter?.("fusion.delegate")).toBe(false);
@@ -112,6 +124,31 @@ describe("runWorkerTasks", () => {
       reply: "done",
       stepCount: 3,
     });
+  });
+
+  it("passes the worker reasoning and output cap into the turn, only when set (F20)", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      workerReasoning: "low",
+      workerMaxOutputTokens: 12_000,
+      signal: new AbortController().signal,
+    });
+    expect(calls[0]!.options).toMatchObject({
+      reasoningEffort: "low",
+      maxOutputTokens: 12_000,
+    });
+    const plain = harness(async () => turnResult());
+    await runWorkerTasks(plain.deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(plain.calls[0]!.options).not.toHaveProperty("reasoningEffort");
+    expect(plain.calls[0]!.options).not.toHaveProperty("maxOutputTokens");
   });
 
   it("runs on a fresh session id, never the parent's — that would deadlock", async () => {
@@ -380,5 +417,953 @@ describe("runWorkerTasks", () => {
       signal: new AbortController().signal,
     });
     expect(results.map((r) => r.status)).toEqual(["failed", "ok"]);
+  });
+
+  it("quotes the parent turn's original request in every worker's brief", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 2,
+      originalRequest: "Build a snake game with a dark theme",
+      signal: new AbortController().signal,
+    });
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.userMessage).toContain(
+        "ORIGINAL REQUEST — context only; your task is below.",
+      );
+      expect(call.userMessage).toContain("Build a snake game with a dark theme");
+    }
+    expect(calls[0]!.userMessage).toContain("Do part 0");
+    expect(calls[1]!.userMessage).toContain("Do part 1");
+  });
+
+  it("renders the fan-out's contract into every worker's brief", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 2,
+      contract: {
+        owners: { "a.js": "t0", "b.js": "t1" },
+        provides: [{ task: "t0", kind: "symbol", name: "A", in: "a.js" }],
+        requires: [{ task: "t1", name: "A" }],
+      },
+      signal: new AbortController().signal,
+    });
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.userMessage).toContain("CONTRACT — the interface between the parts");
+      expect(call.userMessage).toContain("- [t0] symbol A in a.js");
+    }
+    expect(calls[0]!.userMessage).toContain("You own: a.js");
+    expect(calls[0]!.userMessage).toContain("You provide: symbol A in a.js");
+    expect(calls[1]!.userMessage).toContain("You own: b.js");
+    expect(calls[1]!.userMessage).toContain("You may rely on: A (symbol from t0 in a.js)");
+  });
+
+  it("reports max_steps, not ok, when the worker replied on its forced final step", async () => {
+    const { deps } = harness(async ({ options }) => {
+      options.eventHook?.({
+        type: "llm_event",
+        event: {
+          type: "assistant_reply",
+          text: "the step limit was reached before the file write could be executed",
+        },
+      });
+      return turnResult({
+        reason: "reply",
+        stepCount: 7,
+        stopCause: "step_ceiling",
+      });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({ status: "max_steps", stepCount: 7 });
+    expect(results[0]!.notes?.[0]).toMatch(/step limit \(7 steps\)/);
+  });
+
+  it("reports the worker's own time limit as max_steps, not as a cancellation", async () => {
+    const { deps } = harness(
+      ({ options }) =>
+        new Promise<RunTurnResult>((resolve) => {
+          options.signal!.addEventListener(
+            "abort",
+            () => resolve(turnResult({ reason: "cancelled", stepCount: 2 })),
+            { once: true },
+          );
+        }),
+    );
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      workerTimeoutMs: 30,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({ status: "max_steps", stepCount: 2 });
+    expect(results[0]!.notes?.[0]).toMatch(/time limit/);
+  });
+
+  it("fails an ok task whose declared file does not exist, and notes untouched inputs", async () => {
+    // Three times a worker replied "Implemented `js/scene.js`" — once
+    // with invented tool results — and the file was not on disk.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      writeFileSync(join(dir, "spec.md"), "the spec");
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "spec.md"), past, past);
+      const { deps, events } = harness(async ({ options }) => {
+        writeFileSync(join(dir, "index.html"), "<html></html>");
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "assistant_reply",
+            text: "Implemented `js/scene.js` and index.html",
+          },
+        });
+        return turnResult({ stepCount: 5 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [
+          {
+            id: "t0",
+            title: "Scene",
+            instructions: "Write the scene",
+            files: ["index.html", "js/scene.js", "spec.md", "js/**/*.js"],
+          },
+        ],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]).toMatchObject({
+        status: "failed",
+        error: "declared file js/scene.js does not exist after the task",
+        notes: ["spec.md unchanged by this task"],
+      });
+      expect(events.at(-1)!.event).toMatchObject({
+        type: "fusion_worker",
+        phase: "failed",
+        summary: "declared file js/scene.js does not exist after the task",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports no_changes for an ok task that declared files, wrote nothing and changed nothing", async () => {
+    // "js/main.js unchanged by this task / I'm done!" came back `ok`.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      mkdirSync(join(dir, "js"));
+      writeFileSync(join(dir, "js", "main.js"), "old");
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "js", "main.js"), past, past);
+      const { deps, events } = harness(async ({ options }) => {
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: { tool: "os.fs.read", status: "ok", summary: "old", details: {}, truncated: false },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "I'm done!" },
+        });
+        return turnResult({ stepCount: 2 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [
+          { id: "t0", title: "Main", instructions: "Fix main", files: ["js/main.js"] },
+        ],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]).toMatchObject({
+        status: "no_changes",
+        reply: "I'm done!",
+        tools: { writes: 0 },
+        notes: [
+          "js/main.js unchanged by this task",
+          "no write, edit or patch call succeeded and no declared file changed",
+        ],
+      });
+      expect(results[0]).not.toHaveProperty("error");
+      expect(events.at(-1)!.event).toMatchObject({
+        type: "fusion_worker",
+        phase: "finished",
+        summary: "no changes — I'm done!",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries a replaced input onto the row through the declared-file check, whatever the status becomes (F43)", async () => {
+    // The Gemma worker that wrote a 9-row sample over the user's
+    // 2,401-row `sales.csv`: the guard's hit rides the write result's
+    // details, and the row must keep it when the status is folded.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      const replaced = {
+        path: join(dir, "sales.csv"),
+        display: "sales.csv",
+        bytesBefore: 60_000,
+        linesBefore: 2401,
+        linesAfter: 9,
+        shrunk: true,
+        headerChanged: false,
+        saved: "saved",
+        copy: "1-sales.csv",
+      };
+      const { deps } = harness(async ({ options }) => {
+        writeFileSync(join(dir, "sales.csv"), "sku,qty\n1,2\n");
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: {
+              tool: "os.fs.write",
+              status: "ok",
+              summary: "⚠ replaced the user's file `sales.csv` (2,401 lines → 9); …",
+              details: { replaced },
+              truncated: false,
+            },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "Wrote the sample" },
+        });
+        return turnResult({ stepCount: 2 });
+      });
+      deps.workingDir = dir;
+      const signal = new AbortController().signal;
+      const [ok] = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Sales", instructions: "x", files: ["sales.csv"] }],
+        maxWorkers: 1,
+        signal,
+      });
+      // The status stands — the write landed and the reply may be right.
+      expect(ok).toMatchObject({
+        status: "ok",
+        tools: { writes: 1 },
+        replacedInputs: [
+          { path: "sales.csv", tool: "os.fs.write", linesBefore: 2401, linesAfter: 9, saved: "saved" },
+        ],
+      });
+      // A declared file missing turns the row `failed`; the replaced
+      // input is still on it.
+      const [failed] = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [{ id: "t1", title: "Sales", instructions: "x", files: ["sales.csv", "chart.png"] }],
+        maxWorkers: 1,
+        signal,
+      });
+      expect(failed).toMatchObject({
+        status: "failed",
+        error: "declared file chart.png does not exist after the task",
+        replacedInputs: [{ path: "sales.csv" }],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("never reports no_changes for a task without declared files, or one whose write succeeded", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      writeFileSync(join(dir, "notes.md"), "old");
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "notes.md"), past, past);
+      const research = harness(async ({ options }) => {
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "the answer" },
+        });
+        return turnResult();
+      });
+      research.deps.workingDir = dir;
+      const [plain] = await runWorkerTasks(research.deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Research", instructions: "Read and report" }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(plain!.status).toBe("ok");
+
+      // A successful write call is the evidence, even when the declared
+      // path is a glob the disk check cannot stat.
+      const wrote = harness(async ({ options }) => {
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: { tool: "os.fs.write", status: "ok", summary: "wrote", details: {}, truncated: false },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        return turnResult();
+      });
+      wrote.deps.workingDir = dir;
+      const [written] = await runWorkerTasks(wrote.deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Write", instructions: "x", files: ["js/**/*.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(written).toMatchObject({ status: "ok", tools: { writes: 1 } });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves an ok task ok when every declared file was written", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      const { deps } = harness(async () => {
+        writeFileSync(join(dir, "index.html"), "<html></html>");
+        return turnResult({ stepCount: 2 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [
+          {
+            id: "t0",
+            title: "Page",
+            instructions: "Write it",
+            files: ["index.html"],
+          },
+        ],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]!.status).toBe("ok");
+      expect(results[0]).not.toHaveProperty("error");
+      expect(results[0]).not.toHaveProperty("notes");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries the worker's provider failure and a remediation hint to the orchestrator", async () => {
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      options.eventHook?.({
+        type: "loop_failed",
+        error: new Error(
+          'llama-server HTTP 500: {"error":{"message":"Context size has been exceeded."}}',
+        ),
+        category: "transport",
+      });
+      return turnResult({ reason: "failed", stepCount: 0 });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      hint: WORKER_HINT_CONTEXT,
+    });
+    expect(results[0]!.error).toContain("Context size has been exceeded");
+    const last = events.at(-1)!.event;
+    expect(last).toMatchObject({ type: "fusion_worker", phase: "failed" });
+    expect(last.type === "fusion_worker" ? last.summary : "").toContain(
+      "Context size has been exceeded",
+    );
+  });
+
+  it("falls back to the session's stored error when the hook saw no loop failure", async () => {
+    const lastError =
+      "llama-server accepted the request but sent no first token within 120000ms — it may still be evaluating the prompt";
+    const { deps } = harness(async () =>
+      turnResult({
+        reason: "failed",
+        stepCount: 0,
+        session: {
+          ...createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+          lastError,
+        },
+      }),
+    );
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      error: lastError,
+      hint: WORKER_HINT_SATURATED,
+    });
+  });
+});
+
+describe("worker limits from throughput (F19)", () => {
+  it("estimateWorkerTimeoutMs sizes from the brief, the declared files and the measured speed", () => {
+    const ceilingMs = 2_700_000;
+    // No measurement (or a cloud leg): the ceiling, as before.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: null, ceilingMs })).toBe(ceilingMs);
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: 0, ceilingMs })).toBe(ceilingMs);
+    // (4000/4 + 2×2000) tokens / 10 tok/s × 3 = 1,500 s = 25 min.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: 10, ceilingMs })).toBe(1_500_000);
+    // Fast machine, small task: the 10-minute floor.
+    expect(estimateWorkerTimeoutMs({ briefChars: 400, declaredFiles: 1, tokensPerSecond: 200, ceilingMs })).toBe(WORKER_TIMEOUT_FLOOR_MS);
+    // Slow machine, big task: the ceiling.
+    expect(estimateWorkerTimeoutMs({ briefChars: 16_000, declaredFiles: 8, tokensPerSecond: 3, ceilingMs })).toBe(ceilingMs);
+    // A ceiling below the floor is the operator's pin: honoured as is.
+    expect(estimateWorkerTimeoutMs({ briefChars: 400, declaredFiles: 1, tokensPerSecond: 200, ceilingMs: 60_000 })).toBe(60_000);
+  });
+
+  it("gives each worker turn its own estimated time limit on a measured local leg", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    const withFiles = { ...tasks(1)[0]!, files: ["a.js", "b.js"] };
+    await runWorkerTasks(deps, {
+      ...BASE,
+      workerTimeoutMs: 2_700_000,
+      localTokensPerSecond: 10,
+      tasks: [withFiles],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    const briefChars = calls[0]!.userMessage.length;
+    const expected = estimateWorkerTimeoutMs({
+      briefChars,
+      declaredFiles: 2,
+      tokensPerSecond: 10,
+      ceilingMs: 2_700_000,
+    });
+    expect(calls[0]!.options.taskMaxDurationMs).toBe(expected);
+    expect(expected).toBeGreaterThanOrEqual(WORKER_TIMEOUT_FLOOR_MS);
+    expect(expected).toBeLessThan(2_700_000);
+
+    const unmeasured = harness(async () => turnResult());
+    await runWorkerTasks(unmeasured.deps, {
+      ...BASE,
+      workerTimeoutMs: 2_700_000,
+      localTokensPerSecond: null,
+      tasks: [withFiles],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(unmeasured.calls[0]!.options.taskMaxDurationMs).toBe(2_700_000);
+  });
+});
+
+
+describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
+  const stepStarted = (stepIndex: number): AgentLoopEvent => ({ type: "step_started", stepIndex });
+  const stepFinished = (stepIndex: number): AgentLoopEvent => ({
+    type: "step_finished",
+    stepIndex,
+    summary: "step done",
+    durationMs: 1,
+  });
+  const wrote = (tool = "os.fs.write"): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool, status: "ok", summary: "wrote a.js", details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const read = (): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.fs.read", status: "ok", summary: "read main.js: 40 lines", details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const replied = (): AgentLoopEvent => ({
+    type: "llm_event",
+    event: { type: "assistant_reply", text: "done" },
+  });
+  type TurnOptions = Parameters<WorkerRunnerDeps["runTurn"]>[2];
+
+  /**
+   * A worker that reads at every step and writes at `writeAtStep`, if
+   * ever. Mirrors the loop's order: the signal is checked at the top of
+   * a step, a step's tool result lands before its `step_finished`.
+   */
+  function stepping(writeAtStep: number | null) {
+    return async ({ options }: { options: TurnOptions }) => {
+      for (let step = 1; step <= 8; step += 1) {
+        if (options.signal?.aborted) {
+          return turnResult({ reason: "cancelled", stepCount: step - 1 });
+        }
+        options.eventHook?.(stepStarted(step - 1));
+        options.eventHook?.(step === writeAtStep ? wrote() : read());
+        options.eventHook?.(stepFinished(step - 1));
+      }
+      options.eventHook?.(replied());
+      return turnResult({ stepCount: 8 });
+    };
+  }
+
+  /**
+   * A worker whose current step is one long generation: `completedBefore`
+   * read-only steps finish at once, then the next step starts and its
+   * completion stays in flight until the test releases it (it then
+   * writes the file and replies) or the signal aborts — the two ways a
+   * streaming request ends in the real loop.
+   */
+  function generating(completedBefore: number) {
+    let release: (() => void) | undefined;
+    const runTurn = ({ options }: { options: TurnOptions }) =>
+      new Promise<RunTurnResult>((resolve) => {
+        for (let i = 0; i < completedBefore; i += 1) {
+          options.eventHook?.(stepStarted(i));
+          options.eventHook?.(read());
+          options.eventHook?.(stepFinished(i));
+        }
+        options.eventHook?.(stepStarted(completedBefore));
+        options.signal?.addEventListener(
+          "abort",
+          () => resolve(turnResult({ reason: "cancelled", stepCount: completedBefore })),
+          { once: true },
+        );
+        release = () => {
+          options.eventHook?.(wrote());
+          options.eventHook?.(stepFinished(completedBefore));
+          options.eventHook?.(replied());
+          resolve(turnResult({ stepCount: completedBefore + 1 }));
+        };
+      });
+    return { runTurn, release: () => release!() };
+  }
+
+  it("hands a task with declared files back once half the steps pass with no write", async () => {
+    const { deps, events } = harness(stepping(null));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("needs_orchestrator");
+    // Half of 8 is 4: the fifth step is the one that is not taken.
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(4 of 8 steps/);
+    expect(result!.reply).toContain("what I found: 4 tool calls (os.fs.read×4)");
+    expect(result!.reply).toContain("read main.js: 40 lines");
+    expect(result!.stepCount).toBe(4);
+    expect(result!.error).toBeUndefined();
+    expect(result!.notes).toContainEqual(
+      expect.stringContaining(
+        "handed back early: declared files but wrote none by half the budget (4 steps completed, none a successful write)",
+      ),
+    );
+    const finished = events.map((e) => e.event).find((e) => e.type === "fusion_worker" && e.phase !== "started" && e.phase !== "tool");
+    expect(finished).toMatchObject({ phase: "finished", summary: "needs the orchestrator" });
+  });
+
+  it("lets a worker that wrote something before the half-way mark run on", async () => {
+    // The declared file exists afterwards, so the ground-truth check
+    // has nothing to downgrade and the status is the loop's own.
+    const workingDir = mkdtempSync(join(tmpdir(), "atomic-handback-"));
+    writeFileSync(join(workingDir, "a.js"), "ok\n");
+    const { deps } = harness(stepping(3));
+    deps.workingDir = workingDir;
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("ok");
+    expect(result!.stepCount).toBe(8);
+  });
+
+  it("never hands back a task that declared no files", async () => {
+    const { deps } = harness(stepping(null));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("ok");
+    expect(result!.stepCount).toBe(8);
+  });
+
+  it("hands back once three same-result steps completed, even when half the budget is one (F42, F46)", async () => {
+    // Half of 3 is 1, but one completed step is a worker that read the
+    // spec, and two are not yet a stall: the step half waits for the
+    // same result three times (F46), and names it on the note.
+    const { deps } = harness(stepping(null));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 3,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("needs_orchestrator");
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(3 of 3 steps/);
+    expect(result!.stepCount).toBe(3);
+    expect(result!.notes).toContainEqual(
+      expect.stringContaining(
+        "(3 steps completed, none a successful write) (stalled: same result 3×)",
+      ),
+    );
+  });
+
+  const shell = (summary: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.shell.run", status: "ok", summary, details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const failedShell = (summary: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.shell.run", status: "error", summary, details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const readOf = (file: string): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.fs.read", status: "ok", summary: `read ${file}: 12 lines`, details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+
+  /** A worker whose step `i` (1-based) emits `resultAt(i)`; replies after `total` steps. */
+  function steppingWith(resultAt: (step: number) => AgentLoopEvent, total = 8) {
+    return async ({ options }: { options: TurnOptions }) => {
+      for (let step = 1; step <= total; step += 1) {
+        if (options.signal?.aborted) {
+          return turnResult({ reason: "cancelled", stepCount: step - 1 });
+        }
+        options.eventHook?.(stepStarted(step - 1));
+        options.eventHook?.(resultAt(step));
+        options.eventHook?.(stepFinished(step - 1));
+      }
+      options.eventHook?.(replied());
+      return turnResult({ stepCount: total });
+    };
+  }
+
+  it("runs a busy worker to its budget: distinct successful shell calls are not a stall (F46)", async () => {
+    // Live: a worker hashing one file per shell call was handed back at
+    // half its 30 steps and never reached its write. Each step is a
+    // different, successful result — that is work, not a loop.
+    const { deps } = harness(steppingWith((step) => shell(`sha256sum file${step}.txt: exit 0`)));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["js/**/*.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).not.toBe("needs_orchestrator");
+    expect(result!.stepCount).toBe(8);
+    expect(result!.reply).toBe("done");
+    expect(result!.notes ?? []).not.toContainEqual(expect.stringContaining("handed back"));
+  });
+
+  it("hands back when the LAST three steps returned the same result, after busy ones (F46)", async () => {
+    // Two distinct hashes, then the same missing-file error three times
+    // — a worker waiting for a sibling's output that does not exist yet.
+    const { deps } = harness(
+      steppingWith((step) =>
+        step <= 2
+          ? shell(`sha256sum file${step}.txt: exit 0`)
+          : failedShell("cat manifest.json: No such file or directory (exit 1)"),
+      ),
+    );
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("needs_orchestrator");
+    // Half of 8 is 4, but step 4 is only the second repeat; the fifth completes the three.
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(5 of 8 steps/);
+    expect(result!.stepCount).toBe(5);
+    expect(result!.notes).toContainEqual(
+      expect.stringContaining("(5 steps completed, none a successful write) (stalled: same result 3×)"),
+    );
+  });
+
+  it("hands back a worker that only read for six steps, however different the reads (F46)", async () => {
+    const { deps } = harness(steppingWith((step) => readOf(`src/file${step}.js`)));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("needs_orchestrator");
+    // Past half the steps at 4, but distinct reads are not the same
+    // result; the read-only rule needs six of them.
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(6 of 8 steps/);
+    expect(result!.stepCount).toBe(6);
+    expect(result!.notes).toContainEqual(
+      expect.stringContaining("(6 steps completed, none a successful write) (stalled: read-only for 6 steps)"),
+    );
+  });
+
+  it("detectStall names the rule that fired, both when both do (F46)", () => {
+    const same = { fingerprint: "os.shell.run|error|cat x: no such file", busy: false };
+    const busy = (n: number) => ({ fingerprint: `os.shell.run|ok|sha ${n}`, busy: true });
+    const read = (n: number) => ({ fingerprint: `os.fs.read|ok|read ${n}`, busy: false });
+    expect(detectStall([])).toBeUndefined();
+    expect(detectStall([same, same])).toBeUndefined();
+    expect(detectStall([busy(1), same, same, same])).toBe("same result 3×");
+    expect(detectStall([busy(1), busy(2), busy(3), busy(4), busy(5), busy(6), busy(7)])).toBeUndefined();
+    expect(detectStall([busy(1), read(1), read(2), read(3), read(4), read(5), read(6)])).toBe(
+      "read-only for 6 steps",
+    );
+    // A failed shell call is not a success from a non-read tool either.
+    expect(detectStall([read(1), read(2), read(3), same, same, same])).toBe(
+      "same result 3× / read-only for 6 steps",
+    );
+    // Five read-only steps after a busy one: neither rule.
+    expect(detectStall([busy(1), read(1), read(2), read(3), read(4), read(5)])).toBeUndefined();
+  });
+
+  it("never hands back on one completed step: a worker that reads once and then writes runs on (F42)", async () => {
+    // Half of 2 is 1; F19 would have stopped this worker as it started
+    // its second step — the write. A glob keeps the disk check out of
+    // it, so the write call is the evidence.
+    const { deps } = harness(stepping(2));
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 2,
+      tasks: [{ ...tasks(1)[0]!, files: ["js/**/*.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(result!).toMatchObject({ status: "ok", stepCount: 8, tools: { writes: 1 } });
+  });
+
+  it("keeps generating past half the time limit while the first completion is still streaming (F42)", async () => {
+    // Live: a 6 tok/s worker was 1,350 s — half its limit — into its
+    // FIRST completion, 7,293 tokens of the file it was about to write,
+    // when F19's timer stopped it. Nothing has completed, nothing is
+    // checked: the worker runs on and the write lands.
+    vi.useFakeTimers();
+    try {
+      const worker = generating(0);
+      const { deps, calls } = harness(worker.runTurn);
+      let done = false;
+      const run = runWorkerTasks(deps, {
+        ...BASE,
+        workerTimeoutMs: 60_000,
+        tasks: [{ ...tasks(1)[0]!, files: ["js/**/*.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      }).then((results) => {
+        done = true;
+        return results;
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(calls[0]!.options.signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(calls[0]!.options.signal?.aborted).toBe(false);
+      expect(done).toBe(false);
+      worker.release();
+      const [result] = await run;
+      expect(result!).toMatchObject({ status: "ok", reply: "done", stepCount: 1, tools: { writes: 1 } });
+      expect(result!.notes).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not hand back a worker with one completed step and a long in-flight generation (F42)", async () => {
+    // One read step done, the second step's completion streaming past
+    // half the time limit: the floor is two completed steps, and a
+    // check only runs at a step boundary anyway.
+    vi.useFakeTimers();
+    try {
+      const worker = generating(1);
+      const { deps, calls } = harness(worker.runTurn);
+      let done = false;
+      const run = runWorkerTasks(deps, {
+        ...BASE,
+        workerMaxSteps: 8,
+        workerTimeoutMs: 60_000,
+        tasks: [{ ...tasks(1)[0]!, files: ["js/**/*.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      }).then((results) => {
+        done = true;
+        return results;
+      });
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(calls[0]!.options.signal?.aborted).toBe(false);
+      expect(done).toBe(false);
+      worker.release();
+      const [result] = await run;
+      expect(result!).toMatchObject({ status: "ok", stepCount: 2, tools: { calls: 2, writes: 1 } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands back at a step boundary once two steps completed past half the time, not at one (F42)", async () => {
+    vi.useFakeTimers();
+    try {
+      let abortedAfterFirst: boolean | undefined;
+      const { deps } = harness(async ({ options }) => {
+        // The first step's completion takes 31 s of a 60 s limit.
+        options.eventHook?.(stepStarted(0));
+        options.eventHook?.(read());
+        await new Promise((r) => setTimeout(r, 31_000));
+        options.eventHook?.(stepFinished(0));
+        abortedAfterFirst = options.signal?.aborted;
+        options.eventHook?.(stepStarted(1));
+        options.eventHook?.(read());
+        await new Promise((r) => setTimeout(r, 1_000));
+        options.eventHook?.(stepFinished(1));
+        if (options.signal?.aborted) {
+          return turnResult({ reason: "cancelled", stepCount: 2 });
+        }
+        options.eventHook?.(replied());
+        return turnResult({ stepCount: 2 });
+      });
+      const run = runWorkerTasks(deps, {
+        ...BASE,
+        workerMaxSteps: 8,
+        workerTimeoutMs: 60_000,
+        tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      await vi.advanceTimersByTimeAsync(32_000);
+      const [result] = await run;
+      // One completed step past the half-way mark is not enough…
+      expect(abortedAfterFirst).toBe(false);
+      // …two are, and the check ran when the second finished.
+      expect(result!.status).toBe("needs_orchestrator");
+      expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(2 of 8 steps, 1 min of 1 min\)/);
+      expect(result!.stepCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still ends a worker stuck in one endless step at its time limit (fake timers)", async () => {
+    // The hand-back never fires mid-generation; the wall timeout is the
+    // hard bound and does, exactly as before.
+    vi.useFakeTimers();
+    try {
+      const worker = generating(0);
+      const { deps, calls } = harness(worker.runTurn);
+      let done = false;
+      const run = runWorkerTasks(deps, {
+        ...BASE,
+        workerTimeoutMs: 60_000,
+        tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      }).then((results) => {
+        done = true;
+        return results;
+      });
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(calls[0]!.options.signal?.aborted).toBe(false);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls[0]!.options.signal?.aborted).toBe(true);
+      const [result] = await run;
+      expect(result!).toMatchObject({ status: "max_steps", stepCount: 0 });
+      expect(result!.notes?.[0]).toMatch(/time limit/);
+      expect(result!.reply).not.toContain("handed back");
+      expect(result!.durationMs).toBe(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("runWorkerTasks — declared inputs (F51)", () => {
+  function registry(log: string[]) {
+    return {
+      declare: (sessionId: string, paths: readonly string[]) =>
+        log.push(`declare ${sessionId} ${paths.join(",")}`),
+      clear: (sessionId: string) => log.push(`clear ${sessionId}`),
+    };
+  }
+
+  it("declares the contract's inputs, resolved and without globs, for the worker's session before its turn and clears them after", async () => {
+    const log: string[] = [];
+    const { deps } = harness(async ({ session }) => {
+      log.push(`turn ${session.id}`);
+      return turnResult();
+    });
+    await runWorkerTasks(
+      { ...deps, declaredInputs: registry(log) },
+      {
+        ...BASE,
+        tasks: tasks(1),
+        maxWorkers: 1,
+        contract: { inputs: ["sales.csv", "data/*.csv", "/abs/x.json"] },
+        signal: new AbortController().signal,
+      },
+    );
+    expect(log).toEqual([
+      `declare s-w-1 ${join("/repo", "sales.csv")},/abs/x.json`,
+      "turn s-w-1",
+      "clear s-w-1",
+    ]);
+  });
+
+  it("declares nothing when the contract names no input, and still clears in the same finally", async () => {
+    const log: string[] = [];
+    const { deps } = harness(async ({ session }) => {
+      log.push(`turn ${session.id}`);
+      return turnResult();
+    });
+    await runWorkerTasks(
+      { ...deps, declaredInputs: registry(log) },
+      {
+        ...BASE,
+        tasks: tasks(1),
+        maxWorkers: 1,
+        contract: { inputs: ["js/*.js"], owners: { "a.js": "t0" } },
+        signal: new AbortController().signal,
+      },
+    );
+    expect(log).toEqual(["turn s-w-1", "clear s-w-1"]);
   });
 });

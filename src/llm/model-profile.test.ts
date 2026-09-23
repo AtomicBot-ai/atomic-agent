@@ -46,6 +46,19 @@ describe("detectModelProfile", () => {
     expect(detectModelProfile(LLAMA3_PROPS)).toEqual(PLAIN_INSTRUCT_PROFILE);
   });
 
+  it("marks a plain template that reads enable_thinking as switchable (F31)", () => {
+    const glmLike = {
+      model_alias: "glm-4-9b-chat",
+      chat_template:
+        "[gMASK]<sop>{% for m in messages %}<|{{ m['role'] }}|>\n{{ m['content'] }}{% endfor %}{% if enable_thinking is defined and not enable_thinking %}<|assistant|>\n<think></think>{% endif %}",
+    };
+    expect(detectModelProfile(glmLike)).toEqual({
+      ...PLAIN_INSTRUCT_PROFILE,
+      supportsThinkingSwitch: true,
+    });
+    expect(detectModelProfile(LLAMA3_PROPS).supportsThinkingSwitch).toBeUndefined();
+  });
+
   it("detects gemma 4 think profile from channel tags", () => {
     expect(detectModelProfile(GEMMA4_PROPS)).toEqual(GEMMA4_THINK_PROFILE);
   });
@@ -71,7 +84,11 @@ describe("detectModelProfile", () => {
         ...NEMOTRON_PROPS,
         model_alias: "some-other-chatml-think-model",
       }),
-    ).toEqual(PLAIN_INSTRUCT_PROFILE);
+    ).toEqual({
+      // Plain, but the template does read `enable_thinking` (F31).
+      ...PLAIN_INSTRUCT_PROFILE,
+      supportsThinkingSwitch: true,
+    });
   });
 
   // Pins branch ordering. This alias satisfies BOTH gates (it contains

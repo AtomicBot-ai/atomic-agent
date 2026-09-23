@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+import { attachGenerationId } from "../../llm/provider/openai/generation-id.js";
 
 import { createTraceRecorder } from "./trace-recorder.js";
 import type { TraceEvent } from "./trace-event.js";
@@ -345,6 +346,76 @@ describe("createTraceRecorder", () => {
       stop: true,
       truncated: false,
     });
+    // A hand-built event without the estimate records none.
+    expect(completion).not.toHaveProperty("reasoningTokens");
+  });
+
+  it("forwards the step's reasoningTokens estimate onto llm_completion (F49)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-5b", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        reasoningTokens: 1500,
+        completion: {
+          content: "[]",
+          reasoningContent: "x".repeat(6000),
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 5,
+            predictedMs: 12,
+            promptTokens: 80,
+            predictedTokens: 1400,
+          },
+          cacheHitTokens: 80,
+          slotId: 0,
+          modelId: "demo",
+        },
+      },
+    });
+    const completion = events.find((e) => e.type === "llm_completion");
+    expect(completion).toMatchObject({
+      type: "llm_completion",
+      attempt: 1,
+      reasoningTokens: 1500,
+      timing: { predictedTokens: 1400 },
+    });
+  });
+
+  it("records a batch trim with the calls that never ran", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trim", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 3 } as AgentLoopEvent);
+    rec.onAgentEvent({ type: "step_started", stepIndex: 4 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "batch_trimmed",
+        stepIndex: 4,
+        originalSize: 5,
+        kept: "os.fs.write",
+        dropped: ["os.fs.write", "os.fs.write", "os.fs.edit", "reply"],
+        reason: "approval-gated-batched",
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "batch_trimmed",
+      seq: 2,
+      sessionId: "s-trim",
+      ts: 1000,
+      turnIndex: 3,
+      stepIndex: 4,
+      originalSize: 5,
+      kept: "os.fs.write",
+      dropped: ["os.fs.write", "os.fs.write", "os.fs.edit", "reply"],
+      reason: "approval-gated-batched",
+    });
   });
 
   it("emits parse_retry and error events", () => {
@@ -403,6 +474,41 @@ describe("createTraceRecorder", () => {
     expect(err).not.toHaveProperty("fallbackFailures");
   });
 
+  it("records a size-rejection repack (F30)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-repack", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 });
+    rec.onAgentEvent({
+      type: "prompt_repacked",
+      stepIndex: 4,
+      contextWindow: 8_192,
+      source: "estimate",
+      promptTokens: 10_240,
+    });
+    expect(events.find((e) => e.type === "prompt_repacked")).toMatchObject({
+      type: "prompt_repacked",
+      turnIndex: 1,
+      stepIndex: 4,
+      contextWindow: 8_192,
+      source: "estimate",
+      promptTokens: 10_240,
+    });
+  });
+
+  it("records the generation id of a stream that failed after output", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-gen", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    const error = new Error("openai provider 504: Upstream idle timeout", {
+      cause: attachGenerationId(new Error("terminated"), "gen-504"),
+    });
+    rec.onAgentEvent({ type: "loop_failed", error, category: "transport" });
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      message: "openai provider 504: Upstream idle timeout",
+      generationId: "gen-504",
+    });
+  });
+
   it("keeps the last link's message and lists the links that failed before it", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-fb", emit, now });
@@ -425,6 +531,30 @@ describe("createTraceRecorder", () => {
         },
       ],
     });
+  });
+
+  it("records a truncation with no cap on the wire without inventing one", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc-nocap", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 1,
+      cause: "provider_limit",
+      completionTokens: 33_678,
+      promptTokens: 21_000,
+      retry: { kind: "raise_cap", maxTokens: 32_768 },
+    });
+    const recorded = events.filter((e) => e.type === "completion_truncated");
+    expect(recorded).toEqual([
+      expect.objectContaining({
+        cause: "provider_limit",
+        completionTokens: 33_678,
+        retry: "raise_cap",
+        retryValue: 32_768,
+      }),
+    ]);
+    expect(recorded[0]).not.toHaveProperty("requestedMaxTokens");
   });
 
   it("records a truncation retry with its cause, counts and the retry taken", () => {
@@ -703,6 +833,35 @@ describe("createTraceRecorder", () => {
       "link_generator",
       "query_rewriter",
     ]);
+  });
+
+  it("step_finished carries the stalled-review signal when the loop sends one (F41)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-stall", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 5 });
+    rec.onAgentEvent({
+      type: "step_finished",
+      stepIndex: 5,
+      summary: "os.fs.read",
+      durationMs: 3,
+    });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 12 });
+    rec.onAgentEvent({
+      type: "step_finished",
+      stepIndex: 12,
+      summary: "os.fs.read[error]",
+      durationMs: 4,
+      reviewStall: { steps: 12, phase: "cut" },
+    });
+    const rows = events.filter((e) => e.type === "step_finished");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toHaveProperty("reviewStall");
+    expect(rows[1]).toMatchObject({
+      stepIndex: 12,
+      reviewStall: { steps: 12, phase: "cut" },
+    });
   });
 
   it("assigns monotonic seq across events", () => {
