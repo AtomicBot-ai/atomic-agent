@@ -7727,6 +7727,41 @@ async function backendSwitchTest(
  * <json>`: there is no config-write route, and PATCH /api/config re-defaults
  * every block it does not merge.
  */
+/**
+ * The managed llama daemon, brought up at launch when the chat route needs it.
+ *
+ * `atag serve` never starts it: in the terminal the TUI does (its local-models
+ * orchestrator), and in this app only a backend switch did. So after a reboot,
+ * or any launch after the daemon had stopped, a person on the local route got
+ * "The provider is not answering" on their first message, with a model
+ * downloaded and nothing wrong. Start it here when the route is managed-local
+ * and the active model is on disk; a running daemon, an external or cloud
+ * route, or a model not yet downloaded leaves everything as it is.
+ */
+async function startLocalDaemonAtBoot(): Promise<void> {
+  try {
+    const read = await readWholeConfig();
+    if (!read.ok || !read.config) return;
+    const cfg = read.config;
+    if (cfg.localModels?.mode !== "managed") return;
+    // No `llm` block means the agent synthesizes `local-llama`, the local route.
+    const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
+    const entry = cfg.llm?.providers?.find((p) => p.id === active);
+    if (cfg.llm && (!entry || entry.kind !== "llama-server")) return;
+    const st = await modelsStatus();
+    if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
+    if (await localDaemonRunning()) return;
+    const res = await modelsStart();
+    const line = res.ok
+      ? `[desktop] started the local model daemon (${st.status.activeModel})`
+      : `[desktop] could not start the local model daemon: ${res.error ?? "unknown error"}`;
+    console.error(line);
+    send("agent:log", { stream: "stderr", line });
+  } catch (err) {
+    console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function claimDesktopPorts(): Promise<void> {
   if (!DESKTOP_STATE_WAS_FRESH) return;
   try {
@@ -7829,6 +7864,7 @@ void app.whenReady().then(async () => {
     void claimDesktopPorts().then(() => {
       void agent?.start();
       if (SMOKE) void smokeTest();
+      else void startLocalDaemonAtBoot();
     });
   });
 
