@@ -156,7 +156,9 @@ const ROWS = `[...document.querySelectorAll('#content .turn, #content .sysrow')]
     return { k: 'approval', done: !!done, label: ((t.querySelector('.apprlbl b') || {}).textContent || '').trim(),
              badge: ((t.querySelector('.badge') || {}).textContent || '').trim() };
   }
-  if (t.querySelector('.card')) return { k: 'tool', name: ((t.querySelector('.cardhead .nm') || {}).textContent || '').trim() };
+  // The card's visible head is a human line ("Wrote approved.txt"); the raw
+  // tool id it stands for is the card's data-tool (and is printed inside it).
+  if (t.querySelector('.card')) return { k: 'tool', name: (t.querySelector('.card').dataset.tool || '').trim() };
   if (t.querySelector('.tk-asst')) return { k: 'assistant', text: ((t.querySelector('.prose') || {}).innerText || '').trim() };
   if (t.querySelector('.disc')) return { k: 'reason' };
   if (t.querySelector('.ubub, .user, .tk-user')) return { k: 'user', text: t.innerText.trim().slice(0, 80) };

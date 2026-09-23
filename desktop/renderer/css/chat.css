@@ -107,46 +107,64 @@
 .msglink{color:var(--blue);text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px}
 .msglink:hover{color:var(--blue-deep)}
 
-/* ---------------- reasoning disclosure ---------------- */
-.disc{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:0 10px 0 4px;border-radius:var(--r-pill);
-  font-size:13px;color:var(--ink-2);transition:background var(--t-state) var(--ease)}
-.disc b{font-weight:600}
+/* ---------------- work lines: reasoning, tool calls, folded runs ----------------
+   Calm (S3). The steps of a turn are quiet one-line rows on the page, not
+   lifted cards: an icon in the muted ink, a plain sentence, and status and
+   time small on the right. Consecutive steps sit close together, so a turn
+   reads as "what it did" then the reply. The chevron of the reasoning line
+   sits where a tool line's icon sits, so the column of steps lines up. */
+#scroller > .col720 > .tk-step + .tk-step{margin-top:-10px}
+
+/* reasoning disclosure — closed by default, "Reasoning · 1 step" */
+.disc{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
+  font-size:13.5px;color:var(--ink-3);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .disc svg{width:14px;height:14px}
-.disc:hover{background:var(--hover);color:var(--ink)}
-.discbody{margin:4px 0 0 10px;padding:2px 0 2px 14px;border-left:2px solid color-mix(in srgb, var(--reasoning) 40%, transparent);
+.disc:hover{background:var(--hover);color:var(--ink-2)}
+.disc[aria-expanded="true"]{color:var(--ink-2)}
+.discbody{margin:2px 0 4px 16px;padding:2px 0 2px 16px;border-left:2px solid var(--bd-2);
   color:var(--ink-2);font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
 
-/* ---------------- tool cards and folded runs ---------------- */
-.turn .card{background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden;min-width:0}
-.turn .card.err{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--critical) 42%, transparent),var(--sh-card)}
+/* tool calls and folded runs — `.card` / `.cardhead` / `.cardbody` / `.cardsum`
+   / `.du` / `.nm` are what the smoke and drivers read. At rest a row has no
+   surface of its own; hover fills it; open, it becomes a quiet panel with the
+   raw id, the arguments and the output. A failure keeps a faint red wash, the
+   red alert and its error line, without being opened. */
+.turn .card{background:transparent;border-radius:var(--r-row);overflow:hidden;min-width:0;
+  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+.turn .card.open{background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd)}
+.turn .card.err{background:color-mix(in srgb, var(--critical) 6%, transparent)}
 .turn .card.flash{animation:chat-cardflash .6s var(--ease)}
-@keyframes chat-cardflash{30%{box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 45%, transparent),var(--sh-card)}}
-.cardhead{display:flex;align-items:center;gap:10px;width:100%;min-width:0;min-height:42px;padding:0 12px;text-align:left;
-  transition:background var(--t-state) var(--ease)}
+@keyframes chat-cardflash{30%{box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 45%, transparent)}}
+.cardhead{display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:32px;padding:0 10px;text-align:left;
+  border-radius:var(--r-row);transition:background var(--t-state) var(--ease)}
 .cardhead:hover{background:var(--hover)}
 .cardhead:focus-visible{outline-offset:-2px}
-.cardhead .nm{flex:0 1 auto;max-width:62%;min-width:0;font:500 12.5px/1.3 var(--font-mono);color:var(--ink);
+.cardhead .tl-ic{flex:none;display:flex;color:var(--ink-3)}
+.cardhead .tl-ic svg{width:14px;height:14px}
+.cardhead .nm{flex:1 1 auto;min-width:0;font:400 13.5px/1.45 var(--font-ui);color:var(--ink-2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cardhead .du{flex:none;font:400 11.5px/1.3 var(--font-mono);color:var(--ink-2)}
+.cardhead .tl-m{font:400 12.5px/1 var(--font-mono);color:var(--ink)}
+.turn .card.err .nm{color:var(--ink)}
+.cardhead .du{flex:none;font-size:12px;line-height:1.3;font-variant-numeric:tabular-nums;color:var(--ink-3)}
 .cardhead .du:empty{display:none}
-.cardhead .tk-chip{flex:none}
-.cardhead .ar{flex:1 1 0;min-width:0;font:400 11.5px/1.3 var(--font-mono);color:var(--ink-2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cardhead .chev{flex:none;display:flex;margin-left:auto;color:var(--ink-3)}
+.tl-bad{flex:none;font-size:12px;line-height:1.3;color:var(--critical)}
+.tl-st{flex:none;width:16px;height:16px;display:grid;place-items:center}
+.tl-st svg{width:13px;height:13px;stroke-width:2.2}
+.tl-st.ok{color:var(--ink-3)}
+.tl-st.err{color:var(--critical)}
+.tl-st .tk-spin{width:12px;height:12px;border-width:1.5px}
+.cardhead .chev{flex:none;display:flex;color:var(--ink-3)}
 .cardhead .chev svg{width:14px;height:14px}
-/* status glyph: running = pulsing brand dot, done = green tick, failed = red alert */
-.tk-gly{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none}
-.tk-gly svg{width:12px;height:12px;stroke-width:2.4}
-.tk-gly--ok{background:color-mix(in srgb, var(--success) 14%, transparent);color:var(--success)}
-.tk-gly--err{background:color-mix(in srgb, var(--critical) 13%, transparent);color:var(--critical)}
-.tk-gly--warn{background:var(--amber-wash);color:var(--amber-text)}
-/* the TUI's └─ line: the result, first ~160 chars, under the name */
-.cardsum{margin-top:-6px;padding:0 14px 12px 44px;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the error line of a failed call, under its sentence (text column: 10 + 14 + 8) */
+.cardsum{padding:0 12px 9px 32px;font-size:12.5px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .cardsum.bad{color:var(--critical)}
-.cardbody{padding:0 12px 12px;display:grid;gap:6px;min-width:0}
-.cardbody .micro{padding:4px 2px 0;font-size:11.5px;line-height:16px}
-.cardbody pre{margin:0;max-height:320px;max-width:100%;font-size:11.5px}
+.cardbody{padding:2px 10px 10px;display:grid;gap:6px;min-width:0}
+.tl-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;padding:0 2px 2px;font-size:12px;line-height:18px;color:var(--ink-3)}
+.tl-meta .mono{color:var(--ink-2);font-size:12px}
+.tl-meta .tnum{font-variant-numeric:tabular-nums}
+.cardbody .micro{padding:4px 2px 0;font-size:11.5px;line-height:16px;font-weight:500;color:var(--ink-3)}
+.cardbody pre{margin:0;max-height:240px;max-width:100%;font-size:11.5px}
 
 /* ---------------- approval: the indigo decision block ----------------
    Inline, never a modal. `.appr` / `#apprcard` / `.badge` / `[data-appr]` /
@@ -304,11 +322,12 @@
 }
 
 /* ---------------- progress note (B1) ----------------
-   Words the agent sent while its turn went on (`progress_note`). Secondary
-   ink, a hair smaller than a reply, hung off a thin rule so it reads as
-   running commentary; the final reply below it stays the turn's message. */
-.tk-interim{padding:1px 0 1px 12px;border-left:2px solid var(--bd-2)}
-.tk-interim .prose{font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+   Words the agent sent while its turn went on (`progress_note`). Calm (S3):
+   prose on the page like the reply, in the secondary ink and a hair smaller,
+   so it reads as running commentary between the work lines; the final reply
+   below it stays the turn's message. */
+.tk-interim{padding:0}
+.tk-interim .prose{font-size:14px;line-height:1.6;color:var(--ink-2)}
 
 /* ---------------- paused task (B5) ----------------
    Under a reply that opens "(paused:": Continue sends `continue`; a credit

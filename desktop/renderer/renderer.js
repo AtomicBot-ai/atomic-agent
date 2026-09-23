@@ -1845,11 +1845,13 @@ function item(m, end) {
      nothing that looks for "the reply" (drivers, end mark) mistakes it. */
   if (m.k === 'interim') return '<div class="turn interim"><div></div><div class="tk-interim"><div class="prose">'
     + renderProse(m.text) + '</div></div></div>';
-  // The label keeps its textContent ("Reasoning · N steps"); only the weight moved.
-  if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
-    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<b>Reasoning</b> <span>· ' + m.steps + ' steps</span></button>'
+  /* Calm (S3): a quiet line, closed until asked — "Reasoning · 1 step",
+     with the plural right. What it holds is the model's working, not the
+     reply, so it sits in the muted ink and never in bold. */
+  if (m.k === 'reason') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>'
+    + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<span>Reasoning</span> <span class="disc-n">\u00b7 ' + plural(Number(m.steps) || 1, 'step') + '</span></button>'
     + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
-  if (m.k === 'tool') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
+  if (m.k === 'tool') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
 }
@@ -1998,19 +2000,6 @@ function resendUser(id) {
   submit();
 }
 
-function previewArgs(args) {
-  let obj = args;
-  if (typeof args === 'string') { try { obj = JSON.parse(args); } catch { return args.length > 160 ? args.slice(0, 159) + '\u2026' : args; } }
-  if (!obj || typeof obj !== 'object') return '';
-  const fmt = (v) => {
-    if (v === null || v === undefined) return String(v);
-    if (typeof v === 'string') return JSON.stringify(v.length > 60 ? v.slice(0, 59) + '\u2026' : v);
-    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-    try { const j = JSON.stringify(v); return j.length > 60 ? j.slice(0, 59) + '\u2026' : j; } catch { return '[object]'; }
-  };
-  const out = Object.entries(obj).map(([k, v]) => k + '=' + fmt(v)).join(' ');
-  return out.length > 160 ? out.slice(0, 159) + '\u2026' : out;
-}
 function argsBlock(args) {
   if (!args) return '(no args)';
   if (typeof args === 'string') { try { return JSON.stringify(JSON.parse(args), null, 2); } catch { return args; } }
@@ -2024,14 +2013,201 @@ function toolGlyph(state) {
     : state === 'err' ? '<span class="tk-gly tk-gly--err">' + ic('alert') + '</span>'
     : '<span class="tk-gly tk-gly--ok">' + ic('check') + '</span>';
 }
+/* ============================================================
+   Calm (S3) \u2014 a tool call is one human line.
+
+   Danny's decision 4: "Listed files in workspace \u00b7 1 file", "Read
+   /etc/hosts", "Ran `npm test`". The raw tool id, the args, the output and
+   the duration's provenance go inside the expanded part; a failure keeps its
+   red status and its error line visible without expanding.
+
+   The TUI has no wording to reuse here (tool-card.tsx prints the raw id and
+   an args preview), so the verbs are the desktop's own, built from what the
+   call carries: the tool id, its args and its result text. Every branch
+   falls back to something true \u2014 a call this table does not know reads
+   "Used <tool name in words>", and a detail the args or result do not carry
+   is simply left out, never guessed.
+   ============================================================ */
+
+/* The args of a card, as an object. A stored card carries them as JSON; a
+   live one carries the stream's `label`, which is the same JSON clipped to
+   120 characters (openai-chat-completions.ts) \u2014 so a long argument can
+   arrive cut mid-string. The salvage pass reads the `"key": value` pairs
+   that did arrive, and closes a string the clip left open. */
+function toolArgsObj(raw) {
+  if (raw && typeof raw === 'object') return raw;
+  const s = String(raw || '').trim();
+  if (!s) return {};
+  try { const o = JSON.parse(s); return o && typeof o === 'object' ? o : {}; } catch { /* clipped: salvage below */ }
+  const out = {};
+  const re = /"([A-Za-z_][\w-]*)"\s*:\s*("(?:[^"\\]|\\.)*"?|-?\d+(?:\.\d+)?|true|false|null|\[[^\]]*\]?)/g;
+  let mt;
+  while ((mt = re.exec(s))) {
+    let v = mt[2];
+    if (v[0] === '"' && (v.length === 1 || v[v.length - 1] !== '"' || v[v.length - 2] === '\\')) v += '\u2026"';
+    if (v[0] === '[' && v[v.length - 1] !== ']') {
+      v = v.replace(/,\s*$/, '');
+      v += ((v.match(/(^|[^\\])"/g) || []).length % 2 ? '\u2026"' : '') + ']';
+    }
+    try { out[mt[1]] = JSON.parse(v); } catch { out[mt[1]] = v.replace(/^"|"$/g, ''); }
+  }
+  return out;
+}
+/* A path as a person would say it: inside the workspace, relative to it (the
+   workspace itself by its folder name); under the home folder, with ~. */
+function toolPath(p) {
+  let s = String(p == null ? '' : p).trim();
+  const wd = String(S.live.workingDir || WORKSPACE || '').replace(/\/+$/, '');
+  if (!s || s === '.' || s === './') return wd ? wsName(wd) : 'this folder';
+  if (wd && s === wd) return wsName(wd);
+  if (wd && s.startsWith(wd + '/')) s = s.slice(wd.length + 1);
+  s = s.replace(/^\.\//, '').replace(/^\/Users\/[^/]+(?=\/|$)/, '~');
+  return s.length > 72 ? '\u2026' + s.slice(-71) : s;
+}
+function toolHost(u) {
+  try { return new URL(String(u)).host.replace(/^www\./, ''); } catch { return String(u || '').replace(/^[a-z]+:\/\//i, '').split('/')[0]; }
+}
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+function clipWords(s, n) {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1) + '\u2026' : t;
+}
+/* "os.proc.list" -> "proc list", "mcp.docs.search" -> "docs search". */
+function toolWords(name) {
+  return String(name || 'tool').replace(/^(os|mcp)\./, '').replace(/[._]+/g, ' ').trim() || 'a tool';
+}
+/* The generic phrase for a tool, with no details: the head of a folded run
+   ("Listed files \u00b7 3 times") and the fallback when a detail is missing. */
+function toolVerb(name) {
+  const n = String(name || '');
+  const table = {
+    'os.fs.list': 'Listed files', 'os.fs.read': 'Read files', 'os.fs.read_document': 'Read documents',
+    'os.fs.write': 'Wrote files', 'os.fs.edit': 'Edited files', 'os.fs.patch': 'Edited files',
+    'os.fs.trash': 'Moved files to the Trash', 'os.fs.glob': 'Looked for files', 'os.fs.grep': 'Searched in files',
+    'os.fs.diff': 'Compared files', 'os.fs.restore': 'Restored files', 'os.shell.run': 'Ran commands',
+    'os.web.search': 'Searched the web', 'browser.search': 'Searched the web', 'web.search': 'Searched the web',
+    'os.web.fetch': 'Opened web pages', 'browser.navigate': 'Opened web pages', 'os.http.request': 'Called a web service',
+    'vision.describe': 'Looked at images', 'fusion.delegate': 'Delegated tasks',
+    'os.clipboard.read': 'Read the clipboard', 'os.clipboard.write': 'Copied to the clipboard',
+    'os.notify': 'Sent a notification', 'os.email.send': 'Sent an email', 'os.email.inbox': 'Checked email',
+    'tasks.schedule': 'Scheduled a task', 'tasks.cron': 'Scheduled a task', 'tasks.list': 'Listed tasks',
+    'tasks.show': 'Looked at a task', 'tasks.cancel': 'Cancelled a task',
+    'skill.view': 'Opened a skill', 'skill.run_script': 'Ran a skill script', 'tool.view': 'Looked up a tool',
+    'browser.click': 'Clicked on the page', 'browser.type': 'Typed on the page', 'browser.scroll': 'Scrolled the page',
+    'browser.read_aria': 'Read the page', 'browser.tabs': 'Used browser tabs',
+    'verify.run': 'Ran a check', 'verify.syntax': 'Checked the syntax',
+  };
+  if (table[n]) return table[n];
+  if (/^memory\..*\.(store|set)$/.test(n)) return 'Remembered something';
+  if (/^memory\..*\.(recall|list|history)$/.test(n)) return 'Recalled memories';
+  if (/^memory\..*\.(forget|remove)$/.test(n)) return 'Forgot something';
+  if (/^os\.git\./.test(n)) return 'Ran git ' + n.slice(7).replace(/[._]+/g, ' ');
+  return 'Used ' + toolWords(n);
+}
+/* The one line. Returns HTML: machine text (paths, commands, queries) is
+   escaped into `.tl-m` spans; the words around it are plain text. */
+function toolLine(m) {
+  const n = String(m.name || '');
+  const a = toolArgsObj(m.args || m.arg);
+  const out = String(m.out || '');
+  const code = (s) => '<span class="tl-m">' + esc(s) + '</span>';
+  const quote = (s) => '\u201c' + esc(clipWords(s, 60)) + '\u201d';
+  const first = (v) => Array.isArray(v) ? v[0] : v;
+  const more = (v) => Array.isArray(v) && v.length > 1 ? ' and ' + (v.length - 1) + ' more' : '';
+  const path = a.path != null ? a.path : first(a.paths);
+  if (n === 'os.fs.list') {
+    // fs-list.ts: "total: N entries (file=F, dir=D…". Files first; folders
+    // only when there are some; a listing with neither says "0 files".
+    const t = /total:\s*(\d+)\s+entr[a-z]*\s*(?:\(file=(\d+),\s*dir=(\d+))?/.exec(out);
+    const f = t && t[2] != null ? Number(t[2]) : null, d = t && t[3] != null ? Number(t[3]) : 0;
+    const count = !t ? '' : f === null ? plural(Number(t[1]), 'item')
+      : [f || !d ? plural(f, 'file') : '', d ? plural(d, 'folder') : ''].filter(Boolean).join(', ');
+    return 'Listed files in ' + code(toolPath(path)) + (count ? ' \u00b7 ' + count : '');
+  }
+  if ((n === 'os.fs.read' || n === 'os.fs.read_document') && path) return 'Read ' + code(toolPath(path));
+  if (n === 'os.fs.write' && path) {
+    const verb = a.mode === 'append' ? 'Added to ' : /\(replace, (?!new file)/.test(out) ? 'Replaced ' : 'Wrote ';
+    return verb + code(toolPath(path));
+  }
+  if ((n === 'os.fs.edit' || n === 'os.fs.patch') && path) return 'Edited ' + code(toolPath(path));
+  if (n === 'os.fs.trash' && path) return 'Moved ' + code(toolPath(path)) + more(a.paths) + ' to the Trash';
+  if (n === 'os.fs.glob' && a.pattern) return 'Looked for ' + code(clipWords(a.pattern, 60));
+  if (n === 'os.fs.grep' && a.pattern) return 'Searched files for ' + quote(a.pattern);
+  if (n === 'os.shell.run' && (a.cmd || a.command)) {
+    const argv = Array.isArray(a.args) ? a.args : [];
+    const line = [a.cmd || a.command].concat(argv).join(' ').split('\n')[0];
+    const ex = /^exit:\s*(-?\d+|\S+)/m.exec(out);
+    return 'Ran ' + code(clipWords(line, 80)) + (ex && ex[1] !== '0' ? ' \u00b7 exit ' + esc(ex[1]) : '');
+  }
+  if ((n === 'os.web.search' || n === 'browser.search' || n === 'web.search') && a.query) return 'Searched the web for ' + quote(a.query);
+  if ((n === 'os.web.fetch' || n === 'browser.navigate') && a.url) return 'Opened ' + code(toolHost(a.url));
+  if (n === 'os.http.request' && a.url) return 'Called ' + code(toolHost(a.url));
+  if (n === 'browser.tabs' && a.url) return 'Opened ' + code(toolHost(a.url));
+  if (n === 'vision.describe' && path) return 'Looked at ' + code(wsName(toolPath(path))) + more(a.paths);
+  if (n === 'fusion.delegate') {
+    const k = Array.isArray(a.tasks) ? a.tasks.length : (String(m.args || m.arg || '').match(/"instructions"\s*:/g) || []).length;
+    return k ? 'Delegated ' + plural(k, 'task') : 'Delegated tasks';
+  }
+  if (/^memory\..*\.store$/.test(n) && a.content) return 'Remembered ' + quote(a.content);
+  if (/^memory\.profile\.set$/.test(n) && a.key) return 'Remembered your ' + esc(String(a.key).replace(/[._]+/g, ' '));
+  if (/^memory\..*\.recall$/.test(n)) return a.query ? 'Recalled ' + quote(a.query) : 'Recalled memories';
+  return esc(toolVerb(n));
+}
+/* A call still running (or waiting on your approval) has not done it yet:
+   "Ran touch x" reads "Running touch x" until its result lands. */
+function toolRunning(line) {
+  const now = {'Added to':'Adding to', 'Looked for':'Looking for', 'Looked at':'Looking at', 'Listed':'Listing',
+    'Read':'Reading', 'Wrote':'Writing', 'Replaced':'Replacing', 'Edited':'Editing', 'Moved':'Moving',
+    'Searched':'Searching', 'Ran':'Running', 'Opened':'Opening', 'Called':'Calling', 'Delegated':'Delegating',
+    'Remembered':'Remembering', 'Recalled':'Recalling', 'Used':'Using', 'Forgot':'Forgetting',
+    'Scheduled':'Scheduling', 'Cancelled':'Cancelling', 'Checked':'Checking', 'Compared':'Comparing',
+    'Restored':'Restoring', 'Clicked':'Clicking', 'Typed':'Typing', 'Scrolled':'Scrolling', 'Sent':'Sending',
+    'Copied':'Copying'};
+  const mt = /^(Added to|Looked for|Looked at|[A-Z][a-z]+)\b/.exec(line);
+  return mt && now[mt[1]] ? now[mt[1]] + line.slice(mt[1].length) : line;
+}
+/* The failure, in one line, for a card that failed: the first line of the
+   result that says something \u2014 the shell's own `$ cmd` / `exit: N` header and
+   a listing's `path:` line are the call restated, not the error. */
+function toolErrLine(m) {
+  const lines = String(m.out || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const said = lines.find((l) => !/^(\$ |exit:|path:|total:|cwd:)/.test(l)) || lines[0] || 'it did not finish';
+  return clipWords(said, 200);
+}
+function toolIcon(name) {
+  const n = String(name || '');
+  if (n === 'os.shell.run' || /^os\.(proc|git)\./.test(n) || /^verify\./.test(n) || n === 'skill.run_script') return 'term';
+  if (n === 'os.fs.list' || n === 'os.fs.glob' || n === 'os.fs.trash') return 'folder';
+  if (n === 'os.fs.write' || n === 'os.fs.edit' || n === 'os.fs.patch') return 'edit';
+  if (n === 'os.fs.grep') return 'search';
+  if (/^os\.fs\./.test(n)) return 'file';
+  if (/search$/.test(n)) return 'search';
+  if (/^(browser|os\.web|os\.http)\./.test(n)) return 'globe';
+  if (n === 'vision.describe') return 'image';
+  if (n === 'fusion.delegate') return 'fusion';
+  if (/^memory\./.test(n)) return 'memory';
+  if (/^tasks\./.test(n)) return 'clock';
+  if (/^os\.email\./.test(n)) return 'mail';
+  if (/^mcp\./.test(n)) return 'plug';
+  return 'wand';
+}
+/* Status, small and on the right: a spinner while it runs, a muted tick when
+   done, a red alert when it failed. */
+function toolStatus(state) {
+  return state === 'run' ? '<span class="tl-st run" title="Running"><span class="tk-spin"></span></span>'
+    : state === 'err' ? '<span class="tl-st err" title="Failed">' + ic('alert') + '</span>'
+    : '<span class="tl-st ok" title="Done">' + ic('check') + '</span>';
+}
 function toolCard(m) {
   const running = m.ok === null;
-  const glyph = toolGlyph(running ? 'run' : m.ok ? 'ok' : 'err');
-  const summary = (m.out || '').trim().replace(/\s+/g, ' ');
-  const clipped = summary.length > 160 ? summary.slice(0, 159) + '\u2026' : summary;
-  return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
-    + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
-      + glyph + '<span class="nm">' + esc(m.name) + '</span>'
+  const failed = m.ok === false;
+  const ms = running ? '' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '';
+  /* `data-tool` is the raw id the drivers compare (turn-order.drive reads it);
+     the same id is printed, visibly, inside the expanded part. */
+  return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
+    + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
+      + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
+      + '<span class="nm">' + (running ? toolRunning(toolLine(m)) : toolLine(m)) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
@@ -2039,16 +2215,18 @@ function toolCard(m) {
       + '<span class="du tnum" title="' + (running ? 'running'
           : m.msSource === 'trace' ? 'measured by the agent (trace): tool result minus the model completion of that step, including parse and any approval wait \u2014 the same interval the TUI shows'
           : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
-          : 'no trace for this call') + '">'
-      + (running ? '\u2026' : m.msSource === 'trace' ? dur(m.ms) : m.observedMs ? dur(m.observedMs) : '') + '</span>'
-      + (m.truncated ? '<span class="tk-chip tk-chip--sm tk-chip--amber">truncated</span>' : '')
-      + '<span class="ar">' + esc(previewArgs(m.args || m.arg)) + '</span>'
+          : 'no trace for this call') + '">' + ms + '</span>'
+      + toolStatus(running ? 'run' : failed ? 'err' : 'ok')
       + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
-    + (!m.open && clipped ? '<div class="cardsum' + (m.ok === false ? ' bad' : '') + '">' + esc(clipped) + '</div>' : '')
+    // The failure stays readable without opening the card.
+    + (failed && !m.open ? '<div class="cardsum bad">' + esc(toolErrLine(m)) + '</div>' : '')
     + (m.open ? '<div class="cardbody">'
-        + '<div class="micro">args</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
-        + '<div class="micro">result</div><pre class="tk-out">' + esc(running ? '(pending)' : (m.out || '\u2014')) + '</pre></div>' : '')
+        + '<div class="tl-meta"><span class="mono">' + esc(m.name) + '</span>'
+          + (failed ? '<span class="tl-bad">failed</span>' : '')
+          + (m.truncated ? '<span>output shortened</span>' : '') + '</div>'
+        + '<div class="micro">Arguments</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
+        + '<div class="micro">Output</div><pre class="tk-out">' + esc(running ? 'Still running\u2026' : (m.out || '\u2014')) + '</pre></div>' : '')
     + '</div>';
 }
 
@@ -12520,15 +12698,17 @@ function groupCard(run) {
     : measured.length === run.length ? (observed ? 'sum of the calls; ' + observed + ' observed by this window until the store lands' : 'sum of the calls, measured by the agent (trace)')
     : measured.length ? measured.length + ' of ' + run.length + ' calls measured' + (observed ? ' (' + observed + ' observed by this window until the store lands)' : '') + '; the rest have no trace row'
     : 'no trace for these calls';
-  const glyph = toolGlyph(pending ? 'run' : bad ? 'err' : 'ok');
-  const previews = run.map((c) => previewArgs(c.args || c.arg)).filter(Boolean);
-  // Soft Tactile: the same card as a single call; a run with a failure takes the red ring and a `N failed` chip.
-  return '<div class="turn" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '">'
-    + '<button class="cardhead" data-group="' + m.id + '">' + glyph
-    + '<span class="nm">' + run.length + ' \u00d7 ' + esc(m.name) + '</span>'
-    + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '\u2026' : measured.length ? dur(ms) : '') + '</span>'
-    + (bad ? '<span class="tk-chip tk-chip--sm tk-chip--red">' + bad + ' failed</span>' : '')
-    + '<span class="ar">' + esc(previews.slice(0, 3).join(' \u00b7 ') + (previews.length > 3 ? ' \u2026' : '')) + '</span>'
+  /* Calm (S3): the same one-line shape as a single call — the tool's plain
+     phrase and how many times ("Listed files \u00b7 3 times"), the failures
+     counted in red words, status and total time small on the right. The
+     members' own lines are one click away (the run unfolds in place). */
+  return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '" data-tool="' + esc(m.name) + '">'
+    + '<button class="cardhead" data-group="' + m.id + '" title="' + esc(m.name) + '">'
+    + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
+    + '<span class="nm">' + esc(toolVerb(m.name)) + ' \u00b7 ' + run.length + ' times</span>'
+    + (bad ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
+    + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
+    + toolStatus(pending ? 'run' : bad ? 'err' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
@@ -13012,9 +13192,11 @@ if (typeof window !== 'undefined') {
   };
   window.__overflow = () => {
     const sc = document.getElementById('scroller'); const col = document.querySelector('.col720');
-    // .cardsum is the COLLAPSED card's summary line — measured here since it is
-    // one of the three min-content contributors the wrap rules had to defeat.
-    const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr,.cardsum'));
+    // A collapsed card's one line (calm S3: the human line in the head, and
+    // `.cardsum`, the error line of a failed card) — measured here since they
+    // are min-content contributors the wrap rules had to defeat.
+    const sumSel = '.card:not(.open) > .cardhead .nm,.cardsum';
+    const els = Array.from(document.querySelectorAll('.card,.prose,.cardbody pre,.appr,' + sumSel));
     // r4-ui item 3: a user row is `display:block` now (the bubble), so its
     // gridTemplateColumns is "none" and would read back NaN. Only the rows that
     // still use the 28px/1fr grid can answer for the track.
@@ -13023,7 +13205,7 @@ if (typeof window !== 'undefined') {
     return {sw: sc ? sc.scrollWidth : 0, cw: sc ? sc.clientWidth : 0,
             colRight: col ? Math.round(col.getBoundingClientRect().right) : 0, colWidth: col ? col.clientWidth : 0, track,
             maxRight: Math.round(Math.max(0, ...els.map((c) => c.getBoundingClientRect().right))),
-            sums: Array.from(document.querySelectorAll('.cardsum')).map((n) => Math.round(n.getBoundingClientRect().right)),
+            sums: Array.from(document.querySelectorAll(sumSel)).map((n) => Math.round(n.getBoundingClientRect().right)),
             durations: Array.from(document.querySelectorAll('.card .du')).map((d) => d.textContent),
             lastTitle: (() => { const d = document.querySelectorAll('.card .du'); return d.length ? d[d.length - 1].title : ''; })()};
   };

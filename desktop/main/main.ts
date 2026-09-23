@@ -2489,8 +2489,9 @@ async function smokeTest(): Promise<void> {
     const groupsAfter = await js<Groups>("window.__groups()");
     const mine = groupsAfter.find((g) => !groupsBefore.some((b) => b.id === g.id));
     check(
+      // Calm (S3): the fold's head is the tool's plain phrase and a count.
       "three same-name cards in a row fold into one line",
-      groupsAfter.length === groupsBefore.length + 1 && !!mine && mine.head === "3 \u00d7 os.fs.list",
+      groupsAfter.length === groupsBefore.length + 1 && !!mine && mine.head === "Listed files \u00b7 3 times",
       `${groupsBefore.length} → ${groupsAfter.length} folded runs; new head ${JSON.stringify(mine ? mine.head : null)}`,
     );
     type Grp = { members: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number; cardsBefore: number; cardsAfter: number; groupsBefore: number; groupsAfter: number } | null;
@@ -2520,9 +2521,11 @@ async function smokeTest(): Promise<void> {
       `scrollWidth ${ov.sw} vs clientWidth ${ov.cw}, max right ${ov.maxRight} vs column ${ov.colRight}, track ${ov.track}px of ${ov.colWidth}`,
     );
     // Review fix: the same payload as a COLLAPSED card, so the assertion also
-    // covers `.cardsum` — the summary line whose nowrap/ellipsis rules had to
-    // go for the column to stop widening. __pushTool defaults to open, so the
-    // card above only ever exercised `.ar` and `.cardbody pre`.
+    // covers the collapsed card's one line — calm (S3): the human line in the
+    // head ("Ran `python3 -c xxx…`"), plus `.cardsum` on a failed card — whose
+    // wrap/ellipsis rules had to hold for the column to stop widening.
+    // __pushTool defaults to open, so the card above only ever exercised
+    // `.cardbody pre`.
     await js<number>("window.__pushTool('os.shell.run', {cmd:'python3', args:['-c', 'x'.repeat(300)]}, '/Users/example/' + 'b'.repeat(260) + '.tsx', false)");
     const ov3 = await js<Ov & { sums: number[] }>("window.__overflow()");
     check(
