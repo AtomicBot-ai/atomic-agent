@@ -181,6 +181,8 @@ export interface CatalogModel {
   /** At or above this it runs comfortably. */
   recommendedRamGb?: number;
   sizeGb?: number;
+  /** The vision projector a pull fetches with the weights, in GB. */
+  mmprojSizeGb?: number;
   vision?: boolean;
   tag?: string;
   uncensored?: boolean;
@@ -219,6 +221,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             minRamGb: meta.minRamGb,
             recommendedRamGb: meta.recommendedRamGb,
             sizeGb: meta.sizeGb,
+            ...(meta.mmprojSizeGb ? { mmprojSizeGb: meta.mmprojSizeGb } : {}),
             vision: meta.vision,
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
@@ -295,9 +298,28 @@ export function modelsPull(
   return { done, cancel: () => child.kill("SIGTERM") };
 }
 
-/** Whole gigabytes, the unit the catalog's RAM advice is written in. */
+/** The memory sizes Macs are sold with, in GB (really GiB). */
+const MARKETED_RAM_GB = [4, 6, 8, 12, 16, 18, 24, 32, 36, 48, 64, 96, 128, 192, 256, 384, 512];
+
+/**
+ * Host RAM as the machine is sold: an "18 GB" Mac reports 19.3e9 bytes,
+ * which is 18 GiB, and printing "19 GB" beside the box that says 18 read as
+ * a mistake. Bytes → GiB, snapped to the nearest size Macs ship with when it
+ * is within 0.75 GiB of one (a VM or an odd machine keeps its own rounded
+ * figure). ONE helper for every surface — the wizard, Settings › Models and
+ * the composer picker all read `app:hostRam`.
+ */
+export function marketedRamGb(bytes: number): number {
+  const gib = bytes / 1024 ** 3;
+  if (!(gib > 0)) return 1;
+  let near = MARKETED_RAM_GB[0]!;
+  for (const size of MARKETED_RAM_GB) if (Math.abs(size - gib) < Math.abs(near - gib)) near = size;
+  return Math.abs(near - gib) <= 0.75 ? near : Math.max(1, Math.round(gib));
+}
+
+/** Whole gigabytes as the Mac is sold, the unit the catalog's RAM advice is written in. */
 export function hostRamGb(): number {
-  return Math.max(1, Math.floor(totalmem() / 1_000_000_000));
+  return marketedRamGb(totalmem());
 }
 
 /**

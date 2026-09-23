@@ -38,6 +38,8 @@ export interface CuratedModelMeta {
   sizeGb: number;
   /** `contextLabel`. */
   contextLabel: string;
+  /** `mmprojFileSizeGb` — the projector a vision model's pull also fetches. */
+  mmprojSizeGb?: number;
   /** `supportsVision` — it reads images (a projector rides along). */
   vision: boolean;
   /** `tag`, when the catalogue sets one. */
@@ -54,6 +56,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     sizeGb: 4.22,
+    mmprojSizeGb: 0.99,
     contextLabel: "128K",
     vision: true,
   },
@@ -64,6 +67,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 8,
     recommendedRamGb: 12,
     sizeGb: 6.72,
+    mmprojSizeGb: 0.175,
     contextLabel: "256K",
     vision: true,
   },
@@ -74,6 +78,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 16,
     recommendedRamGb: 20,
     sizeGb: 14.25,
+    mmprojSizeGb: 1.19,
     contextLabel: "256K",
     vision: true,
     tag: "High Performance",
@@ -85,6 +90,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 20,
     recommendedRamGb: 24,
     sizeGb: 17.29,
+    mmprojSizeGb: 1.2,
     contextLabel: "256K",
     vision: true,
     tag: "High Performance",
@@ -96,6 +102,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     sizeGb: 17.9,
+    mmprojSizeGb: 0.93,
     contextLabel: "256K",
     vision: true,
     tag: "New",
@@ -107,6 +114,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     sizeGb: 17.6,
+    mmprojSizeGb: 0.93,
     contextLabel: "256K",
     vision: true,
   },
@@ -117,6 +125,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     sizeGb: 22.4,
+    mmprojSizeGb: 0.9,
     contextLabel: "256K",
     vision: true,
   },
@@ -127,6 +136,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     sizeGb: 2.7,
+    mmprojSizeGb: 0.67,
     contextLabel: "256K",
     vision: true,
   },
@@ -137,6 +147,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 10,
     recommendedRamGb: 16,
     sizeGb: 5.3,
+    mmprojSizeGb: 0.92,
     contextLabel: "256K",
     vision: true,
     tag: "Recommended",
@@ -148,6 +159,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     sizeGb: 22.0,
+    mmprojSizeGb: 0.9,
     contextLabel: "256K",
     vision: true,
     tag: "High Performance",
@@ -170,6 +182,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 20,
     recommendedRamGb: 32,
     sizeGb: 15.9,
+    mmprojSizeGb: 2.05,
     contextLabel: "128K",
     vision: true,
     tag: "New",
@@ -181,6 +194,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     minRamGb: 20,
     recommendedRamGb: 32,
     sizeGb: 16.5,
+    mmprojSizeGb: 0.93,
     contextLabel: "256K",
     vision: true,
     tag: "Use at your own risk",

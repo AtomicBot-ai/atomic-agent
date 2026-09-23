@@ -9808,6 +9808,11 @@ if (BR) {
      providersReady()'s key check (item 7), so the inferred half waits for
      that second round trip; the latched half does not depend on it. */
   if (BR && BR.build) BR.build().then((b) => { BUILD = b; render(); }).catch(() => {});
+  /* Calm (S6): the host's RAM once at boot, so the composer's model picker
+     ranks and labels rows with the same figure as the wizard and Settings
+     (it used to read 0 until the wizard or the Local pane had asked, and
+     every row said "no RAM guidance"). */
+  loadHostRamGb().then((n) => { if (n) render(); }).catch(() => {});
   if (BR && BR.unverified) BR.unverified().then((ids) => { UNVERIFIED = ids || []; render(); }).catch(() => {});
   Promise.all([BR.firstRun ? BR.firstRun() : Promise.resolve(null), BR.configGet()]).then(async ([fr, res]) => {
     FIRSTRUN = fr;
