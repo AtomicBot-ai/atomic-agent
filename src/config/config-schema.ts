@@ -1389,7 +1389,9 @@ export interface UserManagedLocalLlmConfig {
   device: string;
   /**
    * Which llama.cpp build (release zip) the managed backend installs.
-   * Windows-only — every other platform publishes a single asset.
+   * Windows and Linux arm64 — macOS and Linux x64 publish a single
+   * asset. On Linux arm64 only `"vulkan"` and `"cuda-13.3"` name a
+   * build; the other values detect, the same as `"auto"`.
    *   - `"auto"` (default) — probe `nvidia-smi` and pick the newest CUDA
    *     build the driver can run, else Vulkan.
    *   - `"cpu"` — the CPU-only build. For machines whose Vulkan stack

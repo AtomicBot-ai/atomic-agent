@@ -4,6 +4,11 @@ const execSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
 import {
+  LINUX_ARM64_BACKEND_ASSETS,
+  resetLinuxArm64BackendAssetCache,
+} from "./linux-arm64-backend-variant.js";
+import { UnsupportedGlibcError } from "./platform-assets.js";
+import {
   WINDOWS_BACKEND_ASSETS,
   isWindowsGpuBackendAsset,
   parseDriverCudaVersion,
@@ -114,12 +119,14 @@ describe("isWindowsGpuBackendAsset", () => {
 describe("resolveDownloadAsset", () => {
   beforeEach(() => {
     resetWindowsBackendAssetCache();
+    resetLinuxArm64BackendAssetCache();
     setConfiguredBackendVariant("auto");
     execSyncMock.mockReset();
   });
 
   afterEach(() => {
     resetWindowsBackendAssetCache();
+    resetLinuxArm64BackendAssetCache();
     setConfiguredBackendVariant("auto");
   });
 
@@ -197,6 +204,40 @@ describe("resolveDownloadAsset", () => {
     expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
       WINDOWS_BACKEND_ASSETS.cuda124,
     );
+  });
+
+  it("selects the arm64 CUDA build on a GB10 (DGX Spark)", () => {
+    execSyncMock.mockReturnValue(Buffer.from("12.1\n"));
+    const asset = resolveDownloadAsset("linux", "arm64", "2.39");
+    expect(asset.assetName).toBe(LINUX_ARM64_BACKEND_ASSETS.cuda133);
+    expect(asset.binaryName).toBe("llama-server");
+  });
+
+  it("falls back to the arm64 Vulkan build without nvidia-smi", () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    expect(resolveDownloadAsset("linux", "arm64", "2.39").assetName).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
+  });
+
+  it("refuses linux arm64 on a glibc older than the arm64 builds need", () => {
+    execSyncMock.mockReturnValue(Buffer.from("12.1\n"));
+    expect(() => resolveDownloadAsset("linux", "arm64", "2.35")).toThrow(
+      UnsupportedGlibcError,
+    );
+    expect(() => resolveDownloadAsset("linux", "arm64", null)).toThrow(
+      /needs glibc 2\.38 or newer.*found no glibc/,
+    );
+  });
+
+  it("honours a 'vulkan' pin on linux arm64 without probing", () => {
+    setConfiguredBackendVariant("vulkan");
+    expect(resolveDownloadAsset("linux", "arm64", "2.39").assetName).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
+    expect(execSyncMock).not.toHaveBeenCalled();
   });
 
   it("ignores the variant preference off Windows (single-asset platforms)", () => {
