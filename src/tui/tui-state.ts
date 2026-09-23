@@ -296,6 +296,15 @@ export interface TuiSessionInfo {
   completionMaxTokens: number;
   skillCount: number;
   /**
+   * Installed skills `skills.catalogTokenBudget` left out of the
+   * catalog `skillCount` counts. Absent is read as zero — the field is
+   * optional only so the many state fixtures that predate it stay
+   * valid, not because "unknown" is a meaningful third state. Without
+   * it the diagnostics line reports a clipped catalog as the whole
+   * install, the operator-facing half of issue #466.
+   */
+  skillCountDropped?: number;
+  /**
    * Whether the user actually opted into a local backend (see
    * `isLocalBackendConfigured`). Decides whether the llama-server health
    * indicator is shown at all, so a fresh install is not told that a server

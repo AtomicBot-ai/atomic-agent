@@ -55,6 +55,22 @@ export function formatSkillCatalogOmittedLine(count: number): string {
 }
 
 /**
+ * The same fact for the surfaces a person reads — the `run` banner and
+ * `/skills` — without the `… [truncated]` prompt-marker syntax, which
+ * belongs to the prefix and reads as noise in CLI copy. Kept here beside
+ * {@link formatSkillCatalogOmittedLine} so the two phrasings of one
+ * omission cannot drift, and worded to append to an existing count
+ * ("17 installed, 4 more not shown") rather than to stand alone.
+ *
+ * It names the knob for the same reason the prompt marker does: the
+ * count alone tells an operator that skills are missing but not that
+ * the cause is a budget they can raise (issue #466).
+ */
+export function formatSkillCatalogOmittedNote(count: number): string {
+  return `${count} more not shown (skills.catalogTokenBudget)`;
+}
+
+/**
  * The catalog plus what it cost: `dropped` is how many installed skills
  * the char budget left out, and it is what makes `### skills` render
  * {@link formatSkillCatalogOmittedLine}. Counts only — no names — so it

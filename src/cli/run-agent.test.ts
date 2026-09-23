@@ -8,7 +8,7 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { formatAgentEvent } from "./run-agent.js";
+import { formatAgentEvent, formatSkillsBannerValue } from "./run-agent.js";
 
 const HINT = formatLlamaUnreachableHint("http://127.0.0.1:8080");
 
@@ -296,4 +296,26 @@ describe("runAgentCommand exit codes", () => {
     expect(turnOptions).toHaveLength(1);
     expect(turnOptions[0]!.maxSteps).toBe(7);
   }, 60_000);
+});
+
+/**
+ * The `skills:` row of the startup banner. It has always printed the
+ * catalog the prompt got, which is not the install once
+ * `skills.catalogTokenBudget` starts cutting (issue #466 — fixed for
+ * the prompt in PR #471, not for anything reading the runtime).
+ */
+describe("the run banner skills row", () => {
+  it("names the omitted count and the knob when the budget cut the catalog", () => {
+    expect(formatSkillsBannerValue(17, 16)).toBe(
+      "17 installed, 16 more not shown (skills.catalogTokenBudget)",
+    );
+  });
+
+  it("is byte-identical to the pre-fix row when nothing was dropped", () => {
+    expect(formatSkillsBannerValue(33, 0)).toBe("33 installed");
+    expect(formatSkillsBannerValue(0, 0)).toBe("0 installed");
+    expect(formatSkillsBannerValue(33, 0)).not.toContain(
+      "skills.catalogTokenBudget",
+    );
+  });
 });

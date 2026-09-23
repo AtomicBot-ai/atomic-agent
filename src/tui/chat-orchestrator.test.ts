@@ -502,6 +502,86 @@ function noticeLines(actions: readonly TuiAction[]): readonly string[] {
     .map((a) => a.line);
 }
 
+/**
+ * `/skills` answers "what is installed?" out of `runtime.skillCatalog`,
+ * which is the catalog the prompt got — clipped at
+ * `skills.catalogTokenBudget`. PR #471 taught the prompt to admit the
+ * cut; the operator asking the same question still got the short list
+ * with no sign of the rest (issue #466).
+ */
+describe("ChatOrchestrator /skills truncation", () => {
+  function skillRuntime(
+    catalog: Array<{ name: string; description: string; source: string }>,
+    dropped: number,
+  ): AgentRuntime {
+    return {
+      ...(stubRuntime(() => new Promise<never>(() => {})) as object),
+      skillCatalog: catalog,
+      skillCatalogDropped: dropped,
+    } as unknown as AgentRuntime;
+  }
+
+  const CATALOG = [
+    { name: "alpha", description: "a", source: "global" },
+    { name: "beta", description: "b", source: "project" },
+  ];
+
+  function dump(dropped: number): { text: string; feed: string[] } {
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(
+      skillRuntime(CATALOG, dropped),
+      bus,
+      {
+        maxSteps: 5,
+        llamaUrl: "http://127.0.0.1:8080",
+        readGateFacts: cloudGateFacts,
+      },
+    );
+    orchestrator.dumpSkillCatalog();
+    const message = actions.find((a) => a.type === "system_message");
+    return {
+      text: message && message.type === "system_message" ? message.text : "",
+      feed: actions
+        .filter(
+          (a): a is Extract<TuiAction, { type: "runtime_info" }> =>
+            a.type === "runtime_info",
+        )
+        .map((a) => a.line),
+    };
+  }
+
+  it("ends the listing on the omitted count and the knob that raises it", () => {
+    const { text, feed } = dump(4);
+    expect(text.split("\n").at(-1)).toBe(
+      "  … 4 more not shown (skills.catalogTokenBudget)",
+    );
+    expect(feed.at(-1)).toBe(
+      "  … 4 more not shown (skills.catalogTokenBudget)",
+    );
+    // The header still counts the rows it actually printed.
+    expect(text.split("\n")[0]).toBe("skill catalog (2 entries)");
+  });
+
+  it("is byte-identical to the pre-fix dump when nothing was dropped", () => {
+    const { text, feed } = dump(0);
+    expect(text).toBe(
+      [
+        "skill catalog (2 entries)",
+        "  - alpha (global): a",
+        "  - beta (project): b",
+      ].join("\n"),
+    );
+    expect(feed).toEqual([
+      "skill catalog (2):",
+      "  - alpha (global): a",
+      "  - beta (project): b",
+    ]);
+    expect(text).not.toContain("skills.catalogTokenBudget");
+  });
+});
+
 function queueSnapshots(actions: readonly TuiAction[]): readonly string[][] {
   return actions
     .filter(

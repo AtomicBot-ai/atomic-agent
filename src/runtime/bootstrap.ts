@@ -251,7 +251,18 @@ export interface RuntimeEventHandlers {
    */
   onAgentEvent?: (event: AgentLoopEvent, sessionId?: string) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
-  onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
+  /**
+   * `entries` is the rebuilt catalog, `dropped` how many installed
+   * skills `skills.catalogTokenBudget` left out of it. Hosts that
+   * display a count need both: an install can push the catalog over the
+   * budget, so the number they show has to be able to stop growing and
+   * say why (issue #466). Handlers written against the one-argument
+   * signature keep working — the extra argument is simply ignored.
+   */
+  onSkillRegistryChange?: (
+    entries: SkillCatalogEntry[],
+    dropped: number,
+  ) => void;
   /**
    * Optional sink for remote-control channel lifecycle changes (e.g.
    * Telegram). Fires on every observable transition (`starting →
@@ -496,6 +507,22 @@ export interface AgentRuntime {
   readonly providerRegistry: ProviderRegistry;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Installed skills `skills.catalogTokenBudget` left out of
+   * `skillCatalog`; `0` when every one fit. The agent loop gets this
+   * count on `loopDeps` and turns it into the `### skills` truncation
+   * marker (issue #466), but the prompt is not the only place the
+   * catalog is counted: the `run` banner, `/api/capabilities`, the TUI
+   * diagnostics line and `/skills` all report `skillCatalog.length` as
+   * "installed". Without the count beside it every one of them states a
+   * clipped number as the whole truth — the same misreading the prompt
+   * marker exists to prevent, told to the operator instead of to the
+   * model. Live getter for the same reason `skillCatalog` is one:
+   * `refreshSkills()` can turn a catalog that fit into one that does
+   * not, and a snapshot taken at boot would go stale on the first
+   * install.
+   */
+  readonly skillCatalogDropped: number;
   readonly toolDescriptors: readonly ToolDescriptor[];
   readonly grammar: string;
   readonly logger: StructuredLogger;
@@ -2713,7 +2740,10 @@ export async function createAgentRuntime(
       tokenBudget: config.skills.catalogTokenBudget,
     });
     skillCatalog = skillSection.entries;
-    options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
+    options.handlers?.onSkillRegistryChange?.(
+      [...skillCatalog],
+      skillSection.dropped,
+    );
   };
 
   /**
@@ -3173,8 +3203,11 @@ export async function createAgentRuntime(
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
       resolveWorkerPricing: (providerId, modelId) =>
-        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)
-          ?.pricing,
+        resolveModelPricingFor(
+          resolveLlmConfig(getConfig()),
+          modelId,
+          providerId,
+        )?.pricing,
       // The same client the llama-server provider serves workers with,
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
@@ -3489,6 +3522,13 @@ export async function createAgentRuntime(
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
+  });
+  // Reads `skillSection`, not a captured number: `refreshSkills()`
+  // reassigns the whole section, so a getter over the binding is what
+  // keeps the dropped count in step with the entries it belongs to.
+  Object.defineProperty(runtime, "skillCatalogDropped", {
+    enumerable: true,
+    get: () => skillSection.dropped,
   });
   // Same late binding as the loop's own getter: `/tools`, the sidecar
   // and every host that reads the catalog off the runtime must see the

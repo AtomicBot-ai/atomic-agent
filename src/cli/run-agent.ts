@@ -20,6 +20,7 @@ import {
   type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
+import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import { stderrSink } from "../tracing/structured-logger.js";
 import {
   isFailedSessionStatus,
@@ -200,6 +201,27 @@ function withLlamaHint(
  * is appended once per process — every retry repeating three lines of
  * advice would bury the log.
  */
+/**
+ * The `skills:` row of the startup banner. `installed` has always been
+ * `runtime.skillCatalog.length`, which is the catalog the prompt got,
+ * not the number of skills on disk — so on an install big enough to
+ * overflow `skills.catalogTokenBudget` the banner quietly understated
+ * itself and the operator had no hint that anything was missing
+ * (issue #466, whose fix stopped at the prompt).
+ *
+ * Nothing dropped renders byte-identically to the pre-fix banner: the
+ * suffix is the whole change, and it is absent at zero.
+ */
+export function formatSkillsBannerValue(
+  installed: number,
+  dropped: number,
+): string {
+  const base = `${installed} installed`;
+  return dropped > 0
+    ? `${base}, ${formatSkillCatalogOmittedNote(dropped)}`
+    : base;
+}
+
 export function formatAgentEvent(
   event: AgentLoopEvent,
   ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
@@ -441,7 +463,10 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       `  cwd:     ${parsed.workingDir}\n` +
       `  llama:   ${config.localModels.url}\n` +
       `  browser: ${config.browser.channel}${config.browser.headless ? " (headless)" : ""}\n` +
-      `  skills:  ${runtime.skillCatalog.length} installed\n` +
+      `  skills:  ${formatSkillsBannerValue(
+        runtime.skillCatalog.length,
+        runtime.skillCatalogDropped,
+      )}\n` +
       `  approval: level ${formatApprovalLevel(approvalLevel)}\n` +
       `  type /quit to exit, /abort to cancel current turn\n`,
   );
