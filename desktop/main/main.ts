@@ -1903,7 +1903,9 @@ async function smokeTest(): Promise<void> {
       await js<void>("window.__ctxAdjust('agent.conversationMaxPairs:1')");
       await new Promise((r) => setTimeout(r, 4000));
       const after = await js<{ pairs: number }>("window.__ctxCfg()");
-      check("context dial writes config", after.pairs === before.pairs + 1, `${before.pairs} → ${after.pairs}`);
+      // One at a time up to 50, then in tens (renderer pairsStep, B2).
+      const want = before.pairs < 50 ? before.pairs + 1 : Math.floor(before.pairs / 10) * 10 + 10;
+      check("context dial writes config", after.pairs === want, `${before.pairs} → ${after.pairs} (want ${want})`);
     } finally {
       await configSet("agent.conversationMaxPairs", String(before.pairs));
       await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");

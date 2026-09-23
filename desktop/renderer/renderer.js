@@ -1396,7 +1396,8 @@ const ATTN = new Set();                  // sessions whose last desktop-run turn
 /* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
    See the top of onChatEvent. */
 const STREAM_ERR = new Map();
-const RUNNING = new Map();               // turnId → sessionId, fed only by the turn stream's own frames
+const RUNNING = new Map();
+const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
 
@@ -3038,7 +3039,7 @@ function ctxBoundLine() {
 }
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
-  const pairs = agent.conversationMaxPairs || 20;
+  const pairs = agent.conversationMaxPairs || PAIRS_DEFAULT;
   const win = CTX.window;
   // Lane B \u2014 context before the first message (item 3). Copy follows
   // src/tui/components/context-panel.tsx: title(), buildRows() (the
@@ -3094,11 +3095,11 @@ function contextHTML() {
     + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
     + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span class="ctxdt">tasks per turn</span>'
-      + '<span class="cap">sent each turn (1-100)</span></span>'
+      + '<span class="cap">sent each turn (1-' + PAIRS_MAX + ')</span></span>'
       + '<span class="hstack ctxstep">'
       + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:-1" aria-label="fewer tasks per turn"' + (pairs <= 1 ? ' disabled' : '') + '>' + ic('minus') + '</button>'
       + '<span class="mono tnum ctxval">' + pairs + '</span>'
-      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= 100 ? ' disabled' : '') + '>' + ic('plus') + '</button>'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= PAIRS_MAX ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
     + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
     + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
@@ -10545,7 +10546,7 @@ function ctxReleaseWindowOnRouteChange() {
   CTX055.route = route;
   return changed;
 }
-function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || 0; }
+function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || PAIRS_DEFAULT; }
 
 // `stateDirOverride` exists for the smoke only (window.__ctxEmpty): it
 // runs this same path against a real directory that holds no trace, so
@@ -11994,14 +11995,23 @@ async function applySessionModelStamp() {
   refreshContext();
 }
 
+/* B2 — `agent.conversationMaxPairs` is 1..1000, default 200, since agent
+   0.6.3 (config-schema.ts; it was 1..100, default 20). One at a time up to
+   50, then in tens, so the default is a handful of clicks from anywhere
+   useful rather than a hundred. */
+function pairsStep(current, dir) {
+  if (dir > 0) return current < 50 ? current + 1 : Math.floor(current / 10) * 10 + 10;
+  return current <= 50 ? current - 1 : Math.ceil(current / 10) * 10 - 10;
+}
 async function ctxAdjust(spec) {
   const at = spec.lastIndexOf(':');
   const key = spec.slice(0, at);
   const delta = Number(spec.slice(at + 1));
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
-  const current = agent[key.split('.')[1]] || 0;
-  const bounds = [1, 100];
-  const next = Math.max(bounds[0], Math.min(bounds[1], current + delta));
+  const pairsKey = key === 'agent.conversationMaxPairs';
+  const current = agent[key.split('.')[1]] || (pairsKey ? PAIRS_DEFAULT : 0);
+  const bounds = pairsKey ? [1, PAIRS_MAX] : [1, 100];
+  const next = Math.max(bounds[0], Math.min(bounds[1], pairsKey ? pairsStep(current, Math.sign(delta)) : current + delta));
   if (next === current) return;
   // Write first, then repaint from what the config actually took.
   const res = await BR.configSet(key, String(next));
