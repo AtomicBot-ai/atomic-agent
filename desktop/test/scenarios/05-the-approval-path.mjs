@@ -79,14 +79,16 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
      as the released tool and the next model call took. Asserted right here,
      before the work finishes, because a second later it is over and the
      evidence is gone. */
+  /* Calm: "working" is the composer lighting up (the travelling band, drawn
+     while `#composer.cl-on`), not a "Thinking 1.3s" strip above it. */
   const working = await app.eval(`(() => ({
-    strip: (document.querySelector('.statusstrip') || {}).textContent || '',
+    lit: !!document.querySelector('#composer.cl-on .cloader'),
     stop: !!document.querySelector('.sendbtn.stop'),
   }))()`);
   app.log(`the instant after Approve, the app says: ${JSON.stringify(working)}`);
-  check(working.strip.trim().length > 0 && working.stop,
+  check(working.lit && working.stop,
     'the app says it is working the instant I approve, and offers me Stop',
-    `strip=${JSON.stringify(working.strip)} stop=${working.stop} — approving left the window looking idle`);
+    `composer lit=${working.lit} stop=${working.stop} — approving left the window looking idle`);
 
   const done = await waitTurn(app, { timeout: 240000 });
 

@@ -2301,10 +2301,10 @@ function apprCard(m) {
 function composer() {
   const running = S.busy || !!S.pending;
   /* Soft Tactile: every status line is a chip, then machine text. What the
-     drivers and the ticker read is kept — `.statusstrip` (+ gated / waiting /
-     appstatus), the waiting strip's `.ann` / `.readout` / `.ob-help`, the busy
-     strip's FIRST `.tnum` (the 100 ms ticker writes the elapsed time into it),
-     and `data-act="jump:appr"`.
+     drivers read is kept — `.statusstrip` (+ gated / waiting / appstatus),
+     the waiting strip's `.ann` / `.readout` / `.ob-help`, and
+     `data-act="jump:appr"`. Calm (S3) dropped the busy strip (see below);
+     the turn's 100 ms ticker still counts S.elapsed but has no readout.
      r2 (DMG feedback): no Stop pill on the busy or waiting strip. The one
      Stop is the composer's own button (sendButton: `.sendbtn.stop` whenever
      S.busy || S.pending), and ⌘ . still aborts while a steer is drafted. */
@@ -2322,12 +2322,15 @@ function composer() {
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
       + '</div>'
-    : S.busy
-    ? '<div class="statusstrip busy">'
-      + '<span class="tk-chip tk-chip--sm tk-chip--blue ss-phase"><span class="threedot"><i></i><i></i><i></i></span>'
-      + '<span class="ss-word">' + S.phase + '</span></span>'
-      + '<span class="mono tnum ss-time">' + (S.elapsed / 10).toFixed(1) + 's</span>'
-      + '</div>'
+    /* Calm (S3): no busy strip. It said "Thinking 1.3s" / the running
+       tool's raw id / "Writing reply" above the composer — and each of
+       those is already on screen: the composer's travelling light says the
+       agent is working (S2), a running tool is its own line in the
+       transcript with a spinner, and a reply being written is the reply.
+       The strips that remain carry a decision (Jump to request), a wait the
+       agent is sitting out, or a failure. The one Stop stays the composer's
+       send button, and drivers that waited on `.statusstrip` also accept
+       `.sendbtn.stop`, which is drawn for the whole turn. */
     // r5 item 10: where the lock was, the reason it ended. A toast fades;
     // the operator needs this next to the button that was disabled. The
     // 45 s watchdog's line is a wait, not a failure, so it keeps Caution.
