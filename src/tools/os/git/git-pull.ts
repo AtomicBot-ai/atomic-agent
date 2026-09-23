@@ -1,6 +1,11 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import {
+  NO_PROGRESS,
+  PULL_REPORT_LIMITS,
+  shapePullReport,
+} from "./git-remote-report.js";
+import {
   gitFailureResult,
   optionalString,
   refuseWhenRemoteSyncOff,
@@ -8,11 +13,6 @@ import {
   runGitRemote,
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
-import {
-  NO_PROGRESS,
-  PULL_REPORT_LIMITS,
-  shapePullReport,
-} from "./git-remote-report.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 const TOOL = "os.git.pull";

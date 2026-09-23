@@ -5,6 +5,11 @@ import type { ToolDefinition } from "../../tool-registry.js";
 import { resolveUserPath } from "../expand-home.js";
 import { hasEmbeddedUserinfo } from "./git-credentials.js";
 import {
+  CLONE_REPORT_LIMITS,
+  NO_PROGRESS,
+  shapeCloneReport,
+} from "./git-remote-report.js";
+import {
   gitFailureResult,
   optionalString,
   refuseWhenRemoteSyncOff,
@@ -12,11 +17,6 @@ import {
   runGitRemote,
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
-import {
-  CLONE_REPORT_LIMITS,
-  NO_PROGRESS,
-  shapeCloneReport,
-} from "./git-remote-report.js";
 
 const TOOL = "os.git.clone";
 const CLONE_TIMEOUT_MS = 300_000;
