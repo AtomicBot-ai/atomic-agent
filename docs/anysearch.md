@@ -3,12 +3,47 @@
 This document describes how Atomic Agent integrates
 [AnySearch](https://anysearch.com) for maintainers and bounty reviewers.
 
-Peer patterns consulted while shaping this work: OpenClaw web-search plugin
-(anonymous + vertical `tag`/`zone`/`language`), AutoGPT search/parallel/extract
-blocks, CAMEL toolkit, HyperResearcher provider + concurrent batch, Hermes
-vertical-search skill (discover-then-route), GPT-Researcher retriever/extract,
-AnythingLLM AnySearch provider (#6439), official
-[anysearch-skill](https://github.com/anysearch-ai/anysearch-skill) CLI + MCP.
+Peer patterns consulted while shaping this work:
+
+| Peer | What we borrowed |
+|---|---|
+| [QwenPaw #7081](https://github.com/agentscope-ai/QwenPaw/pull/7081) (anysearch-ai) | Opt-in provider, anonymous+keyed, security notes, evidence-heavy PR |
+| [AnythingLLM #6058](https://github.com/Mintplex-Labs/anything-llm/pull/6058) (You.com) | Keyless-default + optional key, shared result shape, test evidence |
+| Official [anysearch-skill](https://github.com/anysearch-ai/anysearch-skill) / MCP | Discover-then-route, batch, extract, `auto_registered` key etiquette |
+| OpenClaw / Hermes vertical search | `tag` / `zone` / `language`, sub-domain discovery before inventing tags |
+| AutoGPT / HyperResearcher | Parallel batch + isolated per-query failure |
+
+## Architecture
+
+```mermaid
+flowchart TB
+  subgraph Agent["Agent turn"]
+    T["os.web.search"]
+    S["starter skill anysearch"]
+    B["batch-search.js via skill.run_script"]
+  end
+
+  subgraph Runtime["Atomic web-search stack"]
+    O["search orchestrator<br/>fallback · cache · cooldown"]
+    P["AnySearchProvider"]
+    H["searchHttp SSRF-safe curl"]
+  end
+
+  subgraph Hosted["api.anysearch.com"]
+    Search["POST /v1/search"]
+    Subs["GET /v1/sub-domains"]
+    Ext["POST /v1/extract"]
+  end
+
+  T --> O --> P --> H --> Search
+  S --> Subs
+  S --> Ext
+  B --> Search
+  O -.->|402 / 429 park| P
+```
+
+Routing extras (`tag`, `params` JSON string, `zone`, `language`) travel on
+`os.web.search` only when present; Exa/Brave/DDG/SearXNG ignore them.
 
 ## What shipped
 
