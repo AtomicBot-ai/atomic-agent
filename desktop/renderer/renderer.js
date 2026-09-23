@@ -1377,9 +1377,19 @@ const PAL = [
 ];
 
 /* ---------------- state ---------------- */
+/** A per-viewer pane flag from localStorage: 'open' or anything else. */
+function readPaneFlag(key) {
+  try { return localStorage.getItem(key) === 'open'; } catch (e) { return false; }
+}
+function writePaneFlag(key, on) {
+  try { localStorage.setItem(key, on ? 'open' : 'closed'); } catch (e) { /* no storage: the choice lasts this launch */ }
+}
 const S = {
   room:'chat', theme:'system',
-  inspector:true, inspTab:'steps',
+  // Calm (S1): the inspector is closed until the viewer opens it, and it
+  // remembers that choice per viewer, like atag.theme. readPaneFlag is a
+  // function declaration, so it is hoisted and safe to call here.
+  inspector: readPaneFlag('atag.inspector'), inspTab:'steps',
   sidebar:'open',   // r5 item 2: 'open' | 'rail' — the class on #sidebar is derived from this
 
   consoleOpen:false, consoleTab:'agent',
@@ -1452,38 +1462,33 @@ function render() {
 }
 
 
-function toolCount() { const n = S.log.filter((x) => x.k === 'tool').length; return n === 1 ? '1 tool call' : n + ' tool calls'; }
+/* Calm (S1): the toolbar names the open chat and nothing else — no tool
+   count, no "running" word (the sidebar dot and the composer already say
+   that). A chat that has not been saved yet is "New chat". */
 function roomTitle() {
   if (S.room === 'chat') {
     const ses = SESSIONS.find((x) => x.id === S.sessionId);
-    return ['Chat', ses ? ses.t + ' · ' + (S.busy ? 'running' : S.pending ? 'waiting for you' : toolCount()) : ''];
+    return ses && ses.t ? ses.t : 'New chat';
   }
-  if (S.room === 'tasks')  return ['Tasks', TASKS.length + (TASKS.length === 1 ? ' task' : ' tasks')];
-  if (S.room === 'skills') return ['Skills', SKILLS.filter((s) => s.on).length + ' enabled of ' + SKILLS.length];
-  return ['Chat', ''];
+  if (S.room === 'tasks')  return 'Tasks';
+  if (S.room === 'skills') return 'Skills';
+  return 'New chat';
 }
 
+/* Calm (S1): four controls — sidebar toggle, title, Search, inspector
+   toggle. The console left the toolbar: it is View › Toggle Console
+   (⇧ ⌘ Y) and the palette's Logs row. Chords live in tooltips only. */
 function renderToolbar() {
-  const [t, sub] = roomTitle();
+  const t = roomTitle();
   $('#toolbar').innerHTML =
     '<div class="lights" aria-hidden="true"></div>'
-    // r5 item 2: "the sidebar toggle should glow blue while the sidebar is
-    // open" — the user's words. `.iconbtn.on` is the app's existing active
-    // treatment (the Inspector and Console buttons below use it), so the
-    // sidebar joins them rather than inventing a fourth look. The chord is
-    // printed as ⌘ 0, which is what shortcutsSheet and the keydown map ship.
-    // Review fix: on a narrow window the control is disabled rather than dead —
-    // see sidebarToggleHTML.
     + sidebarToggleHTML()
-    + '<div class="tb-title"><b>' + esc(t) + '</b><span>' + esc(sub) + '</span></div>'
+    + '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>'
     + '<div class="tb-right">'
-      // Soft Tactile: a lifted Search pill with one ⌘K keycap (SH-01).
-      + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘K') + '</button>'
-      + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector" title="Inspector">' + ic('inspector') + '</button>'
-      // r5 item 2: converted with the sidebar's tooltip beside it — a toolbar
-      // where one chord reads "⌘ 0" and its neighbour "Ctrl+Shift+Y" is worse
-      // than either spelling alone. ⇧ ⌘ Y is what shortcutsSheet prints.
-      + '<button class="iconbtn' + (S.consoleOpen ? ' on' : '') + '" data-act="toggle:console" title="Console (⇧ ⌘ Y)">' + ic('console') + '</button>'
+      + '<button class="searchbtn" data-act="palette" title="Search and commands (⌘ K)">' + ic('search') + '<span class="sec">Search</span></button>'
+      + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
+        + ' aria-pressed="' + !!S.inspector + '"'
+        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning (⌥ ⌘ 0)">' + ic('inspector') + '</button>'
     + '</div>';
 }
 
@@ -1509,96 +1514,63 @@ function renderToolbar() {
    ============================================================ */
 function renderSidebar() {
   const tk = sidebarTasks(), ch = sidebarChats();
-  // Review fix: .sb-lists is the scroll container and this rebuilds it whole,
-  // so every render used to snap it back to the top — the "Load more" button
-  // scrolled itself off screen the moment it was clicked, and the list could
-  // not be scrolled at all while a turn streamed (a render per delta frame).
-  // Same capture-then-restore as renderContent/afterChat do for #scroller;
-  // the README calls holding the pixel position a deliberate divergence from
-  // the TUI's bottom-anchored offset, made because the user asked for the
-  // scroll not to move.
+  // Review fix (kept): .sb-lists is the scroll container and this rebuilds it
+  // whole, so its scroll position is captured and restored around the write.
   const prevLists = $('#sidebar').querySelector('.sb-lists');
   const keepScroll = prevLists ? prevLists.scrollTop : 0;
-  // r5 item 2: the class is derived from S.sidebar on every render, so it can
-  // never drift from the state the toolbar button reads. Applied BEFORE the
-  // innerHTML write — the geometry hooks measure in the same tick.
+  // r5 item 2: the class is derived from S.sidebar on every render, applied
+  // BEFORE the innerHTML write — the geometry hooks measure in the same tick.
   $('#sidebar').classList.toggle('rail', S.sidebar === 'rail');
+  /* Calm (S1): workspace chip, New chat, Chats, then Tasks only when the
+     agent holds any, and Settings at the bottom. The Chats header lost its
+     plus to the New chat button (one way to do one thing); the Tasks header
+     keeps its plus while it is on screen, and counts running tasks only
+     when there are some. With no tasks — or with the task list unreadable,
+     which Settings › Tasks reports in full — the section is not drawn. */
+  const showTasks = tk.rows.length > 0;
   $('#sidebar').innerHTML =
     '<div class="sb-head">' + MARK_COLOR
-      // r4-ui item 4: "On the line in the top left part with the user's workspace
-      // thing, there should not be any plus." The head row is the lockup and the
-      // workspace chip now, nothing else; both pluses live on the list headers.
-      + '<button class="wschip" data-act="workspace"><span>' + esc(BR ? WORKSPACE : '~/Teletubbies') + '</span>' + ic('chevD') + '</button></div>'
+      + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
+    + '<button class="sb-new" data-act="session:new" title="New chat (⌘ N)" aria-label="New chat">'
+      + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
     + '<div class="sb-lists">'
-      + '<div class="sb-list" data-list="tasks">'
-        + '<div class="sb-list-head micro"><span>Tasks</span>'
-          // countRunningTasks (sidebar-tasks-selector.ts) counts the FULL snapshot, not the page.
-          // r4-ui item 4: the counter is emitted BEFORE the plus, so "N running"
-          // sits to its left — the label takes flex:1, so both headers' plus
-          // buttons share one right edge whether or not a counter precedes them.
-          // Review fix: with the tasks fetch failed there is no snapshot to
-          // count, and "0 running" directly above "could not load tasks: …"
-          // states a number this window does not have. The counter is dropped
-          // for that state — the error line below is the honest report.
-          + (TASKS_ERR ? '' : '<span class="ct tnum">' + tk.running + ' running</span>')
-          // `tasks:new` reaches tasksAct('new'), which opens Settings › Tasks with
-          // the create form already up — the same destination the TUI's `+ new`
-          // chip on its Tasks header has.
-          + '<button class="iconbtn sb-add" data-act="tasks:new" title="New task" aria-label="New task">' + ic('plus') + '</button></div>'
-        + (TASKS_ERR ? '<div class="sb-empty">' + esc(TASKS_ERR) + '</div>'
-           : tk.rows.length ? tk.rows.map(taskRow).join('')
-           // Not the TUI's "(no active tasks)" (sidebar.tsx:714), on purpose:
-           // that list is the rail's running/pending/recurring projection,
-           // while this one is EVERY task the agent holds (see the list-scope
-           // note above), so "no active tasks" would be the wrong claim about
-           // an empty one. The Chats list below keeps the TUI's string verbatim.
-           : '<div class="sb-empty">(no tasks yet)</div>')
-        + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
-      + '</div>'
       + '<div class="sb-list" data-list="chats">'
-        // r4-ui item 4: "When I click on plus in the same line as chats, it
-        // creates a new chat." No counter on this list — the TUI's Sessions
-        // header carries none either.
-        + '<div class="sb-list-head micro"><span>Chats</span>'
-          + '<button class="iconbtn sb-add" data-act="session:new" title="New chat (⌘N)" aria-label="New chat">' + ic('plus') + '</button></div>'
+        + '<div class="sb-list-head micro"><span>Chats</span></div>'
         + (ch.rows.length ? ch.rows.map(chatRow).join('')
-           : '<div class="sb-empty">(no sessions yet)</div>')   // sidebar.tsx:502
+           : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
+      + (showTasks
+        ? '<div class="sb-list" data-list="tasks">'
+          + '<div class="sb-list-head micro"><span>Tasks</span>'
+            // countRunningTasks (sidebar-tasks-selector.ts) counts the FULL snapshot, not the page.
+            + (tk.running > 0 ? '<span class="ct tnum">' + tk.running + ' running</span>' : '')
+            // `tasks:new` reaches tasksAct('new'): Settings › Tasks with the create form up.
+            + '<button class="iconbtn sb-add" data-act="tasks:new" title="New task" aria-label="New task">' + ic('plus') + '</button></div>'
+          + tk.rows.map(taskRow).join('')
+          + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
+        + '</div>'
+        : '')
     + '</div>'
-    // Item 7: the bottom-left settings entry. Lands on Manage › Tasks, the TUI's default Manage tab.
-    // r5 item 8, the user's words, which override the row this used to be:
-    // "the bottom-left settings entry becomes a plain blue button — no keycap
-    // hint, no second icon." So it is `.btn.btn-p` — the app's existing accent
-    // button, whose --accent/#fff pair is identical in all three theme states —
-    // full width, 32px, with the word and nothing else. Both children are
-    // always emitted and CSS picks one: a text node cannot be swapped for an
-    // SVG by CSS alone, and the 52px rail cannot hold the word. The chord keeps
-    // three homes (this title, ⌘K's Tasks row, the shortcuts sheet) plus the
-    // macOS menu bar's own accelerator, which the OS draws.
-    // Review fix: the aria-label carries the chord too. In the 52px rail the
-    // word is display:none, so the aria-label IS the accessible name — leaving
-    // it as bare "Settings" was the one surface where losing the keycap also
-    // lost the chord, and a screen-reader user on the rail would hear less than
-    // the sighted user hovering the same pixel. The spec's copy section asks
-    // for "Settings (⌘ ,)" on both the tooltip and the label.
-    // Soft Tactile (SH-01): the reference draws the entry as a full-width
-    // neutral button — gear, the word, and the ⌘, keycap on the right. The
-    // rail keeps the gear alone; the keycap is only emitted while the sidebar
-    // is not collapsed by the user (CSS hides it on the responsive rail too).
+    // The bottom-left Settings entry: house icon and the word. The ⌘ , chord
+    // lives in the tooltip, the palette and the app menu, not on the button.
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:tasks" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
         + '<span class="sb-settings-ic">' + ic('home') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
-        + (S.sidebar === 'rail' ? '' : keycaps('⌘,'))
       + '</button></div>'
     ;
   if (keepScroll) {
     const lists = $('#sidebar').querySelector('.sb-lists');
-    // The rebuilt list can be shorter (a delete, a collapsed page); the browser
-    // clamps to scrollHeight on its own, so nothing here has to.
     if (lists) lists.scrollTop = keepScroll;
   }
+}
+
+/** The workspace chip's label: the folder's own name, not the whole path
+    (the full path is the chip's tooltip and lives in the workspace menu). */
+function wsName(p) {
+  const parts = String(p || '').replace(/\/+$/, '').split('/');
+  return parts[parts.length - 1] || String(p || '');
 }
 
 /** Every task, ordered as the TUI orders its rail (STATUS_RANK, then newest). */
@@ -2650,8 +2622,9 @@ function renderInspector() {
       : '<p class="cap">Connect an agent to see what it can reach.</p>';
   }
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
-    + '<div class="inspbody">' + body + '</div>'
-    + '<div class="inspfoot">' + (S.agentSession ? '<span class="mono">' + esc(String(S.agentSession).slice(0, 18)) + '…</span>' : 'no session yet') + '</div>';
+    // Calm (S1): no session-id footer. The id is one palette row away
+    // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
+    + '<div class="inspbody">' + body + '</div>';
 }
 
 /* ---------------- console ---------------- */
@@ -3819,7 +3792,7 @@ function act(a) {
     });
     return;
   }
-  if (a === 'tools') { close(); S.inspector = true; S.inspTab = 'world'; render(); return; }
+  if (a === 'tools') { close(); S.inspector = true; writePaneFlag('atag.inspector', true); S.inspTab = 'world'; render(); return; }
   if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
   if (a === 'quit') { close(); if (BR && BR.quit) { BR.quit(); return; } render(); toast('This is a prototype', 'Nothing to quit'); return; }
   if (a === 'about') { close(); render(); toast('Atomic Agent 0.3.7', 'Local-first agent · GAIA L1 69.8%'); return; }
@@ -3878,7 +3851,7 @@ function act(a) {
     if (v === 'chat') S.settings = null;
     S.room = v; render(); return;
   }
-  if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
+  if (k === 'insp')      { close(); S.inspector = true; writePaneFlag('atag.inspector', true); S.inspTab = v; render(); return; }
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
@@ -3889,7 +3862,7 @@ function act(a) {
     close(); toast('The sidebar is a rail on a narrow window', 'widen the window past 1000px to open it', 'bad'); return;
   }
   if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
-                           else if (v === 'inspector') S.inspector = !S.inspector;
+                           else if (v === 'inspector') { S.inspector = !S.inspector; writePaneFlag('atag.inspector', S.inspector); }
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); render(); settingsPaneEntered(opened); return; }
   if (k === 'theme')     { close(); S.theme = v;
@@ -17927,6 +17900,16 @@ if (typeof window !== 'undefined') {
      right edge. */
   window.__sbHeads = () => ({
     headPlus: !!document.querySelector('#sidebar .sb-head [data-act]:not(.wschip)'),
+    /* Calm (S1): New chat is its own button under the workspace chip, not a
+       plus on the Chats header. */
+    newChat: (() => {
+      const b = document.querySelector('#sidebar .sb-new');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return {act: b.dataset.act || null, text: b.textContent, visible: !!b.offsetParent,
+              labelVisible: !!(b.querySelector('.sb-new-lb') && b.querySelector('.sb-new-lb').offsetParent),
+              centre: Math.round(r.left + r.width / 2)};
+    })(),
     heads: ['tasks', 'chats'].map((l) => {
       const h = document.querySelector('[data-list="' + l + '"] .sb-list-head');
       if (!h) return {list: l, act: null};
@@ -17947,7 +17930,8 @@ if (typeof window !== 'undefined') {
     rail: document.querySelector('#sidebar').classList.contains('rail'),
   });
   window.__clickHead = (list) => {
-    const b = document.querySelector('[data-list="' + list + '"] .sb-list-head button[data-act]');
+    const b = list === 'new' ? document.querySelector('#sidebar .sb-new')
+      : document.querySelector('[data-list="' + list + '"] .sb-list-head button[data-act]');
     if (!b) return null;
     b.click();
     return {pane: S.settings ? settingsPaneId(S.settingsPane) : null, mode: TK.mode,

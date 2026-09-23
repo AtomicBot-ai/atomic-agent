@@ -51,13 +51,12 @@
 
 /* Title block: "Chat" and the session line on one baseline. */
 .tb-title{display:flex;align-items:baseline;gap:10px;min-width:0;margin-left:4px;flex:0 1 auto}
-.tb-title b{font-size:15px;line-height:20px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;color:var(--ink)}
-.tb-title span{font-size:12.5px;line-height:16px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tb-title b{font-size:14px;line-height:20px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:56ch;color:var(--ink)}
 .tb-right{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
 
-/* Search pill: a lifted pill with the ⌘K keycap. */
+/* Search pill: a lifted pill; the ⌘K chord is its tooltip. */
 .searchbtn{
-  display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 6px 0 12px;margin-right:4px;
+  display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 14px 0 12px;margin-right:4px;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:var(--sh-card);
   font-size:13px;line-height:1;color:var(--ink-2);flex:none;
   transition:color var(--t-state) var(--ease),background var(--t-state) var(--ease);
@@ -67,7 +66,6 @@
 .searchbtn:hover{color:var(--ink)}
 .searchbtn:hover svg{color:var(--ink-2)}
 .searchbtn:active{transform:scale(.97)}
-.searchbtn .kc{margin-left:2px}
 
 #main{flex:1;min-height:0;min-width:0;display:flex}
 
@@ -94,21 +92,34 @@
   transition:background var(--t-state) var(--ease);
 }
 .wschip:hover{background:var(--panel-2)}
-.wschip span{flex:1;min-width:0;font:400 12px/16px var(--font-mono);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wschip span{flex:1;min-width:0;font:600 13px/18px var(--font-ui);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wschip svg{width:14px;height:14px;color:var(--ink-2)}
+
+/* New chat: a quiet full-width row under the workspace chip — plus, word. */
+.sb-new{
+  flex:none;display:flex;align-items:center;gap:9px;width:100%;height:34px;margin-top:8px;padding:0 12px 0 11px;
+  border-radius:var(--r-pill);color:var(--ink);font-size:13.5px;font-weight:500;text-align:left;
+  transition:background var(--t-state) var(--ease);
+}
+.sb-new:hover{background:var(--hover)}
+.sb-new:active{transform:scale(.97)}
+.sb-new:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.sb-new-ic{display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--ink-2)}
+.sb-new-ic svg{width:15px;height:15px}
+.sb-new-lb{flex:1;min-width:0}
 
 .sb-lists{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:6px}
 .sb-list{display:flex;flex-direction:column;gap:1px}
 /* Group header: sentence case, bold, with the running count and the plus. */
 .sb-list-head{
   height:30px;flex:none;display:flex;align-items:center;gap:6px;margin-top:10px;padding:0 4px 0 10px;
-  font:700 12.5px/16px var(--font-ui);letter-spacing:0;color:var(--ink-2);text-transform:none;
+  font:600 12px/16px var(--font-ui);letter-spacing:0;color:var(--ink-3);text-transform:none;
 }
 .sb-list-head > span:first-child{flex:1;min-width:0}
 .sb-list-head .ct{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
 .sb-list-head .sb-add{width:26px;height:26px;color:var(--ink-2)}
 .sb-list-head .sb-add svg{width:14px;height:14px}
-.sb-empty{padding:4px 10px 6px;font-size:12.5px;line-height:18px;color:var(--ink-2)}
+.sb-empty{padding:4px 12px 6px;font-size:13px;line-height:18px;color:var(--ink-3)}
 
 /* Rows: 34px pills — dot · title · right meta (tasks) or the hover controls
    (chats). The meta rides a data attribute so the row's children stay dot,
@@ -167,14 +178,13 @@
 }
 .loadmore:hover{background:var(--brand-wash)}
 
-/* Footer: full-width neutral Settings button with its ⌘, keycap. */
+/* Footer: a quiet full-width Settings row; the ⌘ , chord is its tooltip. */
 .sb-footwrap{flex:none;padding-top:8px}
-.sb-settings{width:100%;height:36px;justify-content:flex-start;gap:9px;padding:0 8px 0 14px;background:var(--hover);color:var(--ink)}
-.sb-settings:hover{background:var(--press)}
+.sb-settings{width:100%;height:34px;justify-content:flex-start;gap:9px;padding:0 8px 0 12px;background:transparent;color:var(--ink);font-weight:500}
+.sb-settings:hover{background:var(--hover)}
 .sb-settings-ic{display:flex;align-items:center;justify-content:center}
 .sb-settings-ic svg{width:16px;height:16px}
 .sb-settings-lb{flex:1;min-width:0;text-align:left}
-.sb-settings .kc{margin-left:auto}
 
 /* ---------------- the rail (52px) ---------------- */
 /* Dots, the two pluses and the gear; names stay in the rows' titles. The
@@ -183,7 +193,7 @@
 #sidebar.rail{width:52px;padding:10px 10px 18px}
 #sidebar.rail::before{left:4px;right:4px}
 #sidebar.rail .wschip,#sidebar.rail .sesrow .t1,#sidebar.rail .pinbtn,#sidebar.rail .unreadbtn,
-#sidebar.rail .loadmore,#sidebar.rail .sb-empty,#sidebar.rail .sb-settings-lb,#sidebar.rail .sb-settings .kc{display:none}
+#sidebar.rail .loadmore,#sidebar.rail .sb-empty,#sidebar.rail .sb-settings-lb,#sidebar.rail .sb-new-lb{display:none}
 #sidebar.rail .sb-head{justify-content:center;height:36px}
 #sidebar.rail .sb-head > svg{position:static}
 #sidebar.rail .sb-list-head{justify-content:center;padding:0;margin-top:6px}
@@ -194,11 +204,12 @@
 #sidebar.rail .sb-lists{scrollbar-width:none}
 #sidebar.rail .sb-footwrap{display:flex;justify-content:center}
 #sidebar.rail .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
+#sidebar.rail .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
 @media (max-width:1000px){
   #sidebar{width:52px;padding:10px 10px 18px}
   #sidebar::before{left:4px;right:4px}
   #sidebar .wschip,#sidebar .sesrow .t1,#sidebar .pinbtn,#sidebar .unreadbtn,
-  #sidebar .loadmore,#sidebar .sb-empty,#sidebar .sb-settings-lb,#sidebar .sb-settings .kc{display:none}
+  #sidebar .loadmore,#sidebar .sb-empty,#sidebar .sb-settings-lb,#sidebar .sb-new-lb{display:none}
   #sidebar .sb-head{justify-content:center;height:36px}
   #sidebar .sb-head > svg{position:static}
   #sidebar .sb-list-head{justify-content:center;padding:0;margin-top:6px}
@@ -209,6 +220,7 @@
   #sidebar .sb-lists{scrollbar-width:none}
   #sidebar .sb-footwrap{display:flex;justify-content:center}
   #sidebar .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
+  #sidebar .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
 }
 
 /* ---------------- content ---------------- */
@@ -229,8 +241,6 @@
 .insphead .seg button{flex:1}
 .inspbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 6px 10px}
 .inspbody > .cap{margin:0;padding:8px 10px;font-size:12.5px;line-height:18px;color:var(--ink-2)}
-.inspfoot{flex:none;display:flex;align-items:center;gap:8px;padding:10px 16px 12px;font-size:11.5px;line-height:16px;color:var(--ink-2)}
-.inspfoot .mono{font-size:11px;line-height:16px;color:var(--ink-2)}
 
 /* Steps: 38px rows — index · tool name · duration, all mono. */
 .step{

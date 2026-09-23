@@ -1613,10 +1613,15 @@ async function smokeTest(): Promise<void> {
   const sb0 = await js<Sb | null>("window.__sidebar ? window.__sidebar() : null");
   check(
     "renderer painted",
-    !!sb0 && sb0.navrows === 0 && JSON.stringify(sb0.headers) === '["Tasks","Chats"]' && sb0.subtitles === 0 && !sb0.skillsRow,
+    // Calm (S1): Chats first; Tasks is drawn only when the agent holds tasks.
+    !!sb0 && sb0.navrows === 0
+      && JSON.stringify(sb0.headers) === (sb0.tasks.length > 0 ? '["Chats","Tasks"]' : '["Chats"]')
+      && sb0.subtitles === 0 && !sb0.skillsRow,
     sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
   );
-  check("toolbar titled", (await js<string>("document.querySelector('.tb-title b').textContent")) === "Chat");
+  // Calm (S1): the toolbar names the open chat; nothing is open at boot.
+  const tbTitle = await js<string>("document.querySelector('.tb-title b').textContent");
+  check("toolbar titled", tbTitle === "New chat", JSON.stringify(tbTitle));
   check("bridge exposed", await js<boolean>("!!window.atomic"));
   check(
     "no demo content",
@@ -3392,8 +3397,10 @@ async function sidebarTest(
   try {
     let sb = await js<Sb>("window.__sidebar()");
     check(
-      "sidebar is Tasks over Chats, with no nav rows",
-      JSON.stringify(sb.headers) === '["Tasks","Chats"]' && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
+      // Calm (S1): Chats first, Tasks under it and only when there are tasks.
+      "sidebar is Chats, then Tasks when there are any, with no nav rows",
+      JSON.stringify(sb.headers) === (sb.tasks.length > 0 ? '["Chats","Tasks"]' : '["Chats"]')
+        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
       `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
@@ -3655,13 +3662,17 @@ async function sidebarTest(
       executed.length > 0 && sb.tasks.some((t) => executed.some((e) => e.id === t.id)),
       `${apiTasks.length} tasks from the agent (${executed.length} executed, ${apiTasks.filter((t) => t.status === "cancelled").length} cancelled), ${sb.tasks.length} rows over ${pages} page(s)`,
     );
+    // Calm (S1): the counter is drawn only while something is running —
+    // "0 running" was a number with nothing to say.
+    const runningNow = apiTasks.filter((t) => t.status === "running").length;
     check(
       "the tasks header counts running tasks",
-      sb.counter === `${apiTasks.filter((t) => t.status === "running").length} running`,
-      `counter ${JSON.stringify(sb.counter)}`,
+      sb.counter === (runningNow > 0 ? `${runningNow} running` : ""),
+      `counter ${JSON.stringify(sb.counter)} with ${runningNow} running`,
     );
     if (apiTasks.length === 0) {
-      check("an empty tasks list says so", sb.tasksEmpty === "(no tasks yet)", JSON.stringify(sb.tasksEmpty));
+      // Calm (S1): no tasks, no Tasks section — the list's absence is the empty state.
+      check("an empty tasks list is not drawn", !sb.headers.includes("Tasks") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
     } else {
       const first = sb.tasks[0];
       const src = apiTasks.find((t) => t.id === first.id);
@@ -6298,46 +6309,62 @@ async function uiTest(
   );
 
   // --- item 4: the pluses ----------------------------------------------------
+  /* Calm (S1): New chat is a labelled button under the workspace chip, and
+     the Chats header carries no plus. The Tasks header is drawn only when the
+     agent holds tasks, with its one plus and a running count only while
+     something runs. The head row still carries no control of its own. */
+  type Head = { list: string; act: string | null; buttons: number; right: number; centre: number; visible: boolean;
+                counter: string | null; counterVisible: boolean; labelVisible: boolean; counterLeftOfPlus: boolean };
   type Heads = {
     headPlus: boolean; railWidth: number; rail: boolean;
-    heads: Array<{ list: string; act: string | null; buttons: number; right: number; centre: number; visible: boolean;
-                   counter: string | null; counterVisible: boolean; labelVisible: boolean; counterLeftOfPlus: boolean }>;
+    newChat: { act: string | null; text: string; visible: boolean; labelVisible: boolean; centre: number } | null;
+    heads: Head[];
   };
   const heads = await js<Heads>("window.__sbHeads()");
+  const tasksHead = heads.heads.find((h) => h.list === "tasks");
+  const chatsHead = heads.heads.find((h) => h.list === "chats");
+  const tasksShown = !!tasksHead && tasksHead.act !== null;
   check("item 4: no plus on the head row", heads.headPlus === false, JSON.stringify(heads.headPlus));
   check(
-    // ONE plus per header, counted — a second control appearing in a list
-    // header later would otherwise slip past a first-match selector.
-    "item 4: one plus per list header, and they line up",
-    heads.heads[0].act === "tasks:new" && heads.heads[1].act === "session:new"
-      && heads.heads[0].buttons === 1 && heads.heads[1].buttons === 1
-      && heads.heads[0].right === heads.heads[1].right,
+    "calm: New chat is a labelled button, and the Chats header has no plus",
+    !!heads.newChat && heads.newChat.act === "session:new" && heads.newChat.visible
+      && /New chat/.test(heads.newChat.text) && !!chatsHead && chatsHead.buttons === 0,
+    JSON.stringify({ newChat: heads.newChat, chats: chatsHead }),
+  );
+  check(
+    // ONE plus on the Tasks header when it is drawn — a second control
+    // appearing there later would otherwise slip past a first-match selector.
+    "item 4: the Tasks header, when drawn, carries one plus",
+    !tasksShown || (tasksHead!.act === "tasks:new" && tasksHead!.buttons === 1),
     JSON.stringify(heads.heads.map((h) => [h.list, h.act, h.buttons, h.right])),
   );
   check(
-    // ...and the Chats header carries no counter at all, which is what the
-    // TUI's Sessions header does. Captured before, asserted now.
-    "item 4: \"N running\" sits to the left of the Tasks plus, and Chats has no counter",
-    /^\d+ running$/.test(heads.heads[0].counter ?? "") && heads.heads[0].counterLeftOfPlus
-      && heads.heads[1].counter === null,
-    JSON.stringify([heads.heads[0].counter, heads.heads[0].counterLeftOfPlus, heads.heads[1].counter]),
+    "item 4: \"N running\" sits to the left of the Tasks plus, only while something runs, and Chats has no counter",
+    (!tasksShown || tasksHead!.counter === null || (/^[1-9]\d* running$/.test(tasksHead!.counter) && tasksHead!.counterLeftOfPlus))
+      && !!chatsHead && chatsHead.counter === null,
+    JSON.stringify([tasksHead?.counter, tasksHead?.counterLeftOfPlus, chatsHead?.counter]),
   );
   const rail = await js<Heads>("window.__rail()");
+  const railTasks = rail.heads.find((h) => h.list === "tasks");
   check(
-    "item 4: the collapsed rail keeps both pluses and nothing else",
-    rail.rail && rail.heads.every((h) => h.visible && !h.labelVisible && Math.abs(h.centre - rail.railWidth / 2) <= 2)
-      && !rail.heads[0].counterVisible,
-    JSON.stringify([rail.railWidth, rail.heads.map((h) => [h.list, h.visible, h.labelVisible, h.centre])]),
+    "item 4: the collapsed rail keeps the New chat plus (and the Tasks plus when drawn) and nothing else",
+    rail.rail && !!rail.newChat && rail.newChat.visible && !rail.newChat.labelVisible
+      && Math.abs(rail.newChat.centre - rail.railWidth / 2) <= 2
+      && (!tasksShown || (!!railTasks && railTasks.visible && !railTasks.labelVisible
+          && Math.abs(railTasks.centre - rail.railWidth / 2) <= 2 && !railTasks.counterVisible)),
+    JSON.stringify([rail.railWidth, rail.newChat, rail.heads.map((h) => [h.list, h.visible, h.labelVisible, h.centre])]),
   );
   await js<Heads>("window.__rail()"); // back to the full sidebar
-  const viaTasks = await js<{ pane: string | null; mode: string } | null>("window.__clickHead('tasks')");
-  check(
-    "item 4: the Tasks plus opens the create form",
-    !!viaTasks && viaTasks.pane === "tasks" && viaTasks.mode === "create",
-    JSON.stringify(viaTasks),
-  );
-  await js<void>("window.__tasksAct('back'); window.__settingsClose();");
-  const viaChats = await js<{ logLen: number; session: string | null; onRows: number } | null>("window.__clickHead('chats')");
+  if (tasksShown) {
+    const viaTasks = await js<{ pane: string | null; mode: string } | null>("window.__clickHead('tasks')");
+    check(
+      "item 4: the Tasks plus opens the create form",
+      !!viaTasks && viaTasks.pane === "tasks" && viaTasks.mode === "create",
+      JSON.stringify(viaTasks),
+    );
+    await js<void>("window.__tasksAct('back'); window.__settingsClose();");
+  }
+  const viaChats = await js<{ logLen: number; session: string | null; onRows: number } | null>("window.__clickHead('new')");
   check(
     "item 4: the Chats plus starts a new chat",
     !!viaChats && viaChats.logLen === 0 && viaChats.session === null && viaChats.onRows === 0,
@@ -10275,22 +10302,25 @@ async function chromeTest(
     // --- item 8: the bottom-left entry is a plain blue button ----------------
     const setBtn = await js<SetBtn | null>("window.__settingsBtn()");
     check(
-      "item 8: the settings entry is a neutral button: gear, the word, one ⌘, keycap",
+      // Calm (S1): the keycap left the button; the chord is its tooltip, its
+      // aria-label, the palette and the app menu (asserted by item 8 below).
+      "item 8: the settings entry is a neutral button: icon and the word, no keycap",
       /* Soft Tactile (SH-01) draws the entry as a full-width neutral button
          with the gear, the word and its ⌘, keycap. It stays default rank,
          never primary: a permanent nav control in the corner of every screen
          is not the primary action of the screen. */
       !!setBtn && setBtn.text === "Settings" && setBtn.act === "settings:tasks"
-        && setBtn.keycaps === 1 && setBtn.labelVisible && setBtn.iconVisible
+        && setBtn.keycaps === 0 && setBtn.labelVisible && setBtn.iconVisible
         && setBtn.oldRow === 0 && /(^|\s)btn(\s|$)/.test(setBtn.classes)
         && !/(^|\s)btn-p(\s|$)/.test(setBtn.classes),
       JSON.stringify(setBtn),
     );
     // #sidebar is 260px (8px window gutter + the 252px floating panel with 8px
-    // side padding), so the button's full width is 236.
+    // side padding), so the button's full width is 236. Calm (S1): 34px, the
+    // height of every other sidebar row.
     check(
-      "item 8: it is 36px tall, full width, below the lists",
-      !!setBtn && setBtn.height === 36 && setBtn.width === 236 && setBtn.belowLists,
+      "item 8: it is 34px tall, full width, below the lists",
+      !!setBtn && setBtn.height === 34 && setBtn.width === 236 && setBtn.belowLists,
       setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
     );
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
@@ -10302,10 +10332,11 @@ async function chromeTest(
        and drawn from the palette — a real border, a real ground, and a label
        that is not the disabled ink — and that the two themes DIFFER, which is
        what proves it is reading tokens rather than a literal. */
+    // Calm (S1): a quiet row — no ground at rest, a hover fill like the chat
+    // rows — so the theme shows in its ink, which must differ between themes.
     check(
       "item 8: it is drawn from the palette, and follows the theme",
-      setDark.bg !== setLight.bg && setDark.fg !== setLight.fg
-        && setDark.bg !== "rgba(0, 0, 0, 0)" && setLight.bg !== "rgba(0, 0, 0, 0)",
+      setDark.fg !== setLight.fg && setDark.fg !== "" && setLight.fg !== "",
       `dark ${setDark.bg}/${setDark.fg}; light ${setLight.bg}/${setLight.fg}`,
     );
     const opened = await js<{ settings: boolean; pane: string | null }>("window.__settingsBtnClick()");
