@@ -164,11 +164,13 @@ const PRESETS = [
   {id:'perplexity', label:'Perplexity', kind:'openai-compatible', baseUrl:'https://api.perplexity.ai', env:'PERPLEXITY_API_KEY'},
   {id:'nous', label:'Nous Research', kind:'openai-compatible', baseUrl:'https://inference-api.nousresearch.com', env:'NOUS_API_KEY'},
   {id:'novita', label:'Novita AI', kind:'openai-compatible', baseUrl:'https://api.novita.ai/openai', env:'NOVITA_API_KEY'},
+  // Atomic Chat's Local API Server: 127.0.0.1 (the address it binds), /v1 appended like every compat base; no key unless one is set in its settings.
+  {id:'atomic-chat', label:'Atomic Chat (local)', kind:'openai-compatible', baseUrl:'http://127.0.0.1:1337', env:'ATOMIC_CHAT_API_KEY', local:true},
   {id:'ollama', label:'Ollama (local)', kind:'openai-compatible', baseUrl:'http://localhost:11434', env:'OLLAMA_API_KEY', local:true},
   {id:'lmstudio', label:'LM Studio (local)', kind:'openai-compatible', baseUrl:'http://localhost:1234', env:'LMSTUDIO_API_KEY', local:true},
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
-  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers}));
+  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local}));
 /* What is left of the prototype's Models pane after Settings › LLM replaced
    it (review fix): no rows of its own any more — only the provider-add and
    model-search writers, which the `--smoke --models` harness drives directly
@@ -913,6 +915,7 @@ const LLMP = {
   daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
   logs:null, logsTimer:null, logsBusy:false,
   pulling:null, pullLog:[], // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
+  tune:{busy:null, msg:null, err:null}, // the Thinking section: busy = the config path being written
   timer:null, seq:0, inflight:null,
 };
 const LLM_PANEL_MODES = ['local','cloud','external','fallback']; // llm-panel-state.ts LLM_PANEL_MODES
@@ -931,10 +934,24 @@ const TG = {
 /* Import panel — the TUI's ImportPanelState; the form is
    createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
 const IMP = {
-  mode:'configure', form:{source:'hermes', sourceDir:'', sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
+  mode:'configure', form:{source:'hermes', sourceDir:'', skills:true, memory:true, mcp:true, sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
   report:null, reportExecuted:false, notice:null, state:null, defaults:null, runs:0, busy:false,
 };
-const IMP_TOGGLE_FIELDS = ['sessions','cron','secrets','overwrite'];
+const IMP_TOGGLE_FIELDS = ['skills','memory','mcp','sessions','cron','secrets','overwrite'];
+/* src/tui/import/import-sources.ts: the source row's order, its labels, the
+   default-folder placeholder, and which toggles each source draws, in row order.
+   The descriptions are the importers' own (obImportRegistry); the secrets row
+   shows the variable names instead, as the TUI's hint does. */
+const IMP_SOURCES = ['hermes','openclaw','claude-code','codex','pi','oh-my-pi'];
+const IMP_SOURCE_META = {
+  hermes:{label:'Hermes', logo:'hermes', dir:'~/.hermes', toggles:['sessions','cron','secrets'], secretsHint:'OPENROUTER_API_KEY / AIMLAPI_API_KEY'},
+  openclaw:{label:'OpenClaw', logo:'openclaw', dir:'~/.openclaw', toggles:['sessions','cron']},
+  'claude-code':{label:'Claude Code', logo:'claudecode', dir:'~/.claude', toggles:['skills','memory','mcp','sessions','secrets'], secretsHint:'ANTHROPIC_API_KEY'},
+  codex:{label:'Codex', logo:'codex', dir:'~/.codex', toggles:['skills','memory','sessions','secrets'], secretsHint:'OPENAI_API_KEY'},
+  pi:{label:'Pi', logo:'', dir:'~/.pi/agent', toggles:['skills','sessions']},
+  'oh-my-pi':{label:'Oh-My-Pi', logo:'', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
+};
+const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
 const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
@@ -1197,6 +1214,7 @@ const LOGO_FILES = {
   xai:'xai.svg', moonshot:'moonshot.svg', perplexity:'perplexity-color.svg', nous:'nousresearch.svg', novita:'novita-color.svg',
   ollama:'ollama.svg', lmstudio:'lmstudio.svg', huggingface:'huggingface-color.svg', nvidia:'nvidia-color.svg', zhipu:'zhipu-color.svg',
   codex:'codex-color.svg', claudecode:'claudecode-color.svg', hermes:'hermesagent.svg', openclaw:'openclaw-color.svg', github:'github.svg',
+  atomicchat:'atomicchat.png',
 };
 /** Model id → the family whose mark it wears ('' when there is none). */
 function modelLogoKey(id) {
@@ -1226,6 +1244,7 @@ const PROVIDER_LOGO_KEYS = {
   'nous research':'nous', novita:'novita', 'novita ai':'novita', ollama:'ollama', 'ollama (local)':'ollama', lmstudio:'lmstudio',
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
+  'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
 };
 /** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
 function providerLogoKey(p) {
@@ -1260,6 +1279,8 @@ const SLASH = [
   ['help','list available slash commands'],
   ['tools','list built-in tools (fs, shell, browser, memory, vision)','<query>'],
   ['theme','switch the UI theme','<name>|list'],
+  // menu-registry.ts setup.onboarding: `/onboarding`, alias `/setup` (the 4th field: aliases, matched as typed).
+  ['onboarding','run first-time setup again from the start — keeps your providers, keys, sessions and memory','',['setup']],
   ['clear','clear chat transcript (keeps session)'],
   ['abort','abort the running turn'],
   ['quit','exit Atomic Agent'],
@@ -2780,7 +2801,8 @@ function slashMatches() {
   // keeps showing that command and its hint instead of "no matching command".
   const q = S.draft.replace(/^\//, '').toLowerCase().split(/\s+/)[0];
   if (!q) return SLASH;
-  return SLASH.filter(([n, d]) => n.startsWith(q)) .concat(SLASH.filter(([n, d]) => !n.startsWith(q) && n.includes(q)));
+  const starts = (row) => row[0].startsWith(q) || (row[3] || []).some((al) => al.startsWith(q));
+  return SLASH.filter(starts).concat(SLASH.filter((row) => !starts(row) && row[0].includes(q)));
 }
 function slashPopover() {
   const m = slashMatches();
@@ -2788,10 +2810,10 @@ function slashPopover() {
   // Soft Tactile: one amber row, no inline colour.
   if (!m.length) return '<div class="slash"><div class="slashlist"><div class="slashrow nomatch"><span class="cmd">no matching command</span></div></div></div>';
   // Rows scroll inside .slashlist; the footer (count + keys) stays put.
-  return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a], i) =>
+  return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a, al], i) =>
     '<button class="slashrow' + (i === S.slashCur ? ' on' : '') + '" data-slash="' + esc(n) + '">'
     + '<span class="cmd">/' + bold(n, q) + '</span><span class="ds">' + esc(d) + '</span>'
-    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div>'
+    + '<span class="hint">' + esc(a || (al && al.length ? 'also /' + al.join(', /') : '')) + '</span></button>').join('') + '</div>'
     + '<div class="slashfoot"><span>' + m.length + (m.length === 1 ? ' command' : ' commands') + '</span>'
     + '<span class="grow"></span>' + keycaps('↑↓ tab esc') + '</div></div>';
 }
@@ -4208,7 +4230,8 @@ function runSlash(parts) {
     telegram:'settings:telegram', import:'settings:import', privacy:'settings:privacy', analytics:'settings:privacy',
     theme:'palette:theme', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
     session:'session:id', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
-    expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar'};
+    expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar',
+    onboarding:'onboarding', setup:'onboarding'};
   if (name === 'runmode') { fzSlash(parts.slice(1).join(' ')); return; }
   // Item 7: `/privacy [analytics <verb>]` and `/analytics <verb>` as
   // slash-command-handler.ts dispatchPrivacySub / dispatchAnalyticsSub.
@@ -6023,7 +6046,7 @@ if (BR) {
   const originalAct = act;
   act = function (a) {
     if (a === 'stop' && S.turnId) { BR.cancel(S.turnId); S.busy = false; clearInterval(ticker); render(); return; }
-    if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); BR.restart().then(applyStatus); return; }
+    if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
       BR.chooseWorkspace().then((dir) => {
         if (!dir) return;
@@ -7978,7 +8001,7 @@ function obWizardHTML() {
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on this Mac needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -8702,8 +8725,8 @@ async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
 }
 
 /* ---- the import step ------------------------------------------------
-   Four sources through `atag import` (src/cli/import-command.ts accepts
-   hermes, openclaw, claude-code and codex and nothing else), plus one
+   Six sources through `atag import` (src/cli/import-command.ts accepts
+   hermes, openclaw, claude-code, codex, pi and oh-my-pi), plus one
    the import machinery cannot reach at any level: the operator's OWN
    ~/.atomic-agent, the terminal setup this desktop keeps its own state
    dir beside.  There is no `atomic-agent` import source to route that
@@ -8713,7 +8736,7 @@ async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
    key ENV VAR NAMES rather than values.  Absent that bridge the row is
    simply not offered; nothing here throws when it is missing.
    ------------------------------------------------------------------ */
-/** The four registries under src/import (import-options.ts), plus the bridge's. */
+/** The six registries under src/import (import-options.ts), plus the bridge's. */
 function obImportRegistry(id) {
   if (id === 'hermes') return [
     {id:'sessions', label:'Sessions', description:'Conversation history (state.db) -> sessions.sqlite'},
@@ -8736,6 +8759,16 @@ function obImportRegistry(id) {
     {id:'memory', label:'Instructions', description:'AGENTS.md -> memory.sqlite'},
     {id:'sessions', label:'Sessions', description:'Rollouts (sessions/**/*.jsonl) -> sessions.sqlite'},
     {id:'secrets', label:'Provider key', description:'OPENAI_API_KEY (auth.json) -> <stateDir>/.env'},
+  ];
+  // agent 0.6.2 (#457): src/import/pi/import-options.ts, src/import/oh-my-pi/import-options.ts. No secrets domain.
+  if (id === 'pi') return [
+    {id:'skills', label:'Skills', description:'Skill directories (skills/**/SKILL.md) -> global skills dir'},
+    {id:'sessions', label:'Sessions', description:'Transcripts (sessions/*/*.jsonl) -> sessions.sqlite'},
+  ];
+  if (id === 'oh-my-pi') return [
+    {id:'skills', label:'Skills', description:'Skill directories (skills/*/SKILL.md) -> global skills dir'},
+    {id:'mcp', label:'MCP servers', description:'mcpServers (mcp.json) -> config.mcp.servers'},
+    {id:'sessions', label:'Sessions', description:'Transcripts (sessions/*/*.jsonl) -> sessions.sqlite'},
   ];
   // The bridge's own domains. `keys` is the secret row and starts off,
   // exactly as `secrets` does everywhere else.
@@ -11354,7 +11387,9 @@ function rmResolve(cfg) {
         ? (managedModelId ?? worker.model ?? null)
         : ((worker && worker.defaultChatModel) ?? (worker && worker.model) ?? null)),
     workers: fusion.workers ?? 2,
-    workerMaxSteps: fusion.workerMaxSteps ?? 40,
+    cloudWorkers: fusion.cloudWorkers ?? 4,
+    workersPinned: fusion.workers !== undefined,
+    workerMaxSteps: fusion.workerMaxSteps ?? 60,
     workerTimeoutMs: fusion.workerTimeoutMs ?? 2700000,
     primaryProviderId, degraded,
   };
@@ -12069,7 +12104,7 @@ function wizardHTML() {
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
         + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="tk-lbl" for="wiz-key">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
     + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" spellcheck="false">'
     + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>';
@@ -15379,10 +15414,21 @@ function llmKeyEnvNames(p) {
 }
 function llmKeyNamesPresent() { return new Set([].concat(LLMP.envKeys || [], LLMP.dotenvKeys || [])); }
 function llmHasKey(p) {
+  return llmHasRealKey(p) || llmKeylessLocal(p);
+}
+function llmHasRealKey(p) {
   if (p.kind === 'subscription-cli') return true;
   if (p.apiKey && String(p.apiKey).length) return true;
   const present = llmKeyNamesPresent();
   return llmKeyEnvNames(p).some((n) => present.has(n));
+}
+/* local-backend-readiness.ts isKeylessLocalProviderEntry (and agent-cli's
+   port): Atomic Chat, Ollama, LM Studio or any loopback compat endpoint has
+   no key at all, so a missing one is not "missing". */
+function llmKeylessLocal(p) {
+  if (!p || p.kind !== 'openai-compatible') return false;
+  if (['atomic-chat', 'lmstudio', 'ollama'].includes(p.id)) return true;
+  try { return ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(new URL(p.baseUrl).hostname.toLowerCase()); } catch (err) { return false; }
 }
 function llmKeysKnown() { return LLMP.envKeys !== null && LLMP.dotenvKeys !== null; }
 function llmDaemonPort() {
@@ -15573,7 +15619,7 @@ function llmLocalRows() {
 function llmProviderRow(p) {
   const hasKey = llmHasKey(p);
   const active = p.id === llmActiveTextId();
-  const auth = p.kind === 'subscription-cli' ? 'cli auth' : hasKey ? 'key ok' : 'missing key';
+  const auth = p.kind === 'subscription-cli' ? 'cli auth' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
     enterEffect: !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
@@ -15834,14 +15880,30 @@ function llmRunModeHTML() {
     + '</div>'
     // /runmode status, where the stored and the effective mode can disagree.
     + '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>'
-    + '<div class="llm-workers">'
-      + '<span class="tk-help">' + esc('Workers: ' + rm.workers + ' — the default fan-out. The orchestrator can ask for more or fewer per job.') + '</span>'
-      + '<span class="tk-seg llm-workerseg" role="group" aria-label="Workers">'
-      + [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
-          '<button class="' + (n === rm.workers ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === rm.workers) + '">'
-          + n + '</button>').join('')
-      + '</span></div>'
+    // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
+    + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
     + '</section>';
+}
+/* What the count means depends on the worker leg (agent v0.6.3,
+   fusion-delegate.ts): an unpinned LOCAL leg runs one worker per job —
+   parallel local workers measured slower — so the default "2" would be a
+   lie there; a cloud leg takes the count, capped at cloudWorkers. */
+function llmWorkersHTML(rm) {
+  const leg = rm.workerProviderId ? llmProvider(rm.workerProviderId) : null;
+  const localLeg = !!leg && leg.kind === 'llama-server';
+  const shown = rm.workersPinned || !localLeg ? rm.workers : null;
+  const help = rm.workersPinned
+    ? 'Fusion workers: ' + rm.workers + ' per job. The orchestrator can ask for more or fewer.'
+    : localLeg
+      ? 'Fusion workers: auto — one local worker per job, since parallel local workers run slower. Pick a number to set your own.'
+      : 'Fusion workers: ' + rm.workers + ' per job by default, up to ' + rm.cloudWorkers + ' at once in the cloud. The orchestrator can ask for more or fewer.';
+  return '<div class="llm-workers">'
+    + '<span class="tk-help">' + esc(help) + '</span>'
+    + '<span class="tk-seg llm-workerseg" role="group" aria-label="Fusion workers">'
+    + [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+        '<button class="' + (n === shown ? 'on' : '') + '" data-act="runmode:workers:' + n + '" aria-pressed="' + (n === shown) + '">'
+        + n + '</button>').join('')
+    + '</span></div>';
 }
 
 function llmRouteCardHTML() {
@@ -15934,7 +15996,9 @@ function llmRowHTML(row, index, cursor) {
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
       + ' ' + chip(m.downloaded ? 'green' : 'line', m.downloaded ? 'downloaded' : 'remote')
       + (row.text.indexOf('★ best fit for this machine') >= 0 ? ' ' + chip('indigo', '★ best fit for this machine') : '')
-      + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '');
+      + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '')
+      // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
+      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
     // r7 models: what the model is, how it fits this machine, and the one
     // caution it earns. Absent on a row that has no catalogue entry.
     return open + radio + modelMark(m.id, '')
@@ -15995,6 +16059,7 @@ function llmLocalHTML() {
         ? 'Ordered for this machine — it reports ' + ram + ' GB of RAM. Every fit line under a model is measured against that.'
         : 'Reading this machine’s RAM…') + '</p>',
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
+    + llmTuneHTML()
     + llmSectionHTML('Local embeddings', emb, text.length, cursor)
     // Item 7B — the Ollama signpost. atomic-agent has no Ollama download
     // path of any kind: `grep -rni ollama src/` finds provider presets, a
@@ -16052,7 +16117,55 @@ function llmExternalHTML() {
         + '<span class="llm-line-t">managed daemon: <span class="mono">' + esc(llmFormatDaemon()) + '</span></span>'
         + '<span class="grow"></span>' + llmKeyBtn('s', 'start/stop', 'llm:daemon') + '</div>'
       + '<p class="llm-back">← <button class="llm-link" data-act="llm:mode:local">Local pane</button>: pick a managed model to switch back</p>'
-    + '</div>';
+    + '</div>'
+    + llmTuneHTML();
+}
+/* Gaps 11: the three knobs agent v0.6.3 reads on every local completion
+   (config v66/v68) — the managed daemon and an External llama.cpp alike.
+   Leaf `config set` writes; `atag serve` read the file at boot, so each
+   change carries the restart line. Copy condensed from the schema's own
+   comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
+const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
+function llmTuneHTML() {
+  const lm = llmLocalModels();
+  const tri = (v) => (v === 'on' || v === 'off' ? v : 'auto');
+  const thinking = tri(lm.thinking), template = tri(lm.useServerTemplate);
+  const budget = Number.isInteger(lm.reasoningBudgetTokens) ? lm.reasoningBudgetTokens : 1500;
+  const T = LLMP.tune;
+  const seg = (key, cur, opts, label) => '<span class="tk-seg llm-tuneseg" role="group" aria-label="' + esc(label) + '">'
+    + opts.map(([v, txt]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+      + (T.busy ? ' disabled' : '') + '>' + esc(txt) + '</button>').join('') + '</span>';
+  const budgets = LLM_TUNE_BUDGETS.includes(budget) ? LLM_TUNE_BUDGETS : LLM_TUNE_BUDGETS.concat([budget]).sort((a, b) => a - b);
+  const row = (title, help, control) => '<div class="llm-tune-row"><span class="llm-tune-body"><span class="llm-tune-t">' + esc(title) + '</span>'
+    + '<span class="tk-help">' + esc(help) + '</span></span>' + control + '</div>';
+  return '<section class="llm-section llm-tune"><div class="tk-sh llm-sh"><span class="llm-sh-t">Reasoning and prompt format</span>'
+    + (T.busy ? '<span class="tk-spin"></span>' : '') + '</div>'
+    + '<div class="llm-tune-card">'
+    + row('Thinking', 'Auto keeps the model’s own default. Off asks a reasoning model to answer without thinking first.',
+        seg('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
+    + row('Thinking budget', 'Tokens a reasoning model may think before it calls a tool. Its final answer is never cut. Default 1500.',
+        seg('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n)]), 'Thinking budget in tokens'))
+    + row('Model’s own chat template', 'Auto uses it for every model without a built-in format, so everything but Gemma and Qwen. On forces it, Off never uses it.',
+        seg('template', template, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Use the model’s own chat template'))
+    + '</div>'
+    + (T.err ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(T.err) + '</span></div>'
+      : T.msg ? restartLine(T.msg) : '')
+    + '</section>';
+}
+async function llmTuneSet(key, raw) {
+  if (!BR || LLMP.tune.busy) return;
+  const PATHS = {thinking:'localModels.thinking', budget:'localModels.reasoningBudgetTokens', template:'localModels.useServerTemplate'};
+  const path = PATHS[key]; if (!path) return;
+  const value = key === 'budget' ? String(Math.max(0, parseInt(raw, 10) || 0)) : (['auto', 'on', 'off'].includes(raw) ? raw : 'auto');
+  LLMP.tune = {busy:path, msg:null, err:null}; llmRepaint();
+  const res = await BR.configSet(path, value);
+  if (!res || res.ok === false) { LLMP.tune = {busy:null, msg:null, err:llmFail(path + ' write failed', res)}; llmRepaint(); return; }
+  await refreshLiveConfig();
+  const said = key === 'thinking' ? 'Thinking: ' + value
+    : key === 'template' ? 'Model’s own chat template: ' + value
+    : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens');
+  LLMP.tune = {busy:null, msg:said + '.', err:null};
+  llmRepaint();
 }
 function llmFallbackHTML() {
   const view = llmFallbackView();
@@ -16141,18 +16254,30 @@ function llmModalHTML() {
   }
   if (LLMP.steerUrl !== null) {
     const url = LLMP.steerUrl;
-    const ollama = llmLooksLikeOllama(url);
+    const known = llmSteerPresetId(url);
+    const ollama = known === 'ollama', atomic = known === 'atomic-chat';
     // ST-24: an amber prompt, because nothing failed — the server is just the other kind.
     return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
-      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
-      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
-      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
+      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : atomic ? logoHTML('atomicchat', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
+      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : atomic ? 'Atomic Chat detected — add it as a provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
+      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : atomic ? 'Atomic Chat\u2019s Local API Server' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
       + '<div class="acts"><button class="btn btn-s sm" data-act="llm:steer:n">Dismiss' + keycaps('N') + '</button>'
       + '<button class="btn btn-p sm" data-act="llm:steer:y">Open the provider wizard with this URL' + keycaps('Y') + '</button></div></div>';
   }
   return '';
 }
 function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
+/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick: Ollama's
+   port (any host), Atomic Chat's :1337 only on this machine (its preset
+   saves 127.0.0.1), anything else → null (the manual compat row). */
+function llmSteerPresetId(url) {
+  if (llmLooksLikeOllama(url)) return 'ollama';
+  try {
+    const u = new URL(url);
+    if (u.port === '1337' && ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase())) return 'atomic-chat';
+  } catch (err) { /* not a URL */ }
+  return null;
+}
 
 /* ============================================================
    Item 7A — add a model from Hugging Face.
@@ -16756,6 +16881,7 @@ function llmAct(what) {
   }
   if (verb === 'backend') { llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
+  if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
   if (verb === 'logs') { llmLogsOpen(); return; }
   if (verb === 'logsRefresh') { llmLogsRefresh(); return; }
@@ -16781,9 +16907,10 @@ function llmAct(what) {
   if (verb === 'steer') {
     const url = LLMP.steerUrl; LLMP.steerUrl = null;
     if (arg === 'y' && url) {
-      // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's port lands on its preset, anything else on the manual compat row, the probed URL prefilled.
+      // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's and Atomic Chat's ports land on their presets, anything else on the manual compat row, the probed URL prefilled.
       llmSetMode('cloud');
-      const preset = llmLooksLikeOllama(url) ? KIND_ROWS.find((k) => k.id === 'ollama') : null;
+      const presetId = llmSteerPresetId(url);
+      const preset = presetId ? KIND_ROWS.find((k) => k.id === presetId) : null;
       llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
       if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);
       render();
@@ -17181,19 +17308,22 @@ function telegramKey(e, k, inText) {
    HTTP API has no import route); its report lines are parsed into the TUI's rows. ---------------- */
 
 function importVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'import'; }
-function impFocusOrder(source) { const order = ['sourceType', 'source', 'sessions', 'cron']; if (source === 'hermes') order.push('secrets'); order.push('overwrite', 'limit', 'run'); return order; }
+function impFocusOrder(source) { return ['sourceType', 'source'].concat(impMeta(source).toggles, ['overwrite', 'limit', 'run']); }
+function impMeta(source) { return IMP_SOURCE_META[source] || IMP_SOURCE_META.hermes; }
+/* import-sources.ts nextImportSource: ←/→ / space / Enter step the source row, wrapping. */
+function impNextSource(source, d) { const i = Math.max(0, IMP_SOURCES.indexOf(source)); return IMP_SOURCES[(i + d + IMP_SOURCES.length) % IMP_SOURCES.length]; }
 function impRepaint() { if (importVisible()) paneRepaintKeepFocus(importTab()); }
 async function importTabEntered() {
   if (!BR || IMP.defaults) return;
   const d = await BR.importDefaults();
   if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = d[IMP.form.source] || ''; impRepaint(); }
 }
-function impDefaultDir(source) { return IMP.defaults ? (IMP.defaults[source] || '') : (homeDir() ? homeDir() + (source === 'openclaw' ? '/.openclaw' : '/.hermes') : ''); }
+function impDefaultDir(source) { return IMP.defaults && IMP.defaults[source] ? IMP.defaults[source] : (homeDir() ? homeDir() + impMeta(source).dir.slice(1) : ''); }
 function importTab() {
   const f = IMP.form;
-  const sourceLabel = f.source === 'openclaw' ? 'OpenClaw' : 'Hermes';
+  const meta = impMeta(f.source);
   const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
-  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(f.source === 'openclaw' ? 'openclaw' : 'hermes', 'sm') + '<h3 class="sd-title">' + sourceLabel + ' → Atomic Agent</h3></div>';
+  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(meta.logo, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3></div>';
   if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
   else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
@@ -17202,23 +17332,22 @@ function importTab() {
 }
 function impFormHTML(f) {
   const fc = f.focus;
-  const hermes = f.source === 'hermes';
-  // The agent's own option descriptions (src/import/<source>/import-options.ts).
-  const desc = hermes
-    ? {sessions:'Conversation history (state.db) → sessions.sqlite', cron:'Scheduled jobs (cron/jobs.json) → tasks.sqlite'}
-    : {sessions:'Transcript logs (agents/<agent>/sessions/*.jsonl) → sessions.sqlite', cron:'Scheduled jobs (state/openclaw.sqlite cron_jobs) → tasks.sqlite'};
+  const meta = impMeta(f.source);
+  // The agent's own option descriptions (src/import/<source>/import-options.ts), via the wizard's registry.
+  const desc = {};
+  for (const o of obImportRegistry(f.source)) desc[o.id] = o.description.replace(/ -> /g, ' → ');
   const sw = (field, title, d) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
     + '<div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>'
     + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
   // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
   return '<div class="sd-form">'
     + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
-    + ['hermes', 'openclaw'].map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
-      + logoHTML(s, 'xs') + (s === 'hermes' ? 'Hermes' : 'OpenClaw') + '</button>').join('') + '</div></div>'
+    + IMP_SOURCES.map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
+      + logoHTML(IMP_SOURCE_META[s].logo, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
     + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
-    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(hermes ? '~/.hermes' : '~/.openclaw') + '" autocomplete="off" spellcheck="false"></div>'
-    + '<div class="tk-card sd-rows">' + sw('sessions', 'Sessions', esc(desc.sessions)) + sw('cron', 'Cron jobs', esc(desc.cron))
-    + (hermes ? sw('secrets', 'Secrets', '<span class="sd-mono">OPENROUTER_API_KEY / AIMLAPI_API_KEY</span>') : '')
+    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
+    + '<div class="tk-card sd-rows">'
+    + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
     + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Limit</label>'
     + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
@@ -17263,11 +17392,19 @@ async function impRun(execute) {
   const f = IMP.form;
   const limit = f.limit.trim();
   if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'limit must be a non-negative integer'; impRepaint(); return {ok:false, error:IMP.notice}; }
-  const exclude = []; if (!f.sessions) exclude.push('sessions'); if (!f.cron) exclude.push('cron');
-  const selected = f.source === 'hermes' ? (f.sessions || f.cron || f.secrets) : (f.sessions || f.cron);
-  if (!selected) { IMP.mode = 'configure'; IMP.notice = f.source === 'hermes' ? 'nothing selected to import — enable sessions, cron or secrets' : 'nothing selected to import — enable sessions or cron'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  // import-form-options.ts: every drawn toggle that is off is excluded; secrets is its own opt-in.
+  const toggles = impMeta(f.source).toggles;
+  const exclude = toggles.filter((t) => t !== 'secrets' && !f[t]);
+  const selected = toggles.some((t) => f[t]);
+  if (!selected) {
+    // nothingSelectedNotice: "enable a, b or c".
+    const names = toggles.slice(); const last = names.pop();
+    IMP.mode = 'configure'; IMP.notice = 'nothing selected to import — enable ' + (names.length ? names.join(', ') + ' or ' + last : last);
+    impRepaint(); return {ok:false, error:IMP.notice};
+  }
   IMP.mode = 'running'; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
-  const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets:f.secrets, overwrite:f.overwrite, limit, execute});
+  const secrets = toggles.includes('secrets') && f.secrets;
+  const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets, overwrite:f.overwrite, limit, execute});
   IMP.busy = false;
   if (!res || !res.ok) { IMP.mode = 'configure'; IMP.notice = (res && res.error) || 'import failed'; impRepaint(); return {ok:false, error:IMP.notice}; }
   IMP.report = res.report; IMP.state = res.state;
@@ -17277,7 +17414,7 @@ async function impRun(execute) {
     if (res.state === 'applied') {
       const s = res.report.summary;
       toast('import done', 'migrated=' + s.migrated + ' skipped=' + s.skipped + ' conflict=' + s.conflict + ' error=' + s.error);
-      if (f.cron) tasksRefresh();
+      if (toggles.includes('cron') && f.cron) tasksRefresh();
       if (f.sessions) loadResources();
     }
   } else { IMP.mode = 'preview'; IMP.reportExecuted = false; }
@@ -17288,7 +17425,8 @@ function importAct(what) {
   const [verb, ...rest] = what.split(':');
   const arg = rest.join(':');
   const f = IMP.form;
-  if (verb === 'source') { if (arg !== f.source && (arg === 'hermes' || arg === 'openclaw')) { f.source = arg; f.sourceDir = impDefaultDir(arg); if (arg !== 'hermes') f.secrets = false; f.focus = 'sourceType'; } impRepaint(); return; }
+  // import-reducer.ts import_source_set: the folder follows the source; a source with no secrets row drops the opt-in.
+  if (verb === 'source') { if (arg !== f.source && IMP_SOURCES.includes(arg)) { f.source = arg; f.sourceDir = impDefaultDir(arg); if (!impMeta(arg).toggles.includes('secrets')) f.secrets = false; f.focus = 'sourceType'; } impRepaint(); return; }
   if (verb === 'toggle') { if (IMP_TOGGLE_FIELDS.includes(arg)) { f[arg] = !f[arg]; f.focus = arg; } impRepaint(); return; }
   if (verb === 'field') { const [name, ...v] = rest; if (name === 'sourceDir' || name === 'limit') f[name] = v.join(':'); impRepaint(); return; }
   if (verb === 'focus') { f.focus = arg; impRepaint(); return; }
@@ -17328,12 +17466,12 @@ function importKey(e, k, inText) {
   if (k === 'Enter') {
     e.preventDefault();
     if (f.focus === 'run') importAct('preview');
-    else if (f.focus === 'sourceType') importAct('source:' + (f.source === 'hermes' ? 'openclaw' : 'hermes'));
+    else if (f.focus === 'sourceType') importAct('source:' + impNextSource(f.source, 1));
     else if (IMP_TOGGLE_FIELDS.includes(f.focus)) importAct('toggle:' + f.focus);
     else move(1);
     return true;
   }
-  if (f.focus === 'sourceType') { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('source:' + (f.source === 'hermes' ? 'openclaw' : 'hermes')); } return true; }
+  if (f.focus === 'sourceType') { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('source:' + impNextSource(f.source, k === 'ArrowLeft' ? -1 : 1)); } return true; }
   if (IMP_TOGGLE_FIELDS.includes(f.focus)) { if (k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); importAct('toggle:' + f.focus); } return true; }
   if (f.focus === 'source' || f.focus === 'limit') { const n = document.querySelector('[data-imp-focus="' + f.focus + '"]'); if (n && k.length === 1) { n.focus(); return false; } }
   return true;

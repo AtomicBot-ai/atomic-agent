@@ -7,6 +7,8 @@ import {
   modelsStop,
   modelsUse,
   providerHasKey,
+  providerIsUsable,
+  parseChatStartSpeed,
   readWholeConfig,
   rewriteWholeConfig,
   setActiveTextProvider,
@@ -98,7 +100,8 @@ function transportFor(id: string): "grammar+llama-server" | "native_tools" {
  */
 function readyLine(stdout: string): string | undefined {
   const m = /chat: started pid (\d+), healthy on port (\d+)/.exec(stdout);
-  if (m) return `local-llm: ready — pid ${m[1]} on http://127.0.0.1:${m[2]}`;
+  const speed = parseChatStartSpeed(stdout);
+  if (m) return `local-llm: ready — pid ${m[1]} on http://127.0.0.1:${m[2]}${speed ? ` · ~${speed.tokensPerSecond} tok/s` : ""}`;
   const last = stdout.trim().split("\n").filter(Boolean).pop();
   return last ? `local-llm: ${last}` : undefined;
 }
@@ -115,7 +118,7 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === id);
   if (!entry) return { ok: false, error: `provider "${id}" is not configured` };
   const cloud = entry.kind !== "llama-server";
-  if (cloud && !providerHasKey(entry)) {
+  if (cloud && !providerIsUsable(entry)) {
     return { ok: false, needsKey: true, providerId: id, error: "no API key" };
   }
   /* Under effective Fusion the orchestrator IS the active provider, and its
@@ -267,7 +270,7 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   if (!read.ok || !read.config) return { ok: false, error: read.error };
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === providerId);
   if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
-  if (entry.kind !== "llama-server" && !providerHasKey(entry)) {
+  if (entry.kind !== "llama-server" && !providerIsUsable(entry)) {
     return { ok: false, needsKey: true, providerId, error: "no API key" };
   }
   const modelChanged = entry.defaultChatModel !== modelId.trim();

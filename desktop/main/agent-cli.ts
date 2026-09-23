@@ -555,9 +555,31 @@ export async function modelsSearch(
   }
 }
 
+/**
+ * The chat daemon's speed as `models start` measures it once the daemon is
+ * healthy (agent ≥0.6.3, src/cli/models-handlers.ts): "chat: started pid N,
+ * healthy on port P[, vision …], ~N tok/s single stream". Null when the line
+ * has no measurement (older agent, or the probe did not answer).
+ */
+export function parseChatStartSpeed(stdout: string): { pid: number; tokensPerSecond: number } | null {
+  const m = /chat: started pid (\d+), healthy on port \d+.*?, ~(\d+(?:\.\d+)?) tok\/s single stream/.exec(stdout);
+  return m ? { pid: Number(m[1]), tokensPerSecond: Number(m[2]) } : null;
+}
+
+/* The last measurement, keyed by the daemon pid it was taken on: a daemon
+   restarted by anything else (the TUI, a crash) never inherits it. Every
+   start the desktop makes — launch, backend switch, Settings — goes through
+   modelsStart, so this is the one place to catch it. */
+let lastChatSpeed: { pid: number; tokensPerSecond: number } | null = null;
+
 /** Start the managed llama daemon after switching to a local model. */
 export async function modelsStart(): Promise<CliResult> {
-  return cli(["models", "start"], 90_000);
+  const res = await cli(["models", "start"], 90_000);
+  if (res.ok) {
+    const speed = parseChatStartSpeed(res.stdout);
+    if (speed) lastChatSpeed = speed;
+  }
+  return res;
 }
 
 /**
@@ -683,7 +705,8 @@ export async function verifyProviderKey(
   if (!url) return { ok: false, checked: false, error: `this build cannot check a ${entry.kind || "provider"} key` };
   if (!model) return { ok: false, checked: false, error: "no model to check the key against" };
   const key = resolveKeyValue(entry);
-  if (!key) {
+  // A keyless local server is asked the same one-token question, just without Authorization.
+  if (!key && !isKeylessLocalProviderEntry(entry)) {
     return {
       ok: false,
       checked: true,
@@ -693,8 +716,8 @@ export async function verifyProviderKey(
     };
   }
   const headers: Record<string, string> = { "content-type": "application/json", ...(entry.headers ?? {}) };
-  if (entry.apiKeyHeader) headers[entry.apiKeyHeader] = key;
-  else headers.authorization = `Bearer ${key}`;
+  if (key && entry.apiKeyHeader) headers[entry.apiKeyHeader] = key;
+  else if (key) headers.authorization = `Bearer ${key}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -1375,6 +1398,26 @@ export function keyNamesAvailable(): KeyEnvNames {
  * so `OPENAI_COMPAT_API_KEY=""` next to a real `OPENAI_API_KEY` is "no key"
  * here exactly as it is for the agent.
  */
+/** Preset ids with `local: true` in src/tui/providers/provider-presets.ts. */
+const LOCAL_PRESET_IDS = new Set(["atomic-chat", "lmstudio", "ollama"]);
+
+/**
+ * src/tui/local-backend-readiness.ts isKeylessLocalProviderEntry: a server
+ * on this machine (Atomic Chat, Ollama, LM Studio, a hand-added loopback
+ * endpoint) has no API key at all, so a missing key must not block it —
+ * the agent saves it with no key and sends requests without Authorization.
+ */
+export function isKeylessLocalProviderEntry(entry: ProviderEntry): boolean {
+  if (entry.kind !== "openai-compatible") return false;
+  if (LOCAL_PRESET_IDS.has(entry.id)) return true;
+  return isLocalProviderUrl(entry.baseUrl ?? "");
+}
+
+/** Ready to route to: a key, or a keyless local server (isCloudTextProviderReady). */
+export function providerIsUsable(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
+  return providerHasKey(entry, names) || isKeylessLocalProviderEntry(entry);
+}
+
 export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
   if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
@@ -1417,7 +1460,7 @@ export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; e
   if (!read.ok || !read.config) return { ok: false, error: read.error };
   const names = keyNamesAvailable();
   const ids = (read.config.llm?.providers ?? [])
-    .filter((p) => p.kind !== "llama-server" && providerHasKey(p, names))
+    .filter((p) => p.kind !== "llama-server" && providerIsUsable(p, names))
     .map((p) => p.id);
   return { ok: true, ids };
 }
@@ -1821,6 +1864,8 @@ export interface ModelsStatus {
   daemonUrl: string | null;
   health: string | null;
   url: string | null;
+  /** `~N tok/s` from the `models start` that brought up THIS daemon pid; null when unmeasured. */
+  tokensPerSecond: number | null;
 }
 
 /**
@@ -1859,6 +1904,7 @@ export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStat
       daemonUrl: urlMatch ? urlMatch[0] : null,
       health: fields["health"] || null,
       url: fields["url"] || null,
+      tokensPerSecond: pid && lastChatSpeed && lastChatSpeed.pid === Number(pid[1]) ? lastChatSpeed.tokensPerSecond : null,
     },
   };
 }
@@ -2023,13 +2069,16 @@ export async function modelsUseDevice(id: string): Promise<CliResult> {
    the import-options.ts files under src/import — with one whitelist for all four an
    unticked `skills` on Claude Code was dropped from --exclude and the dry
    run previewed more than the operator ticked. */
-export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex";
+export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex" | "pi" | "oh-my-pi";
 /** Domain ids each source's resolver understands, from its import-options.ts. */
 export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
   hermes: ["sessions", "cron", "secrets"],
   openclaw: ["sessions", "cron"],
   "claude-code": ["skills", "memory", "mcp", "sessions", "secrets"],
   codex: ["skills", "memory", "sessions", "secrets"],
+  // agent 0.6.2 (#457): src/import/pi/import-options.ts, src/import/oh-my-pi/import-options.ts.
+  pi: ["skills", "sessions"],
+  "oh-my-pi": ["skills", "mcp", "sessions"],
 };
 /** Sources whose CLI leg accepts `--migrate-secrets` (import-command.ts:128, :332, :446). */
 const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex"];
@@ -2058,7 +2107,7 @@ export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: 
  */
 export function importArgs(input: ImportRunInput): { ok: true; args: string[] } | { ok: false; error: string } {
   const domains = IMPORT_DOMAINS[input.source as ImportSourceId];
-  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code or codex" };
+  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi" };
   const dir = input.dir.trim();
   if (!dir) return { ok: false, error: "source dir is empty" };
   const args = ["import", input.source, "--source", dir];
@@ -2274,6 +2323,8 @@ export interface LlamaProbeResult {
   /** describeLlamaHealthFailure(): the line the operator can act on; null when reachable. */
   message: string | null;
   ollama: boolean;
+  /** looksLikeAtomicChatUrl(): Atomic Chat's Local API Server port (1337). */
+  atomicChat: boolean;
 }
 
 /** src/llm/llama-endpoint-url.ts llamaEndpointUrl, verbatim. */
@@ -2298,6 +2349,12 @@ export function normalizeLocalLlmBaseUrl(raw: string): string | null {
 
 function looksLikeOllamaUrl(url: string): boolean {
   try { return new URL(url).port === "11434"; } catch { return false; }
+}
+
+/** src/llm/describe-llama-health-failure.ts looksLikeAtomicChatUrl: the
+    Local API Server port of Atomic Chat (and Jan, which it forks). */
+function looksLikeAtomicChatUrl(url: string): boolean {
+  try { return new URL(url).port === "1337"; } catch { return false; }
 }
 
 /** src/tui/providers/is-local-provider-url.ts: loopback hosts. */
@@ -2335,6 +2392,10 @@ function describeLlamaHealthFailure(kind: LlamaProbeResult["kind"], error: strin
           ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Ollama (local), base URL ${url}.`
           : `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url} (any API key value passes — a stock Ollama has no auth).`;
       }
+      // Same reasoning as Ollama: the preset row saves its own 127.0.0.1:1337, so name it only for a server on this machine.
+      if (looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url)) {
+        return `${url} answers like Atomic Chat's Local API Server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Atomic Chat (local), base URL ${url}.`;
+      }
       return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url}.`;
     case "llama-loading":
       return `${url} is a llama.cpp server still loading its model. Give it a minute and save the URL again.`;
@@ -2357,16 +2418,16 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
     const text = await response.text().catch(() => "");
     if (!response.ok) {
       if (response.status === 503 && bodyLooksLikeLlamaLoading(text)) {
-        result = { reachable: false, status: 503, kind: "llama-loading", error: "llama.cpp is still loading the model", latencyMs: Date.now() - start, message: null, ollama: false };
+        result = { reachable: false, status: 503, kind: "llama-loading", error: "llama.cpp is still loading the model", latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
       } else {
-        result = { reachable: false, status: response.status, kind: "unknown", error: `http ${response.status}`, latencyMs: Date.now() - start, message: null, ollama: false };
+        result = { reachable: false, status: response.status, kind: "unknown", error: `http ${response.status}`, latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
       }
     } else {
       const isLlama = bodyLooksLikeLlamaHealth(text);
-      result = { reachable: isLlama, status: response.status, kind: isLlama ? "llama-server" : "unknown", error: isLlama ? null : "answered 200 but not with llama.cpp's /health shape", latencyMs: Date.now() - start, message: null, ollama: false };
+      result = { reachable: isLlama, status: response.status, kind: isLlama ? "llama-server" : "unknown", error: isLlama ? null : "answered 200 but not with llama.cpp's /health shape", latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
     }
   } catch (err) {
-    result = { reachable: false, status: null, kind: "unknown", error: err instanceof Error ? err.message : String(err), latencyMs: Date.now() - start, message: null, ollama: false };
+    result = { reachable: false, status: null, kind: "unknown", error: err instanceof Error ? err.message : String(err), latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
   }
   if (result.reachable) {
     // verifyAuth: the key-guarded /props; only an explicit 401/403 flips the verdict.
@@ -2387,6 +2448,7 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
     } catch { /* stays unknown */ }
   }
   result.ollama = looksLikeOllamaUrl(url);
+  result.atomicChat = looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url);
   if (!result.reachable) result.message = describeLlamaHealthFailure(result.kind, result.error, url);
   return { ok: true, url, probe: result };
 }
@@ -2549,6 +2611,8 @@ const IMPORT_AGENT_LABELS: Record<ImportSourceId, string> = {
   openclaw: "OpenClaw",
   "claude-code": "Claude Code",
   codex: "Codex",
+  pi: "Pi",
+  "oh-my-pi": "Oh-My-Pi",
 };
 
 export function importAgentDir(id: ImportSourceId, home = homedir(), env = process.env): string {
@@ -2561,6 +2625,11 @@ export function importAgentDir(id: ImportSourceId, home = homedir(), env = proce
       return env["CLAUDE_CODE_STATE_DIR"] ?? join(home, ".claude");
     case "codex":
       return env["CODEX_STATE_DIR"] ?? join(home, ".codex");
+    // The products' `agent/` subtree, where the importable artefacts live.
+    case "pi":
+      return env["PI_STATE_DIR"] ?? join(home, ".pi", "agent");
+    case "oh-my-pi":
+      return env["OMP_STATE_DIR"] ?? join(home, ".omp", "agent");
   }
 }
 
@@ -2583,6 +2652,10 @@ function hasImportableState(id: ImportSourceId, dir: string): boolean {
         existsSync(join(dir, "auth.json")) ||
         existsSync(join(dir, "AGENTS.md"))
       );
+    case "pi":
+      return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions"));
+    case "oh-my-pi":
+      return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions")) || existsSync(join(dir, "mcp.json"));
   }
 }
 

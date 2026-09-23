@@ -1,7 +1,7 @@
 /**
  * Run mode — Local / Cloud / Fusion — main-process side.
  *
- * Ports of the agent's own logic (v0.6.1), kept pure so the smoke can pin
+ * Ports of the agent's own logic (v0.6.3), kept pure so the smoke can pin
  * every sentence and every write payload without a live provider:
  *
  *   resolveRunMode             ← src/llm/run-mode/resolve-run-mode.ts
@@ -37,6 +37,7 @@ export interface FusionPins {
   workerProvider?: string;
   workerModel?: string;
   workers?: number;
+  cloudWorkers?: number;
   workerMaxSteps?: number;
   workerTimeoutMs?: number;
 }
@@ -58,7 +59,8 @@ export const LOCAL_PROVIDER_KIND = "llama-server";
 export const FUSION_WORKERS_MIN = 1;
 export const FUSION_WORKERS_MAX = 8;
 export const DEFAULT_FUSION_WORKERS = 2;
-const DEFAULT_FUSION_WORKER_MAX_STEPS = 40;
+export const DEFAULT_FUSION_CLOUD_WORKERS = 4;
+const DEFAULT_FUSION_WORKER_MAX_STEPS = 60;
 const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
 const RUN_MODE_NAMES: readonly RunModeName[] = ["local", "cloud", "fusion"];
 
@@ -75,6 +77,10 @@ export interface ResolvedRunMode {
   workerProviderId: string | null;
   workerModel: string | null;
   workers: number;
+  /** Fan-out cap when the worker leg is a cloud provider (`fusion.cloudWorkers`, default 4). */
+  cloudWorkers: number;
+  /** `fusion.workers` was written by the operator. Unpinned, a local (slot-affine) leg runs ONE worker per job. */
+  workersPinned: boolean;
   workerMaxSteps: number;
   workerTimeoutMs: number;
   primaryProviderId: string;
@@ -137,6 +143,8 @@ export function resolveRunMode(cfg: RunModeConfig | null | undefined): ResolvedR
         ? (managedModelId ?? worker.model ?? null)
         : (worker?.defaultChatModel ?? worker?.model ?? null)),
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
+    cloudWorkers: fusion?.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
+    workersPinned: fusion?.workers !== undefined,
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs: fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
     primaryProviderId,

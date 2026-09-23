@@ -1470,6 +1470,8 @@ function wireIpc(client: AgentClient): void {
     openclaw: importAgentDir("openclaw"),
     "claude-code": importAgentDir("claude-code"),
     codex: importAgentDir("codex"),
+    pi: importAgentDir("pi"),
+    "oh-my-pi": importAgentDir("oh-my-pi"),
   }));
   /* r5 item 7 (setup wizard): the first-run import step's own scan —
      src/import/detect-import-agents.ts, shallow existsSync checks only. */
@@ -5631,7 +5633,7 @@ async function settingsTestPartC(
     while (!ok(v) && Date.now() < deadline) { await wait(400); v = await read(); }
     return v;
   };
-  type Provider = { id: string; kind: string; apiKey?: string; apiKeyEnvVar?: string; defaultChatModel?: string; model?: string };
+  type Provider = { id: string; kind: string; apiKey?: string; apiKeyEnvVar?: string; baseUrl?: string; defaultChatModel?: string; model?: string };
   type Cfg = { llm?: { activeTextProvider?: string; activeEmbeddingProvider?: string; providers?: Provider[]; fallback?: { chain?: string[]; appendLocal?: boolean } }; localModels?: { url?: string; mode?: string; managed?: { modelId?: string } }; telegram?: { enabled?: boolean; ownerUserId?: number | null } };
   type LlmPane = {
     mode: string; rows: number; view: string; localRows: number; embRows: number; refreshed: number | null; localErr: string | null; statusErr: string | null;
@@ -5757,7 +5759,10 @@ async function settingsTestPartC(
   const keyNames = (p: Provider): string[] => p.apiKeyEnvVar ? [p.apiKeyEnvVar] : p.kind === "openrouter" ? ["OPENROUTER_API_KEY"] : p.kind === "aimlapi" ? ["AIMLAPI_API_KEY"] : p.kind === "gemini" ? ["GEMINI_API_KEY"]
     : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
   const dotenv = stateDir ? dotenvKeys(stateDir).keys : [];
-  const expectKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
+  const realKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
+  // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all.
+  const keylessLocal = (p: Provider) => p.kind === "openai-compatible" && (["atomic-chat", "lmstudio", "ollama"].includes(p.id) || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(p.baseUrl ?? ""));
+  const expectKey = (p: Provider) => realKey(p) || keylessLocal(p);
   // Each provider row as drawn: the id, the kind (shown only when it differs from the id), the key chip, and what Enter does.
   const cloudRows = await js<Array<{ row: string; id: string; kind: string | null; auth: string; effect: string }>>(
     "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"cloud-provider:\"]')].map((r) => { const kind = r.querySelector('.t .llm-kind'); const chip = r.querySelector('.t .tk-chip');"
@@ -5766,7 +5771,7 @@ async function settingsTestPartC(
   );
   const providersOk = cloud.providers.length === cloudProviders.length && cloudRows.length === cloudProviders.length && cloudProviders.every((p) => {
     const row = cloud.providers.find((r) => r.id === p.id);
-    const auth = p.kind === "subscription-cli" ? "cli auth" : expectKey(p) ? "key ok" : "missing key";
+    const auth = p.kind === "subscription-cli" ? "cli auth" : realKey(p) ? "key ok" : keylessLocal(p) ? "no key needed" : "missing key";
     const drawn = cloudRows.find((r) => r.row === `cloud-provider:${p.id}`);
     return !!row && row.hasKey === expectKey(p) && !!drawn && drawn.id === p.id && drawn.kind === (p.kind === p.id ? null : p.kind) && drawn.auth === auth
       && drawn.effect === (p.id === activeText ? `Current provider: ${p.id}` : expectKey(p) ? `Enter: switch cloud route to ${p.id}` : `Enter: configure API key for ${p.id}`);
@@ -9293,6 +9298,8 @@ async function onboardingTest(
     const argvCodex = argvOf("codex", ["memory", "mcp"], true);
     const argvOpenclaw = argvOf("openclaw", ["sessions"], true);
     const argvHermes = argvOf("hermes", ["cron"], true);
+    const argvPi = argvOf("pi", ["sessions", "cron"], true);
+    const argvOmp = argvOf("oh-my-pi", ["mcp"], true);
     const argvUnknown = argvOf("atomic-agent", [], false);
     check(
       "wizard: the import argv excludes only domains the source understands, and gates the secrets flag",
@@ -9303,10 +9310,14 @@ async function onboardingTest(
         // OpenClaw has no secrets domain and no --migrate-secrets leg.
         argvOpenclaw.args?.join(" ") === "import openclaw --source /tmp/src --exclude sessions --dry-run" &&
         argvHermes.args?.join(" ") === "import hermes --source /tmp/src --exclude cron --migrate-secrets --dry-run" &&
+        // Pi and Oh-My-Pi (agent 0.6.2) have no secrets leg; `cron` is not a Pi domain.
+        argvPi.args?.join(" ") === "import pi --source /tmp/src --exclude sessions --dry-run" &&
+        argvOmp.args?.join(" ") === "import oh-my-pi --source /tmp/src --exclude mcp --dry-run" &&
         argvUnknown.ok === false &&
-        argvUnknown.error === "source must be hermes, openclaw, claude-code or codex",
+        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi",
       `claude=${JSON.stringify(argvClaude)} codex=${JSON.stringify(argvCodex)}` +
         ` openclaw=${JSON.stringify(argvOpenclaw)} hermes=${JSON.stringify(argvHermes)}` +
+        ` pi=${JSON.stringify(argvPi)} omp=${JSON.stringify(argvOmp)}` +
         ` unknown=${JSON.stringify(argvUnknown)}`,
     );
 

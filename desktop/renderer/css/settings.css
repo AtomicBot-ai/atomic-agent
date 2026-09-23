@@ -28,8 +28,10 @@
    produced a click, and the dismiss-on-outside-click branch could not fire
    there. The smoke looks this rule up by its exact text — keep it verbatim. */
 body.electron #settings{-webkit-app-region:no-drag}
-/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open. */
-#window:has(#settings) #overlays{z-index:29}
+/* The add-provider wizard (the composer's selector popup) floats above the settings window while it is open.
+   !important: paint() pins the layer with an INLINE z-index of 20, which beat this rule, so the wizard
+   opened from Settings › LLM (Add provider, the "… detected" prompt) was drawn behind the settings sheet. */
+#window:has(#settings) #overlays{z-index:29 !important}
 
 .setwin{position:relative;width:min(1060px, calc(100% - 48px));height:min(700px, calc(100% - 48px));
   display:grid;grid-template-columns:230px minmax(0,1fr);
