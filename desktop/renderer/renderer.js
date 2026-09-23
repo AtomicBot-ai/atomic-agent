@@ -1836,7 +1836,10 @@ function emptyChat() {
 /** The greeting and its quiet line (repainted alone when the catalogue lands). */
 function emptyPlateHTML() {
   const wd = S.live.workingDir || WORKSPACE || '';
-  const model = activeModel();
+  // Calm (S6): no model is named while none is set up (U16), and the
+  // managed route's "download model" call to action is not a model name.
+  const active = activeModel();
+  const model = composerNeedsSetup() || active === DOWNLOAD_MODEL_LABEL ? '' : active;
   const meta = (wd ? '<span class="em-it" title="' + esc(wd) + '">' + ic('folder') + '<span>' + esc(wsName(wd)) + '</span></span>' : '')
     + (wd && model ? '<span class="em-sep">\u00b7</span>' : '')
     + (model ? '<span class="em-it">' + modelMark(model, 'xs') + '<span>' + esc(modelWord(model)) + '</span></span>' : '');
@@ -2558,7 +2561,37 @@ function composer() {
          chip stands for is its `data-id`, which is what the drivers and the
          smoke compare. */
       + '<div class="cfoot' + (selHasKind('workers') ? ' is-fusion' : '') + '">'
-        + '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend" data-id="' + esc(backend) + '"'
+        + (composerNeedsSetup() ? setupChipHtml() : routeChipsHtml(backend))
+        + '<span class="cgrow"></span>'
+        + contextChip()
+        + codingModeChip()
+      + '</div>'
+    + '</div></div>';
+}
+
+/* Calm (S6, U16) — no route anyone chose. Skipping setup leaves the agent's
+   own default: the external llama.cpp route at 127.0.0.1:8080, which nobody
+   picked (needsOnboarding does not count it either). The composer used to
+   draw that as "Custom server · llama.cpp", a route to a server that is not
+   there. Now it says what is true and offers the way out: one "Set up a
+   model" chip that opens setup. Nothing is written; the config stays the
+   agent's default. The chips come back the moment a server at that address
+   answers /props with a model, or any route is chosen. */
+function composerNeedsSetup() {
+  if (!LIVE_CONFIG || OB.open || SWX.want) return false;
+  if (selBackend() !== 'custom') return false;
+  const lm = LIVE_CONFIG.localModels || {};
+  const url = lm.url || DEFAULT_LLAMA_URL;
+  if (url !== DEFAULT_LLAMA_URL) return false;
+  return !(EXT.url === url && EXT.model);
+}
+function setupChipHtml() {
+  return '<button class="cchip setupchip" data-act="onboarding:choose" title="No model is set up yet. Open setup"'
+    + ' aria-label="Set up a model">' + ic('plus') + '<span class="cval">Set up a model</span></button>';
+}
+/** Where · Provider · Model (· Fusion's seats), as the route draws them. */
+function routeChipsHtml(backend) {
+  return '<button class="cchip modechip' + cchipOpen('backend') + '" data-sel-open="backend" data-id="' + esc(backend) + '"'
           + ' title="Where it runs: ' + esc(backendWord(backend)) + '" aria-label="Where it runs: ' + esc(backendWord(backend)) + '">'
           + ic(backend === 'cloud' ? 'cloud' : backend === 'custom' ? 'server' : backend === 'fusion' ? 'fusion' : 'laptop')
           + '<span class="cval">' + esc(backendWord(backend)) + '</span>' + ic('chevD', 'chev') + '</button>'
@@ -2579,12 +2612,7 @@ function composer() {
         // reachable through the provider chip and the backend rows.
         + modelChipHtml()
         // Run mode — Fusion: the ⇄ between the two seats and the fourth control, `workers`.
-        + fzChipsHtml()
-        + '<span class="cgrow"></span>'
-        + contextChip()
-        + codingModeChip()
-      + '</div>'
-    + '</div></div>';
+        + fzChipsHtml();
 }
 
 /* Calm (S2) — the composer loader's state, read by composer(). It is on
@@ -9525,7 +9553,7 @@ async function obSettle() {
   /* A skipped setup is not a completed one: saying "Setup complete" to
      someone who chose nothing sent them to a composer with no working model
      and the word that it was done. */
-  if (outcome === 'skipped') toast('Setup skipped', 'Pick a model any time from the composer, or run setup again from the menu');
+  if (outcome === 'skipped') toast('Setup skipped', 'Set up a model from the composer when you are ready.');
   else toast('Setup complete', 'Restarting the agent…');
   render();
   if (OB.restarted) { refreshLiveConfig(); return; }
@@ -9534,9 +9562,10 @@ async function obSettle() {
 
 /* ---- opening ---- */
 
-async function openOnboarding() {
+async function openOnboarding(at) {
+  const first = at === 'choose' ? 'choose' : 'intro';
   Object.assign(OB, {
-    open: true, step: 'intro', offer: null, resumeAfterCloud: null, localModelId: null,
+    open: true, step: first, offer: null, resumeAfterCloud: null, localModelId: null,
     outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
@@ -9548,7 +9577,7 @@ async function openOnboarding() {
   // The one place a fresh intro starts from zero — obSkyStart itself
   // treats a new canvas node as a remount (review fix).
   obSkyReset();
-  OB_LAST_STEP = 'intro';
+  OB_LAST_STEP = first;
   render();
   if (!BR) return;
   OB.ram = await loadHostRamGb();
@@ -9944,6 +9973,8 @@ if (BR) {
   const prevAct = act;
   act = function (a) {
     if (a === 'onboarding') { openOnboarding(); return; }
+    // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
+    if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
     if (a === 'dl:cancel') { if (BR.cancelPull) BR.cancelPull(); DL.queue.length = 0; return; }
     /* r6 — three lanes found this one independently, and the operator
        named it himself: "when I click on next, nothing happens. But when I
@@ -10197,8 +10228,11 @@ async function extRefreshModel() {
   // The route may have moved while /props was outstanding; a late answer must
   // not paint a model onto a cloud chip.
   if (selBackend() !== 'custom') return;
+  const setupWas = composerNeedsSetup();
   EXT.url = url;
   EXT.model = res && res.ok && res.model ? res.model : null;
+  // Calm (S6): a server answering at the default address brings the route's chips back.
+  if (composerNeedsSetup() !== setupWas) { render(); return; }
   bswRepaint();
 }
 
@@ -13683,7 +13717,8 @@ function modelChipHtml() {
  */
 function bswRepaint() {
   const foot = document.querySelector('.cfoot');
-  if (foot) {
+  // Calm (S6): the "Set up a model" chip stands in for the whole route; no model chip joins it.
+  if (foot && !foot.querySelector('.setupchip')) {
     const html = modelChipHtml();
     const el = foot.querySelector('.modelchip');
     if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }

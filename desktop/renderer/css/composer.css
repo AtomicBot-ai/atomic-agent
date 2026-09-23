@@ -232,6 +232,11 @@
 .cfoot .cchip.needsmodel:hover,.cfoot .cchip.dlchip:hover,
 .cfoot .cchip.needsmodel.is-open{background:color-mix(in srgb, var(--amber) 28%, transparent)}
 .cfoot .cchip.needsmodel > svg,.cfoot .cchip.dlchip > svg{color:var(--amber-text)}
+/* Calm (S6, U16): no route was chosen — one chip that opens setup. An
+   invitation in the brand's wash, not a warning. */
+.cfoot .cchip.setupchip{background:var(--brand-wash);color:var(--blue)}
+.cfoot .cchip.setupchip:hover{background:color-mix(in srgb, var(--brand) 18%, transparent)}
+.cfoot .cchip.setupchip > svg{color:var(--blue)}
 
 /* Fusion: the ⇄ between the two seats and the fourth control, `workers`
    (composer-meta-controls.tsx). Neutral like the rest of the row — the
