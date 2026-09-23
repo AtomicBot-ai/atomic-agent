@@ -5221,6 +5221,22 @@ async function hfAndDeltaTest(
   // Let the turn finish before anything else drives the composer.
   const endDeadline = Date.now() + 150_000;
   while (Date.now() < endDeadline && (await js<boolean>("window.__busy()"))) await wait(1000);
+  /* A small local model can run away inside one step (7,400 tokens over six
+     minutes in one run) and outlive the wait above. The checks below steer
+     S.agentSession and expect a refusal, so a real turn still running there
+     takes the steer instead, and its RUNNING entry keeps that chat's dot on
+     "running" through every dot check after. Stop it the way the Stop button
+     does and wait for its end frame, so the dot checks read this window's
+     state. Stop only drops the stream: the agent may still hold the turn for
+     a while and accept the next steer, so the DIAG line names the cause. */
+  if (await js<boolean>("window.__busy()")) {
+    process.stdout.write("DIAG steer: the live turn outlived its 150 s wait (a runaway step?) — stopped here;"
+      + " if the agent still holds it, the refused-steer checks below read it as running\n");
+    await js<void>("abort()");
+    const stopDeadline = Date.now() + 30_000;
+    while (Date.now() < stopDeadline
+      && (await js<boolean>("!!S.agentSession && [...RUNNING.values()].includes(S.agentSession)"))) await wait(500);
+  }
 
   // A refusal parks the text ahead of ordinary backlog, in the TUI's words.
   await js<number>("window.__clearQueue()");
@@ -10706,6 +10722,13 @@ async function chromeTest(
       if (/chrome lane ready/i.test(reply)) break;
       await wait(1000);
     }
+    /* The reply's words land with its delta frame and the turn ends with its
+       done frame 100-470 ms later (measured). Until then the row is a
+       streaming reply, which by design carries no actions, so sampling on the
+       words alone read an empty row about one run in four. The checks below
+       are about a FINISHED reply: wait for the turn to end. */
+    const settled = Date.now() + 15_000;
+    while (Date.now() < settled && (await js<boolean>("window.__busy()"))) await wait(100);
     litter = await js<string | null>("window.__agentSession()");
     check("item 4: the fixture turn answered", /chrome lane ready/i.test(reply), JSON.stringify(reply.slice(0, 80)));
 
