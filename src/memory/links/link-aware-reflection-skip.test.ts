@@ -7,6 +7,7 @@ import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
 
 import { MemoryStore } from "../memory-store.js";
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ReflectionRunner } from "../reflection/reflection-runner.js";
 
 import { LinkStore } from "./link-store.js";
@@ -235,6 +236,7 @@ describe("link-aware reflection reports hydration failures", () => {
     notesStore: MemoryStore;
     emitTrace: (event: LinkGeneratorTraceEvent) => void;
     onLlm?: () => void;
+    logger?: StructuredLogger;
   }) {
     const linkGenerator = createLinkGeneratorRunner({
       llmComplete: async () => {
@@ -253,6 +255,7 @@ describe("link-aware reflection reports hydration failures", () => {
       notesStore: args.notesStore,
       minCandidates: 2,
       emitTrace: args.emitTrace,
+      ...(args.logger ? { logger: args.logger } : {}),
     });
   }
 
@@ -329,5 +332,47 @@ describe("link-aware reflection reports hydration failures", () => {
     expect(traces[0]!.outcome).toBe("failed");
     // The runner's own LLM-side failure — no hydration prefix.
     expect(traces[0]!.reason).toBe("llm-side boom");
+  });
+
+  it("a throwing logger neither rejects reflect() nor silences the trace", async () => {
+    // The log and the trace are two sinks on the same tearing-down
+    // runtime, so the failure mode is shared. When the log ran first
+    // and unguarded, a logger that threw took the whole `catch` block
+    // with it: `reflect()` rejected into the agent loop's bare `void`,
+    // AND the trace event this path exists to emit never fired — the
+    // exact silence the fix was written to remove, reintroduced by a
+    // sink nobody was watching.
+    const traces: LinkGeneratorTraceEvent[] = [];
+    const runner = build({
+      notesStore: deadStore(),
+      emitTrace: (event) => traces.push(event),
+      logger: {
+        debug() {
+          /* unused */
+        },
+        info() {
+          /* unused */
+        },
+        error() {
+          /* unused */
+        },
+        warn() {
+          throw new Error("log sinks are gone");
+        },
+      } as unknown as StructuredLogger,
+    });
+
+    await expect(
+      runner.reflect({
+        sessionId: "s7",
+        userMessage: "u",
+        assistantReply: "a",
+        recalledMemoryIds: fx.ids,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(traces).toHaveLength(1);
+    expect(traces[0]!.outcome).toBe("failed");
+    expect(traces[0]!.reason).toContain("hydration");
   });
 });

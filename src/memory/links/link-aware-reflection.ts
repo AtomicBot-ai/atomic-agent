@@ -94,10 +94,6 @@ export function createLinkAwareReflectionRunner(args: {
           }
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          args.logger?.warn("link candidate hydration failed", {
-            sessionId: input.sessionId,
-            error: reason,
-          });
           // The log alone left the *trace* silent: `generate()` is
           // never reached, so `LinkGeneratorRunner` never emits its
           // per-call event and this run reads exactly like one with
@@ -106,10 +102,22 @@ export function createLinkAwareReflectionRunner(args: {
           // with an LLM-side failure from the runner.
           //
           // The whole point of this path is the shutdown race above,
-          // so the sink runs while the runtime is tearing down and
-          // the per-session recorder it resolves may already be gone:
-          // guard it, or a throwing sink turns the bare `void
-          // reflect()` into an unhandled rejection.
+          // so both observability calls run while the runtime is
+          // tearing down — the per-session recorder the trace sink
+          // resolves, and the log sinks, may already be gone. Each
+          // gets its own `try`, because this `catch` block is the
+          // last thing standing between a dead SQLite handle and the
+          // agent loop's bare `void reflect()`: anything that throws
+          // out of here becomes an unhandled rejection.
+          //
+          // Trace first, log second — the order
+          // `LinkGeneratorRunner.finish` uses, and the order that
+          // matters: the trace is the artifact this whole path exists
+          // to keep honest, so it must not be hostage to a logger
+          // that dies one line earlier. (`StructuredLogger` swallows
+          // its own sink errors, so in-process this is defence in
+          // depth; the dep is an interface and a test double or a
+          // future sink-less logger need not be so polite.)
           if (args.emitTrace) {
             try {
               args.emitTrace({
@@ -120,6 +128,14 @@ export function createLinkAwareReflectionRunner(args: {
             } catch {
               // A sink hiccup must never derail reflection — swallow.
             }
+          }
+          try {
+            args.logger?.warn("link candidate hydration failed", {
+              sessionId: input.sessionId,
+              error: reason,
+            });
+          } catch {
+            // Same contract as the sink above — swallow.
           }
           return;
         }
