@@ -7895,8 +7895,32 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   const client = agent;
   agent = null;
-  void client.stop().finally(() => app.quit());
+  void client.stop().then(stopLocalDaemonOnQuit).finally(() => app.quit());
 });
+
+/**
+ * `localModels.managed.stopOnExit` (default true), honoured on quit. The
+ * terminal agent stops its daemon when its last session exits
+ * (src/local-llm/session-registry.ts); the desktop never did, so quitting
+ * the app left llama-server holding the model's memory — gigabytes — until
+ * the next reboot. The daemon is on the desktop's own state dir and port, so
+ * no terminal session shares it. Bounded, so a stuck CLI cannot hold quit.
+ */
+async function stopLocalDaemonOnQuit(): Promise<void> {
+  if (SMOKE) return;
+  try {
+    const read = await readWholeConfig();
+    const lm = read.ok ? read.config?.localModels : undefined;
+    const managed = lm?.managed as { stopOnExit?: boolean } | undefined;
+    if (lm?.mode !== "managed" || managed?.stopOnExit === false) return;
+    await Promise.race([
+      modelsStop(),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+  } catch {
+    // Quitting wins over tidying up.
+  }
+}
 
 /**
  * r4 integration — the seams between the four lanes, asserted where each
