@@ -7,6 +7,7 @@ import {
   modelsStop,
   modelsUse,
   providerHasKey,
+  providerIsUsable,
   readWholeConfig,
   rewriteWholeConfig,
   setActiveTextProvider,
@@ -115,7 +116,7 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === id);
   if (!entry) return { ok: false, error: `provider "${id}" is not configured` };
   const cloud = entry.kind !== "llama-server";
-  if (cloud && !providerHasKey(entry)) {
+  if (cloud && !providerIsUsable(entry)) {
     return { ok: false, needsKey: true, providerId: id, error: "no API key" };
   }
   /* Under effective Fusion the orchestrator IS the active provider, and its
@@ -267,7 +268,7 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   if (!read.ok || !read.config) return { ok: false, error: read.error };
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === providerId);
   if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
-  if (entry.kind !== "llama-server" && !providerHasKey(entry)) {
+  if (entry.kind !== "llama-server" && !providerIsUsable(entry)) {
     return { ok: false, needsKey: true, providerId, error: "no API key" };
   }
   const modelChanged = entry.defaultChatModel !== modelId.trim();

@@ -164,11 +164,13 @@ const PRESETS = [
   {id:'perplexity', label:'Perplexity', kind:'openai-compatible', baseUrl:'https://api.perplexity.ai', env:'PERPLEXITY_API_KEY'},
   {id:'nous', label:'Nous Research', kind:'openai-compatible', baseUrl:'https://inference-api.nousresearch.com', env:'NOUS_API_KEY'},
   {id:'novita', label:'Novita AI', kind:'openai-compatible', baseUrl:'https://api.novita.ai/openai', env:'NOVITA_API_KEY'},
+  // Atomic Chat's Local API Server: 127.0.0.1 (the address it binds), /v1 appended like every compat base; no key unless one is set in its settings.
+  {id:'atomic-chat', label:'Atomic Chat (local)', kind:'openai-compatible', baseUrl:'http://127.0.0.1:1337', env:'ATOMIC_CHAT_API_KEY', local:true},
   {id:'ollama', label:'Ollama (local)', kind:'openai-compatible', baseUrl:'http://localhost:11434', env:'OLLAMA_API_KEY', local:true},
   {id:'lmstudio', label:'LM Studio (local)', kind:'openai-compatible', baseUrl:'http://localhost:1234', env:'LMSTUDIO_API_KEY', local:true},
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
-  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers}));
+  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local}));
 /* What is left of the prototype's Models pane after Settings › LLM replaced
    it (review fix): no rows of its own any more — only the provider-add and
    model-search writers, which the `--smoke --models` harness drives directly
@@ -1196,6 +1198,7 @@ const LOGO_FILES = {
   xai:'xai.svg', moonshot:'moonshot.svg', perplexity:'perplexity-color.svg', nous:'nousresearch.svg', novita:'novita-color.svg',
   ollama:'ollama.svg', lmstudio:'lmstudio.svg', huggingface:'huggingface-color.svg', nvidia:'nvidia-color.svg', zhipu:'zhipu-color.svg',
   codex:'codex-color.svg', claudecode:'claudecode-color.svg', hermes:'hermesagent.svg', openclaw:'openclaw-color.svg', github:'github.svg',
+  atomicchat:'atomicchat.png',
 };
 /** Model id → the family whose mark it wears ('' when there is none). */
 function modelLogoKey(id) {
@@ -1225,6 +1228,7 @@ const PROVIDER_LOGO_KEYS = {
   'nous research':'nous', novita:'novita', 'novita ai':'novita', ollama:'ollama', 'ollama (local)':'ollama', lmstudio:'lmstudio',
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
+  'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
 };
 /** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
 function providerLogoKey(p) {
@@ -7847,7 +7851,7 @@ function obWizardHTML() {
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on this Mac needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -11881,7 +11885,7 @@ function wizardHTML() {
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
         + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="tk-lbl" for="wiz-key">API key' + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
     + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" spellcheck="false">'
     + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>';
@@ -15191,10 +15195,21 @@ function llmKeyEnvNames(p) {
 }
 function llmKeyNamesPresent() { return new Set([].concat(LLMP.envKeys || [], LLMP.dotenvKeys || [])); }
 function llmHasKey(p) {
+  return llmHasRealKey(p) || llmKeylessLocal(p);
+}
+function llmHasRealKey(p) {
   if (p.kind === 'subscription-cli') return true;
   if (p.apiKey && String(p.apiKey).length) return true;
   const present = llmKeyNamesPresent();
   return llmKeyEnvNames(p).some((n) => present.has(n));
+}
+/* local-backend-readiness.ts isKeylessLocalProviderEntry (and agent-cli's
+   port): Atomic Chat, Ollama, LM Studio or any loopback compat endpoint has
+   no key at all, so a missing one is not "missing". */
+function llmKeylessLocal(p) {
+  if (!p || p.kind !== 'openai-compatible') return false;
+  if (['atomic-chat', 'lmstudio', 'ollama'].includes(p.id)) return true;
+  try { return ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(new URL(p.baseUrl).hostname.toLowerCase()); } catch (err) { return false; }
 }
 function llmKeysKnown() { return LLMP.envKeys !== null && LLMP.dotenvKeys !== null; }
 function llmDaemonPort() {
@@ -15385,7 +15400,7 @@ function llmLocalRows() {
 function llmProviderRow(p) {
   const hasKey = llmHasKey(p);
   const active = p.id === llmActiveTextId();
-  const auth = p.kind === 'subscription-cli' ? 'cli auth' : hasKey ? 'key ok' : 'missing key';
+  const auth = p.kind === 'subscription-cli' ? 'cli auth' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
     enterEffect: !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
@@ -15953,18 +15968,30 @@ function llmModalHTML() {
   }
   if (LLMP.steerUrl !== null) {
     const url = LLMP.steerUrl;
-    const ollama = llmLooksLikeOllama(url);
+    const known = llmSteerPresetId(url);
+    const ollama = known === 'ollama', atomic = known === 'atomic-chat';
     // ST-24: an amber prompt, because nothing failed — the server is just the other kind.
     return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
-      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
-      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
-      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
+      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : atomic ? logoHTML('atomicchat', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
+      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : atomic ? 'Atomic Chat detected — add it as a provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
+      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : atomic ? 'Atomic Chat\u2019s Local API Server' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
       + '<div class="acts"><button class="btn btn-s sm" data-act="llm:steer:n">Dismiss' + keycaps('N') + '</button>'
       + '<button class="btn btn-p sm" data-act="llm:steer:y">Open the provider wizard with this URL' + keycaps('Y') + '</button></div></div>';
   }
   return '';
 }
 function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
+/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick: Ollama's
+   port (any host), Atomic Chat's :1337 only on this machine (its preset
+   saves 127.0.0.1), anything else → null (the manual compat row). */
+function llmSteerPresetId(url) {
+  if (llmLooksLikeOllama(url)) return 'ollama';
+  try {
+    const u = new URL(url);
+    if (u.port === '1337' && ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase())) return 'atomic-chat';
+  } catch (err) { /* not a URL */ }
+  return null;
+}
 
 /* ============================================================
    Item 7A — add a model from Hugging Face.
@@ -16593,9 +16620,10 @@ function llmAct(what) {
   if (verb === 'steer') {
     const url = LLMP.steerUrl; LLMP.steerUrl = null;
     if (arg === 'y' && url) {
-      // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's port lands on its preset, anything else on the manual compat row, the probed URL prefilled.
+      // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's and Atomic Chat's ports land on their presets, anything else on the manual compat row, the probed URL prefilled.
       llmSetMode('cloud');
-      const preset = llmLooksLikeOllama(url) ? KIND_ROWS.find((k) => k.id === 'ollama') : null;
+      const presetId = llmSteerPresetId(url);
+      const preset = presetId ? KIND_ROWS.find((k) => k.id === presetId) : null;
       llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
       if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);
       render();

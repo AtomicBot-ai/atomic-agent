@@ -683,7 +683,8 @@ export async function verifyProviderKey(
   if (!url) return { ok: false, checked: false, error: `this build cannot check a ${entry.kind || "provider"} key` };
   if (!model) return { ok: false, checked: false, error: "no model to check the key against" };
   const key = resolveKeyValue(entry);
-  if (!key) {
+  // A keyless local server is asked the same one-token question, just without Authorization.
+  if (!key && !isKeylessLocalProviderEntry(entry)) {
     return {
       ok: false,
       checked: true,
@@ -693,8 +694,8 @@ export async function verifyProviderKey(
     };
   }
   const headers: Record<string, string> = { "content-type": "application/json", ...(entry.headers ?? {}) };
-  if (entry.apiKeyHeader) headers[entry.apiKeyHeader] = key;
-  else headers.authorization = `Bearer ${key}`;
+  if (key && entry.apiKeyHeader) headers[entry.apiKeyHeader] = key;
+  else if (key) headers.authorization = `Bearer ${key}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -1375,6 +1376,26 @@ export function keyNamesAvailable(): KeyEnvNames {
  * so `OPENAI_COMPAT_API_KEY=""` next to a real `OPENAI_API_KEY` is "no key"
  * here exactly as it is for the agent.
  */
+/** Preset ids with `local: true` in src/tui/providers/provider-presets.ts. */
+const LOCAL_PRESET_IDS = new Set(["atomic-chat", "lmstudio", "ollama"]);
+
+/**
+ * src/tui/local-backend-readiness.ts isKeylessLocalProviderEntry: a server
+ * on this machine (Atomic Chat, Ollama, LM Studio, a hand-added loopback
+ * endpoint) has no API key at all, so a missing key must not block it —
+ * the agent saves it with no key and sends requests without Authorization.
+ */
+export function isKeylessLocalProviderEntry(entry: ProviderEntry): boolean {
+  if (entry.kind !== "openai-compatible") return false;
+  if (LOCAL_PRESET_IDS.has(entry.id)) return true;
+  return isLocalProviderUrl(entry.baseUrl ?? "");
+}
+
+/** Ready to route to: a key, or a keyless local server (isCloudTextProviderReady). */
+export function providerIsUsable(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
+  return providerHasKey(entry, names) || isKeylessLocalProviderEntry(entry);
+}
+
 export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
   if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
@@ -1417,7 +1438,7 @@ export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; e
   if (!read.ok || !read.config) return { ok: false, error: read.error };
   const names = keyNamesAvailable();
   const ids = (read.config.llm?.providers ?? [])
-    .filter((p) => p.kind !== "llama-server" && providerHasKey(p, names))
+    .filter((p) => p.kind !== "llama-server" && providerIsUsable(p, names))
     .map((p) => p.id);
   return { ok: true, ids };
 }
@@ -2274,6 +2295,8 @@ export interface LlamaProbeResult {
   /** describeLlamaHealthFailure(): the line the operator can act on; null when reachable. */
   message: string | null;
   ollama: boolean;
+  /** looksLikeAtomicChatUrl(): Atomic Chat's Local API Server port (1337). */
+  atomicChat: boolean;
 }
 
 /** src/llm/llama-endpoint-url.ts llamaEndpointUrl, verbatim. */
@@ -2298,6 +2321,12 @@ export function normalizeLocalLlmBaseUrl(raw: string): string | null {
 
 function looksLikeOllamaUrl(url: string): boolean {
   try { return new URL(url).port === "11434"; } catch { return false; }
+}
+
+/** src/llm/describe-llama-health-failure.ts looksLikeAtomicChatUrl: the
+    Local API Server port of Atomic Chat (and Jan, which it forks). */
+function looksLikeAtomicChatUrl(url: string): boolean {
+  try { return new URL(url).port === "1337"; } catch { return false; }
 }
 
 /** src/tui/providers/is-local-provider-url.ts: loopback hosts. */
@@ -2335,6 +2364,10 @@ function describeLlamaHealthFailure(kind: LlamaProbeResult["kind"], error: strin
           ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Ollama (local), base URL ${url}.`
           : `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url} (any API key value passes — a stock Ollama has no auth).`;
       }
+      // Same reasoning as Ollama: the preset row saves its own 127.0.0.1:1337, so name it only for a server on this machine.
+      if (looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url)) {
+        return `${url} answers like Atomic Chat's Local API Server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Atomic Chat (local), base URL ${url}.`;
+      }
       return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url}.`;
     case "llama-loading":
       return `${url} is a llama.cpp server still loading its model. Give it a minute and save the URL again.`;
@@ -2357,16 +2390,16 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
     const text = await response.text().catch(() => "");
     if (!response.ok) {
       if (response.status === 503 && bodyLooksLikeLlamaLoading(text)) {
-        result = { reachable: false, status: 503, kind: "llama-loading", error: "llama.cpp is still loading the model", latencyMs: Date.now() - start, message: null, ollama: false };
+        result = { reachable: false, status: 503, kind: "llama-loading", error: "llama.cpp is still loading the model", latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
       } else {
-        result = { reachable: false, status: response.status, kind: "unknown", error: `http ${response.status}`, latencyMs: Date.now() - start, message: null, ollama: false };
+        result = { reachable: false, status: response.status, kind: "unknown", error: `http ${response.status}`, latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
       }
     } else {
       const isLlama = bodyLooksLikeLlamaHealth(text);
-      result = { reachable: isLlama, status: response.status, kind: isLlama ? "llama-server" : "unknown", error: isLlama ? null : "answered 200 but not with llama.cpp's /health shape", latencyMs: Date.now() - start, message: null, ollama: false };
+      result = { reachable: isLlama, status: response.status, kind: isLlama ? "llama-server" : "unknown", error: isLlama ? null : "answered 200 but not with llama.cpp's /health shape", latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
     }
   } catch (err) {
-    result = { reachable: false, status: null, kind: "unknown", error: err instanceof Error ? err.message : String(err), latencyMs: Date.now() - start, message: null, ollama: false };
+    result = { reachable: false, status: null, kind: "unknown", error: err instanceof Error ? err.message : String(err), latencyMs: Date.now() - start, message: null, ollama: false, atomicChat: false };
   }
   if (result.reachable) {
     // verifyAuth: the key-guarded /props; only an explicit 401/403 flips the verdict.
@@ -2387,6 +2420,7 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
     } catch { /* stays unknown */ }
   }
   result.ollama = looksLikeOllamaUrl(url);
+  result.atomicChat = looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url);
   if (!result.reachable) result.message = describeLlamaHealthFailure(result.kind, result.error, url);
   return { ok: true, url, probe: result };
 }
