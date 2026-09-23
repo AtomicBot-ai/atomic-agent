@@ -9176,11 +9176,15 @@ async function onboardingTest(
         wl3.phase === "configure" && wl3.row === "Gemini (Google AI)",
       `cur ${wl0.cur}->${wl1.cur} marked=${JSON.stringify(wl1.marked)} search=${JSON.stringify(wl2.rows)} picked=${JSON.stringify(wl3.row)}`,
     );
-    // ... and the .env sentence the copy contract spells out, on the
-    // screen the pick lands on.
+    // ... and where the key goes, on the screen the pick lands on. Calm (S6,
+    // U14): the line says "Your key stays on this Mac."; the .env sentence the
+    // copy contract spells out is that line's tooltip.
     const wizCopy = await js<string[]>(
       "Array.from(document.querySelectorAll('#onboarding .ob-wiz .ob-kicker, #onboarding .ob-wiz .ob-h,"
         + " #onboarding .ob-wiz .ob-help')).map((e) => e.textContent)",
+    );
+    const wizKeyTip = await js<string>(
+      "((document.querySelector('#onboarding .ob-wiz .ob-help[title]') || {}).title || '')",
     );
     await js<ObState>("window.__obKey('esc')");
     const listCopy = await js<string[]>(
@@ -9194,12 +9198,13 @@ async function onboardingTest(
          the subhead, and naming the field is the placeholder's job. The list
          behind it lost its heading too: the step's own title already says
          "Connect a cloud provider". */
-      "wizard: the key screen names the provider once, and keeps the .env sentence",
+      "wizard: the key screen names the provider once, and says the key stays on this Mac",
       listCopy.length === 0 &&
         wizCopy.includes("API key") && wizCopy.includes("Gemini") &&
         wizCopy.filter((l) => /API key/i.test(l)).length === 1 &&
-        wizCopy.includes("Saved to .env as GEMINI_API_KEY (mode 0600)."),
-      `list=${JSON.stringify(listCopy)} key=${JSON.stringify(wizCopy)}`,
+        wizCopy.includes("Your key stays on this Mac.") &&
+        wizKeyTip === "Saved to .env as GEMINI_API_KEY (mode 0600).",
+      `list=${JSON.stringify(listCopy)} key=${JSON.stringify(wizCopy)} tip=${JSON.stringify(wizKeyTip)}`,
     );
     await js<ObState>("window.__obKey('esc')");
     await js<ObState>("window.__obKey('esc')");

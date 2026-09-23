@@ -114,7 +114,9 @@ export async function passIntro(app) {
  * is walked back with `esc` and tried again rather than believed.
  */
 export async function pickLocalModel(app, id) {
+  // Calm (S6): a click on a card or a row selects it; Continue / Download starts it.
   await app.clickText('Local models');
+  await app.clickText('Continue');
   await app.waitFor("document.querySelectorAll('#onboarding .ob-row').length > 1",
     'the curated model list', { timeout: 180000 });
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -123,8 +125,8 @@ export async function pickLocalModel(app, id) {
        "Add a model from Hugging Face…" row at the end, and an off-by-one
        there is how a first pass ended up on the Hugging Face screen. */
     const at = await app.eval(`(() => {
-      const n = [...document.querySelectorAll('#onboarding .ob-row')]
-        .find((r) => ((r.querySelector('.t')||{innerText:''}).innerText || '').trim().indexOf(${JSON.stringify(id)}) === 0);
+      // Calm (S6): rows show the human name; the id is the row's data-model.
+      const n = document.querySelector('#onboarding .ob-row[data-model=' + JSON.stringify(${JSON.stringify(id)}) + ']');
       return n ? n.getAttribute('data-obrow') : null;
     })()`);
     if (at === null) throw new Error(`no row for ${id} in the picker`);
@@ -132,6 +134,7 @@ export async function pickLocalModel(app, id) {
     try {
       await scrollTo(app, rowSel);
       await app.clickSel(rowSel, { scroll: false });
+      await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });
     } catch (e) {
       /* A saturated Mac loses CDP round trips (`Input.dispatchMouseEvent
          timed out` at 30 s). That is the machine, not the app: look at the
@@ -143,7 +146,7 @@ export async function pickLocalModel(app, id) {
     if (s.step === 'local_download') { app.log(`downloading ${s.localModelId}`); return; }
     app.log(`the click landed on "${s.step}" (model ${s.localModelId}), not the download — walking back`);
     if (s.step !== 'local_pick') { await app.press('Escape'); await sleep(600); }
-    if ((((await ob(app)) || {}).step) === 'choose') await app.clickText('Local models');
+    if ((((await ob(app)) || {}).step) === 'choose') { await app.clickText('Local models'); await app.clickText('Continue'); }
     await app.waitFor("window.__ob().step === 'local_pick'"
       + " && document.querySelectorAll('#onboarding .ob-row').length > 1", 'the picker again',
       { timeout: 60000, quiet: true });

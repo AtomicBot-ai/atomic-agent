@@ -40,6 +40,8 @@
 .prow .col{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
 .prow .nm{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .ep{font:400 12px/1.4 var(--font-mono);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Calm (S6): a provider's one line of what it is, in the UI face. */
+.prow .ds{font:400 12.5px/1.4 var(--font-ui);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .ann{flex:none}
 /* r2: the picked model's tick, at the right end of its row. */
 .prow-tick{flex:none;display:grid;place-items:center;width:22px;height:22px;color:var(--brand)}
@@ -99,7 +101,7 @@
 #onboarding .ob-lock .ob-mark{display:flex;flex:none}
 #onboarding .ob-lock .ob-mark svg{width:30px;height:30px}
 #onboarding .ob-lock .ob-wm{font:600 17px/1.2 var(--font-ui);letter-spacing:-.02em;color:var(--on-strong);white-space:nowrap}
-#onboarding .ob-statement{margin:auto 0 0;max-width:13ch;font:600 30px/1.13 var(--font-ui);letter-spacing:-.04em;color:var(--on-strong)}
+#onboarding .ob-statement{margin:auto 0 0;max-width:14ch;font:600 26px/1.18 var(--font-ui);letter-spacing:-.035em;color:var(--on-strong)}
 #onboarding .ob-stepmarks{display:grid;gap:4px}
 #onboarding .ob-stepmark{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:var(--r-pill);
   font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
@@ -159,6 +161,10 @@
 #onboarding .ob-row .t{display:block;font-size:14px;font-weight:600;line-height:1.35;color:var(--ink)}
 #onboarding .ob-row .d{display:block;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
 #onboarding .ob-row > .kc{margin-left:auto}
+/* Calm (S6): the selected row's tick, where the provider list draws its own. */
+#onboarding .ob-tick{flex:none;display:grid;place-items:center;width:22px;height:22px;margin-left:auto;color:var(--brand)}
+#onboarding .ob-tick svg{width:15px;height:15px;stroke-width:2.2}
+#onboarding .ob-models .ob-row > .ob-tick{align-self:center}
 #onboarding .ob-row > .tk-ico,#onboarding .ob-row > .logo{flex:none}
 /* A model with no brand mark wears the CPU badge at the logo's size, so
    every row's text starts on the same line. */
@@ -204,7 +210,7 @@
 #onboarding .ob-out{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;
   padding:6px 8px;border:0;color:var(--ink-2);cursor:default}
 #onboarding .ob-out > .logo,#onboarding .ob-out > .tk-ico{grid-row:1 / span 3;align-self:start;margin-top:1px}
-#onboarding .ob-out .t{font:500 13px/1.35 var(--font-mono);color:var(--ink-2)}
+#onboarding .ob-out .t{font:500 13px/1.35 var(--font-ui);color:var(--ink-2)}
 #onboarding .ob-out .ob-desc,#onboarding .ob-out .ob-fit{display:block;font-size:12.5px;line-height:1.4;color:var(--ink-2)}
 
 /* ---------------- fields ---------------- */
@@ -271,6 +277,11 @@
 #onboarding .ob-wiz .ob-err{padding:0 0 0 4px;background:transparent;color:var(--critical);font-size:12.5px}
 #onboarding .ob-wiz .ob-err > svg{width:14px;height:14px;margin-top:2px}
 #onboarding .ob-wiz .ob-err.is-warn,#onboarding .ob-wiz .ob-err.is-warn > svg{color:var(--amber-text)}
+/* Calm (S6, U14): the provider's own words, one click away under the plain line. */
+#onboarding .ob-errmore{margin:-6px 0 0 28px;font-size:12px;line-height:1.45;color:var(--ink-2)}
+#onboarding .ob-errmore > summary{width:max-content;cursor:pointer;color:var(--ink-2)}
+#onboarding .ob-errmore > summary:hover{color:var(--ink)}
+#onboarding .ob-errmore > span{display:block;margin-top:4px;white-space:pre-wrap;font-family:var(--font-mono);font-size:11.5px}
 
 /* ---------------- the action bar and the hint strip ---------------- */
 #onboarding .ob-foot{flex:none;display:flex;align-items:center;gap:10px;padding-top:16px;border:0}

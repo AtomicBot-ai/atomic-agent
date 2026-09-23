@@ -100,7 +100,9 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
   /* F6 — the model step. `modelChosen` is what lets wizNext run twice: once
      to verify and offer the catalogue, once to save the choice. */
   models:[], modelPick:null, defaultModel:null, modelChosen:false, savedId:null,
-  savedLabel:'', modelFilter:'', unverifiedNote:null };
+  savedLabel:'', modelFilter:'', unverifiedNote:null,
+  /* Calm (S6): the provider's raw words behind a plain error, {for, text}. */
+  errorDetail:null };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
    kinds, whose config shape the desktop does not write. */
 const KIND_ROWS = [
@@ -276,19 +278,49 @@ const OB = {
    "not asked yet"; `hostRamGb()` is what render paths read. */
 let HOST_RAM_GB = 0;
 
+/* Calm (S6, U13) — what each provider IS, in one line, instead of its base
+   URL. Factual only: what you get through it, nothing it cannot do. A
+   provider missing here shows its host, as before. */
+const OB_WIZ_TOP = new Set(['openrouter', 'aimlapi']);
+const OB_WIZ_LOCAL = ['atomic-chat', 'ollama', 'lmstudio'];
+const OB_WIZ_BLURB = {
+  openrouter: 'Hundreds of models with one key',
+  aimlapi: 'Many models with one key',
+  gemini: 'Google’s Gemini models',
+  anthropic: 'Claude models',
+  groq: 'Very fast open models',
+  deepseek: 'DeepSeek models',
+  mistral: 'Mistral models',
+  cerebras: 'Very fast open models',
+  together: 'Open models in the cloud',
+  fireworks: 'Open models in the cloud',
+  xai: 'Grok models',
+  moonshot: 'Kimi models',
+  perplexity: 'Sonar models',
+  nous: 'Hermes models',
+  novita: 'Open models in the cloud',
+  'atomic-chat': 'Models you already have in Atomic Chat',
+  ollama: 'Models you run with Ollama',
+  lmstudio: 'Models you run in LM Studio',
+  'openai-compatible': 'Any server that speaks the OpenAI API',
+};
+const OB_ATOMIC_CHAT = { running: null, asking: false };
+
 /* ONBOARDING_CHOICES (onboarding-state.ts:130-155), verbatim and in order
    — the order is load-bearing, the 1–3 digits are positional. */
 /* One line of consequence each. These used to be two lines apiece, which on
    the choose screen made three paragraphs the eye had to read before it could
    choose — the tester's "I have to peer at it". A route is picked on what it
    costs you, so that is the line. */
+/* Calm (S6): short declaratives. The second card also covers the model apps
+   on this Mac (Atomic Chat, Ollama, LM Studio), which live in its list. */
 const OB_CHOICES = [
   {id:'local', label:'Local models', detail:[
-    'Runs on this Mac. Private and free per token, after one 2.7–22 GB download.', '']},
+    'Private and free on this Mac, after one download.', '']},
   {id:'cloud', label:'Cloud models', detail:[
-    'Fastest to a working agent. Needs an API key from one of 24 providers.', '']},
+    'An API key, or a model app already on this Mac.', '']},
   {id:'custom', label:'Custom endpoint', detail:[
-    'A URL you already run. Nothing is downloaded and nothing else is asked.', '']},
+    'A llama.cpp server you already run. Nothing to download.', '']},
 ];
 
 /* The flow has two phases, and the header says which one you are in as a
@@ -307,7 +339,7 @@ const OB_PHASE_OF = {
    line. Plainest possible form: what this screen asks you to decide. */
 const OB_TITLES = {
   choose: 'Choose how Atomic Agent gets its model',
-  cloud: 'Connect a cloud provider',
+  cloud: 'Choose a provider',
   custom_chat_url: 'Point Atomic Agent at your endpoint',
   custom_embedding_url: 'Embeddings endpoint',
   local_pick: 'Choose a model to run on this Mac',
@@ -345,7 +377,7 @@ const OB_SUBTITLES = {
 const OB_COPY = {
   // onboarding-choose-step.tsx:30-33
   chooseExplainer: [
-    'Nothing here is permanent — you can add the others at any time from the menu.'],
+    'You can add the others later.'],
   // onboarding-intro-step.tsx:53 / :12, logo.tsx TAGLINE
   tagline: 'Local AI-First Agent',
   taglineMsPerChar: 45,
@@ -364,13 +396,13 @@ const OB_COPY = {
   urlEmbeddingPlaceholder: 'http://127.0.0.1:19092',
   urlProbing: 'probing /health…',
   // onboarding-download-step.tsx:18-38
-  cloudOffer: ['Don’t want to wait? Set up a cloud model in the meantime —',
-               'it takes about a minute, and the download keeps running.'],
-  cloudOfferFailed: 'Set up a cloud model instead — it takes about a minute.',
+  /* Calm (S6): short declaratives, no dashes; the chords are the cards'
+     tooltips. obOfferHTML splits title from detail at the first sentence. */
+  cloudOffer: ['Set up a cloud model meanwhile. It takes about a minute, and the download keeps going.'],
+  cloudOfferFailed: 'Set up a cloud model instead. It takes about a minute.',
   cloudOfferKey: 'press c',
-  skipOffer: ['Or skip the wait — start using the agent now. The download',
-              'keeps running; progress shows in the top bar.'],
-  skipOfferFailed: 'Or skip — start using the agent without a local model.',
+  skipOffer: ['Start using the agent now. The download keeps going, with its progress at the top of the window.'],
+  skipOfferFailed: 'Start using the agent without a local model.',
   skipOfferKey: 'press s',
   // onboarding-download-progress.tsx:63-79
   phaseRuntime: 'llama.cpp runtime',
@@ -6718,10 +6750,9 @@ function isSmallModel(model) {
    without being discouraging: this is the model the person is about to
    spend twenty minutes downloading because it is the one their machine
    can run, and telling them it is bad would be both unkind and wrong. */
-const SMALL_MODEL_CAUTION =
-  'A small model: quick, and fine for everyday questions, editing and short tasks. '
-  + 'It reasons less well than the larger ones and is shakier at long multi-step tool work, '
-  + 'so expect to correct it more often.';
+/* Calm (S6): one quiet line, not a paragraph. Same truth: quick and fine
+   for everyday work, weaker at long multi-step tool work. */
+const SMALL_MODEL_CAUTION = 'A small model: quick, but weaker at long multi-step work.';
 
 /**
  * The catalogue ordered for THIS machine: best fit first, and within a
@@ -7785,6 +7816,8 @@ function obRow(index, selected, label, detail, extraClass, attrs, lead, trail) {
 function obModelLabel() {
   if (!OB.localModelId) return 'the model';
   const id = String(OB.localModelId);
+  const known = (OB.models || []).find((m) => m && m.id === id && m.name);
+  if (known) return obModelName(known);
   return id.indexOf('custom-') === 0 ? id.replace(/^custom-/, '') : id;
 }
 
@@ -7827,10 +7860,13 @@ function obChooseHTML() {
   const look = {local:['laptop', ' tk-ico--indigo'], cloud:['cloud', ' tk-ico--blue'], custom:['server', '']};
   const rows = OB_CHOICES.map((choice, i) => {
     const l = look[choice.id] || ['server', ''];
+    /* Calm (S6): a click picks the card (tick); Continue, Enter or a double
+       click opens it. The digit chord stays and moves to the tooltip. */
     return obRow(i, OB.cursor === i, esc(choice.label),
-      esc(choice.detail[0]) + (choice.detail[1] ? '<br>' + esc(choice.detail[1]) : ''), '', '',
+      esc(choice.detail[0]) + (choice.detail[1] ? '<br>' + esc(choice.detail[1]) : ''), '',
+      ' title="' + esc(choice.label + ' · press ' + (i + 1)) + '"',
       '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
-      '<span class="kc">' + (i + 1) + '</span>');
+      OB.cursor === i ? obTickHTML() : '');
   }).join('');
   return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
     + '<div class="ob-list ob-routes">' + rows + '</div>';
@@ -7842,14 +7878,17 @@ function obLocalPickHTML() {
   const onHf = OB.cursor >= models.length;
   /* r6 UX: windowLocalPicks paints six rows and says `↓ 7 more`, because
      a terminal cannot scroll a region. This one can: every row is drawn,
-     the box scrolls, and the cursor is kept in view for the keyboard. */
+     the box scrolls, and the cursor is kept in view for the keyboard.
+     Calm (S6): a click selects (tick); the action bar's Download button, or
+     a double click, starts it. */
   const best = bestModelFor(OB.models, OB.ram);
   const body = models.length
     ? models.map((row, at) => {
         const model = row.model;
-        return obRow(at, !onHf && at === OB.cursor,
+        const on = !onHf && at === OB.cursor;
+        return obRow(at, on,
           obModelRowLabel(model, best && model.id === best.id),
-          obModelRowDetail(model), '', '', modelMark(model.id));
+          obModelRowDetail(model), '', ' data-model="' + esc(model.id) + '"', modelMark(model.id), on ? obTickHTML() : '');
       }).join('')
     /* r2: while `atag models list` is out, a spinner where the list will be
        rather than a sentence about reading a catalogue. */
@@ -7859,9 +7898,8 @@ function obLocalPickHTML() {
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
     esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
-      + esc('One download, then it runs offline. This machine reports ' + OB.ram + ' GB of RAM, '
-        + 'and the list below is ordered for it — the best fit first.') + '</div>'
-    + '<div class="ob-h ob-sec">' + esc(OB_COPY.localHeading) + '</div>'
+      + esc(OB.ram ? 'Runs offline after one download. Ordered for this Mac’s ' + OB.ram + ' GB of memory.'
+                   : 'Runs offline after one download.') + '</div>'
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
        Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
        item next to a sibling that cannot shrink absorbs every pixel of
@@ -7871,38 +7909,52 @@ function obLocalPickHTML() {
     + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf;
 }
 
+/** The selected row's tick, at its right end (the provider list's `.prow-tick`). */
+function obTickHTML() {
+  return '<span class="ob-tick" aria-hidden="true">' + ic('check') + '</span>';
+}
+
+/** A catalogue model's name as a person reads it: "Qwen 3.5 9B", else the id. */
+function obModelName(model) { return llmModelName(model); }
+
+/** What one pick downloads, in GB: the weights, plus the projector a vision
+    model's pull fetches with them. 0 when the catalogue does not say. */
+function obDownloadGb(model) {
+  const weights = Number(model && model.sizeGb) || parseFloat(String((model && model.size) || '')) || 0;
+  return weights + (Number(model && model.mmprojSizeGb) || 0);
+}
+function obGbWord(gb) { return (Math.round(gb * 10) / 10).toFixed(1).replace(/\.0$/, '') + ' GB'; }
+
 /**
- * One pick row's name line: the id, plus the badges a person chooses on.
- * `★ Best fit for this machine` is the whole point of the ordering — the
- * single obvious choice — and it is drawn on exactly one row.
+ * One pick row's name line: the human name and, on exactly one row, the
+ * badge a person chooses on. Calm (S6): one badge — "Recommended" on the
+ * best fit for this Mac — not a second catalogue tag beside it.
  */
 function obModelRowLabel(model, isBest) {
-  return '<span class="ob-mono">' + esc(model.id) + '</span>'
-    + (isBest ? '<span class="ob-badge ob-badge-best">★ Best fit for this machine</span>' : '')
-    + (model.tag ? '<span class="ob-badge' + (model.uncensored ? ' ob-badge-warn' : '') + '">' + esc(model.tag) + '</span>' : '');
+  return esc(obModelName(model))
+    + (isBest ? '<span class="ob-badge ob-badge-best">Recommended</span>' : '');
 }
 
 /**
- * The three lines under the name: what the model IS (the catalogue's own
- * description — the operator's ask, so a person can tell what they are
- * choosing), what it costs, and where it is a compromise.
+ * The line under the name: the catalogue's own blurb and the download size.
+ * Then, only where it is true, one quiet line: a tight fit, a small model,
+ * or reduced-refusal weights. A comfortable fit says nothing; the heading
+ * already says the list is ordered for this Mac.
  *
- * A model with no catalogue entry gets no description line at all rather
- * than a sentence this window made up about it.
+ * A model with no catalogue entry gets no blurb rather than a sentence this
+ * window made up about it.
  */
 function obModelRowDetail(model) {
   const fit = fitFor(model, OB.ram);
-  const cautions = [];
-  if (fit.caution) cautions.push(fit.caution);
-  // The small-model warning belongs to the MODEL, not to the machine: a
-  // 4B is no cleverer on 68 GB than it is on 8. It matters most where a
-  // weak machine has left it as the recommendation, which is exactly
-  // where it appears without any extra wiring.
-  if (isSmallModel(model)) cautions.push(SMALL_MODEL_CAUTION);
-  return (model.description ? '<span class="ob-desc">' + esc(model.description) + '</span>' : '')
-    + '<span>' + esc(modelFactsLine(model)) + '</span>'
-    + '<span class="ob-fit ob-fit-' + fit.v + '">' + esc(fit.label) + '</span>'
-    + (cautions.length ? '<span class="ob-caution">' + esc(cautions.join(' ')) + '</span>' : '');
+  const blurb = String(model.description || '').replace(/\s*\([^)]*\)\s*$/, '').replace(/,\s*imatrix-calibrated$/, '');
+  const gb = obDownloadGb(model);
+  const facts = [blurb, gb ? obGbWord(gb) : model.size, model.downloaded ? 'already on this Mac' : '']
+    .filter(Boolean).join(' · ');
+  let note = '';
+  if (fit.v === 'tight') note = '<span class="ob-fit ob-fit-tight">Tight fit on ' + esc(String(OB.ram)) + ' GB. It will run slowly.</span>';
+  else if (model.uncensored && model.tag) note = '<span class="ob-caution">' + esc(model.tag) + '</span>';
+  else if (isSmallModel(model)) note = '<span class="ob-caution">' + esc(SMALL_MODEL_CAUTION) + '</span>';
+  return '<span>' + esc(facts) + '</span>' + note;
 }
 
 /** Said when the catalogue has nothing this machine can run. */
@@ -7923,12 +7975,11 @@ function obNothingFitsLine() {
 function obOutOfReachHTML() {
   const out = obOutOfReach();
   if (!out.length) return '';
-  return '<div class="ob-h ob-out-h">' + esc('Needs a bigger machine than this one') + '</div>'
+  return '<div class="ob-h ob-out-h">' + esc('Needs more memory than this Mac has') + '</div>'
     + '<div class="ob-out-list">' + out.map((model) =>
       '<div class="ob-out">' + modelMark(model.id, 'xs')
-      + '<span class="t"><span class="ob-mono">' + esc(model.id) + '</span></span>'
-      + (model.description ? '<span class="ob-desc">' + esc(model.description) + '</span>' : '')
-      + '<span class="ob-fit ob-fit-over">' + esc(fitFor(model, OB.ram).label) + '</span></div>').join('')
+      + '<span class="t">' + esc(obModelName(model)) + '</span>'
+      + '<span class="ob-fit ob-fit-over">' + esc(model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fitFor(model, OB.ram).short) + '</span></div>').join('')
     + '</div>';
 }
 
@@ -8051,10 +8102,9 @@ function obOfferHTML(cls, spec, icon, lines, chord) {
     title = text.slice(0, text.indexOf('. '));
     detail = text.slice(text.indexOf('. ') + 2);
   }
-  return '<button class="ob-offer' + cls + '" data-obact="' + spec + '">' + icon
+  return '<button class="ob-offer' + cls + '" data-obact="' + spec + '" title="' + esc(title + ' \u00b7 ' + chord) + '">' + icon
     + '<span class="ob-rbody"><span class="t">' + esc(title) + '</span>'
-    + (detail ? '<span class="d">' + esc(detail) + '</span>' : '') + '</span>'
-    + '<span class="kc">' + esc(String(chord).replace(/^press\s+/, '')) + '</span></button>';
+    + (detail ? '<span class="d">' + esc(detail) + '</span>' : '') + '</span></button>';
 }
 
 /** onboarding-wait-or-jump-step.tsx:38-55, :139-150. */
@@ -8082,7 +8132,7 @@ function obWaitOrJumpHTML() {
         ? '<div class="ob-explain">' + esc('The ' + label + ' download failed — the cloud model still works.') + '</div>' : '')
     + (status === 'ready' ? '' : obProgressBlockHTML())
     + '<div class="ob-list">' + rows.map((row, i) =>
-        obRow(i, cursor === i, esc(row.label), esc(row.detail), '', '', icons[i])).join('') + '</div>';
+        obRow(i, cursor === i, esc(row.label), esc(row.detail), '', '', icons[i], cursor === i ? obTickHTML() : '')).join('') + '</div>';
 }
 
 /** Something that is done, said once: a green tick and the sentence. */
@@ -8106,7 +8156,7 @@ function obProposeHTML() {
   return obReadyHTML(obConfiguredLabel())
     + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
     + '<div class="ob-list">'
-    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail), '', '', icons[i])).join('') + '</div>';
+    + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail), '', '', icons[i], (OB.cursor % 2) === i ? obTickHTML() : '')).join('') + '</div>';
 }
 
 /** buildImportPickRows (import-step.ts:101-113): agents, then the import
@@ -8263,9 +8313,31 @@ function obImportReportHTML(executed) {
  */
 /** The rows the cloud step's list is showing — KIND_ROWS through `/`. */
 function obWizRows() {
+  /* Calm (S6): in the order they are drawn, so the arrows walk the screen
+     top to bottom — the two one-key services, the model apps on this Mac,
+     then every other cloud provider (the custom URL row last). */
+  const all = KIND_ROWS.map((k, i) => ({k, i}));
+  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.custom ? 3 : 2;
+  const ordered = all.slice().sort((a, b) => (group(a) - group(b))
+    || (group(a) === 1 ? OB_WIZ_LOCAL.indexOf(a.k.id) - OB_WIZ_LOCAL.indexOf(b.k.id) : a.i - b.i));
   const q = (WIZ.q || '').trim().toLowerCase();
-  if (!q) return KIND_ROWS.map((k, i) => ({k, i}));
-  return KIND_ROWS.map((k, i) => ({k, i})).filter(({k}) => k.label.toLowerCase().indexOf(q) >= 0);
+  if (!q) return ordered;
+  return ordered.filter(({k}) => k.label.toLowerCase().indexOf(q) >= 0);
+}
+/** A base URL's host, for a provider row with no blurb. */
+function hostOf(url) { try { return new URL(url).host; } catch (e) { return String(url || ''); } }
+/* Whether Atomic Chat's Local API Server answers on :1337, from the same
+   probe the custom-endpoint step uses. null until asked; asked once per
+   visit to the provider list. */
+function obProbeAtomicChat() {
+  if (!BR || !BR.llamaProbe || OB_ATOMIC_CHAT.asking) return;
+  OB_ATOMIC_CHAT.asking = true;
+  Promise.resolve(BR.llamaProbe('http://127.0.0.1:1337')).then((res) => {
+    const p = res && res.ok && res.probe;
+    const running = !!(p && p.atomicChat && (p.reachable || p.kind === 'openai-compat'));
+    OB_ATOMIC_CHAT.asking = false;
+    if (running !== OB_ATOMIC_CHAT.running) { OB_ATOMIC_CHAT.running = running; if (OB.open && OB.step === 'cloud') render(); }
+  }, () => { OB_ATOMIC_CHAT.asking = false; });
 }
 
 /* F6 — the model step, rendered by BOTH wizards.
@@ -8312,6 +8384,12 @@ function wizModelStepHTML(withFoot) {
     + '</div>';
 }
 
+/** The provider's own words behind the plain error on screen, while that error stands. */
+function wizErrDetail() {
+  const d = WIZ.errorDetail;
+  return d && WIZ.error && d.for === WIZ.error ? d.text : '';
+}
+
 /** The model step's verbs. The popover hands these to selShell instead of
  *  putting them in the body, where they scrolled out of reach with the list. */
 function wizModelStepFoot() {
@@ -8328,46 +8406,46 @@ function obWizardHTML() {
     const rows = obWizRows();
     const cur = rows.length ? WIZ.cur % rows.length : 0;
     /* B.3 — a row list, not a scrolling wall of identical boxes. Each row
-       is the provider's name over its endpoint in mono, and one already set
-       up carries a Configured chip. The two we recommend sit above More
-       providers. Soft Tactile: each row wears the provider's real mark
-       (renderer/logos, on a white badge); a URL you supply gets the server
-       badge, never a monogram. */
-    const RECOMMENDED = new Set(['openrouter', 'aimlapi']);
-    /* The three built-in kinds carry no baseUrl — the agent holds their
-       endpoints — so these are the hosts those kinds talk to, for display. */
-    const KIND_HOST = {
-      openrouter: 'https://openrouter.ai/api',
-      aimlapi: 'https://api.aimlapi.com',
-      gemini: 'https://generativelanguage.googleapis.com',
-    };
+       wears the provider's real mark (renderer/logos, on a white badge); a
+       URL you supply gets the server badge, never a monogram.
+       Calm (S6): the name over one line of what it is (not its base URL),
+       in three groups — the two one-key services, the model apps on this
+       Mac, then more cloud providers. A click ticks a row; Continue, Enter
+       or a double click opens its key screen. */
     const row = ({k}, n) =>
       '<button class="prow' + (n === cur ? ' on' : '') + '"'
       + ' data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
       + '" aria-selected="' + (n === cur ? 'true' : 'false') + '">'
       + providerMark(k.custom ? '' : k.id)
       + '<span class="col"><span class="nm">' + esc(k.label.split(' (')[0]) + '</span>'
-      + '<span class="ep">' + esc(k.custom ? 'a URL you supply' : k.baseUrl || KIND_HOST[k.kind] || k.kind) + '</span></span>'
+      + '<span class="ds">' + esc(OB_WIZ_BLURB[k.id] || (k.baseUrl ? hostOf(k.baseUrl) : k.kind)) + '</span></span>'
+      + (k.id === 'atomic-chat' && OB_ATOMIC_CHAT.running ? '<span class="ann lit">Running</span>' : '')
       + (taken[k.id] ? '<span class="ann lit">Configured</span>' : '')
+      + (n === cur ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
       + '</button>';
-    const top = rows.filter(({k}) => RECOMMENDED.has(k.id));
-    const rest = rows.filter(({k}) => !RECOMMENDED.has(k.id));
+    const top = rows.filter(({k}) => OB_WIZ_TOP.has(k.id));
+    const local = rows.filter(({k}) => k.local);
+    const rest = rows.filter(({k}) => !OB_WIZ_TOP.has(k.id) && !k.local);
     const at = (r) => rows.indexOf(r);
+    const group = (title, list) => !list.length ? ''
+      : (title ? '<div class="prow-more">' + esc(title) + '</div>' : '')
+        + '<div class="prows">' + list.map((r) => row(r, at(r))).join('') + '</div>';
+    if (OB_ATOMIC_CHAT.running === null) obProbeAtomicChat();
     return '<div class="ob-wiz">'
       + (WIZ.q === null ? ''
           : '<div class="ob-field ob-search">' + ic('search')
-            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '">'
-            + '<span class="kc">esc</span></div>')
+            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '"></div>')
       + '<div class="ob-wizlist">'
-        + (top.length ? '<div class="prows">' + top.map((r) => row(r, at(r))).join('') + '</div>' : '')
-        + (rest.length
-            ? '<div class="prow-more">More providers</div>'
-              + '<div class="prows">' + rest.map((r) => row(r, at(r))).join('') + '</div>'
-            : '')
+        + group('', top)
+        + group('Local on this Mac', local)
+        + group(top.length || local.length ? 'More providers' : '', rest)
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
-      // for it too, and it routes through the same action.
-      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">' + ic('chevL') + 'Back</button><span class="grow"></span></div>'
+      // for it too, and it routes through the same action. Continue presses
+      // Enter through the same router the keyboard uses.
+      + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:cancel">' + ic('chevL') + 'Back</button><span class="grow"></span>'
+        + (rows.length ? '<button class="btn btn-p" data-act="wiz:next">Continue' + ic('arrowR') + '</button>' : '')
+      + '</div>'
       + '</div>';
   }
   const k = WIZ.row;
@@ -8400,10 +8478,14 @@ function obWizardHTML() {
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
     + (WIZ.error
-        ? '<div class="ob-err' + (unchecked ? ' is-warn' : '') + '">' + ic(unchecked ? 'info' : 'alert')
-          + '<span>' + esc(WIZ.error) + '</span></div>'
+        ? '<div class="ob-err' + (unchecked ? ' is-warn' : '') + '">'
+          + ic(unchecked ? 'info' : 'alert') + '<span>' + esc(WIZ.error) + '</span></div>'
+          + (wizErrDetail()
+              ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '')
         : '')
-    + (k.env ? '<div class="ob-help">' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '</div>' : '')
+    /* Calm (S6, U14): where the key goes, in the user's words; the file, the
+       variable and the mode are the tooltip. */
+    + (k.env ? '<div class="ob-help" title="' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '">Your key stays on this Mac.</div>' : '')
     + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
     + (unchecked
       ? '<div class="ob-foot">'
@@ -8454,8 +8536,25 @@ function obFootHTML() {
          obPress, so it opens the route under the cursor, exactly as the key. */
       right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       break;
-    case 'local_pick':
+    case 'local_pick': {
       left = obBtn('nav:back', 'Back', 'btn-g', false, 'chevL');
+      /* Calm (S6, U2/U15): the download is a button that says what it costs,
+         not a side effect of clicking a row. Enter presses it too. */
+      const picks = obPickRows();
+      const row = picks[OB.cursor % Math.max(1, picks.length)];
+      if (row && row.kind === 'model') {
+        const gb = obDownloadGb(row.model);
+        right = row.model.downloaded
+          ? obBtn('nav:go', 'Use ' + obModelName(row.model), 'btn-p', false, '', 'arrowR')
+          : obBtn('nav:go', gb ? 'Download ' + obGbWord(gb) : 'Download', 'btn-p', false, 'download');
+      } else if (row && !OB.busy) {
+        right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
+      }
+      break;
+    }
+    case 'propose_second':
+    case 'wait_or_jump':
+      right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       break;
     case 'local_hf_ref':
       left = obBtn('nav:back', busy ? 'Cancel' : 'Back', 'btn-g', false, busy ? '' : 'chevL');
@@ -8863,6 +8962,7 @@ function obCloudKey(input, key) {
 /* ---------------- effects ---------------- */
 
 function obOpenCloudWizard() {
+  OB_ATOMIC_CHAT.running = null;   // re-asked on this visit to the list
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
   WIZ.cur = 0; WIZ.q = null;
 }
@@ -9583,7 +9683,11 @@ function obKeydown(e) {
      straight out of the wizard into a toolbar nobody can click. */
   if (e.key === 'Tab') { obTabbed(e); return; }
   const target = e.target || {};
-  const inField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+  /* Calm (S6): only the flow's OWN fields keep their keys. The composer's
+     textarea behind the modal can still hold focus from boot, and it used
+     to swallow Enter and the 1–3 chords on the choose step. */
+  const inField = (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+    && !!(target.closest && target.closest('#onboarding'));
   if (OB.step === 'intro') {
     // "press any key", taken literally (use-intro-input.ts).
     e.preventDefault(); e.stopPropagation();
@@ -9731,16 +9835,32 @@ function obTabbed(e) {
  * sends the SAME Enter the keyboard sends, through the one key table, so
  * a click can never do something no key can.
  */
+/* Calm (S6) — select, then continue. Valerii's round-2 ruling for the
+   cloud model list (a click picks and ticks, a double click uses) now holds
+   on every step: a click moves the cursor onto the row and ticks it, and the
+   step's primary button — "Download 5.2 GB", "Continue" — or Enter, or a
+   double click, sends the SAME Enter through the one key table. So a click
+   still can never do something no key can; it just no longer starts a
+   multi-gigabyte download on its own. `clicks` is the gesture's
+   `event.detail`: the second click of a double click counts even though the
+   first one's repaint replaced the row. A `detail` of 0 is not a pointer
+   at all: it is Enter or Space on the focused row (the browser's own
+   activation), and that commits, as the key does everywhere else here.
+   Two rows keep one-click activation, because a click on them is the whole
+   answer: an import source is a checkbox (the click ticks it), and the
+   Hugging Face row is a way into its own step, not a model. */
 /** A click on a cloud-list row. Same rule, same key router. */
-function obWizRowClick(n) {
+function obWizRowClick(n, clicks) {
   const rows = obWizRows();
   if (!rows.length) return;
   WIZ.cur = n;
-  obKey('', {return:true});
+  if (!clicks || clicks >= 2) { obKey('', {return:true}); return; }
+  render();
 }
-function obRowClick(index) {
+function obRowClick(index, clicks) {
   if (OB.cursor !== index) obDispatch({type:'onboarding_cursor_set', cursor: index});
-  obKey('', {return:true});
+  const hfRow = OB.step === 'local_pick' && index >= obPickRows().filter((r) => r.kind === 'model').length;
+  if (OB.step === 'import_pick' || hfRow || !clicks || clicks >= 2) obKey('', {return:true});
 }
 /** A click on one of the flow's own controls, routed the same way. */
 function obControlClick(spec) {
@@ -9916,7 +10036,7 @@ document.addEventListener('paste', (e) => {
 document.addEventListener('click', (e) => {
   if (!OB.open) return;
   const row = e.target.closest && e.target.closest('[data-obrow]');
-  if (row) { obRowClick(+row.dataset.obrow); return; }
+  if (row) { obRowClick(+row.dataset.obrow, e.detail); return; }
   const ctl = e.target.closest && e.target.closest('[data-obact]');
   if (ctl) { obControlClick(ctl.dataset.obact); return; }
   /* F6 — a click on a model row selects it; the verb is on the action bar,
@@ -9931,7 +10051,7 @@ document.addEventListener('click', (e) => {
     render(); return;
   }
   const wr = e.target.closest && e.target.closest('[data-obwiz]');
-  if (wr) { obWizRowClick(+wr.dataset.obwiz); return; }
+  if (wr) { obWizRowClick(+wr.dataset.obwiz, e.detail); return; }
 });
 document.addEventListener('input', (e) => {
   if (!OB.open) return;
@@ -12586,7 +12706,7 @@ function wizardHTML() {
   return selShell(k.label,
     '<div class="selbody selwiz">' + fields
     + (verifying ? '<p class="ob-help">Asking the provider to answer once with this key\u2026</p>' : '')
-    + (WIZ.error ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '">' + esc(WIZ.error) + '</div>' : '')
+    + (WIZ.error ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
     + '</div>',
     unchecked
       ? '<button class="btn btn-g xs" data-act="wiz:back">Back</button><span class="grow"></span>'
@@ -12687,8 +12807,9 @@ async function wizNext() {
        agent's model index, and no help at all to someone who has just
        mistyped a key. Say what failed first, then quote the backend. */
     WIZ.error = listed && listed.error
-      ? 'Could not verify this key with ' + k.label.split(' (')[0] + ' — ' + listed.error
+      ? 'Could not check this key with ' + k.label.split(' (')[0] + '.'
       : k.label.split(' (')[0] + ' returned no models for this key.';
+    WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
     render();
     return;
   }
@@ -12712,7 +12833,14 @@ async function wizNext() {
   if (proof && proof.checked && !proof.ok) {
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
-    WIZ.error = proof.error || 'the provider would not accept this key';
+    /* Calm (S6, U14): a plain sentence; the provider's own words ("User not
+       found") are the Details under it. */
+    const service = k.label.split(' (')[0];
+    WIZ.error = proof.status === 402
+      ? service + ' accepted this key, but the account cannot pay for a request.'
+      : service + ' didn\u2019t accept this key. Check that you copied all of it.';
+    const said = String(proof.error || '').replace(/^the provider rejected this key:\s*/, '');
+    WIZ.errorDetail = said ? {for: WIZ.error, text: said} : null;
     render(); refreshLiveConfig();
     return;
   }
