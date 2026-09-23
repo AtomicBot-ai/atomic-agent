@@ -153,7 +153,10 @@ import {
   createLinkGeneratorRunner,
   createLinkAwareReflectionRunner,
 } from "../memory/links/index.js";
-import type { LinkGeneratorLlmComplete } from "../memory/links/index.js";
+import type {
+  LinkGeneratorLlmComplete,
+  LinkGeneratorTraceEvent,
+} from "../memory/links/index.js";
 import { NeighborEvolver } from "../memory/evolution/index.js";
 import {
   ConsolidatorJob,
@@ -2159,6 +2162,27 @@ export async function createAgentRuntime(
           : {}),
       }),
     );
+    // Per-session trace emission — same resolve-by-sessionId pattern
+    // as reflection / vote. Shared by the runner and the decorator:
+    // the decorator's hydration-failure bail-out returns before
+    // `generate()` is reached, so it is the only one that can report
+    // that outcome, and it must land in the same stream under the
+    // same event type or the trace still reads as "link-gen off".
+    const emitLinkGeneratorTrace = (event: LinkGeneratorTraceEvent) => {
+      touchRecorder(event.sessionId)?.recordLinkGenerator({
+        outcome: event.outcome,
+        ...(typeof event.linksWritten === "number"
+          ? { linksWritten: event.linksWritten }
+          : {}),
+        ...(event.reason ? { reason: event.reason } : {}),
+      });
+      memoryHealth.observe(
+        event.sessionId,
+        "link_generator",
+        event.outcome,
+        event.reason,
+      );
+    };
     const linkGenerator = createLinkGeneratorRunner({
       llmComplete: linkGenLlmComplete,
       linkStore,
@@ -2168,23 +2192,7 @@ export async function createAgentRuntime(
       minCandidates: config.memory.links.minCandidates,
       logger,
       metrics,
-      // Per-session trace emission — same resolve-by-sessionId
-      // pattern as reflection / vote.
-      emitTrace: (event) => {
-        touchRecorder(event.sessionId)?.recordLinkGenerator({
-          outcome: event.outcome,
-          ...(typeof event.linksWritten === "number"
-            ? { linksWritten: event.linksWritten }
-            : {}),
-          ...(event.reason ? { reason: event.reason } : {}),
-        });
-        memoryHealth.observe(
-          event.sessionId,
-          "link_generator",
-          event.outcome,
-          event.reason,
-        );
-      },
+      emitTrace: emitLinkGeneratorTrace,
     });
     reflectionRunner = createLinkAwareReflectionRunner({
       reflection: baseReflectionRunner,
@@ -2192,6 +2200,7 @@ export async function createAgentRuntime(
       notesStore,
       minCandidates: config.memory.links.minCandidates,
       logger,
+      emitTrace: emitLinkGeneratorTrace,
     });
   }
 
