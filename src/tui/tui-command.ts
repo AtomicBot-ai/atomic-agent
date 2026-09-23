@@ -227,8 +227,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
     handlers: {
       onAgentEvent: (event, sessionId) => bus.emitAgentEvent(event, sessionId),
       onApprovalRequest: (request) => bus.emitApproval(request),
-      onSkillRegistryChange: (entries) =>
-        bus.emit({ type: "skill_count_changed", count: entries.length }),
+      onSkillRegistryChange: (entries, dropped) =>
+        bus.emit({
+          type: "skill_count_changed",
+          count: entries.length,
+          dropped,
+        }),
       onChannelStatus: (status) => {
         // Telegram status flows through the panel orchestrator, which
         // both updates the panel slice and emits a runtime_info line
@@ -262,6 +266,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
     maxSteps: maxSteps ?? config.agent.maxSteps,
     completionMaxTokens: config.localModels.completionMaxTokens,
     skillCount: runtime.skillCatalog.length,
+    // The catalog is what the prompt got, not what is installed: a big
+    // enough install is cut at `skills.catalogTokenBudget` and the
+    // count alone then reads as the whole library (issue #466). Seeded
+    // here and kept live by `skill_count_changed`.
+    skillCountDropped: runtime.skillCatalogDropped,
     // Read after the startup gate, so a local model picked in the wizard
     // moments ago already counts as configured for this launch.
     localBackendConfigured: isLocalBackendConfigured(),

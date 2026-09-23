@@ -141,7 +141,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "skill_count_changed":
       return {
         ...state,
-        session: { ...state.session, skillCount: action.count },
+        session: {
+          ...state.session,
+          skillCount: action.count,
+          skillCountDropped: action.dropped,
+        },
       };
     case "approval_level_changed":
       return {
