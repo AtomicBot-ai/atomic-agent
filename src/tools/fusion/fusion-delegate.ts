@@ -168,7 +168,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Args: { tasks: [{ id, instructions, title?, deliverable?, files? }], maxWorkers?, contract? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. Args: { tasks: [{ id, instructions, title?, deliverable?, files? }], maxWorkers?, contract? }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {

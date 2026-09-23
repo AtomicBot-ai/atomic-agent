@@ -58,7 +58,33 @@ export interface ContractProvide {
   name: string;
   /** Where it must appear. Absent: any path the task owns (or declares). */
   in?: string;
+  /**
+   * What the thing IS, in one line: a signature, a return shape, a field
+   * meaning. Optional, and the only part of a provide that carries
+   * semantics rather than identity.
+   *
+   * It exists because matching names is not matching meaning. Two
+   * workers in one fan-out both implemented `PHYS.corners(b)` and both
+   * satisfied the name contract; the producer returned
+   * `{w: world point, o: local offset}` and the consumer projected `o`
+   * as if it were the world point, so every box drew at the origin while
+   * the shadows — read straight from `pos` — landed correctly. Nothing
+   * errored, the page loaded, and the automated checks were green.
+   *
+   * One line in the CONSUMER's brief is what closes that. Reading the
+   * producer's file instead costs a whole worker turn at 4 tok/s, which
+   * is the reason the briefs said "write first, no reading" in the first
+   * place.
+   */
+  shape?: string;
 }
+
+/**
+ * How long a `shape` may be. It is untrusted model text pasted into
+ * every consumer's brief, and a line is what it is for — a paragraph
+ * belongs in `instructions`.
+ */
+export const MAX_PROVIDE_SHAPE_CHARS = 200;
 
 export interface ContractRequire {
   /** The task that relies on it. */
@@ -106,7 +132,8 @@ const CHECK_RENDER_CHARS = 300;
 /** `symbol HD.Ship in js/ship.js` — the same phrase everywhere. */
 export function describeProvide(provide: ContractProvide): string {
   const where = provide.in === undefined ? "" : ` in ${provide.in}`;
-  return `${provide.kind} ${provide.name}${where}`;
+  const shape = provide.shape === undefined ? "" : ` — ${provide.shape}`;
+  return `${provide.kind} ${provide.name}${where}${shape}`;
 }
 
 /** Paths a task owns, in declaration order. */
@@ -283,10 +310,13 @@ export function renderContractForTask(
     .filter((r) => r.task === taskId)
     .flatMap((r) => {
       const source = (contract.provides ?? []).find((p) => p.name === r.name);
+      // The shape travels to the CONSUMER, which is the half that was
+      // missing: the producer knows what it returns, the consumer is the
+      // one that has to agree about it.
       return source === undefined
         ? []
         : [
-            `${r.name} (${source.kind} from ${source.task}${source.in === undefined ? "" : ` in ${source.in}`})`,
+            `${r.name} (${source.kind} from ${source.task}${source.in === undefined ? "" : ` in ${source.in}`})${source.shape === undefined ? "" : ` — ${source.shape}`}`,
           ];
     });
   return [

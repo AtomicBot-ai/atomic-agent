@@ -761,6 +761,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
                 },
                 name: stringSchema,
                 in: stringSchema,
+                // What it IS, in one line — a signature or return shape.
+                // Names match without meanings matching; this is the
+                // only part of a provide that carries semantics.
+                shape: stringSchema,
               },
               ["task", "kind", "name"],
             ),

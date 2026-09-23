@@ -52,6 +52,7 @@
 
 import {
   CONTRACT_PROVIDE_KINDS,
+  MAX_PROVIDE_SHAPE_CHARS,
   MAX_CONTRACT_CHECKS,
   MAX_CONTRACT_PROVIDES,
   MAX_CONTRACT_RENDERED_CHARS,
@@ -277,7 +278,7 @@ function readContract(
   if (value.provides !== undefined && value.provides !== null) {
     if (!Array.isArray(value.provides)) {
       problems.push(
-        "contract.provides must be an array of { task, kind, name, in? }",
+        "contract.provides must be an array of { task, kind, name, in?, shape? }",
       );
     } else if (value.provides.length > MAX_CONTRACT_PROVIDES) {
       problems.push(
@@ -315,6 +316,22 @@ function readContract(
         if (entry.in !== undefined && entry.in !== null && inPath === null) {
           problems.push(`${label}.in must be a non-empty path`);
         }
+        const rawShape =
+          entry.shape === undefined || entry.shape === null
+            ? null
+            : readString(entry.shape);
+        if (entry.shape !== undefined && entry.shape !== null && rawShape === null) {
+          problems.push(`${label}.shape must be a non-empty string`);
+        }
+        // Truncated, not refused: an over-long shape is a model being
+        // wordy about something real, and losing the whole call over it
+        // costs a regeneration. The first line is the signature anyway.
+        const shape =
+          rawShape === null
+            ? null
+            : rawShape.length > MAX_PROVIDE_SHAPE_CHARS
+              ? `${rawShape.slice(0, MAX_PROVIDE_SHAPE_CHARS - 1)}…`
+              : rawShape;
         if (problems.length > before || kind === null || name === null) {
           continue;
         }
@@ -323,6 +340,7 @@ function readContract(
           kind: kind as ContractProvideKind,
           name,
           ...(inPath === null ? {} : { in: inPath }),
+          ...(shape === null ? {} : { shape }),
         });
       }
       if (provides.length > 0) contract.provides = provides;
