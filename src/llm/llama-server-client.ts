@@ -596,8 +596,18 @@ export class LlamaServerClient {
         },
       );
     }
-    const { response, cleanup, timedOut, keepAlive, startStreamDeadline } =
-      opened;
+    const {
+      response,
+      controller,
+      cleanup,
+      timedOut,
+      keepAlive,
+      startStreamDeadline,
+    } = opened;
+    // Declared out here so the `finally` below can reach it on every exit,
+    // including the one where the body turned out to be missing and the
+    // `LlamaServerError` is thrown before any reader exists.
+    let reader: ReadableStreamDefaultReader<string> | null = null;
     let finalResult: CompletionResult = {
       content: "",
       reasoningContent: "",
@@ -621,9 +631,7 @@ export class LlamaServerClient {
           url,
         );
       }
-      const reader = response.body
-        .pipeThrough(new TextDecoderStream())
-        .getReader();
+      reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       // Headers are in, and the first token may still be minutes away: the
       // request can be queued behind busy slots with its prompt not yet
       // evaluated. The deadline has been the `first-token` one since the
@@ -686,6 +694,38 @@ export class LlamaServerClient {
     } catch (err) {
       throw this.wrapTransportError(err, url, timedOut());
     } finally {
+      // Release the transport, whatever ended this generator.
+      //
+      // A llama.cpp slot is freed when the *connection closes*, not when
+      // its client stops reading: a `/completion` stream left open but
+      // undrained keeps holding its slot, logs nothing server-side, and
+      // makes every later request queue behind it in silence — on an
+      // otherwise idle server, until this process exits. So a generator
+      // that is *abandoned* rather than driven to `done` has to tear the
+      // socket down itself. `cleanup()` cannot do it: it only clears the
+      // deadlines and detaches the external abort listener, which leaves
+      // the fetch alive with nobody reading it. An abandon reaches here
+      // when a consumer calls `.return()` — that resumes this function at
+      // its `yield` and runs exactly this block, no `catch` — or when an
+      // exception is thrown out of the loop that is consuming us.
+      //
+      // The abort path does not need this (the signal already killed the
+      // socket, which is why a cancelled generation shows a clean
+      // `slot release` server-side) and neither does normal completion,
+      // but both tolerate it: cancelling an already-closed body resolves
+      // as a no-op, aborting a fetch whose body has ended does nothing,
+      // and `finally` cannot rewrite the `finalResult` returned above.
+      // Nor can it wake the external signal — that listener only ever
+      // runs one way, the caller's signal into `controller`, and it is
+      // still attached here because `cleanup()` runs last.
+      //
+      // Deliberately not awaited: `.return()` awaits whatever this block
+      // awaits, and a cancel propagating into a socket that is about to
+      // be aborted must never hang the consumer trying to walk away.
+      // Nothing here helps a generator dropped without `.return()` — GC
+      // never runs `finally` — but every reachable exit is covered.
+      void reader?.cancel().catch(() => undefined);
+      if (!controller.signal.aborted) controller.abort();
       cleanup();
     }
   }

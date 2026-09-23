@@ -3360,41 +3360,63 @@ async function consumeStream(
     }
   };
   let finalResult: CompletionResult | null = null;
-  while (true) {
-    const next = await stream.next();
-    if (next.done) {
-      finalResult = next.value;
-      break;
+  // Whether this loop reached the generator's own `done`. A loop that
+  // did not has abandoned a LIVE stream, and an abandoned stream that is
+  // never closed is never released: `LlamaServerClient.completeStream`
+  // tears its socket down in a `finally`, and a `finally` only runs on a
+  // generator someone closes. A `for await` would call `.return()` for
+  // us on the way out; this hand-run loop has to do it itself, or the
+  // exception that ends it — a parser throw, an `onEvent` consumer
+  // throwing back at us — leaves a llama.cpp slot held by a request no
+  // log mentions and every later completion queues behind, for the life
+  // of the process. This is the one abandon site the release exists for.
+  let drained = false;
+  try {
+    while (true) {
+      const next = await stream.next();
+      if (next.done) {
+        finalResult = next.value;
+        break;
+      }
+      const chunk = next.value;
+      // Latch the serving link's transport off the first stamped chunk —
+      // it is constant for the whole stream (a live stream is never
+      // restarted on another link) and must be known before the parser is
+      // first used.
+      servedTransport ??= chunk.servedTransport;
+      // Channel A: dedicated `reasoning_content` deltas (QwQ, DeepSeek-R1
+      // with `--reasoning-format deepseek`). Bypass the grammar parser —
+      // these tokens never appear inside `<think>` or JSON, they come on a
+      // separate SSE field and are already decoded.
+      if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
+        channelAReasoning += chunk.reasoningDelta;
+        onEvent?.({
+          type: "reasoning_delta",
+          stepIndex,
+          text: chunk.reasoningDelta,
+        });
+      }
+      // Channel B: inline content (may contain `<think>...</think>` +
+      // grammar-constrained JSON). The stream parser splits this into
+      // reasoning / reply-text deltas for us.
+      if (chunk.delta.length > 0) {
+        accumulated += chunk.delta;
+        emitParseEvents(getParser().push(chunk.delta));
+      }
+      if (chunk.done) {
+        // Some servers close the iterator right after the done frame; keep
+        // draining until `next.done` so we do not leave the response reader
+        // hanging.
+      }
     }
-    const chunk = next.value;
-    // Latch the serving link's transport off the first stamped chunk —
-    // it is constant for the whole stream (a live stream is never
-    // restarted on another link) and must be known before the parser is
-    // first used.
-    servedTransport ??= chunk.servedTransport;
-    // Channel A: dedicated `reasoning_content` deltas (QwQ, DeepSeek-R1
-    // with `--reasoning-format deepseek`). Bypass the grammar parser —
-    // these tokens never appear inside `<think>` or JSON, they come on a
-    // separate SSE field and are already decoded.
-    if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
-      channelAReasoning += chunk.reasoningDelta;
-      onEvent?.({
-        type: "reasoning_delta",
-        stepIndex,
-        text: chunk.reasoningDelta,
-      });
-    }
-    // Channel B: inline content (may contain `<think>...</think>` +
-    // grammar-constrained JSON). The stream parser splits this into
-    // reasoning / reply-text deltas for us.
-    if (chunk.delta.length > 0) {
-      accumulated += chunk.delta;
-      emitParseEvents(getParser().push(chunk.delta));
-    }
-    if (chunk.done) {
-      // Some servers close the iterator right after the done frame; keep
-      // draining until `next.done` so we do not leave the response reader
-      // hanging.
+    drained = true;
+  } finally {
+    // Only on the abandon: a stream driven to `done` has closed itself.
+    // Swallowed and awaited-with-a-catch because we are already
+    // unwinding — the release must not replace the error that ended this
+    // loop with one of its own.
+    if (!drained) {
+      await stream.return(undefined as never).catch(() => undefined);
     }
   }
   emitParseEvents(getParser().end());
