@@ -10681,6 +10681,13 @@ async function chromeTest(
       if (/chrome lane ready/i.test(reply)) break;
       await wait(1000);
     }
+    /* The reply's words land with its delta frame and the turn ends with its
+       done frame 100-470 ms later (measured). Until then the row is a
+       streaming reply, which by design carries no actions, so sampling on the
+       words alone read an empty row about one run in four. The checks below
+       are about a FINISHED reply: wait for the turn to end. */
+    const settled = Date.now() + 15_000;
+    while (Date.now() < settled && (await js<boolean>("window.__busy()"))) await wait(100);
     litter = await js<string | null>("window.__agentSession()");
     check("item 4: the fixture turn answered", /chrome lane ready/i.test(reply), JSON.stringify(reply.slice(0, 80)));
 
