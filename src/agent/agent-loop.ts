@@ -497,6 +497,33 @@ const PROVIDER_WAIT_BASE_MS = 2_000;
  */
 const PROVIDER_WAIT_MAX_BACKOFF_MS = 30_000;
 
+/**
+ * Memory-v2 phase 2. Ceiling on the per-turn note allowlist handed to
+ * `reflect()` as `recalledMemoryIds`.
+ *
+ * The allowlist is the union of every note surfaced across the turn,
+ * so it grows once per step. It is rendered verbatim into the
+ * link-generator prompt (one `[id] body` row per candidate, and that
+ * prompt has no cap of its own) and hydrated again for the vote
+ * runner and the EVOLVE directives. Bounded only by
+ * `memory.notes.maxEntries`, a long task-mode turn (`task.maxSteps`
+ * defaults to 1000) could hand a multi-KB candidate block to a
+ * sub-call whose reported failure mode is already `timeout`.
+ *
+ * 32 is several recalls' worth — `memory.recallInjection.k` is 3 plus
+ * up to `maxExpanded: 12` graph-expanded ids per refresh — and still
+ * renders in ~4 KB at the prompt's 120-char preview. The most
+ * RECENTLY surfaced ids win: they describe where the turn actually
+ * went, and any turn short enough to fit keeps its turn-start recall
+ * (the shape issue #464 is about).
+ *
+ * Capping here rather than in the prompt builder keeps the prompt and
+ * the parser's anti-feedback-loop allowlist derived from the same
+ * list — the runner builds that allowlist from `input.candidates`, so
+ * the two can never drift.
+ */
+export const MAX_SURFACED_NOTE_ALLOWLIST = 32;
+
 /** Sleep that returns early when the operator aborts the turn. */
 async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   if (ms <= 0 || signal.aborted) return;
@@ -1290,6 +1317,19 @@ export class AgentLoop {
       }
     };
     recordSurfacedProcedures(state);
+    // Memory-v2 phase 2 — same accumulator again, this time for the
+    // freeform note ids that feed `recalledMemoryIds` below. Reading
+    // `state.recalledNotes` at reflection time instead was a silent
+    // no-op on every multi-step turn: by the last step the recall
+    // query has drifted into tool-output noise and returns nothing, so
+    // the link-generator was handed an empty allowlist and skipped.
+    const surfacedNoteIds = new Set<number>();
+    const recordSurfacedNotes = (s: SessionState): void => {
+      for (const n of s.recalledNotes ?? []) {
+        surfacedNoteIds.add(n.id);
+      }
+    };
+    recordSurfacedNotes(state);
     // One-shot notice injected into the NEXT step's prompt only. Cleared
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
@@ -1902,6 +1942,7 @@ export class AgentLoop {
         state = await refreshMemoryContext(this.deps, state, options);
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
+        recordSurfacedNotes(state);
       } catch (err) {
         requestDeadline.dispose();
         runError = err instanceof Error ? err : new Error(String(err));
@@ -2594,11 +2635,20 @@ export class AgentLoop {
               userMessage,
               assistantReply,
               // Memory-v2 phase 2. Surfaced ids for this turn — the
-              // allowlist for the link-generator sub-call. Empty /
-              // undefined when memory.notes is disabled OR no recall
-              // was performed.
-              ...(state.recalledNotes && state.recalledNotes.length > 0
-                ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
+              // allowlist for the link-generator sub-call, and for the
+              // EVOLVE directives inside reflection. Every note
+              // surfaced through any step, not just the last refresh's
+              // recall. Empty / undefined when memory.notes is
+              // disabled OR no recall was performed; capped at the
+              // most recently surfaced `MAX_SURFACED_NOTE_ALLOWLIST`
+              // so a long turn cannot grow the link-generator prompt
+              // without bound.
+              ...(surfacedNoteIds.size > 0
+                ? {
+                    recalledMemoryIds: Array.from(surfacedNoteIds).slice(
+                      -MAX_SURFACED_NOTE_ALLOWLIST,
+                    ),
+                  }
                 : {}),
               // Memory-v2 phase 7a. Allowlist for the vote-runner —
               // every lesson surfaced through any step of this turn,

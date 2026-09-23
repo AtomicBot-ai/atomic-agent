@@ -26,12 +26,19 @@ import type { LinkGeneratorRunner } from "./link-generator-runner.js";
  * intentional — both runners are fire-safe and write to independent
  * tables.
  *
- * The decorator skips link-gen when:
- *   - `recalledMemoryIds` is missing or shorter than the runner's
- *     `minCandidates` (already enforced inside the runner; the
- *     decorator short-circuits to avoid a needless DB read).
- *   - Hydrating ids into `{id, body}` yields fewer than
- *     `minCandidates` rows (e.g. recently evicted ids).
+ * Too-few-candidates is NOT decided here. The decorator used to
+ * `return` on both the id-count and the hydrated-row-count gates,
+ * which made a link-gen that never fires indistinguishable from one
+ * that is switched off. The runner's own `minCandidates` guard is the
+ * first statement of its `runOne` and emits a `skipped` trace + metric
+ * before any LLM call, so the decorator hands the (possibly short)
+ * candidate set over and lets that guard report. The one thing the
+ * decorator still short-circuits is the DB read: an id list shorter
+ * than `minCandidates` cannot hydrate into enough rows, so it is
+ * forwarded unhydrated.
+ *
+ * The decorator still bails out entirely when hydration throws — see
+ * the guard in `reflect` (logged, never silent).
  *
  * `abortPending` is forwarded to both runners.
  */
@@ -53,27 +60,27 @@ export function createLinkAwareReflectionRunner(args: {
         // ReflectionRunner is already fire-safe — defence in depth.
       }
       const ids = input.recalledMemoryIds ?? [];
-      if (ids.length < minCandidates) return;
       // Same shutdown race as the vote-aware decorator: `notesStore`
       // is a SQLite handle that runtime shutdown may close while this
       // fire-and-forget continuation is pending, and a closed
       // better-sqlite3 statement throws `TypeError`. `reflect()` must
       // stay fire-safe for the agent loop's bare `void` call.
       const candidates: { id: number; body: string }[] = [];
-      try {
-        for (const id of ids) {
-          const entry = args.notesStore.get(id);
-          if (!entry) continue;
-          candidates.push({ id: entry.id, body: entry.content });
+      if (ids.length >= minCandidates) {
+        try {
+          for (const id of ids) {
+            const entry = args.notesStore.get(id);
+            if (!entry) continue;
+            candidates.push({ id: entry.id, body: entry.content });
+          }
+        } catch (err) {
+          args.logger?.warn("link candidate hydration failed", {
+            sessionId: input.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return;
         }
-      } catch (err) {
-        args.logger?.warn("link candidate hydration failed", {
-          sessionId: input.sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return;
       }
-      if (candidates.length < minCandidates) return;
       try {
         await args.linkGenerator.generate({
           sessionId: input.sessionId,
