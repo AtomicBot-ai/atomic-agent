@@ -185,7 +185,8 @@ async function pickCloudModel(modelId) {
   await app.waitFor(
     `[...document.querySelectorAll('[data-llm-row]')].some((n) => (n.dataset.llmRow || '').includes(${JSON.stringify(modelId)}))`,
     { timeoutMs: 60000, label: `the row for ${modelId} arrives` });
-  await app.clickText(`use openrouter/${modelId}`, { settleMs: 2500 });
+  // Calm (S5): the row says "Use" (its tooltip keeps the TUI's "Enter: use openrouter/…"), so it is clicked by its hook.
+  await app.clickSel(`[data-llm-row="cloud-text:openrouter:${modelId}"]`, { settleMs: 2500 });
   await app.waitFor(
     `[...document.querySelectorAll('.cfoot .cchip')].some((n) => n.dataset.id === ${JSON.stringify(modelId)})`,
     { timeoutMs: 90000, label: `the model chip follows the pick of ${modelId}` });
@@ -375,17 +376,18 @@ try {
      what Enter does on it. Read per row, so a chip on the wrong row fails. */
   const providerRow = (id) => `(() => { const r = document.querySelector('#settings [data-llm-row="cloud-provider:${id}"]'); if (!r) return null;`
     + ` const chip = r.querySelector('.t .tk-chip');`
-    + ` return {id: ((r.querySelector('.t .llm-id') || {}).textContent || '').trim(), auth: chip ? chip.textContent.trim() : '', effect: ((r.querySelector('.llm-effect') || {}).textContent || '').trim()}; })()`;
-  const keyOk = (id) => `((row) => !!row && row.id === '${id}' && row.auth === 'key ok')(${providerRow(id)})`;
+    + ` return {id: (r.dataset.llmRow || '').slice('cloud-provider:'.length), auth: chip ? chip.textContent.trim() : '', effect: ((r.querySelector('.llm-effect') || {}).textContent || '').trim()}; })()`;
+  // Calm (S5): the key chip and the action pill speak words ("Key saved", "Use" / "In use").
+  const keyOk = (id) => `((row) => !!row && row.id === '${id}' && row.auth === 'Key saved')(${providerRow(id)})`;
   check('both providers are listed with a resolved key',
     await app.js(`${keyOk('openrouter')} && ${keyOk('aimlapi')}`));
-  await app.clickText('switch cloud route to openrouter', { settleMs: 2000 });
+  await app.clickSel('[data-llm-row="cloud-provider:openrouter"]', { settleMs: 2000 });
   await app.waitFor(`[...document.querySelectorAll('.cfoot .cchip')].some((n) => n.dataset.id === 'openrouter')`,
     { timeoutMs: 90000, label: 'the route moves to openrouter' });
   /* The pane repaints from the live config a beat after the route moves,
      so this waits for the row to say it rather than sampling once. */
   const settingsAgrees = await app.waitFor(
-    `((row) => !!row && row.id === 'openrouter' && row.auth === 'key ok' && row.effect === 'Current provider: openrouter')(${providerRow('openrouter')})`,
+    `((row) => !!row && row.id === 'openrouter' && row.auth === 'Key saved' && row.effect === 'In use')(${providerRow('openrouter')})`,
     { timeoutMs: 30000, label: 'Settings names openrouter as current' }).catch(() => false);
   check('Settings agrees the current provider is openrouter', settingsAgrees,
     JSON.stringify(await app.js(providerRow('openrouter'))));

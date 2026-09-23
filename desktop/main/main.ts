@@ -4709,12 +4709,13 @@ async function hfAndDeltaTest(
   await js<Hf>("window.__llmOpen('local')");
   const localBody0 = await js<string>("window.__settingsBody()");
   const rowLive = await js<boolean>(
-    "[...document.querySelectorAll('#settings button')].some((b) => b.textContent === 'a add from hugging face' && !b.disabled)",
+    "[...document.querySelectorAll('#settings button[data-act=\"llm:hf\"]')].some((b) => b.textContent.trim() === 'Add from Hugging Face' && !b.disabled)",
   );
+  // Calm (S5): the hint row's "a add from hugging face" left; the section's own button is the mouse route (the `a` key still works).
   check(
-    "llm tab: the Hugging Face row is live and the Local pane signposts Ollama",
-    rowLive && localBody0.includes("a add from hugging face")
-      && localBody0.includes("Ollama is not a download source on this agent")
+    "llm tab: the Hugging Face button is live and the Local pane signposts Ollama",
+    rowLive && localBody0.includes("Add from Hugging Face")
+      && localBody0.includes("Nothing here downloads from Ollama")
       && localBody0.includes("Ollama (local)") && localBody0.includes("http://localhost:11434"),
     `row enabled=${rowLive}`,
   );
@@ -5744,23 +5745,30 @@ async function settingsTestPartC(
         : `${vendored.length} curated ids, all with a description and both RAM figures`,
     );
   }
-  /* What the pane draws for the TUI's lines: the mode strip's four buttons
-     (Local pressed), the route card's label · value rows, and the status
-     chip on every local model row (downloaded / remote). */
-  const localView = await js<{ modes: string[]; on: string[]; kv: Array<[string, string]>; chips: string[] }>(
-    "(() => { const box = document.querySelector('#settings .setbody'); if (!box) return {modes: [], on: [], kv: [], chips: []};"
+  /* What the pane draws (Calm S5): the pane switch's three words (Local
+     pressed), the route card's label · value rows inside Advanced (opened
+     here to read them), and each local model row's action pill in words —
+     "Download 5.3 GB" for a remote model, "Use" / "In use" / "Start" for a
+     downloaded one — with the TUI's sentence as the pill's tooltip. */
+  const localView = await js<{ modes: string[]; on: string[]; kv: Array<[string, string]>; effects: Array<[string, string, boolean]> }>(
+    "(() => { const box = document.querySelector('#settings .setbody'); if (!box) return {modes: [], on: [], kv: [], effects: []};"
+    + " const adv = box.querySelector('.llm-adv'); if (adv) adv.open = true;"
     + " const kv = [...box.querySelectorAll('.llm-route .llm-kv')].map((row) => { const k = ((row.querySelector('.llm-k') || {}).innerText || '').trim();"
     + " const all = (row.innerText || '').replace(/\\s+/g, ' ').trim(); return [k, all.startsWith(k) ? all.slice(k.length).trim() : all]; });"
     + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
-    + " chips: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"] .t .tk-chip, [data-llm-row^=\"local-embedding:\"] .t .tk-chip')].map((c) => c.textContent.trim())}; })()",
+    + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Active chat route", "Press ←/→ to switch mode", "Local text models", "Local embeddings", "j/k move", "Enter selected action", "a add from hugging face", "s start/stop", "r refresh", "Enter: download"];
+  const localCopy = ["Chats run on", "Models on this Mac", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Local", "Cloud", "External llama.cpp", "Fallback"]) || !same(localView.on, ["Local"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  if (!same(localView.modes, ["Local", "Cloud", "Custom server"]) || !same(localView.on, ["Local"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
-  for (const chip of ["downloaded", "remote"]) if (!localView.chips.includes(chip)) localMissing.push(`${chip} chip`);
-  const chipTally = `${localView.chips.filter((c) => c === "downloaded").length} downloaded · ${localView.chips.filter((c) => c === "remote").length} remote`;
-  check("llm tab: route card, mode strip and the Local pane carry the TUI copy", localMissing.length === 0, localMissing.length ? `missing ${JSON.stringify(localMissing)} (row chips: ${chipTally})` : `status line ${JSON.stringify(local.statusLine)} · row chips: ${chipTally}`);
+  // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
+  const badPills = localView.effects.filter(([label, title, remote]) => remote
+    ? !(/^Download( \d|$)/.test(label) || label === "Downloading…") || !(title === "Enter: download" || title === "Downloading…")
+    : !["Use", "In use", "Start"].includes(label));
+  if (localView.effects.length === 0 || badPills.length) localMissing.push(`row pills ${JSON.stringify(badPills.length ? badPills : localView.effects)}`);
+  const pillTally = `${localView.effects.filter(([, , r]) => r).length} to download · ${localView.effects.filter(([, , r]) => !r).length} downloaded`;
+  check("llm tab: route card, pane switch and the Local pane carry the copy", localMissing.length === 0, localMissing.length ? `missing ${JSON.stringify(localMissing)} (rows: ${pillTally})` : `status line ${JSON.stringify(local.statusLine)} · rows: ${pillTally}`);
   const cfgAfter = JSON.stringify((await configGet()).config);
   check("llm tab: opening the tab writes no config", cfgBefore === cfgAfter, cfgBefore === cfgAfter ? "" : "config.json changed");
   // The route card's daemon line and current model follow `atag models status` and the user file.
@@ -5788,36 +5796,42 @@ async function settingsTestPartC(
   // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all.
   const keylessLocal = (p: Provider) => p.kind === "openai-compatible" && (["atomic-chat", "lmstudio", "ollama"].includes(p.id) || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(p.baseUrl ?? ""));
   const expectKey = (p: Provider) => realKey(p) || keylessLocal(p);
-  // Each provider row as drawn: the id, the kind (shown only when it differs from the id), the key chip, and what Enter does.
-  const cloudRows = await js<Array<{ row: string; id: string; kind: string | null; auth: string; effect: string }>>(
-    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"cloud-provider:\"]')].map((r) => { const kind = r.querySelector('.t .llm-kind'); const chip = r.querySelector('.t .tk-chip');"
-    + " return {row: r.dataset.llmRow, id: ((r.querySelector('.t .llm-id') || {}).textContent || '').trim(), kind: kind ? kind.textContent.trim() : null,"
-    + " auth: chip ? chip.textContent.trim() : '', effect: ((r.querySelector('.llm-effect') || {}).textContent || '').trim()}; })",
+  // Each provider row as drawn (Calm S5): the preset's name, the id in mono only when the name differs, the key chip in words,
+  // the action pill in words, and the TUI's sentence for what Enter does as that pill's tooltip.
+  const cloudRows = await js<Array<{ row: string; name: string; id: string | null; auth: string; effect: string; title: string }>>(
+    "[...document.querySelectorAll('#settings .setbody [data-llm-row^=\"cloud-provider:\"]')].map((r) => { const id = r.querySelector('.t .llm-id'); const chip = r.querySelector('.t .tk-chip'); const e = r.querySelector('.llm-effect');"
+    + " return {row: r.dataset.llmRow, name: ((r.querySelector('.t .llm-name') || {}).textContent || '').trim(), id: id ? id.textContent.trim() : null,"
+    + " auth: chip ? chip.textContent.trim() : '', effect: e ? e.textContent.trim() : '', title: e ? e.title : ''}; })",
   );
+  const AUTH_WORD: Record<string, string> = { "key ok": "Key saved", "missing key": "No key", "no key needed": "No key needed", "cli auth": "Signed in with its CLI" };
   const providersOk = cloud.providers.length === cloudProviders.length && cloudRows.length === cloudProviders.length && cloudProviders.every((p) => {
     const row = cloud.providers.find((r) => r.id === p.id);
     const auth = p.kind === "subscription-cli" ? "cli auth" : realKey(p) ? "key ok" : keylessLocal(p) ? "no key needed" : "missing key";
     const drawn = cloudRows.find((r) => r.row === `cloud-provider:${p.id}`);
-    return !!row && row.hasKey === expectKey(p) && !!drawn && drawn.id === p.id && drawn.kind === (p.kind === p.id ? null : p.kind) && drawn.auth === auth
-      && drawn.effect === (p.id === activeText ? `Current provider: ${p.id}` : expectKey(p) ? `Enter: switch cloud route to ${p.id}` : `Enter: configure API key for ${p.id}`);
+    return !!row && row.hasKey === expectKey(p) && !!drawn && drawn.name.length > 0 && (drawn.id === null ? drawn.name === p.id : drawn.id === p.id) && drawn.auth === AUTH_WORD[auth]
+      && drawn.effect === (p.id === activeText ? "In use" : expectKey(p) ? "Use" : "Add key")
+      && drawn.title === (p.id === activeText ? `Current provider: ${p.id}` : expectKey(p) ? `Enter: switch cloud route to ${p.id}` : `Enter: configure API key for ${p.id}`);
   });
-  // The model filter is a search box; the price facet is inert and says why.
+  // The model filter is a search box, drawn with the provider's model list (Calm S5: the inert price facet is gone).
   const filterBox = await js<boolean>("(() => { const i = document.querySelector('#settings .setbody .llm-filter #llm-filter'); return !!i && i.getClientRects().length > 0 && !i.disabled; })()");
-  const cloudCopy = ["Cloud providers", "Cloud text models", "provider: ", "price: all", "pricing is not exposed", "Cloud embeddings", "n add provider", "c configure", "f filter"];
+  const cloudCopy = ["Cloud providers", "Add provider"].concat(cloudProviders.length ? ["Models on "] : []);
   const cloudMissing: string[] = cloudCopy.filter((c) => !cloudBody.includes(c));
-  if (!filterBox) cloudMissing.push("the model filter box");
+  if (cloudProviders.length && !filterBox) cloudMissing.push("the model filter box");
   check(
     "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
-    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers configured. Press n to add one.")),
+    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
     `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
   );
   const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
   const modelsBody = await js<string>("window.__settingsBody()");
   const paintedModels = await js<number>("document.querySelectorAll('#settings [data-llm-row^=\"cloud-text:\"]').length");
-  const counter = models.section.filtered === 0 ? "no match" : `1/${models.section.filtered}`;
+  // Calm (S5): the window says how much of the list it shows, in words, only when it is not all of it.
+  const counterOk = !models.section.provider ? true
+    : models.section.filtered === 0 ? modelsBody.includes("No model matches.")
+    : models.section.filtered > 12 ? modelsBody.includes(`Showing 1–12 of ${models.section.filtered}`) : !modelsBody.includes("Showing 1–");
   check(
     "llm tab: Cloud text models is the provider's atag models search list windowed to 12 rows",
-    models.section.status === "ready" && paintedModels === Math.min(12, models.section.filtered) && modelsBody.includes(`↑/↓ move (${counter}`) && (cloudProviders.length === 0 || models.section.models > 0),
+    models.section.status === "ready" && paintedModels === Math.min(12, models.section.filtered) && counterOk && (cloudProviders.length === 0 || models.section.models > 0),
     `provider ${models.section.provider ?? "none"}: ${models.section.models} models, ${paintedModels} painted, status ${models.section.status}${models.modelsErr ? " err=" + models.modelsErr : ""}`,
   );
 
@@ -5826,15 +5840,17 @@ async function settingsTestPartC(
   const extBody = await js<string>("window.__settingsBody()");
   const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:8080";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
-  // The row as drawn: the "base URL" label, the URL, and its status chip.
-  const extRow = await js<{ label: string; url: string; status: string } | null>(
-    "(() => { const r = document.querySelector('#settings .setbody [data-llm-row=\"external-url\"]'); if (!r) return null;"
-    + " return {label: ((r.querySelector('.llm-k2') || {}).textContent || '').trim(), url: ((r.querySelector('.llm-id') || {}).textContent || '').trim(), status: ((r.querySelector('.t .tk-chip') || {}).textContent || '').trim()}; })()",
+  // The row as drawn: the "Server address" label, the URL, its status chip, and the action pill (the TUI's sentence as its tooltip).
+  const extRow = await js<{ label: string; url: string; status: string; effect: string; title: string } | null>(
+    "(() => { const r = document.querySelector('#settings .setbody [data-llm-row=\"external-url\"]'); if (!r) return null; const e = r.querySelector('.llm-effect');"
+    + " return {label: ((r.querySelector('.llm-k2') || {}).textContent || '').trim(), url: ((r.querySelector('.llm-id') || {}).textContent || '').trim(), status: ((r.querySelector('.t .tk-chip') || {}).textContent || '').trim(),"
+    + " effect: e ? e.textContent.trim() : '', title: e ? e.title : ''}; })()",
   );
   check(
-    "llm tab: External pane is the one base-URL row with the two hint lines",
-    ext.rows === 1 && !!extRow && extRow.label === "base URL" && extRow.url === extUrl && (extActive || extRow.status === "not active") && extBody.includes("managed daemon: ") && extBody.includes("s start/stop")
-      && extBody.includes("← Local pane: pick a managed model to switch back") && extBody.includes(extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
+    "llm tab: Custom server pane is the one server-address row and the way back to Local",
+    ext.rows === 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
+      && extBody.includes("Custom llama.cpp server") && extBody.includes("pick one under Local")
+      && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
     `${ext.rows} row(s), active=${extActive}, drawn ${JSON.stringify(extRow)}`,
   );
   const cfgBeforeProbe = JSON.stringify((await configGet()).config);
@@ -5897,9 +5913,10 @@ async function settingsTestPartC(
   );
   const fbDrawn = fbRows.length === expectedChain.length && fbRows.every((r, i) => r.idx === String(i + 1) && (r.id === expectedChain[i] || r.id.startsWith(`${expectedChain[i]}/`)));
   check(
-    "llm tab: Fallback pane shows the resolver's effective chain and the honest status line",
-    same(fbLinks, expectedChain) && fb.fallback.links[0]?.isActive === true && fbBody.includes("status: fallover events are not exposed by the agent's HTTP API") && fbBody.includes("Fallback chain")
-      && fbDrawn && fbBody.includes("active (primary)") && fbBody.includes(`append local as last resort: ${appendLocal ? "on" : "off"}`) && fbBody.includes("l to toggle") && fbBody.includes("< > reorder"),
+    "llm tab: Fallback pane shows the resolver's effective chain",
+    // Calm (S5): the chain in words — Primary / Fallback / Last resort, "Use this Mac as the last resort" with its On/Off.
+    same(fbLinks, expectedChain) && fb.fallback.links[0]?.isActive === true && fbBody.includes("Fallback chain")
+      && fbDrawn && fbBody.includes("Primary") && fbBody.includes("Use this Mac as the last resort") && fbBody.includes(appendLocal ? "On" : "Off"),
     `${JSON.stringify(fbLinks)} vs ${JSON.stringify(expectedChain)} appendLocal=${appendLocal}${fbDrawn ? "" : " drawn " + JSON.stringify(fbRows)}`,
   );
   const llmBefore = cfg0.llm;
@@ -5926,12 +5943,13 @@ async function settingsTestPartC(
   type TgState = { hasToken: boolean | null; enabled: boolean | null; owner: unknown; mode: string; message: string; restart: boolean; lastError: string | null; keysKnown: boolean; dotenvKeys: string[] };
   const tg = await until(() => js<TgState>("window.__telegram()"), (t) => t.keysKnown, 10_000);
   const tgBody = await js<string>("window.__settingsBody()");
-  // The nav row: Telegram is the pressed tab, and it carries no count badge.
-  const tgLabel = await js<{ act: string; label: string; count: boolean }>(
-    "(() => { const b = document.querySelector('#settings .settab.on'); if (!b) return {act: '', label: '', count: false};"
-    + " return {act: b.dataset.act || '', label: ((b.querySelector('.lb') || {}).textContent || '').trim(), count: !!b.querySelector('.setcount')}; })()",
+  // Calm (S5): the lit nav row is Connections, with no count badge, and its pane switch has Telegram pressed.
+  const tgLabel = await js<{ act: string; label: string; count: boolean; sub: string }>(
+    "(() => { const b = document.querySelector('#settings .settab.on'); if (!b) return {act: '', label: '', count: false, sub: ''};"
+    + " const sub = document.querySelector('#settings .set-subseg button.on');"
+    + " return {act: b.dataset.act || '', label: ((b.querySelector('.lb') || {}).textContent || '').trim(), count: !!b.querySelector('.setcount'), sub: sub ? sub.textContent.trim() : ''}; })()",
   );
-  const tgPlain = tgLabel.act === "settings:telegram" && tgLabel.label === "Telegram" && !tgLabel.count;
+  const tgPlain = tgLabel.act === "settings:connections" && tgLabel.label === "Connections" && !tgLabel.count && tgLabel.sub === "Telegram";
   const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
   const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
   if (!envHas && !dotenvHas) {

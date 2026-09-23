@@ -267,7 +267,7 @@ try {
     say('--- Settings › LLM › Local on the same simulated 8 GB machine ---');
     say(`  ${ramLine.trim()}`);
     for (const r of rows) { say(`   ${r[0]}`); for (const l of r.slice(1)) say(`       ${l}`); }
-    check('the Local pane names the machine it is ranking for', /reports 8 GB of RAM/.test(ramLine), ramLine.trim());
+    check('the Local pane names the machine it is ranking for', /8 GB of memory/.test(ramLine), ramLine.trim());
     check('the Local pane is ordered best fit first, and marks it',
       rows.length > 0 && /★ best fit for this machine/.test(rows[0][0]) && /gemma-4-e4b/.test(rows[0][0]),
       rows.length ? rows[0][0] : 'no rows');

@@ -796,6 +796,8 @@ const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP server
                        ['tasks','Tasks'],['skills','Skills'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
+/* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
+const SETDET = {};
 const SETTINGS_LAST = { section: (() => { try { const v = localStorage.getItem('atag.settingsSection'); return typeof v === 'string' ? v : null; } catch (e) { return null; } })() };
 /* Settings shell state: the diagnostics line's tool counters, read from
    the open session's tool_result rows (GET /api/sessions/{id}). */
@@ -1090,7 +1092,7 @@ const HF_MMPROJ_LINE = '   vision projector in this repo — it is pulled alongs
 const HF_ROW_LABEL = 'Add a model from Hugging Face…';  // onboarding/local-model-picks.ts HUGGING_FACE_ROW_LABEL
 /* Authored here — the TUI has no counterpart, because the TUI's Local
    pane never has to explain why Ollama is not in it. */
-const OLLAMA_SIGNPOST = 'Ollama (local) is a provider here: add the running server under Cloud › n add provider › Ollama (local), http://localhost:11434. Ollama is not a download source on this agent — nothing on this pane downloads from it.';
+const OLLAMA_SIGNPOST = 'Using Ollama? Add it under Cloud as a provider: Ollama (local), http://localhost:11434. Nothing here downloads from Ollama.';
 
 /* ---- Item 7C: what v0.5.5 answers that the desktop was projecting ----
    `stored` is GET /api/sessions/{id}.contextUsage verbatim — the whole
@@ -4713,6 +4715,9 @@ document.addEventListener('click', (e) => {
   /* Calm (S4): the approval card's Details is a native <details>; the click
      lands before it toggles, so the new state is the opposite of `open`. It
      is kept on the request so a repaint while the card waits keeps it. */
+  // Calm (S5): a Settings disclosure (Models › Advanced) — same rule, kept by name.
+  const sdet = t.closest('[data-setdet]');
+  if (sdet && sdet.parentElement) { SETDET[sdet.dataset.setdet] = !sdet.parentElement.open; return; }
   const adet = t.closest('[data-apprdet]');
   if (adet) { const m = S.log.find((x) => x.id === adet.dataset.apprdet); if (m && adet.parentElement) m.open = !adet.parentElement.open; return; }
   const tg = t.closest('[data-toggle]');
@@ -16267,8 +16272,9 @@ function llmTab() {
   return '<div class="llm-pane has-modal"><div class="llm-modal-layer">' + modal + '</div>'
     + '<div class="llm-behind" inert aria-hidden="true">' + body + '</div></div>';
 }
-/* The panel under the toolbar, top to bottom as SET-LLM-00 lists it:
-   banners, the message, the route card, run mode, the pane, its keys. */
+/* The panel under the toolbar, top to bottom (Calm S5): the pane switch,
+   notices, where chats run, the pane itself, and Advanced (the route's
+   internals and the local server's knobs) behind a disclosure. */
 function llmPanelHTML() {
   const mode = LLMP.mode;
   const status = llmStatusLine();
@@ -16277,14 +16283,13 @@ function llmPanelHTML() {
     // External reports its probe under its own row (ST-24); the other panes report at the top.
     + (mode !== 'external' ? llmStatusNoteHTML(status, tone) : '')
     + (LLMP.daemonPhase === 'starting'
-      ? '<div class="tk-notice tk-notice--blue llm-start"><span class="tk-spin"></span><span class="grow"><b>Model is starting — please stand by</b>'
-        + '<span class="llm-note">Loading the model into llama-server. Inputs are paused until it is ready.</span></span></div>' : '')
+      ? '<div class="tk-notice tk-notice--blue llm-start"><span class="tk-spin"></span><span class="grow"><b>The model is starting</b>'
+        + '<span class="llm-note">Loading it into memory. Chats wait until it is ready.</span></span></div>' : '')
     + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
     + (LLMP.msg ? (LLMP.msg.restart ? restartLine(LLMP.msg.text) : llmMsgHTML(LLMP.msg.text)) : '')
-    + llmRouteCardHTML()
     + llmRunModeHTML()
     + (mode === 'fallback' ? llmFallbackHTML() : mode === 'cloud' ? llmCloudHTML() : mode === 'external' ? llmExternalHTML() : llmLocalHTML())
-    + llmFooterHint(mode);
+    + llmAdvancedHTML(mode);
 }
 /* How loud the status line is on screen. The sentence is llmStatusLine's,
    unchanged: a quiet readout in the toolbar while nothing is wrong or while
@@ -16300,22 +16305,23 @@ function llmStatusTone(line) {
   if (/^local-llm URL saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
   return 'err';
 }
-/* The pane toolbar (ST-20…25): the four panes as a segmented control, the
-   status readout, refresh and the daemon log. Drivers read
-   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
+/* Calm (S5): the pane switch is three words — Local · Cloud · Custom server
+   (the External llama.cpp pane). Fallback is reached from the Cloud pane and
+   keeps Cloud lit. Drivers read `#settings .llmmode.on` and click
+   `[data-act="llm:mode:cloud"]`. A busy readout only while something is on
+   its way; "ready" is not news. */
+const LLM_BAR_MODES = [['local', 'Local'], ['cloud', 'Cloud'], ['external', 'Custom server']];
 function llmBarHTML(mode, status, tone) {
+  const lit = mode === 'fallback' ? 'cloud' : mode;
   return '<div class="tk-bar llm-bar">'
     + '<div class="llm-modehead">'
-      + '<span class="tk-seg llm-seg" role="tablist" aria-label="LLM panes">'
-      + LLM_PANEL_MODES.map((m) => '<button class="llmmode' + (m === mode ? ' on' : '') + '" role="tab" aria-selected="' + (m === mode) + '" data-act="llm:mode:' + m + '">'
-        + esc(LLM_MODE_LABELS[m]) + '</button>').join('')
+      + '<span class="tk-seg llm-seg" role="tablist" aria-label="Models">'
+      + LLM_BAR_MODES.map(([m, label]) => '<button class="llmmode' + (m === lit ? ' on' : '') + '" role="tab" aria-selected="' + (m === lit) + '" data-act="llm:mode:' + m + '">'
+        + esc(label) + '</button>').join('')
       + '</span></div>'
-    + (tone === 'ready' || tone === 'busy'
-      ? '<span class="llm-status is-' + tone + '">' + (tone === 'busy' ? '<span class="tk-spin"></span>' : '<span class="tk-dot tk-dot--hollow"></span>')
-        + '<span>' + esc(status) + '</span></span>' : '')
+    + (tone === 'busy' ? '<span class="llm-status is-busy"><span class="tk-spin"></span><span>' + esc(status) + '</span></span>' : '')
     + '<span class="grow"></span>'
     + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
-    + '<button class="btn btn-s sm" data-act="llm:logs" title="llama-server log (L)">' + ic('log') + 'LLM logs</button>'
     + '</div>';
 }
 function llmMsgHTML(text) {
@@ -16327,50 +16333,59 @@ function llmProviderMark(p, size) {
   if (!p) return providerMark('', size);
   return providerMark(providerLogoKey(p.id) ? p.id : (p.kind || p.id), size);
 }
-/* A keyboard hint that is also a button, whose text reads "s start/stop"
-   whole (inline-block, so the keycap does not split it into lines). */
-function llmKeyBtn(key, rest, act) {
-  return '<button class="tk-hint llm-kb" data-act="' + esc(act) + '"><span class="kc">' + esc(key) + '</span> ' + esc(rest) + '</button>';
+/* A local catalogue model's human name ("Gemma 4 E4B"), else its id. */
+function llmModelName(m) {
+  return m && m.name ? m.name.replace(/\s+(?:QAT\s+)?GGUF$/i, '') : modelWord(m ? m.id : '');
 }
-/* llm-panel.tsx RouteCard. `current:` is the provider's chat model; for the local route the TUI shows the daemon's /props model —
-   the desktop has no /props, so `atag models status` "active model:" stands in, then localModels.managed.modelId (the critique's fallback). */
-/* The run mode — the one thing the TUI had here that this window did not.
-   Three modes, and `fusion` is the interesting one: a cloud model
-   orchestrating several llama-server workers. It is ordinary config
-   (`llm.runMode`), additive to the active provider, so it sits above the
-   route card rather than replacing it — the route still says who answers. */
+/* Where chats run (Calm S5). The three run modes stay the one write path
+   they were — act 'runmode:*' → the composer's own switch — drawn as three
+   quiet choices, with the answer under them in plain words: which model,
+   on which provider, and whether it is ready. The resolved `/runmode status`
+   line only when Fusion is stored or in effect (it is the only case where
+   the stored and the effective mode can disagree); the worker count only
+   under Fusion. */
 function llmRunModeHTML() {
   /* The EFFECTIVE mode, resolved as the agent resolves it (rmResolve): a
      stored `fusion` whose orchestrator is no longer the active provider is not
-     Fusion, and the Active chip must not say it is. The cards and the count run
-     the composer's own switch (act 'runmode:*' → selChooseBackend /
-     selChooseFusion / fzSetWorkers) — one write path for both surfaces. */
+     Fusion, and it must not be drawn as the active choice. */
   const rm = rmNow();
   const mode = rm.effective;
   const blocker = BSW.readyLoaded ? fzBlocker() : null;
   const MODES = [
-    ['local', 'Local', 'everything runs on this Mac', 'laptop'],
-    ['cloud', 'Cloud', 'everything runs on the provider', 'cloud'],
-    ['fusion', 'Fusion', blocker && mode !== 'fusion' ? blocker : 'a cloud model plans, local workers do the work', 'fusion'],
+    ['local', 'This Mac', 'Everything runs on this Mac', 'laptop'],
+    ['cloud', 'Cloud', 'Everything runs on the provider', 'cloud'],
+    ['fusion', 'Fusion', blocker && mode !== 'fusion' ? blocker : 'A cloud model plans, local workers do the work', 'fusion'],
   ];
-  // ST-20 / ST-22: three selectable cards, the worker count as a segmented choice.
-  return '<section class="llm-section llm-runmode"><div class="tk-sh llm-sh"><span class="llm-sh-t">Run mode</span></div>'
-    + '<div class="llm-rm-grid">'
+  const fusionShown = mode === 'fusion' || rm.stored === 'fusion';
+  return '<section class="llm-section llm-runmode"><div class="llm-rm-row">'
+    + '<span class="llm-rm-t0">Chats run on</span>'
+    + '<span class="llm-rm-grid" role="group" aria-label="Chats run on">'
     + MODES.map(([id, label, why, icon]) => {
         const on = id === mode;
         const blocked = id === 'fusion' && !on && !!blocker;
-        return '<button class="llm-rm' + (on ? ' on' : '') + (blocked ? ' blocked' : '') + '" data-act="runmode:' + id + '" aria-pressed="' + on + '">'
-          + '<span class="tk-ico tk-ico--sm' + (on ? ' tk-ico--brand' : '') + '">' + ic(icon) + '</span>'
-          + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span><span class="llm-rm-d">' + esc(why) + '</span></span>'
-          + (on ? '<span class="tk-chip tk-chip--sm tk-chip--green">Active</span>' : '')
-          + '</button>';
+        return '<button class="llm-rm' + (on ? ' on' : '') + (blocked ? ' blocked' : '') + '" data-act="runmode:' + id + '" aria-pressed="' + on + '" title="' + esc(why) + '">'
+          + ic(icon) + '<span class="llm-rm-t">' + esc(label) + '</span></button>';
       }).join('')
-    + '</div>'
-    // /runmode status, where the stored and the effective mode can disagree.
-    + '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>'
+    + '</span></div>'
+    + llmNowHTML()
+    + (fusionShown ? '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
     + '</section>';
+}
+/* One line: the model answering, its provider, and a readiness word. */
+function llmNowHTML() {
+  const active = llmProvider(llmActiveTextId());
+  const local = !!active && active.kind === 'llama-server';
+  let model = active ? (active.defaultChatModel || active.model || null) : null;
+  if (!model && local) model = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
+  const route = llmRouteMode();
+  const where = route === 'external' ? 'a custom server' : local ? 'this Mac' : active ? providerWord(active.id) : 'no provider';
+  const d = llmFormatDaemon();
+  const word = !local || route === 'external' ? '' : /^running/.test(d) ? 'Ready' : /^(loading|starting)/.test(d) ? 'Starting' : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? 'Not answering' : '';
+  const dot = word === 'Ready' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
+  return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
+    + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '') + '</p>';
 }
 /* What the count means depends on the worker leg (agent v0.6.3,
    fusion-delegate.ts): an unpinned LOCAL leg runs one worker per job —
@@ -16394,6 +16409,11 @@ function llmWorkersHTML(rm) {
     + '</span></div>';
 }
 
+/* llm-panel.tsx RouteCard, now inside Advanced: each TUI line ("current:
+   aimlapi / gpt-5.5", "local daemon: stopped · mode managed") as a label and
+   its value. `current:` is the provider's chat model; for the local route the
+   desktop has no /props, so `atag models status` "active model:" stands in,
+   then localModels.managed.modelId. */
 function llmRouteCardHTML() {
   const activeId = llmActiveTextId();
   const active = llmProvider(activeId);
@@ -16404,28 +16424,10 @@ function llmRouteCardHTML() {
   const lm = llmLocalModels();
   const mode = lm.mode || 'external';
   const daemon = llmFormatDaemon();
-  const route = llmRouteMode();
-  const ROUTE = {cloud:['cloud', 'Cloud'], local:['laptop', 'Local'], external:['server', 'External llama.cpp']};
-  /* The daemon chip only restates llmFormatDaemon's own word — running,
-     loading, starting, stopping, stopped, unreachable, unknown — in the
-     status colours. It never says more than `atag models status` did. */
-  const word = /^running/.test(daemon) ? 'running' : /^loading/.test(daemon) ? 'loading' : /unreachable$/.test(daemon) ? 'unreachable' : daemon;
-  const tone = word === 'running' ? ['tk-chip--green', 'tk-dot--green']
-    : word === 'loading' || word === 'starting' ? ['tk-chip--blue', 'tk-dot--brand tk-dot--pulse']
-    : word === 'stopping' ? ['tk-chip--amber', 'tk-dot--amber']
-    : word === 'unreachable' ? ['tk-chip--red', 'tk-dot--red'] : ['', 'tk-dot--hollow'];
-  /* Each TUI line ("current: aimlapi / gpt-5.5", "local daemon: stopped ·
-     mode managed") as a label and its value; the marks are inline images
-     with no text of their own. */
   const kv = (label, value) => '<div class="llm-kv"><span class="llm-k">' + esc(label) + '</span>' + value + '</div>';
   return '<div class="llm-route">'
-    + '<div class="llm-route-head"><b>Active chat route</b>'
-      + (route ? '<span class="tk-chip tk-chip--sm tk-chip--blue">' + ic(ROUTE[route][0]) + esc(ROUTE[route][1]) + '</span>' : '')
-      + '<span class="grow"></span>'
-      + '<span class="tk-chip tk-chip--sm ' + tone[0] + '"><span class="tk-dot ' + tone[1] + '"></span>' + esc('local daemon ' + word) + '</span>'
-    + '</div>'
-    + kv('current', (active ? llmProviderMark(active, 'xs') : '') + '<b class="mono">' + esc(active ? active.id : 'unknown') + '</b>'
-      + (model ? '<span class="llm-slash"> / </span>' + modelMark(model, 'xs') + '<span class="mono">' + esc(model) + '</span>' : ''))
+    + kv('current', '<b class="mono">' + esc(active ? active.id : 'unknown') + '</b>'
+      + (model ? '<span class="llm-slash"> / </span><span class="mono">' + esc(model) + '</span>' : ''))
     + kv('tools', '<span class="mono">' + (local ? 'grammar' : 'native_tools') + ' · cache ' + (local ? 'local slot/cache_prompt' : 'cloud: no slot affinity') + '</span>')
     + kv('provider embeddings', '<span class="mono">' + (emb ? esc(emb.id) + (emb.defaultEmbeddingModel ? ' · ' + esc(emb.defaultEmbeddingModel) : '') : 'not configured') + '</span>')
     + kv('local daemon', '<span class="mono">' + esc(daemon) + ' · mode ' + esc(mode) + (mode === 'external' ? ' · ' + esc(lm.url || '') : '') + '</span>')
@@ -16447,73 +16449,104 @@ function llmStatusLine() {
   return 'status: ready';
 }
 function llmReport(line, source) { LLMP.statusLine = line; LLMP.statusSource = source || 'cloud'; }
-/* llm-panel.tsx footerHint (the full form), each key a button. */
-function llmFooterHint(mode) {
-  const lead = '<div class="llm-foot"><span class="llm-hintline">Press <span class="kc">←/→</span> to switch mode</span>';
-  if (mode === 'fallback') return lead + tuiHints(['j/k move', ['< > reorder', 'llm:fb:move:1'], ['a add link', 'llm:fb:add'], ['d remove', 'llm:fb:remove'], ['l toggle local', 'llm:fb:local'], ['←/→ switch pane', 'llm:mode:next'], ['r refresh', 'llm:refresh']]) + '</div>';
-  if (mode === 'local') return lead + tuiHints(['j/k move', ['Enter selected action', 'llm:enter'],
-    // Item 7A — llm-panel-key-bindings.ts `a`: the reference is parsed and the repo listed in the
-    // main process (desktop/main/huggingface.ts, a port of the agent's own huggingface-* modules),
-    // the choice is written into localModels.customModels, and the download is `atag models pull`.
-    ['a add from hugging face', 'llm:hf'],
-    ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['s start/stop', 'llm:daemon'], ['r refresh', 'llm:refresh'],
-    ['E embeddings on/off', 'llm:embToggle'], ['d remove', 'llm:remove'], ['B backend update', 'llm:backend'], ['U auto-update', 'llm:autoUpdate'], ['G device', 'llm:device'], ['L LLM logs', 'llm:logs']]) + '</div>';
-  return lead + tuiHints(['j/k move', ['Enter selected action', 'llm:enter'], ['←/→ switch Local/Cloud/External/Fallback', 'llm:mode:next'], ['f filter', 'llm:filter'],
-    ['n add provider', 'llm:add'], ['c configure', 'llm:configure'], ['r refresh', 'llm:refresh'], ['e embedding', 'llm:embedding'], ['d remove', 'llm:remove'], ['L LLM logs', 'llm:logs']]) + '</div>';
+/* Calm (S5): the footer's key rows are gone (the keys still work; each
+   names itself in a tooltip). What only a key could do is a button here:
+   the local server's start/stop, backend update, auto-update and device,
+   local embeddings on/off, the LLM log; the route's internals above them. */
+function llmAdvancedHTML(mode) {
+  const open = !!SETDET['llm-adv'];
+  const managed = llmManaged();
+  const autoOn = managed.autoUpdate !== false;
+  const embOn = llmEmbCfg().enabled === true;
+  const btn = (act, label, title) => '<button class="btn btn-s sm" data-act="' + act + '" title="' + esc(title) + '">' + esc(label) + '</button>';
+  return '<details class="llm-adv"' + (open ? ' open' : '') + '><summary data-setdet="llm-adv">' + ic('chevR') + 'Advanced</summary>'
+    + '<div class="llm-adv-body">'
+    + '<div class="llm-adv-h">Active route</div>'
+    + llmRouteCardHTML()
+    + (mode !== 'cloud' && mode !== 'fallback'
+      ? '<div class="llm-adv-h">Model server on this Mac</div>'
+        + '<div class="llm-adv-acts">'
+          + btn('llm:daemon', llmDaemonUp() ? 'Stop' : 'Start', 'Start or stop the local model server (s)')
+          + btn('llm:backend', 'Update llama.cpp', 'Fetch the newest llama.cpp backend now (B)')
+          + btn('llm:autoUpdate', 'Auto-update: ' + (autoOn ? 'on' : 'off'), 'Fetch a newer llama.cpp after each start (U)')
+          + btn('llm:device', 'Device: ' + (managed.device || 'auto'), 'Cycle the device the model runs on: auto, each GPU, CPU (G)')
+          + btn('llm:embToggle', 'Local embeddings: ' + (embOn ? 'on' : 'off'), 'Turn the local embedding model on or off (E)')
+        + '</div>' : '')
+    + '<div class="llm-adv-acts">' + btn('llm:logs', 'LLM logs', 'The local model server’s log (L)')
+      + (mode === 'cloud' ? btn('llm:mode:fallback', 'Fallback chain…', 'Which providers to try when one fails') : '') + '</div>'
+    + '</div></details>';
+}
+/* What a row's action pill says (Calm S5): the verb in plain words, with
+   the TUI's full sentence in its tooltip. The whole row is the button. */
+function llmEffectLabel(row) {
+  const p = row.primaryAction;
+  if (p === 'downloading') return 'Downloading…';
+  if (p === 'download') return row.model && row.model.size ? 'Download ' + row.model.size : 'Download';
+  if (p === 'current') return row.kind === 'externalUrl' ? 'Edit address' : 'In use';
+  if (p === 'use') return row.kind === 'externalUrl' ? 'Use this server' : 'Use';
+  if (p === 'start') return 'Start';
+  if (p === 'enable') return 'Turn on';
+  if (p === 'configure') return 'Add key';
+  return row.enterEffect;
 }
 function llmRowHTML(row, index, cursor) {
   const selected = index === cursor;
   const extra = row.kind === 'localTextModel' && !row.model.downloaded ? ' data-pull-local="' + esc(row.model.id) + '"' : '';
-  /* Soft Tactile list row (ST-20, ST-23): the id and its chips on one line
-     ("qwen-3.5-9b downloaded ★ best fit for this machine" — the chips are
+  /* Soft Tactile list row (ST-20, ST-23): the name, its id in mono when the
+     name is not the id, and the best-fit chip on one line (the chips are
      inline-block, and model-picks.drive.mjs reads that first line off
      innerText), then the blurb and fit lines. A row that carries them keeps
-     `.llm-model` and `.llm-sub`: the driver measures the first one, because
-     `.tuirow` was once a clipped 24px line. */
+     `.llm-model` and `.llm-sub`: the driver measures the first one. */
   const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
     + '" data-llm-row="' + esc(row.id) + '"' + extra + ' data-act="llm:row:' + index + '">';
   const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
-  // The action Enter (or a click) takes on this row, as the TUI words it.
-  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + '">'
-    + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(row.enterEffect) + '</span>';
+  // The action a click (or Enter) takes on this row, as a pill; the TUI's sentence is its tooltip.
+  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + '" title="' + esc(row.enterEffect) + '">'
+    + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(llmEffectLabel(row)) + '</span>';
+  // A second verb on the row: a span with its own act (the delegate resolves the innermost [data-act]).
+  const rowAct = (act, label) => '<span role="button" tabindex="-1" class="llm-rowact" data-act="' + esc(act) + '">' + esc(label) + '</span>';
   const chip = (tone, html) => '<span class="tk-chip tk-chip--sm llm-ib' + (tone ? ' tk-chip--' + tone : '') + '">' + html + '</span>';
   if (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') {
     const m = row.model;
     const chat = row.kind === 'localTextModel';
-    const t = '<span class="llm-id mono">' + esc(m.id) + '</span>'
+    const name = llmModelName(m);
+    const best = row.text.indexOf('★ best fit for this machine') >= 0;
+    const t = '<span class="llm-name">' + esc(name) + '</span>'
+      + (name !== m.id ? ' <span class="llm-id mono">' + esc(m.id) + '</span>' : '')
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
-      + ' ' + chip(m.downloaded ? 'green' : 'line', m.downloaded ? 'downloaded' : 'remote')
-      + (row.text.indexOf('★ best fit for this machine') >= 0 ? ' ' + chip('indigo', '★ best fit for this machine') : '')
-      + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '')
+      + (best ? ' ' + chip('indigo', '★ best fit for this machine') : '')
+      + (chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
       + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
-    // r7 models: what the model is, how it fits this machine, and the one
-    // caution it earns. Absent on a row that has no catalogue entry.
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
       + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (m.size ? ' · ' + m.size : '')) + '</span>' : '')
       + (row.fitNote ? '<span class="d llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc(row.fitNote) + '</span>' : '')
       + (row.caution ? '<span class="d llm-sub llm-caution">' + esc(row.caution) + '</span>' : '')
-      + '</span>' + effect + '</button>';
+      + '</span>'
+      + (chat && m.downloaded && row.primaryAction !== 'current' ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      + effect + '</button>';
   }
   if (row.kind === 'cloudProvider') {
     const p = row.provider;
     const head = p.id + ' [' + p.kind + '] ';
     const auth = row.text.indexOf(head) === 0 ? row.text.slice(head.length) : '';
+    const name = providerWord(p.id);
     // Until the key names are read every row says "missing key"; it is drawn neutral until they are.
     const tone = !llmKeysKnown() ? 'line' : auth === 'key ok' ? 'green' : auth === 'missing key' ? 'red' : 'line';
-    const t = '<span class="llm-id mono">' + esc(p.id) + '</span>'
-      // The kind only when it says more than the id ("aimlapi" is an aimlapi provider).
-      + (p.kind === p.id ? '' : ' <span class="llm-kind">' + esc(p.kind) + '</span>')
-      + ' ' + chip(tone, esc(auth))
+    const AUTH = {'key ok':'Key saved', 'missing key':'No key', 'no key needed':'No key needed', 'cli auth':'Signed in with its CLI'};
+    const t = '<span class="llm-name">' + esc(name) + '</span>'
+      + (name !== p.id ? ' <span class="llm-id mono">' + esc(p.id) + '</span>' : '')
+      + ' ' + chip(tone, esc(AUTH[auth] || auth))
       // Saved without a key check (the wizard's Save unchecked) — the same flag the composer's provider list shows.
       + (UNVERIFIED.indexOf(p.id) >= 0 ? ' ' + chip('amber', 'Unverified') : '');
-    return open + radio + llmProviderMark(p, 'sm') + '<span class="body"><span class="t">' + t + '</span></span>' + effect + '</button>';
+    return open + radio + llmProviderMark(p, 'sm') + '<span class="body"><span class="t">' + t + '</span></span>'
+      + rowAct('llm:edit:' + p.id, 'Edit') + rowAct('llm:removeAt:' + index, 'Remove') + effect + '</button>';
   }
   if (row.kind === 'cloudChatModel' || row.kind === 'cloudEmbeddingModel') {
     return open + radio + modelMark(row.modelId, 'sm')
-      + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(row.providerId + '/' + row.modelId) + '</span> '
-      + chip('line', row.kind === 'cloudChatModel' ? 'text' : 'embedding') + '</span></span>'
+      + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(row.modelId) + '</span>'
+      + (row.kind === 'cloudEmbeddingModel' ? ' ' + chip('line', 'embedding') : '') + '</span></span>'
       + effect + '</button>';
   }
   if (row.kind === 'externalUrl') {
@@ -16521,8 +16554,8 @@ function llmRowHTML(row, index, cursor) {
     const status = m ? m[1] : '';
     const tone = /^healthy/.test(status) ? 'green' : status === 'unreachable' ? 'amber' : 'line';
     return open + '<span class="tk-ico">' + ic('server') + '</span>'
-      + '<span class="body"><span class="t"><span class="llm-k2">base URL </span><span class="llm-id mono">' + esc(row.url) + '</span> ' + chip(tone, esc(status)) + '</span>'
-      + '<span class="d llm-effect-d">' + esc(row.enterEffect) + '</span></span></button>';
+      + '<span class="body"><span class="t"><span class="llm-k2">Server address </span><span class="llm-id mono">' + esc(row.url) + '</span> ' + chip(tone, esc(status)) + '</span></span>'
+      + effect + '</button>';
   }
   return open + '<span class="body"><span class="t">' + esc(row.text) + '</span></span>' + effect + '</button>';
 }
@@ -16532,7 +16565,7 @@ function llmSectionHTML(title, rows, offset, cursor, empty, emphasise, extra) {
     + '<div class="tk-sh llm-sh"><span class="llm-sh-t">' + esc(title) + '</span><span class="grow"></span>' + (x.actions || '') + '</div>'
     + (x.note || '')
     + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('') + '</div>'
-      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'No rows in this section yet.') + '</div>')
+      : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'Nothing here yet.') + '</div>')
     + '</section>';
 }
 function llmLocalHTML() {
@@ -16542,20 +16575,14 @@ function llmLocalHTML() {
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
   const ram = hostRamGb();
   // r7 models: the basis for the order and for every fit line below it.
-  return llmSectionHTML('Local text models', text, 0, cursor, null, false, {
+  return llmSectionHTML('Models on this Mac', text, 0, cursor, null, false, {
       note: '<p class="llm-ram">' + esc(ram
-        ? 'Ordered for this machine — it reports ' + ram + ' GB of RAM. Every fit line under a model is measured against that.'
-        : 'Reading this machine’s RAM…') + '</p>',
+        ? 'Best fit first for this Mac’s ' + ram + ' GB of memory.'
+        : 'Reading this Mac’s memory…') + '</p>',
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     + llmTuneHTML()
-    + llmSectionHTML('Local embeddings', emb, text.length, cursor)
-    // Item 7B — the Ollama signpost. atomic-agent has no Ollama download
-    // path of any kind: `grep -rni ollama src/` finds provider presets, a
-    // health-failure hint and a steer modal, and ZERO hits under
-    // src/local-llm. Offering "download from Ollama" here would be a
-    // capability this window invented. What does work — adding the running
-    // server as an OpenAI-compatible provider — is named first, with its
-    // exact route, because that is the question this line exists to answer.
+    + llmSectionHTML('Embedding models', emb, text.length, cursor)
+    // Item 7B — the Ollama signpost: Ollama is a provider, never a download source here.
     + '<div class="llm-ollama">' + logoHTML('ollama', 'sm') + '<span>' + esc(OLLAMA_SIGNPOST) + '</span></div>';
 }
 function llmCloudHTML() {
@@ -16566,22 +16593,17 @@ function llmCloudHTML() {
   const section = llmCloudSection();
   const embOffset = providers.length + section.filtered.length;
   const sp = section.provider;
-  return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers configured. Press n to add one.', true,
+  return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers yet.', true,
       {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>'})
-    + '<section class="llm-section">'
-    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Cloud text models</span>'
-      + '<span class="llm-prov"><span class="llm-k3">provider: </span>' + (sp ? llmProviderMark(sp, 'xs') : '') + '<b class="mono">' + esc(sp ? sp.id : 'none') + '</b></span></div>'
-    + '<div class="tk-bar llm-modelbar">'
-      + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
-        + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="f to filter" aria-label="Filter models"></label></span>'
-      // The price facet needs the catalogue's pricing, which `atag models search --json` does not print: the facet stays at `all` and `p` is inert.
-      + '<span class="llm-price"><button class="btn btn-s xs llm-ib" data-act="llm:pricing" disabled title="pricing is not in `atag models search --json` on this agent — the facet stays at all">'
-        + esc('price: ' + LLMP.pricing) + '</button><span class="llm-price-note">pricing is not exposed</span></span>'
-    + '</div>'
-    + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></section>'
-    + llmSectionHTML('Cloud embeddings', emb, embOffset, cursor);
+    + (sp ? '<section class="llm-section">'
+      + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Models on ' + esc(providerWord(sp.id)) + '</span>'
+        + '<span class="grow"></span>'
+        + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
+          + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="Filter models" aria-label="Filter models" title="Filter (f)"></label></span></div>'
+      + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></section>'
+      + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '');
 }
-/* The 12-row window of the text-model rows around the cursor, with the TUI's counter line. */
+/* The 12-row window of the text-model rows around the cursor, and how many there are. */
 function llmCloudModelListHTML() {
   const section = llmCloudSection();
   const cursor = LLMP.cursor.cloud;
@@ -16589,23 +16611,22 @@ function llmCloudModelListHTML() {
   const cursorInSection = Math.max(0, Math.min(cursor - section.sectionStart, rows.length - 1));
   const start = Math.max(0, Math.min(cursorInSection - Math.floor(LLM_MODEL_WINDOW / 2), rows.length - LLM_MODEL_WINDOW));
   const visible = rows.slice(start, start + LLM_MODEL_WINDOW);
-  const counter = rows.length === 0 ? 'no match' : (cursorInSection + 1) + '/' + rows.length + (rows.length !== section.models.length ? ' of ' + section.models.length : '');
-  return (section.status === 'loading' ? '<div class="llm-loading"><span class="tk-spin"></span><span>fetching model list…</span></div>' : '')
-    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">model list unavailable (' + esc(section.error || 'unknown error') + ') - showing current model only</span></div>' : '')
+  const counter = rows.length === 0 ? 'No model matches.'
+    : rows.length > visible.length || rows.length !== section.models.length
+      ? 'Showing ' + (start + 1) + '–' + (start + visible.length) + ' of ' + rows.length + (rows.length !== section.models.length ? ' (filtered from ' + section.models.length + ')' : '') + '. Filter to find the rest.'
+      : '';
+  return (section.status === 'loading' ? '<div class="llm-loading"><span class="tk-spin"></span><span>Fetching the model list…</span></div>' : '')
+    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span></div>' : '')
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
-    + '<div class="llm-counter">↑/↓ move (' + esc(counter) + ')' + (LLMP.filterFocused ? ' · type to filter · Enter select · Esc done' : '') + '</div>';
+    + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
 }
 function llmExternalHTML() {
   const rows = llmExternalRows();
   const status = llmStatusLine();
-  return llmSectionHTML('External llama.cpp', rows, 0, LLMP.cursor.external)
+  return llmSectionHTML('Custom llama.cpp server', rows, 0, LLMP.cursor.external, null, false,
+      {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'})
     + llmStatusNoteHTML(status, llmStatusTone(status))
-    + '<div class="llm-extra">'
-      + '<div class="llm-line"><span class="tk-ico tk-ico--sm">' + ic('cpu') + '</span>'
-        + '<span class="llm-line-t">managed daemon: <span class="mono">' + esc(llmFormatDaemon()) + '</span></span>'
-        + '<span class="grow"></span>' + llmKeyBtn('s', 'start/stop', 'llm:daemon') + '</div>'
-      + '<p class="llm-back">← <button class="llm-link" data-act="llm:mode:local">Local pane</button>: pick a managed model to switch back</p>'
-    + '</div>'
+    + '<p class="llm-back">To go back to a model on this Mac, <button class="llm-link" data-act="llm:mode:local">pick one under Local</button>.</p>'
     + llmTuneHTML();
 }
 /* Gaps 11: the three knobs agent v0.6.3 reads on every local completion
@@ -16661,8 +16682,8 @@ function llmFallbackHTML() {
   if (LLMP.fallbackPicker) {
     const c = LLMP.fallbackPicker.cursor;
     const ids = view.addableProviderIds;
-    return '<section class="llm-section"><div class="tk-sh llm-sh"><span class="llm-sh-t">Add fallback link</span><span class="grow"></span>'
-      + '<button class="btn btn-g sm" data-act="llm:fb:pickCancel">Cancel' + keycaps('Esc') + '</button></div>'
+    return '<section class="llm-section"><div class="tk-sh llm-sh"><span class="llm-sh-t">Add a provider to the chain</span><span class="grow"></span>'
+      + '<button class="btn btn-g sm" data-act="llm:fb:pickCancel" title="Cancel (Esc)">Cancel</button></div>'
       + (ids.length ? '<div class="tk-list llm-list">' + ids.map((id, i) => {
           const p = llmProvider(id);
           return '<button class="tuirow tk-li llm-row' + (i === c ? ' on' : '') + '" data-llm-row="fb-pick:' + esc(id) + '" data-act="llm:fb:pick:' + esc(id) + '">'
@@ -16670,7 +16691,7 @@ function llmFallbackHTML() {
             + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(id) + '</span></span>' + (p && p.kind ? '<span class="d">' + esc(p.kind) + '</span>' : '') + '</span></button>';
         }).join('') + '</div>'
         : '<div class="llm-empty">Every configured provider is already in the chain.</div>')
-      + '<p class="llm-counter">↑/↓ move · Enter add · Esc cancel</p></section>';
+      + '</section>';
   }
   const rows = llmFallbackRows();
   const declared = llmDeclaredChain(view.links);
@@ -16679,16 +16700,18 @@ function llmFallbackHTML() {
      resort locked, and the toggle as a switch. */
   const move = (delta, can, icon, label) => '<span role="button" class="btn btn-g icon xs llm-mv' + (can ? '' : ' is-off') + '"'
     + (can ? ' data-act="llm:fb:move:' + delta + '"' : ' aria-disabled="true"') + ' title="' + label + '" aria-label="' + label + '">' + ic(icon) + '</span>';
-  // llm-fallback-rows.tsx StatusLine shows the last `provider_switched` event of the TUI process; the serve API exposes no fallover events.
-  return '<p class="llm-honest">' + ic('info') + '<span>status: fallover events are not exposed by the agent\'s HTTP API</span></p>'
+  // llm-fallback-rows.tsx StatusLine shows the last `provider_switched` event of the TUI process; the serve API exposes no
+  // fallover events, so the desktop has no status line to show (Calm S5 dropped the sentence that said so).
+  return '<p class="llm-back"><button class="llm-link" data-act="llm:mode:cloud">' + ic('chevL') + 'Cloud</button></p>'
     + '<section class="llm-section"><div class="tk-sh llm-sh"><span class="llm-sh-t">Fallback chain</span></div>'
-    + (view.links.length === 0 ? '<div class="llm-empty">No chain configured. Falls back to the active provider only.</div>' : '')
+    + '<p class="llm-ram">When a provider fails, the next one in the chain answers.</p>'
+    + (view.links.length === 0 ? '<div class="llm-empty">No chain yet. Only the active provider answers.</div>' : '')
     + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => {
       const sel = i === cursor;
       if (r.kind === 'add') return '<button class="tuirow tk-li llm-row llm-fb-add' + (sel ? ' on' : '') + '" data-llm-row="fb-add" data-act="llm:fb:add">'
-        + '<span class="tk-ico tk-ico--sm">' + ic('plus') + '</span><span class="body"><span class="t">Add link</span><span class="d">Enter or a to choose a provider</span></span></button>';
+        + '<span class="tk-ico tk-ico--sm">' + ic('plus') + '</span><span class="body"><span class="t">Add a provider</span></span></button>';
       const l = r.link;
-      const note = l.isActive ? 'active (primary)' : l.isAppendedLocal ? 'local last resort (appendLocal)' : 'fallover link';
+      const note = l.isActive ? 'Primary' : l.isAppendedLocal ? 'Last resort' : 'Fallback';
       const tone = l.isActive ? ' tk-chip--green' : l.isAppendedLocal ? ' tk-chip--indigo' : '';
       const pos = declared.indexOf(l.providerId);
       const p = llmProvider(l.providerId);
@@ -16698,14 +16721,15 @@ function llmFallbackHTML() {
           + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span></span>'
           + '<span class="d">' + esc(l.kind) + '</span></span>'
         + '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(note) + '</span>'
-        + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="local last resort">' + ic('lock') + '</span>'
-          : sel ? move(-1, pos > 0, 'chevU', 'Move up (&lt;)') + move(1, pos >= 0 && pos < declared.length - 1, 'chevD', 'Move down (&gt;)') : '') + '</span>'
+        + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="This Mac, as the last resort">' + ic('lock') + '</span>'
+          : sel ? move(-1, pos > 0, 'chevU', 'Move up (&lt;)') + move(1, pos >= 0 && pos < declared.length - 1, 'chevD', 'Move down (&gt;)')
+            + (pos >= 0 ? '<span role="button" class="llm-rowact" data-act="llm:fb:remove" title="Remove (d)">Remove</span>' : '') : '') + '</span>'
         + '</button>';
     }).join('') + '</div>' : '')
     + '<div class="llm-fbl">'
       + '<button class="tk-switch' + (view.appendLocal ? ' on' : '') + '" role="switch" aria-checked="' + view.appendLocal + '" data-act="llm:fb:local" aria-label="Append local as last resort"></button>'
-      + '<span class="llm-fbl-t">append local as last resort: <b>' + (view.appendLocal ? 'on' : 'off') + '</b></span>'
-      + '<span class="grow"></span>' + llmKeyBtn('l', 'to toggle', 'llm:fb:local')
+      + '<span class="llm-fbl-t">Use this Mac as the last resort</span>'
+      + '<span class="grow"></span><span class="set-state' + (view.appendLocal ? ' on' : '') + '">' + (view.appendLocal ? 'On' : 'Off') + '</span>'
     + '</div></section>';
 }
 /* llm-panel-modals.tsx PromptBox copy, one at a time; a modal takes the whole pane as in the TUI. */
@@ -17389,6 +17413,9 @@ function llmAct(what) {
     else return;
     llmRepaint(); return;
   }
+  // Calm (S5): a row's own Remove / Edit (the keys acted on the cursor row).
+  if (verb === 'removeAt') { LLMP.cursor[LLMP.mode] = +arg; llmAct('remove'); return; }
+  if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode('cloud'); llmOpenWizard(p); } return; }
   if (verb === 'confirm') { const c = LLMP.confirm; if (!c) return; if (c.kind === 'removeProvider') llmRemoveProviderConfirm(); else if (c.kind === 'removeLocal') llmRemoveLocalConfirm(); return; }
   if (verb === 'cancel') { LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {

@@ -382,7 +382,7 @@ async function main() {
     const customPane = await app.snap(LLM_MODE);
     t.say(`  Settings › LLM opened on: ${JSON.stringify(customPane)}`);
     await shot('12-llm-custom');
-    t.check('a custom route opens Settings › LLM on External', /external/i.test(customPane || ''), JSON.stringify(customPane));
+    t.check('a custom route opens Settings › Models on Custom server', /custom/i.test(customPane || ''), JSON.stringify(customPane));
     await closeSettings(app);
   } finally {
     await app.close();

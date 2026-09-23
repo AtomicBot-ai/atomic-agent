@@ -47,9 +47,6 @@
 
 /* ---- Route card: what answers now ---- */
 .llm-pane .llm-route{display:flex;flex-direction:column;gap:3px;min-width:0;padding:13px 18px 14px;border-radius:var(--r-block);background:var(--well)}
-.llm-pane .llm-route-head{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:4px}
-.llm-pane .llm-route-head b{font-size:13.5px;font-weight:600}
-.llm-pane .llm-route-head .tk-chip .tk-dot{width:7px;height:7px}
 .llm-pane .llm-kv{display:block;min-width:0;padding-left:136px;text-indent:-136px;font-size:12.5px;line-height:24px;color:var(--ink);overflow-wrap:anywhere}
 .llm-pane .llm-k{display:inline-block;width:136px;text-indent:0;color:var(--ink-2);vertical-align:top}
 .llm-pane .llm-kv .mono{font-size:12px;line-height:24px}
@@ -83,7 +80,6 @@
 .llm-pane .llm-row.on .t{color:var(--ink)}
 .llm-pane .llm-id{font-size:13px;line-height:20px;font-weight:500;color:var(--ink)}
 .llm-pane .llm-size{font:400 12px/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
-.llm-pane .llm-kind{font:400 11.5px/1 var(--font-mono);color:var(--ink-2)}
 .llm-pane .llm-k2{font-size:12px;color:var(--ink-2)}
 .llm-pane .llm-ib{display:inline-block;line-height:22px;vertical-align:1px;white-space:nowrap}
 .llm-pane .llm-row .t .tk-chip{margin-left:2px}
@@ -96,62 +92,80 @@
 .llm-pane .llm-row .llm-fit-tight{color:var(--amber-text)}
 .llm-pane .llm-row .llm-fit-over{color:var(--ink-2)}
 .llm-pane .llm-row .llm-caution{color:var(--amber-text)}
-.llm-pane .llm-effect{flex:0 1 auto;display:inline-flex;align-items:center;gap:6px;max-width:42%;margin-left:auto;
-  font:400 11.5px/1.4 var(--font-mono);color:var(--ink-2);text-align:right;white-space:normal;overflow-wrap:anywhere}
-.llm-pane .llm-model .llm-effect{margin-top:3px}
-.llm-pane .llm-effect--current{color:var(--success)}
+/* Calm (S5): a row's action is a quiet pill in the UI face ("Download 5.3 GB",
+   "Use"); the one in use is plain green words. The row is the button. */
+.llm-pane .llm-effect{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;margin-left:auto;padding:0 11px;border-radius:var(--r-pill);
+  box-shadow:inset 0 0 0 1px var(--bd);font:500 12.5px/1 var(--font-ui);color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+.llm-pane .llm-row:hover .llm-effect{background:var(--lift)}
+.llm-pane .llm-model .llm-effect{margin-top:1px}
+.llm-pane .llm-effect--current{box-shadow:none;padding:0 2px;color:var(--success)}
+.llm-pane .llm-row[data-llm-row="external-url"] .llm-effect--current{padding:0 11px;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink)}
+.llm-pane .llm-effect--downloading{box-shadow:none;color:var(--ink-2)}
+.llm-pane .llm-effect--download{color:var(--blue)}
 .llm-pane .llm-effect .tk-spin{width:12px;height:12px}
-.llm-pane .llm-row .llm-effect-d{font-family:var(--font-mono);font-size:11.5px}
+/* A second verb on a row (Remove, Edit): quiet text, a fill on hover. */
+.llm-pane .llm-rowact{flex:none;display:inline-flex;align-items:center;height:26px;padding:0 9px;border-radius:var(--r-pill);
+  font:500 12.5px/1 var(--font-ui);color:var(--ink-2);cursor:pointer;transition:background-color var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.llm-pane .llm-rowact:hover{background:var(--hover);color:var(--ink)}
+.llm-pane .llm-name{font-size:13.5px;line-height:20px;font-weight:600;color:var(--ink)}
+.llm-pane .llm-name + .llm-id{font-size:11.5px;font-weight:400;color:var(--ink-2)}
 
-/* ---- Run mode (ST-20, ST-22) ---- */
-.llm-pane .llm-rm-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.llm-pane .llm-rm{display:flex;align-items:center;gap:10px;min-width:0;min-height:62px;padding:10px 12px 10px 14px;border-radius:18px;
-  background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);text-align:left;
-  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
-.llm-pane .llm-rm:hover{background:var(--hover)}
-.llm-pane .llm-rm.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand)}
-.llm-pane .llm-rm-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.llm-pane .llm-rm-t{font-size:14px;font-weight:600;line-height:1.3}
-.llm-pane .llm-rm-d{font-size:12px;line-height:1.35;color:var(--ink-2)}
-.llm-pane .llm-workers{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:0 2px}
+/* ---- Where chats run (ST-20, ST-22; Calm S5: three quiet choices) ---- */
+.llm-pane .llm-runmode{gap:8px}
+.llm-pane .llm-rm-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px}
+.llm-pane .llm-rm-t0{font-size:13px;font-weight:600;color:var(--ink)}
+.llm-pane .llm-rm-grid{display:inline-flex;flex-wrap:wrap;gap:6px}
+.llm-pane .llm-rm{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px 0 11px;border-radius:var(--r-pill);
+  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font:500 13px/1 var(--font-ui);
+  transition:background-color var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.llm-pane .llm-rm > svg{width:15px;height:15px}
+.llm-pane .llm-rm:hover{background:var(--hover);color:var(--ink)}
+.llm-pane .llm-rm:active{transform:scale(.97)}
+.llm-pane .llm-rm.on{background:var(--lift);box-shadow:0 0 0 1.5px var(--brand);color:var(--ink)}
+.llm-pane .llm-rm.on > svg{color:var(--blue)}
+.llm-pane .llm-rm-t{font-weight:inherit}
+/* Fusion while its pre-flight refuses: the reason is the tooltip; the choice reads as waiting. */
+.llm-pane .llm-rm.blocked{color:var(--ink-3)}
+.llm-pane .llm-now{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:0;font-size:13px;line-height:1.45;color:var(--ink-2)}
+.llm-pane .llm-now b{font-weight:600;color:var(--ink)}
+.llm-pane .llm-nowst{display:inline-flex;align-items:center;gap:6px;margin-left:4px;color:var(--ink-2)}
+.llm-pane .llm-nowst .tk-dot{width:7px;height:7px}
+.llm-pane .llm-workers{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:2px 0 0}
 .llm-pane .llm-workers .tk-help{flex:1;min-width:220px}
 .llm-pane .llm-workerseg button{min-width:34px;padding:0 10px}
-/* Fusion's card while its pre-flight refuses: the reason, in the waiting colour. */
-.llm-pane .llm-rm.blocked .llm-rm-d{color:var(--amber-text)}
-/* /runmode status under the cards — machine text. */
-.llm-pane .llm-rm-status{margin:0;padding:0 2px;font:400 12px/1.45 var(--font-mono);letter-spacing:0;color:var(--ink-2);overflow-wrap:anywhere}
+/* /runmode status, only around Fusion — machine text. */
+.llm-pane .llm-rm-status{margin:0;font:400 12px/1.45 var(--font-mono);letter-spacing:0;color:var(--ink-2);overflow-wrap:anywhere}
+
+/* ---- Advanced (Calm S5): the route's internals and the local server's knobs ---- */
+.llm-pane .llm-adv{border-top:1px solid var(--divider);padding-top:10px}
+.llm-pane .llm-adv > summary{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 6px;border-radius:var(--r-pill);
+  list-style:none;cursor:pointer;font-size:13px;font-weight:500;color:var(--ink-2);transition:background-color var(--t-state) var(--ease)}
+.llm-pane .llm-adv > summary::-webkit-details-marker{display:none}
+.llm-pane .llm-adv > summary:hover{background:var(--hover);color:var(--ink)}
+.llm-pane .llm-adv > summary > svg{width:14px;height:14px;transition:transform var(--t-state) var(--ease)}
+.llm-pane .llm-adv[open] > summary > svg{transform:rotate(90deg)}
+.llm-pane .llm-adv-body{display:flex;flex-direction:column;gap:10px;padding:10px 0 4px}
+.llm-pane .llm-adv-h{font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.llm-pane .llm-adv-acts{display:flex;flex-wrap:wrap;gap:8px}
 
 /* ---- Cloud: provider, filter, price facet ---- */
 .llm-pane .llm-prov{min-width:0;font-size:12.5px;color:var(--ink-2)}
 .llm-pane .llm-prov .logo,.llm-pane .llm-prov .tk-ico{vertical-align:middle;margin:-2px 5px 0 2px}
 .llm-pane .llm-prov b{font-weight:500;color:var(--ink)}
-.llm-pane .llm-modelbar{gap:10px 12px}
 .llm-pane .llm-filter{flex:1;min-width:200px}
 .llm-pane .llm-filterbox{display:inline-flex;width:100%;height:36px;vertical-align:middle}
 .llm-pane .llm-filterbox > svg{width:15px;height:15px;color:var(--ink-3)}
 .llm-pane #llm-filter{flex:1;width:auto;min-width:0;height:100%;padding:0;border:0;border-radius:0;background:transparent;outline:none;
   color:var(--ink);font:400 13.5px/1 var(--font-ui)}
 .llm-pane #llm-filter::placeholder{color:var(--ink-3)}
-.llm-pane .llm-price{display:flex;align-items:center;gap:8px;flex:none}
 .llm-pane .btn.llm-ib{display:inline-block;line-height:26px;text-align:center}
-.llm-pane .llm-price-note{font-size:12px;color:var(--ink-2)}
 
 /* ---- External ---- */
-.llm-pane .llm-extra{display:flex;flex-direction:column;gap:8px}
-.llm-pane .llm-line{display:flex;align-items:center;gap:10px;min-height:44px;padding:5px 8px 5px 10px;border-radius:var(--r-row);background:var(--well)}
-.llm-pane .llm-line-t{font-size:13px;color:var(--ink-2)}
-.llm-pane .llm-line-t .mono{color:var(--ink)}
 .llm-pane .llm-back{margin:0;padding:0 4px;font-size:12.5px;color:var(--ink-2)}
 .llm-pane .llm-link{display:inline-block;color:var(--blue);font-weight:600;font-size:inherit;text-decoration:underline;text-underline-offset:2px}
 .llm-pane .llm-link:hover{color:var(--blue-deep)}
-.llm-pane .tk-hint.llm-kb{display:inline-block;height:28px;line-height:28px;padding:0 10px;border-radius:var(--r-pill);
-  background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);font-size:12.5px;font-weight:500;white-space:nowrap}
-.llm-pane .tk-hint.llm-kb:hover{background:var(--hover)}
-.llm-pane .llm-kb .kc{vertical-align:1px;margin-right:1px}
 
 /* ---- Fallback (ST-25) ---- */
-.llm-pane .llm-honest{display:flex;align-items:center;gap:8px;margin:0;padding:0 2px;font-size:12.5px;color:var(--ink-2)}
-.llm-pane .llm-honest > svg{width:15px;height:15px;color:var(--ink-2)}
 .llm-pane .llm-idx{display:inline-block;width:24px;height:24px;margin-right:10px;border-radius:50%;background:var(--hover);
   font:500 11.5px/24px var(--font-mono);color:var(--ink-2);text-align:center;vertical-align:middle}
 .llm-pane .llm-fb-row .t .logo,.llm-pane .llm-fb-row .t .tk-ico{vertical-align:middle;margin:-2px 8px 0 0}
@@ -174,8 +188,6 @@
 /* ---- Ollama signpost and the key strip ---- */
 .llm-pane .llm-ollama{display:flex;align-items:flex-start;gap:10px;margin:0;padding:12px 14px;border:0;border-radius:18px;max-width:none;
   background:var(--well);font-size:12.5px;line-height:1.5;color:var(--ink-2)}
-.llm-pane .llm-foot{display:flex;flex-direction:column;gap:4px;padding-top:2px}
-.llm-pane .llm-hintline{padding:0 6px;font-size:12px;color:var(--ink-2)}
 .llm-pane .tuihint{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin:0;white-space:normal;font-family:var(--font-ui);color:var(--ink-2)}
 .llm-pane .tuihint .tk-hint{height:24px;padding:0 6px;border-radius:8px;font:400 12px/24px var(--font-ui);color:var(--ink-2);white-space:nowrap;background:transparent}
 .llm-pane .tuihint button.tk-hint:hover{background:var(--hover);color:var(--ink)}
@@ -234,11 +246,3 @@
 .llm-pane .llm-log-err{color:var(--critical)}
 .llm-pane .llm-log-warn{color:var(--amber-text)}
 .llm-pane .llm-log-ok{color:var(--blue)}
-
-/* ---- Narrow window: the run modes stack, the row action drops under the text ---- */
-@container llmpane (max-width: 600px){
-  .llm-pane .llm-rm-grid{grid-template-columns:minmax(0,1fr)}
-  .llm-pane .llm-rm{min-height:50px}
-  .llm-pane .llm-effect{max-width:36%}
-  .llm-pane .llm-price-note{flex-basis:100%}
-}
