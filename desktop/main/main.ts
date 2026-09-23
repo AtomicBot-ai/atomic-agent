@@ -6564,7 +6564,7 @@ async function uiTest(
   );
   const palRows = await js<Array<[string, string]>>("window.__palRows()");
   const WANT: Array<[string, string]> = [
-    ["Chat", "room:chat"], ["Feed", "insp:steps"], ["World", "insp:world"],
+    ["Chat", "room:chat"], ["Steps", "insp:steps"], ["World", "insp:world"],
     ["Reasoning", "insp:reasoning"], ["Logs", "console:agent"],
   ];
   const palMisses = WANT.filter(([t, a]) => !palRows.some((r) => r[0] === t && r[1] === a));

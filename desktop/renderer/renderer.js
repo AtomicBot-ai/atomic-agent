@@ -1403,10 +1403,13 @@ const CATS = [
 /* palette catalogue — every row has a menu-bar home */
 const PAL = [
   ['Go', [
-    ['chat','Chat','Session','⌘ 1','room:chat'],
-    ['inspector','Feed','Observe','/feed','insp:steps'],
-    ['atom','World','Observe','/world','insp:world'],
-    ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
+    /* Calm (S7, U24): plain context words, not "Session" / "Observe". The
+       side panel's tabs keep their own names (Steps, Reasoning, World); the
+       slash aliases stay in the fourth slot, searchable, never printed. */
+    ['chat','Chat','','⌘ 1','room:chat'],
+    ['inspector','Steps','Side panel','/feed','insp:steps'],
+    ['atom','World','Side panel','/world','insp:world'],
+    ['bolt','Reasoning','Side panel','/reasoning','insp:reasoning'],
     ['console','Logs','Console','/logs','console:agent'],
     // Calm (S5): the Settings sections; the row that opens Settings where it
     // was left carries the chord of the sidebar button.
@@ -1422,19 +1425,19 @@ const PAL = [
     ['import','Import','Settings','/import','settings:import'],
     ['gauge','Diagnostics','Settings','','settings:diagnostics'],
   ]],
-  ['Session', [
-    ['plus','New session','keeps warm runtime','⌘ N','session:new'],
+  ['Chat', [
+    ['plus','New chat','','⌘ N','session:new'],
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
-    ['chat','Switch session…','','⌘ O','session:switch'],
-    ['x','Clear transcript','keeps session','⌘ ⌫','clear'],
+    ['chat','Switch chat…','','⌘ O','session:switch'],
+    ['x','Clear transcript','','⌘ ⌫','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
   ]],
   ['Model', [
-    ['cloud','Switch chat model…','pull | use | status','⇧ ⌘ M','selector:model'],
+    ['cloud','Switch chat model…','','⇧ ⌘ M','selector:model'],
   ]],
   ['Run', [
-    ['fusion','Where it runs…','/runmode','','runmode'],
+    ['fusion','Where it runs…','','/runmode','runmode'],
     ['shield','Coding mode…','','','modes'],
     ['stop','Abort turn','','⌘ .','stop'],
     ['arrowR','Steer the running turn','','','steer'],
@@ -3147,12 +3150,14 @@ function palRows() {
     if (t.split(/[\s·]+/).some((w) => w.startsWith(q))) return 2;
     if (t.includes(q)) return 3;
     if ((r.cx || '').toLowerCase().includes(q)) return 4;
+    // The slash alias ("/llm", "/feed"): typed with or without its slash.
+    if ((r.sc || '').startsWith('/') && r.sc.slice(1).startsWith(q.replace(/^\//, ''))) return 2;
     return 9;
   };
   const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
   // cross-entity
   SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
@@ -3173,8 +3178,10 @@ function bold(t, q) {
    tasks, skills and scope rows are two-line rows with the context under the title. */
 function palRowHTML(r, i, q) {
   const current = S.scope === 'theme' && r.act === 'theme:' + S.theme;
+  /* Calm (S7, U24): a slash alias is searchable (palRows scores it) but not
+     printed — the right column holds a chord only where one exists. */
   const shortcut = current ? '<span class="palcheck" title="Current theme">' + ic('check') + '</span>'
-    : r.sc && r.sc.startsWith('/') ? '<span class="mono palslash">' + esc(r.sc) + '</span>'
+    : r.sc && r.sc.startsWith('/') ? ''
     : r.dot && r.dot[0] !== 'empty' ? '<span class="' + ovDotCls(r.dot[0], r.dot[1]) + '" title="' + esc(r.dot[1]) + '"></span>'
     : keycaps(r.sc);
   const two = !!(r.badge || S.scope);
@@ -3198,7 +3205,7 @@ function paletteHTML() {
     });
   } else if (flat.length === 0) {
     list = '<div class="palempty"><div class="palempty-t">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
-      + '<div class="cap">Nothing in the command registry matches.</div>'
+      + '<div class="cap">No command, chat, task or skill matches.</div>'
       + '<button class="palrow" data-ask="1"><span class="ic">' + ic('arrowR') + '</span>'
       + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
   } else {
@@ -3217,13 +3224,13 @@ function paletteHTML() {
     + '<div class="palin">' + ic('search')
       + (sc ? '<span class="palscope tk-chip tk-chip--blue tk-chip--sm">' + esc(sc.label)
         + '<span class="palscope-x" data-popscope="1" role="button" title="Back to all commands" aria-label="Back to all commands">' + ic('x') + '</span></span>' : '')
-      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
+      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, chats, tasks and skills…') + '" value="' + esc(S.q) + '">'
       + keycaps('esc') + '</div>'
     + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>'
     + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'
       + '<span>' + keycaps('↑') + keycaps('↓') + ' Move</span>'
       + (S.scope ? '<span>' + keycaps('⌫') + ' Back</span>' : '')
-      + '<span style="margin-left:auto">' + PAL.reduce((n, g) => n + g[1].length, 0) + ' commands</span></div>'
+      + '</div>'
     + '</div></div>';
 }
 

@@ -35,8 +35,9 @@
 
 /* Row: icon · title · context · shortcut (keycaps, a mono slash alias, a status dot or the current-theme check). */
 .palrow{flex:none;display:flex;align-items:center;gap:10px;min-height:36px;padding:5px 10px;width:100%;
-  border-radius:var(--r-well);text-align:left;color:var(--ink);font-size:13.5px;line-height:18px;
-  transition:background var(--t-state) var(--ease)}
+  border-radius:var(--r-well);text-align:left;color:var(--ink);font-size:13.5px;line-height:18px}
+/* Calm (S7): no transitions in the palette — it is opened and walked from
+   the keyboard many times a day, and every step should land at once. */
 .palrow:hover{background:var(--hover)}
 .palrow .ic{flex:none;width:18px;display:flex;justify-content:center;color:var(--ink-2)}
 .palrow .ti{flex:none;max-width:72%;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -45,7 +46,6 @@
 .palrow:not(.two) .cx:not(:empty){margin-left:-6px}
 .palrow:not(.two) .cx:not(:empty)::before{content:"· "}
 .palrow .sc{flex:none;margin-left:auto;display:flex;align-items:center;gap:3px;padding-left:8px}
-.palrow .palslash{font-size:11.5px;line-height:1;color:var(--ink-2)}
 .palrow .palcheck{display:flex;color:var(--blue)}
 .palrow.on{background:var(--brand-wash)}
 .palrow.on .ic,.palrow.on .ti,.palrow.on .palcheck{color:var(--blue)}
