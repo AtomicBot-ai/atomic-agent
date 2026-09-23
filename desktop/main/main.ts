@@ -5508,7 +5508,7 @@ async function hfAndDeltaTest(
   const boundWant = {
     none: "",
     pairs: "older turns are being dropped — 12 of 20 turns kept",
-    cap: "older turns are being dropped — the 48k-token transcript cap (agent.conversationMaxTokens) is the limit · 3 dropped so far",
+    cap: "older turns are being dropped — the 48k-token transcript cap is the limit · 3 dropped so far",
     window: "older turns are being dropped — the window is the limit, not a configured cap",
   };
   const boundBad = (Object.keys(boundWant) as Array<keyof typeof boundWant>)

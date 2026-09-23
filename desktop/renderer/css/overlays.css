@@ -151,3 +151,7 @@
 @media (max-width:700px){
   .kbgrid{grid-template-columns:1fr}
 }
+
+/* Calm (S7): the layer a closing popover fades out on (overlayMotionExit).
+   Its one child is an inert copy, placed where the popover was. */
+#ovghost{position:fixed;left:0;top:0;width:0;height:0;z-index:21;pointer-events:none}

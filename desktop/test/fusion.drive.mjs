@@ -82,7 +82,7 @@ const chips = () => app.eval(`[...document.querySelectorAll('#composer .cfoot [d
 const popRows = () => app.eval(`[...document.querySelectorAll('.selpop .modelrow')].map((r) => [
   (r.querySelector('.nm') || {}).textContent || '', (r.querySelector('.cap') || {}).textContent || '', r.classList.contains('on')])`);
 const popTitle = () => app.eval(`(document.querySelector('.selpop .selttl') || {}).textContent || null`);
-const fusionRowCap = () => app.eval(`(() => { const r = [...document.querySelectorAll('.selpop .modelrow')].find((n) => (n.querySelector('.nm') || {}).textContent === 'fusion'); return r ? r.querySelector('.cap').textContent : null; })()`);
+const fusionRowCap = () => app.eval(`(() => { const r = [...document.querySelectorAll('.selpop .modelrow')].find((n) => n.dataset.id === 'fusion'); return r ? r.querySelector('.cap').textContent : null; })()`);
 /* A switch has landed when the file says so AND the composer lock is released on a connected agent. */
 const landed = (pred, label) => until(async () => pred(cfg())
   && await app.eval(`window.__swxState().pending === 0 && window.__live() === 'connected'`), label);
@@ -159,9 +159,9 @@ try {
   await until(async () => (await popRows()).length === 2, 'the workers rows', 15000);
   const rowsC = await popRows();
   check('C: workers rows — openrouter in the cloud, then Download more models…',
-    JSON.stringify(rowsC.map((r) => [r[0], r[1]])) === '[["openrouter","workers · in the cloud"],["Download more models…","opens the local models pane"]]', JSON.stringify(rowsC));
+    JSON.stringify(rowsC.map((r) => [r[0], r[1]])) === '[["OpenRouter","workers · in the cloud"],["Download more models…","opens the local models pane"]]', JSON.stringify(rowsC));
   await shot('C-workers-popover');
-  await app.clickText('openrouter', { scope: '.selpop' });
+  await app.clickSel('.selpop .modelrow[data-id="openrouter"]');
   await landed((c) => c.runMode && c.runMode.fusion && c.runMode.fusion.workerProvider === 'openrouter', 'the workers pinned to openrouter');
   const c2 = cfg();
   await until(async () => /qwen3\.7-flash/.test((await chip('workers')) || ''), 'the workers chip names the cloud model', 15000);
@@ -174,7 +174,7 @@ try {
   await until(async () => (await popRows()).every((r) => r[1] !== 'checking keys…'), 'the key facts', 15000);
   const rowsD = await popRows();
   check('D: provider rows read orchestrator, the current one marked',
-    JSON.stringify(rowsD) === '[["aimlapi","orchestrator",true],["openrouter","orchestrator",false],["Add a new provider","opens the wizard",false]]', JSON.stringify(rowsD));
+    JSON.stringify(rowsD) === '[["AI/ML API","orchestrator",true],["OpenRouter","orchestrator",false],["Add a new provider","opens the wizard",false]]', JSON.stringify(rowsD));
   await shot('D-provider-popover');
   await closePopover();
 

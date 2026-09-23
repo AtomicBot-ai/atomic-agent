@@ -67,6 +67,7 @@ const POPUP = `(() => {
     title: (pop.querySelector('.selhead')||{textContent:''}).textContent.replace(/\\s+/g,' ').trim(),
     rows: [...pop.querySelectorAll('.modelrow')].slice(0,14).map((r) => ({
       label: (r.querySelector('.nm')||{textContent:''}).textContent.trim(),
+      id: r.dataset.id || '',
       on: r.classList.contains('on'),
     })),
   };
@@ -203,7 +204,7 @@ async function main() {
     t.say(`  rows: ${JSON.stringify((pop ? pop.rows : []).map((x) => x.label))}`);
     await shot('01-backend-switch');
 
-    r = await app.clickText('.selpop .modelrow', 'local', { settle: 4000 });
+    r = await app.clickText('.selpop .modelrow[data-id="local"]', '', { settle: 4000 });
     t.check('clicking the "local" row switches the route', r.ok, r.why || `clicked "${r.clicked}"`);
     t.check('the window arrives on the local route and stops moving', await onRoute(app, 'local'));
     t.say(`  the app says: ${JSON.stringify(await app.snap(TROUBLE))}`);
@@ -235,7 +236,7 @@ async function main() {
     t.say('\n--- clicking the backend control, then the "cloud" row ---');
     r = await app.clickSel('#composer .cfoot [data-sel-open="backend"]', { settle: 700 });
     t.check('the backend control opens again', r.ok, r.why || '');
-    r = await app.clickText('.selpop .modelrow', 'cloud', { settle: 6000 });
+    r = await app.clickText('.selpop .modelrow[data-id="cloud"]', '', { settle: 6000 });
     t.check('clicking the "cloud" row switches the route', r.ok, r.why || `clicked "${r.clicked}"`);
     t.check('the window arrives on the cloud route and stops moving', await onRoute(app, 'cloud'));
     t.say(`  the app says: ${JSON.stringify(await app.snap(TROUBLE))}`);
@@ -287,7 +288,7 @@ async function main() {
     t.say('\n--- back to local ---');
     r = await app.clickSel('#composer .cfoot [data-sel-open="backend"]', { settle: 700 });
     t.check('the backend control opens from the cloud route', r.ok, r.why || '');
-    r = await app.clickText('.selpop .modelrow', 'local', { settle: 5000 });
+    r = await app.clickText('.selpop .modelrow[data-id="local"]', '', { settle: 5000 });
     t.check('clicking "local" switches back', r.ok, r.why || `clicked "${r.clicked}"`);
     t.check('the window arrives back on the local route', await onRoute(app, 'local'));
     if (await app.snap(`!!document.querySelector('.selpop')`)) await done(app);

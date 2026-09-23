@@ -3274,6 +3274,80 @@ function overlaysHTML() {
   return html;
 }
 
+/* ============================================================
+   Calm (S7) — overlay motion, per the Emil rules (SPEC "References").
+   A composer popover scales out of its chip: 0.97 → 1 with opacity,
+   180 ms, a strong ease-out (cubic-bezier(0.23, 1, 0.32, 1)); it leaves
+   faster (120 ms) the same way it came. The delete alert, a centred modal,
+   grows from its centre. The palette and the sheets are keyboard-opened
+   (⌘K, ⌘O, ⌘/) and do not animate at all; neither does a repaint of a
+   popover that is already open (the model search, a pane switch).
+   This layer is rebuilt with innerHTML, so the motion is keyed on WHICH
+   overlay is up, not on the node: a repaint in the middle of the entrance
+   continues it on the new node from where it was, and a closing popover
+   is handed to an inert copy on its own layer, with no ids and no pointer
+   events, that fades and is removed. Reduced motion: a short fade in,
+   nothing on the way out.
+   ============================================================ */
+const OVM = { IN_MS: 180, OUT_MS: 120, MODAL_MS: 200, EASE_OUT: 'cubic-bezier(0.23, 1, 0.32, 1)' };
+function reducedMotion() {
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; }
+}
+/** The overlay that animates, if one is up: its node and its kind. */
+function overlayMotionTarget(root) {
+  const el = root.querySelector('.popover, .alertbox');
+  if (!el) return null;
+  const kind = ['selpop', 'ctxpop', 'modepop', 'alertbox'].find((c) => el.classList.contains(c)) || 'popover';
+  return {el, kind};
+}
+function overlayMotionBefore(root) {
+  const was = overlayMotionTarget(root);
+  if (!was) return null;
+  was.rect = was.el.getBoundingClientRect();
+  return was;
+}
+function overlayMotionAfter(root, was) {
+  if (typeof Element === 'undefined' || !Element.prototype.animate) return;
+  const now = overlayMotionTarget(root);
+  const reduce = reducedMotion();
+  const modal = now && now.kind === 'alertbox';
+  const frames = reduce ? [{opacity: 0}, {opacity: 1}]
+    : [{opacity: 0, transform: 'scale(0.97)'}, {opacity: 1, transform: 'scale(1)'}];
+  const dur = reduce ? OVM.OUT_MS : modal ? OVM.MODAL_MS : OVM.IN_MS;
+  if (now && (!was || was.kind !== now.kind)) {
+    now.el.animate(frames, {duration: dur, easing: OVM.EASE_OUT});
+    root.__ovIn = {kind: now.kind, t0: performance.now(), dur};
+  } else if (now && root.__ovIn && root.__ovIn.kind === now.kind) {
+    const elapsed = performance.now() - root.__ovIn.t0;
+    if (elapsed < root.__ovIn.dur) {
+      const a = now.el.animate(frames, {duration: root.__ovIn.dur, easing: OVM.EASE_OUT});
+      a.currentTime = elapsed;
+    }
+  }
+  if (was && (!now || now.kind !== was.kind) && !reduce && was.rect.width > 0) overlayMotionExit(was);
+}
+function overlayMotionExit(was) {
+  let layer = document.getElementById('ovghost');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'ovghost';
+    layer.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(layer);
+  }
+  const g = was.el;
+  g.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  g.inert = true;
+  const r = was.rect;
+  Object.assign(g.style, {position: 'fixed', left: r.left + 'px', top: r.top + 'px', right: 'auto', bottom: 'auto',
+    width: r.width + 'px', height: r.height + 'px', maxHeight: 'none', margin: '0', pointerEvents: 'none'});
+  layer.appendChild(g);
+  const a = g.animate([{opacity: 1, transform: 'scale(1)'}, {opacity: 0, transform: 'scale(0.97)'}],
+    {duration: OVM.OUT_MS, easing: OVM.EASE_OUT, fill: 'forwards'});
+  const done = () => { if (g.parentNode) g.remove(); };
+  a.onfinish = done;
+  setTimeout(done, OVM.OUT_MS + 200);
+}
+
 function renderOverlays() {
   const o = $('#overlays');
   const html = overlaysHTML();
@@ -3324,7 +3398,9 @@ function renderOverlays() {
   const af = document.activeElement;
   const keep = af && af.id && o.contains(af) && (af.tagName === 'INPUT' || af.tagName === 'TEXTAREA')
     ? {id: af.id, start: af.selectionStart, end: af.selectionEnd, value: af.value} : null;
+  const wasPop = overlayMotionBefore(o);
   o.innerHTML = html;
+  overlayMotionAfter(o, wasPop);
   if (keep) {
     const again = o.querySelector('#' + CSS.escape(keep.id));
     if (again) {
@@ -3461,9 +3537,13 @@ function anchorStyle(sel, width) {
   const onRight = r.left + r.width / 2 > (lo + hi) / 2;
   const left = Math.max(lo, Math.min(onRight ? r.right + 6 - w : r.left - 6, hi - w));
   const room = Math.round(top - 8 - Math.max(win.top, col.top) - 8);
+  /* Calm (S7): the popover grows out of its chip — the origin is the chip's
+     centre on the popover's bottom edge (see overlayMotion). */
+  const originX = Math.round(Math.max(0, Math.min(w, r.left + r.width / 2 - left)));
   return 'position:fixed;left:' + Math.round(left) + 'px;bottom:'
     + Math.round(window.innerHeight - top + 8) + 'px;top:auto;right:auto;width:' + w + 'px'
-    + (room > 160 ? ';max-height:' + room + 'px' : '');
+    + (room > 160 ? ';max-height:' + room + 'px' : '')
+    + ';transform-origin:' + originX + 'px 100%';
 }
 
 /**
@@ -3484,7 +3564,8 @@ function ctxBoundLine() {
   if (u.conversationBoundBy === 'pairs') {
     text = 'older turns are being dropped — ' + (u.conversationPairs || 0) + ' of ' + (u.conversationPairsCap || 0) + ' turns kept';
   } else if (u.conversationCapAuto === false && u.conversationCap === u.conversationCapConfigured) {
-    text = 'older turns are being dropped — the ' + fmtTokens(u.conversationCap) + '-token transcript cap (agent.conversationMaxTokens) is the limit';
+    // Calm (S7): no config key name in the popover (Global rules: copy).
+    text = 'older turns are being dropped — the ' + fmtTokens(u.conversationCap) + '-token transcript cap is the limit';
   } else {
     text = 'older turns are being dropped — the window is the limit, not a configured cap';
   }
@@ -3548,12 +3629,16 @@ function contextHTML() {
     + ctxBoundLine()
     + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
-    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span class="ctxdt">tasks per turn</span>'
-      + '<span class="cap">sent each turn (1-' + PAIRS_MAX + ')</span></span>'
+    /* Calm (S7, U20): agent.conversationMaxPairs is how many of your earlier
+       messages — each with everything the agent did answering it — the
+       prompt carries (config-schema.ts: "macro-turns of history"). The old
+       label, "tasks per turn", named something else. Same key, same steps. */
+    + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span class="ctxdt">Earlier messages kept</span>'
+      + '<span class="cap">How many of your past messages the model still sees (1–' + PAIRS_MAX + ')</span></span>'
       + '<span class="hstack ctxstep">'
-      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:-1" aria-label="fewer tasks per turn"' + (pairs <= 1 ? ' disabled' : '') + '>' + ic('minus') + '</button>'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:-1" aria-label="Keep fewer earlier messages"' + (pairs <= 1 ? ' disabled' : '') + '>' + ic('minus') + '</button>'
       + '<span class="mono tnum ctxval">' + pairs + '</span>'
-      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= PAIRS_MAX ? ' disabled' : '') + '>' + ic('plus') + '</button>'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="Keep more earlier messages"' + (pairs >= PAIRS_MAX ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
     + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
     + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
@@ -7973,16 +8058,37 @@ function obModelRowLabel(model, isBest) {
  * window made up about it.
  */
 function obModelRowDetail(model) {
-  const fit = fitFor(model, OB.ram);
-  const blurb = String(model.description || '').replace(/\s*\([^)]*\)\s*$/, '').replace(/,\s*imatrix-calibrated$/, '');
-  const gb = obDownloadGb(model);
-  const facts = [blurb, gb ? obGbWord(gb) : model.size, model.downloaded ? 'already on this Mac' : '']
+  const facts = [modelBlurb(model), modelSizeWord(model), model.downloaded ? 'already on this Mac' : '']
     .filter(Boolean).join(' · ');
-  let note = '';
-  if (fit.v === 'tight') note = '<span class="ob-fit ob-fit-tight">Tight fit on ' + esc(String(OB.ram)) + ' GB. It will run slowly.</span>';
-  else if (model.uncensored && model.tag) note = '<span class="ob-caution">' + esc(model.tag) + '</span>';
-  else if (isSmallModel(model)) note = '<span class="ob-caution">' + esc(SMALL_MODEL_CAUTION) + '</span>';
-  return '<span>' + esc(facts) + '</span>' + note;
+  const note = modelPickNote(model, OB.ram);
+  return '<span>' + esc(facts) + '</span>'
+    + (note ? '<span class="' + (note.v === 'tight' ? 'ob-fit ob-fit-tight' : 'ob-caution') + '">' + esc(note.text) + '</span>' : '');
+}
+
+/* Calm (S7, U19): the words the wizard's local list says about a model, in
+   one place, so the composer's model picker says the same thing on the same
+   Mac: the catalogue blurb (its parenthetical tail dropped), what one pick
+   downloads, and at most one quiet line — a tight fit, the reduced-refusal
+   tag, or the small-model caution. A model that does not run here reads
+   "Needs 24 GB". */
+function modelBlurb(model) {
+  return String((model && model.description) || '').replace(/\s*\([^)]*\)\s*$/, '').replace(/,\s*imatrix-calibrated$/, '');
+}
+function modelSizeWord(model) {
+  const gb = obDownloadGb(model);
+  return gb ? obGbWord(gb) : String((model && model.size) || '');
+}
+/** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
+function modelPickNote(model, ram) {
+  const fit = fitFor(model, ram);
+  if (fit.v === 'over') {
+    const need = fit.known && model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fit.short.replace(/^will not run — n/, 'N').replace(/^n/, 'N');
+    return {v:'over', text: need + (ram ? '. This Mac has ' + ram + ' GB.' : '.')};
+  }
+  if (fit.v === 'tight') return {v:'tight', text:'Tight fit on ' + ram + ' GB. It will run slowly.'};
+  if (model.uncensored && model.tag) return {v:'caution', text: String(model.tag)};
+  if (isSmallModel(model)) return {v:'caution', text: SMALL_MODEL_CAUTION};
+  return null;
 }
 
 /** Said when the catalogue has nothing this machine can run. */
@@ -10598,6 +10704,28 @@ function selEnterModelPane() {
   if (id && SEL.modelsFor !== id && selProviders().some((p) => p.id === id)) selLoadModels(id);
 }
 
+/** The local catalogue rows the model pane's search keeps. */
+function selLocalMatches() {
+  return SEL.local.filter((m) => !SEL.filter || modelMatches(m.id, (m.family || '') + ' ' + (m.name || ''), SEL.filter));
+}
+/** Calm (S7, U19): the models this Mac cannot run and has not downloaded —
+    named, with what they need, and not offered for download (the wizard's
+    "Needs more memory than this Mac has" block). */
+function selOutOfReach() {
+  if (SEL.kind !== 'model' || selBackend() === 'cloud' || selBackend() === 'fusion') return [];
+  const ram = hostRamGb();
+  if (!ram) return [];
+  return orderModelsByFit(selLocalMatches(), ram)
+    .filter((m) => !m.downloaded && !m.active && fitFor(m, ram).v === 'over');
+}
+/** A popover row's name as a person reads it; `label` keeps what the row stands for. */
+function selRowName(r) {
+  if (r.type === 'backend') return backendWord(r.id);
+  if (r.type === 'provider' || r.type === 'fusionLeg') return r.id === 'local-llama' ? 'This Mac' : providerWord(r.id);
+  if (r.type === 'workerModel') return modelWord(r.id);
+  return String(r.label || '');
+}
+
 /** Rows for the current pane, as objects the delegate can act on by index. */
 function selRows() {
   if (SEL.kind === 'backend') {
@@ -10610,15 +10738,20 @@ function selRows() {
     const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     const here = selBackend();
     const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
+    /* Calm (S7): the rows speak the chip's words ("Cloud", "This Mac",
+       "Custom server", "Fusion" — backendWord, drawn in selectorHTML) and
+       each detail is one plain line. `id` stays the route, `label` the id. */
+    const customHost = customUrl ? hostOf(customUrl) : '';
     return [
       {type:'backend', id:'cloud', label:'cloud',
-       detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready' : 'add a provider first',
+       detail: !BSW.readyLoaded ? 'checking keys…' : ready > 0 ? ready + ' provider' + (ready === 1 ? '' : 's') + ' ready'
+         : 'no provider yet · add one in Settings › Models',
        active: here === 'cloud'},
       {type:'backend', id:'local', label:'local',
-       detail: 'llama.cpp managed here' + (here === 'custom' ? ' · switches this route to managed' : ''),
+       detail: 'a model Atomic Agent runs on this Mac',
        active: here === 'local'},
       {type:'backend', id:'custom', label:'custom',
-       detail: 'llama.cpp you run' + (customUrl ? ' · ' + customUrl : '') + ' · Settings › LLM › External',
+       detail: customHost ? 'your llama.cpp server at ' + customHost : 'your own llama.cpp server · set it up in Settings › Models',
        active: here === 'custom'},
       // Last on purpose (backendRows): the three above are routes, this one is a
       // mode built on two of them. The detail is the pre-flight's one line, or
@@ -10657,22 +10790,25 @@ function selRows() {
      operator running their own llama-server the cloud provider's catalogue. */
   if (selBackend() !== 'cloud' && selBackend() !== 'fusion') {
     const custom = selBackend() === 'custom';
-    const rows = SEL.local
-      .filter((m) => !SEL.filter || modelMatches(m.id, m.family, SEL.filter))
+    /* Calm (S7, U19): ordered for this Mac and worded like the wizard's list
+       (modelPickNote) — best fit first, the largest that runs comfortably at
+       the top. A model this Mac cannot run and has not downloaded is not a
+       row at all: selOutOfReach draws it under "Needs more memory than this
+       Mac has", with no download one click away. One already on disk stays
+       a row (it is the operator's to use), with its caution. */
+    const ram = hostRamGb();
+    const rows = orderModelsByFit(selLocalMatches(), ram)
+      .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
       .map((m) => {
-        /* r7 models: the same verdict the wizard and Settings show, in its
-           one-line form, and the catalogue's own description when there is
-           one — a switcher that only says "22 GB" tells nobody what they
-           are switching to. */
-        const fit = fitFor(m, hostRamGb());
-        return {type:'localModel', id:m.id, label:m.id, downloaded:m.downloaded, active:m.active,
-          detail: m.size + ' · ' + m.context + ' context · ' + fit.short
-            + (m.description ? ' · ' + m.description : '')
-            + (m.downloaded ? ' · on disk' : custom ? ' · not downloaded' : '')};
+        const note = modelPickNote(m, ram);
+        return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
+          detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on this Mac' : custom ? 'not downloaded' : '']
+            .filter(Boolean).join(' · '),
+          note};
       });
     // The TUI's deep-link row (model:local:download-more), outside the filter —
     // the `local` branch only, exactly as modelRows has it.
-    if (!custom) rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens the local models pane', active:false});
+    if (!custom) rows.push({type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false});
     return rows;
   }
   // A local orchestrator has no cloud catalogue: the TUI's modelRows lists nothing there.
@@ -10903,31 +11039,43 @@ function selectorHTML() {
 
   const search = SEL.kind === 'model'
     ? '<div class="selsearch"><label class="tk-inpwrap">' + ic('search') + '<input id="sel-filter" '
-      + 'placeholder="search models" value="' + esc(SEL.filter) + '" spellcheck="false" autocomplete="off"></label></div>'
+      + 'placeholder="Search models" value="' + esc(SEL.filter) + '" spellcheck="false" autocomplete="off"></label></div>'
     : '';
 
-  /* Soft Tactile rows (MP-01, MP-05, MP-11, MP-14): badge · the id (DM Mono for
-     providers and models, the query marked) over its one-line facts · the right
-     slot. The first `.cap` in a row is its detail — integration.drive reads it. */
+  /* Soft Tactile rows (MP-01, MP-05, MP-11, MP-14): badge · the name over its
+     one-line facts · the right slot. Calm (S7): names are human words in the
+     UI face (selRowName) — no mono ids; the id the row stands for is its
+     `data-id`. A local model may carry one quiet caution line under its facts,
+     the wizard's own (modelPickNote). The first `.cap` in a row is its detail
+     — integration.drive reads it. */
+  const out = selOutOfReach();
   const list = '<div class="sellist">'
-    + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>reading the catalogue…</div>' : '')
+    + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
     + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
     + rows.map((r, i) => {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
         const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
-          + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'download</span>' : '')
+          + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
           /* F1 — an unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
+        const name = selRowName(r);
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
-          + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '">'
+          + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
           + selRowLead(r)
-          + '<span class="col"><span class="nm' + (model || r.type === 'provider' || r.type === 'fusionLeg' ? ' mono' : '') + '">'
-          + (model ? selHilite(r.label, SEL.filter) : esc(r.label)) + '</span><span class="cap">' + esc(r.detail || '') + '</span></span>'
+          + '<span class="col"><span class="nm">'
+          + (model ? selHilite(name, SEL.filter) : esc(name)) + '</span><span class="cap">' + esc(r.detail || '') + '</span>'
+          + (r.note ? '<span class="selnote2' + (r.note.v === 'tight' ? ' tight' : '') + '">' + esc(r.note.text) + '</span>' : '')
+          + '</span>'
           + (right ? '<span class="selr">' + right + '</span>' : '')
           + '</button>';
       }).join('')
-    + (!real.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">no models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
+    + (out.length ? '<div class="selouth">Needs more memory than this Mac has</div>'
+        + out.map((m) => '<div class="selout" data-id="' + esc(m.id) + '">' + modelMark(m.id, 'xs')
+          + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
+          + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This Mac has.*$/, '')) + '</span></div>').join('')
+      : '')
+    + (!real.length && !out.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
   // Adding a provider is the pane's own trailing row now, as in the TUI.
@@ -11395,7 +11543,8 @@ function modesHTML() {
           + '<span class="radio' + (on ? ' on' : '') + '"></span>'
           + '<span class="col"><span class="ml">' + esc(m.word) + '</span>'
           + '<span class="cap">' + esc(off ? MODE_NEEDS_NEWER : m.detail) + '</span></span>'
-          + (on ? '<span class="cap modecur">current</span>' : '') + '</button>';
+          /* Calm (S7): the filled radio already says which one is on; no "current" word beside it. */
+          + '</button>';
       }).join('')
     + '<div class="modenote">'
     + (off
@@ -11412,8 +11561,9 @@ function modesHTML() {
           // chip as a broken one: three of the four choices genuinely do
           // not change what the agent does at that base.
           + (MODE.baseLevel === MAX_APPROVAL_LEVEL
-              ? '<p class="cap modewarn">Your configured approval level is ' + MAX_APPROVAL_LEVEL
-                + ' of ' + MAX_APPROVAL_LEVEL + ', so default already approves everything — lower agent.approvalLevel to make the modes differ.</p>'
+              /* Calm (S7): the mode's own word, and no config key in the line (it is in the tooltip). */
+              ? '<p class="cap modewarn" title="agent.approvalLevel">Your approval level is ' + MAX_APPROVAL_LEVEL
+                + ' of ' + MAX_APPROVAL_LEVEL + ', so Ask first already approves everything. Lower the approval level to make the modes differ.</p>'
               : ''))
     + '</div>'
     + '<div class="popfoot">'

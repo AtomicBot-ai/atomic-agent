@@ -64,7 +64,7 @@ const chips = (app) => app.eval(`[...document.querySelectorAll('#composer .cfoot
 
 /** The rows of whatever selector popover is open. */
 const selRows = (app) => app.eval(`[...document.querySelectorAll('.selpop .modelrow')]
-  .map((n) => ({label: (n.querySelector('.nm') || n).textContent.trim(),
+  .map((n) => ({label: (n.querySelector('.nm') || n).textContent.trim(), id: n.dataset.id || '',
                 detail: (n.querySelector('.cap') || {textContent: ''}).textContent.trim(),
                 active: n.classList.contains('on')}))`);
 
@@ -97,7 +97,7 @@ async function settled(app, timeout = 120000) {
  * Open one of the composer's parameter controls by clicking its chip.
  *
  * The model pane is FETCHED (selLoadModels → `atag models` over IPC), and
- * while it is in flight the pane draws "reading the catalogue…" over an
+ * while it is in flight the pane draws "Loading models…" over an
  * empty list. Reading the rows the instant the popover appears therefore
  * reports "0 rows" about a pane that is working perfectly — which is what
  * this driver did on its first pass, and it is the same too-early read the
@@ -109,7 +109,7 @@ async function settled(app, timeout = 120000) {
 async function openSel(app, kind) {
   await app.clickSel(`#composer .cfoot [data-sel-open="${kind}"]`);
   await app.waitFor(`!!document.querySelector('.selpop')`, `the ${kind} popover`, { quiet: true });
-  await app.waitFor(`!/reading the catalogue/.test((document.querySelector('.selpop')||{}).textContent || '')`,
+  await app.waitFor(`!/Loading models…/.test((document.querySelector('.selpop')||{}).textContent || '')`,
     `the ${kind} pane finished reading its catalogue`, { timeout: 90000, quiet: true }).catch(() => {});
   return selTitle(app);
 }
@@ -133,9 +133,11 @@ async function closeSel(app) {
   }
 }
 
-/** Click a row of the open selector, then let the switch finish. */
-async function pickRow(app, label) {
-  await app.clickText(label, { scope: '.selpop' });
+/** Click a row of the open selector, then let the switch finish. Calm (S7):
+    rows show human names, so a row is found by the id it stands for
+    (`data-id`), the same hook the composer chips carry. */
+async function pickRow(app, id) {
+  await app.clickSel(`.selpop .modelrow[data-id="${id}"]`);
   await sleep(400);
   await closeSel(app);
   return settled(app);
@@ -177,8 +179,8 @@ async function main() {
     stage(3, 'Switch to local, by clicking the backend chip');
     const title = await openSel(app, 'backend');
     want(title === 'Where it runs', 'the backend chip opens "Where it runs"', title);
-    const backends = (await selRows(app)).map((r) => r.label);
-    want(backends.length === 3, 'three backends are offered', backends.join(', '));
+    const backends = (await selRows(app)).map((r) => r.id);
+    want(backends.length === 4, 'four backends are offered (cloud, local, custom, fusion)', backends.join(', '));
     const onLocal = await pickRow(app, 'local');
     await shot(app, '03-local');
     want(onLocal.some((c) => c.kind === 'backend' && /local/.test(c.id)),
@@ -233,12 +235,12 @@ async function main() {
        row that is not already active wins; if the catalogue has none of
        them the old rule stands, and stage 7 still holds either way. */
     const SMALL = /(mini|flash|lite|haiku|small|nano|8b|4b|turbo)/i;
-    const usable = models.filter((m) => !m.active && m.label && !current.includes(m.label));
-    const target = usable.find((m) => SMALL.test(m.label)) || usable[0];
-    if (want(!!target, 'there is another model to move to', target ? target.label : 'none')) {
-      const onModel = await pickRow(app, target.label);
+    const usable = models.filter((m) => !m.active && m.id && !current.includes(m.id));
+    const target = usable.find((m) => SMALL.test(m.id)) || usable[0];
+    if (want(!!target, 'there is another model to move to', target ? target.id : 'none')) {
+      const onModel = await pickRow(app, target.id);
       await shot(app, '06-model-switched');
-      want(onModel.some((c) => c.kind === 'model' && c.id.includes(target.label)),
+      want(onModel.some((c) => c.kind === 'model' && c.id.includes(target.id)),
         'the model chip followed the click', JSON.stringify(onModel));
     } else {
       /* The pane stays OPEN when there is nothing to pick, and it covers the
