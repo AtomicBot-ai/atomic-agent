@@ -448,11 +448,20 @@ export const WORKER_HINT_SATURATED =
   "the local server was saturated: fewer parallel workers";
 export const WORKER_HINT_QUOTA =
   "provider credit/quota exhausted — retrying will not help";
+/**
+ * The client's `/slots` watchdog proved the server answers nothing at
+ * all (`first-token-unreachable`). That is evidence `WORKER_HINT_QUEUED`
+ * and `WORKER_HINT_SATURATED` do not have: the server is not full, it is
+ * gone, and narrowing the fan-out on a dead daemon wastes another wave.
+ */
+export const WORKER_HINT_UNREACHABLE =
+  "the local server stopped answering entirely: restart the daemon before re-delegating — fewer workers will not help";
 
 const CONTEXT_EXCEEDED =
   /context size has been exceeded|ran out of context|exceeds? the (?:available )?context|context (?:size|length|window) (?:exceeded|was exceeded)/i;
 const SERVER_SATURATED =
   /no first token|first[- ]token timeout|sent no data for \d+\s*ms|idle timeout/i;
+const SERVER_UNREACHABLE = /stopped answering GET \/slots|it is unreachable/i;
 const CREDIT_OR_QUOTA =
   /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of credits?|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
 
@@ -467,6 +476,10 @@ const CREDIT_OR_QUOTA =
  * gateway's 402 / 429.
  */
 export function workerFailureHint(message: string): string | undefined {
+  // Before the saturation arm: an unreachable server is the strictly
+  // better-evidenced diagnosis, and "use fewer workers" is the wrong
+  // advice for a daemon that is not answering anybody.
+  if (SERVER_UNREACHABLE.test(message)) return WORKER_HINT_UNREACHABLE;
   if (SERVER_SATURATED.test(message)) return WORKER_HINT_SATURATED;
   if (CONTEXT_EXCEEDED.test(message)) return WORKER_HINT_CONTEXT;
   if (CREDIT_OR_QUOTA.test(message)) return WORKER_HINT_QUOTA;

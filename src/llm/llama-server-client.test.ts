@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   LlamaServerClient,
   LlamaServerError,
+  SLOTS_UNREACHABLE_BUDGET_MS,
   extractLlamaErrorDetail,
   judgeSlotProgress,
 } from "./llama-server-client.js";
@@ -1337,6 +1338,130 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       await vi.advanceTimersByTimeAsync(60_000);
       const err = await failure;
       expect((err as LlamaServerError).message).toContain("no first token within 300000ms");
+    });
+
+    it("ends the wait as unreachable when /slots stops answering altogether", async () => {
+      // Issue #490. An unanswered poll used to refresh the stall clock,
+      // so a server that answered nothing at all read as "busy" and only
+      // the 30-minute first-token budget could end the wait — which is
+      // how a Fusion worker burned its whole budget with zero steps.
+      // Now the unanswered run has its own clock.
+      vi.useFakeTimers();
+      let polls = 0;
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: async () => {
+          polls += 1;
+          throw Object.assign(new Error("connect ECONNREFUSED"), {
+            code: "ECONNREFUSED",
+          });
+        },
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+
+      // One budget minus a poll interval: plenty of failed polls, no abort.
+      await vi.advanceTimersByTimeAsync(SLOTS_UNREACHABLE_BUDGET_MS - 15_000);
+      expect(polls).toBeGreaterThan(30);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const err = (await failure) as LlamaServerError;
+      expect(err).toBeInstanceOf(LlamaServerError);
+      expect(err.timedOut).toBe(true);
+      expect(err.message).toContain("stopped answering GET /slots entirely");
+      expect(err.message).toContain(`for ${SLOTS_UNREACHABLE_BUDGET_MS}ms`);
+      expect(err.message).toContain("it is unreachable");
+      // Not the slow-model diagnosis, and not the stall one either.
+      expect(err.message).not.toContain("evaluating the prompt");
+      expect(err.message).not.toContain("every slot idle");
+    });
+
+    it("does not abort on a transient poll failure that a later answer clears", async () => {
+      // One failed poll against a busy server is ordinary — /slots is
+      // known to hang while a slot evaluates a large prompt, which is
+      // exactly when the wait is most worth keeping.
+      vi.useFakeTimers();
+      let polls = 0;
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 4 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: async () => {
+          polls += 1;
+          // Every third poll fails; the rest report real work.
+          if (polls % 3 === 0) throw new Error("socket hang up");
+          return new Response(JSON.stringify([busy(0, polls)]), { status: 200 });
+        },
+      });
+      const first = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next();
+      const failure = first.catch((err: unknown) => err);
+
+      // Three unreachable budgets' worth of the same pattern: the run of
+      // unanswered polls never gets past one, so nothing fires.
+      await vi.advanceTimersByTimeAsync(3 * SLOTS_UNREACHABLE_BUDGET_MS);
+      expect(polls).toBeGreaterThan(100);
+      opened().push('data: {"content":"hi","stop":false}\n\n');
+      const chunk = (await failure) as IteratorResult<{ delta: string }>;
+      expect(chunk.done).toBe(false);
+      expect(chunk.value.delta).toBe("hi");
+      opened().close();
+    });
+
+    it("never aborts a server that is genuinely working, however long it takes", async () => {
+      // The other direction of the same change: a busy server answers
+      // every poll, so neither clock can reach its budget.
+      vi.useFakeTimers();
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 4 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: slotsJson([busy(0), busy(1, 9)]),
+      });
+      const first = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next();
+      await vi.advanceTimersByTimeAsync(3 * SLOTS_UNREACHABLE_BUDGET_MS);
+      opened().push('data: {"content":"ok","stop":false}\n\n');
+      expect((await first).done).toBe(false);
+      opened().close();
+    });
+
+    it("latches a build without /slots instead of pretending to watch it", async () => {
+      // 501 (or 404) is the opposite of unreachable: the server answered,
+      // it just has no such endpoint, and it never will while it runs.
+      // Aborting on that would break every user on such a build, so the
+      // watch latches the fact, stops polling, and the first-token
+      // timeout says outright that nothing was watching.
+      vi.useFakeTimers();
+      let polls = 0;
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 90_000,
+        slots: async () => {
+          polls += 1;
+          return new Response("slots endpoint disabled", { status: 501 });
+        },
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+
+      await vi.advanceTimersByTimeAsync(91_000);
+      const err = (await failure) as LlamaServerError;
+      expect(err.message).toContain("sent no first token within 90000ms");
+      expect(err.message).toContain("no /slots endpoint");
+      // Polled once, learned the endpoint is absent, stopped.
+      expect(polls).toBe(1);
+      expect(client.slotsWatchUnavailable()).toBe(true);
+
+      // And the next request on the same server does not probe again.
+      const second = client
+        .completeStream({ prompt: "p2", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err2: unknown) => err2);
+      await vi.advanceTimersByTimeAsync(91_000);
+      expect((await second) as LlamaServerError).toBeInstanceOf(LlamaServerError);
+      expect(polls).toBe(1);
     });
 
     it("stops polling once the first byte arrives", async () => {

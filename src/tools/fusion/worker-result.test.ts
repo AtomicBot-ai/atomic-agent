@@ -5,6 +5,7 @@ import {
   WORKER_HINT_CONTEXT,
   WORKER_HINT_QUOTA,
   WORKER_HINT_SATURATED,
+  WORKER_HINT_UNREACHABLE,
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
@@ -737,11 +738,27 @@ describe("workerFailureHint", () => {
       "llama-server sent no data for 120000ms mid-stream — the server stopped responding",
       WORKER_HINT_SATURATED,
     ],
+    [
+      // The /slots watchdog's own verdict. It reads as saturation on
+      // the words alone, and "use fewer workers" is the wrong advice
+      // for a daemon that is answering nobody — so it is matched first.
+      "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll got a reply, so the server is not merely busy, it is unreachable; check that llama-server is still alive and restart it before retrying (running fewer workers will not help)",
+      WORKER_HINT_UNREACHABLE,
+    ],
     ["openrouter HTTP 402: Payment Required", WORKER_HINT_QUOTA],
     ["HTTP 429: Too Many Requests", WORKER_HINT_QUOTA],
     ["insufficient credits on this API key", WORKER_HINT_QUOTA],
   ])("recognises %s", (message, hint) => {
     expect(workerFailureHint(message)).toBe(hint);
+  });
+
+  it("sends an unreachable server to a restart, not to a narrower fan-out", () => {
+    const hint = workerFailureHint(
+      "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll got a reply, so the server is not merely busy, it is unreachable",
+    );
+    expect(hint).toBeDefined();
+    expect(hint).not.toBe(WORKER_HINT_SATURATED);
+    expect(hint).toContain("restart the daemon");
   });
 
   it("stays silent on failures it has no remedy for", () => {

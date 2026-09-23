@@ -68,13 +68,22 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *    evaluating; a server that is provably doing nothing is not going
  *    to answer, and waiting the full first-token budget on it is what
  *    parked a turn for half an hour. See `SLOTS_POLL_INTERVAL_MS`.
+ *  - `first-token-unreachable` — while waiting for the first byte,
+ *    `/slots` stopped answering *at all* (every poll timed out or the
+ *    socket failed) for `SLOTS_UNREACHABLE_BUDGET_MS`. The distinction
+ *    from `first-token-stall` is the whole point: a stall is a server
+ *    that talks and does nothing, this is a server that has gone
+ *    silent, and the advice for the two is different — one is "check
+ *    why the request is not being picked up", the other is "the daemon
+ *    is gone, restart it". See `SLOTS_UNREACHABLE_BUDGET_MS`.
  */
 export type LlamaTimeoutKind =
   | "total"
   | "first-token"
   | "idle"
   | "stream-total"
-  | "first-token-stall";
+  | "first-token-stall"
+  | "first-token-unreachable";
 
 /**
  * Progress watch while waiting for the first token: `GET /slots` every
@@ -89,12 +98,61 @@ export type LlamaTimeoutKind =
 export const SLOTS_POLL_INTERVAL_MS = 15_000;
 export const SLOTS_POLL_TIMEOUT_MS = 3_000;
 
-/** What one answered `/slots` poll said about progress. */
+/**
+ * How long `/slots` may go *completely unanswered* — every poll timing
+ * out or failing at the socket, with no answer of any kind in between —
+ * before a first-token wait is ended as `first-token-unreachable`.
+ * Floored at the idle budget by `unreachableBudgetMs()`.
+ *
+ * Ten minutes, and the number is a compromise between two real
+ * failures, not a round figure:
+ *
+ *  - Too short kills healthy work. `/slots` is known to hang while a
+ *    slot evaluates a large prompt (measured on the fusion benchmark),
+ *    and that is exactly the moment the request is least dead and most
+ *    worth waiting for. A CPU prompt eval of a long context is minutes
+ *    of legitimate silence, so anything on the order of the poll
+ *    interval — or of the idle budget, 5 min by default — would fall
+ *    over on a slow machine doing its job.
+ *  - Too long is what issue #490 reported. At 30 min
+ *    (`firstTokenTimeoutMs`) a dead daemon consumed a Fusion worker's
+ *    *entire* budget, so the worker died with zero steps and nothing
+ *    to hand back.
+ *
+ * Ten minutes is a third of the first-token budget: twice the default
+ * idle budget of slack for a long prompt eval, and it still returns two
+ * thirds of a 30-min wait to the caller when the server really is gone.
+ * `SLOTS_UNREACHABLE_MIN_POLLS` is the second half of the guard — see
+ * there for why a duration alone is not enough.
+ */
+export const SLOTS_UNREACHABLE_BUDGET_MS = 10 * 60_000;
+
+/**
+ * How many *consecutive* unanswered polls the unreachable run must also
+ * cover. At the default 15 s interval the budget above is ~33 polls, so
+ * this floor never binds; it exists because `slotsPollIntervalMs` is
+ * tunable, and a deployment that widened the interval must not be able
+ * to turn one or two failed polls into an abort. One failed poll against
+ * a busy server is ordinary.
+ */
+export const SLOTS_UNREACHABLE_MIN_POLLS = 8;
+
+/** What one `/slots` poll said about progress. */
 export type SlotProgressVerdict =
   | { kind: "progress"; snapshot: string }
   | { kind: "idle"; snapshot: string }
-  /** The poll failed or timed out: no verdict, the server is busy or off. */
-  | { kind: "unknown" };
+  /**
+   * The server answered, but the answer carries no verdict — an error
+   * status, or a body that is not a slot table. It is alive; only the
+   * watch is blind. Never counted as progress, never as unreachable.
+   */
+  | { kind: "unknown" }
+  /**
+   * No answer at all: the poll timed out or the socket failed. Either
+   * the server is busy enough that `/slots` cannot be served, or it is
+   * gone — `SLOTS_UNREACHABLE_BUDGET_MS` is what tells the two apart.
+   */
+  | { kind: "unanswered" };
 
 /**
  * Compare a `/slots` answer with the previous one. Pure. `slotId` is the
@@ -319,6 +377,16 @@ export class LlamaServerClient {
   private readonly sleep: (ms: number) => Promise<void>;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
+  /**
+   * The base URL whose `/slots` answered 404/405/501 — the endpoint is
+   * not built into this llama.cpp, so the progress watch can never do
+   * its job there. Latched (rather than re-discovered every 15 s) so
+   * the client stops polling an endpoint that will never exist, and so
+   * a first-token timeout can *say* the watch was blind instead of
+   * pretending it was watching. Keyed by URL because the base is read
+   * from config per request unless `baseUrl` pins it.
+   */
+  private slotsUnavailableFor: string | null = null;
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
@@ -359,6 +427,32 @@ export class LlamaServerClient {
    * from a measured speed, not a guess, and one that follows the load
    * on the machine rather than a constant.
    */
+  /**
+   * True once this server has answered a `/slots` poll with 404/405/501:
+   * the endpoint is absent, so the progress watch is off for good and
+   * `firstTokenTimeoutMs` is the only thing bounding a first-token wait.
+   * Read by the first-token error message; exposed so an operator-facing
+   * surface can say the same thing without repeating the probe.
+   */
+  slotsWatchUnavailable(): boolean {
+    if (this.slotsUnavailableFor === null) return false;
+    return (
+      this.slotsUnavailableFor ===
+      (this.baseUrlOverride ?? getConfig().localModels.url)
+    );
+  }
+
+  /**
+   * The unanswered-`/slots` budget in force, never shorter than the idle
+   * budget. An operator who raised `requestTimeoutMs` is saying this
+   * machine goes quiet for long stretches while it is working; the same
+   * tolerance has to apply to a `/slots` that cannot be served, or the
+   * new deadline would undercut the setting they chose.
+   */
+  private unreachableBudgetMs(): number {
+    return Math.max(SLOTS_UNREACHABLE_BUDGET_MS, this.requestTimeoutMs);
+  }
+
   measuredTokensPerSecond(): number | null {
     if (this.throughputSamples.length === 0) return null;
     const sum = this.throughputSamples.reduce((a, b) => a + b, 0);
@@ -717,7 +811,10 @@ export class LlamaServerClient {
    * A first-token wait also runs the `/slots` progress watch (`watch`):
    * a third timer that polls every `slotsPollIntervalMs` and fires
    * `first-token-stall` when the server keeps answering and shows no
-   * work anywhere for a whole idle budget. It stops at the first byte.
+   * work anywhere for a whole idle budget, or
+   * `first-token-unreachable` when it stops answering the poll
+   * altogether for `unreachableBudgetMs()`. It stops at the first byte,
+   * and never starts on a server whose `/slots` is known absent.
    */
   private createRequestController(
     externalSignal?: AbortSignal,
@@ -759,14 +856,32 @@ export class LlamaServerClient {
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
 
-    // The progress watch. `lastProgressAt` is the last moment the
-    // server was seen doing anything (or could not be asked — a poll
-    // that times out is a busy server); a run of answered polls with
-    // nothing moving that lasts an idle budget is the stall.
+    // The progress watch. Two clocks, because "the server says nothing
+    // is happening" and "the server says nothing" are different
+    // failures with opposite remedies:
+    //
+    //  - `lastProgressAt` — the last moment the server was seen doing
+    //    anything, or could not be asked. Anything that is not a clean
+    //    `idle` verdict refreshes it, so `first-token-stall` still
+    //    needs an *unbroken* run of idle answers spanning an idle
+    //    budget, exactly as before.
+    //  - `unansweredSince` / `unansweredPolls` — the current run of
+    //    polls that got no answer at all, reset by any answer of any
+    //    kind. `first-token-unreachable` fires only when that run
+    //    outlasts `unreachableBudgetMs()` *and* covers at least
+    //    `SLOTS_UNREACHABLE_MIN_POLLS` polls.
+    //
+    // Folding the second case into the first is what made the watchdog
+    // unfirable on a dead server (issue #490): an unanswered poll used
+    // to refresh `lastProgressAt`, so total silence read as "busy" and
+    // the only thing left bounding the wait was the 30-minute
+    // first-token budget the watch exists to cut short.
     let watchTimer: ReturnType<typeof setTimeout> | null = null;
     let watchStopped = false;
     let previousSnapshot: string | null = null;
     let lastProgressAt = Date.now();
+    let unansweredSince: number | null = null;
+    let unansweredPolls = 0;
     const stopWatch = (): void => {
       watchStopped = true;
       if (watchTimer !== null) {
@@ -784,11 +899,48 @@ export class LlamaServerClient {
           watch?.slotId ?? -1,
           previousSnapshot,
         );
-      } catch {
-        verdict = { kind: "unknown" };
+      } catch (err) {
+        // An HTTP status means the server answered — it is alive, and
+        // only the watch is blind. 404/405/501 is the endpoint missing
+        // from this build, which will not change while the process
+        // runs: latch it and stop polling rather than spending a
+        // request every 15 s to be told the same thing, and rather
+        // than claiming a watch this server cannot support. Every
+        // other status (401/403 behind a proxy, a 5xx) may clear, so
+        // the watch keeps polling and simply learns nothing.
+        const status = err instanceof LlamaServerError ? err.status : null;
+        if (status === 404 || status === 405 || status === 501) {
+          const config = getConfig();
+          this.slotsUnavailableFor =
+            this.baseUrlOverride ?? config.localModels.url;
+          stopWatch();
+          return;
+        }
+        verdict = status === null ? { kind: "unanswered" } : { kind: "unknown" };
       }
       if (watchStopped || expired !== null || controller.signal.aborted) return;
       const now = Date.now();
+      if (verdict.kind === "unanswered") {
+        unansweredPolls += 1;
+        unansweredSince ??= now;
+        if (
+          unansweredPolls >= SLOTS_UNREACHABLE_MIN_POLLS &&
+          now - unansweredSince >= this.unreachableBudgetMs()
+        ) {
+          expired = "first-token-unreachable";
+          stopWatch();
+          controller.abort();
+          return;
+        }
+        // Still ambiguous: a hung `/slots` is the ordinary look of a
+        // slot evaluating a large prompt, so the stall clock is
+        // refreshed and the first-token budget stays the backstop.
+        lastProgressAt = now;
+        scheduleWatch();
+        return;
+      }
+      unansweredSince = null;
+      unansweredPolls = 0;
       if (verdict.kind !== "unknown") previousSnapshot = verdict.snapshot;
       if (verdict.kind === "idle") {
         if (now - lastProgressAt >= this.requestTimeoutMs) {
@@ -808,7 +960,12 @@ export class LlamaServerClient {
         void pollOnce();
       }, this.slotsPollIntervalMs);
     };
-    if (initialKind === "first-token" && this.progressWatch && watch) {
+    if (
+      initialKind === "first-token" &&
+      this.progressWatch &&
+      watch &&
+      !this.slotsWatchUnavailable()
+    ) {
       scheduleWatch();
     }
 
@@ -890,11 +1047,31 @@ export class LlamaServerClient {
     // responding" is wrong when it never started, which for llama.cpp
     // is the ordinary look of a long prompt eval.
     if (timedOut === "first-token") {
+      // Say it when the progress watch was blind: on a build without
+      // `/slots` this budget is the *only* thing that bounded the wait,
+      // and letting the reader assume a watch was running would send
+      // them looking for a stall report that could never be produced.
+      const blind = this.slotsWatchUnavailable()
+        ? ` (this server has no /slots endpoint, so the progress watch was off and this budget was the only bound on the wait)`
+        : ``;
       return new LlamaServerError(
-        `llama-server sent no first token within ${this.firstTokenTimeoutMs}ms — ` +
+        `llama-server sent no first token within ${this.firstTokenTimeoutMs}ms${blind} — ` +
           `it may still be evaluating the prompt or queued behind other requests; ` +
           `raise ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS (localModels.firstTokenTimeoutMs), ` +
           `run fewer local workers at once, or shorten the prompt/context if it is too large for this machine to evaluate in time`,
+        null,
+        url,
+        true,
+        undefined,
+        { cause: err },
+      );
+    }
+    if (timedOut === "first-token-unreachable") {
+      return new LlamaServerError(
+        `llama-server stopped answering GET /slots entirely for ${this.unreachableBudgetMs()}ms ` +
+          `while this request waited for its first token — not one poll got a reply, so the server is ` +
+          `not merely busy, it is unreachable; check that llama-server is still alive and restart it ` +
+          `before retrying (running fewer workers will not help)`,
         null,
         url,
         true,
