@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import { renderWorkerBrief } from "../fusion/worker-prompt.js";
 import type { ToolContext } from "../tool-registry.js";
 import { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import { buildOsFsEditTool } from "./fs-edit.js";
+import { compressToolResult } from "../../compressor/result-compressor.js";
 import {
   REPLACE_VERB_WINDOW_WORDS,
   requestAsksToReplace,
@@ -336,5 +337,53 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
     expect(
       (await write.run({ path: "sales.csv", content: csv(9) }, ctx("s-w-1"))).status,
     ).toBe("ok");
+  });
+
+  it("keeps the way onward when the path is long enough to reach the compressor's cap", async () => {
+    // A worker writes by absolute path into a nested workspace, and
+    // `display` is the path as the call spelled it. The declared-input
+    // wording is the longer of the two — 224 characters before the path
+    // and the counts go in — so an ordinary nested path takes the whole
+    // message past the compressor's 400-character default, and what the
+    // head slice eats is the end: the `os.fs.edit` / `os.fs.patch`
+    // instruction and the redeclare escape hatch.
+    const nested = join(
+      dir,
+      "sessions",
+      "2026-09-22T10-14-33Z-fanout-4f2a",
+      "workers",
+      "worker-03",
+      "workspace",
+      "checkouts",
+      "atomic-agent",
+      "artifacts",
+      "reports",
+      "quarterly",
+      "2026-q3",
+    );
+    await mkdir(nested, { recursive: true });
+    const absolute = join(nested, "regional-sales-rollup-final.csv");
+    await writeFile(absolute, csv(2401), "utf8");
+    const registry = new DeclaredInputsRegistry();
+    registry.declare("s-w-1", [absolute]);
+    const write = buildOsFsWriteTool({
+      approvals: gate,
+      approvalRequired: true,
+      declaredInputs: registry,
+    });
+    const refused = await write.run(
+      { path: absolute, content: csv(9, "sku,qty") },
+      ctx("s-w-1"),
+    );
+    const expected = `refused: ${absolute} is an input this fan-out declared (2,402 lines → 10); edit it in place (os.fs.edit / os.fs.patch) — a worker cannot replace a declared input; if the task needs it replaced, say so in your reply so the orchestrator can redeclare it`;
+    // Guard the guard: under the default cap this test proves nothing.
+    expect(expected.length).toBeGreaterThan(400);
+    expect(refused.status).toBe("error");
+    expect(refused.summary).toBe(expected);
+    expect(refused.truncated).toBe(false);
+    expect(
+      compressToolResult({ tool: "os.fs.write", status: "error", output: expected })
+        .summary,
+    ).not.toContain("redeclare it");
   });
 });
