@@ -555,9 +555,31 @@ export async function modelsSearch(
   }
 }
 
+/**
+ * The chat daemon's speed as `models start` measures it once the daemon is
+ * healthy (agent ≥0.6.3, src/cli/models-handlers.ts): "chat: started pid N,
+ * healthy on port P[, vision …], ~N tok/s single stream". Null when the line
+ * has no measurement (older agent, or the probe did not answer).
+ */
+export function parseChatStartSpeed(stdout: string): { pid: number; tokensPerSecond: number } | null {
+  const m = /chat: started pid (\d+), healthy on port \d+.*?, ~(\d+(?:\.\d+)?) tok\/s single stream/.exec(stdout);
+  return m ? { pid: Number(m[1]), tokensPerSecond: Number(m[2]) } : null;
+}
+
+/* The last measurement, keyed by the daemon pid it was taken on: a daemon
+   restarted by anything else (the TUI, a crash) never inherits it. Every
+   start the desktop makes — launch, backend switch, Settings — goes through
+   modelsStart, so this is the one place to catch it. */
+let lastChatSpeed: { pid: number; tokensPerSecond: number } | null = null;
+
 /** Start the managed llama daemon after switching to a local model. */
 export async function modelsStart(): Promise<CliResult> {
-  return cli(["models", "start"], 90_000);
+  const res = await cli(["models", "start"], 90_000);
+  if (res.ok) {
+    const speed = parseChatStartSpeed(res.stdout);
+    if (speed) lastChatSpeed = speed;
+  }
+  return res;
 }
 
 /**
@@ -1842,6 +1864,8 @@ export interface ModelsStatus {
   daemonUrl: string | null;
   health: string | null;
   url: string | null;
+  /** `~N tok/s` from the `models start` that brought up THIS daemon pid; null when unmeasured. */
+  tokensPerSecond: number | null;
 }
 
 /**
@@ -1880,6 +1904,7 @@ export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStat
       daemonUrl: urlMatch ? urlMatch[0] : null,
       health: fields["health"] || null,
       url: fields["url"] || null,
+      tokensPerSecond: pid && lastChatSpeed && lastChatSpeed.pid === Number(pid[1]) ? lastChatSpeed.tokensPerSecond : null,
     },
   };
 }

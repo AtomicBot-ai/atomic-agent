@@ -8,6 +8,7 @@ import {
   modelsUse,
   providerHasKey,
   providerIsUsable,
+  parseChatStartSpeed,
   readWholeConfig,
   rewriteWholeConfig,
   setActiveTextProvider,
@@ -99,7 +100,8 @@ function transportFor(id: string): "grammar+llama-server" | "native_tools" {
  */
 function readyLine(stdout: string): string | undefined {
   const m = /chat: started pid (\d+), healthy on port (\d+)/.exec(stdout);
-  if (m) return `local-llm: ready — pid ${m[1]} on http://127.0.0.1:${m[2]}`;
+  const speed = parseChatStartSpeed(stdout);
+  if (m) return `local-llm: ready — pid ${m[1]} on http://127.0.0.1:${m[2]}${speed ? ` · ~${speed.tokensPerSecond} tok/s` : ""}`;
   const last = stdout.trim().split("\n").filter(Boolean).pop();
   return last ? `local-llm: ${last}` : undefined;
 }

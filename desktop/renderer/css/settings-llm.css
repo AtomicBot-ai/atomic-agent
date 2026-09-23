@@ -217,6 +217,15 @@
 .llm-pane .llm-mmproj{display:flex;align-items:center;gap:8px}
 .llm-pane .llm-mmproj > svg{width:15px;height:15px;color:var(--ink-2)}
 
+/* ---- Thinking (gap 11): three knobs, a title and one help line each, the choice on the right ---- */
+.llm-pane .llm-tune-card{display:flex;flex-direction:column;border-radius:var(--r-block);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd)}
+.llm-pane .llm-tune-row{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;min-height:46px;padding:10px 12px 10px 16px}
+.llm-pane .llm-tune-row + .llm-tune-row{box-shadow:inset 0 1px 0 var(--bd)}
+.llm-pane .llm-tune-body{flex:1;min-width:220px;display:flex;flex-direction:column;gap:2px}
+.llm-pane .llm-tune-t{font-size:13.5px;font-weight:600;line-height:1.3}
+.llm-pane .llm-tuneseg button{min-width:44px;padding:0 10px}
+.llm-pane .llm-tune .tk-sh .tk-spin{width:12px;height:12px;margin-left:8px}
+
 /* ---- llama-server log (ST-26) ---- */
 .llm-pane .llm-logbar{flex-wrap:nowrap}
 .llm-pane .llm-logpath{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px/1.4 var(--font-mono);color:var(--ink-2)}

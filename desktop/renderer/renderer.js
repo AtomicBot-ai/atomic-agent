@@ -914,6 +914,7 @@ const LLMP = {
   daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
   logs:null, logsTimer:null, logsBusy:false,
   pulling:null, pullLog:[], // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
+  tune:{busy:null, msg:null, err:null}, // the Thinking section: busy = the config path being written
   timer:null, seq:0, inflight:null,
 };
 const LLM_PANEL_MODES = ['local','cloud','external','fallback']; // llm-panel-state.ts LLM_PANEL_MODES
@@ -5896,7 +5897,7 @@ if (BR) {
   const originalAct = act;
   act = function (a) {
     if (a === 'stop' && S.turnId) { BR.cancel(S.turnId); S.busy = false; clearInterval(ticker); render(); return; }
-    if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); BR.restart().then(applyStatus); return; }
+    if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
       BR.chooseWorkspace().then((dir) => {
         if (!dir) return;
@@ -15761,7 +15762,9 @@ function llmRowHTML(row, index, cursor) {
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
       + ' ' + chip(m.downloaded ? 'green' : 'line', m.downloaded ? 'downloaded' : 'remote')
       + (row.text.indexOf('★ best fit for this machine') >= 0 ? ' ' + chip('indigo', '★ best fit for this machine') : '')
-      + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '');
+      + (chat && m.tag ? ' ' + chip('blue', esc(m.tag)) : '')
+      // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
+      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
     // r7 models: what the model is, how it fits this machine, and the one
     // caution it earns. Absent on a row that has no catalogue entry.
     return open + radio + modelMark(m.id, '')
@@ -15822,6 +15825,7 @@ function llmLocalHTML() {
         ? 'Ordered for this machine — it reports ' + ram + ' GB of RAM. Every fit line under a model is measured against that.'
         : 'Reading this machine’s RAM…') + '</p>',
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
+    + llmTuneHTML()
     + llmSectionHTML('Local embeddings', emb, text.length, cursor)
     // Item 7B — the Ollama signpost. atomic-agent has no Ollama download
     // path of any kind: `grep -rni ollama src/` finds provider presets, a
@@ -15879,7 +15883,55 @@ function llmExternalHTML() {
         + '<span class="llm-line-t">managed daemon: <span class="mono">' + esc(llmFormatDaemon()) + '</span></span>'
         + '<span class="grow"></span>' + llmKeyBtn('s', 'start/stop', 'llm:daemon') + '</div>'
       + '<p class="llm-back">← <button class="llm-link" data-act="llm:mode:local">Local pane</button>: pick a managed model to switch back</p>'
-    + '</div>';
+    + '</div>'
+    + llmTuneHTML();
+}
+/* Gaps 11: the three knobs agent v0.6.3 reads on every local completion
+   (config v66/v68) — the managed daemon and an External llama.cpp alike.
+   Leaf `config set` writes; `atag serve` read the file at boot, so each
+   change carries the restart line. Copy condensed from the schema's own
+   comments on localModels.thinking / reasoningBudgetTokens / useServerTemplate. */
+const LLM_TUNE_BUDGETS = [0, 500, 1500, 4000, 8000];
+function llmTuneHTML() {
+  const lm = llmLocalModels();
+  const tri = (v) => (v === 'on' || v === 'off' ? v : 'auto');
+  const thinking = tri(lm.thinking), template = tri(lm.useServerTemplate);
+  const budget = Number.isInteger(lm.reasoningBudgetTokens) ? lm.reasoningBudgetTokens : 1500;
+  const T = LLMP.tune;
+  const seg = (key, cur, opts, label) => '<span class="tk-seg llm-tuneseg" role="group" aria-label="' + esc(label) + '">'
+    + opts.map(([v, txt]) => '<button class="' + (v === cur ? 'on' : '') + '" aria-pressed="' + (v === cur) + '" data-act="llm:tune:' + key + ':' + v + '"'
+      + (T.busy ? ' disabled' : '') + '>' + esc(txt) + '</button>').join('') + '</span>';
+  const budgets = LLM_TUNE_BUDGETS.includes(budget) ? LLM_TUNE_BUDGETS : LLM_TUNE_BUDGETS.concat([budget]).sort((a, b) => a - b);
+  const row = (title, help, control) => '<div class="llm-tune-row"><span class="llm-tune-body"><span class="llm-tune-t">' + esc(title) + '</span>'
+    + '<span class="tk-help">' + esc(help) + '</span></span>' + control + '</div>';
+  return '<section class="llm-section llm-tune"><div class="tk-sh llm-sh"><span class="llm-sh-t">Reasoning and prompt format</span>'
+    + (T.busy ? '<span class="tk-spin"></span>' : '') + '</div>'
+    + '<div class="llm-tune-card">'
+    + row('Thinking', 'Auto keeps the model’s own default. Off asks a reasoning model to answer without thinking first.',
+        seg('thinking', thinking, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Thinking'))
+    + row('Thinking budget', 'Tokens a reasoning model may think before it calls a tool. Its final answer is never cut. Default 1500.',
+        seg('budget', budget, budgets.map((n) => [n, n === 0 ? 'No limit' : String(n)]), 'Thinking budget in tokens'))
+    + row('Model’s own chat template', 'Auto uses it for every model without a built-in format, so everything but Gemma and Qwen. On forces it, Off never uses it.',
+        seg('template', template, [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'Use the model’s own chat template'))
+    + '</div>'
+    + (T.err ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(T.err) + '</span></div>'
+      : T.msg ? restartLine(T.msg) : '')
+    + '</section>';
+}
+async function llmTuneSet(key, raw) {
+  if (!BR || LLMP.tune.busy) return;
+  const PATHS = {thinking:'localModels.thinking', budget:'localModels.reasoningBudgetTokens', template:'localModels.useServerTemplate'};
+  const path = PATHS[key]; if (!path) return;
+  const value = key === 'budget' ? String(Math.max(0, parseInt(raw, 10) || 0)) : (['auto', 'on', 'off'].includes(raw) ? raw : 'auto');
+  LLMP.tune = {busy:path, msg:null, err:null}; llmRepaint();
+  const res = await BR.configSet(path, value);
+  if (!res || res.ok === false) { LLMP.tune = {busy:null, msg:null, err:llmFail(path + ' write failed', res)}; llmRepaint(); return; }
+  await refreshLiveConfig();
+  const said = key === 'thinking' ? 'Thinking: ' + value
+    : key === 'template' ? 'Model’s own chat template: ' + value
+    : 'Thinking budget: ' + (value === '0' ? 'no limit' : value + ' tokens');
+  LLMP.tune = {busy:null, msg:said + '.', err:null};
+  llmRepaint();
 }
 function llmFallbackHTML() {
   const view = llmFallbackView();
@@ -16595,6 +16647,7 @@ function llmAct(what) {
   }
   if (verb === 'backend') { llmBackendUpdate(); return; }
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
+  if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
   if (verb === 'logs') { llmLogsOpen(); return; }
   if (verb === 'logsRefresh') { llmLogsRefresh(); return; }
