@@ -32,9 +32,11 @@
  *
  * Usage:
  *
- *   import { launch } from './drive.mjs';
+ *   import { launch } from './drive-selector-lib.mjs';
  *   const app = await launch({ port: 9403, stateDir: '/tmp/...' });
- *   await app.clickText('.cfoot button', 'local');
+ *   await app.clickSel('#composer .cfoot [data-sel-open="backend"]');
+ *   await app.clickText('.selpop .modelrow[data-id="local"]', '');   // "This Mac"
+ *   // Chips and popover rows show human words; match the id in data-id.
  *   console.log(await app.snap(`document.querySelector('#composer').textContent`));
  *   await app.close();
  */

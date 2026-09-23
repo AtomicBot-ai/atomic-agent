@@ -2245,11 +2245,13 @@ function toolTense(line, state) {
   const mt = /^(Added to|Looked for|Looked at|Looked up|[A-Z][a-z]+)\b/.exec(line);
   if (state === 'err' && mt && mt[1] === 'Ran' && /\u00b7 exit /.test(line)) return line;
   if (!mt || !forms[mt[1]]) {
+    if (state === 'wait') return 'Waiting for your OK: ' + line.charAt(0).toLowerCase() + line.slice(1);
     return state === 'run' ? line
       : (state === 'unk' ? 'Tried: ' : 'Couldn\u2019t finish: ') + line.charAt(0).toLowerCase() + line.slice(1);
   }
   const rest = line.slice(mt[1].length);
   if (state === 'run') return forms[mt[1]][0] + rest;
+  if (state === 'wait') return 'Waiting for your OK to ' + forms[mt[1]][1] + rest;
   return (state === 'unk' ? 'Tried to ' : 'Couldn\u2019t ') + forms[mt[1]][1] + rest;
 }
 /* The failure, in one line, for a card that failed: the first line of the
@@ -2293,6 +2295,19 @@ function toolStatus(state) {
 function toolState(m) {
   return m.ok === null ? 'run' : m.ok === false ? 'err' : m.forced ? 'unk' : 'ok';
 }
+/* Calm (S7): a call that is waiting on the approval card under it has not
+   started; "Running touch x" above "Allow Atomic Agent to run…?" read as if
+   it already had. The newest running card of the tool the pending approval
+   names reads "Waiting for your OK to run touch x" instead. */
+function toolAwaitsApproval(m) {
+  const p = S.pending;
+  if (!p || !p.tool || p.tool !== m.name || m.ok !== null) return false;
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const c = S.log[i];
+    if (c.k === 'tool' && c.name === m.name && c.ok === null) return c === m;
+  }
+  return false;
+}
 function toolCard(m) {
   const st = toolState(m);
   const running = st === 'run';
@@ -2303,7 +2318,7 @@ function toolCard(m) {
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
-      + '<span class="nm">' + toolTense(toolLine(m), st) + '</span>'
+      + '<span class="nm">' + toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
       // 0ms for a store-rebuilt card (turns-to-messages.ts); the user rejected that zero, so a card
@@ -6494,6 +6509,18 @@ const CATEGORY_LABEL = {
   fs_read_outside:'read outside the working directory',
 };
 
+/* Calm (S7): why an answer to an approval did not land, in words. The
+   route's own text ("approvalId not pending: …", "fetch failed",
+   ECONNREFUSED) is not a sentence for a person; it goes to the Agent log
+   (Settings › Diagnostics, the console) and the row says what it means. */
+function agentReplyWords(why) {
+  const w = String(why || '');
+  if (w) LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', 'approval answer: ' + w]);
+  if (/not pending/i.test(w)) return 'the agent was no longer waiting for an answer.';
+  if (!w || /no reply|fetch failed|ECONN|ETIMEDOUT|timed? ?out|socket|network|abort/i.test(w)) return 'the agent did not answer.';
+  if (/did not confirm/i.test(w)) return 'the agent did not confirm it.';
+  return 'the agent did not accept it.';
+}
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a';
   S.pending = null;
@@ -6502,7 +6529,7 @@ function answerLive(req, key) {
   req.at = new Date().toTimeString().slice(0, 8);
   if (key === 's' || key === 'a') {
     placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
-      text:'granted once — session-wide grants are not exposed by the agent\u2019s HTTP API yet, so this behaved as “allow once”.'});
+      text:'Allowed once. Atomic Agent can only allow a call once for now.'});
   }
   /* r6 (human-scenario round): the window has to go back to LOOKING busy.
      onApprovalEvent clears S.busy so the strip can say "Waiting for your
@@ -6523,7 +6550,7 @@ function answerLive(req, key) {
     S.busy = true;
   }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
-    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(res.error || 'no reply')});
+    if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
   });
   if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
@@ -6587,8 +6614,7 @@ async function denyByProse(req, text, post) {
      had stopped waiting for that answer. */
   placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev: landed ? '' : 'warn', text: landed
     ? 'Denied, with your message as the reason.'
-    : 'Couldn\u2019t deny that call with your message: ' + (/not pending/i.test(why)
-      ? 'the agent was no longer waiting for an answer.' : esc(why))});
+    : 'Couldn\u2019t deny that call with your message: ' + esc(agentReplyWords(why))});
   render();
   // Then the text itself. steerOrQueue prints its own honest line about where
   // it landed — folded into the running turn, or parked as the next one.
@@ -13288,8 +13314,12 @@ function groupCard(run) {
   return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-group="' + m.id + '" title="' + esc(m.name) + '">'
     + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
-    + '<span class="nm">' + esc(toolVerb(m.name)) + ' \u00b7 ' + run.length + ' times</span>'
-    + (bad ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
+    /* Calm (S7): the head takes the run's tense like a single call does —
+       "Couldn't list files · 3 times" when every member failed (and then no
+       separate "3 failed"), "Listing files" while one still runs. */
+    + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad === run.length ? 'err'
+        : states.every((x) => x === 'unk') ? 'unk' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
+    + (bad && bad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
     + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('unk') ? 'unk' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
@@ -16665,8 +16695,13 @@ const LLM_BAR_MODES = [['local', 'Local'], ['cloud', 'Cloud'], ['external', 'Cus
 function llmBarHTML(mode, status, tone) {
   const lit = mode === 'fallback' ? 'cloud' : mode;
   return '<div class="tk-bar llm-bar">'
+    /* Calm (S7): two rows of this pane both had a "Cloud" — this switch
+       (which models you are setting up) and "Chats run on" (where chats
+       run). Each now names what it is; they stay two controls because they
+       do two different things (one only shows a list, one writes config). */
     + '<div class="llm-modehead">'
-      + '<span class="tk-seg llm-seg" role="tablist" aria-label="Models">'
+      + '<span class="llm-rm-t0">Set up</span>'
+      + '<span class="tk-seg llm-seg" role="tablist" aria-label="Set up models">'
       + LLM_BAR_MODES.map(([m, label]) => '<button class="llmmode' + (m === lit ? ' on' : '') + '" role="tab" aria-selected="' + (m === lit) + '" data-act="llm:mode:' + m + '">'
         + esc(label) + '</button>').join('')
       + '</span></div>'
