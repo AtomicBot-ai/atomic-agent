@@ -403,9 +403,27 @@ export function classifyWorkerStatus(
  * the task, and saying so is the whole content of the row.
  */
 export const WORKER_QUEUED_NOTE =
-  "never got a server slot: waited in the local server's queue behind busy workers and produced no token";
+  "produced no token at all: the request was sent and nothing came back";
+
+/**
+ * Two hints, because the same silence means opposite things.
+ *
+ * With other workers running alongside, a worker that never got a token
+ * was queued behind them and the fan-out is too wide. ALONE on the leg
+ * it is the opposite: there was nothing to queue behind, so a silent
+ * worker means the request never reached the server or the server never
+ * answered it — a client or daemon fault, and telling the orchestrator
+ * to "use fewer workers" there sends it to narrow a fan-out of one.
+ *
+ * Measured: four solo delegations died at 45 minutes with zero tool
+ * calls while the llama-server log recorded nothing at all for the whole
+ * window, the server having gone silent to this client after an earlier
+ * generation was cancelled. A restart cleared it.
+ */
 export const WORKER_HINT_QUEUED =
   "the local server had no free slot: run fewer workers at once, or split the fan-out into smaller waves";
+export const WORKER_HINT_UNSERVED =
+  "this worker ran alone and still got no token, so the local server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
 
 export const WORKER_HINT_CONTEXT =
   "the local server ran out of context: use fewer workers at once or shorter briefs";

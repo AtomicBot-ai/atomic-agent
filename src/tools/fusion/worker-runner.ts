@@ -20,6 +20,7 @@ import {
 import {
   WorkerRunCollector,
   WORKER_HINT_QUEUED,
+  WORKER_HINT_UNSERVED,
   WORKER_QUEUED_NOTE,
   type WorkerTaskResult,
 } from "./worker-result.js";
@@ -778,15 +779,20 @@ async function runOneTask(
   // the status carries that hint rather than a bigger-deadline one.
   if (queuedOutcome) {
     const { error: _dropped, ...rest } = result;
+    // Was there anything to queue behind? A worker running alone that
+    // still got no token was not queued — nothing answered it.
+    const ranAlone = options.maxWorkers <= 1 || options.tasks.length <= 1;
     result = {
       ...rest,
       status: "queued",
       reply: WORKER_QUEUED_NOTE,
       stepCount: 0,
-      hint: WORKER_HINT_QUEUED,
+      hint: ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED,
       notes: [
         ...(result.notes ?? []),
-        `never served: no first token within ${Math.round(queueBudgetMs / 60_000)} min of being sent, while its own budget was ${Math.round(timeoutMs / 60_000)} min — the local server's slots were all busy`,
+        ranAlone
+          ? `no first token within ${Math.round(queueBudgetMs / 60_000)} min, and it was the only worker on the leg — nothing was occupying the server`
+          : `no first token within ${Math.round(queueBudgetMs / 60_000)} min of being sent, while its own budget was ${Math.round(timeoutMs / 60_000)} min — up to ${options.maxWorkers} workers were sharing the server`,
       ],
     };
   }

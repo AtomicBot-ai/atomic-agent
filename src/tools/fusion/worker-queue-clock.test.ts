@@ -90,9 +90,44 @@ describe("the worker's clock does not run while it is queued", () => {
     expect(abortedAt! - start).toBe(15 * MIN);
     expect(result!.status).toBe("queued");
     expect(result!.stepCount).toBe(0);
-    // The remedy is the fan-out's width, not a bigger deadline.
-    expect(result!.hint).toMatch(/fewer workers/i);
-    expect(result!.reply).toMatch(/never got a server slot/i);
+    // It ran ALONE: there was nothing to queue behind, so the remedy is
+    // not a narrower fan-out. This is the shape of the field case — four
+    // solo delegations dead at 45 min while the server log was empty.
+    expect(result!.hint).toMatch(/never answered it/i);
+    expect(result!.hint).not.toMatch(/fewer workers/i);
+    expect(result!.notes?.join(" ")).toMatch(/only worker on the leg/i);
+  });
+
+  it("blames the fan-out's width only when there was something to queue behind", async () => {
+    vi.useFakeTimers();
+    const deps = harness(
+      (options) =>
+        new Promise<RunTurnResult>((resolve) => {
+          options.signal?.addEventListener("abort", () =>
+            resolve({
+              session: createEmptySessionState({
+                id: "s-x",
+                workingDir: "/repo",
+              }),
+              reason: "cancelled",
+              stepCount: 0,
+            }),
+          );
+        }),
+    );
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: [
+        { id: "t0", title: "Task 0", instructions: "one" },
+        { id: "t1", title: "Task 1", instructions: "two" },
+      ],
+      maxWorkers: 2,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(WORKER_BUDGET + MIN);
+    const results = await run;
+    expect(results[0]!.status).toBe("queued");
+    expect(results[0]!.hint).toMatch(/fewer workers/i);
   });
 
   it("gives a served worker its whole budget measured from the first token", async () => {
