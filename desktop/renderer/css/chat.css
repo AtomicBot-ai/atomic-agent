@@ -174,6 +174,11 @@
 .pathchip svg{width:13px;height:13px}
 .pathchip b{font-weight:600;overflow-wrap:anywhere}
 .appr .pathchip .cap{font-size:11.5px;color:inherit;opacity:.75;overflow-wrap:anywhere}
+/* B3: what approving a read outside the working folder also grants */
+.apprscope{display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-radius:var(--r-well);background:var(--glass-soft);
+  color:var(--on-strong);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.apprscope svg{width:15px;height:15px;flex:none;margin-top:2px;color:var(--caution-on-indigo)}
+.apprscope .mono{font-size:12px}
 .apprbtns{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .apprgrp{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .appr .apprabort{margin-left:auto;color:var(--on-strong)}
@@ -297,3 +302,20 @@
   #scroller > .col720{padding:18px 16px 12px}
   .emptychat{padding:16px}
 }
+
+/* ---------------- progress note (B1) ----------------
+   Words the agent sent while its turn went on (`progress_note`). Secondary
+   ink, a hair smaller than a reply, hung off a thin rule so it reads as
+   running commentary; the final reply below it stays the turn's message. */
+.tk-interim{padding:1px 0 1px 12px;border-left:2px solid var(--bd-2)}
+.tk-interim .prose{font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+
+/* ---------------- paused task (B5) ----------------
+   Under a reply that opens "(paused:": Continue sends `continue`; a credit
+   pause also offers Switch provider. */
+.pausebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.pausebar .btn svg{width:13px;height:13px}
+
+/* ---------------- steered message (B4) ----------------
+   Caption under a bubble that was folded into the running turn. */
+.turn.usr .usrcap{margin:4px 4px 0 auto;width:fit-content;max-width:74%;font-size:12px;line-height:1.4;color:var(--ink-2);text-align:right}

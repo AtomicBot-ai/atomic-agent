@@ -1903,7 +1903,9 @@ async function smokeTest(): Promise<void> {
       await js<void>("window.__ctxAdjust('agent.conversationMaxPairs:1')");
       await new Promise((r) => setTimeout(r, 4000));
       const after = await js<{ pairs: number }>("window.__ctxCfg()");
-      check("context dial writes config", after.pairs === before.pairs + 1, `${before.pairs} → ${after.pairs}`);
+      // One at a time up to 50, then in tens (renderer pairsStep, B2).
+      const want = before.pairs < 50 ? before.pairs + 1 : Math.floor(before.pairs / 10) * 10 + 10;
+      check("context dial writes config", after.pairs === want, `${before.pairs} → ${after.pairs} (want ${want})`);
     } finally {
       await configSet("agent.conversationMaxPairs", String(before.pairs));
       await js<void>("window.__ctxRefreshCfg && window.__ctxRefreshCfg()");
@@ -4175,7 +4177,8 @@ async function settingsTest(
   // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it.
   await js<void>("window.__settingsOpen('privacy')");
   const priv = await js<string>("window.__settingsBody()");
-  const privacyCopy = ["Anonymous usage analytics", "Product analytics + crash reports, fully anonymous.", "Session grants", "none active"]
+  const privacyCopy = ["Anonymous usage analytics", "Product analytics + crash reports, fully anonymous.", "Session grants",
+    "Reading outside the working folder", "Ask first", "Read anywhere"]
     .every((s) => priv.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
   check("privacy tab: TUI copy, no approval ladder", privacyCopy && noLadder, privacyCopy ? (noLadder ? "" : "ladder text present") : "copy missing");
@@ -10850,7 +10853,7 @@ async function chromeTest(
       last: { resent: string | null; toasts: Array<[string, string, string]> };
     }>("window.__retryVerb()");
     check(
-      "item 4: the retry verb resends the last real user message, or says there is none",
+      "item 4: the retry verb resends the last real user message (never a steer), or says there is none",
       retryVerb.empty.resent === null
         && retryVerb.empty.toasts.length === 1
         && retryVerb.empty.toasts[0]![0] === "Nothing to send again"

@@ -832,6 +832,7 @@ const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row win
    schema default when the user file has no key): the user file from GET
    /api/config when it carries the key, else `atag config get
    analytics.enabled`; null until either has answered. */
+const READ_SCOPES = [['working-dir', 'Ask first', 'Ask before reading outside the working folder'], ['unrestricted', 'Read anywhere', 'Read anywhere without asking']];
 const PRIV = { busy:false, message:null, lastError:null, effective:null, effectiveBusy:false, chain:Promise.resolve(), pending:0 }; // chain/pending: the analytics write queue
 /* The TUI's ctrl+g chord layer (menu-popup.tsx `ctrl+g <key>`): ctrl+g
    arms a 1.5 s prefix, the next key runs the menu node with that chord. */
@@ -1299,9 +1300,13 @@ const CATS = [
   ['shell','shell command',4],
   ['script','skill script',4],
   ['proc_kill','process kill',4],
+  ['publish','publish · GitHub',4],
+  ['git_remote','git · remote',4],
   ['fusion_fanout','fusion · fan-out',4],
   ['browser_nonweb','browser · non-web URL',5],
   ['trust_config','agent trust config',5],
+  ['email','e-mail send',5],
+  ['fs_read_outside','read outside the working directory',5],
   ['other','uncategorised',5],
 ];
 
@@ -1388,7 +1393,11 @@ const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
 const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
 const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/events
 const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
-const RUNNING = new Map();               // turnId → sessionId, fed only by the turn stream's own frames
+/* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
+   See the top of onChatEvent. */
+const STREAM_ERR = new Map();
+const RUNNING = new Map();
+const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
 
@@ -1759,7 +1768,11 @@ function item(m, end) {
   // typed turns into a clickable chip inside their own message.
   // r5 item 4: the action row goes OUTSIDE the bubble, so the buttons are never
   // drawn inside the accent-wash box.
-  if (m.k === 'user') return '<div class="turn usr"><div class="prose usr bubble">' + esc(m.text) + '</div>' + msgActs(m) + '</div>';
+  /* B4: a message folded into the running turn says so, in the TUI's words
+     (user-bubble.tsx STEERED_LABEL_SUFFIX). The reply that follows answers
+     the turn's opening request; drawn bare, it reads as the answer to this. */
+  if (m.k === 'user') return '<div class="turn usr' + (m.steered ? ' steered' : '') + '"><div class="prose usr bubble">' + esc(m.text) + '</div>'
+    + (m.steered ? '<div class="usrcap">steered into the running turn</div>' : '') + msgActs(m) + '</div>';
   // item 5: the reply, then the files this turn wrote, as an attachment footer.
   /* r5 item 4: the action row goes after the attachment strip and BEFORE the
      end mark. The mark is the turn's full stop and r4-ui's contract is that it
@@ -1784,6 +1797,7 @@ function item(m, end) {
        copy/retry buttons — those belong to the message, this belongs to the
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
+    + (pausedOffer(m) ? pausedBarHTML(m) : '')
     + '</div></div>';
   /* F2 — the one action that helps, on the row that reports the problem.
      A person told their provider is not answering has exactly one useful
@@ -1791,6 +1805,12 @@ function item(m, end) {
      (and its `.sysact` Switch provider) is drawn by sysRowHTML, which the
      folded repeat shares. */
   if (m.k === 'system') return sysRowHTML(m, 1);
+  /* B1: a progress note — words the agent sent while the turn went on. Quiet
+     and secondary, with no end mark and no actions: the turn's final reply is
+     the message, this is the running commentary above it. No `.tk-asst`, so
+     nothing that looks for "the reply" (drivers, end mark) mistakes it. */
+  if (m.k === 'interim') return '<div class="turn interim"><div></div><div class="tk-interim"><div class="prose">'
+    + renderProse(m.text) + '</div></div></div>';
   // The label keeps its textContent ("Reasoning · N steps"); only the weight moved.
   if (m.k === 'reason') return '<div class="turn" id="turn-' + m.id + '"><div></div><div>'
     + '<button class="disc" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">' + ic(m.open ? 'chevD' : 'chevR') + '<b>Reasoning</b> <span>· ' + m.steps + ' steps</span></button>'
@@ -2035,6 +2055,11 @@ function apprCard(m) {
       + '<dt>preview</dt><dd><div class="previewblk">' + esc(m.preview) + '</div></dd>'
       + '<dt>affects</dt><dd><span class="pathchip">' + ic('file') + '<b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
     + '</dl>'
+    /* B3: the one approval that outlives its call. Approving a read outside
+       the working folder also lets the agent read under that folder for the
+       rest of this chat (ReadScopeGrants), so the card says so up front. */
+    + (m.cat === 'fs_read_outside' && m.state == null
+        ? '<div class="apprscope">' + ic('info') + '<span>Approving lets the agent read <span class="mono">' + esc(m.readRoot || m.affectsDir + m.affectsBase) + '</span> for the rest of this chat.</span></div>' : '')
     + '<div class="apprbtns"><div class="apprgrp">'
       + '<button class="btn sm btn-white' + (isTrust ? ' dg' : '') + '" data-appr="y">Approve' + keycaps('Y') + '</button>'
       + (isTrust || m.approvalId ? '' : '<button class="btn sm btn-glass" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
@@ -3014,7 +3039,7 @@ function ctxBoundLine() {
 }
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
-  const pairs = agent.conversationMaxPairs || 20;
+  const pairs = agent.conversationMaxPairs || PAIRS_DEFAULT;
   const win = CTX.window;
   // Lane B \u2014 context before the first message (item 3). Copy follows
   // src/tui/components/context-panel.tsx: title(), buildRows() (the
@@ -3070,11 +3095,11 @@ function contextHTML() {
     + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
     + '<div class="ctxdials"><div class="ctxdial"><span class="col"><span class="ctxdt">tasks per turn</span>'
-      + '<span class="cap">sent each turn (1-100)</span></span>'
+      + '<span class="cap">sent each turn (1-' + PAIRS_MAX + ')</span></span>'
       + '<span class="hstack ctxstep">'
       + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:-1" aria-label="fewer tasks per turn"' + (pairs <= 1 ? ' disabled' : '') + '>' + ic('minus') + '</button>'
       + '<span class="mono tnum ctxval">' + pairs + '</span>'
-      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= 100 ? ' disabled' : '') + '>' + ic('plus') + '</button>'
+      + '<button class="btn btn-s xs icon" data-ctx-step="agent.conversationMaxPairs:1" aria-label="more tasks per turn"' + (pairs >= PAIRS_MAX ? ' disabled' : '') + '>' + ic('plus') + '</button>'
       + '</span></div></div>'
     + '<div class="popfoot"><button class="btn btn-g xs" data-act="clear">Clear transcript</button><span class="grow"></span>'
     + '<button class="btn btn-s xs" data-act="close">Done</button></div></div></div>';
@@ -3479,10 +3504,21 @@ function privacyPane() {
         + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
           + (!known || PRIV.busy ? ' disabled' : '') + ' title="a: analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
+      /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
+         config cache, which a CLI write does not reset in a running
+         `atag serve` (checked live: a write with the chat open still asked),
+         so the change takes the restart notice above. */
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Reading outside the working folder</div>'
+          + '<div class="d">' + esc(READ_SCOPES.find((r) => r[0] === readScopeValue())[2]) + '. The agent can always read the working folder and any path you name in the chat.</div></div>'
+        + '<div class="tk-seg set-seg" role="group" aria-label="Reading outside the working folder">'
+          + READ_SCOPES.map(([v, label, long]) => '<button class="' + (v === readScopeValue() ? 'on' : '') + '" aria-pressed="' + (v === readScopeValue())
+            + '" title="' + esc(long) + '" data-act="privacy:readscope:' + v + '"' + (PRIV.busy || !LIVE_CONFIG ? ' disabled' : '') + '>' + esc(label) + '</button>').join('')
+        + '</div>'
+      + '</div>'
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Session grants</div>'
-          + '<div class="d">The desktop answers each approval once, allow or deny, so a session holds no standing grants.</div></div>'
-        + '<span class="tk-chip tk-chip--sm tk-chip--line">none active</span>'
+          + '<div class="d">Each approval is answered once, allow or deny. One exception: approving a read outside the working folder lets the agent read that folder for the rest of that chat.</div></div>'
       + '</div>'
     + '</div>'
     + '<div class="set-privgrid">'
@@ -3492,6 +3528,26 @@ function privacyPane() {
     + tuiHints([['a: analytics ' + (on ? 'off' : 'on'), 'privacy:analytics', {disabled: !known || PRIV.busy}], ['r: refresh', 'privacy:refresh']])
     + '</div>';
 }
+/* B3: `agent.readScope` — the user file's value, else the schema default. */
+function readScopeValue() {
+  const a = LIVE_CONFIG && LIVE_CONFIG.agent;
+  return a && a.readScope === 'unrestricted' ? 'unrestricted' : 'working-dir';
+}
+async function readScopeSet(value) {
+  if (!BR || !LIVE_CONFIG || PRIV.busy || value === readScopeValue()) return;
+  const run = async () => {
+    PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
+    const res = await BR.configSet('agent.readScope', value);
+    if (!res || res.ok === false) PRIV.lastError = 'could not change where the agent reads: ' + ((res && res.error) || 'unknown error');
+    else PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder';
+    await refreshLiveConfig();
+    PRIV.busy = false; render();
+  };
+  PRIV.pending++;
+  PRIV.chain = PRIV.chain.then(run, run);
+  try { await PRIV.chain; } finally { PRIV.pending--; }
+}
+
 /* The value the TUI shows: the user file's key when set, else the
    effective value `atag config get analytics.enabled` printed (the schema
    default). null = not known yet / the CLI read failed. */
@@ -3713,6 +3769,7 @@ function act(a) {
     return;
   }
   if (a === 'send') { close(); submit(); return; }
+  if (a === 'turn:continue') { close(); continueTurn(); return; }
   /* r5 item 4: this verb used to toast "Retrying last turn" and retry nothing.
      It is an orphan — no palette row, menu node, slash entry or markup reaches
      it — but shipping a real retry button beside a fake retry verb is not
@@ -3720,8 +3777,10 @@ function act(a) {
      user message. */
   if (a === 'retry') {
     close(); render();
+    // B4: the turn's own request, never a steer folded into it — the TUI's
+    // `[try again]` (reducer-helpers.ts lastTurnRequest) skips them the same way.
     for (let i = S.log.length - 1; i >= 0; i--) {
-      if (S.log[i].k === 'user' && String(S.log[i].text || '').trim()) { resendUser(S.log[i].id); return; }
+      if (S.log[i].k === 'user' && !S.log[i].steered && String(S.log[i].text || '').trim()) { resendUser(S.log[i].id); return; }
     }
     toast('Nothing to send again', 'no message in this transcript', 'bad');
     return;
@@ -3763,6 +3822,7 @@ function act(a) {
   if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
+  if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
   // at all. It copies the reply now, and says so honestly when there is none.
   if (a === 'copy:reply') {
@@ -5396,6 +5456,33 @@ function turnFailureLine(ev) {
 }
 
 function onChatEvent(ev) {
+  /* B5 — a named `event: error` frame (it arrives with `payload`) is not
+     always the end of the turn. The agent's one error emitter also sends a
+     step's failure, and since 0.6.3 an out-of-credit refusal is exactly that:
+     the step fails, the task PAUSES, and the paused reply ("(paused: …)
+     say `continue`") and `finish_reason: length` follow in the same stream.
+     Ending the turn on the frame dropped that reply and printed "not
+     answering" for a provider that had answered. Every named frame is
+     followed by `done` in its stream (agent-client.ts), so the verdict waits
+     for it: work after the frame means the turn went on; nothing after it
+     means it failed, drawn exactly as before. Errors without `payload` (the
+     request itself failed) still end the turn at once. */
+  if (ev && ev.turnId && STREAM_ERR.has(ev.turnId)) {
+    const held = STREAM_ERR.get(ev.turnId);
+    if (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress') held.after = true;
+    if (ev.kind === 'done') {
+      STREAM_ERR.delete(ev.turnId);
+      if (!held.after) ev = Object.assign({}, held.ev, {kind:'error', turnId:ev.turnId, deferred:true});
+    }
+    if (ev.kind === 'aborted' || (ev.kind === 'error' && !ev.payload)) STREAM_ERR.delete(ev.turnId);
+  }
+  if (ev && ev.kind === 'error' && ev.payload && ev.turnId && !ev.deferred) {
+    const held = STREAM_ERR.get(ev.turnId);
+    // The first failure names what went wrong, unless the turn recovered
+    // from it and failed again later — then the later one is the story.
+    if (!held || held.after) STREAM_ERR.set(ev.turnId, {ev, after:false});
+    return;
+  }
   /* item 6 — the running dot, bookkept BEFORE the turnId guard below.
      A turn keeps streaming after the user opens another chat, and its
      done/aborted/error is the only truthful end-of-run signal there is:
@@ -5528,6 +5615,23 @@ function onChatEvent(ev) {
     if (item) { item.text += ev.text; S.phase = 'Writing reply'; render(); }
     return;
   }
+  /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
+     batched a `reply` with work tools, so the turn goes on past it
+     (src/http/openai-chat-completions.ts; the store row is an
+     `assistant_reply` with `progressNote: true`). It is interim: drawn as a
+     quiet row above the live reply, like tool cards, so the turn's final
+     reply stays its last row. Deltas the note streamed are already in
+     `item.text` and are not the start of the final reply, so they come out
+     again here. The note never enters S.history (only `item.text` does, at
+     `done`) nor the plan hand-off check, which reads `item.text` too. */
+  if (ev.kind === 'progress_note') {
+    const text = String(pick(ev.payload, 'text') || '');
+    if (!text.trim() || !item) return;
+    item.text = stripStreamedNote(item.text, text);
+    S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'interim', text});
+    render();
+    return;
+  }
   /* Item 7C — the agent read a steer at a step boundary. The frame comes
      UNNAMED on the wire and is recognised in agent-client.ts by its
      `object`. A steer sent from this window is already in the transcript;
@@ -5568,7 +5672,11 @@ function onChatEvent(ev) {
     return;
   }
   if (ev.kind === 'done' || ev.kind === 'finish' || ev.kind === 'aborted' || ev.kind === 'error') {
-    if (ev.kind === 'finish') return;
+    /* B5: the finish reason is kept on the reply. `length` is how the agent
+       ends a task it PAUSED (step or time ceiling, no progress, out of
+       credit — agent-loop.ts formatTaskStoppedReply) rather than finished;
+       the reply row then offers to continue. */
+    if (ev.kind === 'finish') { if (item && ev.reason) item.finish = String(ev.reason); return; }
     S.busy = false; S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
@@ -5648,6 +5756,22 @@ function onChatEvent(ev) {
   }
 }
 
+/** B1: `body` with a trailing streamed copy of `note` taken off. The agent's
+    own test for "already on the wire" is `endsWith` / trimmed equality; a
+    stream cut short may have carried only the note's start, so a trailing
+    run of at least 12 characters that begins the note goes too. Anything
+    that is not the note (an earlier step's words) stays. */
+function stripStreamedNote(body, note) {
+  const b = String(body || '').replace(/\s+$/, '');
+  const n = String(note || '').trim();
+  if (!n || !b) return String(body || '');
+  if (b.endsWith(n)) return b.slice(0, b.length - n.length).replace(/\s+$/, '');
+  for (let k = Math.min(b.length, n.length - 1); k >= 12; k--) {
+    if (n.startsWith(b.slice(b.length - k).replace(/^\s+/, ''))) return b.slice(0, b.length - k).replace(/\s+$/, '');
+  }
+  return String(body || '');
+}
+
 /* Turn order — "end agent results should be the last message within the
    turn" (operator, 2026-09-15 DMG).
 
@@ -5711,6 +5835,10 @@ function onApprovalEvent(payload) {
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,
+    /* B3: a read outside the working folder names the directory the agent
+       widens its read roots to when this is approved (read-scope-approval.ts
+       `affectedResources: [root]`) — allow-once over HTTP still widens it. */
+    readRoot: payload.category === 'fs_read_outside' ? String(first) : '',
     // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
     // and it is the one attention signal that works for a turn this window did
     // not start (a scheduled task's, say).
@@ -5762,6 +5890,9 @@ const CATEGORY_LABEL = {
   fs_trash:'move to Trash', http:'HTTP request', shell:'shell command',
   script:'skill script', proc_kill:'process kill', browser_nonweb:'browser · non-web URL',
   trust_config:'agent trust config', fusion_fanout:'fusion · fan-out', other:'uncategorised',
+  // agent 0.6.0 / 0.6.3 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
+  publish:'publish · GitHub', git_remote:'git · remote', email:'e-mail send',
+  fs_read_outside:'read outside the working directory',
 };
 
 function answerLive(req, key) {
@@ -10415,7 +10546,7 @@ function ctxReleaseWindowOnRouteChange() {
   CTX055.route = route;
   return changed;
 }
-function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || 0; }
+function ctxPairsCap() { return (LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxPairs) || PAIRS_DEFAULT; }
 
 // `stateDirOverride` exists for the smoke only (window.__ctxEmpty): it
 // runs this same path against a real directory that holds no trace, so
@@ -11019,6 +11150,52 @@ async function executePlan(mode) {
   submit();
 }
 
+/* B5 — a paused task. The agent ends a task it stopped at a ceiling (steps,
+   time, no progress) or because the provider is out of credit with a reply
+   that opens "(paused:" and finish_reason `length`, and asks for `continue`
+   (agent-loop.ts formatTaskStoppedReply). The desktop offers that as a
+   button under the reply, only on the chat's latest reply while nothing
+   runs. A reopened chat has no finish reason, so the reply's own opening
+   decides there. */
+function pausedKind(m) {
+  if (!m || m.k !== 'assistant' || m.placeholder) return '';
+  const t = String(m.text || '').trim();
+  if (!t.startsWith('(paused:')) return '';
+  if (m.finish && m.finish !== 'length') return '';
+  return /out of credit/.test(t.slice(0, 400)) ? 'credit' : 'ceiling';
+}
+function pausedOffer(m) {
+  if (S.busy || S.pending || !pausedKind(m)) return false;
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    const c = S.log[i];
+    if (c.k === 'user' || c.k === 'assistant') return c.id === m.id;
+  }
+  return false;
+}
+function pausedBarHTML(m) {
+  return '<div class="pausebar">'
+    + '<button class="btn sm btn-p" data-act="turn:continue" title="send \u201ccontinue\u201d so the agent picks up where it stopped">' + ic('play') + 'Continue</button>'
+    + (pausedKind(m) === 'credit' ? '<button class="btn sm btn-s" data-sel-open="provider">Switch provider</button>' : '')
+    + '</div>';
+}
+function continueTurn() {
+  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
+    toast('The microphone is open', 'finish or cancel the dictation, then continue', 'bad');
+    return;
+  }
+  const e = $('#entry');
+  const draft = String((e ? e.value : S.draft) || '').trim();
+  if (draft && draft !== 'continue') {
+    toast('Your draft is in the way', 'send or clear the composer, then continue', 'bad');
+    if (e) e.focus();
+    return;
+  }
+  S.draft = 'continue';
+  if (e) { e.value = 'continue'; autosize(e); }
+  submit();
+}
+
 /** Put the plan away. Stays in plan mode — src/tui/reduce-ui-actions.ts. */
 function dismissPlan() {
   if (!PLAN.on) return;
@@ -11565,8 +11742,10 @@ function sessionTurnsToLog(turns) {
   const log = [];
   (Array.isArray(turns) ? turns : []).forEach((t) => {
     if (!t || typeof t !== 'object') return;
-    if (t.kind === 'user') { log.push({id:nid(), k:'user', text:t.text || ''}); return; }
-    if (t.kind === 'assistant_reply') { log.push({id:nid(), k:'assistant', text:t.text || ''}); return; }
+    // B4: a stored steer (agent ≥ 0.6.3 `steered: true`) keeps its caption.
+    if (t.kind === 'user') { log.push(t.steered ? {id:nid(), k:'user', text:t.text || '', steered:true} : {id:nid(), k:'user', text:t.text || ''}); return; }
+    // B1: a progress note (`progressNote`) is an interim row, never a reply.
+    if (t.kind === 'assistant_reply') { log.push({id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''}); return; }
     if (t.kind === 'assistant_tool_call') {
       if (t.reasoning) log.push({id:nid(), k:'reason', steps:1, open:false, text:t.reasoning});
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
@@ -11816,14 +11995,23 @@ async function applySessionModelStamp() {
   refreshContext();
 }
 
+/* B2 — `agent.conversationMaxPairs` is 1..1000, default 200, since agent
+   0.6.3 (config-schema.ts; it was 1..100, default 20). One at a time up to
+   50, then in tens, so the default is a handful of clicks from anywhere
+   useful rather than a hundred. */
+function pairsStep(current, dir) {
+  if (dir > 0) return current < 50 ? current + 1 : Math.floor(current / 10) * 10 + 10;
+  return current <= 50 ? current - 1 : Math.ceil(current / 10) * 10 - 10;
+}
 async function ctxAdjust(spec) {
   const at = spec.lastIndexOf(':');
   const key = spec.slice(0, at);
   const delta = Number(spec.slice(at + 1));
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
-  const current = agent[key.split('.')[1]] || 0;
-  const bounds = [1, 100];
-  const next = Math.max(bounds[0], Math.min(bounds[1], current + delta));
+  const pairsKey = key === 'agent.conversationMaxPairs';
+  const current = agent[key.split('.')[1]] || (pairsKey ? PAIRS_DEFAULT : 0);
+  const bounds = pairsKey ? [1, PAIRS_MAX] : [1, 100];
+  const next = Math.max(bounds[0], Math.min(bounds[1], pairsKey ? pairsStep(current, Math.sign(delta)) : current + delta));
   if (next === current) return;
   // Write first, then repaint from what the config actually took.
   const res = await BR.configSet(key, String(next));
@@ -17497,6 +17685,7 @@ if (typeof window !== 'undefined') {
     const body = t.querySelector('.prose,.card,.appr,.disc');
     const usr = t.classList.contains('usr');
     return {k: usr ? 'user'
+              : t.classList.contains('interim') ? 'interim'
               : t.querySelector('.card') ? 'tool'
               : t.querySelector('.appr') ? 'approval'
               : t.querySelector('.disc') ? 'reason'
@@ -19570,7 +19759,9 @@ if (typeof window !== 'undefined') {
       // kind, so the render() inside act() draws a shape the item() switch knows.
       S.log = [{id: 'r5-a', k: 'user', text: 'the first thing said'},
                {id: 'r5-b', k: 'user', text: '   '},
-               {id: 'r5-c', k: 'system', text: 'a system line'}];
+               {id: 'r5-c', k: 'system', text: 'a system line'},
+               // B4: a steer folded into the turn is not the turn's request.
+               {id: 'r5-d', k: 'user', text: 'a steer', steered: true}];
       S.toasts = [];
       act('retry');
       return {empty, last: {resent, toasts: window.__toasts()}};
