@@ -1752,38 +1752,30 @@ function chatView() {
 }
 
 function emptyChat() {
-  /* B.6 — a data plate, not a greeting. A window that has just opened knows
-     four things the person about to type needs: where it will work, which
-     provider and model will answer, and which build is running. The old
-     empty state showed a large faded mark and a sentence that told them none
-     of it. The suggestions stay: they are the cheapest way into a first turn. */
-  const id = selActiveProviderId();
-  const entry = (selProviders() || []).find((p) => p.id === id);
-  const model = activeModel();
-  /* Soft Tactile (CH-01): the plate is a lifted card headed by the app mark,
-     and the provider and model rows wear their brand marks (server / CPU
-     badge when there is none). The marks carry alt="" and sit outside the
-     value span, so the text of each value is exactly what it was. */
-  const rows = [
-    ['Workspace', S.live.workingDir || 'not set', ''],
-    /* The managed-local route has no provider entry of its own to name (the
-       agent synthesizes `local-llama`), so "none configured" there read as
-       "nothing will answer" beside a model that was ready to. */
-    selBackend() === 'local'
-      ? ['Provider', 'this Mac · llama.cpp', providerMark('local-llama', 'xs')]
-      : ['Provider', id ? (id + (providerHost(entry) ? ' · ' + providerHost(entry) : '')) : 'none configured', id ? providerMark(id, 'xs') : ''],
-    ['Model', model || 'none chosen', model ? modelMark(model, 'xs') : ''],
-    ['Build', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : '—', ''],
-  ];
-  return '<div class="emptychat">'
-    + '<div class="plate emptyplate">'
-    + '<div class="emptyhead">' + MARK_COLOR + '<b>Ready when you are</b></div><dl>'
-    + rows.map(([k, v, mark]) => '<dt>' + esc(k) + '</dt><dd>' + mark + '<span>' + esc(v) + '</span></dd>').join('')
-    + '</dl></div>'
+  /* Calm (S3): a greeting, and one quiet line saying where the agent will
+     work and which model will answer — the folder by its own name (the full
+     path is its tooltip) and the model by its human name. B.6's data plate
+     (Workspace / Provider / Model / Build rows) read as a config dump; the
+     provider and backend are on the composer's chips right below, and the
+     Build row named the desktop shell's version, not the agent's (U7). The
+     suggestions stay: they are the cheapest way into a first turn. */
+  return '<div class="emptychat">' + emptyPlateHTML()
     + '<div class="ghost">'
-      + ['what can you do?','summarise the files in this folder','check the disk space on this Mac']
+      + ['What can you do?','Summarise the files in this folder','Check the disk space on this Mac']
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
     + '</div></div>';
+}
+/** The greeting and its quiet line (repainted alone when the catalogue lands). */
+function emptyPlateHTML() {
+  const wd = S.live.workingDir || WORKSPACE || '';
+  const model = activeModel();
+  const meta = (wd ? '<span class="em-it" title="' + esc(wd) + '">' + ic('folder') + '<span>' + esc(wsName(wd)) + '</span></span>' : '')
+    + (wd && model ? '<span class="em-sep">\u00b7</span>' : '')
+    + (model ? '<span class="em-it">' + modelMark(model, 'xs') + '<span>' + esc(modelWord(model)) + '</span></span>' : '');
+  return '<div class="emptyplate">'
+    + '<div class="emptyhead">' + MARK_COLOR + '<b>What should we work on?</b></div>'
+    + (meta ? '<div class="emptymeta">' + meta + '</div>' : '')
+    + '</div>';
 }
 
 /* r4-ui item 3: `end` is true for the one item that closes a finished turn
@@ -13341,6 +13333,13 @@ function bswRepaint() {
     const el = foot.querySelector('.modelchip');
     if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
     else if (html) { const spacer = foot.querySelector(':scope > .cgrow'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
+  }
+  // Calm (S3): the empty chat's quiet line names the model too — the same
+  // catalogue name, swapped in place (the plate has no input to disturb).
+  const plate = document.querySelector('.emptychat .emptyplate');
+  if (plate) {
+    const fresh = emptyPlateHTML();
+    if (plate.outerHTML !== fresh) plate.outerHTML = fresh;
   }
   if (!SEL.open || OB.open) return;
   const f = document.getElementById('sel-filter');
