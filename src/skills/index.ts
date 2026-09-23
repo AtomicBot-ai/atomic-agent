@@ -22,11 +22,16 @@ export type { SkillChangeListener } from "./skill-registry.js";
 
 export {
   buildSkillCatalog,
+  buildSkillCatalogSection,
   formatSkillCatalogLine,
+  formatSkillCatalogOmittedLine,
   SKILL_CATALOG_CHARS_PER_TOKEN,
   DEFAULT_CATALOG_MAX_CHARS,
 } from "./skill-catalog.js";
-export type { BuildCatalogOptions } from "./skill-catalog.js";
+export type {
+  BuildCatalogOptions,
+  SkillCatalogSection,
+} from "./skill-catalog.js";
 
 export { runSkillScript, SkillScriptError } from "./skill-script-runner.js";
 export type {

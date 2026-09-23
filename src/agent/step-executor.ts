@@ -375,6 +375,8 @@ export interface StepContext {
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
+  /** Installed skills the catalog budget left out (issue #466). */
+  skillCatalogDropped?: number;
   stepIndex: number;
   signal: AbortSignal;
   /**
@@ -638,6 +640,9 @@ async function executeStepInner(
     toolDescriptors: stepToolDescriptors,
     capabilities: ctx.capabilities,
     skillCatalog: ctx.skillCatalog,
+    ...(ctx.skillCatalogDropped !== undefined
+      ? { skillCatalogDropped: ctx.skillCatalogDropped }
+      : {}),
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),

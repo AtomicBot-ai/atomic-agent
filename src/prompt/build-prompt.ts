@@ -144,6 +144,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     toolDescriptors: input.toolDescriptors,
     capabilities: input.capabilities,
     skillCatalog: input.skillCatalog,
+    ...(input.skillCatalogDropped !== undefined
+      ? { skillCatalogDropped: input.skillCatalogDropped }
+      : {}),
     reasoningSystemToken: suppressPrefill
       ? undefined
       : input.profile?.reasoningSystemToken,
