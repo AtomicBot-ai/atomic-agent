@@ -11123,6 +11123,14 @@ function selectorHTML() {
      the wizard's own (modelPickNote). The first `.cap` in a row is its detail
      — integration.drive reads it. */
   const out = selOutOfReach();
+  /* The out-of-reach names sit after the models and before the trailing
+     "Download more models…" row, as the wizard keeps its Hugging Face row last. */
+  const outHTML = out.length ? '<div class="selouth">Needs more memory than this Mac has</div>'
+    + out.map((m) => '<div class="selout" data-id="' + esc(m.id) + '">' + modelMark(m.id, 'xs')
+      + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
+      + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This Mac has.*$/, '')) + '</span></div>').join('')
+    : '';
+  const firstAction = rows.findIndex((r) => r.type === 'action');
   const list = '<div class="sellist">'
     + (SEL.modelsBusy || SEL.localBusy ? '<div class="selnote cap"><span class="tk-spin"></span>Loading models…</div>' : '')
     + (SEL.modelsErr ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.modelsErr) + '</span></div>' : '')
@@ -11134,7 +11142,8 @@ function selectorHTML() {
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
         const name = selRowName(r);
-        return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
+        return (i === firstAction ? outHTML : '')
+          + (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
           + '<button class="modelrow' + (r.active ? ' on' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
           + selRowLead(r)
           + '<span class="col"><span class="nm">'
@@ -11144,11 +11153,7 @@ function selectorHTML() {
           + (right ? '<span class="selr">' + right + '</span>' : '')
           + '</button>';
       }).join('')
-    + (out.length ? '<div class="selouth">Needs more memory than this Mac has</div>'
-        + out.map((m) => '<div class="selout" data-id="' + esc(m.id) + '">' + modelMark(m.id, 'xs')
-          + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
-          + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This Mac has.*$/, '')) + '</span></div>').join('')
-      : '')
+    + (firstAction < 0 ? outHTML : '')
     + (!real.length && !out.length && SEL.kind === 'model' && SEL.filter && !SEL.modelsBusy && !SEL.localBusy ? '<div class="selnote cap">No models match \u201c' + esc(SEL.filter) + '\u201d</div>' : '')
     + '</div>';
 
