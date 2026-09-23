@@ -229,9 +229,12 @@
    adds nothing to the column's height and the turn-end growth __streamActs
    measures stays exactly its (zero) contribution. 16px wide at the left edge,
    clear of the right-aligned buttons. The svg is 12px (asserted). */
-.endmark{position:relative;width:16px;height:22px;margin-top:-22px;display:grid;place-items:center;color:var(--lift)}
-.endmark::before{content:"";position:absolute;left:0;top:3px;width:16px;height:16px;border-radius:5px;background:var(--ink-3);opacity:.6}
+.endmark{position:relative;width:16px;height:22px;margin-top:-22px;display:grid;place-items:center;color:var(--ink-3)}
 .endmark svg{position:relative;width:12px;height:12px}
+/* Calm (S3): at rest only the newest finished turn shows its mark; an older
+   turn's mark comes back with its actions, on hover or keyboard focus. */
+.endmark:not(.latest){opacity:0}
+.turn:hover .endmark,.turn:focus-within .endmark{opacity:1}
 
 /* --- item 4: hover actions on a message ---
    The row always occupies its 22px box and only its paint changes, so revealing
@@ -252,17 +255,16 @@
 .msgacts{display:flex;align-items:center;justify-content:flex-end;gap:2px;height:22px;margin-top:2px;opacity:0;pointer-events:none}
 .turn:hover .msgacts,.msgacts:focus-within{opacity:1;pointer-events:auto}
 @media (hover:none){.msgacts{opacity:1;pointer-events:auto}}
-.msgact{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill);color:var(--ink-2)}
+.msgact{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-pill);color:var(--ink-2);
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .msgact svg{width:14px;height:14px}
 .msgact:hover{background:var(--hover);color:var(--ink)}
 .msgact.danger{color:var(--critical)}
 .msgact.danger:hover{background:var(--critical-wash);color:var(--critical)}
-/* F11 — the last message keeps its actions, and they carry their names. */
-.msgacts.shown{opacity:1;pointer-events:auto}
-.msgacts.shown .msgact{width:auto;padding:0 10px 0 8px;gap:5px}
-.msgacts.shown .msgact.danger{background:var(--critical-wash)}
-.msgacts.shown .msgact.danger:hover{background:color-mix(in srgb, var(--critical) 18%, transparent)}
-.msgactlb{font:600 12px/1 var(--font-ui);letter-spacing:0}
+/* Calm (S3): no permanently shown row — the last message reveals its
+   actions like every other (F11's labelled row is gone; the names are the
+   buttons' tooltips). */
+.msgact:active{transform:scale(.97)}
 
 /* ---------------- Saved to strip (item 5) ---------------- */
 .attach{margin-top:10px;display:flex;flex-direction:column;gap:3px;min-width:0}

@@ -10698,9 +10698,12 @@ async function chromeTest(
     );
     check(
       "item 4: hidden at rest, revealed by hover or keyboard, and revealing shifts nothing",
-      !!userActs && userActs.opacity === "0" && userActs.events === "none" && userActs.height === 22 && msgHover,
-      `opacity=${userActs?.opacity} pointer-events=${userActs?.events} visibility=${userActs?.vis}`
-      + ` height=${userActs?.height}; ${msgHoverDetail};`
+      // Calm (S3): the LAST message too — its row is no longer pinned open.
+      !!userActs && userActs.opacity === "0" && userActs.events === "none" && userActs.height === 22 && msgHover
+        && !!asstActs && asstActs.opacity === "0" && asstActs.events === "none" && asstActs.height === 22,
+      `user opacity=${userActs?.opacity} pointer-events=${userActs?.events} visibility=${userActs?.vis}`
+      + ` height=${userActs?.height}; last reply opacity=${asstActs?.opacity} pointer-events=${asstActs?.events}`
+      + ` height=${asstActs?.height}; ${msgHoverDetail};`
       + " :hover is not synthesisable from script, so the rule's own text is asserted —"
       + " its :focus-within twin is the same declaration and is driven below",
     );

@@ -1820,7 +1820,7 @@ function item(m, end) {
      desktop's own "(no reply)" / "(stopped)" backfill. */
   if (m.k === 'assistant') return '<div class="turn"><div></div>'
     + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
-    + (end ? '<div class="endmark" title="turn complete">' + MARK_MONO + '</div>' : '')
+    + (end ? '<div class="endmark' + (end === 'latest' ? ' latest' : '') + '" title="Turn complete">' + MARK_MONO + '</div>' : '')
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -1898,17 +1898,14 @@ function msgActs(m) {
      permanently missing from the last reply of every finished turn. */
   if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '<div class="msgacts"></div>';
   if (!text.trim()) return '';
-  /* F11 — on the LAST message the actions stay put and carry their names.
-     Everywhere else they appear on hover, as before. The tester read the
-     hover-only glyph at the bottom edge of a bubble as a stray logo, which is
-     a fair reading of an unlabelled icon that only exists while the pointer
-     is over it — and the two things anyone wants at the end of a reply are
-     copy and send-again. */
-  const last = S.log.length && S.log[S.log.length - 1].id === m.id;
-  const cls = 'msgacts' + (last ? ' shown' : '');
-  const label = (t) => last ? '<span class="msgactlb">' + t + '</span>' : '';
+  /* Calm (S3): the actions appear on hover or keyboard focus on EVERY
+     message, the last one included. F11 had pinned the last message's row
+     open with labels ("Copy", "Send again"); the spec's reading of the
+     reference apps is that a reply is plain prose until it is pointed at.
+     The names live on in each button's tooltip and aria-label. */
+  const cls = 'msgacts';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
-    + ic('copy') + label('Copy') + '</button>';
+    + ic('copy') + '</button>';
   if (m.k !== 'user') return '<div class="' + cls + '">' + copy + '</div>';
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
@@ -1916,7 +1913,7 @@ function msgActs(m) {
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
   return '<div class="' + cls + '">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + label('Send again') + '</button>'
+    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>'
     + copy + '</div>';
 }
 
@@ -12636,6 +12633,10 @@ function endMarkIds() {
 function renderItems() {
   const items = S.log; let html = '';
   const end = endMarkIds();
+  // Only while it is still the newest turn: once another question follows,
+  // that turn's own mark (when it finishes) takes over.
+  let lastEnd = Array.from(end).pop();
+  if (lastEnd && items.slice(items.findIndex((x) => x.id === lastEnd) + 1).some((x) => x.k === 'user')) lastEnd = null;
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
     if (m.k === 'tool') {
@@ -12659,7 +12660,10 @@ function renderItems() {
       const times = j - i + 1;
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
-    html += item(m, end.has(m.id));
+    /* Calm (S3): the latest finished turn keeps its full stop at rest; an
+       earlier turn's mark shows with that message's actions, on hover or
+       focus, so a long transcript is not a column of logos. */
+    html += item(m, end.has(m.id) ? (m.id === lastEnd ? 'latest' : true) : false);
   }
   return html;
 }
