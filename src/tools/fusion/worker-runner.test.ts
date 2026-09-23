@@ -110,7 +110,12 @@ describe("runWorkerTasks", () => {
       origin: "fusion",
       providerId: "local-llama",
       maxSteps: 7,
-      taskMaxDurationMs: 60_000,
+      // The loop's ceiling starts at turn start, which includes the wait
+      // for a server slot; the worker's own 60 s budget starts at its
+      // first token. So the loop is given the work budget PLUS the queue
+      // allowance (a third of it), or it would cut the work short by
+      // however long the worker queued.
+      taskMaxDurationMs: 60_000 + 20_000,
       // The role is the policy module's too: a worker builds.
       toolRole: "builder",
     });
@@ -488,10 +493,17 @@ describe("runWorkerTasks", () => {
     expect(results[0]!.notes?.[0]).toMatch(/step limit \(7 steps\)/);
   });
 
-  it("reports the worker's own time limit as max_steps, not as a cancellation", async () => {
+  it("reports the worker's own time limit as a timeout, not as a cancellation", async () => {
     const { deps } = harness(
       ({ options }) =>
         new Promise<RunTurnResult>((resolve) => {
+          // Served, then out of time — which is the case this test is
+          // about. A worker that never produced a token is `queued`
+          // instead; see worker-queue-clock.test.ts.
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_delta", text: "…" },
+          });
           options.signal!.addEventListener(
             "abort",
             () => resolve(turnResult({ reason: "cancelled", stepCount: 2 })),
@@ -506,7 +518,10 @@ describe("runWorkerTasks", () => {
       maxWorkers: 1,
       signal: new AbortController().signal,
     });
-    expect(results[0]).toMatchObject({ status: "max_steps", stepCount: 2 });
+    // `timeout`, not `max_steps`: the two have different remedies, and
+    // telling the orchestrator "out of steps" about a worker that ran out
+    // of time sent it to raise the wrong budget.
+    expect(results[0]).toMatchObject({ status: "timeout", stepCount: 2 });
     expect(results[0]!.notes?.[0]).toMatch(/time limit/);
   });
 
@@ -854,7 +869,11 @@ describe("worker limits from throughput (F19)", () => {
       tokensPerSecond: 10,
       ceilingMs: 2_700_000,
     });
-    expect(calls[0]!.options.taskMaxDurationMs).toBe(expected);
+    // The estimate itself is unchanged — the loop is handed it plus the
+    // queue allowance, for the reason above.
+    expect(calls[0]!.options.taskMaxDurationMs).toBe(
+      expected + Math.floor(expected / 3),
+    );
     expect(expected).toBeGreaterThanOrEqual(WORKER_TIMEOUT_FLOOR_MS);
     expect(expected).toBeLessThan(2_700_000);
 
@@ -867,7 +886,9 @@ describe("worker limits from throughput (F19)", () => {
       maxWorkers: 1,
       signal: new AbortController().signal,
     });
-    expect(unmeasured.calls[0]!.options.taskMaxDurationMs).toBe(2_700_000);
+    expect(unmeasured.calls[0]!.options.taskMaxDurationMs).toBe(
+      2_700_000 + 900_000,
+    );
   });
 });
 
@@ -941,6 +962,14 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
           options.eventHook?.(stepFinished(i));
         }
         options.eventHook?.(stepStarted(completedBefore));
+        // A generating worker is one the server is answering: it streams.
+        // Without a token the runner cannot tell it from a worker still
+        // queued behind a busy slot, which is the whole point of the
+        // queue budget.
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_delta", text: "…" },
+        });
         options.signal?.addEventListener(
           "abort",
           () => resolve(turnResult({ reason: "cancelled", stepCount: completedBefore })),
@@ -1306,7 +1335,7 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(calls[0]!.options.signal?.aborted).toBe(true);
       const [result] = await run;
-      expect(result!).toMatchObject({ status: "max_steps", stepCount: 0 });
+      expect(result!).toMatchObject({ status: "timeout", stepCount: 0 });
       expect(result!.notes?.[0]).toMatch(/time limit/);
       expect(result!.reply).not.toContain("handed back");
       expect(result!.durationMs).toBe(60_000);

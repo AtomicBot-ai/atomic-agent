@@ -173,6 +173,27 @@ const GOG_TOOL_RESULT_RENDER_CAP_CHARS = 16_000;
  */
 const TOOLS_FULL_BODY_WHEN_FRESH: ReadonlySet<string> = new Set([
   "os.http.request",
+  // The listing tools (see src/compressor/listing-caps.ts). Their
+  // summaries are an ordered list of rows: the model needs the rows on
+  // the turn it is choosing a commit, a PR, a branch, a process or a
+  // tab from, and a header plus the newest few is enough afterwards
+  // for "what did I look at?". Without this entry a wide listing —
+  // `os.proc.list` at its default `limit` runs to the full 8 000
+  // chars, ~2 000 tokens — would sit in `### conversation` at that
+  // size for the rest of the session; with it, that width is paid for
+  // once and the standing cost drops to TOOL_RESULT_HISTORY_CAP_CHARS,
+  // the same 400 chars these results cost before the caps changed.
+  // `os.shell.run` is deliberately absent: its `{"jobs": true}` form
+  // is a listing, but the tool's other forms are not, and its render
+  // budget is decided below.
+  "os.git.log",
+  "os.git.status",
+  "os.git.branch",
+  "os.proc.list",
+  "os.window.list",
+  "browser.tabs",
+  "github.pr.list",
+  "github.issue.list",
 ]);
 
 /**
@@ -238,8 +259,26 @@ export function renderToolResultBody(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
   options: RenderTurnOptions,
 ): string {
-  if (isFreshGogShellResult(turn, options)) {
-    return capSummary(turn.summary, GOG_TOOL_RESULT_RENDER_CAP_CHARS);
+  if (isGogShellResult(turn)) {
+    if (options.inCurrentMacroTurn === true)
+      return capSummary(turn.summary, GOG_TOOL_RESULT_RENDER_CAP_CHARS);
+  } else if (turn.tool === "os.shell.run") {
+    // The tool compressed this at ingestion (`agent.shellToolResultCharCap`,
+    // 16 000 by default); the render budget only decides how much of that
+    // the prompt pays for. Fresh — the inference that has to act on the
+    // command — gets the generic cap; once the macro-turn closes it drops
+    // back to the 400 chars a shell result used to be, so widening
+    // ingestion costs nothing in `### conversation` forever. Both cuts are
+    // taken from the start: a shell summary *is* a tail, and its last
+    // lines (the `exit:` line, the verdict) are the answer. The command
+    // line is not lost with the head — it is on the `assistant_tool_call`
+    // turn immediately above.
+    return capSummaryToTail(
+      turn.summary,
+      options.inCurrentMacroTurn === true
+        ? TOOL_RESULT_RENDER_CAP_CHARS
+        : TOOL_RESULT_HISTORY_CAP_CHARS,
+    );
   }
   if (TOOLS_FULL_BODY_WHEN_FRESH.has(turn.tool)) {
     if (options.inCurrentMacroTurn === true) return turn.summary;
@@ -263,21 +302,28 @@ export function renderToolResultBody(
   return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
 }
 
-function isFreshGogShellResult(
+function isGogShellResult(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
-  options: RenderTurnOptions,
 ): boolean {
-  return (
-    options.inCurrentMacroTurn === true &&
-    turn.tool === "os.shell.run" &&
-    turn.summary.includes("$ gog ")
-  );
+  return turn.tool === "os.shell.run" && turn.summary.includes("$ gog ");
 }
 
 function capSummary(summary: string, capChars: number): string {
   if (summary.length <= capChars) return summary;
   const keep = Math.max(1, capChars - 40);
   return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
+}
+
+/**
+ * `capSummary` taken from the other end: what survives is the end of the
+ * summary rather than its start. For a result the tool already compressed
+ * into a tail, a head-first cut renders the beginning of that tail and
+ * drops the line the call was made for.
+ */
+function capSummaryToTail(summary: string, capChars: number): string {
+  if (summary.length <= capChars) return summary;
+  const keep = Math.max(1, capChars - 40);
+  return `… [rendering-truncated ${summary.length - keep} chars]\n${summary.slice(-keep)}`;
 }
 
 /**

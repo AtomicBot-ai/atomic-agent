@@ -60,11 +60,23 @@ export interface SubcallHealthTracker {
 }
 
 /**
- * What one outcome does to a streak. `aborted` is neutral: a new turn
- * aborts the previous turn's still-running reflection by design, which
- * says nothing about whether the sub-call works. Every outcome that
- * reached the end without an error — a result, `none`, or a gate that
- * declined to call the model — proves the path is healthy.
+ * What one outcome does to a streak.
+ *
+ * Only outcomes that actually exercised the sub-call are evidence.
+ * `ok` and `none` reached the model and came back, so they prove the
+ * path is healthy and reset the streak.
+ *
+ * Everything else is neutral — it neither counts nor resets:
+ *   - `aborted`: a new turn aborts the previous turn's still-running
+ *     reflection by design.
+ *   - `skipped` / `skipped_no_history` / `skipped_not_referential`: a
+ *     gate declined to call the model, so the call path was never
+ *     tried. These used to count as healthy, which let an interleaved
+ *     gate-skip reset a real timeout/failure streak and suppress the
+ *     operator warning indefinitely — e.g. the link-generator, whose
+ *     `skipped` fires on every turn that surfaced too few notes to
+ *     link (a turn with no recall at all), interleaved with timeouts
+ *     on the turns that did have candidates.
  */
 export function classifySubcallOutcome(
   outcome: MemorySubcallOutcome,
@@ -74,12 +86,12 @@ export function classifySubcallOutcome(
     case "failed":
       return "unhealthy";
     case "aborted":
-      return "neutral";
-    case "ok":
-    case "none":
     case "skipped":
     case "skipped_no_history":
     case "skipped_not_referential":
+      return "neutral";
+    case "ok":
+    case "none":
       return "healthy";
   }
 }

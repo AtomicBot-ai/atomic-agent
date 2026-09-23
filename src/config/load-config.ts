@@ -261,6 +261,20 @@ export function loadConfig(): AtomicAgentConfig {
         1_000,
         1_000_000,
       ),
+      // Lower bounds are the compressor's own defaults, so an operator
+      // dialling down can land exactly on the pre-knob behaviour.
+      shellToolResultCharCap: readBoundedPositiveInt(
+        "ATOMIC_AGENT_SHELL_TOOL_RESULT_CHAR_CAP",
+        ENV_DEFAULTS.SHELL_TOOL_RESULT_CHAR_CAP,
+        400,
+        1_000_000,
+      ),
+      shellToolResultTailLines: readBoundedPositiveInt(
+        "ATOMIC_AGENT_SHELL_TOOL_RESULT_TAIL_LINES",
+        ENV_DEFAULTS.SHELL_TOOL_RESULT_TAIL_LINES,
+        12,
+        100_000,
+      ),
       loopWarningThreshold: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOOP_WARNING_THRESHOLD",
         ENV_DEFAULTS.LOOP_WARNING_THRESHOLD,
@@ -320,9 +334,13 @@ export function loadConfig(): AtomicAgentConfig {
       ),
     },
     skills: {
+      // File value is the default, env var overrides it — the same
+      // layering `localModels.completionMaxTokens` uses. Before v70 the
+      // fallback was the schema constant, so `skills.catalogTokenBudget`
+      // in config.json was read, validated and then ignored (issue #466).
       catalogTokenBudget: readBoundedPositiveInt(
         "ATOMIC_AGENT_SKILLS_CATALOG_BUDGET",
-        ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+        user.skills.catalogTokenBudget,
         1,
         100_000,
       ),

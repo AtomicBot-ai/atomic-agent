@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 
 import {
   buildSkillCatalog,
+  buildSkillCatalogSection,
   formatSkillCatalogLine,
+  formatSkillCatalogOmittedLine,
   DEFAULT_CATALOG_MAX_CHARS,
   SKILL_CATALOG_CHARS_PER_TOKEN,
 } from "./skill-catalog.js";
@@ -108,6 +110,142 @@ describe("buildSkillCatalog", () => {
     });
     expect(configured).toEqual(legacy);
     expect(legacy.length).toBeLessThan(records.length);
+  });
+
+  /**
+   * Issue #466. The catalog cut silently: 33 installed skills rendered
+   * to ~7900 chars, the 4096-char default showed 17 of them, and nothing
+   * in the prompt said the other 16 existed — so the model answered "no
+   * such skill" for skills that were installed and loadable.
+   */
+  describe("the truncation marker", () => {
+    it("reports the real dropped count, and none when everything fits", () => {
+      const records = Array.from({ length: 10 }, (_, i) =>
+        record(`skill-${i}`, "d".repeat(580)),
+      );
+      const whole = buildSkillCatalogSection(records, { tokenBudget: 1024 });
+      expect(whole.entries).toHaveLength(records.length);
+      expect(whole.dropped).toBe(0);
+
+      const cut = buildSkillCatalogSection(records);
+      expect(cut.entries.length).toBeLessThan(records.length);
+      expect(cut.dropped).toBe(records.length - cut.entries.length);
+      expect(formatSkillCatalogOmittedLine(cut.dropped)).toContain(
+        "skills.catalogTokenBudget",
+      );
+    });
+
+    it("counts against the budget: the section still fits with the marker", () => {
+      // Four equal-length rows against a budget that holds exactly
+      // three of them — so the entries the plain cut keeps leave not one
+      // byte for a marker, and the packer has to give a row back.
+      const records = Array.from({ length: 4 }, (_, i) =>
+        record(`skill-${i}`, "d".repeat(100)),
+      );
+      const lineLength = formatSkillCatalogLine({
+        name: "skill-0",
+        description: "d".repeat(100),
+        source: "global",
+      }).length;
+      // Three rows and the two newlines between them, to the byte —
+      // which is what the plain first-overflow cut used to keep.
+      const maxChars = lineLength * 3 + 2;
+
+      const cut = buildSkillCatalogSection(records, { maxChars });
+      expect(cut.entries).toHaveLength(2);
+      expect(cut.dropped).toBe(2);
+      const rendered = [
+        ...cut.entries.map(formatSkillCatalogLine),
+        formatSkillCatalogOmittedLine(cut.dropped),
+      ].join("\n");
+      expect(rendered.length).toBeLessThanOrEqual(maxChars);
+    });
+
+    // The reserve is a per-row check, and `packCatalog` force-keeps the
+    // first row without it. So the budget guarantee is "two or more rows
+    // survive ⇒ the section fits", and these two pin both sides of that
+    // boundary so neither can drift unnoticed.
+    it("keeps the section inside the budget at every cut where two or more rows survive", () => {
+      const records = Array.from({ length: 12 }, (_, i) =>
+        record(`skill-${i}`, "d".repeat(40)),
+      );
+      const lineLength = formatSkillCatalogLine({
+        name: "skill-0",
+        description: "d".repeat(40),
+        source: "global",
+      }).length;
+      let checked = 0;
+      // Sweep every packing boundary and a byte either side of it.
+      for (let rows = 2; rows <= 12; rows++) {
+        for (const delta of [-1, 0, 1]) {
+          const maxChars = rows * (lineLength + 1) + delta;
+          const section = buildSkillCatalogSection(records, { maxChars });
+          if (section.entries.length < 2) continue;
+          const rendered = [
+            ...section.entries.map(formatSkillCatalogLine),
+            ...(section.dropped > 0
+              ? [formatSkillCatalogOmittedLine(section.dropped)]
+              : []),
+          ].join("\n");
+          expect(rendered.length).toBeLessThanOrEqual(maxChars);
+          checked++;
+        }
+      }
+      expect(checked).toBeGreaterThan(20);
+    });
+
+    it("still marks the truncation when the budget holds only the force-kept row", () => {
+      const records = Array.from({ length: 40 }, (_, i) =>
+        record(`skill-${i}`, "d".repeat(50)),
+      );
+      const lineLength = formatSkillCatalogLine({
+        name: "skill-0",
+        description: "d".repeat(50),
+        source: "global",
+      }).length;
+      // Room for one row but not for a second one plus the marker.
+      const section = buildSkillCatalogSection(records, {
+        maxChars: lineLength + 10,
+      });
+      expect(section.entries).toHaveLength(1);
+      expect(section.dropped).toBe(39);
+      // Deliberate: the marker is worth more than the soft budget here.
+      // A one-row catalog that does not say it is clipped is the exact
+      // failure #466 is about.
+      const rendered = [
+        formatSkillCatalogLine(section.entries[0]!),
+        formatSkillCatalogOmittedLine(section.dropped),
+      ].join("\n");
+      expect(rendered).toContain("39 more installed skills not shown");
+    });
+
+    it("a catalog that only just fits gets no marker and no lost entry", () => {
+      const records = [record("first", "one"), record("second", "two")];
+      const exact =
+        formatSkillCatalogLine({
+          name: "first",
+          description: "one",
+          source: "global",
+        }).length +
+        1 +
+        formatSkillCatalogLine({
+          name: "second",
+          description: "two",
+          source: "global",
+        }).length;
+      const section = buildSkillCatalogSection(records, { maxChars: exact });
+      expect(section.entries).toHaveLength(2);
+      expect(section.dropped).toBe(0);
+    });
+
+    it("singular for one dropped skill", () => {
+      expect(formatSkillCatalogOmittedLine(1)).toContain(
+        "1 more installed skill ",
+      );
+      expect(formatSkillCatalogOmittedLine(2)).toContain(
+        "2 more installed skills ",
+      );
+    });
   });
 
   it("explicit maxChars wins over tokenBudget", () => {

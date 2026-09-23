@@ -1,5 +1,6 @@
 import { platform } from "node:os";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { runCommand } from "../../sandbox/command-runner.js";
 
@@ -9,6 +10,13 @@ import { runCommand } from "../../sandbox/command-runner.js";
  * most idiomatic for the host OS. Failure modes are explicit and
  * human-readable so the LLM can decide whether to fall back gracefully.
  */
+
+/**
+ * Estimated width of one window line — app name, title, and whatever
+ * the OS adds. The OS writes these and nothing here clamps them, so
+ * it is an estimate, not a ceiling.
+ */
+const TITLE_CHARS = 240;
 
 export const osWindowListTool: ToolDefinition = {
   name: "os.window.list",
@@ -34,12 +42,23 @@ export const osWindowListTool: ToolDefinition = {
         details: { platform: os, stderr: result.stderr },
       });
     }
-    return compressToolResult({
-      tool: "os.window.list",
-      status: "ok",
-      output: result.stdout.trim(),
-      details: { platform: os, lines: result.stdout.split(/\r?\n/).length },
-    });
+    const lines = result.stdout.split(/\r?\n/);
+    return compressToolResult(
+      {
+        tool: "os.window.list",
+        status: "ok",
+        output: result.stdout.trim(),
+        details: { platform: os, lines: lines.length },
+      },
+      // One line per window, and `details` carries only a COUNT of the
+      // lines — so anything the compressor cuts here is unrecoverable.
+      // There is no `limit` to work from (the OS decides how many
+      // windows exist), so budget the lines we are about to print at
+      // TITLE_CHARS each — counted before the trim, so an empty list
+      // still buys a line. ~16 windows fit the shared ceiling, which
+      // is what bounds a busier desktop.
+      listingResultCaps(lines.length, TITLE_CHARS),
+    );
   },
 };
 

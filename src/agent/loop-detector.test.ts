@@ -307,7 +307,7 @@ describe("loop notice formatters", () => {
   });
 
   it("formatForcedLoopReply explains the graceful stop", () => {
-    const reply = formatForcedLoopReply("browser.click", 4);
+    const reply = formatForcedLoopReply("browser.click", 4, undefined, 4);
     expect(reply).toContain("browser.click");
     expect(reply).toContain("4");
     expect(reply.toLowerCase()).toContain("best answer");
@@ -321,9 +321,48 @@ describe("loop notice formatters", () => {
       "read_repeat",
       "outcome_repeat",
     ] as const) {
-      const reply = formatForcedLoopReply("os.shell.run", 3, detector);
-      expect(reply).toContain("no-progress loop");
-      expect(reply).toContain("3 blocked attempts");
+      const reply = formatForcedLoopReply("os.shell.run", 5, detector, 4);
+      expect(reply).toContain("no-progress outcome");
+      expect(reply).toContain("refused 4 times in a row");
+      expect(reply).toContain("repeated tool call");
+    }
+  });
+
+  // The streak is not the number of refusals: with the defaults the
+  // no-progress streak plateaus at 5 while the breaker trips on the 4th
+  // refusal, so "after 5 blocked attempts" overstated the refusals by
+  // one on every ordinary repeat stop. This case passes 3 to show the
+  // reply quotes what it is given, not the streak beside it.
+  it("formatForcedLoopReply quotes the refusal count, not the streak, when it has one", () => {
+    const reply = formatForcedLoopReply("os.shell.run", 5, "no_progress", 3);
+    expect(reply).toContain("refused 3 times in a row, counting this one");
+    expect(reply).not.toMatch(/blocked attempts/i);
+    // The streak must not be quoted as a refusal count.
+    expect(reply).not.toContain("5");
+    expect(reply.toLowerCase()).toContain("best answer");
+  });
+
+  it("formatForcedLoopReply says `time` for a single refusal", () => {
+    const reply = formatForcedLoopReply("os.shell.run", 5, "no_progress", 1);
+    expect(reply).toContain("refused 1 time in a row");
+    expect(reply).not.toContain("1 times");
+  });
+
+  // The 3-argument form is exported API (src/agent/index.ts) and has no
+  // refusal count to quote. It must not fall back to `count`: on a
+  // breaker signal that is `max(streak, breakerVetoStreak)`, so it is
+  // not a streak this function can honestly describe. The production
+  // caller never reaches this branch — a veto is recorded before the
+  // signal is built, so `blocked` is always >= 1 there.
+  it("formatForcedLoopReply quotes no number when it has no refusal count", () => {
+    for (const reply of [
+      formatForcedLoopReply("os.shell.run", 5, "no_progress"),
+      formatForcedLoopReply("os.shell.run", 5, "no_progress", 0),
+    ]) {
+      expect(reply).toContain("kept returning the same no-progress outcome");
+      expect(reply).toContain("this call was not run");
+      expect(reply).not.toMatch(/blocked attempts|refused/i);
+      expect(reply).not.toMatch(/\d/);
     }
   });
 

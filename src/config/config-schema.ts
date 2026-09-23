@@ -419,6 +419,19 @@ export interface AtomicAgentConfig {
      */
     batchToolResultCharCap: number;
     /**
+     * What survives **ingestion** of a non-`gog` `os.shell.run` result.
+     * The compressor runs inside the tool and its summary is what gets
+     * stored as the `tool_result` turn, so whatever these drop is gone —
+     * not paged, not deferred. Before they existed the shell tool took
+     * the compressor's bare defaults (400 chars / 12 lines) while every
+     * read-oriented tool passed 8–64 KB. `gog` keeps its own far larger
+     * options and ignores both. Env-only:
+     * `ATOMIC_AGENT_SHELL_TOOL_RESULT_CHAR_CAP`,
+     * `ATOMIC_AGENT_SHELL_TOOL_RESULT_TAIL_LINES`.
+     */
+    shellToolResultCharCap: number;
+    shellToolResultTailLines: number;
+    /**
      * No-progress loop detection (OpenClaw-style `ToolLoopTracker`).
      * `loopWarningThreshold` — args-only repeat count that injects a
      * `### notice` (env `ATOMIC_AGENT_LOOP_WARNING_THRESHOLD`).
@@ -782,8 +795,9 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 2: reactive link graph. See UserConfigFile.memory.links.
-     * Default disabled — the link-generator LLM sub-call is opt-in,
-     * and recall-side expansion only fires when enabled is true.
+     * Enabled by default. With the master switch off the
+     * link-generator LLM sub-call never fires and recall-side
+     * expansion is skipped.
      */
     links: {
       enabled: boolean;
@@ -795,9 +809,10 @@ export interface AtomicAgentConfig {
       generatorTimeoutMs: number;
     };
     /**
-     * Phase 3: memory evolution (neighbor-evolver). Default disabled
-     * — without it the parser still recognises `EVOLVE` lines but
-     * silently drops them. See UserConfigFile.memory.evolution.
+     * Phase 3: memory evolution (neighbor-evolver). Enabled by
+     * default. With the master switch off the parser still
+     * recognises `EVOLVE` lines but silently drops them. See
+     * UserConfigFile.memory.evolution.
      */
     evolution: {
       enabled: boolean;
@@ -806,8 +821,8 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 5: distilled lessons + cold-path consolidator. See
-     * UserConfigFile.memory.lessons for full doc. Default disabled —
-     * with the master switch off, `### lessons` is not rendered,
+     * UserConfigFile.memory.lessons for full doc. Enabled by
+     * default; with the master switch off, `### lessons` is not rendered,
      * `memory.lessons.recall` returns `LessonsDisabledError`, and
      * the consolidator never registers its periodic timer.
      */
@@ -821,7 +836,7 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 7b: MemP-style advisory procedures distilled alongside
-     * lessons. Default disabled — when off, the `### procedures`
+     * lessons. Enabled by default; when off, the `### procedures`
      * section is not rendered, `memory.procedures.recall` returns a
      * `ProceduresDisabledError`, and the consolidator emits only the
      * `LESSON` half of the combined grammar.
@@ -848,9 +863,9 @@ export interface AtomicAgentConfig {
      * one extra sub-call per turn (after link-generator and
      * neighbor-evolver) that asks the model to UPVOTE/DOWNVOTE the
      * items surfaced in this turn's variable tail. See
-     * `UserConfigFile.memory.voting` for full doc. Default disabled
-     * — flipping it on adds the extra LLM call on the shared
-     * reflection slot.
+     * `UserConfigFile.memory.voting` for full doc. Enabled by
+     * default; the extra LLM call rides the shared reflection slot,
+     * so turning it off removes one sub-call per turn.
      */
     voting: {
       enabled: boolean;
@@ -1863,7 +1878,7 @@ export interface UserConfigFile {
      * `EVOLVE` lines but the runner drops them silently. Flip on to
      * let reflection refine `tags` on existing memories.
      *
-     *  - `enabled`     master switch. Default `false`.
+     *  - `enabled`     master switch. Default `true`.
      *  - `maxPerWrite` Hard cap on number of EVOLVE directives
      *                  actually applied per reflection. Default `2`.
      *  - `leaseMs`     B↔C lease window in ms. EVOLVE skips any
@@ -1877,15 +1892,16 @@ export interface UserConfigFile {
     };
     /**
      * Memory-v2 phase 5. Distilled lessons + cold-path consolidator.
-     * Default disabled because rolling phase 5 on flips the stable
-     * prefix bytes once (see AGENTS.md "Memory fabric phase 5"), so
-     * deployments choose an explicit upgrade window.
+     * Enabled by default. Rolling phase 5 on flipped the stable
+     * prefix bytes once (see AGENTS.md "Memory fabric phase 5");
+     * that upgrade has shipped, so the switch is now on out of the
+     * box and turning it off is the deliberate act.
      *
      * `lessons` keys:
      *   - `enabled`            master switch for `### lessons`
      *                          rendering + `memory.lessons.recall` +
      *                          `ConsolidatorJob.start`. Default
-     *                          `false`.
+     *                          `true`.
      *   - `recallK`            top-K lessons surfaced per turn (BM25).
      *                          Default `2`.
      *   - `maxTokens`          hard cap on the rendered `### lessons`
@@ -1902,7 +1918,7 @@ export interface UserConfigFile {
      *
      * `consolidation` keys:
      *   - `enabled`              master switch on the consolidator
-     *                            timer. Default `false`. Independent
+     *                            timer. Default `true`. Independent
      *                            from `lessons.enabled` so the schema
      *                            can be inspected without ticking.
      *   - `intervalMs`           consolidator tick period. Default
@@ -1933,7 +1949,7 @@ export interface UserConfigFile {
     /**
      * Memory-v2 phase 7b. Procedures (MemP-style how-to templates)
      * mirroring `lessons.*`:
-     *   - `enabled`           master switch. Default `false`.
+     *   - `enabled`           master switch. Default `true`.
      *   - `recallK`           top-K procedures surfaced per turn
      *                         via BM25 against the current user
      *                         message. Default `2`.
@@ -1978,7 +1994,7 @@ export interface UserConfigFile {
      *                              does not run, and the lesson
      *                              recall reranker treats every
      *                              row as if `vote_score = 0`.
-     *                              Default `false`.
+     *                              Default `true`.
      *   - `maxVotePerItem`        clamp on `|vote_score|`. Each
      *                              UPVOTE/DOWNVOTE is `+1`/`-1` and
      *                              the row is pinned in
@@ -2029,8 +2045,8 @@ export interface UserConfigFile {
      * slot** and the **reflection slot** are both untouched.
      *
      * `retrieve.rewriter` keys:
-     *  - `enabled`       master switch. Default `false`.
-     *  - `timeoutMs`     hard per-call timeout. Default `3000`.
+     *  - `enabled`       master switch. Default `true`.
+     *  - `timeoutMs`     hard per-call timeout. Default `10_000`.
      *  - `historyTurns`  trailing turns fed into the rewriter
      *                    prompt. Default `3`.
      *  - `gateMode`      `heuristic` | `embedding` | `always`.
@@ -2086,8 +2102,18 @@ export interface UserConfigFile {
    * (https://clawhub.ai) — the primary skill marketplace, browsed and
    * searched server-side. Older files are upgraded with it enabled,
    * pointed at the public registry, hiding suspicious skills by default.
+   *
+   * `catalogTokenBudget` (added in config v70) is the soft budget for
+   * the `### skills` block of the stable prefix, in tokens. It shipped
+   * as `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` only, which made it the one
+   * `skills.*` knob a config file could not set — writing it there was
+   * parsed away in silence (issue #466). Older files are upgraded with
+   * the env default, so the prompt is unchanged. The env var still wins
+   * when both are set (operator override), exactly as it does for
+   * `localModels.completionMaxTokens`.
    */
   skills: {
+    catalogTokenBudget: number;
     disabled: string[];
     taps: string[];
     clawhub: {
@@ -2417,7 +2443,13 @@ export interface UserConfigFile {
 // `finish` (F41, `src/agent/review-stall.ts`). Additive: an older file
 // has no field, the fusion block stays as it was, and the default applies
 // at read time like the other optional fusion fields.
-export const USER_CONFIG_VERSION = 69;
+// v70: `skills.catalogTokenBudget` (default 512) — the `### skills`
+// catalog budget, until now settable only through
+// `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET`; the key in config.json was
+// parsed away without a word (issue #466). Additive: an older file has
+// no field, takes the env default, and renders the same prompt. The env
+// var still overrides the file value.
+export const USER_CONFIG_VERSION = 70;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2575,8 +2607,17 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   66,
   67,
   68,
+  69,
   USER_CONFIG_VERSION,
 ];
+
+/**
+ * Default `skills.catalogTokenBudget`, shared by the file defaults and
+ * `ENV_DEFAULTS.SKILLS_CATALOG_BUDGET` so the two cannot drift apart.
+ * 512 tokens × 8 chars/token is the historical 4096-char catalog cap —
+ * see `SKILL_CATALOG_CHARS_PER_TOKEN`.
+ */
+export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -2864,6 +2905,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     maxImagesPerCall: 4,
   },
   skills: {
+    catalogTokenBudget: DEFAULT_SKILLS_CATALOG_BUDGET,
     disabled: [],
     taps: ["anthropics/skills", "openai/skills", "vercel-labs/agent-skills"],
     clawhub: {
@@ -2988,7 +3030,7 @@ export const ENV_DEFAULTS = {
   BROWSER_HEADLESS: false,
   BROWSER_NO_SANDBOX: false,
   BROWSER_LAUNCH_TIMEOUT_MS: 30_000,
-  SKILLS_CATALOG_BUDGET: 512,
+  SKILLS_CATALOG_BUDGET: DEFAULT_SKILLS_CATALOG_BUDGET,
   PROJECT_SKILLS_DIR: ".atomic-agent/skills",
   USER_CONFIG_FILE_NAME: "config.json",
   TASKS_ENABLED: true,
@@ -3016,6 +3058,13 @@ export const ENV_DEFAULTS = {
   MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
   BATCH_TOOL_RESULT_CHAR_CAP: 32_000,
+  /**
+   * Ingestion cap (chars) on a non-`gog` `os.shell.run` result summary.
+   * This is the one line to change to pick a different default.
+   */
+  SHELL_TOOL_RESULT_CHAR_CAP: 16_000,
+  /** Ingestion cap (tail lines) on a non-`gog` `os.shell.run` result summary. */
+  SHELL_TOOL_RESULT_TAIL_LINES: 500,
   /** Args-only repeat count that injects a no-progress `### notice`. */
   LOOP_WARNING_THRESHOLD: 3,
   /** Identical args+result streak that vetoes a call before dispatch. */
@@ -5299,6 +5348,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
     },
     skills: {
+      catalogTokenBudget: parseBoundedPositiveInt(
+        skills.catalogTokenBudget ??
+          USER_CONFIG_DEFAULTS.skills.catalogTokenBudget,
+        "skills.catalogTokenBudget",
+        1,
+        100_000,
+      ),
       disabled: parseSkillNameArray(
         skills.disabled ?? USER_CONFIG_DEFAULTS.skills.disabled,
         "skills.disabled",

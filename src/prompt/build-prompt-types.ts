@@ -21,6 +21,13 @@ export interface BuildPromptInput {
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Installed skills the catalog budget left out. Forwarded into
+   * `buildStablePrefix`, which ends `### skills` on a truncation marker
+   * when it is above zero (issue #466). Omitted / `0` keeps the prefix
+   * byte-identical to the legacy output.
+   */
+  skillCatalogDropped?: number;
   systemPersona?: string;
   /**
    * Single-stream decode speed of the local worker daemon (tokens per

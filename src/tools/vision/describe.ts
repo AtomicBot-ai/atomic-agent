@@ -9,6 +9,49 @@ import {
   UnsupportedImageFormatError,
 } from "./load-image.js";
 
+/**
+ * Per-call compressor bounds for a successful `vision.describe`.
+ *
+ * The VLM's answer is free-form prose, routinely several paragraphs
+ * (a screenshot walkthrough, an OCR transcript). Under the
+ * runtime-wide defaults it was cut twice: `maxTailLines: 12` keeps
+ * only the LAST twelve non-blank lines and `maxSummaryLength: 400`
+ * then slices the head of the remainder, so a 2 KB description
+ * reached the model as ~385 chars of its ending — the opening
+ * sentence, which is where a describe answer states what the image
+ * is, was the first thing thrown away. Nothing can recover it: the
+ * conversation turn keeps only `summary`, `details` holds just
+ * provider/paths/bytes, and a re-run costs another paid,
+ * non-deterministic model call that would be cut the same way.
+ *
+ * Budget — what the tool can PRODUCE and what the prompt can DELIVER
+ * are different numbers, and the smaller one wins. Produce:
+ * `describeImage` caps generation at `max_tokens: 4096` on the
+ * OpenAI path (`llm/provider/openai/openai-describe-image.ts`) and
+ * 512 on llama-server
+ * (`llm/provider/llama-server/llama-server-vision.ts`), so ~16 KB at
+ * ~4 chars/token. Deliver: `TOOL_RESULT_RENDER_CAP_CHARS` in
+ * `session/conversation-turn.ts` clips every rendered tool_result to
+ * 8_000 chars, and `vision.describe` is not in the
+ * `TOOLS_FULL_BODY_WHEN_FRESH` bypass set — not even on the
+ * inference that consumes the result. Keeping more than 8_000 would
+ * only store text the renderer cuts again every turn, so the cap is
+ * aligned to the render ceiling, as `MCP_COMPRESSOR_OPTIONS` in
+ * `mcp/mcp-tool-adapter.ts` already is. A typical description is
+ * 500-3000 chars and is unaffected; if `vision.describe` ever joins
+ * the bypass set, this should go back up to ~16_000.
+ *
+ * Tail truncation is disabled because prose is a document, not a
+ * log. Caveat inherited from the compressor: `extractTail` drops
+ * blank lines unconditionally, so a multi-paragraph description
+ * arrives with its paragraph breaks collapsed — every sentence
+ * survives, the blank lines between them do not.
+ */
+const VISION_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: 8_000,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export interface VisionDescribeToolOptions {
   provider: LlmProvider;
   /** Per-call image count cap mirrored from `config.vision.maxImagesPerCall`. */
@@ -135,22 +178,25 @@ export function buildVisionDescribeTool(
           })),
           signal: ctx.signal,
         });
-        return compressToolResult({
-          tool: "vision.describe",
-          status: "ok",
-          output: result.text,
-          details: {
-            provider: options.provider.name,
-            images: images.map((img) => ({
-              id: img.id,
-              path: img.path,
-              bytes: img.bytes.byteLength,
-              mimeType: img.mimeType,
-              mimeTypeSource: img.mimeTypeSource,
-            })),
-            durationMs: result.durationMs,
+        return compressToolResult(
+          {
+            tool: "vision.describe",
+            status: "ok",
+            output: result.text,
+            details: {
+              provider: options.provider.name,
+              images: images.map((img) => ({
+                id: img.id,
+                path: img.path,
+                bytes: img.bytes.byteLength,
+                mimeType: img.mimeType,
+                mimeTypeSource: img.mimeTypeSource,
+              })),
+              durationMs: result.durationMs,
+            },
           },
-        });
+          VISION_COMPRESSOR_OPTIONS,
+        );
       } catch (error) {
         if (error instanceof VisionUnsupportedError) {
           return errorResult(error.message);

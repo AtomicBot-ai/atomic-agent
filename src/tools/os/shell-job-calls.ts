@@ -2,6 +2,7 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../compressor/listing-caps.js";
 import {
   awaitJobExit,
   type CommandJobExit,
@@ -32,9 +33,19 @@ import {
  */
 
 /**
- * Output lines a still-running or killed result shows. The result
- * compressor keeps the last twelve non-blank lines, so the notice above
- * the command line survives only when the body is shorter than that.
+ * Output lines a still-running or killed result shows. These stay small
+ * on purpose: a job that has not finished is a status report, not the
+ * output itself, and the notice above the command line should survive
+ * the result compressor's tail.
+ *
+ * At the default `agent.shellToolResultTailLines` (500) it always does.
+ * At the 12-line minimum it is tight: a detached result is 1 notice line
+ * + 2 header lines + the marker and `RUNNING_TAIL_LINES` below it = 12
+ * exactly, so an *eviction* notice on top of the detach notice is the
+ * one line that can still be cut. That is the behaviour at the
+ * compressor's bare defaults, which is what the minimum restores — not
+ * something the knob introduced; the eviction is also on
+ * `details.evictedJobId`.
  */
 const RUNNING_TAIL_LINES = 8;
 const KILLED_TAIL_LINES = 9;
@@ -149,6 +160,8 @@ export function renderShellDetached(
     notices,
     statusLine: `still running (job ${record.id}, pid ${record.job.pid ?? "?"}, ${formatShellElapsed(runningMs)}${record.keep ? ", kept" : ""})`,
     body: tailShellOutput(joinShellOutput(output), RUNNING_TAIL_LINES),
+    // A status report: the notice on top is the point, not the excerpt.
+    overflow: "head",
     details: {
       detached: true,
       jobId: record.id,
@@ -175,6 +188,7 @@ function renderShellKilled(
     notices: [],
     statusLine: `killed (job ${record.id}, ${STOP_WORDING[reason]}) after ${formatShellElapsed(exit.durationMs)}, exit: ${formatExitStatus(exit)}`,
     body: tailShellOutput(joinShellOutput(output), KILLED_TAIL_LINES),
+    overflow: "head",
     details: {
       killed: true,
       jobId: record.id,
@@ -263,6 +277,29 @@ function describeJobState(record: ShellJobRecord): string {
   return `exited ${exit ? formatExitStatus(exit) : "?"} after ${formatShellElapsed(exit?.durationMs ?? 0)} — ${collectHint}`;
 }
 
+/**
+ * Width of one rendered job line, derived rather than guessed:
+ * `job 123: ` (up to 9) + the command head, which `headOfCommand`
+ * really does clamp to 60, + ` — ` (3) + the longest state sentence
+ * `describeJobState` can produce (`exited with signal SIGKILL after
+ * 1h 2m — {"wait": 123} collects the output`, ~76). 9 + 60 + 3 + 76 =
+ * 148, rounded to 150, so a full listing is never cut.
+ *
+ * Note what this knob does NOT do: the stored size of this result is
+ * bound by its CONTENT, not by the budget. The registry holds at most
+ * `maxJobs` running plus the finished records it keeps — 23 rows in
+ * the default configuration — so the worst case is ~3.3 KB whatever
+ * number goes here. A typical three-job session measures 209 chars,
+ * which is under the 400 a result like this was capped at before, so
+ * in the ordinary case there is no standing cost at all. It matters
+ * only at the pathological end, because `os.shell.run` is not in
+ * `TOOLS_FULL_BODY_WHEN_FRESH` (only one of its forms is a listing),
+ * so unlike the other eight sites this one would pay its width on
+ * every later turn rather than once. PR #470 gives `os.shell.run` its
+ * own fresh/aged split, after which even that becomes transient.
+ */
+const JOB_CHARS = 150;
+
 /** `{jobs: true}`: this session's jobs — id, command head, started, state. */
 export function listShellJobs(ctx: ShellJobCallContext): CompressedToolResult {
   const records = ctx.jobs.list(ctx.sessionId);
@@ -270,22 +307,33 @@ export function listShellJobs(ctx: ShellJobCallContext): CompressedToolResult {
     (record) =>
       `job ${record.id}: ${headOfCommand(record.facts.commandLine)} — ${describeJobState(record)}`,
   );
-  return compressToolResult({
-    tool: "os.shell.run",
-    status: "ok",
-    output: lines.length > 0 ? lines.join("\n") : "no jobs in this session",
-    details: {
-      jobs: records.map((record) => ({
-        id: record.id,
-        cmd: headOfCommand(record.facts.commandLine, 200),
-        startedAt: new Date(record.job.startedAt).toISOString(),
-        state: record.state,
-        pid: record.job.pid ?? null,
-        keep: record.keep,
-        runningMs: Date.now() - record.job.startedAt,
-        exitCode: record.job.exited()?.exitCode ?? null,
-        stopReason: record.stopReason,
-      })),
+  return compressToolResult(
+    {
+      tool: "os.shell.run",
+      status: "ok",
+      output: lines.length > 0 ? lines.join("\n") : "no jobs in this session",
+      details: {
+        jobs: records.map((record) => ({
+          id: record.id,
+          cmd: headOfCommand(record.facts.commandLine, 200),
+          startedAt: new Date(record.job.startedAt).toISOString(),
+          state: record.state,
+          pid: record.job.pid ?? null,
+          keep: record.keep,
+          runningMs: Date.now() - record.job.startedAt,
+          exitCode: record.job.exited()?.exitCode ?? null,
+          stopReason: record.stopReason,
+        })),
+      },
     },
-  });
+    // This listing is how a model finds its own jobs — `unknownJob`
+    // points it right here — and it bypasses `renderShellResult`, so
+    // it keeps the raw compressor defaults: the last 12 lines, then
+    // 385 chars. The registry already bounds the rows (`maxJobs`
+    // running, plus the finished records it keeps), so budget the rows
+    // we are about to print at JOB_CHARS each: a 60-char command head
+    // (`headOfCommand`) plus the state sentence, which carries the
+    // `{"wait": n}` hint the model needs next.
+    listingResultCaps(records.length, JOB_CHARS),
+  );
 }

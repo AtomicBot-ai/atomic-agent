@@ -1989,6 +1989,13 @@ export class LocalModelsOrchestrator {
    * promoting it to a `daemon_error_set` — the chat daemon already
    * succeeded, so the panel-level error slot stays clear. Memory-v2
    * phase 1B: embedding failure ⇒ FTS5-only fallback, not a fatal stop.
+   *
+   * A *failed* start is reported but never persisted: this runs from
+   * `startDaemon`, which `autoStartIfReady` calls at TUI launch with no
+   * user action, so a one-off start failure must not erase the
+   * operator's durable hybrid-recall opt-in (issue #465). Fallback is
+   * already handled at runtime — `bootstrap` probes the daemon and
+   * degrades to FTS5 when it is unreachable, flag or no flag.
    */
   private reportEmbeddingStartOutcome(
     embedding: { pid: number } | { error: string } | { skipped: true },
@@ -2002,10 +2009,9 @@ export class LocalModelsOrchestrator {
         line: `local-llm: embedding daemon up (${id}, pid ${embedding.pid}) — hybrid recall on`,
       });
     } else if ("error" in embedding) {
-      persistMemoryEmbeddingsEnabled(false);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: embedding daemon failed — hybrid recall disabled (${embedding.error})`,
+        line: `local-llm: embedding daemon failed — hybrid recall unavailable until it starts, FTS5 recall still works (${embedding.error})`,
       });
     } else if (!requested) {
       // skipped is also returned when no embedding was requested;
@@ -2075,6 +2081,11 @@ export class LocalModelsOrchestrator {
           });
         }
       }
+      // Unlike the start-failure paths above, `!desired` is not a
+      // transient sample of a daemon: it means the master switch is
+      // off, no model is selected, or the GGUF is not on disk. Those
+      // are durable config/disk facts, so persisting `false` here is
+      // reconciliation, not the intent-clobber of issue #465.
       if (cfg.memory.embeddings.enabled) {
         persistMemoryEmbeddingsEnabled(false);
       }
@@ -2114,23 +2125,37 @@ export class LocalModelsOrchestrator {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      persistMemoryEmbeddingsEnabled(false);
+      // Not persisted: `autoStartIfReady` reaches this at TUI launch
+      // with no user action, and a transient start failure must not
+      // erase the operator's opt-in (issue #465). `bootstrap` probes
+      // the daemon on every boot and falls back to FTS5 by itself.
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: embedding daemon failed — hybrid recall disabled (${msg})`,
+        line: `local-llm: embedding daemon failed — hybrid recall unavailable until it starts, FTS5 recall still works (${msg})`,
       });
     }
   }
 
   /**
-   * Keep `memory.embeddings.enabled` aligned with the live embedding
-   * daemon: on when the operator enabled embeddings, a model is on
-   * disk, and the daemon is running; off otherwise. Does not flip
-   * `localModels.embeddings.enabled` — that is the operator master
+   * Latch `memory.embeddings.enabled` **on** once the operator enabled
+   * embeddings, a model is on disk and the daemon is running. Does not
+   * flip `localModels.embeddings.enabled` — that is the operator master
    * switch (`E` hotkey).
+   *
+   * One-way by design. This runs off the snapshot timer (5s, 1s while a
+   * daemon is starting), so `emb.running` is a transient observation: a
+   * single sample taken while the daemon starts, restarts or auto-updates
+   * would otherwise write `false` to disk permanently and silently drop
+   * the runtime to FTS5-only recall at every later boot — in `serve` mode
+   * nothing ever writes the flag back. Writing `false` buys nothing
+   * anyway: `bootstrap` already probes the daemon and degrades gracefully
+   * when the flag is on but the daemon is unreachable. Turning hybrid
+   * recall off stays with the user-initiated paths (stop daemon, master
+   * switch, model teardown).
    */
   private reconcileHybridRecallFromDaemon(emb: EmbeddingDaemonInfo): void {
     const cfg = getConfig();
+    if (cfg.memory.embeddings.enabled) return;
     const dataDir = cfg.paths.localModelsDataDir;
     const modelId = cfg.localModels.embeddings.modelId;
     const hasModel =
@@ -2139,8 +2164,8 @@ export class LocalModelsOrchestrator {
       isEmbeddingModelDownloaded(dataDir, getEmbeddingModelDef(modelId));
     const shouldEnable =
       cfg.localModels.embeddings.enabled && hasModel && emb.running;
-    if (cfg.memory.embeddings.enabled === shouldEnable) return;
-    persistMemoryEmbeddingsEnabled(shouldEnable);
+    if (!shouldEnable) return;
+    persistMemoryEmbeddingsEnabled(true);
   }
 
   /**
@@ -2327,7 +2352,12 @@ export class LocalModelsOrchestrator {
    * Memory-v2 phase 1B. Delete an embedding model's GGUF from disk.
    * If the deleted model is the one currently configured as active,
    * the embedding daemon is stopped first so we never race against
-   * a partially-deleted file the server still has mmap'd.
+   * a partially-deleted file the server still has mmap'd, and hybrid
+   * recall is turned off explicitly: removing the active model is a
+   * user action that ends the opt-in. This used to be left to the
+   * snapshot reconciler's `hasModel` branch, which no longer writes
+   * `false` at all (issue #465) — the master switch is deliberately
+   * untouched, exactly as the reconciler left it.
    */
   async removeEmbeddingModel(id: EmbeddingModelId): Promise<void> {
     const cfg = getConfig();
@@ -2364,6 +2394,9 @@ export class LocalModelsOrchestrator {
     }
     try {
       await removeEmbeddingModelFiles(dataDir, id);
+      if (cfg.localModels.embeddings.modelId === id) {
+        persistMemoryEmbeddingsEnabled(false);
+      }
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding ${def.name} removed`,
