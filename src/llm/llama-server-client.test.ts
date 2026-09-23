@@ -5,6 +5,7 @@ import {
   extractLlamaErrorDetail,
   judgeSlotProgress,
 } from "./llama-server-client.js";
+import type { CompletionResult } from "./llama-server-client.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -705,6 +706,138 @@ describe("LlamaServerClient.completeStream", () => {
     });
     const result = await client.complete({ prompt: "x" });
     expect(result.reasoningContent).toBe("the plan");
+  });
+});
+
+/**
+ * A llama.cpp slot is released when the connection closes, not when the
+ * client stops reading it. A generator that is abandoned rather than
+ * driven to `done` therefore has to close the socket itself, or it holds
+ * a slot that no server log mentions and every later `/completion` queues
+ * behind — until the process exits.
+ */
+describe("LlamaServerClient.completeStream transport release", () => {
+  interface OpenStream {
+    response: Response;
+    /** Set when the body is cancelled — i.e. the reader was released. */
+    cancelled: () => boolean;
+  }
+
+  /** A body that delivers one frame and then never ends on its own. */
+  function endlessSse(): OpenStream {
+    const encoder = new TextEncoder();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('data: {"content":"hi","stop":false}\n\n'),
+        );
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return {
+      response: new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+      cancelled: () => cancelled,
+    };
+  }
+
+  it("aborts the request and cancels the body when the generator is abandoned", async () => {
+    const open = endlessSse();
+    let signal: AbortSignal | undefined;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        signal = init.signal ?? undefined;
+        return open.response;
+      }),
+    });
+
+    const iterator = client.completeStream({ prompt: "hi" });
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(signal?.aborted).toBe(false);
+    expect(open.cancelled()).toBe(false);
+
+    // The consumer walks away mid-stream: a `for await` that breaks, or
+    // an exception out of the consuming body, forwarded down the
+    // `yield*` chain as `.return()`.
+    await iterator.return(undefined as never);
+
+    expect(signal?.aborted).toBe(true);
+    // The cancel is deliberately not awaited inside the generator, so it
+    // reaches the body through the decode pipe a tick later. This mock
+    // fetch ignores the signal, so only a real `reader.cancel()` can set
+    // this — aborting alone would not.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(open.cancelled()).toBe(true);
+  });
+
+  it("leaves a fully consumed stream's result untouched", async () => {
+    const encoder = new TextEncoder();
+    let signal: AbortSignal | undefined;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        signal = init.signal ?? undefined;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"content":"hel","stop":false}\n\n'),
+              );
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"content":"lo","stop":false}\n\n' +
+                    'data: {"content":"","stop":true,"slot_id":2,"timings":{"prompt_ms":5,"predicted_ms":7,"prompt_n":3,"predicted_n":2}}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    });
+
+    const iterator = client.completeStream({ prompt: "hi" });
+    const deltas: string[] = [];
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+      if (next.value.delta) deltas.push(next.value.delta);
+    }
+    expect(deltas.join("")).toBe("hello");
+    expect(final).toEqual({
+      content: "hello",
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 5,
+        predictedMs: 7,
+        promptTokens: 3,
+        predictedTokens: 2,
+      },
+      cacheHitTokens: 0,
+      slotId: 2,
+      modelId: null,
+    });
+    // The release fires on this path too — a finished body, so it is a
+    // no-op — and it must not turn success into a failure.
+    expect(signal?.aborted).toBe(true);
+    await expect(iterator.next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
   });
 });
 
