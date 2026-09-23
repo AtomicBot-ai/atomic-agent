@@ -4048,9 +4048,9 @@ async function settingsTest(
     "(() => ({rows: window.__tasksRows(), body: window.__settingsBody(), win: window.__tasksWindow(),"
     + " heads: [...document.querySelectorAll('#settings .setbody .set-tktbl thead th')].map((th) => th.textContent.trim())}))()",
   );
-  // No rows: the empty state and its three ways out (n / f / r). Rows: the table's column headers.
+  // No rows: the empty state in one sentence (Calm S5: its n / f / r hint buttons left; New task, the filter and Refresh are the toolbar's). Rows: the table's column headers.
   const tasksCopy = taskState.rows === 0
-    ? ["No tasks yet", "Create one, cycle the filter, or refresh.", "n new task", "f cycle filter", "r refresh"].every((s) => taskState.body.includes(s))
+    ? ["No tasks yet", "A task sends a message to the agent on a schedule.", "New task", "Refresh"].every((s) => taskState.body.includes(s)) && !taskState.body.includes("cycle filter")
     : same(taskState.heads, ["Status", "Schedule", "Next run", "Session", "Message"]);
   // The route is called with limit=500 (agent-client tasks(); item 6 needs the
   // whole list so the sidebar's Load more pages over real rows); the TAB then
@@ -4326,17 +4326,21 @@ async function settingsTestPartB(
   const filterSeg = await js<string[]>(
     "[...document.querySelectorAll('#settings .setbody .set-seg button[data-act^=\"skills:filter:\"]')].map((b) => b.textContent.trim() + (b.classList.contains('on') ? '*' : ''))",
   );
-  const copy = ["Built-in tools", " shown · ", " enabled · ", " disabled", "j/k move", "Enter detail", "e toggle", "d remove", "r refresh", "a auto", "f filter", "Skills Hub", "Browse and install skills from ClawHub"];
+  // Calm (S5): the key-hint row is gone; its actions are the row switch, the detail's Remove, the auto readout, the filter and a Refresh button.
+  const copy = ["Built-in tools", " shown · ", " enabled · ", " disabled", "Skills Hub", "Browse and install skills from ClawHub"];
   const missing: string[] = copy.filter((s) => !body.includes(s));
+  if (/j\/k move|e toggle|d remove/.test(body)) missing.push("a key-hint row");
+  if (!(await js<boolean>("!!document.querySelector('#settings .setbody .set-toolbar [data-act=\"skills:refresh\"]')"))) missing.push("the Refresh button");
   if (!same(filterSeg, ["all*", "enabled", "disabled"])) missing.push(`filter segment ${JSON.stringify(filterSeg)}`);
-  check("skills tab: filter bar, hints and the hub CTA carry the TUI copy", missing.length === 0, missing.length ? `missing ${JSON.stringify(missing)}` : "");
+  check("skills tab: filter bar, Refresh and the hub CTA carry the copy, no key-hint row", missing.length === 0, missing.length ? `missing ${JSON.stringify(missing)}` : "");
 
   // Enter on the first row: GET /api/skills/{name} body, skills-detail.tsx header + hints.
   const opened = await until(async () => { await js<void>("window.__skillsAct('detail')"); return skills(); }, (s) => s.mode === "detail", 2_000);
   const detail = await until(skills, (s) => s.detailBody !== null || s.mode !== "detail", 20_000);
   const detailBody = await js<string>("window.__settingsBody()");
   const detailOk = opened.mode === "detail" && typeof detail.detailBody === "string" && detail.detailBody.length > 0 && !!detail.detailName && detail.detailSource === "route"
-    && detailBody.includes(detail.detailName) && detailBody.includes("Esc back") && detailBody.includes("e toggle") && detailBody.includes("r refresh");
+    && detailBody.includes(detail.detailName) && detailBody.includes("All skills")
+    && (await js<boolean>("!!document.querySelector('#settings .setbody .tk-bar [data-act^=\"skills:toggle:\"]') && !!document.querySelector('#settings .setbody .tk-bar [data-act=\"skills:refresh\"]')"));
   check("skills tab: Enter opens the detail from GET /api/skills/{name}", detailOk, `${detail.detailName ?? "?"} body=${detail.detailBody ? detail.detailBody.length : "null"} mode=${detail.mode} source=${detail.detailSource ?? "none"}`);
   await js<void>("window.__skillsAct('back')");
 
@@ -4408,13 +4412,13 @@ async function settingsTestPartB(
   );
   check(
     "skills hub: `atag skill browse` rows",
-    hub.hubRows.length > 0 && hubSearch.placeholder && hubSearch.text === "Search ClawHub and GitHub taps" && hubBody.includes("Enter open card"),
+    hub.hubRows.length > 0 && hubSearch.placeholder && hubSearch.text === "Search ClawHub and GitHub taps" && hubBody.includes("Browse again"),
     `${hub.hubRows.length} rows, search ${JSON.stringify(hubSearch)}${hub.hubError ? " hubError=" + hub.hubError : ""}`,
   );
-  // A hub card's source badge and its install / cancel hints, as drawn.
+  // A hub card's source badge and its Install / back buttons, as drawn (Calm S5: the "i install · n cancel" hint row left; the bar's buttons are the way).
   const cardChrome = () => js<{ badge: string; install: string[]; cancel: string[] }>(
     "(() => { const box = document.querySelector('#settings .setbody'); const chip = box && box.querySelector('.set-titlerow .tk-chip');"
-    + " const hint = (act) => [...(box ? box.querySelectorAll('.tuihint .tk-hint') : [])].filter((b) => b.dataset.act === act).map((b) => b.innerText.replace(/\\s+/g, ' ').trim());"
+    + " const hint = (act) => [...(box ? box.querySelectorAll('.tk-bar button') : [])].filter((b) => b.dataset.act === act).map((b) => b.innerText.replace(/\\s+/g, ' ').trim());"
     + " return {badge: chip ? chip.textContent.trim() : '', install: hint('skills:install'), cancel: hint('skills:back')}; })()",
   );
   // A `[gh]` row (skills.taps): the card carries the TUI's no-preview copy, no download count and installs by identifier.
@@ -4428,7 +4432,7 @@ async function settingsTestPartB(
     check(
       "skills hub: a GitHub-tap card says SKILL.md is pulled at install",
       !!gc && gc.identifier === hub.hubRows[ghIdx]!.identifier && gc.bodyLines === 0 && gc.bodyError === "preview unavailable for GitHub taps (SKILL.md is pulled at install)" && gc.installId === gc.identifier
-        && ghChrome.badge === "gh" && ghBody.includes("↓—") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && same(ghChrome.install, ["i install"]),
+        && ghChrome.badge === "gh" && ghBody.includes("↓—") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && same(ghChrome.install, ["Install"]),
       gc ? `${gc.identifier}: ${gc.bodyError ?? gc.bodyLines + " lines"} · ${JSON.stringify(ghChrome)}` : "no card",
     );
     await js<void>("window.__skillsAct('back')");
@@ -4486,7 +4490,7 @@ async function settingsTestPartB(
       const chrome = await cardChrome();
       const c = card.hubCard;
       chromeOk = chromeOk && !!c && c.identifier === found.hubRows[i]!.identifier && !!c.installId
-        && chrome.badge === "claw" && cardBody.includes("owner ") && same(chrome.install, ["i install"]) && same(chrome.cancel, ["n cancel"]);
+        && chrome.badge === "claw" && cardBody.includes("owner ") && same(chrome.install, ["Install"]) && same(chrome.cancel, ["Results"]);
       outcomes.push(c ? `${c.identifier}: ${c.bodyLines > 0 ? c.bodyLines + " lines" : c.bodyError ?? "no body"}` : "no card");
       if (c && c.bodyLines > 0) resolved = c;
       else if (!c || !clientTexts(c.bodyError)) chromeOk = false;
@@ -4529,8 +4533,9 @@ async function settingsTestPartB(
   );
   const MEM_WINDOW = 14;
   const profileView = await memView();
-  const profileDrawn = same(profileView.pressed, ["profile"])
-    && (mem.rows === 0 ? profileView.painted === 0 && profileView.empty === "No profile facts" : profileView.painted === Math.min(mem.rows, MEM_WINDOW) && same(profileView.heads, ["Key", "Value", "Kind", "Votes"]));
+  // Calm (S5): the channels carry human names ("About you" is the profile) and a calm empty state.
+  const profileDrawn = same(profileView.pressed, ["About you"])
+    && (mem.rows === 0 ? profileView.painted === 0 && profileView.empty === "Nothing about you yet" : profileView.painted === Math.min(mem.rows, MEM_WINDOW) && same(profileView.heads, ["Key", "Value", "Kind", "Votes"]));
   check(
     "memory tab: profile rows equal the tab's own SQL over memory.sqlite",
     mem.channel === "profile" && profileSql.ok && mem.rows === (profileSql.rows ?? []).length && !mem.error && profileDrawn,
@@ -4540,12 +4545,12 @@ async function settingsTestPartB(
   const notesSql = await js<{ ok: boolean; rows?: unknown[]; error?: string }>(`window.__memQuery('notes.listActive', [200])`);
   const notesBody = await js<string>("window.__settingsBody()");
   const notesView = await memView();
-  const notesDrawn = same(notesView.pressed, ["notes"]) && (notes.rows === 0 ? notesView.painted === 0 && notesView.empty === "No notes" : notesView.painted === Math.min(notes.rows, MEM_WINDOW));
+  const notesDrawn = same(notesView.pressed, ["Notes"]) && (notes.rows === 0 ? notesView.painted === 0 && notesView.empty === "No notes yet" : notesView.painted === Math.min(notes.rows, MEM_WINDOW));
   check("memory tab: notes rows equal notes.listActive and the bar says notes: active", notes.channel === "notes" && notesSql.ok && notes.rows === (notesSql.rows ?? []).length && notesDrawn && notesBody.includes("notes: active"), `${notes.rows} vs ${notesSql.ok ? (notesSql.rows ?? []).length : notesSql.error} · drawn ${JSON.stringify(notesView)}`);
   if (notes.rows > 0) {
     const d = await js<MemState>("window.__memoryDetail(0)");
     const dBody = await js<string>("window.__settingsBody()");
-    check("memory tab: a note's detail is memory-detail-text.ts's body", d.mode === "detail" && !!d.detail && d.detail.channel === "notes" && d.detail.body.startsWith("#") && d.detail.body.includes("--- links ---") && dBody.includes(`note #${d.detail.id}`) && dBody.includes("g expand graph"), d.detail ? `note #${d.detail.id}` : `mode=${d.mode} err=${d.error ?? ""}`);
+    check("memory tab: a note's detail is memory-detail-text.ts's body", d.mode === "detail" && !!d.detail && d.detail.channel === "notes" && d.detail.body.startsWith("#") && d.detail.body.includes("--- links ---") && dBody.includes(`note #${d.detail.id}`) && dBody.includes("Expand graph"), d.detail ? `note #${d.detail.id}` : `mode=${d.mode} err=${d.error ?? ""}`);
     // g expand graph: seed one link from the open note to another active note, so the walk (links.outgoing/incoming, depth 2)
     // has a neighbour to return; with memory.links.enabled false the walk is the TUI's no-op and must run no statement.
     const noteIds = ((notesSql.rows ?? []) as Array<{ id?: unknown }>).map((r) => (typeof r.id === "number" ? r.id : null)).filter((x): x is number => x !== null);
@@ -4596,9 +4601,11 @@ async function settingsTestPartB(
   );
   const mcpEmpty = !Array.isArray(beforeServers) || beforeServers.length === 0;
   check(
-    "mcp tab: rows come from mcp.servers, the empty copy is the TUI's",
-    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpList.rows.length === Math.min(m0.rows, 14) && mcpBody.includes(`${m0.rows} servers`) && mcpBody.includes("n add") && mcpBody.includes("d remove")
-      && (!mcpEmpty || (mcpBody.includes("no MCP servers configured — add entries under `mcp.servers[]` in config.json") && mcpList.empty === "No MCP servers")),
+    "mcp tab: rows come from mcp.servers, with Add server, Refresh and a plain empty state",
+    // Calm (S5): Add server and Refresh are buttons (the key-hint row left); the empty state is one plain sentence.
+    m0.rows === (Array.isArray(beforeServers) ? beforeServers.length : 0) && mcpList.rows.length === Math.min(m0.rows, 14) && mcpBody.includes(`${m0.rows} servers`) && mcpBody.includes("Add server")
+      && (await js<boolean>("!!document.querySelector('#settings .setbody .sd-mcp [data-act=\"mcp:refresh\"]')"))
+      && (!mcpEmpty || (mcpBody.includes("Add a server to give the agent more tools.") && mcpList.empty === "No MCP servers")),
     `${m0.rows} rows, config holds ${Array.isArray(beforeServers) ? beforeServers.length : "unset"}, drawn ${JSON.stringify(mcpList)}`,
   );
   const parsed = await js<Array<{ ok: boolean; server?: { name: string; transport?: { kind: string; command?: string; url?: string } }; error?: string }>>(
@@ -4631,7 +4638,7 @@ async function settingsTestPartB(
       "mcp tab: n add writes mcp.servers through the whole-file config set",
       added.ok && onDisk.some((s) => s.name === fixture) && added.state.rows === m0.rows + 1 && added.state.msg.includes(`added "${fixture}"`) && added.state.addModal === null
         && !!addRow && addRow.name === fixture && same(addRow.chips, ["state —", "stdio", "approval_gated"]) && addRow.tools === "0 tools" && addRow.desc === "desktop smoke fixture"
-        && addBody.includes("state not exposed — no MCP status route in this agent"),
+        && addBody.includes(fixture),
       added.ok ? `rows=${added.state.rows} msg=${JSON.stringify(added.state.msg)} drawn=${JSON.stringify(addRow)}` : `error=${added.error ?? "?"}`,
     );
     const dup = await js<{ ok: boolean; error?: string }>(`window.__mcpAddSubmit(${JSON.stringify(JSON.stringify({ name: fixture, command: "echo" }))})`);
@@ -4656,7 +4663,7 @@ async function settingsTestPartB(
       "mcp tab: the detail shows the transport and says resources/prompts are not exposed",
       det.mode === "detail" && detBody.includes("stdio: echo hi") && detView.trust === "approval_gated"
         && same(detView.seg, [["tools", "0", true], ["resources", "—", false], ["prompts", "—", false]]) && detView.empty === "No tools"
-        && res.detailTab === "resources" && same(resView.seg, [["tools", "0", false], ["resources", "—", true], ["prompts", "—", false]]) && resBody.includes("not exposed by the agent's HTTP API"),
+        && res.detailTab === "resources" && same(resView.seg, [["tools", "0", false], ["resources", "—", true], ["prompts", "—", false]]) && resBody.includes("The agent doesn’t list resources yet."),
       `mode=${det.mode} tab=${res.detailTab} detail=${JSON.stringify(detView)} resources=${JSON.stringify(resView.seg)}`,
     );
     const removed = await js<McpState>(`window.__mcpRemove(${JSON.stringify(fixture)})`);
@@ -4765,12 +4772,12 @@ async function hfAndDeltaTest(
   const refCopy = [
     "Which model?", "(it has to be a GGUF build)",
     "unsloth/Qwen3.5-4B-GGUF · https://huggingface.co/owner/repo · a link to one .gguf",
-    "enter look it up", "ctrl+l clear", "esc back to the list",
+    "Look it up", "Back to the list",
   ];
   const refMissing = refCopy.filter((c) => !refBody.includes(c));
   const hasInput = await js<boolean>("!!document.getElementById('llm-hf-ref')");
   check(
-    "hf: `a` opens the reference editor with the TUI's copy",
+    "hf: `a` opens the reference editor with the TUI's copy and its two buttons",
     opened.open && opened.step === "ref" && refMissing.length === 0 && hasInput,
     refMissing.length ? `missing ${JSON.stringify(refMissing)}` : `ram=${opened.ram} input=${hasInput}`,
   );
@@ -5953,7 +5960,7 @@ async function settingsTestPartC(
   const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
   const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
   if (!envHas && !dotenvHas) {
-    // The card's one action: the "Paste a bot token" button with the Enter keycap (the TUI's "Press Enter to paste a bot token").
+    // The card's one action: the "Paste a bot token" button (Calm S5: its Enter keycap moved to the tooltip).
     const tgCta = await js<{ label: string; key: string } | null>(
       "(() => { const b = document.querySelector('#settings .setbody .sd-tgcard [data-act=\"telegram:token\"]'); if (!b || !b.getClientRects().length) return null;"
       + " const k = b.querySelector('.kc'); return {label: [...b.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim(), key: k ? k.textContent.trim() : ''}; })()",
@@ -5961,7 +5968,7 @@ async function settingsTestPartC(
     check(
       "telegram tab: no token anywhere → the Connect Telegram card, plain tab label",
       tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
-        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "↩" && tgBody.includes("a — advanced") && tgPlain,
+        && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && tgBody.includes("Advanced") && tgPlain,
       `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );
   } else {
@@ -6051,7 +6058,7 @@ async function settingsTestPartC(
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
     "import tab: the TUI form with its defaults, and no CLI run until Run preview",
-    imp.runs === 0 && impDrawn && impBody.includes("Run preview") && impBody.includes("↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on Run = preview · Ctrl+Enter preview")
+    imp.runs === 0 && impDrawn && impBody.includes("Run preview") && !impBody.includes("↑↓ move")
       && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
@@ -6076,7 +6083,7 @@ async function settingsTestPartC(
     "import tab: Run preview runs atag import --dry-run and parses the report into the TUI rows",
     prev.ok && prev.state === "preview" && prev.state2.mode === "preview" && prev.state2.runs === 1 && prev.state2.report?.items === 2 && prev.state2.report.summary.skipped === 2 && prev.state2.painted === 2
       && previewDrawn && prevBody.includes("migrated=0 · skipped=2 · conflict=0 · error=0")
-      && prevBody.includes("y / Enter apply") && prevBody.includes("e edit") && prevBody.includes("Esc cancel"),
+      && (await js<boolean>("!!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:apply\"]') && !!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:reset\"]')")),
     prev.ok ? `state=${prev.state} items=${prev.state2.report?.items} runs=${prev.state2.runs}${previewDrawn ? "" : " drawn " + JSON.stringify(pv)}` : `error=${prev.error ?? "?"}`,
   );
   const applied = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(true)");
@@ -6084,7 +6091,7 @@ async function settingsTestPartC(
   const av = await reportView();
   check(
     "import tab: apply passes --yes and reports the CLI's own Nothing to import",
-    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Enter / Esc back to form"),
+    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Back to form"),
     applied.ok ? `state=${applied.state} mode=${applied.state2.mode} title=${JSON.stringify(av.title)}` : `error=${applied.error ?? "?"}`,
   );
   await js<void>("window.__importAct('reset'); window.__settingsClose()");

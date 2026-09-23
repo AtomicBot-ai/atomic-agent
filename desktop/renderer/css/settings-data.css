@@ -31,15 +31,8 @@
 /* `.tk-modal p` / `.sd-tgcard p` (0,1,1) outrank the kit's help tones (0,1,0); an error must stay red. */
 .sd-pane .tk-help--err{color:var(--critical)}
 
-/* The shared settings helpers, as they sit inside these panes
-   (settings.css still styles .tuihint/.tuimsg for the terminal-text tabs). */
-.sd-pane .tuihint{margin:0;white-space:normal;color:var(--ink-2)}
-.sd-pane .tuihint .tk-hint{font:400 12px/1 var(--font-ui);height:24px;padding:0 6px;border-radius:8px;color:var(--ink-2)}
-.sd-pane .tuihint button.tk-hint:hover{background:var(--hover);color:var(--ink)}
-.sd-pane .tuihint button.tk-hint:disabled{background:transparent;color:var(--ink-3);cursor:default}
+/* The shared settings helpers, as they sit inside these panes. */
 .sd-pane .tuimsg{color:var(--ink)}
-.sd-pane .tk-bar > .tk-hint{font:400 12px/1 var(--font-ui);height:26px;padding:0 9px;border-radius:var(--r-pill);color:var(--ink-2)}
-.sd-pane .tk-bar > .tk-hint:hover{background:var(--hover);color:var(--ink)}
 
 /* ---- Memory · ST-12…15 ---- */
 .sd-tblwrap{padding:4px;overflow-x:auto}

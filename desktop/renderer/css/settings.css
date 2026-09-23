@@ -121,20 +121,8 @@ button.set-search:hover{border-color:var(--bd)}
 .set-softnote{background:var(--well);box-shadow:none;color:var(--ink-2)}
 .set-softnote > svg{color:var(--ink-3)}
 
-/* Keycap hints: every hint is a button. Inline-block (not flex) so the label
-   stays one line of text: the keycap and the word read "e toggle". */
-.tuihint{display:flex;align-items:center;flex-wrap:wrap;gap:2px 10px;margin:0;font-size:12px;color:var(--ink-2)}
-#settings .tk-hint,.tuiwrap .tk-hint{display:inline-block;height:24px;line-height:24px;padding:0 6px;white-space:nowrap}
-#settings .tk-hint .kc,.tuiwrap .tk-hint .kc{vertical-align:middle;margin-top:-2px}
-#settings button.tk-hint[disabled],.tuiwrap button.tk-hint[disabled]{color:var(--ink-3);background:transparent;cursor:default}
-/* Hint buttons still drawn the 0.5.5 way by tabs not yet redrawn. */
-.tuihint > button:not(.tk-hint){height:24px;padding:0 6px;border-radius:8px;color:var(--ink-2);font-size:12px}
-.tuihint > button:not(.tk-hint):hover{background:var(--hover);color:var(--ink)}
-.tuihint > button:not(.tk-hint):disabled{color:var(--ink-3);background:transparent;cursor:default}
-
 /* Empty and loading states */
 .set-empty{padding:40px 20px 28px}
-.set-empty .tk-hints{justify-content:center;margin-top:2px}
 
 /* The `↑ N above` / `↓ N below` window lines, clickable. */
 .tuimore{display:inline-flex;align-items:center;height:28px;padding:0 12px;border:0;border-radius:var(--r-pill);background:transparent;
