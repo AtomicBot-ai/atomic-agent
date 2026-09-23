@@ -513,7 +513,7 @@ export interface AgentRuntime {
    * count on `loopDeps` and turns it into the `### skills` truncation
    * marker (issue #466), but the prompt is not the only place the
    * catalog is counted: the `run` banner, `/api/capabilities`, the TUI
-   * diagnostics line and `/skills` all report `skillCatalog.length` as
+   * diagnostics line and `/skills dump` all report `skillCatalog.length` as
    * "installed". Without the count beside it every one of them states a
    * clipped number as the whole truth — the same misreading the prompt
    * marker exists to prevent, told to the operator instead of to the
@@ -3203,11 +3203,8 @@ export async function createAgentRuntime(
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
       resolveWorkerPricing: (providerId, modelId) =>
-        resolveModelPricingFor(
-          resolveLlmConfig(getConfig()),
-          modelId,
-          providerId,
-        )?.pricing,
+        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)
+          ?.pricing,
       // The same client the llama-server provider serves workers with,
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
