@@ -197,18 +197,25 @@ export async function waitForRealSamples(app, { timeout = 240000 } = {}) {
   const until = Date.now() + timeout;
   for (;;) {
     const d = await dl(app);
-    if (d && d.visible && d.measured) return d;
+    // Calm (S1, U5): during setup the strip is not drawn and the wizard
+    // reports the pull, so "running" is the test, not "visible".
+    if (d && d.running && d.measured) return d;
     if (Date.now() > until) return null;
     await sleep(1000);
   }
 }
 
-/** Stop the pull the way a person does: the strip's own Cancel button. */
+/** Stop the pull the way a person does: the strip's own Cancel button, or —
+    during setup, where the strip is not drawn (Calm S1, U5) — the wizard's
+    "Cancel download" under its progress card. Same `dl:cancel` verb. */
 export async function cancelPull(app) {
   try {
-    if (await app.eval('!!document.querySelector("#dlbar .dl-x")')) {
-      await app.clickSel('#dlbar .dl-x', { scroll: false });
-    }
+    const sel = await app.eval(`(() => {
+      const strip = document.querySelector('#dlbar:not([hidden]) .dl-x');
+      if (strip) return '#dlbar .dl-x';
+      return document.querySelector('#onboarding .ob-dlcancel .dl-x') ? '#onboarding .ob-dlcancel .dl-x' : null;
+    })()`);
+    if (sel) await app.clickSel(sel, { scroll: false });
   } catch { /* the strip may already be gone */ }
 }
 

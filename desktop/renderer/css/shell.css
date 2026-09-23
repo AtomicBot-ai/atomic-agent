@@ -294,8 +294,8 @@
 
 /* ---------------- download strip (CH-23) ---------------- */
 /* A flex child of #window between #toolbar and #main, so it is chrome and not
-   an overlay: the wizard layer starts below it (renderDlbar measures the
-   strip's bottom into --dlbar-h). */
+   an overlay. Calm (S1, U5): it is not drawn while first-run setup is open —
+   the wizard covers the whole window and carries the progress itself. */
 #dlbar{
   flex:none;display:flex;align-items:center;gap:10px;height:38px;margin:0 8px 8px;padding:0 6px 0 14px;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:var(--sh-card);

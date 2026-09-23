@@ -325,6 +325,11 @@
   font-variant-numeric:tabular-nums;color:var(--ink-2)}
 #onboarding .ob-rate{margin:0;font:400 12px/1.4 var(--font-mono);color:var(--ink-2)}
 #onboarding .ob-dlprog > .ob-err{padding:0;background:transparent;color:var(--critical)}
+/* Calm (S1, U5): the strip's Cancel, drawn under the progress card while
+   setup covers the window. Outside .ob-dlprog, so samples never rebuild it. */
+#onboarding .ob-dlcancel{display:flex;justify-content:flex-end;max-width:640px;margin-top:-4px}
+#onboarding .ob-dlcancel .btn{color:var(--ink-2)}
+#onboarding .ob-dlcancel .btn:hover{color:var(--ink)}
 #onboarding .ob-offer:not(.ob-offer-inline){display:flex;align-items:center;gap:14px;width:100%;max-width:640px;min-height:64px;margin:0;
   padding:12px 16px;border:0;border-radius:var(--r-block);background:var(--lift);box-shadow:var(--sh-card);
   color:var(--ink);text-align:left;cursor:pointer;

@@ -7250,7 +7250,12 @@ function renderDlbar() {
   const el = document.getElementById('dlbar');
   if (!el) return;
   const job = DL.job;
-  if (!job) {
+  /* Calm (S1, U5): while first-run setup is open the strip is not drawn at
+     all, and --dlbar-h stays 0 so the wizard covers the whole window —
+     toolbar included. The wizard's own download screen carries the
+     progress and its Cancel; the strip comes back the moment the wizard
+     hands over the agent (render() repaints it from scratch). */
+  if (!job || OB.open) {
     el.hidden = true;
     el.innerHTML = '';
     el.__dlShape = null;
@@ -7607,10 +7612,16 @@ function obDownloadHTML() {
     failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey);
   const skip = obOfferHTML('', 'key:s', '<span class="tk-ico">' + ic('arrowR') + '</span>',
     failed ? [OB_COPY.skipOfferFailed] : OB_COPY.skipOffer, OB_COPY.skipOfferKey);
+  /* Calm (S1, U5): the strip is not drawn during setup, so its Cancel moves
+     here — the same verb (`dl:cancel`), outside the progress block so the
+     per-sample repaint (refreshDlProgress) never rebuilds it under a hand. */
+  const cancel = DL.job
+    ? '<div class="ob-dlcancel"><button class="btn btn-g xs dl-x" data-act="dl:cancel">Cancel download</button></div>'
+    : '';
   return '<div class="ob-explain">'
       + esc(failed ? 'The ' + label + ' download failed.'
                    : 'Downloading ' + label + '. You can leave this running.') + '</div>'
-    + obProgressBlockHTML() + cloud + skip;
+    + obProgressBlockHTML() + cancel + cloud + skip;
 }
 
 /**
@@ -18915,7 +18926,10 @@ if (typeof window !== 'undefined') {
     const el = document.getElementById('dlbar');
     const job = DL.job;
     return {
+      // `visible` is the strip on screen; `running` is a pull in flight,
+      // wherever it is reported (the strip, or the wizard during setup).
       visible: !!(el && !el.hidden),
+      running: !!job,
       label: job ? dlJobLabel(job) : null,
       kind: job ? job.kind : null,
       percent: job ? Math.round(job.percent || 0) : null,

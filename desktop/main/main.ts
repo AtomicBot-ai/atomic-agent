@@ -8088,7 +8088,8 @@ type ObState = {
 };
 type ObCopy = { subtitle: string; title: string; lines: string[]; footer: string; hints: string };
 type Dl = {
-  visible: boolean; label: string | null; kind: string | null; percent: number | null;
+  visible: boolean;
+  running: boolean; label: string | null; kind: string | null; percent: number | null;
   transferred: number | null; total: number | null; eta: string; queued: number; text: string;
   phases: { runtime: string; weights: string }; error: string | null;
   /* r5 item 7 review fix: `drove` says whether THIS window moved bytes for
@@ -8506,7 +8507,9 @@ async function onboardingTest(
 
     // And the strip renders what that parse produced — the same object
     // main puts on the wire, fed through the one `cli:pull` subscriber.
-    await js<ObState>("window.__obOpen('local_download')");
+    // Calm (S1, U5): the strip is drawn in the agent window only — during
+    // setup the wizard carries the progress — so these strip checks run with
+    // the wizard closed, and the setup half is asserted after them.
     await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
     const beforeFeed = await js<Dl>("window.__dl()");
     const fed = await js<Dl>(
@@ -8553,16 +8556,36 @@ async function onboardingTest(
       `window.__dlFeed(Object.assign({id:'qwen3.5-4b'}, ${JSON.stringify(parsed)}))`,
     );
 
-    // The strip is chrome: it must sit ABOVE the overlay layer, or the
-    // wizard covers the only surface reporting the download.
-    const layered = await js<{ bar: number; overlays: number }>(
-      "({bar: document.querySelector('#dlbar').getBoundingClientRect().top," +
-        " overlays: document.querySelector('#overlays').getBoundingClientRect().top})",
+    // Calm (S1, U5, Danny's ruling): during setup the chat chrome does not
+    // show above the wizard. The strip is not drawn, the wizard layer starts
+    // at the top of the window (over the toolbar), and the wizard's own
+    // download screen reports the same numbers and carries the Cancel.
+    await js<ObState>("window.__obOpen('local_download')");
+    const layered = await js<{ strip: Dl; overlays: number; win: number; toolbarCovered: boolean; prog: string; cancel: string }>(
+      "(() => { const o = document.querySelector('#overlays').getBoundingClientRect();" +
+        " const w = document.querySelector('#window').getBoundingClientRect();" +
+        " const t = document.querySelector('#toolbar').getBoundingClientRect();" +
+        " const hit = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);" +
+        " const prog = document.querySelector('#onboarding .ob-dlprog');" +
+        " const cancel = document.querySelector('#onboarding .ob-dlcancel [data-act=\"dl:cancel\"]');" +
+        " return {strip: window.__dl(), overlays: o.top, win: w.top," +
+        " toolbarCovered: !!hit && !document.querySelector('#toolbar').contains(hit)," +
+        " prog: prog ? prog.innerText.replace(/\\s+/g, ' ') : ''," +
+        " cancel: cancel && cancel.offsetParent ? cancel.textContent : ''}; })()",
     );
     check(
-      "wizard: the download strip is never covered by the wizard layer",
-      layered.bar < layered.overlays,
-      `dlbar.top=${Math.round(layered.bar)} overlays.top=${Math.round(layered.overlays)}`,
+      "wizard: during setup the wizard covers the chat chrome and reports the download itself",
+      !layered.strip.visible && layered.strip.running && Math.round(layered.overlays) === Math.round(layered.win)
+        && layered.toolbarCovered && layered.prog.includes("25%") && layered.cancel === "Cancel download",
+      `strip=${layered.strip.visible}/${layered.strip.running} overlays.top=${Math.round(layered.overlays)} window.top=${Math.round(layered.win)}` +
+        ` toolbarCovered=${layered.toolbarCovered} prog=${JSON.stringify(layered.prog)} cancel=${JSON.stringify(layered.cancel)}`,
+    );
+    await js<ObState>("window.__obClose()");
+    const stripBack = await js<Dl>("window.__dl()");
+    check(
+      "wizard: the strip comes back in the agent window when setup closes",
+      stripBack.visible && stripBack.percent === 25,
+      `visible=${stripBack.visible} percent=${stripBack.percent}`,
     );
 
     /* Two phases, and the runtime one drawn only when it is being driven.
@@ -8590,6 +8613,7 @@ async function onboardingTest(
        active one in theme.colors.accent). The rule used to name a
        `pending` class the renderer never emits, so both bars drew at the
        same weight (review fix). */
+    await js<ObState>("window.__obOpen('local_download')");
     const barInk = await js<{ waiting: string; active: string; line: string; strong: string }>(
       "(function(){const cs=getComputedStyle(document.documentElement);" +
         "const g=(s)=>{const e=document.querySelector(s); return e?getComputedStyle(e).color:'';};" +
@@ -8604,6 +8628,7 @@ async function onboardingTest(
         barInk.line !== barInk.strong,
       JSON.stringify(barInk),
     );
+    await js<ObState>("window.__obClose()");
     const drained = await js<Dl>(
       "window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:true, upToDate:false})",
     );
@@ -8745,18 +8770,22 @@ async function onboardingTest(
     const toCloud = await js<ObState>("window.__obKey('c')");
     const dlOnCloud = await js<Dl>("window.__dl()");
     check(
-      "wizard: the cloud card stays offered with a provider configured, `c` opens the cloud wizard mid-download, and the strip keeps ticking",
+      // Calm (S1, U5): the strip is not drawn during setup; the pull is.
+      "wizard: the cloud card stays offered with a provider configured, `c` opens the cloud wizard mid-download, and the download keeps running",
       blockShown === 1 &&
         toCloud.step === "cloud" && toCloud.resumeAfterCloud === "local_download" &&
-        dlOnCloud.visible && dlOnCloud.label === "qwen3.5-4b",
+        dlOnCloud.running && dlOnCloud.label === "qwen3.5-4b",
       `block=${blockShown} step=${toCloud.step} resume=${toCloud.resumeAfterCloud} strip=${dlOnCloud.visible}/${dlOnCloud.label}`,
     );
     const back = await js<ObState>("window.__obKey('esc')");
     const dlBack = await js<Dl>("window.__dl()");
+    const progBack = await js<string>(
+      "(document.querySelector('#onboarding .ob-dlprog') || {innerText: ''}).innerText.replace(/\\s+/g, ' ')",
+    );
     check(
       "wizard: backing out of that wizard returns to the download it never left",
-      back.step === "local_download" && dlBack.visible && (dlBack.percent ?? 0) >= 40,
-      `step=${back.step} percent=${dlBack.percent}`,
+      back.step === "local_download" && dlBack.running && (dlBack.percent ?? 0) >= 40 && progBack.includes("40%"),
+      `step=${back.step} percent=${dlBack.percent} prog=${JSON.stringify(progBack)}`,
     );
     await js<ObState>("window.__obKey('s')");
     const skipped = await settled();

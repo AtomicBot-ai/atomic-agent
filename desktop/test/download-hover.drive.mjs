@@ -171,7 +171,7 @@ function judge(where, seen, { needMoves = 2 } = {}) {
  */
 async function burst(app, n = 14) {
   const d = await dl(app);
-  if (!d || !d.visible) return 0;
+  if (!d || !d.running) return 0;   // Calm (S1): the strip is not drawn during setup
   const kind = d.kind || 'weights';
   const id = d.label || SMALL_MODEL;
   const total = d.total || 2_700_000_000;
