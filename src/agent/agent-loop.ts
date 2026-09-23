@@ -1816,6 +1816,7 @@ export class AgentLoop {
             breaker.tool,
             breaker.count,
             breaker.detector,
+            breaker.blockedCount,
           );
           state = recordTurn(state, assistantReplyTurn(replyText));
           this.deps.onEvent?.({
