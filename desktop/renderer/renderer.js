@@ -16784,7 +16784,10 @@ function llmAdvancedHTML(mode) {
 function llmEffectLabel(row) {
   const p = row.primaryAction;
   if (p === 'downloading') return 'Downloading…';
-  if (p === 'download') return row.model && row.model.size ? 'Download ' + row.model.size : 'Download';
+  /* Calm (S7): what the pull fetches — weights plus a vision model's
+     projector — the same figure the wizard's button and the composer's
+     picker quote (modelSizeWord). */
+  if (p === 'download') { const gb = row.model ? modelSizeWord(row.model) : ''; return gb ? 'Download ' + gb : 'Download'; }
   if (p === 'current') return row.kind === 'externalUrl' ? 'Edit address' : 'In use';
   if (p === 'use') return row.kind === 'externalUrl' ? 'Use this server' : 'Use';
   if (p === 'start') return 'Start';
@@ -16823,7 +16826,7 @@ function llmRowHTML(row, index, cursor) {
       + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
-      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (m.size ? ' · ' + m.size : '')) + '</span>' : '')
+      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
       + (row.fitNote ? '<span class="d llm-sub llm-fit-' + esc(row.fitClass || '') + '">' + esc(row.fitNote) + '</span>' : '')
       + (row.caution ? '<span class="d llm-sub llm-caution">' + esc(row.caution) + '</span>' : '')
       + '</span>'
