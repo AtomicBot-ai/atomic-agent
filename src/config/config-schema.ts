@@ -936,6 +936,7 @@ export interface AtomicAgentConfig {
     mouse: boolean;
     onboarding: OnboardingState;
     sessionRail: SessionRailConfig;
+    notify: TuiNotifyConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1283,6 +1284,29 @@ export interface TelegramConfig {
   progressIndicator: boolean;
 }
 
+/**
+ * Local end-of-turn pings, written to the terminal itself (config v71).
+ *
+ * Deliberately not part of `notifications`, which routes a message off
+ * the machine — to Telegram, Discord or e-mail — and needs a channel
+ * configured before it can say anything. This one has no channel and no
+ * setup: it writes `OSC 9` plus a `BEL` to the session's own terminal,
+ * which is exactly as far as it should carry.
+ */
+export interface TuiNotifyConfig {
+  /** Off means the terminal is never written to out of band. */
+  enabled: boolean;
+  /**
+   * How long a turn must have run before its *successful* ending is
+   * worth a ping. A failure always pings regardless: it is the ending
+   * that needs a person, and it can happen in two seconds.
+   *
+   * The floor exists because a bell on every turn is a bell an operator
+   * learns to ignore, which costs the failures too.
+   */
+  minDurationMs: number;
+}
+
 /** Where a finished (or failed) background model download is reported. */
 export type DownloadNotifyChannelSetting =
   "telegram" | "discord" | "email" | "off";
@@ -1367,7 +1391,10 @@ export function parseLocalTemplateSetting(
  */
 export type ReadScope = "working-dir" | "unrestricted";
 
-export const READ_SCOPES: readonly ReadScope[] = ["working-dir", "unrestricted"];
+export const READ_SCOPES: readonly ReadScope[] = [
+  "working-dir",
+  "unrestricted",
+];
 
 export function parseReadScope(raw: unknown, field: string): ReadScope {
   if (
@@ -2161,6 +2188,7 @@ export interface UserConfigFile {
     mouse: boolean;
     onboarding: OnboardingState;
     sessionRail: SessionRailConfig;
+    notify: TuiNotifyConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -2460,7 +2488,11 @@ export interface UserConfigFile {
 // parsed away without a word (issue #466). Additive: an older file has
 // no field, takes the env default, and renders the same prompt. The env
 // var still overrides the file value.
-export const USER_CONFIG_VERSION = 70;
+// v71: `tui.notify` (`enabled` true, `minDurationMs` 30_000) — the TUI
+// writes an OSC 9 notification plus a BEL to its own terminal when a
+// turn ends, so an operator who walked away finds out. Additive: an
+// older file has no block and takes the defaults.
+export const USER_CONFIG_VERSION = 71;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2619,6 +2651,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   67,
   68,
   69,
+  70,
   USER_CONFIG_VERSION,
 ];
 
@@ -2930,6 +2963,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
       completedAt: null,
@@ -3359,7 +3393,10 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
  * expands server-side (`{0,N}` becomes N nested optional rules, four
  * per token) at a size it parses in milliseconds.
  */
-export function parseReasoningBudgetTokens(raw: unknown, field: string): number {
+export function parseReasoningBudgetTokens(
+  raw: unknown,
+  field: string,
+): number {
   const value = coerceIntLike(raw);
   if (value === 0) return 0;
   return parseBoundedPositiveInt(raw, field, 64, 32_768);
@@ -5391,6 +5428,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       onboarding: parseOnboardingState(tui.onboarding),
       sessionRail: parseSessionRailConfig(tui.sessionRail),
+      notify: parseTuiNotify(tui.notify),
     },
     analytics: {
       enabled: parseBool(
@@ -5580,6 +5618,30 @@ export interface OnboardingState {
  * whole config file — and duplicates keep their first position so the
  * on-disk form stays canonical.
  */
+/**
+ * `tui.notify`, defaulted whole. Absent is the overwhelmingly common
+ * case — every config written before v71 — so it is not an error, and a
+ * present block still has each field checked rather than trusted.
+ */
+export function parseTuiNotify(raw: unknown): TuiNotifyConfig {
+  const d = USER_CONFIG_DEFAULTS.tui.notify;
+  if (raw === undefined || raw === null) return { ...d };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.notify",
+      "expected an object with `enabled` and `minDurationMs`",
+    );
+  }
+  const block = raw as Partial<TuiNotifyConfig>;
+  return {
+    enabled: parseBool(block.enabled ?? d.enabled, "tui.notify.enabled"),
+    minDurationMs: parseNonNegativeInt(
+      block.minDurationMs ?? d.minDurationMs,
+      "tui.notify.minDurationMs",
+    ),
+  };
+}
+
 export function parseSessionRailConfig(raw: unknown): SessionRailConfig {
   if (raw === undefined || raw === null) return { order: [], pinned: [] };
   if (typeof raw !== "object" || Array.isArray(raw)) {

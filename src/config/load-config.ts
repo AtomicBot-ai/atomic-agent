@@ -557,6 +557,7 @@ export function loadConfig(): AtomicAgentConfig {
       theme: user.tui.theme,
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
+      notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {
         order: [...user.tui.sessionRail.order],
