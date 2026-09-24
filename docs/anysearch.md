@@ -158,6 +158,11 @@ npx vitest run src/tools/os/web-search/providers/search-orchestrator.test.ts
 
 ## Bounty checklist
 
+Official acceptance bar (GitHub, not email):
+[anysearch-team/open-source-bounty `docs/rules.zh.md`](https://github.com/anysearch-team/open-source-bounty/blob/main/docs/rules.zh.md)
+· [English `docs/rules.md`](https://github.com/anysearch-team/open-source-bounty/blob/main/docs/rules.md)
+(“什么样的合入可以获得奖励？” / “What Qualifies for a Bounty?”).
+
 - [x] Built-in provider + seeded skill + docs
 - [x] General search (anonymous + keyed)
 - [x] Vertical domain search (tool args + discovery)
