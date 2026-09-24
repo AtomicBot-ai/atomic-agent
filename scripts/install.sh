@@ -619,6 +619,24 @@ if [ "$OS_NAME" = "Darwin" ]; then
   echo "Recording if prompted for full os.window/keyboard support."
 fi
 
+# The linux-arm64 Node runtime links libatomic.so.1, which minimal images
+# (Ubuntu/Debian containers, cloud base images) do not ship. Without it the
+# binary dies in the dynamic loader on first run, so say so now.
+if [ "$OS_NAME" = "Linux" ] && command -v ldd >/dev/null 2>&1; then
+  _missing="$(ldd "$INSTALL_DIR/atomic-agent" 2>/dev/null | awk '/not found/ {print $1}')"
+  if [ -n "$_missing" ]; then
+    echo
+    echo "warning: atomic-agent needs shared libraries this system does not have:"
+    printf '  %s\n' $_missing
+    case "$_missing" in
+      *libatomic.so.1*)
+        echo "install them first, e.g. Debian/Ubuntu: sudo apt install libatomic1"
+        echo "                            Fedora/RHEL: sudo dnf install libatomic"
+        ;;
+    esac
+  fi
+fi
+
 echo
 echo "installed atomic-agent to ${INSTALL_DIR}/atomic-agent"
 echo "(plus the short alias 'atag' next to it)"
