@@ -9,6 +9,18 @@ export interface FusionLiveWorker {
   /** The tool it is running right now, or `null` between calls. */
   readonly tool: string | null;
   readonly done: boolean;
+  /**
+   * When this leg was first seen, and when it ended.
+   *
+   * A fan-out is the longest thing the app does and the readout said
+   * nothing about time: four rows of "working" look identical at ten
+   * seconds and at ten minutes, which are very different situations —
+   * the second one is the operator's cue to cancel, narrow the tasks or
+   * go and look at the daemon. Kept per leg rather than for the wave so
+   * a single straggler is visible against its finished siblings.
+   */
+  readonly startedAt: number;
+  readonly finishedAt: number | null;
 }
 
 /**
@@ -28,6 +40,7 @@ export interface FusionLiveWorker {
 export function reduceFusionLiveWorkers(
   current: readonly FusionLiveWorker[],
   event: Extract<AgentLoopEvent, { type: "fusion_worker" }>,
+  now: number = Date.now(),
 ): readonly FusionLiveWorker[] {
   // The orchestrator's own bracket lines are not a leg of the fan-out;
   // the composer already names the model it is running.
@@ -37,12 +50,18 @@ export function reduceFusionLiveWorkers(
     event.phase === "finished" ||
     event.phase === "failed" ||
     event.phase === "cancelled";
+  const previous = at < 0 ? undefined : current[at];
   const next: FusionLiveWorker = {
     taskId: event.taskId,
     title: event.title,
-    model: event.model ?? current[at]?.model ?? null,
-    tool: done ? null : (event.tool ?? current[at]?.tool ?? null),
+    model: event.model ?? previous?.model ?? null,
+    tool: done ? null : (event.tool ?? previous?.tool ?? null),
     done,
+    // First sight starts the clock. A leg that reappears keeps its
+    // original start, or the elapsed time would restart on every tool
+    // call and the readout would always say a few seconds.
+    startedAt: previous?.startedAt ?? now,
+    finishedAt: done ? (previous?.finishedAt ?? now) : null,
   };
   if (at < 0) return [...current, next];
   const copy = [...current];
@@ -50,9 +69,28 @@ export function reduceFusionLiveWorkers(
   return copy;
 }
 
-/** One line per leg: `worker · qwen-3.5-4b — os.fs.read`. */
-export function formatFusionLiveWorker(worker: FusionLiveWorker): string {
+/**
+ * `1m04s`, `12s` — short enough to sit at the end of a truncating row.
+ *
+ * Floors rather than rounds, and lives here rather than in
+ * `thinking-indicator.tsx` where it started: the turn clock and the
+ * per-worker clock are drawn one above the other, and two formatters
+ * would eventually disagree about the same second.
+ */
+export function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+/** One line per leg: `worker · qwen-3.5-4b — os.fs.read · 42s`. */
+export function formatFusionLiveWorker(
+  worker: FusionLiveWorker,
+  now: number = Date.now(),
+): string {
   const model = worker.model ?? "local";
   const what = worker.done ? "done" : (worker.tool ?? "working");
-  return `${worker.title} · ${model} — ${what}`;
+  const elapsed = formatElapsed((worker.finishedAt ?? now) - worker.startedAt);
+  return `${worker.title} · ${model} — ${what} · ${elapsed}`;
 }

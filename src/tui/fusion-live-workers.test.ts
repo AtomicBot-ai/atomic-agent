@@ -61,25 +61,61 @@ describe("the live fan-out readout", () => {
 
   it("names the model and what the leg is doing", () => {
     expect(
-      formatFusionLiveWorker({
-        taskId: "t1",
-        title: "worker 1",
-        model: "qwen-3.5-4b",
-        tool: "os.fs.read",
-        done: false,
-      }),
-    ).toBe("worker 1 · qwen-3.5-4b — os.fs.read");
+      formatFusionLiveWorker(
+        {
+          taskId: "t1",
+          title: "worker 1",
+          model: "qwen-3.5-4b",
+          tool: "os.fs.read",
+          done: false,
+          startedAt: 1_000,
+          finishedAt: null,
+        },
+        43_000,
+      ),
+    ).toBe("worker 1 · qwen-3.5-4b — os.fs.read · 42s");
   });
 
   it("never invents a model name, and says `working` between calls", () => {
     expect(
-      formatFusionLiveWorker({
-        taskId: "t1",
-        title: "worker 1",
-        model: null,
-        tool: null,
-        done: false,
-      }),
-    ).toBe("worker 1 · local — working");
+      formatFusionLiveWorker(
+        {
+          taskId: "t1",
+          title: "worker 1",
+          model: null,
+          tool: null,
+          done: false,
+          startedAt: 1_000,
+          finishedAt: null,
+        },
+        1_000,
+      ),
+    ).toBe("worker 1 · local — working · 0s");
+  });
+
+  it("starts a leg's clock at first sight and keeps it across tool calls", () => {
+    // The elapsed time must not restart every time the worker changes
+    // tool, or the readout always says a few seconds and the straggler
+    // this feature exists to expose never looks slow.
+    let s = reduceFusionLiveWorkers([], ev(), 1_000);
+    s = reduceFusionLiveWorkers(s, ev({ tool: "os.fs.read" }), 20_000);
+    s = reduceFusionLiveWorkers(s, ev({ tool: "os.shell.run" }), 50_000);
+    expect(s[0]?.startedAt).toBe(1_000);
+    expect(s[0]?.finishedAt).toBeNull();
+    expect(formatFusionLiveWorker(s[0]!, 91_000)).toContain("1m30s");
+  });
+
+  it("stops the clock when the leg ends, and keeps it stopped", () => {
+    let s = reduceFusionLiveWorkers([], ev(), 1_000);
+    s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }), 31_000);
+    expect(s[0]?.finishedAt).toBe(31_000);
+    // Reading the row a minute later still reports what it took, not
+    // how long ago it was.
+    expect(formatFusionLiveWorker(s[0]!, 300_000)).toBe(
+      "worker 1 · qwen-3.5-4b — done · 30s",
+    );
+    // A late duplicate event for a finished leg does not restart it.
+    s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }), 90_000);
+    expect(s[0]?.finishedAt).toBe(31_000);
   });
 });

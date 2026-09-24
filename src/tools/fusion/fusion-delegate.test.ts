@@ -187,9 +187,14 @@ describe("fusion.delegate", () => {
       ctx(),
     );
     expect(result.status).toBe("ok");
-    expect(result.summary.split("\n")[1]).toBe("- [fix_main_sync] ok — fix main sync");
+    expect(result.summary.split("\n")[1]).toBe(
+      "- [fix_main_sync] ok — fix main sync",
+    );
     const rows = result.details.tasks as WorkerTaskResult[];
-    expect(rows[0]).toMatchObject({ id: "fix_main_sync", title: "fix main sync" });
+    expect(rows[0]).toMatchObject({
+      id: "fix_main_sync",
+      title: "fix main sync",
+    });
     expect(
       events.filter((e) => e.role === "worker").map((e) => e.title),
     ).toEqual(["fix main sync", "fix main sync"]);
@@ -427,11 +432,20 @@ describe("fusion.delegate", () => {
                 reasoningContent: "",
                 stop: true,
                 truncated: false,
-                timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+                timing: {
+                  promptMs: 1,
+                  predictedMs: 1,
+                  promptTokens: 1,
+                  predictedTokens: 1,
+                },
                 cacheHitTokens: 0,
                 slotId: 0,
                 modelId: "small",
-                usage: { promptTokens: 1_000_000, completionTokens: 250_000, totalTokens: 1_250_000 },
+                usage: {
+                  promptTokens: 1_000_000,
+                  completionTokens: 250_000,
+                  totalTokens: 1_250_000,
+                },
               },
             },
           });
@@ -447,8 +461,13 @@ describe("fusion.delegate", () => {
     );
     const result = await tool.run({ tasks: TASKS }, ctx());
     expect(seen).toHaveLength(2);
-    expect(seen[0]).toMatchObject({ reasoningEffort: "low", maxOutputTokens: 12_000 });
-    expect(result.summary).toContain("cloud spend $4.00 on small (2,000,000 in / 500,000 out)");
+    expect(seen[0]).toMatchObject({
+      reasoningEffort: "low",
+      maxOutputTokens: 12_000,
+    });
+    expect(result.summary).toContain(
+      "cloud spend $4.00 on small (2,000,000 in / 500,000 out)",
+    );
     expect(result.details.workerSpendUsd).toBeCloseTo(4);
   });
 
@@ -483,7 +502,12 @@ describe("fusion.delegate", () => {
           ...over,
         }),
       );
-    const task = { id: "t1", title: "One", instructions: "Do one", files: ["a.js", "b.js"] };
+    const task = {
+      id: "t1",
+      title: "One",
+      instructions: "Do one",
+      files: ["a.js", "b.js"],
+    };
     // What the LOOP is handed is the worker's budget plus its queue
     // allowance (a third): the loop's clock starts at turn start, which
     // includes the wait for a slot, while the worker's own clock starts
@@ -492,9 +516,15 @@ describe("fusion.delegate", () => {
     await capture({}).run({ tasks: [task] }, ctx());
     expect(limits[0]).toBeGreaterThanOrEqual(withQueue(600_000));
     expect(limits[0]).toBeLessThan(withQueue(2_700_000));
-    await capture({ workerSupportsSlotAffinity: () => false }).run({ tasks: [task] }, ctx());
+    await capture({ workerSupportsSlotAffinity: () => false }).run(
+      { tasks: [task] },
+      ctx(),
+    );
     expect(limits[1]).toBe(withQueue(2_700_000));
-    await capture({ localTokensPerSecond: () => null }).run({ tasks: [task] }, ctx());
+    await capture({ localTokensPerSecond: () => null }).run(
+      { tasks: [task] },
+      ctx(),
+    );
     expect(limits[2]).toBe(withQueue(2_700_000));
   });
 
@@ -598,7 +628,10 @@ describe("fusion.delegate", () => {
   });
 
   it("reports all_ok when every task delivered", async () => {
-    const result = await buildFusionDelegateTool(deps()).run({ tasks: TASKS }, ctx());
+    const result = await buildFusionDelegateTool(deps()).run(
+      { tasks: TASKS },
+      ctx(),
+    );
     expect(result.status).toBe("ok");
     expect(result.details.outcome).toBe("all_ok");
   });
@@ -629,7 +662,8 @@ describe("fusion.delegate", () => {
                 result: {
                   tool: "os.fs.write",
                   status: "ok",
-                  summary: "⚠ replaced the user's file `sales.csv` (2,401 lines → 9); …",
+                  summary:
+                    "⚠ replaced the user's file `sales.csv` (2,401 lines → 9); …",
                   details: { replaced },
                   truncated: false,
                 },
@@ -779,7 +813,12 @@ describe("fusion.delegate", () => {
       ],
       requires: [{ task: "t2", name: "HD.Ship" }],
       checks: [
-        { task: "t1", kind: "command", cmd: "node", args: ["--check", "js/ship.js"] },
+        {
+          task: "t1",
+          kind: "command",
+          cmd: "node",
+          args: ["--check", "js/ship.js"],
+        },
         { task: "t2", kind: "page", path: "index.html", checks: ["no errors"] },
         { kind: "command", cmd: "npm", args: ["test"] },
       ],
@@ -789,7 +828,10 @@ describe("fusion.delegate", () => {
       const dir = mkdtempSync(join(tmpdir(), "fusion-delegate-contract-"));
       mkdirSync(join(dir, "js"));
       writeFileSync(join(dir, "js", "ship.js"), "HD.Ship = class {};");
-      writeFileSync(join(dir, "index.html"), '<button id="launch-btn"></button>');
+      writeFileSync(
+        join(dir, "index.html"),
+        '<button id="launch-btn"></button>',
+      );
       return dir;
     }
 
@@ -798,11 +840,18 @@ describe("fusion.delegate", () => {
       try {
         const briefs: string[] = [];
         const runChecks = vi.fn(
-          async (specs: readonly Record<string, unknown>[], runCtx: { workingDir: string }) => ({
+          async (
+            specs: readonly Record<string, unknown>[],
+            runCtx: { workingDir: string },
+          ) => ({
             ok: false,
             results: specs.map((spec) =>
               spec.kind === "page"
-                ? { ok: false, summary: "no errors: 1 pageerror — ReferenceError: p is not defined" }
+                ? {
+                    ok: false,
+                    summary:
+                      "no errors: 1 pageerror — ReferenceError: p is not defined",
+                  }
                 : { ok: true, summary: `${runCtx.workingDir}: exit 0` },
             ),
           }),
@@ -822,9 +871,15 @@ describe("fusion.delegate", () => {
           ctx({ workingDir: dir }),
         );
         expect(briefs).toHaveLength(2);
-        expect(briefs[0]).toContain("CONTRACT — the interface between the parts");
-        expect(briefs[0]).toContain("You provide: symbol HD.Ship in js/ship.js; symbol HD.Ship.reset in js/ship.js");
-        expect(briefs[1]).toContain("You may rely on: HD.Ship (symbol from t1 in js/ship.js)");
+        expect(briefs[0]).toContain(
+          "CONTRACT — the interface between the parts",
+        );
+        expect(briefs[0]).toContain(
+          "You provide: symbol HD.Ship in js/ship.js; symbol HD.Ship.reset in js/ship.js",
+        );
+        expect(briefs[1]).toContain(
+          "You may rely on: HD.Ship (symbol from t1 in js/ship.js)",
+        );
 
         // The runner sees the specs without their `task` key, and the call's cwd.
         expect(runChecks).toHaveBeenCalledTimes(1);
@@ -851,7 +906,10 @@ describe("fusion.delegate", () => {
         );
         const rows = result.details.tasks as WorkerTaskResult[];
         expect(rows.map((r) => r.status)).toEqual(["ok", "failed"]);
-        const report = result.details.contract as { findings: unknown[]; checks: unknown[] };
+        const report = result.details.contract as {
+          findings: unknown[];
+          checks: unknown[];
+        };
         expect(report.findings).toHaveLength(3);
         expect(report.checks).toHaveLength(3);
       } finally {
@@ -889,7 +947,9 @@ describe("fusion.delegate", () => {
           .split("\n")
           .find((l) => l.startsWith("contract: "))!;
         expect(line).not.toContain("missing");
-        expect(line).toContain("3 provides not checked — the turn was cancelled");
+        expect(line).toContain(
+          "3 provides not checked — the turn was cancelled",
+        );
         // And no `contract:` note lands on a row that never ran.
         for (const row of rows) expect(row.notes ?? []).toEqual([]);
         const report = result.details.contract as { findings: unknown[] };
@@ -907,7 +967,9 @@ describe("fusion.delegate", () => {
           { tasks: TASKS, contract: CONTRACT },
           ctx({ workingDir: dir }),
         );
-        expect(result.summary.split("\n")[1]).toContain("3 checks not run — no check runner is wired");
+        expect(result.summary.split("\n")[1]).toContain(
+          "3 checks not run — no check runner is wired",
+        );
         const rows = result.details.tasks as WorkerTaskResult[];
         expect(rows.map((r) => r.status)).toEqual(["ok", "ok"]);
         expect(rows[0]).not.toHaveProperty("checks");
@@ -942,7 +1004,12 @@ describe("fusion.delegate", () => {
             ],
             contract: {
               provides: [
-                { task: "t1", kind: "symbol", name: "HD.Ship", in: "js/ship.js" },
+                {
+                  task: "t1",
+                  kind: "symbol",
+                  name: "HD.Ship",
+                  in: "js/ship.js",
+                },
                 { task: "organize", kind: "other", name: "done" },
               ],
               requires: [{ task: "t1", name: "organized_files" }],
@@ -961,7 +1028,9 @@ describe("fusion.delegate", () => {
           expect(brief).toContain(`contract: ${requireNote}`);
           expect(brief).toContain("- [organize] other done");
         }
-        expect(briefs[0]).toContain("You may rely on: nothing from the other parts");
+        expect(briefs[0]).toContain(
+          "You may rely on: nothing from the other parts",
+        );
         const lines = result.summary.split("\n");
         expect(lines[0]).toBe("2 tasks: 2 ok");
         expect(lines[1]).toBe(
@@ -1015,7 +1084,9 @@ describe("fusion.delegate", () => {
         ctx(),
       );
       expect(result.status).toBe("error");
-      expect(result.summary).toContain('contract.provides[0].task names unknown task "ghost"');
+      expect(result.summary).toContain(
+        'contract.provides[0].task names unknown task "ghost"',
+      );
       expect(runTurn).not.toHaveBeenCalled();
     });
   });
@@ -1033,6 +1104,7 @@ describe("fusion.delegate", () => {
         "2 tasks: 2 ok
         - [t1] ok — One
         - [t2] ok — Two
+        timing: 0s wall, slowest [t1] 0s
         [t1] ok — One (1 steps, 0s, 0 tool calls, 0 errors)
         (the worker produced no reply)
         [t2] ok — Two (1 steps, 0s, 0 tool calls, 0 errors)
@@ -1079,7 +1151,12 @@ describe("fusion.delegate", () => {
 
     /** The live pipeline: `analyze` provides the manifest both others require. */
     const PIPELINE = [
-      { id: "analyze", title: "Analyze", instructions: "a", files: ["manifest.json"] },
+      {
+        id: "analyze",
+        title: "Analyze",
+        instructions: "a",
+        files: ["manifest.json"],
+      },
       { id: "organize", title: "Organize", instructions: "o" },
       { id: "index", title: "Index", instructions: "i" },
     ];
@@ -1095,18 +1172,21 @@ describe("fusion.delegate", () => {
      * A fake `runTurn` that records, for each worker, which siblings had
      * already RESOLVED when it started, and how many were in flight.
      */
-    function ordering(over: {
-      reasonFor?: (taskId: string) => RunTurnResult["reason"];
-      briefs?: string[];
-    } = {}) {
+    function ordering(
+      over: {
+        reasonFor?: (taskId: string) => RunTurnResult["reason"];
+        briefs?: string[];
+      } = {},
+    ) {
       const started: string[] = [];
       const resolvedBefore: Record<string, string[]> = {};
       const resolved: string[] = [];
       let inFlight = 0;
       let peakInFlight = 0;
       const runTurn: FusionDelegateDeps["runTurn"] = async (session, brief) => {
-        const taskId = (session.metadata as { fusionWorker: { taskId: string } })
-          .fusionWorker.taskId;
+        const taskId = (
+          session.metadata as { fusionWorker: { taskId: string } }
+        ).fusionWorker.taskId;
         started.push(taskId);
         over.briefs?.push(brief);
         resolvedBefore[taskId] = [...resolved];
@@ -1135,14 +1215,17 @@ describe("fusion.delegate", () => {
       expect(fake.peak()).toBe(2);
       expect(result.status).toBe("ok");
       const lines = result.summary.split("\n");
-      expect(lines[0]).toBe("3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed");
-      expect(result.details.waves).toEqual([["analyze"], ["organize", "index"]]);
-      // Rows keep the caller's order, whatever wave each ran in.
-      expect((result.details.tasks as WorkerTaskResult[]).map((r) => r.id)).toEqual([
-        "analyze",
-        "organize",
-        "index",
+      expect(lines[0]).toBe(
+        "3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed",
+      );
+      expect(result.details.waves).toEqual([
+        ["analyze"],
+        ["organize", "index"],
       ]);
+      // Rows keep the caller's order, whatever wave each ran in.
+      expect(
+        (result.details.tasks as WorkerTaskResult[]).map((r) => r.id),
+      ).toEqual(["analyze", "organize", "index"]);
     });
 
     it("bounds each wave by maxWorkers", async () => {
@@ -1154,13 +1237,19 @@ describe("fusion.delegate", () => {
       ];
       const contract = {
         ...PIPELINE_CONTRACT,
-        requires: [...PIPELINE_CONTRACT.requires, { task: "report", name: "manifest.json" }],
+        requires: [
+          ...PIPELINE_CONTRACT.requires,
+          { task: "report", name: "manifest.json" },
+        ],
       };
       const result = await tool.run({ tasks, contract, maxWorkers: 2 }, ctx());
       expect(fake.started).toEqual(["analyze", "organize", "index", "report"]);
       expect(fake.resolvedBefore.report).toContain("analyze");
       expect(fake.peak()).toBe(2);
-      expect(result.details.waves).toEqual([["analyze"], ["organize", "index", "report"]]);
+      expect(result.details.waves).toEqual([
+        ["analyze"],
+        ["organize", "index", "report"],
+      ]);
       expect(result.summary.split("\n")[0]).toBe(
         "4 tasks in 2 waves (analyze → organize, index, report): 3 ok, 1 failed",
       );
@@ -1177,7 +1266,8 @@ describe("fusion.delegate", () => {
         { tasks: PIPELINE, contract: PIPELINE_CONTRACT },
         ctx(),
       );
-      const organizeNote = "task organize depends on analyze, which ended failed";
+      const organizeNote =
+        "task organize depends on analyze, which ended failed";
       const indexNote = "task index depends on analyze, which ended failed";
       expect(fake.started).toEqual(["analyze", "organize", "index"]);
       // The provider's own brief carried no such note; the dependents' do.
@@ -1186,15 +1276,15 @@ describe("fusion.delegate", () => {
       expect(briefs[1]).toContain(`contract: ${indexNote}`);
       expect(briefs[2]).toContain(`contract: ${indexNote}`);
       const lines = result.summary.split("\n");
-      expect(lines[0]).toBe("3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed");
+      expect(lines[0]).toBe(
+        "3 tasks in 2 waves (analyze → organize, index): 2 ok, 1 failed",
+      );
       expect(lines[1]).toBe(
         `contract: 1 missing — [analyze] file manifest.json does not exist; ${organizeNote}; ${indexNote}`,
       );
-      expect((result.details.tasks as WorkerTaskResult[]).map((r) => r.status)).toEqual([
-        "failed",
-        "ok",
-        "ok",
-      ]);
+      expect(
+        (result.details.tasks as WorkerTaskResult[]).map((r) => r.status),
+      ).toEqual(["failed", "ok", "ok"]);
       const report = result.details.contract as { warnings: string[] };
       expect(report.warnings).toEqual([organizeNote, indexNote]);
     });
@@ -1232,7 +1322,9 @@ describe("fusion.delegate", () => {
       const lines = result.summary.split("\n");
       expect(lines[0]).toBe("2 tasks in 1 wave (a, b): 2 ok");
       expect(lines[1]).toContain(note);
-      expect((result.details.contract as { warnings: string[] }).warnings).toEqual([note]);
+      expect(
+        (result.details.contract as { warnings: string[] }).warnings,
+      ).toEqual([note]);
     });
 
     it("orders nothing when the requires name nothing any task provides", async () => {

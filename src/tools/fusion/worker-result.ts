@@ -288,8 +288,12 @@ export class WorkerRunCollector {
       .map(([tool, n]) => `${tool}×${n}`)
       .join(", ");
     const parts = [
-      this.calls === 0 ? "no tool calls" : `${this.calls} tool calls (${tally})`,
-      ...(this.recent.length > 0 ? [`last results: ${this.recent.join(" | ")}`] : []),
+      this.calls === 0
+        ? "no tool calls"
+        : `${this.calls} tool calls (${tally})`,
+      ...(this.recent.length > 0
+        ? [`last results: ${this.recent.join(" | ")}`]
+        : []),
       ...(this.replyText.length > 0
         ? [`partial reply: ${oneLine(this.replyText, FINDING_CHARS)}`]
         : []),
@@ -527,6 +531,42 @@ export function formatDelegateOutput(
   return `${joined.slice(0, Math.max(0, charCap - 15))}\n… [truncated]`;
 }
 
+/**
+ * The wave's clock, for the orchestrator that has to decide how to
+ * split the next one.
+ *
+ * Every task already states its own seconds on its block, but a model
+ * reading eight of those has to do the arithmetic to find the one
+ * answer that changes a plan: was this fan-out as slow as its slowest
+ * task, or did most of it spend the time waiting for a slot? The first
+ * says split the straggler, the second says send fewer, larger tasks.
+ * Stating both is the whole point — a number the model has to derive is
+ * a number it derives wrongly under a cap.
+ */
+export function fanoutTimings(results: readonly WorkerTaskResult[]): {
+  slowest: WorkerTaskResult | null;
+  wallMs: number;
+  queuedMs: number;
+} | null {
+  if (results.length === 0) return null;
+  let slowest: WorkerTaskResult | null = null;
+  let wallMs = 0;
+  let queuedMs = 0;
+  for (const r of results) {
+    if (!slowest || r.durationMs > slowest.durationMs) slowest = r;
+    wallMs = Math.max(wallMs, r.durationMs);
+    queuedMs += r.queueWaitMs ?? 0;
+  }
+  return { slowest, wallMs, queuedMs };
+}
+
+/** `1m35s` / `12s`, matching the TUI's own per-worker clock. */
+function formatSeconds(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
+}
+
 /** How much of an error or a note one status-table line carries. */
 const TABLE_DETAIL_CHARS = 160;
 
@@ -586,9 +626,7 @@ export interface DelegateOutputExtras {
 }
 
 /** `analyze → organize, index` — waves in order, each wave's tasks together. */
-export function describeWaves(
-  waves: readonly (readonly string[])[],
-): string {
+export function describeWaves(waves: readonly (readonly string[])[]): string {
   return waves.map((wave) => wave.join(", ")).join(" → ");
 }
 
@@ -629,6 +667,26 @@ function renderStatusTable(
     extra.waves === undefined
       ? ""
       : ` in ${extra.waves.length} wave${extra.waves.length === 1 ? "" : "s"} (${describeWaves(extra.waves)})`;
+  // The clock, beside the tally: slowest task and, when the workers
+  // spent real time queued, how much. Both are levers the orchestrator
+  // can actually pull on the next fan-out.
+  const timings = fanoutTimings(results);
+  const queued =
+    timings && timings.queuedMs >= 1000
+      ? `, ${formatSeconds(timings.queuedMs)} of it queued`
+      : "";
+  // Its own line, and the table's last rather than a fourth clause on
+  // the head line: that line already carries the tally, the
+  // replaced-input count and the bill, and it is the line a capped read
+  // is guaranteed to get — crowding it costs the clauses that were put
+  // there first. Everything between the head and the rows is spoken
+  // for too (the contract line sits directly under the head by
+  // contract), so the clock closes the table instead, which is still
+  // inside any cap that showed the rows at all.
+  const clock =
+    timings && timings.slowest
+      ? `timing: ${formatSeconds(timings.wallMs)} wall, slowest [${timings.slowest.id}] ${formatSeconds(timings.slowest.durationMs)}${queued}`
+      : null;
   const lines = results.map((r) =>
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
@@ -636,7 +694,9 @@ function renderStatusTable(
         oneLine(describeReplacedInput(input), TABLE_DETAIL_CHARS),
       ),
       ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
-      ...(r.checks ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)] : []),
+      ...(r.checks
+        ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)]
+        : []),
       ...(r.notes ?? []).map((note) => oneLine(note, TABLE_DETAIL_CHARS)),
     ].join(" — "),
   );
@@ -644,6 +704,7 @@ function renderStatusTable(
     `${results.length} task${results.length === 1 ? "" : "s"}${waves}: ${tally}${replaced}${cost}`,
     ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
+    ...(clock === null ? [] : [clock]),
   ].join("\n");
 }
 
@@ -663,7 +724,9 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
     `[${result.id}] ${result.status} — ${result.title} ` +
     `(${result.stepCount} steps, ${Math.round(result.durationMs / 1000)}s, ` +
     `${result.tools.calls} tool calls, ${result.tools.errors} errors)` +
-    (result.error ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}` : "");
+    (result.error
+      ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}`
+      : "");
   const diagnosis = [
     ...(result.replacedInputs ?? []).map(describeReplacedInput),
     ...(result.hint ? [`hint: ${result.hint}`] : []),
