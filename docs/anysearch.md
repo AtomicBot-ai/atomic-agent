@@ -147,7 +147,7 @@ no API key in env. Same request shape the built-in provider sends.
 | Field | Value |
 |---|---|
 | When | `2026-09-24T17:27:44+08:00` (general), `2026-09-24T17:27:55+08:00` (vertical) |
-| Commit | `5e94b388` on `feat/anysearch-integration` (PR #484) |
+| Commit | `e3ee50d1` on `feat/anysearch-integration` (PR #484) |
 | Entry | Built-in REST path equivalent to `os.web.search` with `web.search.provider = "anysearch"` |
 | Auth | Anonymous — `X-Anysearch-Client: atomic-agent/web-search` only |
 | Endpoint | `POST https://api.anysearch.com/v1/search` |
