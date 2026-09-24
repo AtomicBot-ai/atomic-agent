@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const execSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
-import { LINUX_ARM64_BACKEND_ASSET } from "./linux-arm64-backend-variant.js";
+import {
+  LINUX_ARM64_BACKEND_ASSETS,
+  resetLinuxArm64BackendAssetCache,
+} from "./linux-arm64-backend-variant.js";
 import { UnsupportedGlibcError } from "./platform-assets.js";
 import {
   WINDOWS_BACKEND_ASSETS,
@@ -116,12 +119,14 @@ describe("isWindowsGpuBackendAsset", () => {
 describe("resolveDownloadAsset", () => {
   beforeEach(() => {
     resetWindowsBackendAssetCache();
+    resetLinuxArm64BackendAssetCache();
     setConfiguredBackendVariant("auto");
     execSyncMock.mockReset();
   });
 
   afterEach(() => {
     resetWindowsBackendAssetCache();
+    resetLinuxArm64BackendAssetCache();
     setConfiguredBackendVariant("auto");
   });
 
@@ -201,15 +206,20 @@ describe("resolveDownloadAsset", () => {
     );
   });
 
-  it("resolves linux arm64 to the one published arm64 build", () => {
+  it("installs the CUDA build on a GB10 (DGX Spark)", () => {
+    execSyncMock.mockReturnValue(Buffer.from("12.1\n"));
     const asset = resolveDownloadAsset("linux", "arm64", "2.39");
-    expect(asset.assetName).toBe(LINUX_ARM64_BACKEND_ASSET);
+    expect(asset.assetName).toBe(LINUX_ARM64_BACKEND_ASSETS.cuda133);
     expect(asset.binaryName).toBe("llama-server");
   });
 
-  it("probes no hardware on linux arm64 — there is nothing to choose", () => {
-    resolveDownloadAsset("linux", "arm64", "2.39");
-    expect(execSyncMock).not.toHaveBeenCalled();
+  it("installs the Vulkan build on linux arm64 without nvidia-smi", () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    expect(resolveDownloadAsset("linux", "arm64", "2.39").assetName).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
   });
 
   it("refuses linux arm64 on a glibc older than the arm64 build needs", () => {
@@ -221,16 +231,11 @@ describe("resolveDownloadAsset", () => {
     );
   });
 
-  it("ignores the variant preference on linux arm64 (single asset)", () => {
-    // Every value has to land on the same asset: arm64 publishes one
-    // build, so a pin that named another would ask for a file that does
-    // not exist in any release.
-    for (const pin of ["vulkan", "cpu", "cuda-12.4", "cuda-13.3"] as const) {
-      setConfiguredBackendVariant(pin);
-      expect(resolveDownloadAsset("linux", "arm64", "2.39").assetName).toBe(
-        LINUX_ARM64_BACKEND_ASSET,
-      );
-    }
+  it("honours a 'vulkan' pin on linux arm64 without probing", () => {
+    setConfiguredBackendVariant("vulkan");
+    expect(resolveDownloadAsset("linux", "arm64", "2.39").assetName).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
     expect(execSyncMock).not.toHaveBeenCalled();
   });
 
