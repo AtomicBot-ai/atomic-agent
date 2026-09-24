@@ -107,6 +107,9 @@ describe("PromptShell", () => {
     const lines = strip(lastFrame() ?? "")
       .split("\n")
       .filter((line) => line.trim().length > 0);
+    // Eight: the harness reports the 24-row fallback, and the bar only
+    // stacks on a window that can spare a row (`STACK_MIN_ROWS`), so
+    // this stays the one-row composition it was written for.
     expect(lines).toHaveLength(8);
     for (const line of lines) {
       expect(line.length).toBeLessThanOrEqual(56);

@@ -5,7 +5,8 @@ import {
   LEG_SEPARATOR,
 } from "../composer-switch/composer-meta-controls.js";
 import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
-import { fusionBarGround } from "../theme/fusion-tint.js";
+import { fusionBarGround, fusionInk } from "../theme/fusion-tint.js";
+import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -121,6 +122,41 @@ export const META_SLOT_SHRINK = 40;
  */
 const PAIR_SEPARATOR = LEG_SEPARATOR;
 
+/**
+ * Below this width the bar stacks into two columns of two rows each.
+ *
+ * Measured rather than picked: the one-row composition has to seat the
+ * route statement (backend dot, provider, model — `MODEL_LABEL_MAX_LEN`
+ * 32 on its own, and in Fusion *two* legs with a separator between
+ * them), the context gauge with its bar and both token counts, and the
+ * coding-mode chip. Around 120 columns the route runs out of room
+ * first, and Yoga answers by truncating it: `aiml…`, `deepseek/…`. Both
+ * of those are the readout's whole content — a provider you cannot name
+ * and a model you cannot identify — so the row has stopped saying
+ * anything by the time it still fits.
+ *
+ * Stacking buys back the full width for each line instead of splitting
+ * it four ways: route and gauge get a line each on the left, and the
+ * mode control gets a label above it on the right, which is the one
+ * place the bar can say what that chip *is*.
+ */
+export const STACK_BELOW_COLUMNS = 120;
+
+/**
+ * Rows the window must have before the bar is allowed to spend one on
+ * stacking. The second line comes out of the chat, and on a short
+ * window that is the worse trade: a truncated provider name is a
+ * nuisance, a chat two replies shorter is the app.
+ *
+ * Measured, not assumed: at 80x24 with a four-line draft the taller
+ * composer pushes its own controls past the viewport — the overlay
+ * mouse suite fails on exactly that, with the Send target no longer
+ * taking clicks. 30 leaves the stacked bar comfortably inside a window
+ * that can afford it and keeps every classic 24-row terminal on the
+ * single row it was laid out for.
+ */
+export const STACK_MIN_ROWS = 30;
+
 export function PromptMetaBar({
   leftSlot,
   backend,
@@ -133,11 +169,58 @@ export function PromptMetaBar({
   modeSlot,
   mouseLayer,
 }: PromptMetaBarProps): ReactElement {
+  const { columns, rows } = useTerminalSize();
+  const ground = fusion ? fusionBarGround() : theme.colors.railBackground;
+  const label = fusion ? fusionInk() : theme.colors.railMuted;
+  const left = (
+    <MetaLeft
+      leftSlot={leftSlot}
+      backend={backend}
+      model={model}
+      provider={provider}
+      needsModelDownload={needsModelDownload ?? false}
+      fusion={fusion}
+      mouseLayer={mouseLayer}
+    />
+  );
+  if (columns > 0 && columns < STACK_BELOW_COLUMNS && rows >= STACK_MIN_ROWS) {
+    return (
+      <Box
+        flexDirection="row"
+        justifyContent="space-between"
+        backgroundColor={ground}
+        paddingX={1}
+        paddingY={1}
+      >
+        {/* Route above its own gauge: both get the column's full width
+            instead of a quarter of the row's. */}
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          flexShrink={1}
+          minWidth={0}
+          overflow="hidden"
+        >
+          {left}
+          {contextSlot ? <Box minWidth={0}>{contextSlot}</Box> : null}
+        </Box>
+        <Box flexDirection="column" flexShrink={0} alignItems="flex-end">
+          {rightSlot ? <Box flexShrink={0}>{rightSlot}</Box> : null}
+          {modeSlot ? (
+            <>
+              <Text color={label}>Coding mode:</Text>
+              <Box flexShrink={0}>{modeSlot}</Box>
+            </>
+          ) : null}
+        </Box>
+      </Box>
+    );
+  }
   return (
     <Box
       flexDirection="row"
       justifyContent="space-between"
-      backgroundColor={fusion ? fusionBarGround() : theme.colors.railBackground}
+      backgroundColor={ground}
       paddingX={1}
       // Matches the buffer's own padding above. The rows carry no
       // foreground, so the bar's ground paints straight through them and
@@ -154,15 +237,7 @@ export function PromptMetaBar({
         reason — has leftovers to fill.
       */}
       <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-        <MetaLeft
-          leftSlot={leftSlot}
-          backend={backend}
-          model={model}
-          provider={provider}
-          needsModelDownload={needsModelDownload ?? false}
-          fusion={fusion}
-          mouseLayer={mouseLayer}
-        />
+        {left}
       </Box>
       <Box flexShrink={0} flexDirection="row">
         {rightSlot ? (
