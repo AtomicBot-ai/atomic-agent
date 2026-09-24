@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import {
   assertLinuxArm64Glibc,
   detectGlibcVersion,
+  detectLinuxArm64BackendAsset,
 } from "./linux-arm64-backend-variant.js";
 import { resolvePlatformAsset, type PlatformAsset } from "./platform-assets.js";
 
@@ -27,9 +28,10 @@ export const WINDOWS_BACKEND_ASSETS = {
 /**
  * Operator-facing values for `localModels.managed.backendVariant`.
  * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
- * the Windows zips outright (no probe). Meaningful on win32 only —
- * macOS, Linux x64 and Linux arm64 each publish a single asset, so the
- * preference has nothing to choose between and is ignored there.
+ * the Windows zips outright (no probe). Meaningful on win32 and on
+ * Linux arm64, where `"vulkan"` and `"cuda-13.3"` pin the two arm64
+ * builds (see `linux-arm64-backend-variant.ts`). macOS and Linux x64
+ * publish a single asset, so the preference is ignored there.
  */
 export const BACKEND_VARIANT_PREFERENCES = [
   "auto",
@@ -194,11 +196,11 @@ export function resetWindowsBackendAssetCache(): void {
  * NVIDIA driver is present. `binaryName` is unchanged within a
  * platform, so install paths and `isBackendDownloaded` stay stable.
  *
- * Linux arm64 keeps `resolvePlatformAsset`'s single asset — there is
- * only one published arm64 build — but refuses a host whose glibc
- * cannot load it (`UnsupportedGlibcError`), because that refusal must
- * come before a 554 MB download rather than after it. `glibcVersion` is
- * for tests; production reads the running process.
+ * Linux arm64 picks between its two builds (CUDA for a GB10, Vulkan
+ * otherwise) and refuses a host whose glibc cannot load them
+ * (`UnsupportedGlibcError`), because that refusal must come before the
+ * download rather than after it. `glibcVersion` is for tests;
+ * production reads the running process.
  */
 export function resolveDownloadAsset(
   platform: NodeJS.Platform = process.platform,
@@ -210,7 +212,10 @@ export function resolveDownloadAsset(
     assertLinuxArm64Glibc(
       glibcVersion === undefined ? detectGlibcVersion() : glibcVersion,
     );
-    return base;
+    return {
+      ...base,
+      assetName: detectLinuxArm64BackendAsset(configuredBackendVariant),
+    };
   }
   if (base.platform !== "win32") return base;
   return { ...base, assetName: detectWindowsBackendAsset() };

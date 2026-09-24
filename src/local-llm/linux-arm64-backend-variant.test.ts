@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const execSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
 import {
   LINUX_ARM64_BACKEND_ASSET,
+  LINUX_ARM64_BACKEND_ASSETS,
+  detectLinuxArm64BackendAsset,
+  parseComputeCaps,
+  resetLinuxArm64BackendAssetCache,
+  selectLinuxArm64BackendAsset,
   LINUX_ARM64_MIN_GLIBC,
   assertLinuxArm64Glibc,
   isSupportedGlibc,
@@ -13,28 +21,110 @@ import {
   resolvePlatformAsset,
 } from "./platform-assets.js";
 
-describe("LINUX_ARM64_BACKEND_ASSET", () => {
-  // The defect this pins: an earlier shape asked for
-  // `llama-turboquant-linux-arm64-vulkan.zip`, which exists in none of
-  // the turboquant releases. `backend-installer.ts` matches releases on
-  // the exact asset name, so naming an unpublished asset turns every
-  // arm64 install into "No release found containing asset …".
-  it("is the one arm64 asset the turboquant repo actually publishes", () => {
-    expect(LINUX_ARM64_BACKEND_ASSET).toBe(
-      "llama-turboquant-linux-arm64-cuda-13.3.zip",
+describe("LINUX_ARM64_BACKEND_ASSETS", () => {
+  // Both names must match the assets the turboquant nightly publishes
+  // (turboquant-29d8598 onward): backend-installer.ts matches releases
+  // on the exact asset name.
+  it("names the two published arm64 builds", () => {
+    expect(LINUX_ARM64_BACKEND_ASSETS).toEqual({
+      cuda133: "llama-turboquant-linux-arm64-cuda-13.3.zip",
+      vulkan: "llama-turboquant-linux-arm64-vulkan.zip",
+    });
+  });
+
+  it("keeps the CUDA build as what resolvePlatformAsset hands linux arm64", () => {
+    const asset = resolvePlatformAsset("linux", "arm64");
+    expect(asset.assetName).toBe(LINUX_ARM64_BACKEND_ASSET);
+    expect(LINUX_ARM64_BACKEND_ASSET).toBe(LINUX_ARM64_BACKEND_ASSETS.cuda133);
+    expect(asset.binaryName).toBe("llama-server");
+  });
+});
+
+describe("parseComputeCaps", () => {
+  it("reads one capability per GPU line", () => {
+    expect(parseComputeCaps("12.1\n")).toEqual(["12.1"]);
+    expect(parseComputeCaps("9.0\r\n9.0\r\n")).toEqual(["9.0", "9.0"]);
+  });
+
+  it("drops lines that are not a capability", () => {
+    expect(parseComputeCaps("[N/A]\n\n")).toEqual([]);
+  });
+});
+
+describe("selectLinuxArm64BackendAsset", () => {
+  it("picks the CUDA build for GB10 (compute capability 12.1)", () => {
+    expect(selectLinuxArm64BackendAsset(["12.1"])).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.cuda133,
     );
   });
 
-  it("is what resolvePlatformAsset hands linux arm64", () => {
-    const asset = resolvePlatformAsset("linux", "arm64");
-    expect(asset.assetName).toBe(LINUX_ARM64_BACKEND_ASSET);
-    expect(asset.binaryName).toBe("llama-server");
+  it("keeps GPUs the CUDA build has no kernels for on Vulkan", () => {
+    // GH200 (9.0) and Jetson Thor (11.0) run a CUDA 13 driver too; the
+    // sm_121a-only CUDA build would load and fail on its first kernel.
+    expect(selectLinuxArm64BackendAsset(["9.0"])).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
+    expect(selectLinuxArm64BackendAsset(["11.0"])).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
   });
 
-  it("names no arm64 build that is not published", () => {
-    expect(LINUX_ARM64_BACKEND_ASSET).not.toContain("vulkan");
-    expect(LINUX_ARM64_BACKEND_ASSET).not.toContain("cpu");
-    expect(LINUX_ARM64_BACKEND_ASSET).not.toContain("cuda-12.4");
+  it("uses Vulkan when no NVIDIA GPU is detected", () => {
+    expect(selectLinuxArm64BackendAsset(null)).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
+  });
+});
+
+describe("detectLinuxArm64BackendAsset", () => {
+  beforeEach(() => {
+    resetLinuxArm64BackendAssetCache();
+    execSyncMock.mockReset();
+  });
+
+  afterEach(() => {
+    resetLinuxArm64BackendAssetCache();
+  });
+
+  it("asks nvidia-smi for the compute capability", () => {
+    execSyncMock.mockReturnValue(Buffer.from("12.1\n"));
+    expect(detectLinuxArm64BackendAsset("auto")).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.cuda133,
+    );
+    expect(execSyncMock.mock.calls[0]?.[0]).toContain("--query-gpu=compute_cap");
+  });
+
+  it("treats a missing or failing nvidia-smi as no NVIDIA GPU", () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    expect(detectLinuxArm64BackendAsset("auto")).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
+  });
+
+  it("probes nvidia-smi at most once per process", () => {
+    execSyncMock.mockReturnValue(Buffer.from("12.1\n"));
+    detectLinuxArm64BackendAsset("auto");
+    detectLinuxArm64BackendAsset("auto");
+    expect(execSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pins 'vulkan' and 'cuda-13.3' without probing", () => {
+    expect(detectLinuxArm64BackendAsset("vulkan")).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.vulkan,
+    );
+    expect(detectLinuxArm64BackendAsset("cuda-13.3")).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.cuda133,
+    );
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("detects for pins that name no arm64 build", () => {
+    execSyncMock.mockReturnValue(Buffer.from("12.1\n"));
+    expect(detectLinuxArm64BackendAsset("cpu")).toBe(
+      LINUX_ARM64_BACKEND_ASSETS.cuda133,
+    );
   });
 });
 

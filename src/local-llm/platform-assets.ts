@@ -72,9 +72,8 @@ export function resolvePlatformAsset(
     };
   }
   if (platform === "linux" && arch === "arm64") {
-    // The one published arm64 build. Named for its GPU backend, but it
-    // carries the dispatched CPU backends too and `dlopen`s CUDA, so it
-    // serves a box with no NVIDIA driver as well — see
+    // The GB10 CUDA build. `resolveDownloadAsset` swaps in the arm64
+    // Vulkan build for any other machine — see
     // `linux-arm64-backend-variant.ts`.
     return {
       platform,
