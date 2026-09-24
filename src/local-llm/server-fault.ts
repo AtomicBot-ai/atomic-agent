@@ -37,14 +37,14 @@ const PATTERNS: readonly FaultPattern[] = [
   {
     needle: "kIOGPUCommandBufferCallbackErrorOutOfMemory",
     describe: (n) =>
-      `the GPU ran out of memory ${n} time${n === 1 ? "" : "s"} — the server is up but every request fails. ` +
+      `the GPU ran out of memory ${n} time${n === 1 ? "" : "s"} — the server kept its socket and failed every request. ` +
       `Lower \`localModels.managed.contextSize\` (it is sized automatically from the model's trained context, ` +
       `which on a large model is far more than the machine can hold), or set \`localModels.managed.swaFull\` to "off".`,
   },
   {
     needle: "out of memory",
     describe: (n) =>
-      `the backend reported out of memory ${n} time${n === 1 ? "" : "s"} — the server is up but requests fail. ` +
+      `the backend reported out of memory ${n} time${n === 1 ? "" : "s"} — the server kept its socket and failed requests. ` +
       `Lower \`localModels.managed.contextSize\`.`,
   },
   {
@@ -56,7 +56,7 @@ const PATTERNS: readonly FaultPattern[] = [
   {
     needle: "failed to decode",
     describe: (n) =>
-      `the model failed to decode ${n} time${n === 1 ? "" : "s"} — the server is up but is not producing tokens. ` +
+      `the model failed to decode ${n} time${n === 1 ? "" : "s"} — the server answered but produced no tokens. ` +
       `The log above the first failure says why.`,
   },
 ];

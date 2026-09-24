@@ -15,6 +15,10 @@ describe("describeServerFault", () => {
     const fault = describeServerFault(log);
     expect(fault?.occurrences).toBe(2);
     expect(fault?.summary).toContain("GPU ran out of memory 2 times");
+    // Past tense: the log is a record. `models status` prints this
+    // beside a `daemon: stopped` line, and "the server is up" there was
+    // simply false.
+    expect(fault?.summary).not.toContain("is up");
     expect(fault?.summary).toContain("localModels.managed.contextSize");
   });
 
