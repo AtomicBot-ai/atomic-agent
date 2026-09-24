@@ -1,3 +1,9 @@
+import { buildCloudSubcallRequest } from "../llm/provider/cloud-subcall.js";
+import type {
+  CompletionRequest,
+  CompletionResult,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
 import type { SessionState } from "./session-state.js";
 
 /**
@@ -113,13 +119,75 @@ export const SESSION_TITLE_TIMEOUT_MS = 20_000;
  */
 export const SESSION_TITLE_SESSION_PREFIX = "title:";
 
+/**
+ * The single synthetic function a cloud sub-call emits into.
+ *
+ * `emit_*` with one string field, like every other sub-call on this
+ * path — see `buildCloudSubcallRequest`.
+ */
+export const SESSION_TITLE_EMIT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    title: {
+      type: "string",
+      description: "The session title, at most six words.",
+    },
+  },
+  required: ["title"],
+  additionalProperties: false,
+};
+
+/**
+ * Output bound for the naming call. A title is six words; anything
+ * beyond this is a reasoning model talking to itself, and it pays for
+ * the tokens either way.
+ */
+export const SESSION_TITLE_MAX_TOKENS = 512;
+
+/**
+ * The title out of a completion, whichever shape it came back in.
+ *
+ * On `native_tools` the answer is in `tool_calls[0].arguments`; a
+ * thinking model that ignores the tool and answers in prose lands in
+ * `content`, and a fallover to a grammar link does too. Both are read,
+ * because this is a nicety that must not depend on which link served
+ * it.
+ */
+export function extractSessionTitleText(
+  completion: Pick<CompletionResult, "content" | "toolCalls">,
+): string {
+  const args = completion.toolCalls?.[0]?.function?.arguments;
+  if (typeof args === "string" && args.length > 0) {
+    try {
+      const parsed = JSON.parse(args) as { title?: unknown };
+      if (typeof parsed.title === "string") return parsed.title;
+    } catch {
+      // Fall through to the prose answer.
+    }
+  }
+  return completion.content;
+}
+
 export interface SessionTitleDeps {
-  complete: (params: {
-    prompt: string;
-    sessionId: string;
-    slotId: number;
-  }) => Promise<{ content: string }>;
+  complete: (
+    params: CompletionRequest & {
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+    },
+  ) => Promise<Pick<CompletionResult, "content" | "toolCalls">>;
   slotId: () => number;
+  /**
+   * Wire shape of the link that will serve this call.
+   *
+   * Load-bearing, not cosmetic: on `native_tools` a bare prompt with no
+   * tools comes back with an EMPTY `content` — the provider answers in
+   * `tool_calls`, and every other sub-call on this path already goes
+   * through `buildCloudSubcallRequest` for exactly that reason. Without
+   * it, naming silently produced nothing on every cloud provider, which
+   * is what most operators run.
+   */
+  toolTransport?: ToolCallTransport;
   timeoutMs?: number;
   onError?: (err: unknown) => void;
 }
@@ -138,13 +206,43 @@ export async function generateSessionTitle(
 ): Promise<string | null> {
   const prompt = firstPromptOf(state);
   if (prompt === null) return null;
+  const sessionId = `${SESSION_TITLE_SESSION_PREFIX}${state.id}`;
+  const text = buildSessionTitlePrompt(prompt);
+  const request =
+    deps.toolTransport === "native_tools"
+      ? {
+          ...buildCloudSubcallRequest({
+            prompt: text,
+            emitFunctionName: "emit_session_title",
+            argsSchema: SESSION_TITLE_EMIT_SCHEMA,
+            description: "Emit the session title",
+            sessionId,
+            maxTokens: SESSION_TITLE_MAX_TOKENS,
+          }),
+          sessionId,
+          grammar: "",
+          // No slot affinity on a cloud link, and no prefix worth
+          // keeping: this prompt is used once.
+          slotId: -1,
+        }
+      : {
+          prompt: text,
+          sessionId,
+          grammar: "",
+          slotId: deps.slotId(),
+        };
   try {
-    const result = await deps.complete({
-      prompt: buildSessionTitlePrompt(prompt),
-      sessionId: `${SESSION_TITLE_SESSION_PREFIX}${state.id}`,
-      slotId: deps.slotId(),
-    });
-    return sanitizeSessionTitle(result.content ?? "");
+    const result = await deps.complete(request);
+    const title = sanitizeSessionTitle(extractSessionTitleText(result) ?? "");
+    if (title === null) {
+      // Reported, not swallowed. An empty answer and a thrown request
+      // look identical from outside — the session simply stays unnamed
+      // — and the difference between "the provider refused" and "the
+      // provider answered in a shape we did not read" is the whole
+      // diagnosis. This one cost a full release cycle to find.
+      deps.onError?.(new Error("the model returned no usable title"));
+    }
+    return title;
   } catch (err) {
     deps.onError?.(err);
     return null;

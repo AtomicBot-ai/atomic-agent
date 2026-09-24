@@ -2950,23 +2950,18 @@ export async function createAgentRuntime(
     ).unref?.();
     void timer;
     const title = await generateSessionTitle(state, {
-      complete: async (params: {
-        prompt: string;
-        sessionId: string;
-        slotId: number;
-      }) => {
+      complete: async (params) => {
         const result = await llmComplete({
-          prompt: params.prompt,
-          // No grammar: a title is one line of prose, and the free-text
-          // shape is what every link renders without a GBNF prelude.
-          grammar: "",
-          slotId: params.slotId,
-          sessionId: params.sessionId,
+          ...params,
           signal: abort.signal,
         });
-        return { content: result.content };
+        return { content: result.content, ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}) };
       },
       slotId: () => slotManager.sideCallSlotId(),
+      // Which wire shape this call has to take. A cloud link answers a
+      // bare prompt with an empty `content`, so the title has to be
+      // asked for the way every other sub-call asks.
+      toolTransport: resolveActiveLlmSlice().transport,
       onError: (err: unknown) =>
         logger.debug("session naming failed", {
           sessionId: state.id,
