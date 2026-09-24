@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+
 import type { RunOutcome } from "./tui-state.js";
 
 /**
@@ -96,6 +98,57 @@ export function shouldNotify(params: {
 }): boolean {
   if (params.outcome === "failed") return true;
   return params.durationMs >= params.minDurationMs;
+}
+
+/**
+ * Escape a string for an AppleScript double-quoted literal. Only two
+ * characters matter there, and the payload has already had its control
+ * bytes removed by `sanitizeNotificationText`.
+ */
+export function escapeAppleScript(text: string): string {
+  return text.split("\\").join("\\\\").split('"').join('\\"');
+}
+
+/**
+ * Raise a real desktop notification where the OS has one and the
+ * terminal cannot be relied on.
+ *
+ * `OSC 9` alone was not enough, which is the whole reason this exists:
+ * iTerm2, WezTerm, kitty and Windows Terminal act on it, and
+ * **Terminal.app — the default terminal on macOS — ignores it**. Its
+ * bell is a sound or a Dock bounce that most people have turned off, so
+ * the honest answer on a Mac is that the feature did nothing at all.
+ *
+ * macOS: `osascript`, which ships with the OS and needs nothing
+ * installed. Linux: `notify-send`, when it is on PATH — absent is not
+ * an error, the terminal sequence is still written. Windows: nothing
+ * extra; Windows Terminal handles `OSC 9`, and a PowerShell toast costs
+ * a process launch and a scripting policy for the same result.
+ *
+ * Fire-and-forget by design: a notifier must never hold up the turn
+ * that just ended, and its failure is not the operator's problem.
+ * `execFile`, not a shell, so nothing in the payload can be a command.
+ */
+export function raiseDesktopNotification(
+  note: TurnNotification,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  const title = sanitizeNotificationText(note.title);
+  const body = sanitizeNotificationText(note.body);
+  try {
+    if (platform === "darwin") {
+      const script =
+        `display notification "${escapeAppleScript(body)}" ` +
+        `with title "${escapeAppleScript(title)}"`;
+      execFile("osascript", ["-e", script], () => undefined);
+      return;
+    }
+    if (platform === "linux") {
+      execFile("notify-send", [title, body], () => undefined);
+    }
+  } catch {
+    // No notifier, no permission, no session bus — all the same answer.
+  }
 }
 
 /** Write one notification, ignoring a stream that will not take it. */

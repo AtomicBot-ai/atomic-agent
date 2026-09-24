@@ -941,6 +941,13 @@ export type AgentLoopEvent =
       model?: string;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
+      /**
+       * The orchestrator's estimate for this task, in seconds, when it
+       * gave one (`tasks[].etaSeconds`). Advisory: the live readout
+       * puts it beside the elapsed time so "42s" can be read as fast or
+       * slow. Nothing is scheduled or timed out against it.
+       */
+      etaSeconds?: number;
       stepCount?: number;
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */

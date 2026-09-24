@@ -70,6 +70,7 @@ describe("the live fan-out readout", () => {
           done: false,
           startedAt: 1_000,
           finishedAt: null,
+          etaSeconds: null,
         },
         43_000,
       ),
@@ -87,10 +88,33 @@ describe("the live fan-out readout", () => {
           done: false,
           startedAt: 1_000,
           finishedAt: null,
+          etaSeconds: null,
         },
         1_000,
       ),
     ).toBe("worker 1 · local — working · 0s");
+  });
+
+  it("shows the orchestrator's estimate beside the running clock", () => {
+    // `42s` alone cannot be read as fast or slow, which is the only
+    // question this row is ever asked.
+    let s = reduceFusionLiveWorkers([], ev({ etaSeconds: 120 }), 1_000);
+    expect(formatFusionLiveWorker(s[0]!, 43_000)).toBe(
+      "worker 1 · qwen-3.5-4b — working · 42s (~2m00s expected)",
+    );
+    // It arrives on the first event and is not repeated on every one.
+    s = reduceFusionLiveWorkers(s, ev({ tool: "os.fs.read" }), 50_000);
+    expect(s[0]?.etaSeconds).toBe(120);
+  });
+
+  it("drops the estimate once the leg is done", () => {
+    // Then the elapsed time IS the answer, and a guess printed beside a
+    // fact only invites the reader to check the guess.
+    let s = reduceFusionLiveWorkers([], ev({ etaSeconds: 120 }), 1_000);
+    s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }), 31_000);
+    expect(formatFusionLiveWorker(s[0]!, 99_000)).toBe(
+      "worker 1 · qwen-3.5-4b — done · 30s",
+    );
   });
 
   it("starts a leg's clock at first sight and keeps it across tool calls", () => {

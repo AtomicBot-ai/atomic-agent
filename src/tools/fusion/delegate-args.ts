@@ -86,6 +86,20 @@ export interface DelegateTask {
   instructions: string;
   /** What the worker should hand back (format, shape, acceptance). */
   deliverable?: string;
+  /**
+   * The orchestrator's own estimate of how long this task will take, in
+   * seconds. Advisory only — nothing is scheduled, budgeted or timed
+   * out against it.
+   *
+   * It exists because the operator watching a fan-out has no way to
+   * tell a task that is thinking from one that is stuck: "42s" means
+   * nothing without a sense of what this piece of work costs. The model
+   * that split the work is the only party with an opinion before the
+   * work starts, so it states one and the live readout shows
+   * `42s (~2m expected)`. A task with no estimate simply shows its
+   * elapsed time, exactly as before.
+   */
+  etaSeconds?: number;
   /** Paths the worker should start from. */
   files?: string[];
   /**
@@ -172,6 +186,27 @@ function readString(value: unknown): string | null {
  * regeneration to fix one integer. Only a value that is not a positive
  * finite number at all is a validation problem.
  */
+/**
+ * The orchestrator's time estimate, in seconds, or `null`.
+ *
+ * Never a validation problem, unlike the budgets below. An estimate is
+ * a guess the model volunteered about work it has not done; refusing a
+ * whole fan-out because the guess came back as `"about two minutes"`
+ * would trade a useful call for a cosmetic field. Anything unusable is
+ * dropped silently and the row shows elapsed time alone.
+ *
+ * Bounded at a day so a model that answers in milliseconds by mistake
+ * cannot render `~11574d` next to a task that takes a minute.
+ */
+const MAX_ETA_SECONDS = 24 * 60 * 60;
+
+function readEtaSeconds(raw: unknown): number | null {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  const rounded = Math.round(raw);
+  if (rounded <= 0 || rounded > MAX_ETA_SECONDS) return null;
+  return rounded;
+}
+
 function readBudget(
   value: unknown,
   label: string,
@@ -361,7 +396,11 @@ function readContract(
           entry.shape === undefined || entry.shape === null
             ? null
             : readString(entry.shape);
-        if (entry.shape !== undefined && entry.shape !== null && rawShape === null) {
+        if (
+          entry.shape !== undefined &&
+          entry.shape !== null &&
+          rawShape === null
+        ) {
           problems.push(`${label}.shape must be a non-empty string`);
         }
         // Truncated, not refused: an over-long shape is a model being
@@ -524,6 +563,7 @@ export function parseDelegateArgs(
     }
     const files = readFiles(entry.files, label, problems);
     const deliverable = readString(entry.deliverable);
+    const etaSeconds = readEtaSeconds(entry.etaSeconds);
     const maxSteps = readBudget(entry.maxSteps, `${label}.maxSteps`, problems);
     const taskTimeoutMs = readBudget(
       entry.timeoutMs,
@@ -542,6 +582,7 @@ export function parseDelegateArgs(
       title: readString(entry.title) ?? humaniseTaskId(id),
       instructions,
       ...(deliverable === null ? {} : { deliverable }),
+      ...(etaSeconds === null ? {} : { etaSeconds }),
       ...(files.length === 0 ? {} : { files }),
       ...(maxSteps === null ? {} : { maxSteps }),
       ...(taskTimeoutMs === null ? {} : { timeoutMs: taskTimeoutMs }),

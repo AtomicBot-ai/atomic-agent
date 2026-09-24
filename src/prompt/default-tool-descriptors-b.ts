@@ -223,7 +223,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // quoting exists to prevent.
     name: "mcp.prompt.list",
     summary:
-      "List prompt templates exposed by an MCP server. Pass `server` and optional `limit` (1..100, default 30). One entry per line: `<name>(arg1, arg2?) — description`. A name or argument name that would be ambiguous in that format is printed JSON-quoted (`\"my (odd) name\"`); pass it decoded, without the quotes, as `mcp.prompt.get`'s `name` or as an `arguments` key.",
+      'List prompt templates exposed by an MCP server. Pass `server` and optional `limit` (1..100, default 30). One entry per line: `<name>(arg1, arg2?) — description`. A name or argument name that would be ambiguous in that format is printed JSON-quoted (`"my (odd) name"`); pass it decoded, without the quotes, as `mcp.prompt.get`\'s `name` or as an `arguments` key.',
     argsSchema: "{ server: string, limit?: number /* 1..100 */ }",
     tier: "rare",
   },
@@ -270,9 +270,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn that sees the operator's original request and your `instructions`, but nothing else from this conversation, so `instructions` must carry what the request does not (exact paths, the contract between parts, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. You choose `maxWorkers`; it is bounded only by the task count and the machine. Call it on its own, never alongside other tool calls.",
     argsSchema:
-      '{ tasks: [{ id: string, instructions: string, title?: string /* defaults to the id */, deliverable?: string, files?: string[] }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */, contract?: { inputs?: string[] /* the files the request provides: workers edit them in place, never replace */, owners?: { [path]: taskId }, provides?: [{ task, kind: "symbol"|"file"|"id"|"endpoint"|"env"|"flag"|"other", name, in?: path }], requires?: [{ task, name /* a provides name */ }], checks?: [{ task?, ...verify.run args }] } /* the interface between the parts: shown to every worker, checked after the fan-out */ }',
+      '{ tasks: [{ id: string, instructions: string, title?: string /* defaults to the id */, deliverable?: string, files?: string[], etaSeconds?: number /* your estimate of how long this part takes; shown to the operator beside the running clock so they can tell thinking from stuck */ }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */, contract?: { inputs?: string[] /* the files the request provides: workers edit them in place, never replace */, owners?: { [path]: taskId }, provides?: [{ task, kind: "symbol"|"file"|"id"|"endpoint"|"env"|"flag"|"other", name, in?: path }], requires?: [{ task, name /* a provides name */ }], checks?: [{ task?, ...verify.run args }] } /* the interface between the parts: shown to every worker, checked after the fan-out */ }',
     examples: [
-      '{"tasks":[{"id":"t1","title":"Map the auth routes","instructions":"List every route under src/http/ that touches auth. For each: path, method, and the middleware it runs.","deliverable":"one bullet per route"},{"id":"t2","title":"Summarise the session store","instructions":"Read src/session/session-store.ts and describe its public API and persistence model.","files":["src/session/session-store.ts"]}]}',
+      '{"tasks":[{"id":"t1","title":"Map the auth routes","instructions":"List every route under src/http/ that touches auth. For each: path, method, and the middleware it runs.","deliverable":"one bullet per route","etaSeconds":120},{"id":"t2","title":"Summarise the session store","instructions":"Read src/session/session-store.ts and describe its public API and persistence model.","files":["src/session/session-store.ts"]}]}',
     ],
   },
   {

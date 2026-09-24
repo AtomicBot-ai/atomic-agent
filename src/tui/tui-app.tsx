@@ -14,6 +14,7 @@ import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js
 import {
   emitTerminalNotification,
   formatTurnNotification,
+  raiseDesktopNotification,
   shouldNotify,
 } from "./terminal-notify.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
@@ -911,6 +912,8 @@ export function TuiApp({
     // Escapes belong in a terminal. Piped or redirected stderr gets the
     // bytes as content, which is how a log file ends up with a bell in
     // it — and how a test run ends up ringing the developer's terminal.
+    // The same gate covers the desktop notifier: a headless run has no
+    // operator to interrupt.
     if (!process.stderr.isTTY) return;
     if (
       !shouldNotify({
@@ -921,17 +924,20 @@ export function TuiApp({
     ) {
       return;
     }
+    const note = formatTurnNotification({
+      outcome: entry.outcome,
+      reason: entry.reason,
+      stepCount: entry.stepCount,
+      durationMs: entry.durationMs,
+      workingDirName: session.workingDir.split("/").filter(Boolean).pop(),
+    });
     // stderr, not Ink's stdout: an out-of-band escape inside a frame
     // survives the next repaint as garbage. See `terminal-notify.ts`.
-    emitTerminalNotification((chunk) => process.stderr.write(chunk), {
-      ...formatTurnNotification({
-        outcome: entry.outcome,
-        reason: entry.reason,
-        stepCount: entry.stepCount,
-        durationMs: entry.durationMs,
-        workingDirName: session.workingDir.split("/").filter(Boolean).pop(),
-      }),
-    });
+    emitTerminalNotification((chunk) => process.stderr.write(chunk), note);
+    // And the OS, because the terminal sequence reaches nobody on the
+    // default macOS terminal — the first field report of this feature
+    // was "I have seen no notifications".
+    raiseDesktopNotification(note);
   }, [state.runHistory, notify, session.workingDir]);
 
   useEffect(() => {

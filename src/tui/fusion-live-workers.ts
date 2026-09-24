@@ -21,6 +21,13 @@ export interface FusionLiveWorker {
    */
   readonly startedAt: number;
   readonly finishedAt: number | null;
+  /**
+   * What the orchestrator expected this task to take, in seconds, when
+   * it said so. Shown beside the elapsed time — `42s (~2m expected)` —
+   * because elapsed alone cannot be read as fast or slow, and "is this
+   * stuck?" is the only question the operator is asking of this row.
+   */
+  readonly etaSeconds: number | null;
 }
 
 /**
@@ -62,6 +69,9 @@ export function reduceFusionLiveWorkers(
     // call and the readout would always say a few seconds.
     startedAt: previous?.startedAt ?? now,
     finishedAt: done ? (previous?.finishedAt ?? now) : null,
+    // The estimate arrives on the first event and is not repeated on
+    // every one, so it is kept rather than overwritten with undefined.
+    etaSeconds: event.etaSeconds ?? previous?.etaSeconds ?? null,
   };
   if (at < 0) return [...current, next];
   const copy = [...current];
@@ -84,7 +94,13 @@ export function formatElapsed(ms: number): string {
   return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
-/** One line per leg: `worker · qwen-3.5-4b — os.fs.read · 42s`. */
+/**
+ * One line per leg: `worker · qwen-3.5-4b — os.fs.read · 42s (~2m expected)`.
+ *
+ * The estimate is dropped once the leg is done: at that point the
+ * elapsed time IS the answer, and a guess printed next to a fact only
+ * invites the reader to check the guess.
+ */
 export function formatFusionLiveWorker(
   worker: FusionLiveWorker,
   now: number = Date.now(),
@@ -92,5 +108,9 @@ export function formatFusionLiveWorker(
   const model = worker.model ?? "local";
   const what = worker.done ? "done" : (worker.tool ?? "working");
   const elapsed = formatElapsed((worker.finishedAt ?? now) - worker.startedAt);
-  return `${worker.title} · ${model} — ${what} · ${elapsed}`;
+  const eta =
+    worker.done || worker.etaSeconds === null
+      ? ""
+      : ` (~${formatElapsed(worker.etaSeconds * 1000)} expected)`;
+  return `${worker.title} · ${model} — ${what} · ${elapsed}${eta}`;
 }

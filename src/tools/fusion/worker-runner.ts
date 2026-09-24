@@ -158,7 +158,9 @@ export function resolveQueueBudgetMs(
     firstTokenTimeoutMs ?? getConfig().localModels.firstTokenTimeoutMs;
   const share = Math.floor(timeoutMs / WORKER_QUEUE_BUDGET_DIVISOR);
   const bounded = Math.min(
-    typeof configured === "number" && Number.isFinite(configured) && configured > 0
+    typeof configured === "number" &&
+      Number.isFinite(configured) &&
+      configured > 0
       ? configured
       : share,
     share,
@@ -439,6 +441,7 @@ async function runOneTask(
       phase: "started",
       role: "worker",
       model: options.workerModel,
+      ...(task.etaSeconds === undefined ? {} : { etaSeconds: task.etaSeconds }),
     });
   };
 
@@ -472,6 +475,7 @@ async function runOneTask(
       role: "worker",
       model: options.workerModel,
       tool,
+      ...(task.etaSeconds === undefined ? {} : { etaSeconds: task.etaSeconds }),
     });
   };
   // A worker has no operator: an approval prompt would park the turn
@@ -560,7 +564,10 @@ async function runOneTask(
   const timeLimit = timeLimitController.signal;
   const abortForTime = (): void => {
     timeLimitController.abort(
-      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+      new DOMException(
+        "The operation was aborted due to timeout",
+        "TimeoutError",
+      ),
     );
   };
   const queueBudgetMs = resolveQueueBudgetMs(timeoutMs);
@@ -586,8 +593,7 @@ async function runOneTask(
   };
   const hitTimeLimit = (): boolean =>
     timeLimit.aborted && !options.signal.aborted && !queuedOut;
-  const hitQueueLimit = (): boolean =>
-    queuedOut && !options.signal.aborted;
+  const hitQueueLimit = (): boolean => queuedOut && !options.signal.aborted;
 
   // D4 / F42 / F46: a task that declared output files and has written
   // none by half its step budget (and is stalled — `detectStall`) or by
@@ -617,16 +623,20 @@ async function runOneTask(
   // orchestrator re-briefs against the cause, not just the count.
   let stall: string | undefined;
   const maybeHandBack = (): void => {
-    if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted) return;
+    if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted)
+      return;
     if (stepsFinished < HAND_BACK_MIN_COMPLETED_STEPS) return;
     const pastHalfTime = Date.now() - startedAt >= halfTimeMs;
     // The step half needs a stalled worker, not merely a busy one at
     // half its budget; the time half fires as before.
     const stalled = detectStall(steps);
-    const pastHalfSteps = stepsFinished >= stepThreshold && stalled !== undefined;
+    const pastHalfSteps =
+      stepsFinished >= stepThreshold && stalled !== undefined;
     if (!pastHalfSteps && !pastHalfTime) return;
     stall = stalled;
-    handBack.abort(new Error("handed back early: no file written by half the budget"));
+    handBack.abort(
+      new Error("handed back early: no file written by half the budget"),
+    );
   };
   const handedBack = (): boolean =>
     handBack.signal.aborted && !options.signal.aborted && !timeLimit.aborted;
@@ -849,7 +859,10 @@ async function runOneTask(
       deps.workingDir,
       startedAt,
     );
-    result = applyNoChangesRule(applyDeclaredFileReport(result, report), report);
+    result = applyNoChangesRule(
+      applyDeclaredFileReport(result, report),
+      report,
+    );
   }
 
   // Keep the feed paired: a turn that died before it ever stepped never

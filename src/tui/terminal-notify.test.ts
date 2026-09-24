@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   emitTerminalNotification,
+  escapeAppleScript,
   formatTurnNotification,
   sanitizeNotificationText,
   shouldNotify,
@@ -128,5 +129,20 @@ describe("emitTerminalNotification", () => {
         { title: "t", body: "b" },
       ),
     ).not.toThrow();
+  });
+});
+
+describe("escapeAppleScript", () => {
+  it("closes the two holes an AppleScript literal has", () => {
+    // The body carries a turn's failure reason, which is
+    // model-adjacent text. An unescaped quote ends the literal and the
+    // rest of the sentence becomes AppleScript.
+    expect(escapeAppleScript('say "hi"')).toBe('say \\"hi\\"');
+    expect(escapeAppleScript("back\\slash")).toBe("back\\\\slash");
+  });
+
+  it("escapes the backslash before the quote, not after", () => {
+    // The wrong order turns an escaped quote back into a bare one.
+    expect(escapeAppleScript('a\\"b')).toBe('a\\\\\\"b');
   });
 });

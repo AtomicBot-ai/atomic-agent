@@ -120,7 +120,9 @@ describe("PromptShell", () => {
     // The bar is where Send used to live; the readout owns that end now.
     expect(lines[5] ?? "").not.toContain("send");
     // The readout keeps its full gauge; the model name is what gives.
-    expect(lines[5] ?? "").toContain("context [======= ] 115.3k/131.1k");
+    // The pair is the transcript against its cap — the number that
+    // moves — with the window trailing it as a fact.
+    expect(lines[5] ?? "").toContain("28.1k/32k cap");
     unmount();
   });
 

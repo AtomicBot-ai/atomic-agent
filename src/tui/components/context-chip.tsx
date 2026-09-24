@@ -123,16 +123,25 @@ export function ContextChip({
  * *is there room for what I am about to send, and has anything already
  * been forgotten?*
  *
- * So: `39.9k/48k`, prompt against the model's real window, gauged.
+ * So: `11.5k/32k cap · 128k window` — the transcript against the
+ * ceiling it is packed to, and the window beside it as a fact rather
+ * than as the scale.
+ *
+ * It used to gauge the prompt against the window whenever a window was
+ * known, which is the thing the paragraph above says is wrong, and the
+ * transcript branch was only reached when no window existed. On a 128k
+ * model that put the bar at 16% and left it there: it never moved, it
+ * never warned, and the first the operator knew about losing history
+ * was the "N tasks lost" suffix appearing after the fact.
+ *
  * Where turns have already been dropped the chip says so in words,
  * because that is the moment the agent stops knowing things it knew a
  * minute ago and the answers start quietly getting worse. A colour
  * alone was never going to carry that.
  *
- * With no window known — a cloud model nobody published a length for —
- * it falls back to the transcript gauge, which is the only scale that
- * still exists. A bar drawn against a window nobody knows would be a
- * fabrication.
+ * With no cap known — nothing has been built yet — it falls back to the
+ * bare total, which is the only scale that still exists. A bar drawn
+ * against a scale nobody knows would be a fabrication.
  */
 export function chipBody(usage: ContextUsageView): string {
   // Tasks, not rows. "12 lost" says nothing about how far back the agent
@@ -146,21 +155,31 @@ export function chipBody(usage: ContextUsageView): string {
         : "";
   const tasks =
     usage.pairsCap > 0 ? `${usage.pairs}/${usage.pairsCap} tasks · ` : "";
-  if (usage.contextWindow !== null && usage.percent !== null) {
-    return `[${renderProgressBar(usage.percent, GAUGE_WIDTH)}] ${tasks}${pair(
-      usage.tokens,
-      usage.contextWindow,
-    )}${lost}`;
-  }
   if (usage.conversationCap === null || usage.conversationPercent === null) {
     // Nothing has set a scale yet. The total is still worth showing — it
     // is the only number that says whether this session is big.
     return `${formatTokens(usage.tokens)}${lost}`;
   }
+  // The window travels as a fact, not as the gauge. It is worth stating
+  // — it is what an operator checks after switching model, and in
+  // Fusion it is the fastest way to see which leg is serving — but it
+  // is not what the bar is measuring and it no longer looks like it is.
+  // Bare number, no word. The label has to survive a 56-column
+  // composer without wrapping — Ink wraps rather than clips, and a
+  // wrapped meta bar pushes the composer's bottom border down. The
+  // model's name is already on this bar, so " window" was spelling out
+  // what the second figure after a `cap` can only be.
+  const window =
+    usage.contextWindow === null
+      ? ""
+      : ` · ${formatTokens(usage.contextWindow)}`;
   return `[${renderProgressBar(
     usage.conversationPercent,
     GAUGE_WIDTH,
-  )}] ${pair(usage.conversationTokens, usage.conversationCap)} cap${lost}`;
+  )}] ${tasks}${pair(
+    usage.conversationTokens,
+    usage.conversationCap,
+  )} cap${window}${lost}`;
 }
 
 /** The chip's ground: three steps of accent, then violet once trimmed. */
