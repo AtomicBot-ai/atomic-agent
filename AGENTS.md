@@ -507,8 +507,10 @@ There is currently **no per-tool env filtering**. `runCommand` in [src/sandbox/c
 `["duckduckgo"]` fallback. Exa's MCP endpoint answers **keyless** when
 `EXA_API_KEY` is unset, and that keyless tier returns HTTP 429 under sustained
 agent load — a GAIA validation campaign logged 1341 `Exa returned HTTP 429`
-errors, 44% of all tool failures in the run (#179). Two mechanisms keep that
-from silently deciding answer quality:
+errors, 44% of all tool failures in the run (#179). Operators can switch the
+primary to `"anysearch"` (also keyless with optional `ANYSEARCH_API_KEY`; see
+[docs/anysearch.md](docs/anysearch.md)) or add it to `web.search.fallback`.
+Two mechanisms keep Exa rate limits from silently deciding answer quality:
 
 1. **Retry before falling through.** [transport/retry-after.ts](src/tools/os/web-search/transport/retry-after.ts)
    owns the schedule; `searchHttp` retries a 429 against the **same** provider

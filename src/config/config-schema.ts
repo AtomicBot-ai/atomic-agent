@@ -56,7 +56,12 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
-export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+export type WebSearchProviderName =
+  | "duckduckgo"
+  | "searxng"
+  | "exa"
+  | "brave"
+  | "anysearch";
 
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
@@ -147,6 +152,14 @@ export interface WebSearchConfig {
   };
   brave: {
     apiKeyEnv: string;
+  };
+  anysearch: {
+    endpoint: string;
+    apiKeyEnv: string;
+    /** Optional default region for AnySearch (`cn` | `intl`). */
+    zone: string | null;
+    /** Optional default language hint for AnySearch. */
+    language: string | null;
   };
 }
 
@@ -2711,6 +2724,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       brave: {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
+      anysearch: {
+        endpoint: "https://api.anysearch.com/v1/search",
+        apiKeyEnv: "ANYSEARCH_API_KEY",
+        zone: null,
+        language: null,
+      },
     },
     fetch: {
       timeoutMs: 30_000,
@@ -3161,13 +3180,22 @@ export function parseWebSearchProviderName(
     raw === "duckduckgo" ||
     raw === "searxng" ||
     raw === "exa" ||
-    raw === "brave"
+    raw === "brave" ||
+    raw === "anysearch"
   ) {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+    `expected one of duckduckgo|searxng|exa|brave|anysearch, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseAnySearchZone(raw: unknown, field: string): string {
+  if (raw === "cn" || raw === "intl") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of cn|intl, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -4447,6 +4475,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (webSearch.exa as Record<string, unknown> | undefined) ?? {};
   const webSearchBrave =
     (webSearch.brave as Record<string, unknown> | undefined) ?? {};
+  const webSearchAnysearch =
+    (webSearch.anysearch as Record<string, unknown> | undefined) ?? {};
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
@@ -4826,6 +4856,36 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
               USER_CONFIG_DEFAULTS.web.search.brave.apiKeyEnv,
             "web.search.brave.apiKeyEnv",
           ),
+        },
+        anysearch: {
+          endpoint: parseNonEmptyString(
+            webSearchAnysearch.endpoint ??
+              USER_CONFIG_DEFAULTS.web.search.anysearch.endpoint,
+            "web.search.anysearch.endpoint",
+          ),
+          apiKeyEnv: parseNonEmptyString(
+            webSearchAnysearch.apiKeyEnv ??
+              USER_CONFIG_DEFAULTS.web.search.anysearch.apiKeyEnv,
+            "web.search.anysearch.apiKeyEnv",
+          ),
+          zone:
+            webSearchAnysearch.zone === null ||
+            webSearchAnysearch.zone === undefined ||
+            webSearchAnysearch.zone === ""
+              ? null
+              : parseAnySearchZone(
+                  webSearchAnysearch.zone,
+                  "web.search.anysearch.zone",
+                ),
+          language:
+            webSearchAnysearch.language === null ||
+            webSearchAnysearch.language === undefined ||
+            webSearchAnysearch.language === ""
+              ? null
+              : parseNonEmptyString(
+                  webSearchAnysearch.language,
+                  "web.search.anysearch.language",
+                ),
         },
       },
       fetch: {

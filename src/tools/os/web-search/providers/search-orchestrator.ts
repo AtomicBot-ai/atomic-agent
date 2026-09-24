@@ -1,6 +1,7 @@
 import type { AtomicAgentConfig } from "../../../../config/index.js";
 import {
   buildSearchCacheKey,
+  buildSearchCacheExtras,
   type SearchCache,
 } from "../transport/search-cache.js";
 import {
@@ -52,6 +53,12 @@ export interface WebSearchOrchestratorResult {
    * can see is not a degradation anybody fixes.
    */
   degraded: readonly string[];
+  /**
+   * Upstream diagnostic id when the serving provider exposes one
+   * (AnySearch `request_id`). Absent on cache hits and non-AnySearch
+   * providers.
+   */
+  requestId?: string;
 }
 
 /**
@@ -91,6 +98,7 @@ export async function runWebSearchWithFallback(
       name,
       input.options.query,
       input.options.maxResults,
+      buildSearchCacheExtras(input.options),
     );
     const cached = input.cache?.get(cacheKey);
     if (cached) {
@@ -115,16 +123,24 @@ export async function runWebSearchWithFallback(
 
     const provider = resolveProviderByName(name, input.config, input.deps);
     try {
-      const results = await provider.search(input.options);
+      const outcome = await provider.search(input.options);
+      const { results, requestId } = outcome;
       input.cache?.set(cacheKey, results);
       // It answered, so whatever it was parked for is over. Clearing
       // the strike count here is what keeps the escalation honest: the
       // ladder measures *consecutive* failures, not lifetime ones.
       cooldown?.clear(name);
+      const shaped: WebSearchOrchestratorResult = {
+        results,
+        provider: name,
+        fromCache: false,
+        degraded,
+        ...(requestId ? { requestId } : {}),
+      };
       if (results.length > 0) {
-        return { results, provider: name, fromCache: false, degraded };
+        return shaped;
       }
-      lastEmpty = { results, provider: name, fromCache: false, degraded };
+      lastEmpty = shaped;
     } catch (err) {
       if (firstError === undefined) firstError = err;
       if (err instanceof WebSearchRateLimitedError && cooldown) {
@@ -164,7 +180,8 @@ function buildProviderChain(
 
 /**
  * `searxng` needs an `instanceUrl`; `brave` needs its API key in the env.
- * `duckduckgo` and `exa` are always attempted (Exa has a keyless MCP path).
+ * `duckduckgo`, `exa`, and `anysearch` are always attempted (Exa and
+ * AnySearch both have a keyless path).
  */
 function isProviderUsable(
   name: WebSearchProviderName,
@@ -181,6 +198,7 @@ function isProviderUsable(
     }
     case "duckduckgo":
     case "exa":
+    case "anysearch":
       return true;
   }
 }
