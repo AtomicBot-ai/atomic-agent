@@ -189,8 +189,11 @@ Response: `HTTP 200`, `code: 0`, `request_id: ccff0b26-1ab4-4645-9ffd-27d6640281
 ### Guide checklist notes
 
 - Empty result vs error: non-zero `code` throws (keeps `request_id` in the message); empty `data.results` returns `[]`.
+- Success path: `request_id` is forwarded into the tool summary (`[search] request_id: …`) and `details.requestId` (guide §4 extension — diagnostic entry).
 - Keyless path confirmed: no `Authorization` header on either call.
+- Client header: `X-Anysearch-Client: atomic-agent/web-search@<version>`.
 - Appendix verticals: protocol-level passthrough via `tag`/`params`; live smoke covers general + `code.doc` only — other sub-domains are **未验证 / 本次不逐源验收**.
+- Skill (`starter-skills/anysearch` v1.2.0): Path 2 vertical-first + HYBRID batch, `/v1/domains` + `/v1/sub-domains` discovery.
 
 ## Tests
 
@@ -222,4 +225,5 @@ Official acceptance bar (GitHub, not email):
 - [x] Vertical domain search (tool args + discovery)
 - [x] Parallel batch (`batch-search.js`)
 - [x] Extract
+- [x] Success-path `request_id` on tool result (summary + `details.requestId`)
 - [x] Markdown maintenance doc

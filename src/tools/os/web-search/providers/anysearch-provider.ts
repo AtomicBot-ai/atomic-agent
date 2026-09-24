@@ -1,3 +1,4 @@
+import { getAppVersion } from "../../../../version.js";
 import { assertProviderStatus } from "./assert-provider-status.js";
 import { searchHttp } from "../transport/search-http.js";
 import { WebSearchRateLimitedError } from "../web-search-errors.js";
@@ -5,6 +6,7 @@ import type {
   WebSearchHttpDeps,
   WebSearchProvider,
   WebSearchProviderOptions,
+  WebSearchProviderOutcome,
   WebSearchResult,
 } from "../web-search-provider.js";
 
@@ -35,7 +37,8 @@ interface AnySearchResult {
   content?: unknown;
 }
 
-const CLIENT_HEADER = "atomic-agent/web-search";
+/** Stable product id; version is resolved per request for the client header. */
+const CLIENT_PRODUCT = "atomic-agent/web-search";
 
 /**
  * AnySearch general-web provider for `os.web.search`.
@@ -58,7 +61,7 @@ export function createAnySearchProvider(
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "X-Anysearch-Client": CLIENT_HEADER,
+        "X-Anysearch-Client": `${CLIENT_PRODUCT}@${getAppVersion()}`,
       };
       if (apiKey) {
         headers.Authorization = `Bearer ${apiKey}`;
@@ -89,6 +92,18 @@ export function createAnySearchProvider(
         );
       }
 
+      // Auth failures are deterministic — a clearer message than the
+      // generic HTTP 401 from assertProviderStatus, and still carries
+      // request_id when the body has one.
+      if (response.status === 401) {
+        throw new Error(
+          redactSecrets(
+            `AnySearch returned HTTP 401 (invalid or revoked API key)${requestIdSuffix(response.body)}`,
+            apiKey,
+          ),
+        );
+      }
+
       try {
         assertProviderStatus(response, "anysearch", "AnySearch");
       } catch (err) {
@@ -104,7 +119,7 @@ export function createAnySearchProvider(
         throw new Error(redactSecrets((err as Error).message, apiKey));
       }
       try {
-        return parseAnySearchJson(response.body, options.maxResults);
+        return parseAnySearchResponse(response.body, options.maxResults);
       } catch (err) {
         throw new Error(redactSecrets((err as Error).message, apiKey));
       }
@@ -134,29 +149,37 @@ export function buildSearchBody(
   return body;
 }
 
-export function parseAnySearchJson(
+/**
+ * Parse an AnySearch JSON body into results + optional `request_id`.
+ * Prefer this over {@link parseAnySearchJson} when the caller needs the
+ * diagnostic id (tool details / operator support).
+ */
+export function parseAnySearchResponse(
   body: string,
   maxResults: number,
-): WebSearchResult[] {
+): WebSearchProviderOutcome {
   let parsed: AnySearchEnvelope;
   try {
     parsed = JSON.parse(body) as AnySearchEnvelope;
   } catch {
     throw new Error("AnySearch returned invalid JSON");
   }
+  const requestId =
+    typeof parsed.request_id === "string" && parsed.request_id.trim()
+      ? parsed.request_id.trim()
+      : undefined;
   if (parsed.code !== undefined && parsed.code !== 0) {
     const message =
       typeof parsed.message === "string" && parsed.message.trim()
         ? parsed.message.trim()
         : `AnySearch returned code ${String(parsed.code)}`;
-    const suffix =
-      typeof parsed.request_id === "string" && parsed.request_id
-        ? ` (request_id: ${parsed.request_id})`
-        : "";
+    const suffix = requestId ? ` (request_id: ${requestId})` : "";
     throw new Error(`${message}${suffix}`);
   }
   const rawResults = parsed.data?.results;
-  if (!Array.isArray(rawResults)) return [];
+  if (!Array.isArray(rawResults)) {
+    return requestId ? { results: [], requestId } : { results: [] };
+  }
   const results: WebSearchResult[] = [];
   for (const raw of rawResults as AnySearchResult[]) {
     if (typeof raw.title !== "string" || typeof raw.url !== "string") continue;
@@ -170,7 +193,15 @@ export function parseAnySearchJson(
     });
     if (results.length >= maxResults) break;
   }
-  return results;
+  return requestId ? { results, requestId } : { results };
+}
+
+/** @deprecated Prefer {@link parseAnySearchResponse}; kept for callers that only need the list. */
+export function parseAnySearchJson(
+  body: string,
+  maxResults: number,
+): WebSearchResult[] {
+  return parseAnySearchResponse(body, maxResults).results;
 }
 
 /**

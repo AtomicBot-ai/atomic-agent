@@ -15,6 +15,17 @@ export interface WebSearchResult {
   published?: string;
 }
 
+/**
+ * What a provider returns from one search attempt. `requestId` is the
+ * upstream diagnostic id when the service exposes one (AnySearch
+ * `request_id`) — surfaced on the tool result so operators can quote it
+ * without digging through raw HTTP logs.
+ */
+export interface WebSearchProviderOutcome {
+  results: WebSearchResult[];
+  requestId?: string;
+}
+
 export interface WebSearchProviderOptions {
   query: string;
   maxResults: number;
@@ -36,7 +47,7 @@ export interface WebSearchProviderOptions {
 
 export interface WebSearchProvider {
   readonly name: WebSearchProviderName;
-  search(options: WebSearchProviderOptions): Promise<WebSearchResult[]>;
+  search(options: WebSearchProviderOptions): Promise<WebSearchProviderOutcome>;
 }
 
 export interface WebSearchHttpDeps {

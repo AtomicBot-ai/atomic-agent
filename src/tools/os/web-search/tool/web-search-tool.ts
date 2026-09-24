@@ -140,13 +140,16 @@ export function buildOsWebSearchTool(
             tool: TOOL_NAME,
             status: "ok",
             output:
-              renderNotes(outcome.degraded) + renderResults(outcome.results),
+              renderNotes(outcome.degraded) +
+              renderRequestId(outcome.requestId) +
+              renderResults(outcome.results),
             details: {
               provider: outcome.provider,
               fromCache: outcome.fromCache,
               query: args.query,
               results: outcome.results,
               ...(args.tag ? { tag: args.tag } : {}),
+              ...(outcome.requestId ? { requestId: outcome.requestId } : {}),
               ...(outcome.degraded.length > 0
                 ? { degraded: outcome.degraded }
                 : {}),
@@ -248,6 +251,12 @@ function parseParams(
 function renderNotes(degraded: readonly string[]): string {
   if (degraded.length === 0) return "";
   return `${degraded.map((note) => `[search] ${note}`).join("\n")}\n\n`;
+}
+
+/** Diagnostic line for AnySearch (and peers that expose a request id). */
+function renderRequestId(requestId: string | undefined): string {
+  if (!requestId) return "";
+  return `[search] request_id: ${requestId}\n\n`;
 }
 
 function renderResults(results: readonly WebSearchResult[]): string {

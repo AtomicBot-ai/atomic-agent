@@ -393,11 +393,61 @@ describe("os.web.search AnySearch vertical args", () => {
     expect(result.status).toBe("ok");
     expect(result.details.provider).toBe("anysearch");
     expect(result.details.tag).toBe("code.doc");
+    expect(result.details.requestId).toBeUndefined();
     expect(calls[0]?.input).toContain('"tag":"code.doc"');
     expect(calls[0]?.input).toContain('"library":"golang"');
     expect(calls[0]?.input).toContain('"zone":"intl"');
     expect(calls[0]?.input).toContain('"language":"en"');
     expect(calls[0]?.input).toContain('"max_results":3');
+  });
+
+  it("exposes AnySearch request_id in the tool summary and details", async () => {
+    const runCommand = (async () => ({
+      command: "curl",
+      args: [],
+      exitCode: 0,
+      signal: null,
+      stdout: curlStdout(
+        JSON.stringify({
+          code: 0,
+          request_id: "rid-tool",
+          data: {
+            results: [
+              {
+                title: "Go docs",
+                url: "https://go.dev/doc",
+                snippet: "context",
+              },
+            ],
+          },
+        }),
+        200,
+      ),
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      truncated: false,
+    })) as unknown as typeof RunCommandType;
+
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({
+        provider: "anysearch",
+        fallback: [],
+      }),
+      runCommand,
+      lookup: publicLookup,
+      env: {},
+      warn: () => undefined,
+    });
+
+    const result = await tool.run(
+      { query: "Go context", maxResults: 3 },
+      makeCtx(),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.details.requestId).toBe("rid-tool");
+    expect(result.summary).toContain("request_id: rid-tool");
   });
 
   it("accepts params as a JSON object string (strict tool schema form)", async () => {

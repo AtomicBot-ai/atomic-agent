@@ -6,6 +6,7 @@ import {
   buildSearchBody,
   createAnySearchProvider,
   parseAnySearchJson,
+  parseAnySearchResponse,
   redactSecrets,
   sanitizeResultUrl,
 } from "./anysearch-provider.js";
@@ -30,6 +31,7 @@ describe("parseAnySearchJson", () => {
     const body = JSON.stringify({
       code: 0,
       message: "success",
+      request_id: "rid-ok",
       data: {
         results: [
           {
@@ -54,6 +56,7 @@ describe("parseAnySearchJson", () => {
         snippet: "Introduction to the changes in Go 1.26.",
       },
     ]);
+    expect(parseAnySearchResponse(body, 5).requestId).toBe("rid-ok");
   });
 
   it("falls back to content when snippet is absent", () => {
@@ -218,10 +221,10 @@ describe("createAnySearchProvider", () => {
         signal: new AbortController().signal,
       });
 
-      expect(results[0]?.title).toBe("A");
+      expect(results.results[0]?.title).toBe("A");
       expect(calls[0]?.args).toContain("https://api.anysearch.com/v1/search");
-      expect(calls[0]?.args.join("\n")).toContain(
-        "X-Anysearch-Client: atomic-agent/web-search",
+      expect(calls[0]?.args.join("\n")).toMatch(
+        /X-Anysearch-Client: atomic-agent\/web-search@/,
       );
       expect(calls[0]?.args.join("\n")).not.toContain("Authorization:");
       expect(calls[0]?.input).toContain('"query":"atomic agent"');
@@ -230,6 +233,83 @@ describe("createAnySearchProvider", () => {
       if (previous === undefined) delete process.env.ANYSEARCH_API_KEY;
       else process.env.ANYSEARCH_API_KEY = previous;
     }
+  });
+
+  it("surfaces request_id on a successful response", async () => {
+    const runCommand = (async () => ({
+      command: "curl",
+      args: [],
+      exitCode: 0,
+      signal: null,
+      stdout: curlStdout(
+        JSON.stringify({
+          code: 0,
+          request_id: "rid-success",
+          data: {
+            results: [
+              {
+                title: "A",
+                url: "https://example.com",
+                snippet: "S",
+              },
+            ],
+          },
+        }),
+      ),
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      truncated: false,
+    })) as unknown as typeof RunCommandType;
+
+    const provider = createAnySearchProvider(defaultConfig, {
+      runCommand,
+      lookup: publicLookup,
+    });
+    const outcome = await provider.search({
+      query: "q",
+      maxResults: 1,
+      timeoutMs: 10_000,
+      cwd: "/tmp",
+      signal: new AbortController().signal,
+    });
+    expect(outcome.requestId).toBe("rid-success");
+    expect(outcome.results).toHaveLength(1);
+  });
+
+  it("maps HTTP 401 to a clear auth error with request_id", async () => {
+    const runCommand = (async () => ({
+      command: "curl",
+      args: [],
+      exitCode: 0,
+      signal: null,
+      stdout: curlStdout(
+        JSON.stringify({
+          code: -1,
+          message: "unauthorized",
+          request_id: "rid-401",
+        }),
+        401,
+      ),
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      truncated: false,
+    })) as unknown as typeof RunCommandType;
+
+    const provider = createAnySearchProvider(defaultConfig, {
+      runCommand,
+      lookup: publicLookup,
+    });
+    await expect(
+      provider.search({
+        query: "q",
+        maxResults: 1,
+        timeoutMs: 10_000,
+        cwd: "/tmp",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/HTTP 401.*invalid or revoked.*request_id: rid-401/);
   });
 
   it("attaches Bearer auth and vertical fields when configured", async () => {

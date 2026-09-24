@@ -4,6 +4,7 @@ export type {
   WebSearchProvider,
   WebSearchProviderName,
   WebSearchProviderOptions,
+  WebSearchProviderOutcome,
   WebSearchResult,
 } from "./web-search-provider.js";
 export { WebSearchBlockedError } from "./web-search-errors.js";

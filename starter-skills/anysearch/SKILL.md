@@ -1,7 +1,7 @@
 ---
 name: anysearch
 description: "AnySearch vertical discovery, parallel batch search, and URL extract. Everyday search: os.web.search with provider anysearch (supports tag/params)."
-version: 1.1.1
+version: 1.2.0
 requires_tools:
   - os.http.request
   - os.shell.run
@@ -23,7 +23,8 @@ routing (17 domains), parallel batch search, and full-page URL extraction.
 | Need | Use |
 |---|---|
 | Everyday / vertical search | `os.web.search` with `web.search.provider = "anysearch"` (supports `tag`, `params`, `zone`, `language`) |
-| Discover vertical capabilities | This skill → `GET /v1/sub-domains` |
+| List domains | This skill → `GET /v1/domains` |
+| Discover vertical tags + params | This skill → `GET /v1/sub-domains` |
 | True parallel batch (2–5 queries) | `skill.run_script` → `batch-search.js` |
 | Clean page Markdown | This skill → `POST /v1/extract` (or `os.web.fetch` for local SSRF-safe fetch) |
 
@@ -31,6 +32,22 @@ Base URL: `https://api.anysearch.com`. API key **optional** (anonymous works;
 set `ANYSEARCH_API_KEY` in `~/.atomic-agent/.env` for higher limits). Prefer
 `os.http.request` for skill HTTP; if `http.hostAllowlist` is not `null`, it
 must include `api.anysearch.com` (same rule as `currency` / `wttr-weather`).
+
+## Search path (official skill alignment)
+
+**Default is Path 2 — vertical.** For queries that belong to or overlap a
+supported domain (finance, academic, travel, health, code, legal, gaming,
+film, business, security, ip, energy, environment, agriculture, resource,
+social_media):
+
+1. Call `/v1/sub-domains` (optionally after `/v1/domains` when unsure which
+   domain applies).
+2. Search with `os.web.search` using the discovered `tag` + every `(required)`
+   param (empty string when unknown).
+
+Pure encyclopedia queries with **zero** domain overlap are the rare Path 1
+exception (plain `query` only). When unsure, use **HYBRID**: `batch-search.js`
+with 1 general query + N vertical queries in parallel — coverage beats guessing.
 
 ## Everyday + vertical search via `os.web.search`
 
@@ -40,7 +57,7 @@ After the operator sets `provider: "anysearch"` (or adds it to `fallback`):
 [{ "tool": "os.web.search", "args": { "query": "Go 1.26 release notes", "maxResults": 5 } }]
 ```
 
-Vertical (OpenClaw / Hermes style) — discover first, then route:
+Vertical (OpenClaw / Hermes / official skill style) — discover first, then route:
 
 ```
 [{ "tool": "os.web.search", "args": {
@@ -55,7 +72,9 @@ Vertical (OpenClaw / Hermes style) — discover first, then route:
 `params` is a **JSON object string** (strict tool schemas cannot accept open maps).
 `zone` is `"cn"` or `"intl"`. Config defaults: `web.search.anysearch.zone` /
 `language`. A key alone does **not** select the provider — set `provider`
-explicitly (same rule as OpenClaw).
+explicitly (same rule as OpenClaw). Successful AnySearch answers expose
+`request_id` in the tool summary (`[search] request_id: …`) and
+`details.requestId` for support tickets.
 
 ## Vertical discovery (required before inventing tags)
 
@@ -70,16 +89,27 @@ Supported domains include: `finance`, `academic`, `legal`, `health`,
   "tool": "os.http.request",
   "args": {
     "method": "GET",
+    "url": "https://api.anysearch.com/v1/domains",
+    "headers": { "X-Anysearch-Client": "atomic-agent/skill" }
+  }
+}]
+```
+
+```
+[{
+  "tool": "os.http.request",
+  "args": {
+    "method": "GET",
     "url": "https://api.anysearch.com/v1/sub-domains?domain=code",
     "headers": { "X-Anysearch-Client": "atomic-agent/skill" }
   }
 }]
 ```
 
-Batch up to five domains by repeating `domain=`. Empty `data.domains` means
-no match — **do not invent** tags or params. Pass every `(required)` param
-(use `""` when unknown). On HTTP 400 for a tagged search, re-run discovery
-and fix `tag`/`params` before retrying.
+Batch up to five domains by repeating `domain=` on `/v1/sub-domains`. Empty
+`data.domains` means no match — **do not invent** tags or params. Pass every
+`(required)` param (use `""` when unknown). On HTTP 400 for a tagged search,
+re-run discovery and fix `tag`/`params` before retrying.
 
 ## Parallel batch search
 
@@ -146,6 +176,7 @@ Add `Authorization: Bearer …` only when keyed. Tools appear as `mcp.anysearch.
 ## Rules
 
 1. Prefer `os.web.search` for search (including vertical once discovered).
-2. Call `/v1/sub-domains` before inventing any `tag`.
-3. Use `batch-search.js` for true parallel multi-query; keep HTTP calls solo.
+2. Prefer Path 2 (vertical); call `/v1/domains` and/or `/v1/sub-domains`
+   before inventing any `tag`.
+3. Use `batch-search.js` for true parallel multi-query / HYBRID; keep HTTP calls solo.
 4. Never log secrets; cite source URLs when summarising.

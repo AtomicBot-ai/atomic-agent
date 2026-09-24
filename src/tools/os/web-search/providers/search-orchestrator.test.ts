@@ -11,6 +11,7 @@ import {
 import type {
   WebSearchProviderName,
   WebSearchProviderOptions,
+  WebSearchProviderOutcome,
   WebSearchResult,
 } from "../web-search-provider.js";
 
@@ -78,9 +79,15 @@ import { resolveProviderByName } from "./provider-registry.js";
 
 function stubProvider(
   name: WebSearchProviderName,
-  impl: () => Promise<WebSearchResult[]>,
+  impl: () => Promise<WebSearchResult[] | WebSearchProviderOutcome>,
 ) {
-  return { name, search: vi.fn(impl) };
+  return {
+    name,
+    search: vi.fn(async () => {
+      const out = await impl();
+      return Array.isArray(out) ? { results: out } : out;
+    }),
+  };
 }
 
 describe("runWebSearchWithFallback", () => {
@@ -221,7 +228,7 @@ describe("runWebSearchWithFallback", () => {
  * burst: 1341 429s spread evenly across 24 hours, 8-20 an hour, not
  * tracking concurrency. Against a standing quota, every search paid for
  * three doomed requests and ~1.5s of backoff before reaching the
- * provider that was always going to answer it ‚Ä?and the answer, coming
+ * provider that was always going to answer it ù?and the answer, coming
  * from the weaker fallback, looked exactly like a normal one.
  */
 describe("a provider under a standing rate limit", () => {
@@ -297,7 +304,7 @@ describe("a provider under a standing rate limit", () => {
 
   it("says out loud that the answer came from the fallback", async () => {
     // The other half of #179: the chain worked, so nothing failed, so
-    // nothing was reported ‚Ä?and a whole campaign was quietly served by
+    // nothing was reported ù?and a whole campaign was quietly served by
     // the weaker provider.
     const {} = limitedThenFallback();
     const cooldown = createProviderCooldown();

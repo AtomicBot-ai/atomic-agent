@@ -48,7 +48,7 @@ export function createBraveProvider(
         lookup: deps.lookup,
       });
       assertProviderStatus(response, "brave", "Brave search");
-      return parseBraveJson(response.body, options.maxResults);
+      return { results: parseBraveJson(response.body, options.maxResults) };
     },
   };
 }
