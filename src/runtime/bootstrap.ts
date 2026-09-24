@@ -200,6 +200,11 @@ import {
   type ContextUsageState,
   type FusionWorkerMeta,
   SESSION_LLM_METADATA_KEY,
+  SESSION_TITLE_METADATA_KEY,
+  SESSION_TITLE_TIMEOUT_MS,
+  generateSessionTitle,
+  readSessionTitle,
+  shouldNameSession,
   type SessionLlmStamp,
   type SessionState,
 } from "../session/index.js";
@@ -2926,6 +2931,63 @@ export async function createAgentRuntime(
     }
   };
 
+  /**
+   * Ask the model for a short name and store it on the session.
+   *
+   * Re-reads and re-saves through the store rather than writing the
+   * `finished` object it was handed: the call takes a second or two and
+   * the next turn may already have saved over it, so the read-modify-
+   * write has to happen when the answer arrives, not before.
+   */
+  const nameSession = async (state: SessionState): Promise<void> => {
+    // Its own deadline: the turn is over, nothing is waiting on this,
+    // and a naming call that hangs must not hold a slot for the next
+    // turn to queue behind.
+    const abort = new AbortController();
+    const timer = setTimeout(
+      () => abort.abort(),
+      SESSION_TITLE_TIMEOUT_MS,
+    ).unref?.();
+    void timer;
+    const title = await generateSessionTitle(state, {
+      complete: async (params: {
+        prompt: string;
+        sessionId: string;
+        slotId: number;
+      }) => {
+        const result = await llmComplete({
+          prompt: params.prompt,
+          // No grammar: a title is one line of prose, and the free-text
+          // shape is what every link renders without a GBNF prelude.
+          grammar: "",
+          slotId: params.slotId,
+          sessionId: params.sessionId,
+          signal: abort.signal,
+        });
+        return { content: result.content };
+      },
+      slotId: () => slotManager.sideCallSlotId(),
+      onError: (err: unknown) =>
+        logger.debug("session naming failed", {
+          sessionId: state.id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+    });
+    if (title === null) return;
+    const current = sessionStore.load(state.id) ?? state;
+    // Lost the race, or someone named it in between: the first name
+    // wins, because a label the operator has already navigated by must
+    // not move.
+    if (readSessionTitle(current.metadata) !== null) return;
+    sessionStore.save({
+      ...current,
+      metadata: {
+        ...current.metadata,
+        [SESSION_TITLE_METADATA_KEY]: title,
+      },
+    });
+  };
+
   const executeTurn = async (
     session: SessionState,
     userMessage: string,
@@ -3027,6 +3089,14 @@ export async function createAgentRuntime(
           },
         };
         sessionStore.save(finished);
+        // Name the thread once, from its first prompt, after the first
+        // turn that actually answered. Fire-and-forget on purpose: the
+        // turn is already saved and already returned, and an unnamed
+        // session simply keeps showing its prompt — which is what every
+        // session showed before. It must never delay or fail a reply.
+        if (getConfig().agent.nameSessions && shouldNameSession(finished)) {
+          void nameSession(finished);
+        }
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };

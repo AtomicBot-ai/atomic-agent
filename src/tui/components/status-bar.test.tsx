@@ -64,7 +64,10 @@ describe("StatusBar", () => {
   it("draws no title when the session has no readable preview", () => {
     const rows = rowsOf(stateWithPreview("   \n\n  "));
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toContain("session ");
+    // The session id left the bar with the `RUN` badge: it is a lookup
+    // key for a log, not something to read at a glance. What has to
+    // stay true is that an unnamed session draws no title separator.
+    expect(rows[0]).not.toContain("session ");
     expect(rows[0]).not.toContain("·");
   });
 });

@@ -57,7 +57,7 @@ describe("Esc on the Import tab", () => {
     // The configure-mode handler ends in a catch-all `return true` that
     // swallows stray letters; before the fix it swallowed Esc too, so the
     // operator was stuck on the tab with no "back" gesture at all.
-    expect(strip(lastFrame() ?? "")).toContain("R U N");
+    expect(strip(lastFrame() ?? "")).toContain("☰ Menu");
     expect(quit).toBe(0);
     unmount();
   });

@@ -71,3 +71,16 @@ export {
   isFusionWorkerSessionId,
 } from "./fusion-worker-session.js";
 export type { FusionWorkerMeta } from "./fusion-worker-session.js";
+export {
+  SESSION_TITLE_MAX_CHARS,
+  SESSION_TITLE_METADATA_KEY,
+  SESSION_TITLE_SESSION_PREFIX,
+  SESSION_TITLE_TIMEOUT_MS,
+  buildSessionTitlePrompt,
+  firstPromptOf,
+  generateSessionTitle,
+  readSessionTitle,
+  sanitizeSessionTitle,
+  shouldNameSession,
+  type SessionTitleDeps,
+} from "./session-title.js";

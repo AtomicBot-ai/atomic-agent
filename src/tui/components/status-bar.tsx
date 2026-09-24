@@ -97,7 +97,16 @@ export function StatusBar({
     : null;
   return (
     <Box {...(width ? { width } : {})}>
-      {railRestore ? <RailRestoreButton /> : null}
+      {railRestore ? (
+        <>
+          <RailRestoreButton />
+          {/* With the rail folded away its `+ new` folds away too, and
+              starting a thread then needed a slash command or unfolding
+              first. The header carries the controls that survive the
+              fold: menu, new, and the name of what you are in. */}
+          <NewSessionButton />
+        </>
+      ) : null}
       {brand ? (
         <>
           <Text color={theme.colors.accentSoft} bold>
@@ -108,7 +117,6 @@ export function StatusBar({
         </>
       ) : null}
       <Breadcrumb state={state} section={section} />
-      <SessionTag sessionId={state.session.sessionId} />
       {state.localModelsPanel.pull ? (
         <DownloadChip
           pull={state.localModelsPanel.pull}
@@ -236,9 +244,24 @@ function Breadcrumb({
     state.uiMode === "debug"
       ? menuPlaceByTab(state.activeTab)?.label
       : undefined;
+  // On the chat surface the breadcrumb said `RUN` — a place nobody is
+  // confused about being in, sitting where the session's own name now
+  // goes. The control itself stays: clicking it is how the menu opens,
+  // and it is the only menu affordance once the rail is folded. So it
+  // keeps the target and loses the word, matching the rail's own
+  // `☰ Menu`. Everywhere else the breadcrumb still says where you are,
+  // which is the one thing the menu cannot tell you without opening it.
+  const onChat = section === "run" && state.uiMode !== "debug";
   const label = (
     <Text>
-      <Chip label={tracked(SECTION_LABELS[section])} tone="badge" />
+      <Chip
+        label={
+          onChat
+            ? `${theme.glyphs.menuGlyph} Menu`
+            : tracked(SECTION_LABELS[section])
+        }
+        tone="badge"
+      />
       {tabLabel ? (
         <Text color={theme.colors.muted}>
           {/* The badge carries its own trailing pad; a second space here
@@ -275,6 +298,33 @@ function Breadcrumb({
  * click brings the rail back; without mouse support the glyph stays as
  * a signpost to `/sidebar`, inert like every other chip.
  */
+/**
+ * The rail's `+ new`, kept reachable while the rail is folded. A copy
+ * rather than a shared component: the two sit on different grounds with
+ * different neighbours, and the only thing they genuinely share is the
+ * callback, which is the part that matters.
+ */
+function NewSessionButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Chip label="+ new" />{" "}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.callbacks.onSessionNewRequested?.();
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
 function RailRestoreButton(): ReactElement {
   const mouse = useMouseCommands();
   const label = (
@@ -296,23 +346,6 @@ function RailRestoreButton(): ReactElement {
   );
 }
 
-interface SessionTagProps {
-  sessionId: string | null;
-}
-
-function SessionTag({ sessionId }: SessionTagProps): ReactElement | null {
-  if (!sessionId) return null;
-  // The design sets this as `session <id>` in plain dim type, with a dot
-  // before the title that follows — no pipe. One separator glyph in the
-  // bar, used once, reads as punctuation; two read as a table.
-  return (
-    <Text>
-      <Text color={theme.colors.muted}>{"   session "}</Text>
-      <Text>{shortenId(sessionId)}</Text>
-    </Text>
-  );
-}
-
 function Sep(): ReactElement {
   return (
     <Text color={theme.colors.muted}>
@@ -321,9 +354,4 @@ function Sep(): ReactElement {
       {"  "}
     </Text>
   );
-}
-
-function shortenId(value: string): string {
-  if (value.length <= 8) return value;
-  return `${value.slice(0, 8)}…`;
 }

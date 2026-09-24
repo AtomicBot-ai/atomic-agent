@@ -771,7 +771,7 @@ describe("createAgentRuntime", () => {
           // session-id partition — do not consume the scripted agent
           // reply queue. (Not keyed on `slotId === -1`: a session's first
           // agent request is a pending `-1` too, F13.)
-          if (/^(rewriter|link|vote|distill):/.test(params.sessionId)) {
+          if (/^(rewriter|link|vote|distill|title):/.test(params.sessionId)) {
             return {
               content: "<rewritten_query>NONE</rewritten_query>\n",
               reasoningContent: "",

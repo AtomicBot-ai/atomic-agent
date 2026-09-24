@@ -95,6 +95,45 @@ export function formatElapsed(ms: number): string {
 }
 
 /**
+ * Correct the orchestrator's estimates by what this fan-out has
+ * actually done.
+ *
+ * The estimate is the cloud model's guess about work a different model
+ * will do on hardware it cannot see, and in the field it came back
+ * consistently optimistic — a task it called two minutes took nineteen.
+ * Nothing here can make the guess better, but the finished legs of the
+ * same wave are direct evidence of how wrong it is, and they are free.
+ *
+ * The median ratio, not the mean: one straggler that ran twenty times
+ * its estimate would otherwise drag every other row with it. Clamped
+ * at 20x because past that the estimate carries no information and a
+ * number with no information should not be shown as if it did — the
+ * caller drops the expectation instead.
+ */
+export const MAX_ETA_CORRECTION = 20;
+
+export function etaCorrection(
+  workers: readonly FusionLiveWorker[],
+): number | null {
+  const ratios: number[] = [];
+  for (const w of workers) {
+    if (!w.done || w.etaSeconds === null || w.finishedAt === null) continue;
+    const actual = (w.finishedAt - w.startedAt) / 1000;
+    if (actual <= 0) continue;
+    ratios.push(actual / w.etaSeconds);
+  }
+  if (ratios.length === 0) return null;
+  ratios.sort((a, b) => a - b);
+  const mid = Math.floor(ratios.length / 2);
+  const median =
+    ratios.length % 2 === 1
+      ? (ratios[mid] as number)
+      : ((ratios[mid - 1] as number) + (ratios[mid] as number)) / 2;
+  if (!Number.isFinite(median) || median <= 0) return null;
+  return Math.min(median, MAX_ETA_CORRECTION);
+}
+
+/**
  * One line per leg: `worker · qwen-3.5-4b — os.fs.read · 42s (~2m expected)`.
  *
  * The estimate is dropped once the leg is done: at that point the
@@ -104,13 +143,37 @@ export function formatElapsed(ms: number): string {
 export function formatFusionLiveWorker(
   worker: FusionLiveWorker,
   now: number = Date.now(),
+  correction: number | null = null,
 ): string {
   const model = worker.model ?? "local";
   const what = worker.done ? "done" : (worker.tool ?? "working");
-  const elapsed = formatElapsed((worker.finishedAt ?? now) - worker.startedAt);
-  const eta =
-    worker.done || worker.etaSeconds === null
-      ? ""
-      : ` (~${formatElapsed(worker.etaSeconds * 1000)} expected)`;
-  return `${worker.title} · ${model} — ${what} · ${elapsed}${eta}`;
+  const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
+  const elapsed = formatElapsed(elapsedMs);
+  return `${worker.title} · ${model} — ${what} · ${elapsed}${describeExpectation(
+    worker,
+    elapsedMs,
+    correction,
+  )}`;
+}
+
+/**
+ * The trailing `(~2m expected)`, corrected and honest about being past.
+ *
+ * Dropped once the leg is done: the elapsed time IS the answer then,
+ * and a guess printed beside a fact only invites checking the guess.
+ * Dropped again once elapsed has passed it, replaced by `over` —
+ * "42s (~2m expected)" at nineteen minutes is not an estimate, it is
+ * the UI insisting on something the operator can see is false.
+ */
+function describeExpectation(
+  worker: FusionLiveWorker,
+  elapsedMs: number,
+  correction: number | null,
+): string {
+  if (worker.done || worker.etaSeconds === null) return "";
+  const expectedMs = worker.etaSeconds * 1000 * (correction ?? 1);
+  if (elapsedMs >= expectedMs) {
+    return ` (past the ~${formatElapsed(expectedMs)} expected)`;
+  }
+  return ` (~${formatElapsed(expectedMs)} expected)`;
 }

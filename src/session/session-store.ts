@@ -43,6 +43,7 @@ SELECT id,
          WHERE t.type = 'object'
            AND json_extract(t.value, '$.kind') = 'user'
          LIMIT 1) AS firstPrompt,
+       json_extract(payload, '$.metadata.title') AS title,
        json_extract(payload, '$.metadata.importedFrom') AS importedFrom
   FROM sessions
  WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
@@ -59,6 +60,7 @@ interface SummaryRow {
   turnCount: unknown;
   stepCount: unknown;
   firstPrompt: unknown;
+  title: unknown;
   importedFrom: unknown;
 }
 
@@ -72,6 +74,7 @@ function toSummary(row: SummaryRow): SessionSummary {
     turnCount: toCount(row.turnCount),
     stepCount: toCount(row.stepCount),
     firstPrompt: toText(row.firstPrompt),
+    title: toText(row.title),
     importedFrom: toText(row.importedFrom),
   };
 }

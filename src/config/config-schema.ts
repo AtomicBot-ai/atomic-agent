@@ -376,6 +376,16 @@ export interface AtomicAgentConfig {
      */
     conversationMaxPairs: number;
     /**
+     * Ask the model to name each session from its first prompt.
+     *
+     * One extra short completion per session, once, after the first
+     * answered turn. It is a real call on a metered provider, which is
+     * the whole reason this is a switch rather than a fact: the lists
+     * are perfectly usable showing the prompt itself, which is what
+     * they showed before.
+     */
+    nameSessions: boolean;
+    /**
      * Share of a limit the transcript drops to when that limit
      * overflows, `(0, 1]`. The cut then holds until the next overflow,
      * so between cuts the prompt only grows at its end and a local
@@ -1687,6 +1697,8 @@ export interface UserConfigFile {
      * limit bites first wins.
      */
     conversationMaxPairs: number;
+    /** Ask the model to name each session (config v72). */
+    nameSessions: boolean;
     /**
      * Share of a limit the transcript keeps after a cut, `(0, 1]`.
      * History is dropped in chunks — down to this share of the token
@@ -2488,11 +2500,15 @@ export interface UserConfigFile {
 // parsed away without a word (issue #466). Additive: an older file has
 // no field, takes the env default, and renders the same prompt. The env
 // var still overrides the file value.
+// v72: `agent.nameSessions` (default true) — one short completion per
+// session names it from its first prompt, so the rail and the header
+// show what the thread is about instead of the raw prompt. Additive: an
+// older file inherits `true`, and turning it off restores the prompt.
 // v71: `tui.notify` (`enabled` true, `minDurationMs` 30_000) — the TUI
 // writes an OSC 9 notification plus a BEL to its own terminal when a
 // turn ends, so an operator who walked away finds out. Additive: an
 // older file has no block and takes the defaults.
-export const USER_CONFIG_VERSION = 71;
+export const USER_CONFIG_VERSION = 72;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2652,6 +2668,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   68,
   69,
   70,
+  71,
   USER_CONFIG_VERSION,
 ];
 
@@ -2725,6 +2742,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // the fixed 32K fallback applies only when no window is known.
     conversationMaxTokens: 0,
     conversationMaxPairs: 200,
+    nameSessions: true,
     conversationLowWater: 0.65,
     worldSnapshotMaxTokens: 8_000,
   },
@@ -4738,6 +4756,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "agent.maxSteps",
       ),
       providerWait: parseProviderWait(agent.providerWait),
+      nameSessions: parseBool(
+        agent.nameSessions ?? USER_CONFIG_DEFAULTS.agent.nameSessions,
+        "agent.nameSessions",
+      ),
       task: parseAgentTask(agent.task),
       toolTimeoutMs: parsePositiveInt(
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,

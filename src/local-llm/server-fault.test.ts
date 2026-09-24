@@ -55,3 +55,40 @@ describe("describeServerFault", () => {
     expect(describeServerFault("")).toBeNull();
   });
 });
+
+describe("only the current daemon's run counts", () => {
+  const LAUNCH = "[atomic-agent] launch: model gemma-4-31b (gemma4, 60 layers)";
+
+  it("ignores a fault from an earlier launch", () => {
+    // The log is append-only across restarts. Reporting a dead
+    // daemon's OOM beside `daemon: running / health: ok` is the same
+    // mistake this line exists to prevent, pointed the other way —
+    // caught on the feature's first live run.
+    const log = [
+      LAUNCH,
+      "E error: kIOGPUCommandBufferCallbackErrorOutOfMemory",
+      "E error: kIOGPUCommandBufferCallbackErrorOutOfMemory",
+      LAUNCH,
+      "I srv llama_server: model loaded",
+      "I srv llama_server: listening on http://127.0.0.1:19091",
+    ].join("\n");
+    expect(describeServerFault(log)).toBeNull();
+  });
+
+  it("still reports a fault in the current run", () => {
+    const log = [
+      LAUNCH,
+      "I srv llama_server: model loaded",
+      LAUNCH,
+      "E error: kIOGPUCommandBufferCallbackErrorOutOfMemory",
+    ].join("\n");
+    expect(describeServerFault(log)?.occurrences).toBe(1);
+  });
+
+  it("reads a log with no launch marker whole", () => {
+    // An external server, or a tail that cut the marker off. Silence
+    // on every non-managed setup would be worse than a stale count.
+    const log = "E error: kIOGPUCommandBufferCallbackErrorOutOfMemory";
+    expect(describeServerFault(log)?.occurrences).toBe(1);
+  });
+});

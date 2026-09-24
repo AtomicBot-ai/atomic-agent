@@ -10,6 +10,7 @@ import {
   type SessionState,
 } from "../session/session-state.js";
 import type { SessionSummary } from "../session/session-summary.js";
+import { readSessionTitle } from "../session/session-title.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -1459,6 +1460,7 @@ function hasFirstPrompt(state: SessionState): boolean {
 function summariseSessionState(state: SessionState): SessionSummary {
   const firstUser = state.turns.find((t) => t.kind === "user");
   return {
+    title: readSessionTitle(state.metadata),
     id: state.id,
     workingDir: state.workingDir,
     status: state.status,
@@ -1475,7 +1477,11 @@ function summariseSessionState(state: SessionState): SessionSummary {
 }
 
 function toPickerEntry(row: SessionSummary): SessionPickerEntry {
-  const preview = row.firstPrompt ?? "";
+  // The generated name when there is one, the raw prompt otherwise.
+  // Both lists read this field, so naming a session renames it
+  // everywhere at once — and a session named before this feature, or
+  // one whose naming call failed, is unchanged.
+  const preview = row.title ?? row.firstPrompt ?? "";
   return {
     sessionId: row.id,
     workingDir: row.workingDir,

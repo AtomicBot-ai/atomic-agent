@@ -68,12 +68,39 @@ const PATTERNS: readonly FaultPattern[] = [
  * the answer: the number is what tells an operator whether they are
  * looking at the cause or at a symptom they can ignore.
  */
+/**
+ * The marker every managed launch writes before llama.cpp says anything
+ * of its own. Everything after the last one belongs to the daemon that
+ * is running now.
+ */
+const LAUNCH_MARKER = "[atomic-agent] launch: model ";
+
+/**
+ * Narrow a log to the current daemon's own run.
+ *
+ * The log file is append-only across restarts, so without this a fault
+ * from a daemon that died hours ago is reported beside a `daemon:
+ * running / health: ok` line — which is exactly the mistake the fault
+ * line exists to prevent, made in the other direction. Caught on the
+ * first live run of this feature: 298 out-of-memory errors from an
+ * earlier launch were reported against a healthy server.
+ *
+ * A log with no marker at all (an external server, a truncated tail) is
+ * returned whole: something is better than nothing, and the alternative
+ * is silence on every non-managed setup.
+ */
+export function currentRunLog(logText: string): string {
+  const at = logText.lastIndexOf(LAUNCH_MARKER);
+  return at === -1 ? logText : logText.slice(at);
+}
+
 export function describeServerFault(logText: string): ServerFault | null {
+  const scoped = currentRunLog(logText);
   for (const pattern of PATTERNS) {
     // Case-insensitive on purpose: llama.cpp spells its own errors
     // inconsistently across backends, and this table exists to be
     // matched, not to be a grammar.
-    const haystack = logText.toLowerCase();
+    const haystack = scoped.toLowerCase();
     const needle = pattern.needle.toLowerCase();
     let count = 0;
     let at = haystack.indexOf(needle);

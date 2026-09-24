@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
 import { useSpinner } from "../hooks/use-spinner.js";
 import {
+  etaCorrection,
   formatElapsed,
   formatFusionLiveWorker,
 } from "../fusion-live-workers.js";
@@ -52,18 +53,21 @@ export function ThinkingIndicator({
         learn that N local workers are busy and which model each runs —
         which is the one thing this mode exists to make visible.
       */}
-      {state.fusionLiveWorkers.map((worker) => (
-        <Box key={worker.taskId} marginLeft={2}>
-          <Text
-            color={worker.done ? theme.colors.muted : theme.colors.warnStrong}
-          >
-            {worker.done ? "·" : "▸"}{" "}
-          </Text>
-          <Text color={theme.colors.muted} wrap="truncate">
-            {formatFusionLiveWorker(worker)}
-          </Text>
-        </Box>
-      ))}
+      {/* One correction for the whole readout, from the legs of this
+          fan-out that have already finished. */}
+      {((correction) =>
+        state.fusionLiveWorkers.map((worker) => (
+          <Box key={worker.taskId} marginLeft={2}>
+            <Text
+              color={worker.done ? theme.colors.muted : theme.colors.warnStrong}
+            >
+              {worker.done ? "·" : "▸"}{" "}
+            </Text>
+            <Text color={theme.colors.muted} wrap="truncate">
+              {formatFusionLiveWorker(worker, Date.now(), correction)}
+            </Text>
+          </Box>
+        )))(etaCorrection(state.fusionLiveWorkers))}
     </Box>
   );
 }

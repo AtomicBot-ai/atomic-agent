@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  etaCorrection,
   formatFusionLiveWorker,
   reduceFusionLiveWorkers,
   type FusionLiveWorker,
@@ -141,5 +142,74 @@ describe("the live fan-out readout", () => {
     // A late duplicate event for a finished leg does not restart it.
     s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }), 90_000);
     expect(s[0]?.finishedAt).toBe(31_000);
+  });
+});
+
+describe("the estimate is corrected by what this fan-out actually did", () => {
+  const leg = (
+    over: Record<string, unknown> = {},
+  ): Parameters<typeof etaCorrection>[0][number] => ({
+    taskId: "t",
+    title: "w",
+    model: "qwen",
+    tool: null,
+    done: true,
+    startedAt: 0,
+    finishedAt: 600_000,
+    etaSeconds: 120,
+    ...over,
+  });
+
+  it("is the median ratio of finished legs, not the mean", () => {
+    // One straggler at 20x must not drag every other row with it.
+    const workers = [
+      leg({ finishedAt: 120_000 }), // 1x
+      leg({ finishedAt: 240_000 }), // 2x
+      leg({ finishedAt: 2_400_000 }), // 20x
+    ];
+    expect(etaCorrection(workers)).toBe(2);
+  });
+
+  it("has no opinion until a leg has finished", () => {
+    expect(etaCorrection([leg({ done: false, finishedAt: null })])).toBeNull();
+    expect(etaCorrection([])).toBeNull();
+  });
+
+  it("ignores legs the orchestrator never estimated", () => {
+    expect(etaCorrection([leg({ etaSeconds: null })])).toBeNull();
+  });
+
+  it("scales a running leg's expectation by the correction", () => {
+    // The field shape: the cloud model said two minutes, the work took
+    // nineteen. The next row should not still promise two.
+    const running = {
+      taskId: "t2",
+      title: "worker 2",
+      model: "qwen",
+      tool: null,
+      done: false,
+      startedAt: 0,
+      finishedAt: null,
+      etaSeconds: 120,
+    } as const;
+    expect(formatFusionLiveWorker(running, 60_000, 5)).toContain(
+      "(~10m00s expected)",
+    );
+  });
+
+  it("says `past` instead of insisting on an estimate already blown", () => {
+    const running = {
+      taskId: "t2",
+      title: "worker 2",
+      model: "qwen",
+      tool: null,
+      done: false,
+      startedAt: 0,
+      finishedAt: null,
+      etaSeconds: 120,
+    } as const;
+    expect(formatFusionLiveWorker(running, 19 * 60_000)).toContain(
+      "past the ~2m00s expected",
+    );
   });
 });
