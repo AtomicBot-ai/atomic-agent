@@ -11,6 +11,7 @@ import {
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
+  onClientGone,
   readJsonBody,
   sendError,
   sendJson,
@@ -75,7 +76,7 @@ export function createChatCompletionsHandler(): HttpHandler {
     const completionId = makeCompletionId();
     const created = Math.floor(Date.now() / 1000);
     if (parsed.stream) {
-      await handleStream(req, res, ctx, {
+      await handleStream(res, ctx, {
         request: parsed,
         completionId,
         created,
@@ -83,7 +84,7 @@ export function createChatCompletionsHandler(): HttpHandler {
       });
       return;
     }
-    await handleNonStream(req, res, ctx, {
+    await handleNonStream(res, ctx, {
       request: parsed,
       completionId,
       created,
@@ -104,15 +105,12 @@ interface TurnEnv {
  * assistant reply into an OpenAI `chat.completion` envelope.
  */
 async function handleNonStream(
-  req: IncomingMessage,
   res: ServerResponse,
   ctx: HandlerContext,
   env: TurnEnv,
 ): Promise<void> {
   const controller = new AbortController();
-  req.on("close", () => {
-    if (!res.writableEnded) controller.abort();
-  });
+  onClientGone(res, () => controller.abort());
   let result: RunTurnResult;
   try {
     // Non-stream mode ignores intermediate events — only the final
@@ -192,7 +190,6 @@ async function handleNonStream(
  * then emit the canonical `data: [DONE]` terminator.
  */
 async function handleStream(
-  req: IncomingMessage,
   res: ServerResponse,
   ctx: HandlerContext,
   env: TurnEnv,
@@ -208,9 +205,7 @@ async function handleStream(
     controller,
     startedAt: Date.now(),
   });
-  req.on("close", () => {
-    if (!controller.signal.aborted) controller.abort();
-  });
+  onClientGone(res, () => controller.abort());
   sse.writeEvent(
     null,
     buildStreamChunk({

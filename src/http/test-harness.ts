@@ -95,6 +95,7 @@ export interface HarnessOptions {
     grammar: string;
     slotId: number;
     sessionId: string;
+    signal?: AbortSignal;
   }) => Promise<CompletionResult>;
   /**
    * Optional streaming LLM stub. When supplied, the runtime exercises

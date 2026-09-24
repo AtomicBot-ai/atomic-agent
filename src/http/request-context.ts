@@ -147,6 +147,26 @@ export class BodyParseError extends Error {
   }
 }
 
+/**
+ * Call `onGone` once if the client drops the connection before the
+ * response has been ended. Listens on `res`, never on `req`: since Node
+ * 16 an `IncomingMessage` destroys itself and emits `close` as soon as
+ * its body has been consumed, so a `req.on("close")` attached after
+ * `readJsonBody` has already missed its only event and never fires on a
+ * later disconnect. A turn wired that way outlived every client that
+ * gave up on it — model still generating, steers still accepted.
+ */
+export function onClientGone(res: ServerResponse, onGone: () => void): void {
+  if (res.writableEnded) return;
+  if (res.destroyed) {
+    onGone();
+    return;
+  }
+  res.once("close", () => {
+    if (!res.writableEnded) onGone();
+  });
+}
+
 export interface SseWriter {
   /** Write an SSE frame. `event` is the optional `event:` field name. */
   writeEvent(event: string | null, payload: unknown): boolean;
