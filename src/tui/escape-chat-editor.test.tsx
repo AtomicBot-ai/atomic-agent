@@ -160,6 +160,12 @@ describe("Esc in the chat editor", () => {
 
     stdin.write(ESC);
     await settle();
+    // The draft is what makes this case interesting: arming must not
+    // clear it either, so the operator can still change their mind.
+    expect(counts.abort).toBe(0);
+    expect(strip(lastFrame() ?? "")).toContain("draft message");
+    stdin.write("1");
+    await settle();
 
     expect(counts.abort).toBe(1);
     expect(counts.quit).toBe(0);
@@ -205,7 +211,7 @@ describe("Esc in the chat editor", () => {
 
     stdin.write(ESC);
     await settle();
-    expect(strip(lastFrame() ?? "")).toContain("R U N");
+    expect(strip(lastFrame() ?? "")).toContain("☰ Menu");
     expect(counts.quit).toBe(0);
 
     stdin.write(ESC);

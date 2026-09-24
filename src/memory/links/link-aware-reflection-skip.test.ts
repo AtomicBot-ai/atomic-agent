@@ -7,6 +7,7 @@ import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
 
 import { MemoryStore } from "../memory-store.js";
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ReflectionRunner } from "../reflection/reflection-runner.js";
 
 import { LinkStore } from "./link-store.js";
@@ -25,6 +26,12 @@ import { createLinkAwareReflectionRunner } from "./link-aware-reflection.js";
  * These pin the delegation: the decorator forwards the short
  * candidate set, the runner reports the skip with a reason, and the
  * LLM is still never called.
+ *
+ * The second block pins the one route that survived that change: a
+ * hydration throw returns before `generate()` is reached, so nothing
+ * downstream can narrate it. The decorator emits `failed` itself, and
+ * the reason must say hydration — reporting it as `skipped` would be
+ * the same silence with a nicer label.
  */
 
 interface Fixture {
@@ -197,5 +204,175 @@ describe("link-aware reflection reports its skips", () => {
 
     expect(reads).toBe(0);
     expect(traces.map((t) => t.outcome)).toEqual(["skipped"]);
+  });
+});
+
+describe("link-aware reflection reports hydration failures", () => {
+  let fx: Fixture;
+
+  beforeEach(() => {
+    fx = makeFixture();
+  });
+
+  afterEach(() => {
+    fx.dispose();
+  });
+
+  /** A `notesStore` whose reads die the way a closed handle does. */
+  function deadStore(): MemoryStore {
+    return new Proxy(fx.notesStore, {
+      get(target, prop, receiver) {
+        if (prop === "get") {
+          return () => {
+            throw new TypeError("The database connection is not open");
+          };
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    }) as MemoryStore;
+  }
+
+  function build(args: {
+    notesStore: MemoryStore;
+    emitTrace: (event: LinkGeneratorTraceEvent) => void;
+    onLlm?: () => void;
+    logger?: StructuredLogger;
+  }) {
+    const linkGenerator = createLinkGeneratorRunner({
+      llmComplete: async () => {
+        args.onLlm?.();
+        throw new Error("llm-side boom");
+      },
+      linkStore: fx.linkStore,
+      reflectionSlotId: 7,
+      timeoutMs: 1_000,
+      minCandidates: 2,
+      emitTrace: args.emitTrace,
+    });
+    return createLinkAwareReflectionRunner({
+      reflection: INNER,
+      linkGenerator,
+      notesStore: args.notesStore,
+      minCandidates: 2,
+      emitTrace: args.emitTrace,
+      ...(args.logger ? { logger: args.logger } : {}),
+    });
+  }
+
+  it("emits a failed trace naming hydration when the store throws", async () => {
+    const traces: LinkGeneratorTraceEvent[] = [];
+    let llmCalls = 0;
+    const runner = build({
+      notesStore: deadStore(),
+      emitTrace: (event) => traces.push(event),
+      onLlm: () => {
+        llmCalls += 1;
+      },
+    });
+
+    await expect(
+      runner.reflect({
+        sessionId: "s4",
+        userMessage: "u",
+        assistantReply: "a",
+        recalledMemoryIds: fx.ids,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(llmCalls).toBe(0);
+    expect(traces).toHaveLength(1);
+    expect(traces[0]!.sessionId).toBe("s4");
+    // Not `skipped`: the candidate set was never the problem.
+    expect(traces[0]!.outcome).toBe("failed");
+    expect(traces[0]!.reason).toContain("hydration");
+    expect(traces[0]!.reason).toContain("The database connection is not open");
+  });
+
+  it("keeps reflect() fire-safe when the trace sink itself throws", async () => {
+    // Both the log and the trace run during runtime shutdown, when the
+    // recorder the bootstrap sink resolves may already be gone.
+    let sinkCalls = 0;
+    const runner = build({
+      notesStore: deadStore(),
+      emitTrace: () => {
+        sinkCalls += 1;
+        throw new Error("recorder is gone");
+      },
+    });
+
+    await expect(
+      runner.reflect({
+        sessionId: "s5",
+        userMessage: "u",
+        assistantReply: "a",
+        recalledMemoryIds: fx.ids,
+      }),
+    ).resolves.toBeUndefined();
+    // Not vacuous: the sink really was reached and really did throw.
+    expect(sinkCalls).toBe(1);
+  });
+
+  it("still emits exactly one event on the healthy path", async () => {
+    // The decorator's sink must not double-report a run the runner
+    // already narrates — one call, one event, from the runner.
+    const traces: LinkGeneratorTraceEvent[] = [];
+    const runner = build({
+      notesStore: fx.notesStore,
+      emitTrace: (event) => traces.push(event),
+    });
+
+    await runner.reflect({
+      sessionId: "s6",
+      userMessage: "u",
+      assistantReply: "a",
+      recalledMemoryIds: fx.ids,
+    });
+
+    expect(traces).toHaveLength(1);
+    expect(traces[0]!.outcome).toBe("failed");
+    // The runner's own LLM-side failure — no hydration prefix.
+    expect(traces[0]!.reason).toBe("llm-side boom");
+  });
+
+  it("a throwing logger neither rejects reflect() nor silences the trace", async () => {
+    // The log and the trace are two sinks on the same tearing-down
+    // runtime, so the failure mode is shared. When the log ran first
+    // and unguarded, a logger that threw took the whole `catch` block
+    // with it: `reflect()` rejected into the agent loop's bare `void`,
+    // AND the trace event this path exists to emit never fired — the
+    // exact silence the fix was written to remove, reintroduced by a
+    // sink nobody was watching.
+    const traces: LinkGeneratorTraceEvent[] = [];
+    const runner = build({
+      notesStore: deadStore(),
+      emitTrace: (event) => traces.push(event),
+      logger: {
+        debug() {
+          /* unused */
+        },
+        info() {
+          /* unused */
+        },
+        error() {
+          /* unused */
+        },
+        warn() {
+          throw new Error("log sinks are gone");
+        },
+      } as unknown as StructuredLogger,
+    });
+
+    await expect(
+      runner.reflect({
+        sessionId: "s7",
+        userMessage: "u",
+        assistantReply: "a",
+        recalledMemoryIds: fx.ids,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(traces).toHaveLength(1);
+    expect(traces[0]!.outcome).toBe("failed");
+    expect(traces[0]!.reason).toContain("hydration");
   });
 });

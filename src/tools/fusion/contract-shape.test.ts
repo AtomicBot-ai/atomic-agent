@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { completedWaveNotes } from "./contract-waves.js";
+import type { WorkerTaskResult } from "./worker-result.js";
 import {
   describeProvide,
   renderContractBlock,
@@ -52,9 +54,9 @@ describe("a provide carries its meaning, not just its name", () => {
   });
 
   it("renders exactly as before when no shape is given", () => {
-    expect(
-      describeProvide({ task: "t", kind: "symbol", name: "A.b" }),
-    ).toBe("symbol A.b");
+    expect(describeProvide({ task: "t", kind: "symbol", name: "A.b" })).toBe(
+      "symbol A.b",
+    );
     expect(
       describeProvide({ task: "t", kind: "symbol", name: "A.b", in: "a.js" }),
     ).toBe("symbol A.b in a.js");
@@ -85,5 +87,59 @@ describe("a provide carries its meaning, not just its name", () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error).toMatch(/shape must be a non-empty string/);
+  });
+});
+
+describe("what a later wave is told about the waves before it", () => {
+  const result = (over: Partial<WorkerTaskResult> = {}): WorkerTaskResult =>
+    ({
+      id: "t1",
+      title: "js/ship.js",
+      status: "ok",
+      reply: "wrote js/ship.js exporting Ship",
+      stepCount: 3,
+      durationMs: 1000,
+      tools: { calls: 3, errors: 0 },
+      ...over,
+    }) as WorkerTaskResult;
+
+  it("says what succeeded, in the worker's own words", () => {
+    const notes = completedWaveNotes(new Map([["t1", result()]]));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("[t1] ok");
+    expect(notes[0]).toContain("wrote js/ship.js exporting Ship");
+  });
+
+  it("says why a failure failed, so a later worker can compensate", () => {
+    const notes = completedWaveNotes(
+      new Map([
+        [
+          "t3",
+          result({
+            id: "t3",
+            status: "failed",
+            error: "check failed: no #btn-launch",
+          }),
+        ],
+      ]),
+    );
+    expect(notes[0]).toContain("[t3] failed");
+    expect(notes[0]).toContain("no #btn-launch");
+  });
+
+  it("says nothing before anything has finished", () => {
+    expect(completedWaveNotes(new Map())).toEqual([]);
+  });
+
+  it("is bounded — a brief is not a history of the fan-out", () => {
+    const many = new Map(
+      Array.from({ length: 20 }, (_, i) => [
+        `t${i}`,
+        result({ id: `t${i}`, reply: "x".repeat(500) }),
+      ]),
+    );
+    const notes = completedWaveNotes(many);
+    expect(notes.length).toBeLessThanOrEqual(8);
+    for (const note of notes) expect(note.length).toBeLessThan(200);
   });
 });

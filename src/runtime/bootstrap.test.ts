@@ -215,6 +215,92 @@ describe("createAgentRuntime", () => {
     }
   });
 
+  it("carries the dropped skill count onto the runtime, at boot and on refresh", async () => {
+    // PR #471 taught the PROMPT to say how many skills the budget cut,
+    // but the count stopped at `loopDeps`. Every other reader of the
+    // catalog — the `run` banner, `/api/capabilities`, the TUI, the
+    // `/skills` dump — goes through `runtime`, where there was nothing
+    // to read, so all four reported the clipped length as the install.
+    const writeProjectSkill = (name: string): void => {
+      const dir = join(workingDir, ".atomic-agent", "skills", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          `description: "${"d".repeat(120)}"`,
+          "version: 0.1.0",
+          "---",
+          "",
+          `# ${name}`,
+        ].join("\n"),
+        "utf8",
+      );
+    };
+    writeProjectSkill("dropped-a");
+    writeProjectSkill("dropped-b");
+
+    // Same 4-token budget the wiring test above uses: everything past
+    // the always-kept first entry is cut, so `dropped` is knowable
+    // exactly from the registry size.
+    process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "4";
+    resetConfigCache();
+    const changes: Array<{ count: number; dropped: number }> = [];
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      handlers: {
+        onSkillRegistryChange: (entries, dropped) =>
+          changes.push({ count: entries.length, dropped }),
+      },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      const atBoot = runtime.skillRegistry.list().length;
+      expect(atBoot).toBeGreaterThan(1);
+      expect(runtime.skillCatalog).toHaveLength(1);
+      expect(runtime.skillCatalogDropped).toBe(atBoot - 1);
+
+      // Staleness guard. `refreshSkills()` rebuilds the whole section;
+      // a dropped count captured at boot instead of read through the
+      // live getter would still report the old number here.
+      writeProjectSkill("dropped-c");
+      await runtime.refreshSkills();
+      const afterRefresh = runtime.skillRegistry.list().length;
+      expect(afterRefresh).toBe(atBoot + 1);
+      expect(runtime.skillCatalog).toHaveLength(1);
+      expect(runtime.skillCatalogDropped).toBe(afterRefresh - 1);
+
+      // The same number reaches hosts that only get the change event
+      // (the TUI counts skills from it, never re-reading the runtime).
+      expect(changes).toEqual([{ count: 1, dropped: afterRefresh - 1 }]);
+    } finally {
+      await runtime.shutdown();
+      delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
+      resetConfigCache();
+    }
+  });
+
+  it("reports zero dropped skills when the whole catalog fits", async () => {
+    // The regression pin for every surface that renders this number:
+    // at the shipped budget nothing is cut, and the omission notes the
+    // consumers append must all stay absent.
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      expect(runtime.skillCatalog).toHaveLength(
+        runtime.skillRegistry.list().length,
+      );
+      expect(runtime.skillCatalogDropped).toBe(0);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("keeps the ApprovalGate the single live switch: a level-5 boot flips back to interactive", async () => {
     // Locked invariant: tools always register `approvalRequired: true`;
     // the boot level lands in the gate. A tool-level `false` would
@@ -685,7 +771,7 @@ describe("createAgentRuntime", () => {
           // session-id partition — do not consume the scripted agent
           // reply queue. (Not keyed on `slotId === -1`: a session's first
           // agent request is a pending `-1` too, F13.)
-          if (/^(rewriter|link|vote|distill):/.test(params.sessionId)) {
+          if (/^(rewriter|link|vote|distill|title):/.test(params.sessionId)) {
             return {
               content: "<rewritten_query>NONE</rewritten_query>\n",
               reasoningContent: "",

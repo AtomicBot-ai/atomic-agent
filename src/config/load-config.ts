@@ -231,6 +231,7 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
       conversationMaxTokens: user.agent.conversationMaxTokens,
       conversationMaxPairs: user.agent.conversationMaxPairs,
+      nameSessions: user.agent.nameSessions,
       conversationLowWater: user.agent.conversationLowWater,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       loadedToolsCap: readBoundedPositiveInt(
@@ -557,6 +558,7 @@ export function loadConfig(): AtomicAgentConfig {
       theme: user.tui.theme,
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
+      notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {
         order: [...user.tui.sessionRail.order],

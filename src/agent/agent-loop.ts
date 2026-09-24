@@ -1,4 +1,5 @@
 import {
+  delegationProducedWork,
   emptyFusionOrchestratorState,
   recordDelegation,
   wouldRefuse as fusionGateWouldRefuse,
@@ -33,6 +34,7 @@ import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
+  LlamaServerError,
   LlmFailure,
   TransportError,
   classifyFailure,
@@ -372,6 +374,16 @@ export interface ResolvedTurnLlmSlice {
   supportsSlotAffinity: boolean;
   supportsParallelTools: boolean;
   strictTools: boolean;
+  /**
+   * Whether the pinned link is the local `llama-server` — i.e. whether
+   * the `/props` profile in hand describes the model that will serve
+   * this turn. Only the pin can answer it: `localBackend.isActive()`
+   * describes the ACTIVE provider, which on a pinned Fusion worker turn
+   * is the orchestrator's cloud leg. Optional so legacy / test wiring
+   * that predates it still type-checks; absent falls back to the active
+   * provider's answer, which is what every single-leg run already did.
+   */
+  isLlamaServer?: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -482,8 +494,16 @@ export interface SteeringChannel {
  * So the wait is for the failures that plausibly recover on their own —
  * no HTTP response at all (DNS, refused connection, TLS, socket reset),
  * a server error, or the server saying "busy, later" (408 / 429).
+ *
+ * The one thing `status === null` must NOT sweep up is our own deadline
+ * expiring — see {@link isOwnLlamaDeadlineExpiry}.
  */
 function isWaitableOutage(err: unknown): boolean {
+  // Our own clock ran out. Never evidence about the provider, so it is
+  // decided before the status split rather than inside it: the shape
+  // arrives as `status === null`, which is otherwise the strongest
+  // "no answer at all, wait for it" signal there is.
+  if (isOwnLlamaDeadlineExpiry(err)) return false;
   if (!(err instanceof TransportError)) {
     // An untyped socket failure that reached the classifier through
     // `isNetworkError` — no status to inspect, and by construction it is
@@ -492,6 +512,93 @@ function isWaitableOutage(err: unknown): boolean {
   }
   if (err.status === null) return true;
   return err.status >= 500 || err.status === 408 || err.status === 429;
+}
+
+/**
+ * Did one of OUR OWN request deadlines fire, rather than the link
+ * failing?
+ *
+ * `LlamaServerClient` already treats this as terminal —
+ * `isRetryableLlamaError` refuses to replay a `timedOut` error because
+ * "the model is slower than the budget" does not improve on a second
+ * attempt. The agent loop was undoing that decision one layer up: every
+ * expiry is built with `status === null` (there is no HTTP response to
+ * carry a status), so it classified `transport`, satisfied
+ * `isWaitableOutage`, and the loop parked and replayed the same step.
+ *
+ * What that costs, with the shipped defaults — `firstTokenTimeoutMs` is
+ * 30 minutes (`ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS`) — on a server that
+ * accepts a request and then queues it forever:
+ *
+ *   t=0      request 1 sent, queues inside llama.cpp, no log line
+ *   t=30min  first-token deadline fires → transport → "waitable" → 2 s park
+ *   t=30min  request 2 sent, queues, no log line
+ *   t=45min  the fusion worker's wall clock aborts the turn
+ *            → `max_steps`, `stepCount: 0`, 45.0 minutes, zero tool calls
+ *
+ * The whole 45-minute budget is spent on two silent attempts, and the
+ * operator is handed "ran out of steps" instead of the message the
+ * client had already written, which names the deadline and the knob
+ * that raises it (issue #490 reports exactly this pair of runs).
+ *
+ * The timeout KIND is deliberately not inspected, and the five do not
+ * cost the same, so here is what is actually being traded away:
+ *
+ *   first-token        30 min   `firstTokenTimeoutMs`
+ *   stream-total        6 h     `streamTotalTimeoutMs`
+ *   first-token-stall  300 s    `requestTimeoutMs`
+ *   idle               300 s    `requestTimeoutMs`
+ *   total              300 s    `requestTimeoutMs`
+ *
+ * Only the first is the 45-minute-worker disaster in #490. Two of the
+ * others carry their own positive evidence that the server is alive:
+ * `first-token-stall` fires only because `/slots` kept answering right
+ * up to the verdict, and `stream-total` only because data kept arriving
+ * for six hours. `idle` does NOT — it means the socket is still open
+ * and nothing has come down it for a whole `requestTimeoutMs`, so what
+ * it proves is five minutes stale. A server that actually died mid-turn
+ * usually closes the socket instead, which arrives as `ECONNRESET` with
+ * `timedOut: false` and is still parked.
+ *
+ * The three 300 s kinds are narrowed with the other two anyway, because
+ * the alternative is worse than the wait it saves: the park does not
+ * resume the stream, it replays the whole step from the top, so every
+ * token already generated is thrown away and a second full budget is
+ * spent reproducing it. `isRetryableLlamaError` made exactly this call
+ * one layer down for exactly this reason, and a predicate that reads
+ * `timedOut` while that one reads `timedOut` cannot drift apart.
+ *
+ * Deliberately still waitable, because none of these is our clock:
+ *  - `LlamaServerError(timedOut: false)` with an errno — `ECONNREFUSED`
+ *    while llama-server restarts, `ECONNRESET`, and the socket-level
+ *    `ETIMEDOUT`, which is the kernel's deadline, not ours. `timedOut`
+ *    is set only by `createRequestController`'s own three timers, so a
+ *    kernel `ETIMEDOUT` never reaches this predicate flagged;
+ *  - a bare `TypeError: fetch failed` wrapped as `TransportError(null)`
+ *    by `toLlmFailure`, i.e. DNS or TLS failing while a cloud provider
+ *    is down;
+ *  - `OpenAiHttpError.timedOut`. Its budget is also 300 s, so the cost
+ *    argument above would carry over — but a cloud request is not the
+ *    thing #490 reports, nothing pins the cloud park's behaviour today,
+ *    and one narrowing at a time. Out of scope, not settled.
+ *
+ * The expiry travels wrapped: `toLlmFailure` rebuilds it as a
+ * `TransportError` carrying the original on `cause`, so the outermost
+ * error is never the `LlamaServerError` itself. That is one link, not
+ * many — `runWithFallback` rethrows the last link's error untouched and
+ * keeps the earlier links in a WeakMap beside it (`failed-attempts.ts`)
+ * precisely so that predicates like this one cannot be fooled by a
+ * previous attempt. The depth cap is therefore slack, not a budget, and
+ * exists only so a self-referential or mutually-referential `cause`
+ * cannot spin here.
+ */
+function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError && current.timedOut) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** First backoff after the provider stops answering. */
@@ -551,10 +658,7 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  * resumes after a top-up, the same way as after a ceiling.
  */
 export type TaskStopCause =
-  | "step_ceiling"
-  | "time_ceiling"
-  | "no_progress"
-  | "credit_exhausted";
+  "step_ceiling" | "time_ceiling" | "no_progress" | "credit_exhausted";
 
 export function formatTaskStoppedReply(input: {
   cause: TaskStopCause;
@@ -837,6 +941,13 @@ export type AgentLoopEvent =
       model?: string;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
+      /**
+       * The orchestrator's estimate for this task, in seconds, when it
+       * gave one (`tasks[].etaSeconds`). Advisory: the live readout
+       * puts it beside the elapsed time so "42s" can be read as fast or
+       * slow. Nothing is scheduled or timed out against it.
+       */
+      etaSeconds?: number;
       stepCount?: number;
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */
@@ -1566,8 +1677,11 @@ export class AgentLoop {
               ? {
                   isFusionOrchestrator: () => true,
                   fusionState: () => fusionState,
-                  onDelegated: () => {
-                    fusionState = recordDelegation(fusionState);
+                  onDelegated: (result) => {
+                    fusionState = recordDelegation(
+                      fusionState,
+                      delegationProducedWork(result),
+                    );
                   },
                 }
               : {}),
@@ -1579,6 +1693,14 @@ export class AgentLoop {
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
               : {}),
+            // The `/props` profile describes the local llama-server. It
+            // is the right window only when this step is routed there:
+            // a pinned turn answers from its own link, an unpinned one
+            // from the active provider. In Fusion those differ, and
+            // budgeting a cloud orchestrator against the workers'
+            // per-slot `n_ctx` packed a 128k model to 16k.
+            profileWindowApplies:
+              pinnedSlice?.isLlamaServer ?? this.localBackendActive(),
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
@@ -1620,10 +1742,7 @@ export class AgentLoop {
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,
               // which already warned, and would repeat it per worker.
-              if (
-                event.type === "prompt_built" &&
-                options.ephemeral !== true
-              ) {
+              if (event.type === "prompt_built" && options.ephemeral !== true) {
                 reportProfileClip({
                   warnings: this.profileClipWarnings,
                   sessionId: state.id,
@@ -1961,8 +2080,7 @@ export class AgentLoop {
         // surfaces as an abort — the same shape as Ctrl+C — but it is
         // the task's clock, not the user, so it is read first and never
         // as a cancellation.
-        const ceilingFired =
-          requestDeadline.fired() && !options.signal.aborted;
+        const ceilingFired = requestDeadline.fired() && !options.signal.aborted;
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -2323,8 +2441,13 @@ export class AgentLoop {
         // 120 s", OpenRouter's `in_flight_budget_exhausted` — a 402 the
         // outage predicate would otherwise refuse) is waited for as
         // long as it asked, within the same budget.
-        const retryHint =
-          verdict?.kind === "retry_after" ? verdict : null;
+        //
+        // The precondition is "the provider is not answering", not
+        // "this step failed": one of our own deadlines expiring is not
+        // an observation about the provider at all, and replaying it
+        // buys a second helping of the same silence — see
+        // `isOwnLlamaDeadlineExpiry`.
+        const retryHint = verdict?.kind === "retry_after" ? verdict : null;
         if (
           category === "transport" &&
           !cancelled &&

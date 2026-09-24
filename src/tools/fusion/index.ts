@@ -57,6 +57,7 @@ export type {
   ContractCheckResult,
   ContractCheckRunner,
   ContractFinding,
+  ContractProvideReport,
   ContractReport,
 } from "./contract-checks.js";
 export {
@@ -86,6 +87,7 @@ export {
   FILE_WRITING_TOOLS,
   WORKER_HINT_CONTEXT,
   WORKER_HINT_SATURATED,
+  WORKER_HINT_UNREACHABLE,
   WORKER_HINT_QUOTA,
   WORKER_STATUS_ORDER,
 } from "./worker-result.js";

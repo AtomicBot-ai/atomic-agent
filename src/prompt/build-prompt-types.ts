@@ -82,6 +82,21 @@ export interface BuildPromptInput {
    */
   contextWindow?: number | null;
   /**
+   * Whether `profile.contextWindow` describes the model *this* prompt
+   * is being built for. Default `true` — every single-leg caller.
+   *
+   * The profile comes from the llama-server `/props` probe, so its
+   * window is the local model's. In Fusion the two legs are different
+   * models: a cloud orchestrator's prompt was being budgeted against
+   * the local worker's per-slot `n_ctx` (`--ctx-size / --parallel`, so
+   * 262144/16 = 16384 on a 16-slot daemon), which both clipped the
+   * transcript to a fraction of the cloud window and drew a gauge that
+   * read past 100% — the pinned newest task plus fixed overhead do not
+   * fit a window that small. `false` makes `contextWindow` above the
+   * only source, which for a cloud leg is its catalogue entry.
+   */
+  profileWindowApplies?: boolean;
+  /**
    * The local worker leg's request-slot count as the llama-server
    * reported it, `null` (or absent) until observed. The `### fusion`
    * machine facts state it for an external server, whose `--parallel`

@@ -141,7 +141,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "skill_count_changed":
       return {
         ...state,
-        session: { ...state.session, skillCount: action.count },
+        session: {
+          ...state.session,
+          skillCount: action.count,
+          skillCountDropped: action.dropped,
+        },
       };
     case "approval_level_changed":
       return {
@@ -259,7 +263,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       }
       return { ...state, activeTab: action.tab };
     case "abort_requested":
-      return { ...state, aborting: true };
+      return { ...state, aborting: true, abortArmed: false };
+    case "abort_armed":
+      return state.abortArmed ? state : { ...state, abortArmed: true };
+    case "abort_disarmed":
+      return state.abortArmed ? { ...state, abortArmed: false } : state;
     case "input_changed": {
       // Moving the caret re-emits the buffer unchanged (the editor owns
       // the cursor and reports it through `onChange`). That is not an

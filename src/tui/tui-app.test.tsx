@@ -93,7 +93,7 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("atomic-agent");
     // The status bar shows where you are, not a menu of where you could go —
     // the three-section pill row moved into the operator menu.
-    expect(text).toContain("R U N");
+    expect(text).toContain("☰ Menu");
     expect(text).not.toContain("OBSERVE");
     expect(text).not.toContain("MANAGE");
     // Both rail panes are part of the Run screen at this size.
@@ -200,7 +200,7 @@ describe("TuiApp (smoke)", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     const before = strip(lastFrame() ?? "");
-    expect(before).toContain("R U N");
+    expect(before).toContain("☰ Menu");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
@@ -209,7 +209,7 @@ describe("TuiApp (smoke)", () => {
     if (before.includes("SESSIONS")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
-      expect(after).toContain("R U N");
+      expect(after).toContain("☰ Menu");
       expect(after).not.toContain("OBSERVE \u25b8");
     } else {
       // Sidebar collapsed (narrow runner): Tab falls back to the nav
@@ -406,7 +406,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u001b");
     await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("R U N");
+    expect(text).toContain("☰ Menu");
     expect(text).not.toContain("MANAGE \u25b8");
     unmount();
   });
@@ -511,7 +511,7 @@ describe("TuiApp (smoke)", () => {
     await new Promise((r) => setTimeout(r, 20));
     const text = strip(lastFrame() ?? "");
     expect(text).not.toContain("esc close");
-    expect(text).toContain("R U N");
+    expect(text).toContain("☰ Menu");
     unmount();
   });
 

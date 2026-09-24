@@ -89,3 +89,70 @@ export function clampField(text: unknown, max: number): string {
     .slice(0, max)
     .replace(/[\ud800-\udbff]$/, "");
 }
+
+/**
+ * Characters that make a key ambiguous inside the
+ * `<name>(<arg>, <arg>?) — <description>` row `mcp.prompt.list`
+ * renders: the parentheses that delimit the argument list, the comma
+ * between arguments, the `?` that marks one optional, and the space —
+ * a reader cannot tell a space inside a name from the one before the
+ * description's dash. The quote and backslash are here so the quoted
+ * form below is unambiguous in turn.
+ *
+ * One set for both positions rather than two, though strictly the
+ * parens and the space threaten a prompt name while the comma and the
+ * `?` threaten an argument name: two predicates for one row format is
+ * two things to keep in step, and either position is a key the model
+ * has to echo back. The cost is a rare name like `ready?` quoted when
+ * it did not have to be — a row that still reads, and still resolves.
+ *
+ * Deliberately not `\s`: that matches U+FEFF and U+00A0, which
+ * `flattenKey` goes out of its way to preserve because a name can
+ * carry one and still be the name the server has. They do not split
+ * the row — nothing in the format is invisible — so they are left to
+ * be copied verbatim, as `mcp-prompt-tools.test.ts` pins for a BOM.
+ * A tab or newline never reaches here as itself: `flattenKey` has
+ * already turned it into the space this matches.
+ *
+ * MCP does not restrict the prompt-name or argument-name charset, so
+ * every one of these is reachable from a server that chose an
+ * unlucky name.
+ */
+const ROW_AMBIGUOUS = /["\\(),?\u0020]/;
+
+/**
+ * A key rendered for a `mcp.prompt.list` row.
+ *
+ * An ordinary name (`summarize_doc`, `review-pr`) contains none of
+ * `ROW_AMBIGUOUS` and comes back byte-for-byte as before — which is
+ * the whole design: the common row must not change, because the
+ * model has learnt to read it.
+ *
+ * A name that would break the format is JSON-quoted instead. The
+ * alternative — dropping or replacing the offending characters — is
+ * the mistake `flattenKey`'s doc warns about: it hands the model a
+ * key that looks real and cannot work, and `mcp.prompt.get` answers
+ * "unknown prompt". Quoting keeps the key intact and reversible, and
+ * the `mcp.prompt.list` entry in `prompt/default-tool-descriptors-b.ts`
+ * — the summary the model actually reads, as opposed to the
+ * `ToolDefinition` description, which only the HTTP capabilities
+ * route surfaces — tells it to decode the quotes.
+ *
+ * `flattenKey` still runs first: a quoted key is still one row. That
+ * bounds "reversible" to keys `flattenKey` left alone, which is all
+ * of them but the ones carrying a `LINE_BREAKING` character: those
+ * lose it to a space BEFORE the quoting, so `JSON.parse` of the row
+ * returns the flattened key, not the server's. Unchanged from `main`
+ * — a name with a newline in it was unrecoverable there too, and the
+ * row could not carry one and stay a row — so the quotes are honest
+ * about where the key ENDS even when they cannot restore what a
+ * control character was. Escaping the raw value instead would fix
+ * that one case and reopen the other: `JSON.stringify` escapes the
+ * C0 controls but emits U+2028, the C1 range and the bidi overrides
+ * raw, and U+202E inside a quoted key reverses the rendered row just
+ * as well as outside one.
+ */
+export function renderRowKey(text: unknown): string {
+  const flat = flattenKey(text);
+  return ROW_AMBIGUOUS.test(flat) ? JSON.stringify(flat) : flat;
+}

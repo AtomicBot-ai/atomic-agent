@@ -5,9 +5,17 @@ import {
   estimateKvBytesPerToken,
   type KvLayoutSource,
 } from "./context-size.js";
-import { kvLayoutSourceFromMetadata, parseGgufHeader } from "./gguf-metadata.js";
-import { encodeSyntheticGguf, gemma4Pairs, densePairs } from "./gguf-metadata.fixtures.js";
 import {
+  kvLayoutSourceFromMetadata,
+  parseGgufHeader,
+} from "./gguf-metadata.js";
+import {
+  encodeSyntheticGguf,
+  gemma4Pairs,
+  densePairs,
+} from "./gguf-metadata.fixtures.js";
+import {
+  SWA_FULL_BUDGET_SHARE,
   isSwaFullPreference,
   resolveSwaFullDecision,
   SWA_FULL_MAX_RATIO,
@@ -27,10 +35,20 @@ const gemmaSwaBytes =
 describe("resolveSwaFullDecision", () => {
   it("is off with no layout and not applicable without sliding layers", () => {
     expect(
-      resolveSwaFullDecision({ preference: "on", layout: null, contextSize: CTX, kvBudgetBytes: 1e12 }),
+      resolveSwaFullDecision({
+        preference: "on",
+        layout: null,
+        contextSize: CTX,
+        kvBudgetBytes: 1e12,
+      }),
     ).toMatchObject({ enabled: false, estimate: null });
     expect(
-      resolveSwaFullDecision({ preference: "on", layout: DENSE, contextSize: CTX, kvBudgetBytes: 1e12 }),
+      resolveSwaFullDecision({
+        preference: "on",
+        layout: DENSE,
+        contextSize: CTX,
+        kvBudgetBytes: 1e12,
+      }),
     ).toMatchObject({ enabled: false, slidingLayers: 0 });
   });
 
@@ -51,32 +69,64 @@ describe("resolveSwaFullDecision", () => {
 
   it("honours on and off whatever the budget", () => {
     expect(
-      resolveSwaFullDecision({ preference: "off", layout: GEMMA, contextSize: CTX, kvBudgetBytes: 1e12 }),
+      resolveSwaFullDecision({
+        preference: "off",
+        layout: GEMMA,
+        contextSize: CTX,
+        kvBudgetBytes: 1e12,
+      }),
     ).toMatchObject({ enabled: false });
     expect(
-      resolveSwaFullDecision({ preference: "on", layout: GEMMA, contextSize: CTX, kvBudgetBytes: 0 }),
+      resolveSwaFullDecision({
+        preference: "on",
+        layout: GEMMA,
+        contextSize: CTX,
+        kvBudgetBytes: 0,
+      }),
     ).toMatchObject({ enabled: true });
   });
 
-  it("auto: on when the full-SWA estimate fits the KV budget, off when it does not, off with no budget", () => {
+  it("auto: on only with headroom to spare, off when the full cache would fill the budget", () => {
+    // The full cache has to fit `SWA_FULL_BUDGET_SHARE` of the budget,
+    // not the whole of it.
+    const full = gemmaSwaBytes * 6;
     const fits = resolveSwaFullDecision({
       preference: "auto",
       layout: GEMMA,
       contextSize: CTX,
-      kvBudgetBytes: gemmaSwaBytes * 6 + 1,
+      kvBudgetBytes: full / SWA_FULL_BUDGET_SHARE + 1,
     });
     expect(fits.enabled).toBe(true);
     expect(fits.reason).toMatch(/on \(auto\)/);
+
+    // The regression this pins: a full cache that merely fits the
+    // budget used to turn swa-full ON. On a 31B model at 262144 that
+    // was "29.3 GB full <= 31.9 GB budget" — and the server then logged
+    // 298 Metal out-of-memory errors while staying up, failing every
+    // decode, and handing the operator nothing.
+    const barelyFits = resolveSwaFullDecision({
+      preference: "auto",
+      layout: GEMMA,
+      contextSize: CTX,
+      kvBudgetBytes: full + 1,
+    });
+    expect(barelyFits.enabled).toBe(false);
+
     const tight = resolveSwaFullDecision({
       preference: "auto",
       layout: GEMMA,
       contextSize: CTX,
-      kvBudgetBytes: gemmaSwaBytes * 6 - 1,
+      kvBudgetBytes: full - 1,
     });
     expect(tight.enabled).toBe(false);
     expect(tight.reason).toMatch(/off \(auto\)/);
     expect(
-      resolveSwaFullDecision({ preference: "auto", layout: GEMMA, contextSize: CTX, kvBudgetBytes: null }),
+      resolveSwaFullDecision({
+        preference: "auto",
+        layout: GEMMA,
+        contextSize: CTX,
+        kvBudgetBytes: null,
+      }),
     ).toMatchObject({ enabled: false });
   });
 

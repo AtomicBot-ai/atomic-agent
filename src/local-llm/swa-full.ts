@@ -33,7 +33,9 @@ export const SWA_FULL_PREFERENCES: readonly SwaFullPreference[] = [
   "off",
 ];
 
-export function isSwaFullPreference(value: unknown): value is SwaFullPreference {
+export function isSwaFullPreference(
+  value: unknown,
+): value is SwaFullPreference {
   return (
     typeof value === "string" &&
     (SWA_FULL_PREFERENCES as readonly string[]).includes(value)
@@ -69,7 +71,12 @@ export interface SwaFullDecision {
   /** One line for the daemon log. */
   reason: string;
   /** Estimated bytes of KV at the launch context, with and without. */
-  estimate: { swa: number; full: number; ratio: number; capped: boolean } | null;
+  estimate: {
+    swa: number;
+    full: number;
+    ratio: number;
+    capped: boolean;
+  } | null;
   slidingLayers: number;
 }
 
@@ -82,6 +89,18 @@ export interface SwaFullDecision {
  * has not been measured and the cap is the guard against a layout that
  * would put it at 30×. Flagged as an estimate in the reason line.
  */
+/**
+ * Share of the KV budget the *full* cache may take before `auto`
+ * declines to turn `--swa-full` on.
+ *
+ * Six tenths, so a full cache has to leave four tenths of the budget
+ * unspent. That is the margin the flat `COMPUTE_OVERHEAD_MIB` does not
+ * cover once the context is long, and it is cheap to give up: a model
+ * whose full cache is that small was never the case where prefix reuse
+ * is worth the risk.
+ */
+export const SWA_FULL_BUDGET_SHARE = 0.6;
+
 export function resolveSwaFullDecision(
   input: SwaFullDecisionInput,
 ): SwaFullDecision {
@@ -146,12 +165,32 @@ export function resolveSwaFullDecision(
       slidingLayers: counts.swa,
     };
   }
-  const fits = estimate.full <= input.kvBudgetBytes;
+  // Headroom, not equality. `kvBudgetBytes` is already 92% of free VRAM
+  // minus the weights minus a FLAT compute reserve, and that reserve
+  // does not hold at long contexts — Metal's own buffers grow with the
+  // context and the batch. Spending the whole budget on KV therefore
+  // overcommits the GPU rather than filling it.
+  //
+  // Measured, on a 31B model at its trained 262144: the estimate came
+  // back "KV 4.9 GB with SWA, ~29.3 GB full (×6.0)", 29.3 <= 31.9 said
+  // yes, and the server then logged
+  // `kIOGPUCommandBufferCallbackErrorOutOfMemory` 298 times while
+  // staying up and listening — every decode failing with `ret = -3`,
+  // every turn coming back with nothing.
+  //
+  // The asymmetry is the argument for being strict. Turning swa-full on
+  // buys prefix reuse across the sliding layers: a latency win.
+  // Overcommitting the GPU costs the model entirely. A feature that
+  // wants six times the memory has to prove there is room to spare, and
+  // the one case it is clearly safe — a cache that was small anyway —
+  // is exactly what this threshold keeps.
+  const ceiling = input.kvBudgetBytes * SWA_FULL_BUDGET_SHARE;
+  const fits = estimate.full <= ceiling;
   return {
     enabled: fits,
     reason: fits
-      ? `swa-full: on (auto) — full-SWA estimate fits the ${gb(input.kvBudgetBytes)} KV budget; ${layers}; ${figures}`
-      : `swa-full: off (auto) — full-SWA estimate exceeds the ${gb(input.kvBudgetBytes)} KV budget; ${layers}; ${figures}`,
+      ? `swa-full: on (auto) — full-SWA estimate fits ${gb(ceiling)} of the ${gb(input.kvBudgetBytes)} KV budget; ${layers}; ${figures}`
+      : `swa-full: off (auto) — full-SWA estimate needs more than ${gb(ceiling)} of the ${gb(input.kvBudgetBytes)} KV budget; ${layers}; ${figures}`,
     estimate,
     slidingLayers: counts.swa,
   };

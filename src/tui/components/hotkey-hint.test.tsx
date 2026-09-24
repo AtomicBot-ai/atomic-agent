@@ -153,7 +153,7 @@ describe("HotkeyHint draft chips", () => {
     const out = renderHint(
       chatState({ status: "running", inputValue: "half a thought" }),
     );
-    expect(out).toContain("[esc]");
+    expect(out).toContain("[esc 1]");
     expect(out).toContain("abort, draft kept");
     // Clearing is not on offer while a turn is in flight — abort wins.
     expect(out).not.toContain("clear draft");
@@ -161,9 +161,17 @@ describe("HotkeyHint draft chips", () => {
 
   it("leaves the running label plain when there is no draft to keep", () => {
     const out = renderHint(chatState({ status: "running" }));
-    expect(out).toContain("[esc]");
+    expect(out).toContain("[esc 1]");
     expect(out).toContain("abort");
     expect(out).not.toContain("draft");
+  });
+
+  it("asks for the second key once Esc has armed the abort", () => {
+    const out = renderHint(chatState({ status: "running", abortArmed: true }));
+    expect(out).toContain("[1]");
+    expect(out).toContain("confirm abort");
+    // The strip must stop advertising the key that is already spent.
+    expect(out).not.toContain("[esc 1]");
   });
 });
 

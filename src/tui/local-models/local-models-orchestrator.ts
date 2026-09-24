@@ -92,6 +92,11 @@ import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
 import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
+import {
+  resolveLocalLegRole,
+  resolveRunMode,
+} from "../../llm/run-mode/index.js";
+import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -1627,6 +1632,18 @@ export class LocalModelsOrchestrator {
           line: `local-llm: ${def.name} needs ~${needGb.toFixed(1)} GB but GPU budget ~${gpuBudgetGb!.toFixed(1)} GB — may fail to load / OOM`,
         });
       }
+      // What `parallel: "auto"` means depends on which way fusion is
+      // pointing (see `resolveLocalLegRole`): serving a fan-out wants
+      // every slot the context fits, orchestrating wants exactly one.
+      // Resolved from the `cfg` this call read, so a restart after the
+      // operator swaps the legs in Manage → LLM picks the new role up —
+      // `restartDaemon` comes back through here, and nothing about the
+      // role is captured at boot.
+      const resolvedLlm = resolveLlmConfig(cfg);
+      const localLegRole = resolveLocalLegRole(
+        resolvedLlm,
+        resolveRunMode(resolvedLlm, { managedModelId: mid }),
+      );
       const result = await startChatAndEmbeddingDaemons({
         chat: {
           dataDir,
@@ -1636,6 +1653,7 @@ export class LocalModelsOrchestrator {
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
           parallel: cfg.localModels.managed.parallel,
+          localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),

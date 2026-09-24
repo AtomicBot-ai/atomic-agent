@@ -1,3 +1,4 @@
+import { readSessionTitle } from "./session-title.js";
 import type { SessionState } from "./session-state.js";
 
 /**
@@ -21,6 +22,13 @@ export interface SessionSummary {
    * and keeps the row visible.
    */
   firstPrompt: string | null;
+  /**
+   * The generated name, when one exists — what every list shows in
+   * place of the raw prompt. `null` until the namer has run, which is
+   * every session before this feature and any session whose naming
+   * call failed.
+   */
+  title: string | null;
   /** `metadata.importedFrom` for sessions migrated from another agent. */
   importedFrom: string | null;
 }
@@ -37,6 +45,7 @@ export function summarizeSessionState(state: SessionState): SessionSummary {
     turnCount: state.turnCount,
     stepCount: state.stepCount,
     firstPrompt: firstUser?.kind === "user" ? firstUser.text : null,
+    title: readSessionTitle(state.metadata),
     importedFrom: typeof importedFrom === "string" ? importedFrom : null,
   };
 }

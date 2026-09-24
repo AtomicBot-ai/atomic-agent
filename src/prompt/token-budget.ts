@@ -26,10 +26,7 @@ export interface BudgetCheckResult {
  */
 export function estimateTokens(text: string): number {
   if (text.length === 0) return 0;
-  return estimateTokensFromCounts(
-    text.length,
-    text.trim().split(/\s+/).length,
-  );
+  return estimateTokensFromCounts(text.length, text.trim().split(/\s+/).length);
 }
 
 /**
@@ -37,10 +34,7 @@ export function estimateTokens(text: string): number {
  * already summed. Lets a line-at-a-time packer price a candidate
  * without re-scanning everything it has accepted so far.
  */
-export function estimateTokensFromCounts(
-  chars: number,
-  words: number,
-): number {
+export function estimateTokensFromCounts(chars: number, words: number): number {
   if (chars === 0) return 0;
   return Math.max(Math.ceil(chars / 3.6), Math.ceil(words * 1.4));
 }
@@ -182,10 +176,22 @@ export const CONVERSATION_CAP_FLOOR = 512;
 export const CONVERSATION_CAP_AUTO = 0;
 
 /**
- * The conversation cap under `CONVERSATION_CAP_AUTO` when no context window
- * is known (a cloud model with no published length): the pre-auto default.
+ * The conversation cap under `CONVERSATION_CAP_AUTO` when no context
+ * window is known — a cloud model nobody has published a length for.
+ *
+ * 32k was the pre-auto default, chosen when an unknown window mostly
+ * meant a small local model. It is now the opposite: a window is
+ * unknown precisely when the model is newer than the catalogue
+ * snapshot, and those models are large. Holding a fresh 200k model's
+ * transcript to 32k drops history nobody asked to lose, and the cost of
+ * being wrong the other way is bounded — `computeEffectiveConversationCap`
+ * still clamps to the real window the moment one is known, and the
+ * packer only spends what the transcript actually holds.
+ *
+ * 64k is the smallest window in wide use among models a current
+ * catalogue misses, so it cannot overshoot a model that is merely new.
  */
-export const CONVERSATION_CAP_AUTO_FALLBACK = 32_000;
+export const CONVERSATION_CAP_AUTO_FALLBACK = 64_000;
 
 /**
  * Resolve the actual cap enforced on the `### conversation` section for

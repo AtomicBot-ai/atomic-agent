@@ -295,6 +295,15 @@ export interface StepDependencies {
    */
   contextWindow?: number | null;
   /**
+   * Whether `profile.contextWindow` describes the model serving THIS
+   * step. Default `true`. The agent loop answers it from the link the
+   * step is routed to: a Fusion orchestrator running on a cloud leg
+   * holds a llama-server profile for its workers, and budgeting its own
+   * prompt against the workers' per-slot `n_ctx` is how a 128k model
+   * ended up packed to 16k. See `BuildPromptInput.profileWindowApplies`.
+   */
+  profileWindowApplies?: boolean;
+  /**
    * The local worker leg's request-slot count as the server reported
    * it, `null` until observed — forwarded to `buildPrompt` for the
    * `### fusion` machine facts. See `AgentLoopDeps.liveWorkerSlots`.
@@ -659,11 +668,13 @@ async function executeStepInner(
     // corrupted in transit (Ollama Cloud, ollama/ollama#17248). The
     // same holds for a local link rendering through its own template.
     suppressReasoningPrefill:
-      deps.toolTransport === "native_tools" ||
-      serverTemplate.useServerTemplate,
+      deps.toolTransport === "native_tools" || serverTemplate.useServerTemplate,
     thinking: localModels.thinking,
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
+      : {}),
+    ...(deps.profileWindowApplies !== undefined
+      ? { profileWindowApplies: deps.profileWindowApplies }
       : {}),
     ...(deps.liveWorkerSlots !== undefined
       ? { liveWorkerSlots: deps.liveWorkerSlots() }
@@ -1105,14 +1116,19 @@ async function executeStepInner(
       originalSize: trim.originalSize,
       droppedCount: trim.dropped.length + trim.refused.length,
     });
-    deps.logger?.info("batch trimmed to the first approval-gated call that can run", {
-      sessionId: ctx.session.id,
-      stepIndex: ctx.stepIndex,
-      originalSize: trim.originalSize,
-      kept: trim.kept.tool,
-      dropped: trim.dropped.map((call) => call.tool),
-      refused: trim.refused.map(({ call, reason }) => `${call.tool}: ${reason}`),
-    });
+    deps.logger?.info(
+      "batch trimmed to the first approval-gated call that can run",
+      {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        originalSize: trim.originalSize,
+        kept: trim.kept.tool,
+        dropped: trim.dropped.map((call) => call.tool),
+        refused: trim.refused.map(
+          ({ call, reason }) => `${call.tool}: ${reason}`,
+        ),
+      },
+    );
     return {
       ok: true,
       batch: { ...batch, calls: [trim.kept] },
@@ -1514,7 +1530,9 @@ async function executeStepInner(
   ) {
     unverified = unverifiedClaims(tail.args.text, [
       ...turnToolCalls(ctx.session.turns),
-      ...calls.slice(0, -1).map((call) => ({ tool: call.tool, args: call.args ?? {} })),
+      ...calls
+        .slice(0, -1)
+        .map((call) => ({ tool: call.tool, args: call.args ?? {} })),
     ]);
     if (unverified.length > 0 && ctx.terminalOnly !== true) {
       if (!deps.claimEvidence.noticed()) {
@@ -1764,8 +1782,7 @@ async function executeStepInner(
       batchSize,
     });
   }
-  const stepCalls =
-    suppressed !== null ? [...calls, suppressed.call] : calls;
+  const stepCalls = suppressed !== null ? [...calls, suppressed.call] : calls;
   const stepResults =
     suppressed !== null ? [...toolResults, suppressed.result] : toolResults;
 
@@ -2173,9 +2190,13 @@ function tryParseToolCalls(
           deps.strictTools === true && adapter.strictWidenedArgs
             ? adapter.strictWidenedArgs(toolDescriptors, { strict: true })
             : undefined;
-        const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning, {
-          ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
-        });
+        const batch = adapter.toolCallsToBatch(
+          completion.toolCalls,
+          reasoning,
+          {
+            ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
+          },
+        );
         if (batch.calls.length === 0) {
           return {
             ok: false,
@@ -2363,7 +2384,10 @@ const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
  * pin, and a step that narrows nothing has no reason to rewrite them.
  */
 function stepGrammarToolNames(
-  ctx: Pick<StepContext, "terminalOnly" | "toolSet" | "toolFilter" | "toolRole">,
+  ctx: Pick<
+    StepContext,
+    "terminalOnly" | "toolSet" | "toolFilter" | "toolRole"
+  >,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator">,
   descriptors: readonly ToolDescriptor[],
 ): readonly string[] | null {
@@ -2405,7 +2429,10 @@ function stepGrammarToolNames(
  * grammar byte-identical.
  */
 function resolveStepGrammar(
-  ctx: Pick<StepContext, "terminalOnly" | "toolSet" | "toolFilter" | "toolRole">,
+  ctx: Pick<
+    StepContext,
+    "terminalOnly" | "toolSet" | "toolFilter" | "toolRole"
+  >,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
   thinkingOff: boolean,
@@ -2691,7 +2718,10 @@ export const TRIM_REFUSED_BY_FUSION_GATE = "refused by the fusion gate";
  * both would refuse, in the order the gates run.
  */
 export function turnPolicyForTrim(
-  deps: Pick<StepDependencies, "registry" | "isPlanMode" | "isFusionOrchestrator">,
+  deps: Pick<
+    StepDependencies,
+    "registry" | "isPlanMode" | "isFusionOrchestrator"
+  >,
 ): BatchTrimPolicy {
   const planMode = deps.isPlanMode?.() ?? false;
   const orchestrator = deps.isFusionOrchestrator?.() ?? false;
@@ -3360,41 +3390,63 @@ async function consumeStream(
     }
   };
   let finalResult: CompletionResult | null = null;
-  while (true) {
-    const next = await stream.next();
-    if (next.done) {
-      finalResult = next.value;
-      break;
+  // Whether this loop reached the generator's own `done`. A loop that
+  // did not has abandoned a LIVE stream, and an abandoned stream that is
+  // never closed is never released: `LlamaServerClient.completeStream`
+  // tears its socket down in a `finally`, and a `finally` only runs on a
+  // generator someone closes. A `for await` would call `.return()` for
+  // us on the way out; this hand-run loop has to do it itself, or the
+  // exception that ends it — a parser throw, an `onEvent` consumer
+  // throwing back at us — leaves a llama.cpp slot held by a request no
+  // log mentions and every later completion queues behind, for the life
+  // of the process. This is the one abandon site the release exists for.
+  let drained = false;
+  try {
+    while (true) {
+      const next = await stream.next();
+      if (next.done) {
+        finalResult = next.value;
+        break;
+      }
+      const chunk = next.value;
+      // Latch the serving link's transport off the first stamped chunk —
+      // it is constant for the whole stream (a live stream is never
+      // restarted on another link) and must be known before the parser is
+      // first used.
+      servedTransport ??= chunk.servedTransport;
+      // Channel A: dedicated `reasoning_content` deltas (QwQ, DeepSeek-R1
+      // with `--reasoning-format deepseek`). Bypass the grammar parser —
+      // these tokens never appear inside `<think>` or JSON, they come on a
+      // separate SSE field and are already decoded.
+      if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
+        channelAReasoning += chunk.reasoningDelta;
+        onEvent?.({
+          type: "reasoning_delta",
+          stepIndex,
+          text: chunk.reasoningDelta,
+        });
+      }
+      // Channel B: inline content (may contain `<think>...</think>` +
+      // grammar-constrained JSON). The stream parser splits this into
+      // reasoning / reply-text deltas for us.
+      if (chunk.delta.length > 0) {
+        accumulated += chunk.delta;
+        emitParseEvents(getParser().push(chunk.delta));
+      }
+      if (chunk.done) {
+        // Some servers close the iterator right after the done frame; keep
+        // draining until `next.done` so we do not leave the response reader
+        // hanging.
+      }
     }
-    const chunk = next.value;
-    // Latch the serving link's transport off the first stamped chunk —
-    // it is constant for the whole stream (a live stream is never
-    // restarted on another link) and must be known before the parser is
-    // first used.
-    servedTransport ??= chunk.servedTransport;
-    // Channel A: dedicated `reasoning_content` deltas (QwQ, DeepSeek-R1
-    // with `--reasoning-format deepseek`). Bypass the grammar parser —
-    // these tokens never appear inside `<think>` or JSON, they come on a
-    // separate SSE field and are already decoded.
-    if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
-      channelAReasoning += chunk.reasoningDelta;
-      onEvent?.({
-        type: "reasoning_delta",
-        stepIndex,
-        text: chunk.reasoningDelta,
-      });
-    }
-    // Channel B: inline content (may contain `<think>...</think>` +
-    // grammar-constrained JSON). The stream parser splits this into
-    // reasoning / reply-text deltas for us.
-    if (chunk.delta.length > 0) {
-      accumulated += chunk.delta;
-      emitParseEvents(getParser().push(chunk.delta));
-    }
-    if (chunk.done) {
-      // Some servers close the iterator right after the done frame; keep
-      // draining until `next.done` so we do not leave the response reader
-      // hanging.
+    drained = true;
+  } finally {
+    // Only on the abandon: a stream driven to `done` has closed itself.
+    // Swallowed and awaited-with-a-catch because we are already
+    // unwinding — the release must not replace the error that ended this
+    // loop with one of its own.
+    if (!drained) {
+      await stream.return(undefined as never).catch(() => undefined);
     }
   }
   emitParseEvents(getParser().end());

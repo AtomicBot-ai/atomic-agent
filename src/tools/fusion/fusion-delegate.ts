@@ -20,6 +20,7 @@ import {
   type ContractReport,
 } from "./contract-checks.js";
 import {
+  completedWaveNotes,
   contractForWave,
   dependencyWarnings,
   planWaves,
@@ -339,7 +340,8 @@ export function buildFusionDelegateTool(
       // every provider that had not delivered when its dependent ran.
       // Each wave's block carries everything known so far; the result's
       // `contract:` line carries all of it.
-      const waveWarnings: string[] = plan.cycle === undefined ? [] : [plan.cycle];
+      const waveWarnings: string[] =
+        plan.cycle === undefined ? [] : [plan.cycle];
 
       let results: WorkerTaskResult[];
       try {
@@ -348,7 +350,13 @@ export function buildFusionDelegateTool(
           waveWarnings.push(
             ...dependencyWarnings(wave, plan.dependencies, finished),
           );
-          const contract = contractForWave(parsed.contract, waveWarnings);
+          // Fresh each wave, not accumulated: the notes are recomputed
+          // from everything finished so far, so appending them to the
+          // running warning list would repeat every earlier wave.
+          const contract = contractForWave(parsed.contract, [
+            ...waveWarnings,
+            ...completedWaveNotes(finished),
+          ]);
           const waveResults = await runWorkerTasks(deps, {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -391,12 +399,16 @@ export function buildFusionDelegateTool(
       // reads, not `ok` with a footnote.
       let contract: ContractReport | undefined;
       if (parsed.contract !== undefined) {
-        const findings = await inspectContractProvides(
+        // `results` goes in so a task that never ran is not accused of
+        // failing to provide: a cancelled fan-out leaves the disk empty
+        // for reasons that are not the worker's.
+        const provides = await inspectContractProvides(
           parsed.contract,
           parsed.tasks,
           ctx.workingDir,
+          { results, signal: ctx.signal },
         );
-        results = applyContractFindings(results, findings);
+        results = applyContractFindings(results, provides.findings);
         const checks = await runContractChecks(
           parsed.contract.checks ?? [],
           deps.runChecks,
@@ -410,7 +422,10 @@ export function buildFusionDelegateTool(
         // reads it here, on the line and in the details.
         const warnings = [...(parsed.contract.warnings ?? []), ...waveWarnings];
         contract = {
-          findings,
+          findings: provides.findings,
+          ...(provides.providesSkipped === undefined
+            ? {}
+            : { providesSkipped: provides.providesSkipped }),
           checks: checks.outcomes,
           ...(checks.checksSkipped === undefined
             ? {}
@@ -452,9 +467,14 @@ export function buildFusionDelegateTool(
       // What the fan-out cost on the worker leg, when its model is priced
       // (a cloud leg with a catalogue entry); a local leg resolves to no
       // pricing and the header says nothing.
-      const pricing = deps.resolveWorkerPricing?.(workerProviderId, workerModel);
+      const pricing = deps.resolveWorkerPricing?.(
+        workerProviderId,
+        workerModel,
+      );
       const spend =
-        pricing === undefined ? null : fanoutSpend(results, pricing, workerModel);
+        pricing === undefined
+          ? null
+          : fanoutSpend(results, pricing, workerModel);
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,

@@ -56,6 +56,77 @@ describe("primeStream / replayPrimedStream", () => {
     );
   });
 
+  /**
+   * The buffered first chunk is yielded from `replayPrimedStream`'s own
+   * frame, not delegated — so a consumer that walks away there closes
+   * only the replay wrapper. Before this was handled, the provider
+   * generator underneath stayed suspended forever and its `finally`
+   * (which is where `LlamaServerClient.completeStream` closes the
+   * socket, and therefore where a llama.cpp slot is released) never ran.
+   */
+  it("closes the underlying stream when abandoned on the replayed first chunk", async () => {
+    let released = false;
+    async function* tracked(): AsyncGenerator<string, string, void> {
+      try {
+        yield "x-1";
+        yield "x-2";
+        return "x-done";
+      } finally {
+        released = true;
+      }
+    }
+    const primed = await primeStream(tracked());
+    const replay = replayPrimedStream(primed);
+    expect(await replay.next()).toEqual({ done: false, value: "x-1" });
+    expect(released).toBe(false);
+
+    await replay.return(undefined as never);
+    expect(released).toBe(true);
+    // And the inner generator really is finished, not merely resumed.
+    expect(await primed.rest.next()).toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
+  it("closes the underlying stream when abandoned on a delegated chunk", async () => {
+    let released = false;
+    async function* tracked(): AsyncGenerator<string, string, void> {
+      try {
+        yield "x-1";
+        yield "x-2";
+        return "x-done";
+      } finally {
+        released = true;
+      }
+    }
+    const primed = await primeStream(tracked());
+    const replay = replayPrimedStream(primed);
+    await replay.next();
+    expect(await replay.next()).toEqual({ done: false, value: "x-2" });
+    expect(released).toBe(false);
+
+    await replay.return(undefined as never);
+    expect(released).toBe(true);
+  });
+
+  it("does not close twice on a fully drained stream", async () => {
+    let closes = 0;
+    async function* tracked(): AsyncGenerator<string, string, void> {
+      try {
+        yield "x-1";
+        return "x-done";
+      } finally {
+        closes += 1;
+      }
+    }
+    const primed = await primeStream(tracked());
+    const { chunks, ret } = await collect(replayPrimedStream(primed));
+    expect(chunks).toEqual(["x-1"]);
+    expect(ret).toBe("x-done");
+    expect(closes).toBe(1);
+  });
+
   it("falls the streaming path over when the primary fails to open", async () => {
     const chain = new ProviderFallbackChain({
       resolve: () => ({

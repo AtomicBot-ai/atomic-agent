@@ -60,8 +60,22 @@ export interface ContractCheckOutcome {
   detail: string;
 }
 
+/**
+ * What `inspectContractProvides` could and could not say. The shape
+ * mirrors `runContractChecks`: the verdicts it reached, plus the reason
+ * for the ones it did not reach — never silence, which reads as "all
+ * clear", and never a "missing" it did not earn.
+ */
+export interface ContractProvideReport {
+  findings: ContractFinding[];
+  /** Why some provides were not inspected, when some were not. */
+  providesSkipped?: string;
+}
+
 export interface ContractReport {
   findings: ContractFinding[];
+  /** Why some provides were not inspected — `ContractProvideReport`. */
+  providesSkipped?: string;
   checks: ContractCheckOutcome[];
   /** Why the checks did not run, when they did not. */
   checksSkipped?: string;
@@ -105,19 +119,55 @@ export function contentProvides(
 }
 
 /**
+ * Whether the task that owns a provide got far enough for the disk to
+ * mean anything. A task that was cancelled, or that is absent from the
+ * results because its wave never started, produced nothing and was
+ * never given the chance to — grepping for its output and calling the
+ * absence "missing" accuses a worker of doing the job wrong when the
+ * job never started. Every other status ran: `failed`, `no_changes`,
+ * `max_steps` and `needs_orchestrator` all had their turn, and a task
+ * that ran and provided nothing is exactly what this scan is for.
+ *
+ * With no results to consult — the function is called outside a
+ * fan-out, or by a caller that has no rows — every provide is
+ * assessed, as it always was.
+ */
+function ownerRan(
+  task: string,
+  results: readonly WorkerTaskResult[] | undefined,
+): boolean {
+  if (results === undefined) return true;
+  const own = results.find((r) => r.id === task);
+  return own !== undefined && own.status !== "cancelled";
+}
+
+/**
  * Check every provide against the working directory. Never throws: a
  * path that cannot be read counts as not providing, with the reason on
  * the finding. A non-file provide with nowhere to be looked for gets no
  * finding at all — it is the parser's warning (`contractWarnings`), on
  * the `contract:` line already, and a "missing" verdict over a search
  * that never happened would read as the worker's failure.
+ *
+ * The same reasoning covers a provide whose owner never ran: it gets no
+ * finding either, and `providesSkipped` says so, the way
+ * `runContractChecks` says why its checks did not run.
  */
 export async function inspectContractProvides(
   contract: DelegateContract,
   tasks: readonly DelegateTask[],
   workingDir: string,
-): Promise<ContractFinding[]> {
+  options: {
+    /** The rows the fan-out produced, to tell a real miss from a task that never ran. */
+    results?: readonly WorkerTaskResult[];
+    /** The turn's signal, so an aborted turn is named as the reason rather than the tasks. */
+    signal?: AbortSignal;
+  } = {},
+): Promise<ContractProvideReport> {
   const findings: ContractFinding[] = [];
+  /** Owners whose provides were passed over, in the order they were met. */
+  const notRun: string[] = [];
+  let skipped = 0;
   const cache = new Map<string, Promise<string | null>>();
   const read = (path: string): Promise<string | null> => {
     let pending = cache.get(path);
@@ -141,6 +191,11 @@ export async function inspectContractProvides(
 
   for (const provide of contract.provides ?? []) {
     const base = { task: provide.task, kind: provide.kind, name: provide.name };
+    if (!ownerRan(provide.task, options.results)) {
+      skipped += 1;
+      if (!notRun.includes(provide.task)) notRun.push(provide.task);
+      continue;
+    }
     if (provide.kind === "file") {
       let present = false;
       try {
@@ -176,7 +231,17 @@ export async function inspectContractProvides(
         : {}),
     });
   }
-  return findings;
+  if (skipped === 0) return { findings };
+  // Named the way `runContractChecks` names its own skip: what was not
+  // looked at, then the reason. An aborted turn is the reason for all of
+  // them at once, so say that rather than listing every task the abort
+  // cancelled.
+  const plural = `${skipped} provide${skipped === 1 ? "" : "s"}`;
+  const why =
+    options.signal?.aborted === true
+      ? "the turn was cancelled"
+      : `task${notRun.length === 1 ? "" : "s"} ${notRun.join(", ")} did not run`;
+  return { findings, providesSkipped: `${plural} not checked — ${why}` };
 }
 
 /** `[ship_js] symbol HD.Ship.reset not in js/ship.js` */
@@ -302,8 +367,9 @@ export function applyCheckOutcomes(
 }
 
 /**
- * The `contract:` line of the status table — presence first, then the
- * checks that belong to no task, then why the checks did not run, then
+ * The `contract:` line of the status table — presence first, then why
+ * some provides could not be judged at all, then the checks that belong
+ * to no task, then why the checks did not run, then
  * the warnings the call was run with (an unprovided require, so the
  * orchestrator fixes the contract on its next call instead of wondering
  * why a worker never found it). Nothing when the contract declared
@@ -319,6 +385,7 @@ export function renderContractLine(report: ContractReport): string | undefined {
         : `${missing.length} missing — ${missing.map(describeMissing).join("; ")}`,
     );
   }
+  if (report.providesSkipped !== undefined) parts.push(report.providesSkipped);
   const callLevel = report.checks.filter((o) => o.task === undefined);
   if (callLevel.length > 0) {
     const failed = callLevel.filter((o) => !o.ok);

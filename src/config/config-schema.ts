@@ -356,13 +356,16 @@ export interface AtomicAgentConfig {
      * and same reasoning as `localModels.managed.contextSize` — the
      * useful value is a function of hardware this file cannot see.
      *
-     * The default stays at 32k rather than becoming auto, and
-     * deliberately: on a local server the tokens are free, but on a
-     * metered cloud model with a 200k window "auto" would multiply the
-     * per-step bill without anyone asking for it. Operators who size
-     * their own `llama-server` are exactly the people who should set
-     * this to `0`, and the context panel now tells them so when their
-     * ceiling is what is holding the transcript below their window.
+     * **The shipped default IS `0`** — this paragraph used to claim it
+     * stayed at 32k, which stopped being true when auto landed, and the
+     * number was the one thing an operator would act on.
+     *
+     * Auto is not unbounded spend: it is what the window leaves, and a
+     * model whose window nobody has published falls back to
+     * `CONVERSATION_CAP_AUTO_FALLBACK` (64k). An operator on a metered
+     * cloud model who wants a tighter ceiling than the window sets a
+     * number here, and the context panel says so when that ceiling —
+     * rather than the window — is what holds the transcript down.
      */
     conversationMaxTokens: number;
     /**
@@ -372,6 +375,16 @@ export interface AtomicAgentConfig {
      * ceiling underneath it.
      */
     conversationMaxPairs: number;
+    /**
+     * Ask the model to name each session from its first prompt.
+     *
+     * One extra short completion per session, once, after the first
+     * answered turn. It is a real call on a metered provider, which is
+     * the whole reason this is a switch rather than a fact: the lists
+     * are perfectly usable showing the prompt itself, which is what
+     * they showed before.
+     */
+    nameSessions: boolean;
     /**
      * Share of a limit the transcript drops to when that limit
      * overflows, `(0, 1]`. The cut then holds until the next overflow,
@@ -933,6 +946,7 @@ export interface AtomicAgentConfig {
     mouse: boolean;
     onboarding: OnboardingState;
     sessionRail: SessionRailConfig;
+    notify: TuiNotifyConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1280,6 +1294,29 @@ export interface TelegramConfig {
   progressIndicator: boolean;
 }
 
+/**
+ * Local end-of-turn pings, written to the terminal itself (config v71).
+ *
+ * Deliberately not part of `notifications`, which routes a message off
+ * the machine — to Telegram, Discord or e-mail — and needs a channel
+ * configured before it can say anything. This one has no channel and no
+ * setup: it writes `OSC 9` plus a `BEL` to the session's own terminal,
+ * which is exactly as far as it should carry.
+ */
+export interface TuiNotifyConfig {
+  /** Off means the terminal is never written to out of band. */
+  enabled: boolean;
+  /**
+   * How long a turn must have run before its *successful* ending is
+   * worth a ping. A failure always pings regardless: it is the ending
+   * that needs a person, and it can happen in two seconds.
+   *
+   * The floor exists because a bell on every turn is a bell an operator
+   * learns to ignore, which costs the failures too.
+   */
+  minDurationMs: number;
+}
+
 /** Where a finished (or failed) background model download is reported. */
 export type DownloadNotifyChannelSetting =
   "telegram" | "discord" | "email" | "off";
@@ -1364,7 +1401,10 @@ export function parseLocalTemplateSetting(
  */
 export type ReadScope = "working-dir" | "unrestricted";
 
-export const READ_SCOPES: readonly ReadScope[] = ["working-dir", "unrestricted"];
+export const READ_SCOPES: readonly ReadScope[] = [
+  "working-dir",
+  "unrestricted",
+];
 
 export function parseReadScope(raw: unknown, field: string): ReadScope {
   if (
@@ -1404,7 +1444,9 @@ export interface UserManagedLocalLlmConfig {
   device: string;
   /**
    * Which llama.cpp build (release zip) the managed backend installs.
-   * Windows-only — every other platform publishes a single asset.
+   * Windows-only — every other platform, Linux arm64 included,
+   * publishes a single asset, so there is nothing for the preference to
+   * choose between and it is ignored there.
    *   - `"auto"` (default) — probe `nvidia-smi` and pick the newest CUDA
    *     build the driver can run, else Vulkan.
    *   - `"cpu"` — the CPU-only build. For machines whose Vulkan stack
@@ -1453,8 +1495,14 @@ export interface UserManagedLocalLlmConfig {
    * prompt cannot serve one (see `worker-slots.ts`). That makes the
    * number a property of the machine, which is the party that knows it.
    *
-   * A pinned number is honoured as written: an external server, an
-   * unusual model, a benchmark. Applied on the next daemon start.
+   * `"auto"` also reads which way fusion is pointing. With the legs
+   * swapped — a local orchestrator and cloud workers — the daemon serves
+   * exactly one stream, so it launches with one slot: a second one
+   * cannot be used and is not free (see `local-leg-role.ts`).
+   *
+   * A pinned number is honoured as written, in either direction: an
+   * external server, an unusual model, a benchmark. Applied on the next
+   * daemon start.
    */
   parallel: number | "auto";
   /**
@@ -1649,6 +1697,8 @@ export interface UserConfigFile {
      * limit bites first wins.
      */
     conversationMaxPairs: number;
+    /** Ask the model to name each session (config v72). */
+    nameSessions: boolean;
     /**
      * Share of a limit the transcript keeps after a cut, `(0, 1]`.
      * History is dropped in chunks — down to this share of the token
@@ -2150,6 +2200,7 @@ export interface UserConfigFile {
     mouse: boolean;
     onboarding: OnboardingState;
     sessionRail: SessionRailConfig;
+    notify: TuiNotifyConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -2449,7 +2500,15 @@ export interface UserConfigFile {
 // parsed away without a word (issue #466). Additive: an older file has
 // no field, takes the env default, and renders the same prompt. The env
 // var still overrides the file value.
-export const USER_CONFIG_VERSION = 70;
+// v72: `agent.nameSessions` (default true) — one short completion per
+// session names it from its first prompt, so the rail and the header
+// show what the thread is about instead of the raw prompt. Additive: an
+// older file inherits `true`, and turning it off restores the prompt.
+// v71: `tui.notify` (`enabled` true, `minDurationMs` 30_000) — the TUI
+// writes an OSC 9 notification plus a BEL to its own terminal when a
+// turn ends, so an operator who walked away finds out. Additive: an
+// older file has no block and takes the defaults.
+export const USER_CONFIG_VERSION = 72;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2608,6 +2667,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   67,
   68,
   69,
+  70,
+  71,
   USER_CONFIG_VERSION,
 ];
 
@@ -2681,6 +2742,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // the fixed 32K fallback applies only when no window is known.
     conversationMaxTokens: 0,
     conversationMaxPairs: 200,
+    nameSessions: true,
     conversationLowWater: 0.65,
     worldSnapshotMaxTokens: 8_000,
   },
@@ -2919,6 +2981,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
       completedAt: null,
@@ -3348,7 +3411,10 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
  * expands server-side (`{0,N}` becomes N nested optional rules, four
  * per token) at a size it parses in milliseconds.
  */
-export function parseReasoningBudgetTokens(raw: unknown, field: string): number {
+export function parseReasoningBudgetTokens(
+  raw: unknown,
+  field: string,
+): number {
   const value = coerceIntLike(raw);
   if (value === 0) return 0;
   return parseBoundedPositiveInt(raw, field, 64, 32_768);
@@ -4690,6 +4756,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "agent.maxSteps",
       ),
       providerWait: parseProviderWait(agent.providerWait),
+      nameSessions: parseBool(
+        agent.nameSessions ?? USER_CONFIG_DEFAULTS.agent.nameSessions,
+        "agent.nameSessions",
+      ),
       task: parseAgentTask(agent.task),
       toolTimeoutMs: parsePositiveInt(
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
@@ -5380,6 +5450,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       onboarding: parseOnboardingState(tui.onboarding),
       sessionRail: parseSessionRailConfig(tui.sessionRail),
+      notify: parseTuiNotify(tui.notify),
     },
     analytics: {
       enabled: parseBool(
@@ -5569,6 +5640,30 @@ export interface OnboardingState {
  * whole config file — and duplicates keep their first position so the
  * on-disk form stays canonical.
  */
+/**
+ * `tui.notify`, defaulted whole. Absent is the overwhelmingly common
+ * case — every config written before v71 — so it is not an error, and a
+ * present block still has each field checked rather than trusted.
+ */
+export function parseTuiNotify(raw: unknown): TuiNotifyConfig {
+  const d = USER_CONFIG_DEFAULTS.tui.notify;
+  if (raw === undefined || raw === null) return { ...d };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.notify",
+      "expected an object with `enabled` and `minDurationMs`",
+    );
+  }
+  const block = raw as Partial<TuiNotifyConfig>;
+  return {
+    enabled: parseBool(block.enabled ?? d.enabled, "tui.notify.enabled"),
+    minDurationMs: parseNonNegativeInt(
+      block.minDurationMs ?? d.minDurationMs,
+      "tui.notify.minDurationMs",
+    ),
+  };
+}
+
 export function parseSessionRailConfig(raw: unknown): SessionRailConfig {
   if (raw === undefined || raw === null) return { order: [], pinned: [] };
   if (typeof raw !== "object" || Array.isArray(raw)) {

@@ -11,6 +11,12 @@ import {
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
 import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
+import {
+  emitTerminalNotification,
+  formatTurnNotification,
+  raiseDesktopNotification,
+  shouldNotify,
+} from "./terminal-notify.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { IssueReportPopup } from "./components/issue-report-popup.js";
@@ -27,6 +33,7 @@ import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -35,7 +42,8 @@ import {
 import { reduceTuiState } from "./agent-event-reducer.js";
 import { deriveHerdrReport, type HerdrReporter } from "./herdr-reporter.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
-import type { WhileBusySubmitMode } from "../config/index.js";
+import type { TuiNotifyConfig, WhileBusySubmitMode } from "../config/index.js";
+import { getConfig } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import {
   approvalHotkey,
@@ -873,6 +881,64 @@ export function TuiApp({
       app.exit();
     }
   }, [state.status, callbacks, app]);
+
+  // One terminal ping per finished turn, for the operator who went to
+  // do something else. Keyed on the run-history length rather than on
+  // `status`: the entry is the record of the ending, it carries the
+  // outcome and the duration the decision needs, and a length that only
+  // grows cannot fire twice for one turn the way a status that flips
+  // back and forth can.
+  // Read once per mount. The knob is not something an operator flips
+  // mid-turn, and re-reading it on every render would put a config load
+  // in the render path of the hottest component in the app.
+  const notify = useMemo<TuiNotifyConfig>(() => {
+    try {
+      return getConfig().tui.notify;
+    } catch {
+      // A TUI that cannot read its config still has to draw. Silence is
+      // the safe answer for a notifier.
+      return { enabled: false, minDurationMs: 0 };
+    }
+  }, []);
+  const notifiedRunsRef = useRef(0);
+  useEffect(() => {
+    const entry = state.runHistory[state.runHistory.length - 1];
+    if (!entry || state.runHistory.length <= notifiedRunsRef.current) {
+      notifiedRunsRef.current = state.runHistory.length;
+      return;
+    }
+    notifiedRunsRef.current = state.runHistory.length;
+    if (!notify.enabled) return;
+    // Escapes belong in a terminal. Piped or redirected stderr gets the
+    // bytes as content, which is how a log file ends up with a bell in
+    // it — and how a test run ends up ringing the developer's terminal.
+    // The same gate covers the desktop notifier: a headless run has no
+    // operator to interrupt.
+    if (!process.stderr.isTTY) return;
+    if (
+      !shouldNotify({
+        outcome: entry.outcome,
+        durationMs: entry.durationMs,
+        minDurationMs: notify.minDurationMs,
+      })
+    ) {
+      return;
+    }
+    const note = formatTurnNotification({
+      outcome: entry.outcome,
+      reason: entry.reason,
+      stepCount: entry.stepCount,
+      durationMs: entry.durationMs,
+      workingDirName: session.workingDir.split("/").filter(Boolean).pop(),
+    });
+    // stderr, not Ink's stdout: an out-of-band escape inside a frame
+    // survives the next repaint as garbage. See `terminal-notify.ts`.
+    emitTerminalNotification((chunk) => process.stderr.write(chunk), note);
+    // And the OS, because the terminal sequence reaches nobody on the
+    // default macOS terminal — the first field report of this feature
+    // was "I have seen no notifications".
+    raiseDesktopNotification(note);
+  }, [state.runHistory, notify, session.workingDir]);
 
   useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "tasks") {

@@ -153,7 +153,10 @@ import {
   createLinkGeneratorRunner,
   createLinkAwareReflectionRunner,
 } from "../memory/links/index.js";
-import type { LinkGeneratorLlmComplete } from "../memory/links/index.js";
+import type {
+  LinkGeneratorLlmComplete,
+  LinkGeneratorTraceEvent,
+} from "../memory/links/index.js";
 import { NeighborEvolver } from "../memory/evolution/index.js";
 import {
   ConsolidatorJob,
@@ -197,6 +200,11 @@ import {
   type ContextUsageState,
   type FusionWorkerMeta,
   SESSION_LLM_METADATA_KEY,
+  SESSION_TITLE_METADATA_KEY,
+  SESSION_TITLE_TIMEOUT_MS,
+  generateSessionTitle,
+  readSessionTitle,
+  shouldNameSession,
   type SessionLlmStamp,
   type SessionState,
 } from "../session/index.js";
@@ -251,7 +259,18 @@ export interface RuntimeEventHandlers {
    */
   onAgentEvent?: (event: AgentLoopEvent, sessionId?: string) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
-  onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
+  /**
+   * `entries` is the rebuilt catalog, `dropped` how many installed
+   * skills `skills.catalogTokenBudget` left out of it. Hosts that
+   * display a count need both: an install can push the catalog over the
+   * budget, so the number they show has to be able to stop growing and
+   * say why (issue #466). Handlers written against the one-argument
+   * signature keep working — the extra argument is simply ignored.
+   */
+  onSkillRegistryChange?: (
+    entries: SkillCatalogEntry[],
+    dropped: number,
+  ) => void;
   /**
    * Optional sink for remote-control channel lifecycle changes (e.g.
    * Telegram). Fires on every observable transition (`starting →
@@ -496,6 +515,22 @@ export interface AgentRuntime {
   readonly providerRegistry: ProviderRegistry;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Installed skills `skills.catalogTokenBudget` left out of
+   * `skillCatalog`; `0` when every one fit. The agent loop gets this
+   * count on `loopDeps` and turns it into the `### skills` truncation
+   * marker (issue #466), but the prompt is not the only place the
+   * catalog is counted: the `run` banner, `/api/capabilities`, the TUI
+   * diagnostics line and `/skills dump` all report `skillCatalog.length` as
+   * "installed". Without the count beside it every one of them states a
+   * clipped number as the whole truth — the same misreading the prompt
+   * marker exists to prevent, told to the operator instead of to the
+   * model. Live getter for the same reason `skillCatalog` is one:
+   * `refreshSkills()` can turn a catalog that fit into one that does
+   * not, and a snapshot taken at boot would go stale on the first
+   * install.
+   */
+  readonly skillCatalogDropped: number;
   readonly toolDescriptors: readonly ToolDescriptor[];
   readonly grammar: string;
   readonly logger: StructuredLogger;
@@ -1583,8 +1618,8 @@ export async function createAgentRuntime(
               swaFullActive: () => {
                 const dataDir = config.paths.localModelsDataDir;
                 return (
-                  readLaunchRecord(dataDir, readRunningPid(dataDir))?.swaFull ===
-                  true
+                  readLaunchRecord(dataDir, readRunningPid(dataDir))
+                    ?.swaFull === true
                 );
               },
             }
@@ -1660,6 +1695,12 @@ export async function createAgentRuntime(
       slotAffinity: provider.capabilities.supportsSlotAffinity,
       parallelTools: provider.capabilities.supportsParallelTools,
       strictTools: modelWantsStrictTools(resolved, provider.id),
+      // The entry's kind, not the provider object's — `LlmProvider` has
+      // no kind and a llama-server link is only identifiable from the
+      // config entry it was built from.
+      isLlamaServer:
+        resolved.providers.find((p) => p.id === provider.id)?.kind ===
+        "llama-server",
     };
   };
 
@@ -2159,6 +2200,27 @@ export async function createAgentRuntime(
           : {}),
       }),
     );
+    // Per-session trace emission — same resolve-by-sessionId pattern
+    // as reflection / vote. Shared by the runner and the decorator:
+    // the decorator's hydration-failure bail-out returns before
+    // `generate()` is reached, so it is the only one that can report
+    // that outcome, and it must land in the same stream under the
+    // same event type or the trace still reads as "link-gen off".
+    const emitLinkGeneratorTrace = (event: LinkGeneratorTraceEvent) => {
+      touchRecorder(event.sessionId)?.recordLinkGenerator({
+        outcome: event.outcome,
+        ...(typeof event.linksWritten === "number"
+          ? { linksWritten: event.linksWritten }
+          : {}),
+        ...(event.reason ? { reason: event.reason } : {}),
+      });
+      memoryHealth.observe(
+        event.sessionId,
+        "link_generator",
+        event.outcome,
+        event.reason,
+      );
+    };
     const linkGenerator = createLinkGeneratorRunner({
       llmComplete: linkGenLlmComplete,
       linkStore,
@@ -2168,23 +2230,7 @@ export async function createAgentRuntime(
       minCandidates: config.memory.links.minCandidates,
       logger,
       metrics,
-      // Per-session trace emission — same resolve-by-sessionId
-      // pattern as reflection / vote.
-      emitTrace: (event) => {
-        touchRecorder(event.sessionId)?.recordLinkGenerator({
-          outcome: event.outcome,
-          ...(typeof event.linksWritten === "number"
-            ? { linksWritten: event.linksWritten }
-            : {}),
-          ...(event.reason ? { reason: event.reason } : {}),
-        });
-        memoryHealth.observe(
-          event.sessionId,
-          "link_generator",
-          event.outcome,
-          event.reason,
-        );
-      },
+      emitTrace: emitLinkGeneratorTrace,
     });
     reflectionRunner = createLinkAwareReflectionRunner({
       reflection: baseReflectionRunner,
@@ -2192,6 +2238,7 @@ export async function createAgentRuntime(
       notesStore,
       minCandidates: config.memory.links.minCandidates,
       logger,
+      emitTrace: emitLinkGeneratorTrace,
     });
   }
 
@@ -2457,6 +2504,7 @@ export async function createAgentRuntime(
         supportsSlotAffinity: slice.slotAffinity,
         supportsParallelTools: slice.parallelTools,
         strictTools: slice.strictTools,
+        isLlamaServer: slice.isLlamaServer,
       };
     },
     ...(profileManager ? { profileManager } : {}),
@@ -2713,7 +2761,10 @@ export async function createAgentRuntime(
       tokenBudget: config.skills.catalogTokenBudget,
     });
     skillCatalog = skillSection.entries;
-    options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
+    options.handlers?.onSkillRegistryChange?.(
+      [...skillCatalog],
+      skillSection.dropped,
+    );
   };
 
   /**
@@ -2880,6 +2931,58 @@ export async function createAgentRuntime(
     }
   };
 
+  /**
+   * Ask the model for a short name and store it on the session.
+   *
+   * Re-reads and re-saves through the store rather than writing the
+   * `finished` object it was handed: the call takes a second or two and
+   * the next turn may already have saved over it, so the read-modify-
+   * write has to happen when the answer arrives, not before.
+   */
+  const nameSession = async (state: SessionState): Promise<void> => {
+    // Its own deadline: the turn is over, nothing is waiting on this,
+    // and a naming call that hangs must not hold a slot for the next
+    // turn to queue behind.
+    const abort = new AbortController();
+    const timer = setTimeout(
+      () => abort.abort(),
+      SESSION_TITLE_TIMEOUT_MS,
+    ).unref?.();
+    void timer;
+    const title = await generateSessionTitle(state, {
+      complete: async (params) => {
+        const result = await llmComplete({
+          ...params,
+          signal: abort.signal,
+        });
+        return { content: result.content, ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}) };
+      },
+      slotId: () => slotManager.sideCallSlotId(),
+      // Which wire shape this call has to take. A cloud link answers a
+      // bare prompt with an empty `content`, so the title has to be
+      // asked for the way every other sub-call asks.
+      toolTransport: resolveActiveLlmSlice().transport,
+      onError: (err: unknown) =>
+        logger.debug("session naming failed", {
+          sessionId: state.id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+    });
+    if (title === null) return;
+    const current = sessionStore.load(state.id) ?? state;
+    // Lost the race, or someone named it in between: the first name
+    // wins, because a label the operator has already navigated by must
+    // not move.
+    if (readSessionTitle(current.metadata) !== null) return;
+    sessionStore.save({
+      ...current,
+      metadata: {
+        ...current.metadata,
+        [SESSION_TITLE_METADATA_KEY]: title,
+      },
+    });
+  };
+
   const executeTurn = async (
     session: SessionState,
     userMessage: string,
@@ -2960,7 +3063,9 @@ export async function createAgentRuntime(
           userMessage,
           // The same record the workers' briefs quote, pinned into the
           // orchestrator's own prompt once the packer drops its carrier.
-          ...(turnRequest !== undefined ? { originalRequest: turnRequest } : {}),
+          ...(turnRequest !== undefined
+            ? { originalRequest: turnRequest }
+            : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
@@ -2979,6 +3084,14 @@ export async function createAgentRuntime(
           },
         };
         sessionStore.save(finished);
+        // Name the thread once, from its first prompt, after the first
+        // turn that actually answered. Fire-and-forget on purpose: the
+        // turn is already saved and already returned, and an unnamed
+        // session simply keeps showing its prompt — which is what every
+        // session showed before. It must never delay or fail a reply.
+        if (getConfig().agent.nameSessions && shouldNameSession(finished)) {
+          void nameSession(finished);
+        }
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };
@@ -3173,8 +3286,11 @@ export async function createAgentRuntime(
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
       resolveWorkerPricing: (providerId, modelId) =>
-        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)
-          ?.pricing,
+        resolveModelPricingFor(
+          resolveLlmConfig(getConfig()),
+          modelId,
+          providerId,
+        )?.pricing,
       // The same client the llama-server provider serves workers with,
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
@@ -3489,6 +3605,13 @@ export async function createAgentRuntime(
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
+  });
+  // Reads `skillSection`, not a captured number: `refreshSkills()`
+  // reassigns the whole section, so a getter over the binding is what
+  // keeps the dropped count in step with the entries it belongs to.
+  Object.defineProperty(runtime, "skillCatalogDropped", {
+    enumerable: true,
+    get: () => skillSection.dropped,
   });
   // Same late binding as the loop's own getter: `/tools`, the sidecar
   // and every host that reads the catalog off the runtime must see the

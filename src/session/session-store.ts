@@ -6,6 +6,10 @@ import { getConfig } from "../config/index.js";
 import { stripEphemeral, type SessionState } from "./session-state.js";
 import { normalizeSessionState } from "./normalize-session-state.js";
 import type { SessionSummary } from "./session-summary.js";
+import {
+  SESSION_TITLE_METADATA_KEY,
+  readSessionTitle,
+} from "./session-title.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -43,6 +47,7 @@ SELECT id,
          WHERE t.type = 'object'
            AND json_extract(t.value, '$.kind') = 'user'
          LIMIT 1) AS firstPrompt,
+       json_extract(payload, '$.metadata.title') AS title,
        json_extract(payload, '$.metadata.importedFrom') AS importedFrom
   FROM sessions
  WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
@@ -59,6 +64,7 @@ interface SummaryRow {
   turnCount: unknown;
   stepCount: unknown;
   firstPrompt: unknown;
+  title: unknown;
   importedFrom: unknown;
 }
 
@@ -72,6 +78,7 @@ function toSummary(row: SummaryRow): SessionSummary {
     turnCount: toCount(row.turnCount),
     stepCount: toCount(row.stepCount),
     firstPrompt: toText(row.firstPrompt),
+    title: toText(row.title),
     importedFrom: toText(row.importedFrom),
   };
 }
@@ -107,6 +114,7 @@ export class SessionStore {
   private readonly insertStmt: Database.Statement;
   private readonly updateStmt: Database.Statement;
   private readonly selectStmt: Database.Statement;
+  private readonly selectTitleStmt: Database.Statement;
   private readonly listByWorkingDirStmt: Database.Statement;
   private readonly listRecentStmt: Database.Statement;
   private readonly listRecentDirsStmt: Database.Statement;
@@ -144,6 +152,13 @@ export class SessionStore {
     this.selectStmt = this.db.prepare(
       `SELECT payload FROM sessions WHERE id = ?`,
     );
+    // Projected in SQL rather than parsed in JS: `save` runs this on
+    // every write, and a transcript payload is the one thing in this
+    // row worth not re-parsing.
+    this.selectTitleStmt = this.db.prepare(
+      `SELECT json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title
+       FROM sessions WHERE id = ?`,
+    );
     this.listByWorkingDirStmt = this.db.prepare(
       `SELECT payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
     );
@@ -159,13 +174,66 @@ export class SessionStore {
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
   }
 
+  /**
+   * Persist a session, without erasing a name it was given while the
+   * caller was holding its copy.
+   *
+   * The generated title is the one field written *after* a turn returns
+   * — the naming call takes a second or two and lands long after
+   * `executeTurn` handed the finished session back. Every caller that
+   * then saves its own snapshot (the `run` CLI's final write, the TUI's
+   * model stamp) is holding a state from before that, and a plain
+   * overwrite drops the name. Observed exactly that way: the title was
+   * written and read back in-process, and was gone from the row once
+   * the process exited.
+   *
+   * So the rule is the store's, not each caller's: a write that carries
+   * no title does not remove one. Nothing renames a session today —
+   * `shouldNameSession` refuses to name a session twice — so "keep what
+   * is there" is also the product behaviour.
+   */
   save(state: SessionState): void {
-    const row = this.serialize(state);
-    const existing = this.selectStmt.get(state.id);
-    if (existing) {
-      this.updateStmt.run(row);
-    } else {
-      this.insertStmt.run(row);
+    const stored = this.storedTitle(state.id);
+    if (stored === undefined) {
+      this.insertStmt.run(this.serialize(state));
+      return;
+    }
+    const keep = stored !== null && readSessionTitle(state.metadata) === null;
+    this.updateStmt.run(
+      this.serialize(
+        keep
+          ? {
+              ...state,
+              metadata: {
+                ...state.metadata,
+                [SESSION_TITLE_METADATA_KEY]: stored,
+              },
+            }
+          : state,
+      ),
+    );
+  }
+
+  /**
+   * The stored title: `undefined` when there is no such row, `null`
+   * when the row has no title.
+   *
+   * `json_extract` raises on a payload that is not valid JSON, and this
+   * table tolerates those (see `countUnreadable`) — a corrupt row must
+   * not make saving impossible, so it falls back to the existence check
+   * `save` did before.
+   */
+  private storedTitle(id: string): string | null | undefined {
+    try {
+      const row = this.selectTitleStmt.get(id) as
+        | { title: string | null }
+        | undefined;
+      if (row === undefined) return undefined;
+      return typeof row.title === "string" && row.title.trim().length > 0
+        ? row.title
+        : null;
+    } catch {
+      return this.selectStmt.get(id) === undefined ? undefined : null;
     }
   }
 

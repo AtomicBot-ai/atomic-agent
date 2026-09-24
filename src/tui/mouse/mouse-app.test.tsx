@@ -267,10 +267,10 @@ describe("TuiApp mouse", () => {
   // the menu's own job and is covered by `menu-behaviour.test.ts`.
   it("opens the menu when the breadcrumb is clicked", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "R U N"),
+      () => locate(app.frame(), "☰ Menu"),
       () => app.frame().includes("Observe"),
       "click on the breadcrumb",
     );
@@ -283,7 +283,7 @@ describe("TuiApp mouse", () => {
 
   it("ignores a click that lands on no target", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     const before = app.frame();
     app.mouse.emit(click(0, 0));
     await delay(150);
@@ -293,7 +293,7 @@ describe("TuiApp mouse", () => {
 
   it("places the editor caret where the prompt is clicked", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     app.stdin.write("hello");
     await waitUntil(() => app.frame().includes("hello"), "the typed buffer");
     // Click the second "l" (index 3) then type: the character has to land
@@ -321,7 +321,7 @@ describe("TuiApp mouse", () => {
     // click on the input has to mean "type here" — otherwise the caret
     // moves to a field the keys still do not reach.
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     app.stdin.write("\t");
     await waitUntil(
       () => app.frame().includes("SESSIONS"),
@@ -348,7 +348,7 @@ describe("TuiApp mouse", () => {
 
   it("clamps a click past the end of a line to the line end", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     app.stdin.write("hi");
     await waitUntil(() => app.frame().includes("hi"), "the typed buffer");
     await clickUntil(
@@ -378,7 +378,7 @@ describe("TuiApp mouse", () => {
     const openMenu = async (
       app: ReturnType<typeof mountApp>,
     ): Promise<void> => {
-      await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+      await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
       // Esc on the empty idle prompt — the keyboard's route to the menu.
       app.stdin.write(String.fromCharCode(27));
       await waitUntil(() => app.frame().includes("MENU"), "the menu");
@@ -469,7 +469,7 @@ describe("TuiApp mouse", () => {
     const openDialog = async (
       app: ReturnType<typeof mountApp>,
     ): Promise<void> => {
-      await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+      await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
       app.seedSessions();
       // A prefix, not the whole preview: the rail truncates previews to
       // its width, and the pin mark takes two of those columns.
@@ -615,7 +615,7 @@ describe("TuiApp mouse", () => {
     // run /model — not submit the raw buffer, which is no command at all
     // ("unknown command: /mod").
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     app.stdin.write("/mod");
     await waitUntil(
       () => app.frame().includes("open chat model picker"),
@@ -643,7 +643,7 @@ describe("TuiApp mouse", () => {
     // The terminal stops doing its own drag-to-select the moment mouse
     // reporting is on, so this gesture is the replacement for it.
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
     app.stdin.write("hello world");
     await waitUntil(() => app.frame().includes("hello world"), "the buffer");
     await delay(150);
@@ -683,7 +683,7 @@ describe("TuiApp mouse", () => {
     const seedRail = async (
       app: ReturnType<typeof mountApp>,
     ): Promise<void> => {
-      await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+      await waitUntil(() => app.frame().includes("☰ Menu"), "the Run screen");
       app.seedSessions();
       // The rail truncates previews to its width, so rows are found by a prefix.
       await waitUntil(() => app.frame().includes("first th"), "the rail rows");

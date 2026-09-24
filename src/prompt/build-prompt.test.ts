@@ -575,9 +575,9 @@ describe("buildPrompt", () => {
         thinking: "off",
       });
       expect(prompt.tail.endsWith("<think>\n\n</think>\n\n")).toBe(true);
-      expect(prompt.tail.endsWith("Respond now.\n\n<think>\n\n</think>\n\n")).toBe(
-        true,
-      );
+      expect(
+        prompt.tail.endsWith("Respond now.\n\n<think>\n\n</think>\n\n"),
+      ).toBe(true);
       // Exactly one think block, the closed one: no open prefill after it.
       expect(prompt.tail.match(/<think>/g)).toHaveLength(1);
       // The stable prefix is untouched — the switch is tail bytes only.
@@ -1010,6 +1010,56 @@ describe("buildPrompt", () => {
     expect(prompt.conversationCapEffective).toBeLessThan(4096);
   });
 
+  it("budgets a Fusion orchestrator against its own window, not the workers'", () => {
+    // The shape that shipped 16.9k/16.4k on screen: a 16-slot local
+    // daemon reports 262144/16 = 16384 per slot, the orchestrator runs
+    // on a 128k cloud model, and one profile is held for both legs.
+    const workerProfile = { ...PLAIN_INSTRUCT_PROFILE, contextWindow: 16_384 };
+    const orchestrator = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: workerProfile,
+      contextWindow: 128_000,
+      profileWindowApplies: false,
+      completionMaxTokens: 4096,
+      conversationMaxTokens: 64_000,
+    });
+    expect(orchestrator.contextWindow).toBe(128_000);
+    expect(orchestrator.conversationCapEffective).toBeGreaterThan(16_384);
+
+    // The worker leg on the same profile still gets the probed window.
+    const worker = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: workerProfile,
+      contextWindow: 128_000,
+      profileWindowApplies: true,
+      completionMaxTokens: 4096,
+      conversationMaxTokens: 64_000,
+    });
+    expect(worker.contextWindow).toBe(16_384);
+    expect(worker.conversationCapEffective).toBeLessThan(16_384);
+  });
+
+  it("keeps the probe authoritative when nothing says otherwise", () => {
+    // Every single-leg caller omits the flag, and must keep the old
+    // answer: the probe describes the one model in play.
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: { ...PLAIN_INSTRUCT_PROFILE, contextWindow: 8192 },
+      contextWindow: 128_000,
+      conversationMaxTokens: 64_000,
+    });
+    expect(prompt.contextWindow).toBe(8192);
+  });
+
   it("keeps the configured cap when the model context window is unknown", () => {
     const prompt = buildPrompt({
       session: mkSession(),
@@ -1080,7 +1130,10 @@ describe("buildPrompt", () => {
       ...longTask("b", 6, 2_000),
       { kind: "user" as const, text: "ask c", at: 3_000 },
     ];
-    const build = (session: SessionState, extra: Record<string, unknown> = {}) =>
+    const build = (
+      session: SessionState,
+      extra: Record<string, unknown> = {},
+    ) =>
       buildPrompt({
         session,
         toolDescriptors: TOOLS,
@@ -1499,7 +1552,10 @@ describe("buildPrompt profile clip (issue #407)", () => {
       profileMaxTokens: 40,
     });
     const start = prompt.tail.indexOf("### profile\n") + "### profile\n".length;
-    const section = prompt.tail.slice(start, prompt.tail.indexOf("\n\n", start));
+    const section = prompt.tail.slice(
+      start,
+      prompt.tail.indexOf("\n\n", start),
+    );
     expect(section).toBe(
       [
         "- z_consent: never share the owner's files without asking",
@@ -1523,7 +1579,13 @@ describe("buildPrompt profile clip (issue #407)", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       profileFacts: [
-        { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+        {
+          key: "language",
+          value: "ru",
+          updatedAt: 1,
+          pinned: true,
+          keywords: [],
+        },
       ],
     });
     expect(prompt.profileClip).toBeUndefined();
@@ -1870,7 +1932,12 @@ describe("buildPrompt structured form (`messages`)", () => {
         ...base,
         turns: [
           ...base.turns,
-          { kind: "assistant_tool_call", tool: "browser.read_aria", args: { x: 1 }, at: 1 },
+          {
+            kind: "assistant_tool_call",
+            tool: "browser.read_aria",
+            args: { x: 1 },
+            at: 1,
+          },
           {
             kind: "tool_result",
             tool: "browser.read_aria",
@@ -1893,7 +1960,11 @@ describe("buildPrompt structured form (`messages`)", () => {
     expect(prompt.messages.droppedSummary).toBeNull();
     expect(prompt.messages.turns).toEqual([
       { kind: "user", text: "Check inbox" },
-      { kind: "assistant_tool_call", tool: "browser.read_aria", args: { x: 1 } },
+      {
+        kind: "assistant_tool_call",
+        tool: "browser.read_aria",
+        args: { x: 1 },
+      },
       {
         kind: "tool_result",
         tool: "browser.read_aria",
@@ -1910,9 +1981,16 @@ describe("buildPrompt structured form (`messages`)", () => {
     expect(tail).toContain("CURRENT DATE: 2026-09-14");
     expect(tail.trimEnd().endsWith("### respond\nRespond now.")).toBe(true);
     // The flat tail is the same halves with the conversation between them.
-    const [before, after] = tail.split("### task-policy").length > 1
-      ? [tail.slice(0, tail.indexOf("### task-policy")), tail.slice(tail.indexOf("### task-policy"))]
-      : [tail.slice(0, tail.indexOf("### notice")), tail.slice(tail.indexOf("### notice"))];
+    const [before, after] =
+      tail.split("### task-policy").length > 1
+        ? [
+            tail.slice(0, tail.indexOf("### task-policy")),
+            tail.slice(tail.indexOf("### task-policy")),
+          ]
+        : [
+            tail.slice(0, tail.indexOf("### notice")),
+            tail.slice(tail.indexOf("### notice")),
+          ];
     expect(prompt.tail.startsWith(before)).toBe(true);
     expect(prompt.tail.endsWith(after)).toBe(true);
     expect(prompt.tail).toContain("### conversation");
@@ -1921,8 +1999,16 @@ describe("buildPrompt structured form (`messages`)", () => {
   it("carries the dropped-turns recap separately from the turns", () => {
     const turns = Array.from({ length: 40 }, (_, i) =>
       i % 2 === 0
-        ? { kind: "user" as const, text: `message ${i} ${"x".repeat(200)}`, at: i }
-        : { kind: "assistant_reply" as const, text: `reply ${i} ${"y".repeat(200)}`, at: i },
+        ? {
+            kind: "user" as const,
+            text: `message ${i} ${"x".repeat(200)}`,
+            at: i,
+          }
+        : {
+            kind: "assistant_reply" as const,
+            text: `reply ${i} ${"y".repeat(200)}`,
+            at: i,
+          },
     );
     const prompt = buildPrompt({
       session: mkSession({ turns }),
@@ -1933,9 +2019,16 @@ describe("buildPrompt structured form (`messages`)", () => {
     });
     expect(prompt.droppedTurns).toBeGreaterThan(0);
     expect(prompt.messages.droppedSummary).toBe(
-      prompt.tail.slice(prompt.tail.indexOf("### conversation\n") + "### conversation\n".length).split("\n")[0],
+      prompt.tail
+        .slice(
+          prompt.tail.indexOf("### conversation\n") +
+            "### conversation\n".length,
+        )
+        .split("\n")[0],
     );
-    expect(prompt.messages.turns.length).toBe(turns.length - prompt.droppedTurns);
+    expect(prompt.messages.turns.length).toBe(
+      turns.length - prompt.droppedTurns,
+    );
   });
 });
 
@@ -1948,8 +2041,19 @@ describe("### request pins the operator's request once its carrier is dropped (F
     // packer keeps the last user turn and drops the spec's.
     const turns: SessionState["turns"] = [{ kind: "user", text: SPEC, at: 1 }];
     for (let i = 0; i < 60; i += 1) {
-      turns.push({ kind: "assistant_tool_call", tool: "os.fs.read", args: { path: `f${i}` }, at: 2 + i });
-      turns.push({ kind: "tool_result", tool: "os.fs.read", status: "ok", summary: `${"x".repeat(120)} ${i}`, at: 2 + i });
+      turns.push({
+        kind: "assistant_tool_call",
+        tool: "os.fs.read",
+        args: { path: `f${i}` },
+        at: 2 + i,
+      });
+      turns.push({
+        kind: "tool_result",
+        tool: "os.fs.read",
+        status: "ok",
+        summary: `${"x".repeat(120)} ${i}`,
+        at: 2 + i,
+      });
     }
     turns.push({ kind: "assistant_reply", text: "built", at: 100 });
     turns.push({ kind: "user", text: "fix these bugs", at: 101 });
@@ -1976,10 +2080,16 @@ describe("### request pins the operator's request once its carrier is dropped (F
     const conversation = tail.indexOf("### conversation");
     expect(request).toBeGreaterThan(world);
     expect(conversation).toBeGreaterThan(request);
-    expect(tail.slice(request, conversation)).toContain("Build the asteroids game");
-    expect(tail.slice(request, conversation)).toContain("has been dropped from the conversation below");
+    expect(tail.slice(request, conversation)).toContain(
+      "Build the asteroids game",
+    );
+    expect(tail.slice(request, conversation)).toContain(
+      "has been dropped from the conversation below",
+    );
     // Its room came out of the conversation cap: the tail still fits.
-    expect(dropped.tokens.conversation).toBeLessThanOrEqual(dropped.conversationCapEffective);
+    expect(dropped.tokens.conversation).toBeLessThanOrEqual(
+      dropped.conversationCapEffective,
+    );
 
     const inView = buildPrompt({
       ...base,
@@ -1992,7 +2102,11 @@ describe("### request pins the operator's request once its carrier is dropped (F
     // The section is rendered from the record, not from the transcript,
     // so a dropped carrier and no record costs nothing either.
     expect(
-      buildPrompt({ ...base, session: repairSession(), conversationMaxTokens: 600 }).tail,
+      buildPrompt({
+        ...base,
+        session: repairSession(),
+        conversationMaxTokens: 600,
+      }).tail,
     ).not.toContain("### request");
   });
 
@@ -2034,12 +2148,18 @@ describe("### request pins the operator's request once its carrier is dropped (F
   });
 
   it("requestInView matches the carrier by its trimmed text", () => {
-    const turns: SessionState["turns"] = [{ kind: "user", text: "  hello  ", at: 1 }];
+    const turns: SessionState["turns"] = [
+      { kind: "user", text: "  hello  ", at: 1 },
+    ];
     expect(requestInView("hello", turns)).toBe(true);
     expect(requestInView("other", turns)).toBe(false);
     expect(requestInView("   ", turns)).toBe(true);
-    expect(requestInView(`hello\n\n${REQUEST_FOLLOW_UP_MARKER}\ncontinue`, turns)).toBe(true);
-    expect(requestInView(`other\n\n${REQUEST_FOLLOW_UP_MARKER}\nhello`, turns)).toBe(false);
+    expect(
+      requestInView(`hello\n\n${REQUEST_FOLLOW_UP_MARKER}\ncontinue`, turns),
+    ).toBe(true);
+    expect(
+      requestInView(`other\n\n${REQUEST_FOLLOW_UP_MARKER}\nhello`, turns),
+    ).toBe(false);
   });
 });
 

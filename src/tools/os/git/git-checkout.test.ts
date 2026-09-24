@@ -117,9 +117,13 @@ describe("os.git.checkout", () => {
       approvals: approveAll(),
       approvalRequired: false,
     });
-    await expect(tool.run({ branch: "nope" }, makeCtx(repo))).rejects.toThrow(
-      /os\.git\.checkout: git .*checkout nope exited/,
-    );
+    // A result, not a rejection: a failed write verb is something the
+    // model recovers from, and `git-error-result.ts` says so. Throwing
+    // also put the message on the generic 400-char path, which is what
+    // lost the remedy line on a real refusal.
+    const result = await tool.run({ branch: "nope" }, makeCtx(repo));
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/did not match any file|pathspec/);
   });
 
   it("rejects startPoint without create", async () => {
@@ -142,4 +146,42 @@ describe("requireBranchName", () => {
     expect(() => requireBranchName("a b", "t")).toThrow(/whitespace/);
     expect(requireBranchName(" feat/x ", "t")).toBe("feat/x");
   });
+});
+
+describe("a refused checkout keeps git's remedy (field regression)", () => {
+  it("comes back as a sized error result, not a thrown step error", async () => {
+    // Reproduced from a real run: five dirty files on deep paths make
+    // git's refusal 466 characters, and its last line — the only line
+    // the model can act on — sat past the compressor's bare 400-char
+    // default. The trace recorded a 399-character summary cut mid-path.
+    const repo = await makeGitRepo();
+    const paths = [
+      "src/tools/os/git/remote/handlers/network-sync-handler.ts",
+      "src/tools/os/git/remote/handlers/credential-policy-handler.ts",
+      "src/local-llm/backends/managed/daemon-lifecycle-supervisor.ts",
+      "src/tui/components/local-models/download-progress-strip.tsx",
+      "src/memory/links/generation/candidate-hydration-pipeline.ts",
+    ];
+    for (const p of paths) await writeRepoFile(repo, p, "base\n");
+    await runGitRaw(repo, ["add", "-A"]);
+    await runGitRaw(repo, ["commit", "-m", "base"]);
+    await runGitRaw(repo, ["checkout", "-b", "other-branch"]);
+    for (const p of paths) await writeRepoFile(repo, p, `other ${p}\n`);
+    await runGitRaw(repo, ["commit", "-am", "other"]);
+    await runGitRaw(repo, ["checkout", "-"]);
+    for (const p of paths) await writeRepoFile(repo, p, `dirty ${p}\n`);
+
+    const tool = buildOsGitCheckoutTool({ approvals: approveAll() });
+    const result = await tool.run(
+      { repo, branch: "other-branch" },
+      makeCtx(repo),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain(
+      "Please commit your changes or stash them before you switch branches.",
+    );
+    // Every dirty path survives too — the list is what says WHICH files.
+    for (const p of paths) expect(result.summary).toContain(p);
+    await rm(repo, { recursive: true, force: true });
+  }, 30_000);
 });

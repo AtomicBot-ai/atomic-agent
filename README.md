@@ -356,6 +356,8 @@ The managed chat daemon stops when the last session exits, freeing the RAM and V
 
 On Windows the backend zip is picked per machine (CUDA when a capable NVIDIA driver is present, Vulkan otherwise). If the GPU build cannot serve a model on your hardware — typical for iGPU-only boxes — the start falls back to the CPU build automatically and records `localModels.managed.backendVariant: "cpu"` in `config.json`; set it to `"auto"`, `"vulkan"`, `"cuda-12.4"` or `"cuda-13.3"` to pick a build yourself (e.g. after a driver update).
 
+On Linux arm64 there is a single build and it is used on every machine. It bundles the CUDA runtime and cuBLAS for the NVIDIA GB10 superchip in DGX Spark, and it also carries the dispatched CPU backends (armv8.0 through armv9.2) — the GPU backend is loaded at runtime, so a box with no NVIDIA driver runs the same build on its CPU. That bundle makes the download large, ~554 MB against ~30 MB on x64. It needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, DGX OS 7); on an older or musl system managed mode says so before downloading anything and external mode is the way to run.
+
 Cloud models are searchable from the same command — by id, vendor, or capability, across every configured cloud provider:
 
 ```bash
@@ -589,7 +591,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 
 - Node.js for development; release bundles ship as Node SEA binaries.
 - A reachable `llama-server`, either managed by `atomic-agent models` or launched externally.
-- Managed mode picks the GPU backend automatically: Metal on Apple Silicon, CUDA on Windows when `nvidia-smi` reports a supported driver (including the reworked driver 610+ headers) with Vulkan as the fallback, Vulkan on Linux, CPU when no GPU is usable. Managed local models ship for Linux x64 only; on arm64 point the agent at an external `llama-server` instead.
+- Managed mode picks the GPU backend automatically: Metal on Apple Silicon, CUDA on Windows when `nvidia-smi` reports a supported driver (including the reworked driver 610+ headers) with Vulkan as the fallback, Vulkan on Linux, CUDA on Linux arm64 when an NVIDIA GB10 (DGX Spark) is present and CPU on the same build elsewhere, CPU when no GPU is usable.
 - Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
 - `git` for git tools.
 - macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.

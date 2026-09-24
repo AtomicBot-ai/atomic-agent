@@ -3,12 +3,14 @@ import { join } from "node:path";
 
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
+import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
 import type { SessionSummary } from "../session/session-summary.js";
+import { readSessionTitle } from "../session/session-title.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -126,9 +128,22 @@ function formatProfileSystemMessage(facts: readonly ProfileFact[]): string {
   return [header, ...lines].join("\n");
 }
 
-/** Multiline text for the chat transcript (`/skills`); feed still gets `runtime_info` lines. */
+/**
+ * Multiline text for the chat transcript (`/skills dump`); feed still
+ * gets `runtime_info` lines. Bare `/skills` opens the Skills tab, which
+ * renders `skillRegistry.listAll()` and is honest already — the flat
+ * dump is the one that reads the prompt's catalog.
+ *
+ * `dropped` is what `skills.catalogTokenBudget` cut out of `catalog`.
+ * The entry list is the prompt's list, so without the trailing note
+ * `/skills dump` answers "which skills do I have?" with the clipped
+ * half and no sign of the rest — the operator-facing form of issue #466, where
+ * the model did the same to the user. At zero the note is absent and
+ * the message is byte-identical to the pre-fix output.
+ */
 function formatSkillCatalogSystemMessage(
   catalog: readonly SkillCatalogEntry[],
+  dropped: number,
 ): string {
   if (catalog.length === 0) {
     return "skill catalog: (none installed)";
@@ -137,7 +152,18 @@ function formatSkillCatalogSystemMessage(
   const lines = catalog.map(
     (e) => `  - ${e.name} (${e.source}): ${e.description}`,
   );
-  return [header, ...lines].join("\n");
+  const omitted = dropped > 0 ? [skillCatalogOmittedFeedLine(dropped)] : [];
+  return [header, ...lines, ...omitted].join("\n");
+}
+
+/**
+ * The omission note as a catalog row: indented like the entries it
+ * follows, ellipsis instead of the `-` bullet so it cannot be mistaken
+ * for a skill named "4 more not shown". Shared by the transcript
+ * message and the Feed lines so the two cannot disagree.
+ */
+function skillCatalogOmittedFeedLine(dropped: number): string {
+  return `  … ${formatSkillCatalogOmittedNote(dropped)}`;
 }
 
 /**
@@ -895,13 +921,14 @@ export class ChatOrchestrator {
     }
   }
 
-  /** Emit the installed skill catalog into chat + event feed (`/skills`). */
+  /** Emit the installed skill catalog into chat + event feed (`/skills dump`). */
   dumpSkillCatalog(): void {
     try {
       const catalog = this.runtime.skillCatalog;
+      const dropped = this.runtime.skillCatalogDropped;
       this.bus.emit({
         type: "system_message",
-        text: formatSkillCatalogSystemMessage(catalog),
+        text: formatSkillCatalogSystemMessage(catalog, dropped),
       });
       if (catalog.length === 0) {
         this.bus.emit({
@@ -918,6 +945,12 @@ export class ChatOrchestrator {
         this.bus.emit({
           type: "runtime_info",
           line: `  - ${e.name} (${e.source}): ${e.description}`,
+        });
+      }
+      if (dropped > 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: skillCatalogOmittedFeedLine(dropped),
         });
       }
     } catch (err) {
@@ -1427,6 +1460,7 @@ function hasFirstPrompt(state: SessionState): boolean {
 function summariseSessionState(state: SessionState): SessionSummary {
   const firstUser = state.turns.find((t) => t.kind === "user");
   return {
+    title: readSessionTitle(state.metadata),
     id: state.id,
     workingDir: state.workingDir,
     status: state.status,
@@ -1443,7 +1477,11 @@ function summariseSessionState(state: SessionState): SessionSummary {
 }
 
 function toPickerEntry(row: SessionSummary): SessionPickerEntry {
-  const preview = row.firstPrompt ?? "";
+  // The generated name when there is one, the raw prompt otherwise.
+  // Both lists read this field, so naming a session renames it
+  // everywhere at once — and a session named before this feature, or
+  // one whose naming call failed, is unchanged.
+  const preview = row.title ?? row.firstPrompt ?? "";
   return {
     sessionId: row.id,
     workingDir: row.workingDir,

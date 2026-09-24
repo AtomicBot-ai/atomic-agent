@@ -27,6 +27,16 @@ export function DebugDiagnosticsLine({
     metrics.llmDurationMsLast,
     metrics.stepDurationMsLast,
   );
+  // `skillCount` is the catalog the prompt got; anything
+  // `skills.catalogTokenBudget` cut is invisible in it, so a 40-skill
+  // install reads as 12 (issue #466). Terse on purpose — this row is
+  // already a dense single line and names no knobs (`kv 62%`,
+  // `approval L3`); `/skills dump` is where the operator gets the knob
+  // name.
+  const skills =
+    session.skillCountDropped && session.skillCountDropped > 0
+      ? `skills ${session.skillCount} (+${session.skillCountDropped} not shown)`
+      : `skills ${session.skillCount}`;
   const line = [
     `cwd ${shortenPath(session.workingDir)}`,
     `llama ${session.llamaUrl}`,
@@ -34,7 +44,7 @@ export function DebugDiagnosticsLine({
     kv,
     tools,
     `approval L${session.approvalLevel}`,
-    `skills ${session.skillCount}`,
+    skills,
   ].join(` ${theme.glyphs.pipeSeparator} `);
 
   return (

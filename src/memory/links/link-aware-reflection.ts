@@ -5,7 +5,10 @@ import type {
   ReflectionRunner,
 } from "../reflection/reflection-runner.js";
 
-import type { LinkGeneratorRunner } from "./link-generator-runner.js";
+import type {
+  LinkGeneratorRunner,
+  LinkGeneratorTraceEvent,
+} from "./link-generator-runner.js";
 
 /**
  * Memory-v2 phase 2. Decorator that composes the existing
@@ -38,7 +41,15 @@ import type { LinkGeneratorRunner } from "./link-generator-runner.js";
  * forwarded unhydrated.
  *
  * The decorator still bails out entirely when hydration throws — see
- * the guard in `reflect` (logged, never silent).
+ * the guard in `reflect` — but that bail-out is the one route the
+ * runner cannot narrate, because the runner is never called. So the
+ * decorator emits the `failed` trace event itself, through its own
+ * `emitTrace` dep bound to the same sink the runner uses. The
+ * alternative — forwarding the empty candidate set and letting the
+ * runner's `minCandidates` guard speak — would surface a dead SQLite
+ * handle as `skipped: candidates=0 < minCandidates=2`, which is the
+ * same silence in a new costume: a reader could not tell a DB failure
+ * from a turn that simply surfaced nothing.
  *
  * `abortPending` is forwarded to both runners.
  */
@@ -50,6 +61,14 @@ export function createLinkAwareReflectionRunner(args: {
   minCandidates?: number;
   /** Reports a hydration failure — see the guard in `reflect`. */
   logger?: StructuredLogger;
+  /**
+   * Optional trace sink for the one outcome the runner cannot report:
+   * a hydration throw, which returns before `generate()` is reached.
+   * Shape mirrors `LinkGeneratorRunnerDeps.emitTrace` so bootstrap can
+   * bind one sink to both and the trace carries a single event type.
+   * Fire-safe: a throwing sink is swallowed.
+   */
+  emitTrace?: (event: LinkGeneratorTraceEvent) => void;
 }): ReflectionRunner {
   const minCandidates = args.minCandidates ?? 2;
   return {
@@ -74,10 +93,50 @@ export function createLinkAwareReflectionRunner(args: {
             candidates.push({ id: entry.id, body: entry.content });
           }
         } catch (err) {
-          args.logger?.warn("link candidate hydration failed", {
-            sessionId: input.sessionId,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          const reason = err instanceof Error ? err.message : String(err);
+          // The log alone left the *trace* silent: `generate()` is
+          // never reached, so `LinkGeneratorRunner` never emits its
+          // per-call event and this run reads exactly like one with
+          // link generation switched off. Emit the `failed` event
+          // here instead, prefixing the reason so it is not confused
+          // with an LLM-side failure from the runner.
+          //
+          // The whole point of this path is the shutdown race above,
+          // so both observability calls run while the runtime is
+          // tearing down — the per-session recorder the trace sink
+          // resolves, and the log sinks, may already be gone. Each
+          // gets its own `try`, because this `catch` block is the
+          // last thing standing between a dead SQLite handle and the
+          // agent loop's bare `void reflect()`: anything that throws
+          // out of here becomes an unhandled rejection.
+          //
+          // Trace first, log second — the order
+          // `LinkGeneratorRunner.finish` uses, and the order that
+          // matters: the trace is the artifact this whole path exists
+          // to keep honest, so it must not be hostage to a logger
+          // that dies one line earlier. (`StructuredLogger` swallows
+          // its own sink errors, so in-process this is defence in
+          // depth; the dep is an interface and a test double or a
+          // future sink-less logger need not be so polite.)
+          if (args.emitTrace) {
+            try {
+              args.emitTrace({
+                sessionId: input.sessionId,
+                outcome: "failed",
+                reason: `candidate hydration failed: ${reason}`,
+              });
+            } catch {
+              // A sink hiccup must never derail reflection — swallow.
+            }
+          }
+          try {
+            args.logger?.warn("link candidate hydration failed", {
+              sessionId: input.sessionId,
+              error: reason,
+            });
+          } catch {
+            // Same contract as the sink above — swallow.
+          }
           return;
         }
       }

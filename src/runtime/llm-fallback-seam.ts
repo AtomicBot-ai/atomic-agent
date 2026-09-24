@@ -191,15 +191,40 @@ function cancellationOf(signal: AbortSignal, fallback: unknown): unknown {
  * generator finishes; an abandoned stream never returns and contributes
  * nothing (a cancelled turn reports only what it finished accounting
  * for).
+ *
+ * **The `finally` is what makes an abandon reach the transport.** This
+ * function cannot delegate with `yield*` — every chunk has to be stamped
+ * on the way past — so it pumps `stream.next()` by hand, and a hand-run
+ * inner iterator is NOT closed when this generator is closed. `yield*`
+ * forwards `.return()`; a manual pump swallows it. Without this block a
+ * `.return()` on the seam's stream stopped dead here: the caller's
+ * `finally` ran, this generator ended, and the provider generator
+ * underneath it stayed suspended at its own `yield` forever — which
+ * means `LlamaServerClient.completeStream`'s release never ran and the
+ * llama.cpp slot stayed occupied for the life of the process. Closing
+ * the inner stream from here restores the chain the `yield*` links on
+ * either side of it already had.
+ *
+ * Only on an abandon: a stream driven to `done` has closed itself, and
+ * `return()` on a finished generator is a no-op we do not need to spend.
+ * Rejections are swallowed because this runs while we are already
+ * unwinding — a transport that fails to close must not replace whatever
+ * the consumer was walking away for with an error of its own.
  */
 async function* stampServedTransport(
   stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
   transport: ToolCallTransport,
 ): AsyncGenerator<StreamChunk, CompletionResult, void> {
   let next = await stream.next();
-  while (!next.done) {
-    yield { ...next.value, servedTransport: transport };
-    next = await stream.next();
+  try {
+    while (!next.done) {
+      yield { ...next.value, servedTransport: transport };
+      next = await stream.next();
+    }
+    return next.value;
+  } finally {
+    if (!next.done) {
+      await stream.return(undefined as never).catch(() => undefined);
+    }
   }
-  return next.value;
 }

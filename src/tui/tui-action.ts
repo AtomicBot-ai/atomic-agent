@@ -73,7 +73,14 @@ export type TuiAction =
   | { type: "composer_notice"; text: string | null }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
-  | { type: "skill_count_changed"; count: number }
+  /**
+   * `count` is the catalog the prompt got; `dropped` is how many
+   * installed skills `skills.catalogTokenBudget` left out of it. Both
+   * travel together because an install can push the catalog over the
+   * budget — a `count` that stops rising with no `dropped` beside it is
+   * the operator-facing half of issue #466.
+   */
+  | { type: "skill_count_changed"; count: number; dropped: number }
   /**
    * Mirror the live approval-gate state into `state.session` so the
    * diagnostics line ("approval on/off") tracks the live gate level.
@@ -91,6 +98,10 @@ export type TuiAction =
    */
   | { type: "theme_set"; name: string }
   | { type: "abort_requested" }
+  /** Esc on a running turn: wait for the `1` that confirms. */
+  | { type: "abort_armed" }
+  /** Any other key, or the turn ending: forget the pending Esc. */
+  | { type: "abort_disarmed" }
   | { type: "input_changed"; value: string }
   /**
    * Orchestrator acknowledges a chat message submission: we wipe step/feed

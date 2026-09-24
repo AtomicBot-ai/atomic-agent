@@ -142,6 +142,55 @@ export function dependencyWarnings(
   return warnings;
 }
 
+/** Outcome notes carried into a later wave, and how much of each. */
+const MAX_OUTCOME_NOTES = 8;
+const OUTCOME_DETAIL_CHARS = 120;
+
+/**
+ * What the waves that already ran actually did, for the workers that
+ * have not started yet.
+ *
+ * `dependencyWarnings` says only that a task someone *declared* a
+ * dependency on ended badly. That leaves the common case untold: a
+ * worker in wave 2 rebuilding a file wave 1 already wrote, or writing
+ * against an interface the task that was meant to provide it never
+ * produced. A real run ended with one worker rewriting `index.html`
+ * five times while three of its siblings had already finished —
+ * nothing had told it what was there.
+ *
+ * So every later worker is handed the state of the world: what
+ * succeeded and what it produced, what failed and in whose words.
+ * Bounded, because this goes into every brief and a fan-out of eight
+ * would otherwise carry eight paragraphs of history no worker reads.
+ */
+export function completedWaveNotes(
+  finished: ReadonlyMap<string, WorkerTaskResult>,
+): string[] {
+  if (finished.size === 0) return [];
+  const notes: string[] = [];
+  for (const result of finished.values()) {
+    if (notes.length >= MAX_OUTCOME_NOTES) break;
+    const head = `already done — [${result.id}] ${result.status} (${result.title})`;
+    // A failure's own words; a success's own summary. Both are what a
+    // worker needs to decide whether its task still means what the
+    // orchestrator thought it meant when it wrote the brief.
+    const detail = UNDELIVERED_STATUSES.has(result.status)
+      ? (result.error ?? "no reason given")
+      : result.reply;
+    notes.push(
+      detail.length === 0
+        ? head
+        : `${head}: ${oneLine(detail, OUTCOME_DETAIL_CHARS)}`,
+    );
+  }
+  return notes;
+}
+
+function oneLine(text: string, cap: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > cap ? `${flat.slice(0, cap)}…` : flat;
+}
+
 /**
  * The contract a wave's workers read: the parsed one, plus the warnings
  * the earlier waves produced. The very object when there is nothing to
