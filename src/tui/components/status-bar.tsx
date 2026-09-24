@@ -96,7 +96,12 @@ export function StatusBar({
     ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase)
     : null;
   return (
-    <Box {...(width ? { width } : {})}>
+    // One row, always. The bar is empty on a fresh session now that the
+    // `RUN` badge is gone — and an empty Box has no height, so the whole
+    // app moved up a line and every mouse target with it (the
+    // right-click menu opened a row off its click). The row is reserved
+    // whether or not anything is drawn in it.
+    <Box minHeight={1} {...(width ? { width } : {})}>
       {railRestore ? (
         <>
           <RailRestoreButton />
@@ -116,7 +121,15 @@ export function StatusBar({
           <Sep />
         </>
       ) : null}
-      <Breadcrumb state={state} section={section} />
+      {/* Nothing on the chat surface: `RUN` named a place nobody is
+          confused about being in, and it sat where the session's own
+          name goes. The menu is still Esc, and the rail — restored by
+          the button to the left — carries its own `☰ Menu`. Off the
+          chat surface the breadcrumb stays, because `Manage › Tasks`
+          is the one thing the menu cannot tell you without opening it. */}
+      {section === "run" && state.uiMode !== "debug" ? null : (
+        <Breadcrumb state={state} section={section} />
+      )}
       {state.localModelsPanel.pull ? (
         <DownloadChip
           pull={state.localModelsPanel.pull}
@@ -244,24 +257,9 @@ function Breadcrumb({
     state.uiMode === "debug"
       ? menuPlaceByTab(state.activeTab)?.label
       : undefined;
-  // On the chat surface the breadcrumb said `RUN` — a place nobody is
-  // confused about being in, sitting where the session's own name now
-  // goes. The control itself stays: clicking it is how the menu opens,
-  // and it is the only menu affordance once the rail is folded. So it
-  // keeps the target and loses the word, matching the rail's own
-  // `☰ Menu`. Everywhere else the breadcrumb still says where you are,
-  // which is the one thing the menu cannot tell you without opening it.
-  const onChat = section === "run" && state.uiMode !== "debug";
   const label = (
     <Text>
-      <Chip
-        label={
-          onChat
-            ? `${theme.glyphs.menuGlyph} Menu`
-            : tracked(SECTION_LABELS[section])
-        }
-        tone="badge"
-      />
+      <Chip label={tracked(SECTION_LABELS[section])} tone="badge" />
       {tabLabel ? (
         <Text color={theme.colors.muted}>
           {/* The badge carries its own trailing pad; a second space here

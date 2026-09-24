@@ -71,3 +71,17 @@ describe("StatusBar", () => {
     expect(rows[0]).not.toContain("·");
   });
 });
+
+describe("the chat surface keeps its row without the RUN badge", () => {
+  it("draws no section badge on the Run screen", () => {
+    const rows = rowsOf(stateWithPreview("fix the abort chord"));
+    expect(rows.join("\n")).not.toContain("R U N");
+  });
+
+  it("still occupies exactly one row when it has nothing to draw", () => {
+    // An empty Box has no height, and losing the row moved the whole
+    // app up a line — every mouse target with it.
+    const rows = rowsOf(stateWithPreview(""));
+    expect(rows).toHaveLength(1);
+  });
+});
