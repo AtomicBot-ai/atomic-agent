@@ -138,6 +138,60 @@ ANYSEARCH_API_KEY=as_sk_…
 Client headers: `atomic-agent/web-search`, `atomic-agent/skill`,
 `atomic-agent/skill-batch`.
 
+## Live call evidence (desensitised)
+
+Per [anysearch-integration-guide.md](../anysearch-integration-guide.md) §5 —
+real HTTP against `api.anysearch.com`, anonymous (no `Authorization` header),
+no API key in env. Same request shape the built-in provider sends.
+
+| Field | Value |
+|---|---|
+| When | `2026-09-24T17:27:44+08:00` (general), `2026-09-24T17:27:55+08:00` (vertical) |
+| Commit | `feat/anysearch-integration` (see PR #484) |
+| Entry | Built-in REST path equivalent to `os.web.search` with `web.search.provider = "anysearch"` |
+| Auth | Anonymous — `X-Anysearch-Client: atomic-agent/web-search` only |
+| Endpoint | `POST https://api.anysearch.com/v1/search` |
+
+### A. General search
+
+Request body (no secrets):
+
+```json
+{"query":"React useEffect cleanup","max_results":3}
+```
+
+Response: `HTTP 200`, `code: 0`, `request_id: 73cb0836-00d4-4534-8aa4-69af4ec1467e`, **3** results delivered to the client shape (`title` / `url` / `snippet`), e.g.:
+
+1. [useEffect](https://react.dev/reference/react/useEffect)
+2. [Whats the purpose of cleanup function in useEffect?](https://www.reddit.com/r/reactjs/comments/prvg2k/whats_the_purpose_of_cleanup_function_in_useeffect/)
+3. [Understanding React's useEffect cleanup function](https://blog.logrocket.com/understanding-react-useeffect-cleanup-function/)
+
+### B. Vertical (`code.doc`)
+
+Request body:
+
+```json
+{
+  "query": "Go context cancellation documentation",
+  "tag": "code.doc",
+  "params": { "library": "golang" },
+  "max_results": 2,
+  "zone": "intl",
+  "language": "en"
+}
+```
+
+Response: `HTTP 200`, `code: 0`, `request_id: ccff0b26-1ab4-4645-9ffd-27d66402814c`, **2** results:
+
+1. [Canceling in-progress operations](https://go.dev/doc/database/cancel-operations)
+2. [context - Go Packages](https://pkg.go.dev/context)
+
+### Guide checklist notes
+
+- Empty result vs error: non-zero `code` throws (keeps `request_id` in the message); empty `data.results` returns `[]`.
+- Keyless path confirmed: no `Authorization` header on either call.
+- Appendix verticals: protocol-level passthrough via `tag`/`params`; live smoke covers general + `code.doc` only — other sub-domains are **未验证 / 本次不逐源验收**.
+
 ## Tests
 
 ```sh
