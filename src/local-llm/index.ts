@@ -232,6 +232,7 @@ export {
   type SwaFullPreference,
 } from "./swa-full.js";
 export { readLogTail, type LogTailResult } from "./log-tail.js";
+export { describeServerFault, type ServerFault } from "./server-fault.js";
 
 export {
   huggingFaceToken,

@@ -8,6 +8,7 @@ import { removeCustomModel } from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
 import {
   checkForBackendUpdate,
+  describeServerFault,
   downloadBackend,
   downloadEmbeddingModel,
   downloadJobId,
@@ -18,6 +19,8 @@ import {
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
   formatGgufSize,
+  readLogTail,
+  resolveLogFilePath,
   getConfiguredBackendVariant,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
@@ -413,6 +416,15 @@ export async function runLocalModelsStatus(): Promise<number> {
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
+  // `health: ok` is a socket answering, not a model working. A server
+  // that cannot allocate keeps its socket and fails every decode, so
+  // the one place that knows is its own log.
+  const fault = describeServerFault(
+    readLogTail(resolveLogFilePath(dataDir), 256 * 1024).text,
+  );
+  if (fault) {
+    process.stdout.write(`fault:          ${fault.summary}\n`);
+  }
   return 0;
 }
 
