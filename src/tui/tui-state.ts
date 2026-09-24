@@ -698,6 +698,18 @@ export interface TuiState {
    */
   whileBusyMode: WhileBusySubmitMode;
   /**
+   * Esc has been pressed on a running turn and is waiting for the `1`
+   * that confirms the abort.
+   *
+   * Aborting used to be a bare Esc, which is the same key the composer
+   * uses to clear a draft, the chat uses to snap back from a scroll and
+   * every overlay uses to close itself — so the one keystroke that
+   * throws away minutes of work was also the most reflexive key on the
+   * strip. It is now a two-key chord. Anything that is not `1`
+   * disarms it, so a stray Esc costs one keystroke and nothing else.
+   */
+  abortArmed: boolean;
+  /**
    * The stance the session is working in — see `coding-mode.ts`. Session
    * state, never persisted: `bypass` surviving a restart would be a
    * standing grant nobody remembers making.
@@ -888,6 +900,7 @@ export function createInitialTuiState(
     chatScrollOffset: 0,
     queuedMessages: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
+    abortArmed: false,
     codingMode: "default",
     codingModeMenu: null,
     planHandoff: false,

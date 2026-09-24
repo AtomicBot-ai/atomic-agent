@@ -596,7 +596,7 @@ describe("handleAppKey", () => {
     expect(onSidebarTaskActivated).toHaveBeenCalledWith("task-id-42");
   });
 
-  it("Esc while running aborts the turn when the chat is pinned to the bottom", () => {
+  it("Esc while running arms the abort but does not take it", () => {
     const state = createInitialTuiState(stubSession());
     state.status = "running";
     const dispatch = vi.fn();
@@ -610,8 +610,61 @@ describe("handleAppKey", () => {
       sidebarVisible: false,
     });
     expect(handled).toBe(true);
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_armed" });
+  });
+
+  it("`1` after that Esc is what actually aborts", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.abortArmed = true;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("1", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
     expect(onAbort).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("`1` on its own never aborts", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    handleAppKey("1", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it("any other key stands the armed abort down", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.abortArmed = true;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    handleAppKey("x", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_disarmed" });
   });
 
   it("Esc while running snaps the scrolled-back chat home instead of aborting", () => {
@@ -638,7 +691,7 @@ describe("handleAppKey", () => {
     expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_requested" });
   });
 
-  it("Esc while running on a debug tab aborts even with a stale scroll offset", () => {
+  it("Esc while running on a debug tab arms even with a stale scroll offset", () => {
     // Nothing resets `chatScrollOffset` on a mode switch, and the chat
     // is off-screen in debug mode — snapping an invisible log back would
     // just make Esc look dead there.
@@ -658,8 +711,8 @@ describe("handleAppKey", () => {
       sidebarVisible: false,
     });
     expect(handled).toBe(true);
-    expect(onAbort).toHaveBeenCalledTimes(1);
-    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_armed" });
   });
 });
 

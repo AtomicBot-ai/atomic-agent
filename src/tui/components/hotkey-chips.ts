@@ -89,7 +89,7 @@ export function resolveChips(
         label: "deny",
         onClick: (mouse) => decideApproval(approval, false, mouse),
       },
-      { key: "esc", label: "abort run" },
+      { key: "esc 1", label: "abort run" },
     ];
   }
   // The plan hand-off, same shape as the approval strip above and for
@@ -159,7 +159,9 @@ export function resolveChips(
         label: steering ? "queue mode" : "steer mode",
         shed: 3,
       },
-      { key: "esc", label: hasDraft ? "abort, draft kept" : "abort" },
+      state.abortArmed
+        ? { key: "1", label: "confirm abort · any key cancels" }
+        : { key: "esc 1", label: hasDraft ? "abort, draft kept" : "abort" },
       ...(composerSelectionActive(state)
         ? [
             { key: "ctrl+x", label: "cut", shed: 4 },

@@ -20,6 +20,13 @@ const SESSION: TuiSessionInfo = {
  * assertion waits past that flush window before reading the frame.
  */
 const ESC = String.fromCharCode(27);
+/**
+ * The second half of the abort chord, written as its own byte after a
+ * flush. Sent inside the flush window it would arrive as `alt+1`
+ * instead — which the binding also accepts, and which
+ * `escape-abort-chord.test.tsx` covers separately.
+ */
+const CONFIRM = "1";
 const PAGE_UP = `${String.fromCharCode(27)}[5~`;
 const FLUSH_MS = 60;
 /** Comfortably past the 24-row `ink-testing-library` default viewport. */
@@ -61,12 +68,16 @@ describe("Esc while a turn is running", () => {
 
     stdin.write(ESC);
     await settle();
+    // Esc alone arms and does not abort — the whole point of the chord.
+    expect(counts.abort).toBe(0);
+    stdin.write(CONFIRM);
+    await settle();
 
     // The editor is `disabled` for the whole run, which switches its
     // `useInput` off — so this has to be claimed by the global key layer
-    // or the advertised "[esc] abort" does nothing at all. Exactly once:
-    // the editor's own Esc handler no longer carries a second copy of
-    // the abort, which would double-fire once it stays live during a run.
+    // or the advertised "[esc 1] abort" does nothing at all. Exactly
+    // once: the editor's own Esc handler no longer carries a second copy
+    // of the abort, which would double-fire once it stays live.
     expect(counts.abort).toBe(1);
     expect(counts.quit).toBe(0);
     unmount();
@@ -89,6 +100,8 @@ describe("Esc while a turn is running", () => {
     await settle();
 
     stdin.write(ESC);
+    await settle();
+    stdin.write(CONFIRM);
     await settle();
 
     // The hint strip checks `running` before `uiMode === "debug"`, so a
@@ -127,10 +140,12 @@ describe("Esc while a turn is running", () => {
 
     expect(counts.abort).toBe(0);
 
-    // The offset is back at 0, so the next Esc means abort — which also
-    // proves the first one consumed the scroll rather than falling
+    // The offset is back at 0, so the next Esc arms the abort — which
+    // also proves the first one consumed the scroll rather than falling
     // through and leaving the chat pinned mid-history.
     stdin.write(ESC);
+    await settle();
+    stdin.write(CONFIRM);
     await settle();
 
     expect(counts.abort).toBe(1);
@@ -154,6 +169,8 @@ describe("Esc while a turn is running", () => {
     await settle();
 
     stdin.write(ESC);
+    await settle();
+    stdin.write(CONFIRM);
     await settle();
 
     expect(counts.abort).toBe(0);

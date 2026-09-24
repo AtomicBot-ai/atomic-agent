@@ -98,6 +98,10 @@ export type TuiAction =
    */
   | { type: "theme_set"; name: string }
   | { type: "abort_requested" }
+  /** Esc on a running turn: wait for the `1` that confirms. */
+  | { type: "abort_armed" }
+  /** Any other key, or the turn ending: forget the pending Esc. */
+  | { type: "abort_disarmed" }
   | { type: "input_changed"; value: string }
   /**
    * Orchestrator acknowledges a chat message submission: we wipe step/feed

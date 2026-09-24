@@ -538,9 +538,38 @@ export function handleAppKey(
       dispatch({ type: "chat_scroll_reset" });
       return true;
     }
+    // Esc arms; `1` below confirms. Aborting a turn throws away every
+    // step it has taken, and Esc is the most reflexive key on the strip
+    // — the same one that clears a draft, closes an overlay and snaps
+    // the chat back. One keystroke was too cheap for the one action
+    // that cannot be undone.
+    dispatch({ type: "abort_armed" });
+    return true;
+  }
+  // The confirm half, accepted two ways because the terminal decides
+  // which one arrives. Esc followed by a character IS the Alt-prefix
+  // encoding: press the two quickly and Ink never reports a lone Esc at
+  // all, it reports `1` with `meta`. Requiring the armed flag would
+  // make the chord work or not depending on how fast it was typed. So
+  // `meta+1` on a running turn completes it on its own, and a `1` after
+  // a reported Esc completes it too. `ctrl` is still excluded: ctrl+1
+  // belongs to tab switching.
+  if (
+    state.status === "running" &&
+    input === "1" &&
+    !key.ctrl &&
+    (state.abortArmed || key.meta)
+  ) {
     callbacks.onAbort();
     dispatch({ type: "abort_requested" });
     return true;
+  }
+  // Anything else stands the chord down. Done before the rest of the
+  // pipeline so the disarming key still does its own job: the cost of a
+  // stray Esc is one keystroke that did nothing, not a mode the
+  // operator has to notice and leave.
+  if (state.abortArmed && !key.escape) {
+    dispatch({ type: "abort_disarmed" });
   }
   if (
     state.uiMode === "chat" &&
