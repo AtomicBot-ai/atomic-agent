@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
 import { useSpinner } from "../hooks/use-spinner.js";
 import {
-  etaCorrection,
+  fanoutExpectation,
   formatElapsed,
   formatFusionLiveWorker,
 } from "../fusion-live-workers.js";
@@ -53,9 +53,9 @@ export function ThinkingIndicator({
         learn that N local workers are busy and which model each runs —
         which is the one thing this mode exists to make visible.
       */}
-      {/* One correction for the whole readout, from the legs of this
+      {/* One measurement for the whole readout, from the legs of this
           fan-out that have already finished. */}
-      {((correction) =>
+      {((measured) =>
         state.fusionLiveWorkers.map((worker) => (
           <Box key={worker.taskId} marginLeft={2}>
             <Text
@@ -64,10 +64,10 @@ export function ThinkingIndicator({
               {worker.done ? "·" : "▸"}{" "}
             </Text>
             <Text color={theme.colors.muted} wrap="truncate">
-              {formatFusionLiveWorker(worker, Date.now(), correction)}
+              {formatFusionLiveWorker(worker, Date.now(), measured)}
             </Text>
           </Box>
-        )))(etaCorrection(state.fusionLiveWorkers))}
+        )))(fanoutExpectation(state.fusionLiveWorkers))}
     </Box>
   );
 }

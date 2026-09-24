@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   etaCorrection,
+  fanoutExpectation,
   formatFusionLiveWorker,
   reduceFusionLiveWorkers,
   type FusionLiveWorker,
@@ -211,5 +212,42 @@ describe("the estimate is corrected by what this fan-out actually did", () => {
     expect(formatFusionLiveWorker(running, 19 * 60_000)).toContain(
       "past the ~2m00s expected",
     );
+  });
+});
+
+describe("a leg the orchestrator never estimated", () => {
+  const finished = {
+    taskId: "t1",
+    title: "worker 1",
+    model: "qwen",
+    tool: null,
+    done: true,
+    startedAt: 0,
+    finishedAt: 840_000,
+    etaSeconds: null,
+  } as const;
+  const running = {
+    taskId: "t2",
+    title: "worker 2",
+    model: "qwen",
+    tool: null,
+    done: false,
+    startedAt: 0,
+    finishedAt: null,
+    etaSeconds: null,
+  } as const;
+
+  it("is given the wave's own median instead of nothing", () => {
+    // Measured in the field: every task of a real four-worker run came
+    // back with `etaSeconds: null`, so the row had no expectation at
+    // all. Its siblings' durations are a measurement, not a guess.
+    expect(
+      formatFusionLiveWorker(running, 60_000, fanoutExpectation([finished])),
+    ).toContain("(~14m00s expected)");
+  });
+
+  it("says nothing until a sibling has finished", () => {
+    const out = formatFusionLiveWorker(running, 60_000, fanoutExpectation([]));
+    expect(out).toBe("worker 2 · qwen — working · 1m00s");
   });
 });

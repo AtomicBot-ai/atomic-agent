@@ -112,6 +112,34 @@ export function formatElapsed(ms: number): string {
  */
 export const MAX_ETA_CORRECTION = 20;
 
+/**
+ * How long the finished legs of this fan-out actually took, in ms.
+ *
+ * The fallback expectation for a leg the orchestrator did not estimate
+ * — and in the field it estimated none of them: every task in a real
+ * four-worker run came back with `etaSeconds: null`, because the field
+ * is optional and a model under instruction pressure drops optional
+ * fields first. A median of sibling durations is a worse guess about
+ * THIS task than a good estimate would be, and a far better one than
+ * nothing, which is what the row showed.
+ */
+export function medianFinishedMs(
+  workers: readonly FusionLiveWorker[],
+): number | null {
+  const times: number[] = [];
+  for (const w of workers) {
+    if (!w.done || w.finishedAt === null) continue;
+    const ms = w.finishedAt - w.startedAt;
+    if (ms > 0) times.push(ms);
+  }
+  if (times.length === 0) return null;
+  times.sort((a, b) => a - b);
+  const mid = Math.floor(times.length / 2);
+  return times.length % 2 === 1
+    ? (times[mid] as number)
+    : ((times[mid - 1] as number) + (times[mid] as number)) / 2;
+}
+
 export function etaCorrection(
   workers: readonly FusionLiveWorker[],
 ): number | null {
@@ -140,19 +168,42 @@ export function etaCorrection(
  * elapsed time IS the answer, and a guess printed next to a fact only
  * invites the reader to check the guess.
  */
+export interface FanoutExpectation {
+  /** Median actual/estimate of the finished legs, when any estimated. */
+  readonly correction: number | null;
+  /** Median duration of the finished legs, for legs with no estimate. */
+  readonly medianMs: number | null;
+}
+
+/** Both measurements the readout needs, from one pass over the legs. */
+export function fanoutExpectation(
+  workers: readonly FusionLiveWorker[],
+): FanoutExpectation {
+  return {
+    correction: etaCorrection(workers),
+    medianMs: medianFinishedMs(workers),
+  };
+}
+
 export function formatFusionLiveWorker(
   worker: FusionLiveWorker,
   now: number = Date.now(),
-  correction: number | null = null,
+  expectation: FanoutExpectation | number | null = null,
 ): string {
   const model = worker.model ?? "local";
   const what = worker.done ? "done" : (worker.tool ?? "working");
   const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
   const elapsed = formatElapsed(elapsedMs);
+  const measured: FanoutExpectation =
+    expectation === null
+      ? { correction: null, medianMs: null }
+      : typeof expectation === "number"
+        ? { correction: expectation, medianMs: null }
+        : expectation;
   return `${worker.title} · ${model} — ${what} · ${elapsed}${describeExpectation(
     worker,
     elapsedMs,
-    correction,
+    measured,
   )}`;
 }
 
@@ -168,10 +219,17 @@ export function formatFusionLiveWorker(
 function describeExpectation(
   worker: FusionLiveWorker,
   elapsedMs: number,
-  correction: number | null,
+  measured: FanoutExpectation,
 ): string {
-  if (worker.done || worker.etaSeconds === null) return "";
-  const expectedMs = worker.etaSeconds * 1000 * (correction ?? 1);
+  if (worker.done) return "";
+  // The orchestrator's estimate, corrected by this wave — and when it
+  // gave none, the wave's own median, which is a measurement rather
+  // than a guess.
+  const expectedMs =
+    worker.etaSeconds !== null
+      ? worker.etaSeconds * 1000 * (measured.correction ?? 1)
+      : measured.medianMs;
+  if (expectedMs === null) return "";
   if (elapsedMs >= expectedMs) {
     return ` (past the ~${formatElapsed(expectedMs)} expected)`;
   }
