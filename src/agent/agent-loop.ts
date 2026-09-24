@@ -373,6 +373,16 @@ export interface ResolvedTurnLlmSlice {
   supportsSlotAffinity: boolean;
   supportsParallelTools: boolean;
   strictTools: boolean;
+  /**
+   * Whether the pinned link is the local `llama-server` — i.e. whether
+   * the `/props` profile in hand describes the model that will serve
+   * this turn. Only the pin can answer it: `localBackend.isActive()`
+   * describes the ACTIVE provider, which on a pinned Fusion worker turn
+   * is the orchestrator's cloud leg. Optional so legacy / test wiring
+   * that predates it still type-checks; absent falls back to the active
+   * provider's answer, which is what every single-leg run already did.
+   */
+  isLlamaServer?: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -647,10 +657,7 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  * resumes after a top-up, the same way as after a ceiling.
  */
 export type TaskStopCause =
-  | "step_ceiling"
-  | "time_ceiling"
-  | "no_progress"
-  | "credit_exhausted";
+  "step_ceiling" | "time_ceiling" | "no_progress" | "credit_exhausted";
 
 export function formatTaskStoppedReply(input: {
   cause: TaskStopCause;
@@ -1675,6 +1682,14 @@ export class AgentLoop {
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
               : {}),
+            // The `/props` profile describes the local llama-server. It
+            // is the right window only when this step is routed there:
+            // a pinned turn answers from its own link, an unpinned one
+            // from the active provider. In Fusion those differ, and
+            // budgeting a cloud orchestrator against the workers'
+            // per-slot `n_ctx` packed a 128k model to 16k.
+            profileWindowApplies:
+              pinnedSlice?.isLlamaServer ?? this.localBackendActive(),
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
@@ -1716,10 +1731,7 @@ export class AgentLoop {
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,
               // which already warned, and would repeat it per worker.
-              if (
-                event.type === "prompt_built" &&
-                options.ephemeral !== true
-              ) {
+              if (event.type === "prompt_built" && options.ephemeral !== true) {
                 reportProfileClip({
                   warnings: this.profileClipWarnings,
                   sessionId: state.id,
@@ -2057,8 +2069,7 @@ export class AgentLoop {
         // surfaces as an abort — the same shape as Ctrl+C — but it is
         // the task's clock, not the user, so it is read first and never
         // as a cancellation.
-        const ceilingFired =
-          requestDeadline.fired() && !options.signal.aborted;
+        const ceilingFired = requestDeadline.fired() && !options.signal.aborted;
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -2425,8 +2436,7 @@ export class AgentLoop {
         // an observation about the provider at all, and replaying it
         // buys a second helping of the same silence — see
         // `isOwnLlamaDeadlineExpiry`.
-        const retryHint =
-          verdict?.kind === "retry_after" ? verdict : null;
+        const retryHint = verdict?.kind === "retry_after" ? verdict : null;
         if (
           category === "transport" &&
           !cancelled &&

@@ -70,8 +70,10 @@ describe("the transcript cap under auto", () => {
     const built = build({ conversationMaxTokens: 0 });
     expect(built.contextWindow).toBeNull();
     expect(built.conversationCapAuto).toBe(true);
-    // The pre-auto fixed cap, not the schema default — that is `0` now.
-    expect(CONVERSATION_CAP_AUTO_FALLBACK).toBe(32_000);
+    // Pinned deliberately: this number is what an unknown-window cloud
+    // model is held to, so a change to it is a change to every such
+    // session's history and should have to be typed here too.
+    expect(CONVERSATION_CAP_AUTO_FALLBACK).toBe(64_000);
     expect(built.conversationCapEffective).toBe(CONVERSATION_CAP_AUTO_FALLBACK);
     expect(built.conversationCapEffective).toBeGreaterThan(10_000);
   });

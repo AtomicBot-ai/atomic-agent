@@ -304,7 +304,10 @@ describe("executeStep batch handling", () => {
       "tool_result",
       "assistant_reply",
     ]);
-    expect(tail[2]).toMatchObject({ text: "reading first", progressNote: true });
+    expect(tail[2]).toMatchObject({
+      text: "reading first",
+      progressNote: true,
+    });
   });
 
   it("native_tools: unparseable reasoning-only completion routes through parse_retry, never leaks CoT as a reply", async () => {
@@ -1670,7 +1673,12 @@ function mockCompletion(
     reasoningContent: "",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 20,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: 0,
     modelId: "mock",
@@ -1723,7 +1731,10 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
     const outcome = await executeStep(
       {
-        session: createEmptySessionState({ id: "s-in-order", workingDir: "/w" }),
+        session: createEmptySessionState({
+          id: "s-in-order",
+          workingDir: "/w",
+        }),
         toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
         capabilities: CAPS,
         skillCatalog: SKILLS,
@@ -1945,15 +1956,21 @@ describe("fabricated tool transcripts", () => {
       ],
       [
         "a closed code fence quoting the format",
-        "History looks like this:\n```\nassistant_tool_call: os.fs.read {\"path\":\"a\"}\ntool_result[os.fs.read ok]: hello\n```\nThat is all.",
+        'History looks like this:\n```\nassistant_tool_call: os.fs.read {"path":"a"}\ntool_result[os.fs.read ok]: hello\n```\nThat is all.',
       ],
       [
         "a JSON tool-call array",
         JSON.stringify([
-          { tool: "os.fs.write", args: { path: "a", content: "tool_result[x ok]: y\nz" } },
+          {
+            tool: "os.fs.write",
+            args: { path: "a", content: "tool_result[x ok]: y\nz" },
+          },
         ]),
       ],
-      ["a call line without arguments", "assistant_tool_call: done\ntool_call: nothing here"],
+      [
+        "a call line without arguments",
+        "assistant_tool_call: done\ntool_call: nothing here",
+      ],
     ])("ignores %s", (_label, text) => {
       expect(detectFabricatedToolTranscript(text)).toBeNull();
     });
@@ -1990,7 +2007,10 @@ describe("fabricated tool transcripts", () => {
       const events: StepEvent[] = [];
       const outcome = await executeStep(
         {
-          session: createEmptySessionState({ id: "s-fabricated", workingDir: "/w" }),
+          session: createEmptySessionState({
+            id: "s-fabricated",
+            workingDir: "/w",
+          }),
           toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
           capabilities: CAPS,
           skillCatalog: SKILLS,
@@ -2018,7 +2038,9 @@ describe("fabricated tool transcripts", () => {
       const { outcome, log, events } = await runNative(
         mockCompletion(FABRICATED, {
           toolCalls: [
-            toolCall("c1", "reply", { text: "Implemented js/scene.js and verified it." }),
+            toolCall("c1", "reply", {
+              text: "Implemented js/scene.js and verified it.",
+            }),
           ],
         }),
       );
@@ -2049,8 +2071,14 @@ describe("fabricated tool transcripts", () => {
           ],
         }),
       );
-      expect(log).toEqual(["start os.fs.read js/scene.js", "end os.fs.read js/scene.js"]);
-      expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.read", "reply"]);
+      expect(log).toEqual([
+        "start os.fs.read js/scene.js",
+        "end os.fs.read js/scene.js",
+      ]);
+      expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
+        "os.fs.read",
+        "reply",
+      ]);
       expect(outcome.toolResults.map((r) => r.status)).toEqual(["ok", "error"]);
       expect(outcome.terminal).toBeNull();
       expect(outcome.trimmedBatchNotice).toBe(NOTICE);
@@ -2096,11 +2124,18 @@ describe("fabricated tool transcripts", () => {
       const { outcome, log } = await runNative(
         mockCompletion(
           "The last run said:\ntool_result[os.shell.run ok]: 12 tests passed",
-          { toolCalls: [toolCall("c1", "reply", { text: "All 12 tests pass." })] },
+          {
+            toolCalls: [
+              toolCall("c1", "reply", { text: "All 12 tests pass." }),
+            ],
+          },
         ),
       );
       expect(outcome.terminal).toBe("turn");
-      expect(log).toEqual(["start reply All 12 tests pass.", "end reply All 12 tests pass."]);
+      expect(log).toEqual([
+        "start reply All 12 tests pass.",
+        "end reply All 12 tests pass.",
+      ]);
       expect(outcome.trimmedBatchNotice).toBeUndefined();
     });
 
@@ -2144,7 +2179,9 @@ describe("fabricated tool transcripts", () => {
             // No second request of any kind: the cut completion is judged
             // as it stands, not repaired.
             llmComplete: async () => {
-              throw new Error("a cut completion must not trigger another request");
+              throw new Error(
+                "a cut completion must not trigger another request",
+              );
             },
             llmCompleteStream: async function* () {
               for (const line of completion.content.split(/(?<=\n)/)) {
@@ -2189,7 +2226,9 @@ describe("fabricated tool transcripts", () => {
           mockCompletion(SIX_LINES, {
             earlyStop: EARLY_STOP,
             finishReason: "fabricated_transcript",
-            toolCalls: [toolCall("c1", "os__fs__read", { path: "js/scene.js" })],
+            toolCalls: [
+              toolCall("c1", "os__fs__read", { path: "js/scene.js" }),
+            ],
           }),
         );
         expect(log).toEqual([
@@ -2206,7 +2245,11 @@ describe("fabricated tool transcripts", () => {
       it("trusts the cut when the detector cannot see the lines in what came back", async () => {
         const { outcome, log } = await runStreamed(
           mockCompletion("Working on the scene now.\n", {
-            earlyStop: { reason: "fabricated_transcript", calls: 4, results: 2 },
+            earlyStop: {
+              reason: "fabricated_transcript",
+              calls: 4,
+              results: 2,
+            },
           }),
         );
         expect(log).toEqual([]);
@@ -2476,7 +2519,12 @@ describe("executeStep remembers the transcript cut", () => {
       reasoningContent: "",
       stop: true,
       truncated: false,
-      timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 20,
+        predictedTokens: 5,
+      },
       cacheHitTokens: 0,
       slotId: 0,
       modelId: "mock",
@@ -2496,10 +2544,7 @@ describe("executeStep remembers the transcript cut", () => {
       userMessage: "now",
     };
 
-    const first = await executeStep(
-      { ...ctx, session, stepIndex: 0 },
-      deps,
-    );
+    const first = await executeStep({ ...ctx, session, stepIndex: 0 }, deps);
     expect(first.prompt.droppedTurns).toBeGreaterThan(0);
     const start = first.prompt.conversationPackStart;
     expect(start).not.toBeNull();
@@ -4411,10 +4456,7 @@ describe("executeStep per-request grammar (F17)", () => {
   });
 
   it("orchestrator turn: the gate's refusals leave the grammar, their descriptors stay in the prompt", async () => {
-    const { params } = await runStep(
-      {},
-      { isFusionOrchestrator: () => true },
-    );
+    const { params } = await runStep({}, { isFusionOrchestrator: () => true });
     const names = grammarToolNames(params.grammar);
     expect(names).not.toBeNull();
     // Refused: everything the gate would veto — the writes.
@@ -4504,7 +4546,10 @@ describe("executeStep per-request grammar (F17)", () => {
   it("the repair retry goes out under the same narrowed grammar", async () => {
     const registry = makeRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
-    const session = createEmptySessionState({ id: "s-g-repair", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-g-repair",
+      workingDir: "/w",
+    });
     const seen: LlmStreamParams[] = [];
     let calls = 0;
     await executeStep(
@@ -4532,7 +4577,12 @@ describe("executeStep per-request grammar (F17)", () => {
             reasoningContent: "",
             stop: true,
             truncated: false,
-            timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 1,
+              predictedTokens: 1,
+            },
             cacheHitTokens: 0,
             slotId: 0,
             modelId: "mock",
@@ -4602,7 +4652,12 @@ describe("executeStep tool roles (F18)", () => {
             reasoningContent: "",
             stop: true,
             truncated: false,
-            timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 },
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 1,
+              predictedTokens: 1,
+            },
             cacheHitTokens: 0,
             slotId: 0,
             modelId: "mock",
@@ -4622,7 +4677,10 @@ describe("executeStep tool roles (F18)", () => {
     );
 
   it("builder on native tools: only the role's schemas go on the wire, plus what is loaded", async () => {
-    const session = createEmptySessionState({ id: "s-role-w", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-role-w",
+      workingDir: "/w",
+    });
     session.loadedTools = [
       {
         name: "tasks.schedule",
@@ -4634,7 +4692,11 @@ describe("executeStep tool roles (F18)", () => {
     ];
     const { params } = await runStep(
       { toolRole: "builder", session },
-      { toolTransport: "native_tools", toolCallAdapter: null, supportsSlotAffinity: false },
+      {
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
     );
     const names = wireNames(params);
     expect(names).toContain("os__fs__write");
@@ -4653,7 +4715,10 @@ describe("executeStep tool roles (F18)", () => {
   });
 
   it("builder on the grammar transport: the grammar admits the role's names plus the loaded ones", async () => {
-    const session = createEmptySessionState({ id: "s-role-g", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-role-g",
+      workingDir: "/w",
+    });
     session.loadedTools = [
       {
         name: "tasks.schedule",
@@ -4663,7 +4728,10 @@ describe("executeStep tool roles (F18)", () => {
         source: "explicit",
       },
     ];
-    const { params, baseGrammar } = await runStep({ toolRole: "builder", session }, {});
+    const { params, baseGrammar } = await runStep(
+      { toolRole: "builder", session },
+      {},
+    );
     expect(params.grammar).not.toBe(baseGrammar);
     const names = grammarToolNames(params.grammar);
     expect(names).not.toBeNull();
@@ -4677,7 +4745,10 @@ describe("executeStep tool roles (F18)", () => {
   });
 
   it("orchestrator role + gate: a loaded write is on the wire's descriptors but never in the grammar", async () => {
-    const session = createEmptySessionState({ id: "s-role-o", workingDir: "/w" });
+    const session = createEmptySessionState({
+      id: "s-role-o",
+      workingDir: "/w",
+    });
     session.loadedTools = [
       {
         name: "os.fs.write",
@@ -4710,31 +4781,58 @@ describe("executeStep tool roles (F18)", () => {
 });
 
 describe("executeStep — the structured prompt on a native-tools link", () => {
-  const completion = (toolCalls?: CompletionResult["toolCalls"]): CompletionResult => ({
+  const completion = (
+    toolCalls?: CompletionResult["toolCalls"],
+  ): CompletionResult => ({
     content: "",
     reasoningContent: toolCalls ? "" : "thinking only",
     stop: true,
     truncated: false,
-    timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+    timing: {
+      promptMs: 1,
+      predictedMs: 1,
+      promptTokens: 20,
+      predictedTokens: 5,
+    },
     cacheHitTokens: 0,
     slotId: -1,
     modelId: "openai/gpt-5.5",
     ...(toolCalls ? { toolCalls } : {}),
   });
   const replyCall: CompletionResult["toolCalls"] = [
-    { id: "c", type: "function", function: { name: "reply", arguments: JSON.stringify({ text: "ok" }) } },
+    {
+      id: "c",
+      type: "function",
+      function: { name: "reply", arguments: JSON.stringify({ text: "ok" }) },
+    },
   ];
 
-  async function run(toolTransport: ToolCallTransport, answers: CompletionResult[]) {
+  async function run(
+    toolTransport: ToolCallTransport,
+    answers: CompletionResult[],
+  ) {
     const registry = new ToolRegistry();
     registry.register(replyTool);
-    const base = createEmptySessionState({ id: `s-messages-${toolTransport}`, workingDir: "/w" });
-    const session = { ...base, turns: [{ kind: "user" as const, text: "hi", at: 1 }] };
-    const seen: Array<Parameters<NonNullable<Parameters<typeof executeStep>[1]["llmComplete"]>>[0]> = [];
+    const base = createEmptySessionState({
+      id: `s-messages-${toolTransport}`,
+      workingDir: "/w",
+    });
+    const session = {
+      ...base,
+      turns: [{ kind: "user" as const, text: "hi", at: 1 }],
+    };
+    const seen: Array<
+      Parameters<
+        NonNullable<Parameters<typeof executeStep>[1]["llmComplete"]>
+      >[0]
+    > = [];
     let call = 0;
     const grammar =
       toolTransport === "grammar"
-        ? await buildGrammar(PLAIN_INSTRUCT_PROFILE, join(process.cwd(), "grammars"))
+        ? await buildGrammar(
+            PLAIN_INSTRUCT_PROFILE,
+            join(process.cwd(), "grammars"),
+          )
         : "";
     await executeStep(
       {
@@ -4768,19 +4866,26 @@ describe("executeStep — the structured prompt on a native-tools link", () => {
   it("carries `messages` beside the flat prompt, built from the same packed conversation", async () => {
     const [params] = await run("native_tools", [completion(replyCall)]);
     expect(params?.messages).toBeDefined();
-    expect(params?.messages?.system).toBe(params?.prompt.slice(0, params.messages.system.length));
+    expect(params?.messages?.system).toBe(
+      params?.prompt.slice(0, params.messages.system.length),
+    );
     expect(params?.messages?.turns).toEqual([{ kind: "user", text: "hi" }]);
     expect(params?.messages?.tail).not.toContain("### conversation");
     expect(params?.prompt).toContain("### conversation\nuser: hi");
   });
 
   it("re-shapes the structured tail for the one-shot repair, notice included", async () => {
-    const seen = await run("native_tools", [completion(), completion(replyCall)]);
+    const seen = await run("native_tools", [
+      completion(),
+      completion(replyCall),
+    ]);
     expect(seen).toHaveLength(2);
     const repair = seen[1]!;
     expect(repair.prompt).toContain("### tool-call-repair");
     expect(repair.messages?.tail).toContain("### tool-call-repair");
-    expect(repair.messages?.tail).toContain("native function-calling interface");
+    expect(repair.messages?.tail).toContain(
+      "native function-calling interface",
+    );
     expect(repair.messages?.system).toBe(seen[0]!.messages?.system);
     expect(repair.messages?.turns).toEqual(seen[0]!.messages?.turns);
   });
@@ -4829,7 +4934,10 @@ describe("batch trim consults the turn policy (F8)", () => {
 
   async function run(
     body: string,
-    policy: { isPlanMode?: () => boolean; isFusionOrchestrator?: () => boolean },
+    policy: {
+      isPlanMode?: () => boolean;
+      isFusionOrchestrator?: () => boolean;
+    },
   ) {
     const events: StepEvent[] = [];
     const registry = makeRegistry();
@@ -4857,7 +4965,12 @@ describe("batch trim consults the turn policy (F8)", () => {
           reasoningContent: "",
           stop: true,
           truncated: false,
-          timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
           cacheHitTokens: 0,
           slotId: 0,
           modelId: "mock",
@@ -4892,7 +5005,9 @@ describe("batch trim consults the turn policy (F8)", () => {
     expect(outcome.trimmedBatchNotice).toContain("`os.shell.run`");
     expect(outcome.trimmedBatchNotice).toContain("refused by the fusion gate");
     expect(outcome.trimmedBatchNotice).toContain("do not retry");
-    expect(outcome.trimmedBatchNotice).not.toContain("Dropped from the batch — retry");
+    expect(outcome.trimmedBatchNotice).not.toContain(
+      "Dropped from the batch — retry",
+    );
   });
 
   it("prefers the fan-out over an earlier runnable write on an orchestrator turn", async () => {
@@ -4910,7 +5025,10 @@ describe("batch trim consults the turn policy (F8)", () => {
       { preferTool: "fusion.delegate" },
     );
     expect(trim?.kept.tool).toBe("fusion.delegate");
-    expect(trim?.dropped.map((c) => c.tool)).toEqual(["os.fs.read", "os.fs.write"]);
+    expect(trim?.dropped.map((c) => c.tool)).toEqual([
+      "os.fs.read",
+      "os.fs.write",
+    ]);
     expect(trim?.refused).toEqual([]);
   });
 
@@ -4920,7 +5038,10 @@ describe("batch trim consults the turn policy (F8)", () => {
     // model reads, the second is named as refused, the read as a retry.
     const body = JSON.stringify([
       { tool: "os.fs.write", args: { path: "a", content: "x" } },
-      { tool: "os.fs.edit", args: { path: "b", oldString: "x", newString: "y" } },
+      {
+        tool: "os.fs.edit",
+        args: { path: "b", oldString: "x", newString: "y" },
+      },
       { tool: "os.fs.read", args: { path: "c" } },
     ]);
     const { outcome, events } = await run(body, { isPlanMode: () => true });
@@ -4932,19 +5053,29 @@ describe("batch trim consults the turn policy (F8)", () => {
       dropped: ["os.fs.read"],
       refused: ["os.fs.edit"],
     });
-    expect(outcome.trimmedBatchNotice).toContain("`os.fs.edit` (refused by plan mode)");
-    expect(outcome.trimmedBatchNotice).toContain("Dropped from the batch — retry: `os.fs.read`");
+    expect(outcome.trimmedBatchNotice).toContain(
+      "`os.fs.edit` (refused by plan mode)",
+    );
+    expect(outcome.trimmedBatchNotice).toContain(
+      "Dropped from the batch — retry: `os.fs.read`",
+    );
   });
 
   it("is byte-identical to the old trim when no policy is active", async () => {
     const body = JSON.stringify([
       { tool: "os.fs.write", args: { path: "a", content: "x" } },
-      { tool: "os.fs.edit", args: { path: "b", oldString: "x", newString: "y" } },
+      {
+        tool: "os.fs.edit",
+        args: { path: "b", oldString: "x", newString: "y" },
+      },
     ]);
     const { outcome, events } = await run(body, {});
     expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["os.fs.write"]);
     const trim = events.find((e) => e.type === "batch_trimmed");
-    expect(trim).toMatchObject({ kept: "os.fs.write", dropped: ["os.fs.edit"] });
+    expect(trim).toMatchObject({
+      kept: "os.fs.write",
+      dropped: ["os.fs.edit"],
+    });
     expect(trim).not.toHaveProperty("refused");
     expect(outcome.trimmedBatchNotice).not.toContain("refused");
   });
@@ -4964,7 +5095,9 @@ describe("batch trim consults the turn policy (F8)", () => {
       registry,
       isFusionOrchestrator: () => true,
     });
-    expect(orchestrator.refusedBy?.("os.shell.run")).toBe(TRIM_REFUSED_BY_FUSION_GATE);
+    expect(orchestrator.refusedBy?.("os.shell.run")).toBe(
+      TRIM_REFUSED_BY_FUSION_GATE,
+    );
     expect(orchestrator.refusedBy?.("fusion.delegate")).toBeNull();
     expect(turnPolicyForTrim({ registry })).toEqual({});
   });
@@ -5009,7 +5142,13 @@ describe("claims need evidence (F9b)", () => {
     session.turns.push({ kind: "user", text: "check the files", at: 1 });
     for (const call of options.turns ?? []) {
       session.turns.push({ kind: "assistant_tool_call", ...call, at: 2 });
-      session.turns.push({ kind: "tool_result", tool: call.tool, status: "ok", summary: "ok", at: 3 });
+      session.turns.push({
+        kind: "tool_result",
+        tool: call.tool,
+        status: "ok",
+        summary: "ok",
+        at: 3,
+      });
     }
     let noticed = options.noticed ?? false;
     let marks = 0;
@@ -5043,7 +5182,12 @@ describe("claims need evidence (F9b)", () => {
           reasoningContent: "",
           stop: true,
           truncated: false,
-          timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
           cacheHitTokens: 0,
           slotId: 0,
           modelId: "mock",
@@ -5056,7 +5200,10 @@ describe("claims need evidence (F9b)", () => {
   }
 
   const CLAIM = JSON.stringify([
-    { tool: "reply", args: { text: "Ran node --check on all JavaScript files (all passed)." } },
+    {
+      tool: "reply",
+      args: { text: "Ran node --check on all JavaScript files (all passed)." },
+    },
   ]);
 
   it("holds a reply that claims a check nothing ran, once, with a notice", async () => {
@@ -5069,21 +5216,31 @@ describe("claims need evidence (F9b)", () => {
       notDelivered: true,
       unverifiedClaims: ["node --check"],
     });
-    expect(outcome.trimmedBatchNotice).toContain('Your reply claims "node --check"');
+    expect(outcome.trimmedBatchNotice).toContain(
+      'Your reply claims "node --check"',
+    );
     expect(outcome.trimmedBatchNotice).toContain("no such check ran this turn");
     expect(marks()).toBe(1);
     // The transcript reads the held reply as a call that never delivered.
-    const last = outcome.nextSession.turns[outcome.nextSession.turns.length - 1];
+    const last =
+      outcome.nextSession.turns[outcome.nextSession.turns.length - 1];
     expect(last?.kind).toBe("tool_result");
   });
 
   it("delivers the reply when a shell call this turn ran the claimed check", async () => {
     const { outcome, marks } = await run(CLAIM, {
-      turns: [{ tool: "os.shell.run", args: { cmd: "node", args: ["--check", "js/a.js"] } }],
+      turns: [
+        {
+          tool: "os.shell.run",
+          args: { cmd: "node", args: ["--check", "js/a.js"] },
+        },
+      ],
     });
     expect(outcome.terminal).toBe("turn");
     expect(outcome.toolResults[0]!.status).toBe("ok");
-    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unverifiedClaims");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty(
+      "unverifiedClaims",
+    );
     expect(outcome.trimmedBatchNotice).toBeUndefined();
     expect(marks()).toBe(0);
   });
@@ -5110,7 +5267,9 @@ describe("claims need evidence (F9b)", () => {
   it("does nothing when the loop passes no claim state", async () => {
     const { outcome } = await run(CLAIM, { claimEvidence: false });
     expect(outcome.terminal).toBe("turn");
-    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unverifiedClaims");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty(
+      "unverifiedClaims",
+    );
   });
 });
 
@@ -5120,7 +5279,13 @@ describe("the operator's request reaches the prompt (F22)", () => {
     const registry = new ToolRegistry();
     registry.register(replyTool);
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
-    const spec = `Build it: ${"detail ".repeat(30_000)}`;
+    // Sized to overflow ANY transcript cap the runtime ships, not just
+    // the one in force when this test was written: at ~3.6 chars per
+    // token this is ~116k tokens, comfortably past
+    // `CONVERSATION_CAP_AUTO_FALLBACK`. The old 30_000 sat just under
+    // the 64k fallback and the packer stopped dropping anything, which
+    // made the test pin a number rather than the behaviour it is about.
+    const spec = `Build it: ${"detail ".repeat(60_000)}`;
     const session = createEmptySessionState({ id: "s-f22", workingDir: "/w" });
     session.turns.push({ kind: "user", text: spec, at: 1 });
     session.turns.push({ kind: "assistant_reply", text: "built", at: 2 });
@@ -5145,7 +5310,12 @@ describe("the operator's request reaches the prompt (F22)", () => {
             reasoningContent: "",
             stop: true,
             truncated: false,
-            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
             cacheHitTokens: 0,
             slotId: 0,
             modelId: "mock",
@@ -5171,8 +5341,16 @@ describe("the turn's reasoning effort and output ceiling reach the request (F20)
     const registry = new ToolRegistry();
     registry.register(replyTool);
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
-    const seen: Array<{ reasoningEffort?: string; maxOutputTokens?: number; maxTokens?: number }> = [];
-    const run = (over: { reasoningEffort?: "low"; maxOutputTokens?: number; maxTokens?: number }) =>
+    const seen: Array<{
+      reasoningEffort?: string;
+      maxOutputTokens?: number;
+      maxTokens?: number;
+    }> = [];
+    const run = (over: {
+      reasoningEffort?: "low";
+      maxOutputTokens?: number;
+      maxTokens?: number;
+    }) =>
       executeStep(
         {
           session: createEmptySessionState({ id: "s-f20", workingDir: "/w" }),
@@ -5189,16 +5367,29 @@ describe("the turn's reasoning effort and output ceiling reach the request (F20)
           slotManager: new SlotManager(2),
           llmComplete: async (params) => {
             seen.push({
-              ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }),
-              ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }),
-              ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }),
+              ...(params.reasoningEffort === undefined
+                ? {}
+                : { reasoningEffort: params.reasoningEffort }),
+              ...(params.maxOutputTokens === undefined
+                ? {}
+                : { maxOutputTokens: params.maxOutputTokens }),
+              ...(params.maxTokens === undefined
+                ? {}
+                : { maxTokens: params.maxTokens }),
             });
             return {
-              content: JSON.stringify([{ tool: "reply", args: { text: "ok" } }]),
+              content: JSON.stringify([
+                { tool: "reply", args: { text: "ok" } },
+              ]),
               reasoningContent: "",
               stop: true,
               truncated: false,
-              timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
               cacheHitTokens: 0,
               slotId: 0,
               modelId: "mock",
@@ -5239,7 +5430,9 @@ describe("executeStep — server chat template parts (F31)", () => {
     return registry;
   }
 
-  async function runWith(profile: typeof PLAIN_PROFILE_F31 | typeof QWEN_PROFILE_F31) {
+  async function runWith(
+    profile: typeof PLAIN_PROFILE_F31 | typeof QWEN_PROFILE_F31,
+  ) {
     const grammar = await buildGrammar(profile, grammarsDir);
     const seen: Array<Record<string, unknown>> = [];
     await executeStep(
@@ -5263,7 +5456,12 @@ describe("executeStep — server chat template parts (F31)", () => {
             reasoningContent: "",
             stop: true,
             truncated: false,
-            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
             cacheHitTokens: 0,
             slotId: 0,
             modelId: "mock",
@@ -5278,7 +5476,11 @@ describe("executeStep — server chat template parts (F31)", () => {
 
   it("hands a plain-instruct link the prefix and a framing-free tail as chat parts (auto)", async () => {
     const params = await runWith(PLAIN_PROFILE_F31);
-    const chat = params.chat as { system: string; user: string; prefixHash: string };
+    const chat = params.chat as {
+      system: string;
+      user: string;
+      prefixHash: string;
+    };
     expect(chat).toBeDefined();
     expect(chat.system.startsWith("### system")).toBe(true);
     expect(chat.user).toContain("### respond");
@@ -5321,11 +5523,15 @@ describe("executeStep slot pinning (F13)", () => {
     const registry = replyRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
     const slotManager = new SlotManager(4);
-    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> = [];
+    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> =
+      [];
     const deps = {
       registry,
       slotManager,
-      llmComplete: async (params: { slotId: number; cachePrompt?: boolean }) => {
+      llmComplete: async (params: {
+        slotId: number;
+        cachePrompt?: boolean;
+      }) => {
         seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt });
         // llama-server picked slot 2 by prefix similarity.
         return mockCompletion(replyBody, { slotId: 2 });
@@ -5390,7 +5596,10 @@ describe("executeStep slot pinning (F13)", () => {
     };
     let session = createEmptySessionState({ id: "s-nopin", workingDir: "/w" });
     session = (
-      await executeStep({ ...ctx, session, stepIndex: 0, userMessage: "x" }, deps)
+      await executeStep(
+        { ...ctx, session, stepIndex: 0, userMessage: "x" },
+        deps,
+      )
     ).nextSession;
     await executeStep({ ...ctx, session, stepIndex: 1 }, deps);
     expect(slots).toEqual([-1, -1]);
@@ -5461,7 +5670,8 @@ describe("executeStep slot pinning (F13)", () => {
         profile: PLAIN_INSTRUCT_PROFILE,
         supportsSlotAffinity: true,
         onEvent: (event: StepEvent) => {
-          if (event.type === "prompt_captured") cacheReused.push(event.cacheReused);
+          if (event.type === "prompt_captured")
+            cacheReused.push(event.cacheReused);
         },
       },
     );
@@ -5475,7 +5685,8 @@ describe("executeStep slot pinning (F13)", () => {
     const registry = replyRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
     const slotManager = new SlotManager(4);
-    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> = [];
+    const seen: Array<{ slotId: number; cachePrompt: boolean | undefined }> =
+      [];
     await executeStep(
       {
         session: createEmptySessionState({ id: "s-cloud", workingDir: "/w" }),
@@ -5489,7 +5700,10 @@ describe("executeStep slot pinning (F13)", () => {
       {
         registry,
         slotManager,
-        llmComplete: async (params: { slotId: number; cachePrompt?: boolean }) => {
+        llmComplete: async (params: {
+          slotId: number;
+          cachePrompt?: boolean;
+        }) => {
           seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt });
           return mockCompletion(replyBody, { slotId: 5 });
         },
@@ -5568,7 +5782,12 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
             reasoningContent: "",
             stop: true,
             truncated: false,
-            timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5 },
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
             cacheHitTokens: 0,
             slotId: 0,
             modelId: "mock",
@@ -5585,7 +5804,9 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
   }
 
   /** Point the config at a temp state dir holding `localModels`; returns the restore. */
-  function withLocalModelsConfig(localModels: Record<string, unknown>): () => void {
+  function withLocalModelsConfig(
+    localModels: Record<string, unknown>,
+  ): () => void {
     const previous = process.env.ATOMIC_AGENT_STATE_DIR;
     const dir = mkdtempSync(join(tmpdir(), "f49-"));
     writeFileSync(join(dir, "config.json"), JSON.stringify({ localModels }));
@@ -5599,7 +5820,11 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
   }
 
   it("an ordinary step sends the bounded prelude byte-identical to the base grammar", async () => {
-    const { seen, baseGrammar } = await runQwen([`thinking</think>\n${CALL}`], {}, 2);
+    const { seen, baseGrammar } = await runQwen(
+      [`thinking</think>\n${CALL}`],
+      {},
+      2,
+    );
     expect(seen[0]!.grammar).toBe(baseGrammar);
     expect(seen[0]!.grammar).toContain("think-body ::= think-char{0,8}");
   });
@@ -5614,16 +5839,25 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
     expect(seen[0]!.grammar).toContain("think-body ::= think-char*");
     expect(seen[0]!.grammar).not.toContain("think-char{0,8}");
     expect(grammarToolNames(seen[0]!.grammar)).toEqual(["finish", "reply"]);
-    expect(seen[0]!.grammar).toMatch(/^root ::= think-prelude tool-call-array$/m);
+    expect(seen[0]!.grammar).toMatch(
+      /^root ::= think-prelude tool-call-array$/m,
+    );
   });
 
   it("llm_raw_completion carries the reasoning estimate in budget units, so a cut reads as >= budget", async () => {
     const reasoning = "x".repeat(8);
     const { events } = await runQwen([`${reasoning}</think>\n${CALL}`], {}, 2);
     const raw = events.find((e) => e.type === "llm_raw_completion");
-    expect(raw).toMatchObject({ type: "llm_raw_completion", attempt: 1, reasoningTokens: 2 });
+    expect(raw).toMatchObject({
+      type: "llm_raw_completion",
+      attempt: 1,
+      reasoningTokens: 2,
+    });
     const reasoningEvent = events.find((e) => e.type === "reasoning");
-    expect(reasoningEvent).toMatchObject({ type: "reasoning", text: reasoning });
+    expect(reasoningEvent).toMatchObject({
+      type: "reasoning",
+      text: reasoning,
+    });
   });
 
   it("thinking: off — the prompt ends with the disabled marker, the grammar has the plain root, the call parses with no reasoning", async () => {
@@ -5636,9 +5870,11 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
       expect(seen[0]!.grammar).not.toMatch(/^root ::= think-prelude/m);
       expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
       expect(events.find((e) => e.type === "reasoning")).toBeUndefined();
-      expect(events.find((e) => e.type === "llm_raw_completion")).toMatchObject({
-        reasoningTokens: 0,
-      });
+      expect(events.find((e) => e.type === "llm_raw_completion")).toMatchObject(
+        {
+          reasoningTokens: 0,
+        },
+      );
       expect(events.find((e) => e.type === "parse_retry")).toBeUndefined();
     } finally {
       restore();
@@ -5655,7 +5891,9 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
       expect(repair.endsWith("<think>\n\n</think>\n\n")).toBe(true);
       // One marker at the end; the original one was stripped before the notice.
       expect(repair.match(/<think>/g)).toHaveLength(1);
-      expect(repair.indexOf("### tool-call-repair")).toBeLessThan(repair.indexOf("<think>"));
+      expect(repair.indexOf("### tool-call-repair")).toBeLessThan(
+        repair.indexOf("<think>"),
+      );
       expect(seen[1]!.grammar).toMatch(/^root ::= tool-call-array$/m);
       expect(outcome.toolResults.map((r) => r.tool)).toEqual(["reply"]);
     } finally {
@@ -5666,10 +5904,14 @@ describe("executeStep reasoning budget and thinking: off (F49)", () => {
   it("thinking: on keeps the prefill, the prelude and the open-tag parse", async () => {
     const restore = withLocalModelsConfig({ thinking: "on" });
     try {
-      const { seen, events, baseGrammar } = await runQwen([`why</think>\n${CALL}`]);
+      const { seen, events, baseGrammar } = await runQwen([
+        `why</think>\n${CALL}`,
+      ]);
       expect(seen[0]!.prompt.endsWith("<think>\n")).toBe(true);
       expect(seen[0]!.grammar).toBe(baseGrammar);
-      expect(events.find((e) => e.type === "reasoning")).toMatchObject({ text: "why" });
+      expect(events.find((e) => e.type === "reasoning")).toMatchObject({
+        text: "why",
+      });
     } finally {
       restore();
     }

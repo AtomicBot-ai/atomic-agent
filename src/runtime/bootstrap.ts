@@ -1613,8 +1613,8 @@ export async function createAgentRuntime(
               swaFullActive: () => {
                 const dataDir = config.paths.localModelsDataDir;
                 return (
-                  readLaunchRecord(dataDir, readRunningPid(dataDir))?.swaFull ===
-                  true
+                  readLaunchRecord(dataDir, readRunningPid(dataDir))
+                    ?.swaFull === true
                 );
               },
             }
@@ -1690,6 +1690,12 @@ export async function createAgentRuntime(
       slotAffinity: provider.capabilities.supportsSlotAffinity,
       parallelTools: provider.capabilities.supportsParallelTools,
       strictTools: modelWantsStrictTools(resolved, provider.id),
+      // The entry's kind, not the provider object's — `LlmProvider` has
+      // no kind and a llama-server link is only identifiable from the
+      // config entry it was built from.
+      isLlamaServer:
+        resolved.providers.find((p) => p.id === provider.id)?.kind ===
+        "llama-server",
     };
   };
 
@@ -2493,6 +2499,7 @@ export async function createAgentRuntime(
         supportsSlotAffinity: slice.slotAffinity,
         supportsParallelTools: slice.parallelTools,
         strictTools: slice.strictTools,
+        isLlamaServer: slice.isLlamaServer,
       };
     },
     ...(profileManager ? { profileManager } : {}),
@@ -2999,7 +3006,9 @@ export async function createAgentRuntime(
           userMessage,
           // The same record the workers' briefs quote, pinned into the
           // orchestrator's own prompt once the packer drops its carrier.
-          ...(turnRequest !== undefined ? { originalRequest: turnRequest } : {}),
+          ...(turnRequest !== undefined
+            ? { originalRequest: turnRequest }
+            : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
@@ -3212,8 +3221,11 @@ export async function createAgentRuntime(
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
       resolveWorkerPricing: (providerId, modelId) =>
-        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)
-          ?.pricing,
+        resolveModelPricingFor(
+          resolveLlmConfig(getConfig()),
+          modelId,
+          providerId,
+        )?.pricing,
       // The same client the llama-server provider serves workers with,
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.

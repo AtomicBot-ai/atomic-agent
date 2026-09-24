@@ -204,8 +204,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const contextualKeywordGate =
     input.contextualKeywordGate ?? config.memory.profile.contextualKeywordGate;
   const profileFilterThreshold =
-    input.profileFilterThreshold ??
-    config.memory.voting.profileFilterThreshold;
+    input.profileFilterThreshold ?? config.memory.voting.profileFilterThreshold;
   // Whole fact lines, pinned first; `clip` carries the counts whenever a
   // fact was left out, so the loop can warn (issue #407). The vote
   // filter runs before the clip, so a downvoted fact never takes a line.
@@ -287,8 +286,16 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // The probe first, then whatever the caller resolved (the provider
   // catalogue, for a cloud model that has no `/props` to read). Before
   // this the budget simply had no window off the local path.
-  const contextWindow =
-    input.profile?.contextWindow ?? input.contextWindow ?? null;
+  //
+  // The probe only speaks for the model it probed. `profileWindowApplies`
+  // is how a caller serving a different model this step — a Fusion
+  // orchestrator on a cloud leg, with a llama-server profile in hand for
+  // the workers — says so, and drops to the catalogue instead.
+  const probedWindow =
+    (input.profileWindowApplies ?? true)
+      ? (input.profile?.contextWindow ?? null)
+      : null;
+  const contextWindow = probedWindow ?? input.contextWindow ?? null;
   const sessionTokenEstimate =
     estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
   const conversationCapEffective = computeEffectiveConversationCap({
@@ -432,7 +439,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     turns: packedConversationTurns(packed),
     tail: [...tailBefore, ...tailAfter].join("\n"),
   };
-  const tailParts: string[] = [...tailBefore, ...conversationParts, ...tailAfter];
+  const tailParts: string[] = [
+    ...tailBefore,
+    ...conversationParts,
+    ...tailAfter,
+  ];
   if (turnFraming !== undefined) {
     // Gemma 4 turn-framing: close the system turn and open the model turn.
     // The model emits its own `<|channel>thought` block — we do NOT prefill

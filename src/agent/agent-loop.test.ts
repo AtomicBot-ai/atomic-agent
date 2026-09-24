@@ -173,17 +173,28 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () =>
-        makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } })),
+        makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        ),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        if (event.type === "llm_event" && event.event.type === "prompt_captured") {
+        if (
+          event.type === "llm_event" &&
+          event.event.type === "prompt_captured"
+        ) {
           tails.push(event.event.tail);
         }
       },
     });
-    const spec = `Build it: ${"detail ".repeat(30_000)}`;
+    // Sized to overflow ANY transcript cap the runtime ships, not just
+    // the one in force when this test was written: at ~3.6 chars per
+    // token this is ~116k tokens, comfortably past
+    // `CONVERSATION_CAP_AUTO_FALLBACK`. The old 30_000 sat just under
+    // the 64k fallback and the packer stopped dropping anything, which
+    // made the test pin a number rather than the behaviour it is about.
+    const spec = `Build it: ${"detail ".repeat(60_000)}`;
     const session = createEmptySessionState({ id: "s-request", workingDir });
     session.turns.push({ kind: "user", text: spec, at: 1 });
     session.turns.push({ kind: "assistant_reply", text: "built", at: 2 });
@@ -195,7 +206,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     expect(tails).toHaveLength(1);
     expect(tails[0]).toContain("### request");
-    expect(tails[0]!.indexOf("### request")).toBeLessThan(tails[0]!.indexOf("### conversation"));
+    expect(tails[0]!.indexOf("### request")).toBeLessThan(
+      tails[0]!.indexOf("### conversation"),
+    );
   });
 
   it("passes RunTurnOptions.reasoningEffort / maxOutputTokens to every completion (F20)", async () => {
@@ -207,10 +220,16 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async (params) => {
         seen.push({
-          ...(params.reasoningEffort === undefined ? {} : { effort: params.reasoningEffort }),
-          ...(params.maxOutputTokens === undefined ? {} : { cap: params.maxOutputTokens }),
+          ...(params.reasoningEffort === undefined
+            ? {}
+            : { effort: params.reasoningEffort }),
+          ...(params.maxOutputTokens === undefined
+            ? {}
+            : { cap: params.maxOutputTokens }),
         });
-        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -1025,7 +1044,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(calls).toBe(2);
     expect(observed).toEqual([8_192]);
     expect(repacks).toEqual([
-      expect.objectContaining({ contextWindow: 8_192, source: "provider", stepIndex: 0 }),
+      expect.objectContaining({
+        contextWindow: 8_192,
+        source: "provider",
+        stepIndex: 0,
+      }),
     ]);
     expect(prompts[1]).toContain("trimmed to fit this model's window");
     // The same step, not a new one.
@@ -2490,7 +2513,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         if (event.type === "loop_detected") detected.push(event);
       },
     });
-    const session = createEmptySessionState({ id: "s-outcome-loop", workingDir });
+    const session = createEmptySessionState({
+      id: "s-outcome-loop",
+      workingDir,
+    });
     const result = await loop.runTurn(session, {
       userMessage: "check it",
       maxSteps: 6,
@@ -2510,7 +2536,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // The notice lands on the prompt AFTER the third identical result.
     expect(prompts[3]).toContain("Same result three times from `probe`");
     expect(prompts[3]).toContain("change approach or write");
-    expect(prompts.slice(0, 3).join("\n")).not.toContain("change approach or write");
+    expect(prompts.slice(0, 3).join("\n")).not.toContain(
+      "change approach or write",
+    );
   });
 
   it("ends the turn with a graceful reply (not loop_failed) when the breaker trips", async () => {
@@ -2617,8 +2645,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         };
       },
     });
-    const detected: Array<{ level?: string; detector?: string; count: number }> =
-      [];
+    const detected: Array<{
+      level?: string;
+      detector?: string;
+      count: number;
+    }> = [];
     let step = 0;
     const loop = new AgentLoop({
       registry,

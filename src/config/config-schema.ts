@@ -356,13 +356,16 @@ export interface AtomicAgentConfig {
      * and same reasoning as `localModels.managed.contextSize` — the
      * useful value is a function of hardware this file cannot see.
      *
-     * The default stays at 32k rather than becoming auto, and
-     * deliberately: on a local server the tokens are free, but on a
-     * metered cloud model with a 200k window "auto" would multiply the
-     * per-step bill without anyone asking for it. Operators who size
-     * their own `llama-server` are exactly the people who should set
-     * this to `0`, and the context panel now tells them so when their
-     * ceiling is what is holding the transcript below their window.
+     * **The shipped default IS `0`** — this paragraph used to claim it
+     * stayed at 32k, which stopped being true when auto landed, and the
+     * number was the one thing an operator would act on.
+     *
+     * Auto is not unbounded spend: it is what the window leaves, and a
+     * model whose window nobody has published falls back to
+     * `CONVERSATION_CAP_AUTO_FALLBACK` (64k). An operator on a metered
+     * cloud model who wants a tighter ceiling than the window sets a
+     * number here, and the context panel says so when that ceiling —
+     * rather than the window — is what holds the transcript down.
      */
     conversationMaxTokens: number;
     /**
