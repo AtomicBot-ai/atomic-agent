@@ -1,4 +1,5 @@
 import {
+  delegationProducedWork,
   emptyFusionOrchestratorState,
   recordDelegation,
   wouldRefuse as fusionGateWouldRefuse,
@@ -1669,8 +1670,11 @@ export class AgentLoop {
               ? {
                   isFusionOrchestrator: () => true,
                   fusionState: () => fusionState,
-                  onDelegated: () => {
-                    fusionState = recordDelegation(fusionState);
+                  onDelegated: (result) => {
+                    fusionState = recordDelegation(
+                      fusionState,
+                      delegationProducedWork(result),
+                    );
                   },
                 }
               : {}),
