@@ -91,8 +91,6 @@ export interface PromptShellProps extends Omit<
    * present.
    */
   leftSlot?: ReactElement | null;
-  /** Optional content rendered at the toolbar's right end. */
-  rightSlot?: ReactElement | null;
   /** Optional context readout, rendered at the action bar's right end. */
   contextSlot?: ReactElement | null;
   modeSlot?: ReactElement | null;
@@ -119,7 +117,6 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     provider,
     needsModelDownload,
     leftSlot,
-    rightSlot,
     contextSlot,
     modeSlot,
     running,
@@ -262,7 +259,6 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           provider={provider ?? null}
           needsModelDownload={needsModelDownload ?? false}
           fusion={fusion}
-          rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
           modeSlot={modeSlot ?? null}
           // Same raised layer as the overlay backstop behind the bar —

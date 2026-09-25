@@ -1876,44 +1876,18 @@ export function TuiApp({
         </Text>
       </Box>
     ) : null;
-  // While a turn is running the meta-row gains a second job: the operator
-  // needs to know what Enter will do to the message they are typing.
-  // Running only: during a pending approval every key routes to the
-  // approval modal first, so both Enter-routing and the ctrl+t flip are
-  // dead there — advertising them would promise bindings that do nothing.
+  // The meta row used to carry `⏎ steer (ctrl+t)` while a turn ran. It
+  // is gone: the hint strip two rows below says the same thing in the same
+  // words, and its whole job is keys. Two statements of one binding is one
+  // too many, and this was the copy the row kept having to drop — a live
+  // provider wait took it out, which is how the duplication came to light.
+  // Its ~19 columns now belong to the route and to the outage readout's
+  // reason at every width, in every state.
   //
-  // What used to live here when idle was `ctx <window>` — the *size* of
-  // the context window, which never changes and never told anyone
-  // anything. The chip below reports how much of it is in use instead.
-  //
-  // Dropped outright while a wait is live, not shrunk. It is the one
-  // thing on the row that is duplicated two lines below it, in the hint
-  // strip under the composer, so nothing is lost — and it is the ~19
-  // columns that decide whether the outage readout and the route can
-  // both be read at the widths people actually run. What makes "nothing
-  // is lost" true rather than hopeful is that the strip's `⏎` chip is
-  // essential (`hotkey-chips.ts`): it used to carry `shed: 3` and was
-  // dropped at every width up to 112 columns as soon as the composer
-  // held a draft — which is precisely the state this hint exists for.
-  // This does NOT reopen the pinned "at 60 the right-hand readout must
-  // survive intact" decision: that argument is about a half-drawn
-  // context or mode chip, and both of those keep their `flexShrink={0}`
-  // and their place on the row.
-  //
-  // A `givenUp` badge does not take the hint with it. It is past tense
-  // and 20 columns wide, it has no counter to protect, and the turn
-  // running underneath it is an ordinary turn whose Enter the operator
-  // still has to aim.
-  const outageIsLive = Boolean(outage && !outage.givenUp);
-  const promptRightSlot =
-    state.status === "running" && !outageIsLive ? (
-      <Text>
-        <Text color={theme.colors.railAccent} bold>
-          {"\u23ce"} {state.whileBusyMode}
-        </Text>
-        <Text color={theme.colors.railMuted}> (ctrl+t)</Text>
-      </Text>
-    ) : null;
+  // What the strip gives in exchange: its `⏎` chip is essential
+  // (`hotkey-chips.ts`), so the statement survives at every width. `ctrl+t`
+  // is rankable and still goes below ~82 columns — there the flip is
+  // unadvertised until the strip is allowed to wrap.
   const contextUsage = selectContextUsage(state);
   // The chip renders inside the composer overlay, so its click target
   // registers on the overlay's raised layer — see `composer-overlay.tsx`.
@@ -2403,7 +2377,6 @@ export function TuiApp({
                         provider={promptLlm.provider}
                         needsModelDownload={promptNeedsModelDownload}
                         leftSlot={promptLeftSlot}
-                        rightSlot={promptRightSlot}
                         contextSlot={promptContextSlot}
                         modeSlot={promptModeSlot}
                         running={state.status === "running"}

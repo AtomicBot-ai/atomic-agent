@@ -30,16 +30,23 @@ import { theme } from "../theme/theme.js";
  * status readout belongs, and the app's primary verb belongs next to
  * the text it submits.
  *
- * **About the slots.** `leftSlot` / `rightSlot` arrive from the chat
- * surface already coloured, so this file cannot check them — but they
- * land on the rail ground, which means the caller has to paint them in
- * `rail*` tokens rather than page ones. It used not to: the composer
- * notice came in as `success` and the while-busy hint as `accentSoft`
- * plus `muted`, all three picked to be read on the terminal's own
- * background, and on the palettes whose rail was drawn *inverted* that
- * put light text on a light ground. `tui-app.tsx` now hands over rail
- * tokens, and `theme-contrast.test.ts` holds every one of them to AA
- * against `railBackground`.
+ * **About the slots.** `leftSlot` arrives from the chat surface already
+ * coloured, so this file cannot check it — but it lands on the rail
+ * ground, which means the caller has to paint it in `rail*` tokens rather
+ * than page ones. It used not to: the composer notice came in as
+ * `success` and the while-busy hint (since removed) as `accentSoft` plus
+ * `muted`, both picked to be read on the terminal's own background, and
+ * on the palettes whose rail was drawn *inverted* that put light text on
+ * a light ground. `tui-app.tsx` now hands over rail tokens, and
+ * `theme-contrast.test.ts` holds every one of them to AA against
+ * `railBackground`.
+ *
+ * There is no `rightSlot`. It carried one thing — `⏎ steer (ctrl+t)`
+ * while a turn ran — which the hint strip two rows below states in the
+ * same words, in the row whose whole job is keys. The bar no longer says
+ * it twice, and no longer has to drop its copy when a provider wait needs
+ * the columns — the strip's `⏎` chip is essential in `hotkey-chips.ts`,
+ * which is what makes that safe at every width.
  */
 export interface PromptMetaBarProps {
   /**
@@ -61,20 +68,13 @@ export interface PromptMetaBarProps {
    * made fusion look like a badge on the normal composer.
    */
   fusion?: boolean;
-  /** Chat-surface content rendered at the bar's right end. */
-  rightSlot: ReactElement | null;
-  /**
-   * The context readout, rendered at the bar's right end. Its own prop
-   * rather than part of `rightSlot` because the two coexist: while a
-   * turn runs `rightSlot` carries the Enter-routing hint, and the window
-   * is exactly as worth watching then as when the composer is idle.
-   */
+  /** The context readout, rendered at the bar's right end. */
   contextSlot: ReactElement | null;
   /**
    * The coding-mode chip, at the very end of the bar. Its own prop
-   * rather than part of `rightSlot` for the same reason `contextSlot`
-   * is: the three coexist, and the bar's right end is an ordered
-   * sentence — how full the window is, then under what rules.
+   * rather than folded into `contextSlot`: the two coexist, and the
+   * bar's right end is an ordered sentence — how full the window is,
+   * then under what rules.
    */
   modeSlot: ReactElement | null;
   /**
@@ -164,7 +164,6 @@ export function PromptMetaBar({
   provider,
   needsModelDownload,
   fusion = false,
-  rightSlot,
   contextSlot,
   modeSlot,
   mouseLayer,
@@ -205,7 +204,6 @@ export function PromptMetaBar({
           {contextSlot ? <Box minWidth={0}>{contextSlot}</Box> : null}
         </Box>
         <Box flexDirection="column" flexShrink={0} alignItems="flex-end">
-          {rightSlot ? <Box flexShrink={0}>{rightSlot}</Box> : null}
           {modeSlot ? (
             <>
               <Text color={label}>Coding mode:</Text>
@@ -240,11 +238,6 @@ export function PromptMetaBar({
         {left}
       </Box>
       <Box flexShrink={0} flexDirection="row">
-        {rightSlot ? (
-          <Box flexShrink={0} marginRight={2}>
-            {rightSlot}
-          </Box>
-        ) : null}
         {contextSlot ?? null}
         {modeSlot ? (
           <Box flexShrink={0} marginLeft={1}>

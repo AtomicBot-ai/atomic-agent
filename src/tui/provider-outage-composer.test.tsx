@@ -55,24 +55,32 @@ const WAITING = {
   reason: "terminated",
 };
 
-/** The meta row's Enter-routing hint — not the hint strip's chip. */
+/**
+ * The meta row used to carry its own `⏎ steer (ctrl+t)` copy and drop it
+ * whenever a wait needed the columns. The copy is gone, so the assertions
+ * below are the other way round: the statement lives in the hint strip,
+ * where it survives every outage state AND every width.
+ */
+const STRIP_CHIP = /\[⏎\]\s*steer/;
 const META_HINT = "⏎ steer (ctrl+t)";
 
 describe("the composer while the provider is down", () => {
-  it("trades the meta row's Enter hint for the outage numbers", async () => {
-    // The ~19 columns the hint costs are what let the readout and the
-    // route both be read. Nothing is lost because the strip below keeps
-    // its own `⏎` chip — which is why that chip is essential.
+  it("spends no meta-row columns on an Enter hint the strip already carries", async () => {
+    // The ~19 columns the old copy cost are what let the readout and the
+    // route both be read, and the row had to drop it to get them back.
+    // Now it never spends them: the hint strip's `⏎` chip is the one
+    // statement, before the wait and during it.
     const app = mount();
     app.emit({ type: "step_started", stepIndex: 0 });
     await settle();
-    expect(app.frame()).toContain(META_HINT);
+    expect(app.frame()).not.toContain(META_HINT);
+    expect(app.frame()).toMatch(STRIP_CHIP);
     app.emit(WAITING);
     await settle();
     const frame = app.frame();
     expect(frame).toContain("waiting for provider");
     expect(frame).not.toContain(META_HINT);
-    expect(frame).toMatch(/\[⏎\]\s*steer/);
+    expect(frame).toMatch(STRIP_CHIP);
     app.unmount();
   });
 
@@ -119,16 +127,16 @@ describe("the composer while the provider is down", () => {
     await settle();
     const frame = app.frame();
     expect(frame).not.toContain("retrying provider");
-    // …and the hint the healthy turn is entitled to is back on the row.
-    expect(frame).toContain(META_HINT);
+    // …and the hint the healthy turn is entitled to is where it always is.
+    expect(frame).toMatch(STRIP_CHIP);
     app.unmount();
   });
 
   it("keeps the given-up badge, and the Enter hint alongside it", async () => {
     // The badge is past tense and sticky until a turn actually succeeds:
     // it is what stops nine identical failures reading as nine separate
-    // surprises. It has no counter to protect and 20 columns of width,
-    // so the turn running underneath it keeps its Enter hint.
+    // surprises. The turn running underneath it is an ordinary turn, so
+    // the strip states its Enter routing exactly as it would otherwise.
     const app = mount();
     app.emit({ type: "step_started", stepIndex: 0 });
     app.emit(WAITING);
@@ -151,7 +159,7 @@ describe("the composer while the provider is down", () => {
     await settle();
     const frame = app.frame();
     expect(frame).toContain("provider unreachable");
-    expect(frame).toContain(META_HINT);
+    expect(frame).toMatch(STRIP_CHIP);
     app.unmount();
   });
 });
