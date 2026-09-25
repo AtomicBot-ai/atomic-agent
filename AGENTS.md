@@ -263,13 +263,14 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    because the counter is what says the wait is progressing rather than hung; its reason grows into
    whatever the route leaves over (`flexGrow` from a zero basis, not `flexShrink`: Yoga leaves an
    item at full width rather than shrink it by more than it has to give, and a shrinking reason
-   clipped the route off the row); and the while-a-turn-runs Enter hint is dropped outright while a
-   wait is live, since its ~19 columns are what let both statements be read at all. That drop is
-   only safe because the hint strip's `⏎` chip is **essential** (`hotkey-chips.ts`): at `shed: 3` it
-   was itself dropped at every width up to 112 columns as soon as the composer held a draft, which
-   is exactly the state the hint is written for, and the two disappearances together left nothing
-   on screen saying what Enter would do. A `givenUp` badge does not take the hint with it — it is
-   past tense, twenty columns wide and has no counter to protect. The context and mode chips keep
+   clipped the route off the row). **The meta row carries no Enter hint.** It used to draw
+   `⏎ steer (ctrl+t)` while a turn ran and drop it whenever a wait went live, since its ~19
+   columns were what let both statements be read at all — and that drop is what showed the hint
+   was a duplicate: the hint strip below states the same binding in the same words, in the row
+   whose whole job is keys. The row now never spends those columns, in any state. The
+   strip's `⏎` chip is **essential** in `hotkey-chips.ts` and is what makes "nothing is lost"
+   true; `ctrl+t` keeps `shed: 3` and is still dropped below ~82 columns, so on a terminal that
+   narrow the mode flip is unadvertised until the strip can wrap. The context and mode chips keep
    their `flexShrink={0}` — "at 60 the right-hand readout must survive intact" still holds. Clicking
    the readout opens Manage › LLM (verified under a PTY, not only in unit tests: the readout is a
    Box, and Ink cannot nest one inside a `<Text>`). Measured against a bar carrying its real
