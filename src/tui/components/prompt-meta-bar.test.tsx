@@ -171,22 +171,58 @@ describe("the model label", () => {
   };
 
   /**
-   * Fusion names both legs. Spending the whole budget left-to-right ate
-   * the local half outright — "vendor/some-very-long-name ⇄ q…" — which
-   * hides the model that actually executes most of the steps.
+   * The label used to be cut to 32 characters *before* the row was laid
+   * out, so these two names were trimmed at every width — including the
+   * ones with eighty columns to spare. The cut belongs to the layout,
+   * which knows the width; `MODEL_LABEL_CEILING` is only a guard against
+   * a pathological name setting the flex row's min-content width.
    */
-  it("keeps both fusion legs identifiable", () => {
+  it("names a long model in full when the row has the columns", () => {
+    const frame = renderModel("vendor/an-extremely-long-single-model-name");
+    expect(frame).toContain("vendor/an-extremely-long-single-model-name");
+    expect(frame).not.toContain("vendor/an-extremely-long-single…");
+  });
+
+  it("names both fusion legs in full when the row has the columns", () => {
     const frame = renderModel(
       "vendor/some-very-long-cloud-model ⇄ qwen3-4b-instruct-q4.gguf",
     );
-    expect(frame).toContain("vendor/some-v…");
-    expect(frame).toContain("qwen3-4b-inst…");
+    expect(frame).toContain("vendor/some-very-long-cloud-model");
+    expect(frame).toContain("qwen3-4b-instruct-q4");
   });
 
-  it("still trims a single long name the way it always did", () => {
-    expect(renderModel("vendor/an-extremely-long-single-model-name")).toContain(
-      "vendor/an-extremely-long-single…",
-    );
+  /**
+   * …and when it does not, Yoga cuts. The legs are separate controls
+   * with the swap glyph rigid between them, so each is trimmed on its
+   * own rather than the pair being eaten left to right — which is what
+   * the fixed 32-character budget was buying, at the cost of spending it
+   * even when there was nothing to buy.
+   */
+  it("trims each fusion leg separately once the row runs out", () => {
+    const frame = renderMetaBarAt(
+      64,
+      null,
+      40,
+      "vendor/some-very-long-cloud-model ⇄ qwen3-4b-instruct-q4.gguf",
+    ).join("\n");
+    // Both cut, both still readable as themselves, and the swap glyph
+    // between them intact — asserted as properties rather than exact
+    // columns, which are Yoga's to choose.
+    expect(frame).toContain("…");
+    expect(frame).toMatch(/vendor\/some[\w-]*…/);
+    expect(frame).toMatch(/qwen3-4b[\w-]*…/);
+    expect(frame).toContain("⇄");
+  });
+
+  /**
+   * The ceiling's one job: a name nobody would ever configure on purpose
+   * must not set the flex row's min-content width and push the readouts
+   * off it.
+   */
+  it("keeps the gauge and the mode chip against a pathological name", () => {
+    const frame = renderMetaBarAt(119, null, 40, "x".repeat(300)).join("\n");
+    expect(frame).toContain("6.2k/32.8k");
+    expect(frame).toContain("default");
   });
 });
 
@@ -242,6 +278,7 @@ function renderMetaBarAt(
   columns: number,
   leftSlot: ReactElement | null,
   rows = 40,
+  model: string = ROUTE.model,
 ): string[] {
   const stdout = new SizedStdout(columns, rows);
   const instance = inkRender(
@@ -249,7 +286,7 @@ function renderMetaBarAt(
       leftSlot={leftSlot}
       backend={ROUTE.backend}
       provider={ROUTE.provider}
-      model={ROUTE.model}
+      model={model}
       rightSlot={null}
       contextSlot={RIGHT_GROUP}
       modeSlot={null}

@@ -38,13 +38,27 @@ export interface SplashBannerProps {
    * 100×0, which would pin every rendered frame to one breakpoint.
    */
   size?: SplashSize;
+  /**
+   * Rows the composer's adaptive chrome is spending over its one-row
+   * baseline — the wrapped hint strip, today. The splash has to plan
+   * against the same surface `ChatLog` scrolls in, or it draws artwork
+   * into rows the composer is standing on.
+   */
+  extraChromeRows?: number;
 }
 
-export function SplashBanner({ size }: SplashBannerProps = {}): ReactElement {
+export function SplashBanner({
+  size,
+  extraChromeRows = 0,
+}: SplashBannerProps = {}): ReactElement {
   const terminal = useTerminalSize();
   const surface: SplashSize = size ?? {
     columns: computeChatWidth(terminal.columns, terminal.rows),
-    rows: computeChatViewportRows(terminal.rows, terminal.columns),
+    rows: computeChatViewportRows(
+      terminal.rows,
+      terminal.columns,
+      extraChromeRows,
+    ),
   };
   const fit = computeSplashFit(surface);
   const tips = SPLASH_TIPS.slice(0, fit.tipCount);

@@ -178,6 +178,36 @@ export function computeSidebarWidth(columns: number): number {
 }
 
 /**
+ * Columns of air between the rail's right edge and the chat column. The
+ * rail paints its own ground, so without a gutter the transcript starts
+ * one cell after a block of colour and reads as if it were inside the
+ * panel. Lives here rather than in `tui-app.tsx` because the hint strip's
+ * row budget has to be measured at the same width the strip is rendered
+ * at, and that width is the one place the gutter shows up in arithmetic
+ * rather than in a margin.
+ */
+export const RAIL_GUTTER_COLUMNS = 3;
+
+/**
+ * Columns the main column gets — the width the hint strip is rendered
+ * at, and therefore the width its row count has to be measured at.
+ *
+ * Distinct from {@link computeChatWidth}, which is the splash's surface
+ * and predates the gutter: this one subtracts it. `railVisible` is the
+ * caller's call because it also depends on `uiMode` and whether the
+ * operator folded the rail away, neither of which is geometry.
+ */
+export function computeMainColumnWidth(
+  columns: number,
+  railVisible: boolean,
+): number {
+  const rail = railVisible
+    ? computeSidebarWidth(columns) + RAIL_GUTTER_COLUMNS
+    : 0;
+  return Math.max(0, columns - ROOT_PADDING_LEFT - rail);
+}
+
+/**
  * Columns available to the chat column (and therefore to the splash)
  * once the root padding and the rail have taken their share.
  */
@@ -223,12 +253,58 @@ export function computeSidebarRowBudget(rows: number): SidebarRowBudget {
  *
  * `columns` is optional so existing callers keep the wide-terminal
  * behaviour; pass it to get the narrow-terminal correction.
+ *
+ * `extraChromeRows` is what the composer's adaptive chrome spends above
+ * its one-row baseline — today the hint strip's wrapped lines, see
+ * {@link computeHintRowBudget}. `CHROME_ROWS` already counts one row for
+ * the strip, so a caller passes the *surplus*: zero on a terminal wide
+ * enough that nothing wraps, which is what every pinned number in this
+ * file was measured against.
  */
 export function computeChatViewportRows(
   rows: number,
   columns = Number.POSITIVE_INFINITY,
+  extraChromeRows = 0,
 ): number {
   const chrome =
-    CHROME_ROWS + (columns < NARROW_COLUMNS ? NARROW_CHROME_EXTRA : 0);
+    CHROME_ROWS +
+    (columns < NARROW_COLUMNS ? NARROW_CHROME_EXTRA : 0) +
+    Math.max(0, extraChromeRows);
   return Math.max(MIN_VIEWPORT_ROWS, rows - chrome);
+}
+
+/**
+ * Rows the hint strip may spend before it goes back to deleting hints.
+ *
+ * Wrapping is not free — every row the strip takes is a row of something
+ * else — so the budget is bought from the window's height rather than
+ * granted. Below {@link HINT_ROW_MIN_ROWS} the strip is exactly the
+ * single row this app shipped with; from there each further
+ * {@link HINT_ROW_COST} rows of terminal buy it one more line, up to
+ * {@link MAX_HINT_EXTRA_ROWS}.
+ *
+ * **30 is not a fresh guess.** It is the threshold `prompt-meta-bar.tsx`
+ * already measured for the same trade (`STACK_MIN_ROWS`): a second row
+ * of chrome is the wrong deal on a short window, where a truncated
+ * readout is a nuisance and a chat two replies shorter is the app, and 30
+ * keeps every classic 24-row terminal on the layout it was measured for.
+ * Verified the hard way: at 24 rows a second strip row came out of the
+ * composer's own growth cap — `maxComposerEditorLines` fell from 10 to 9
+ * and a ten-line draft stopped expanding, which the overlay growth suite
+ * caught.
+ *
+ * The cap is there because the strip is a footnote. At 40 rows three
+ * lines already carry every chip the widest state offers at 83 columns
+ * (the chat column of a 120-column terminal, measured under a PTY), so
+ * more buys nothing, and an uncapped budget would let a pathological
+ * state push the composer up the screen.
+ */
+export const HINT_ROW_MIN_ROWS = 30;
+export const HINT_ROW_COST = 10;
+export const MAX_HINT_EXTRA_ROWS = 3;
+
+export function computeHintRowBudget(rows: number): number {
+  if (rows < HINT_ROW_MIN_ROWS) return 1;
+  const bought = 1 + Math.floor((rows - HINT_ROW_MIN_ROWS) / HINT_ROW_COST);
+  return 1 + Math.min(MAX_HINT_EXTRA_ROWS, bought);
 }

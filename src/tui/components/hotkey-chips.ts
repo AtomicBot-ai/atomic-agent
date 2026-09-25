@@ -8,7 +8,6 @@ import {
 import type { MouseContextValue } from "../mouse/mouse-context.js";
 import { cycleNavSlot } from "../section.js";
 import { hasShiftEnterNewline } from "../shift-enter-support.js";
-import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
 /**
@@ -312,47 +311,4 @@ export function resolveChips(
           },
         ]),
   ];
-}
-
-/**
- * Drop chips — lowest `shed` rank first — until the row fits `width`.
- * Stops once only essential (rank-less) chips remain; those overflow
- * into `truncate-end` rather than silently disappearing.
- */
-export function fitChips(chips: HotkeyChip[], width: number): HotkeyChip[] {
-  let kept = chips;
-  while (stripWidth(kept) > width) {
-    const next = nextToShed(kept);
-    if (next < 0) break;
-    kept = kept.filter((_, idx) => idx !== next);
-  }
-  return kept;
-}
-
-function nextToShed(chips: readonly HotkeyChip[]): number {
-  let best = -1;
-  let bestRank = Number.POSITIVE_INFINITY;
-  chips.forEach((chip, idx) => {
-    if (chip.shed === undefined || chip.shed >= bestRank) return;
-    best = idx;
-    bestRank = chip.shed;
-  });
-  return best;
-}
-
-/**
- * Rendered columns of the whole strip. Every key and label we ship is
- * single-width (ASCII plus `↑`, `↓`, `·`), so `String.length` is the
- * rendered width and we do not need a `string-width` dependency here —
- * keep new chips inside that alphabet.
- */
-function stripWidth(chips: readonly HotkeyChip[]): number {
-  if (chips.length === 0) return 0;
-  const separator = 4 + theme.glyphs.dotSeparator.length;
-  const chipWidths = chips.reduce(
-    // "[" + key + "] " + label
-    (acc, chip) => acc + chip.key.length + chip.label.length + 3,
-    0,
-  );
-  return chipWidths + (chips.length - 1) * separator;
 }
