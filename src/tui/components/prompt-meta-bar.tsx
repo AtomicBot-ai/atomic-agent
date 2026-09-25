@@ -86,7 +86,28 @@ export interface PromptMetaBarProps {
   mouseLayer?: number;
 }
 
-const MODEL_LABEL_MAX_LEN = 32;
+/**
+ * Ceiling on the model label — and nothing more than a ceiling.
+ *
+ * This was **32**, applied before the row was laid out, so a 170-column
+ * terminal with eighty columns of slack still rendered
+ * `anthropic/claude-sonnet-4.5-2025…` and a fusion pair came out as
+ * `vendor/some-v… ⇄ qwen3-4b-inst…`. A pre-truncation cannot know the
+ * width it is fitting into. Yoga can, and already does: every control in
+ * `ComposerMetaControls` is `wrap="truncate"` with a `flexShrink` order
+ * (model 3, provider 1, backend 0) chosen so the model gives first, and
+ * the two fusion legs are separate controls with a rigid swap glyph
+ * between them, so each is cut on its own. Measured at bar widths
+ * 70/90/119/140/170/200: the full name survives from 90 up, both legs
+ * from 119 up, and below that each is trimmed separately and stays
+ * identifiable — which is what the fixed budget was trying to buy.
+ *
+ * So the cut is the layout's. This number exists only so a pathological
+ * name — a 300-character local filename — cannot set the flex row's
+ * min-content width and bully the readouts off it. Wide enough that no
+ * real cloud id or GGUF stem reaches it.
+ */
+const MODEL_LABEL_CEILING = 96;
 
 /**
  * How eagerly a chat-surface slot gives up columns, against the route
@@ -126,14 +147,15 @@ const PAIR_SEPARATOR = LEG_SEPARATOR;
  * Below this width the bar stacks into two columns of two rows each.
  *
  * Measured rather than picked: the one-row composition has to seat the
- * route statement (backend dot, provider, model — `MODEL_LABEL_MAX_LEN`
- * 32 on its own, and in Fusion *two* legs with a separator between
- * them), the context gauge with its bar and both token counts, and the
- * coding-mode chip. Around 120 columns the route runs out of room
- * first, and Yoga answers by truncating it: `aiml…`, `deepseek/…`. Both
- * of those are the readout's whole content — a provider you cannot name
- * and a model you cannot identify — so the row has stopped saying
- * anything by the time it still fits.
+ * route statement (backend dot, provider, and a model name that is now
+ * only ceilinged, not budgeted — see `MODEL_LABEL_CEILING` — and in
+ * Fusion *two* legs with a separator between them), the context gauge
+ * with its bar and both token counts, and the coding-mode chip. Around
+ * 120 columns the route runs out of room first, and Yoga answers by
+ * truncating it: `aiml…`, `deepseek/…`. Both of those are the readout's
+ * whole content — a provider you cannot name and a model you cannot
+ * identify — so the row has stopped saying anything by the time it still
+ * fits.
  *
  * Stacking buys back the full width for each line instead of splitting
  * it four ways: route and gauge get a line each on the left, and the
@@ -204,7 +226,18 @@ export function PromptMetaBar({
           {left}
           {contextSlot ? <Box minWidth={0}>{contextSlot}</Box> : null}
         </Box>
-        <Box flexDirection="column" flexShrink={0} alignItems="flex-end">
+        {/*
+          `marginLeft` so a route trimmed to the last column does not butt
+          straight into `Coding mode:` — measured at bar width 90 with a
+          fusion pair, where the two ran together with no space between
+          them.
+        */}
+        <Box
+          flexDirection="column"
+          flexShrink={0}
+          alignItems="flex-end"
+          marginLeft={1}
+        >
           {rightSlot ? <Box flexShrink={0}>{rightSlot}</Box> : null}
           {modeSlot ? (
             <>
@@ -353,14 +386,16 @@ function formatModel(model: string): string {
   // Fusion names both legs. Truncating the joined string would eat the
   // local half whole and leave "anthropic/claude-sonnet-4.5 ⇄ q…", which
   // says less than either name alone would: the reader can no longer
-  // tell which local model is executing. Each side gets half the budget
-  // so both stay identifiable at the width the row already had.
+  // tell which local model is executing. Each side gets half the ceiling
+  // so one pathological name cannot spend the other's share; the cut the
+  // row actually needs is Yoga's, and it lands on the two legs
+  // separately.
   const [cloud, local] = model.split(PAIR_SEPARATOR);
   if (cloud !== undefined && local !== undefined) {
-    const half = Math.floor((MODEL_LABEL_MAX_LEN - PAIR_SEPARATOR.length) / 2);
+    const half = Math.floor((MODEL_LABEL_CEILING - PAIR_SEPARATOR.length) / 2);
     return `${shorten(cloud, half)}${PAIR_SEPARATOR}${shorten(local, half)}`;
   }
-  return shorten(model, MODEL_LABEL_MAX_LEN);
+  return shorten(model, MODEL_LABEL_CEILING);
 }
 
 function shorten(label: string, max: number): string {

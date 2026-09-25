@@ -104,11 +104,18 @@ import { ProviderOutageReadout } from "./components/provider-outage-readout.js";
 import { useElapsed } from "./hooks/use-elapsed.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import {
+  computeHintRowBudget,
+  computeMainColumnWidth,
   computeSidebarRowBudget,
   computeSidebarWidth,
   isSidebarVisible,
   isTerminalTooSmall,
+  RAIL_GUTTER_COLUMNS,
 } from "./layout.js";
+import {
+  selectExtraChromeRows,
+  selectRailVisible,
+} from "./select-chrome-rows.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
@@ -159,15 +166,6 @@ export { makeTuiEventBus } from "./make-event-bus.js";
 export interface TuiEventBus {
   subscribe(listener: (action: TuiAction) => void): () => void;
 }
-
-/**
- * Columns of air between the rail's right edge and the chat column. The
- * rail paints its own ground, so without a gutter the transcript starts
- * one cell after a block of colour and reads as if it were inside the
- * panel. Subtracted from `mainColumnWidth` as well, or the hairline and
- * the hint strip overflow the row they are measured for.
- */
-const RAIL_GUTTER_COLUMNS = 3;
 
 /**
  * How long after a modal opens its backdrop refuses to dismiss it. One
@@ -1083,10 +1081,7 @@ export function TuiApp({
   const swarmTabActive =
     state.uiMode === "debug" && state.activeTab === "swarm";
   const terminalSize = useTerminalSize();
-  const sidebarVisible =
-    state.uiMode === "chat" &&
-    !state.sidebarCollapsed &&
-    isSidebarVisible(terminalSize.columns, terminalSize.rows);
+  const sidebarVisible = selectRailVisible(state, terminalSize);
   // The `»` restore control is offered only while the fold is the
   // operator's own choice AND the terminal could seat the rail: when
   // the size gate is what hid it, a click could restore nothing.
@@ -1104,12 +1099,17 @@ export function TuiApp({
   // Columns left for the main column once the frame gutter and the
   // right rail have taken their cut — what the one-row hint strip has
   // to fit inside.
-  const mainColumnWidth = Math.max(
-    0,
-    terminalSize.columns -
-      ROOT_PADDING_COLUMNS -
-      (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0),
+  const mainColumnWidth = computeMainColumnWidth(
+    terminalSize.columns,
+    sidebarVisible,
   );
+  // Rows the strip may spend before it goes back to deleting hints, and
+  // the rows it actually takes. `selectHintRows` re-runs the same pure
+  // packing the strip itself will run, off the same state and the same
+  // width, so the height budgeted here and the height painted below
+  // cannot drift — see `select-chrome-rows.ts`.
+  const hintRowBudget = computeHintRowBudget(terminalSize.rows);
+  const extraChromeRows = selectExtraChromeRows(state, terminalSize);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   /**
    * The composer belongs to the Run screen. Observe and Manage are for
@@ -1781,7 +1781,7 @@ export function TuiApp({
   // edge and cap its own height. Same budget the debug pane already uses.
   const menuPaneRows = Math.max(
     6,
-    terminalSize.rows - appChromeRows(composerVisible),
+    terminalSize.rows - appChromeRows(composerVisible, extraChromeRows),
   );
   // The switch popup gets the pane's *real* row count, floor of none:
   // it sheds its own chrome down to a three-row frame, and handing it
@@ -1789,7 +1789,7 @@ export function TuiApp({
   // composer instead of shrinking.
   const switchPaneRows = Math.max(
     0,
-    terminalSize.rows - appChromeRows(composerVisible),
+    terminalSize.rows - appChromeRows(composerVisible, extraChromeRows),
   );
 
   // Rows of the stage the composer overlay floats in: the content pane
@@ -2470,6 +2470,7 @@ export function TuiApp({
                 ctrlCArmed={ctrlCArmed}
                 menuLeaderArmed={menuLeaderArmed}
                 width={mainColumnWidth}
+                maxRows={hintRowBudget}
               />
             </Box>
           </Box>

@@ -31,15 +31,24 @@ const WIDE = 200;
  * `TuiApp` renders it, so Ink resolves the same width and the frame we
  * assert on is the frame the operator sees at `columns`.
  */
-function renderHint(state: TuiState, columns: number = WIDE): string {
+function renderHint(
+  state: TuiState,
+  columns: number = WIDE,
+  maxRows = 1,
+): string {
   const { lastFrame, unmount } = render(
     <Box width={columns} flexDirection="column">
-      <HotkeyHint state={state} width={columns} />
+      <HotkeyHint state={state} width={columns} maxRows={maxRows} />
     </Box>,
   );
   const out = (lastFrame() ?? "").replace(ANSI, "");
   unmount();
   return out;
+}
+
+/** Rows the strip painted, blank trailing lines ignored. */
+function rowCount(frame: string): number {
+  return frame.split("\n").filter((line) => line.trim().length > 0).length;
 }
 
 function chatState(overrides: Partial<TuiState> = {}): TuiState {
@@ -207,13 +216,16 @@ describe("HotkeyHint new-window chip", () => {
 });
 
 /**
- * Ink wraps an over-wide row instead of clipping it, which both costs a
- * row `debug-pane` budgeted away (`APP_CHROME_ROWS` counts the strip as
- * 1) and smears chips across two lines with their separators stranded.
- * The strip must therefore stay exactly one row, shedding whole chips
- * rather than letting Yoga chop them.
+ * At `maxRows: 1` — what a window too short to spend a row on hints gets
+ * from `computeHintRowBudget` — the strip is exactly what it always was:
+ * one row, shedding whole chips in the declared order, and clipping with
+ * `truncate-end` once only essentials are left. Ink wraps an over-wide
+ * row instead of clipping it, and a wrapped row the layout has not
+ * budgeted for both costs a row of transcript and smears chips across
+ * two lines with their separators stranded, so at one row the packing
+ * must not produce a second.
  */
-describe("HotkeyHint narrow-width degradation", () => {
+describe("HotkeyHint narrow-width degradation at a one-row budget", () => {
   it("sheds the scroll hint before send / clear-draft / quit at 80 columns", () => {
     const out = renderHint(chatState({ inputValue: "half a thought" }), 80);
     expect(out.split("\n")).toHaveLength(1);
@@ -248,6 +260,101 @@ describe("HotkeyHint narrow-width degradation", () => {
     expect(out.split("\n")).toHaveLength(1);
     expect(widest(out)).toBeLessThanOrEqual(40);
     expect(out).toContain("[enter]");
+  });
+});
+
+/**
+ * 83 columns is the number that matters: it is what a 120-column
+ * terminal — the common one — leaves the chat column once the rail has
+ * taken its share, measured under a PTY against the built app. At one
+ * row the idle strip there had shed five hints, `ctrl+r route` among
+ * them, which is the only keyboard way into the composer's route
+ * controls. Given rows to spend, it keeps all of them.
+ */
+describe("HotkeyHint wrapping", () => {
+  const CHAT_COLUMN = 83;
+  const ALL = [
+    "send",
+    "newline",
+    "sidebar",
+    "scroll",
+    "route",
+    "new window",
+    "select text",
+    "menu",
+    "quit",
+  ];
+
+  it("deletes five hints at 83 columns when held to one row", () => {
+    const out = renderHint(chatState(), CHAT_COLUMN, 1);
+    expect(rowCount(out)).toBe(1);
+    for (const missing of [
+      "sidebar",
+      "scroll",
+      "route",
+      "new window",
+      "select text",
+    ]) {
+      expect(out).not.toContain(missing);
+    }
+  });
+
+  it("keeps every hint at 83 columns once it may wrap", () => {
+    const out = renderHint(chatState(), CHAT_COLUMN, 4);
+    for (const label of ALL) expect(out).toContain(label);
+    expect(rowCount(out)).toBeGreaterThan(1);
+    expect(widest(out)).toBeLessThanOrEqual(CHAT_COLUMN);
+  });
+
+  it("spends only the rows it needs, not the rows it may have", () => {
+    // A budget is a ceiling. At 200 columns the idle strip is one row
+    // wide and must stay one row even when four are on offer — rows the
+    // strip does not need belong to the transcript.
+    expect(rowCount(renderHint(chatState(), 200, 4))).toBe(1);
+  });
+
+  it("wraps whole chips, never a chip away from its separator", () => {
+    // The failure the one-row budget was protecting against: Yoga
+    // chopping mid-chip and stranding separators at line ends.
+    const out = renderHint(chatState(), CHAT_COLUMN, 4);
+    for (const line of out.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      expect(trimmed.startsWith("[")).toBe(true);
+      expect(trimmed.endsWith("\u00b7")).toBe(false);
+      // Every `[` on the line is closed on the same line.
+      expect((trimmed.match(/\[/g) ?? []).length).toBe(
+        (trimmed.match(/\]/g) ?? []).length,
+      );
+    }
+  });
+
+  it("still sheds when the rows run out before the chips do", () => {
+    // Two rows cannot hold the widest idle strip at 60 columns, so the
+    // declared order still decides: scroll goes before the essentials.
+    const out = renderHint(chatState(), 60, 2);
+    expect(rowCount(out)).toBeLessThanOrEqual(2);
+    expect(widest(out)).toBeLessThanOrEqual(60);
+    expect(out).toContain("send");
+    expect(out).toContain("quit");
+  });
+
+  it("keeps the running strip whole at 83 columns with a draft", () => {
+    // The state the strip exists for, and the one the composer's meta row
+    // no longer duplicates: Enter's routing, the ctrl+t flip and the
+    // abort label all on screen at once.
+    const out = renderHint(
+      chatState({
+        status: "running",
+        inputValue: "a message the operator is part-way through",
+      }),
+      CHAT_COLUMN,
+      4,
+    );
+    expect(out).toMatch(/\[⏎\]\s*steer/);
+    expect(out).toMatch(/ctrl\+t\]\s*queue mode/);
+    expect(out).toContain("abort, draft kept");
+    expect(out).toMatch(SCROLL_KEY_PATTERN);
   });
 });
 
