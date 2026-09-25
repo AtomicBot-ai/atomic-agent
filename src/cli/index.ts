@@ -154,6 +154,7 @@ function printHelp(): void {
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
     "  ATOMIC_AGENT_LLAMA_API_KEY     Optional bearer token for the llama-server",
+    "  ATOMIC_AGENT_SERVE_NO_PARENT_EXIT  1 to keep `serve` running after its parent exits (same as --no-parent-exit)",
     "  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default 8192, clamped 64..131072",
     "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
     "  ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH   Explicit path to a Chromium-family binary (overrides auto-detect)",

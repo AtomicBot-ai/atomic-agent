@@ -441,6 +441,12 @@ atomic-agent serve \
 
 `serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot that has a token — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
 
+**`serve` does not outlive whoever started it.** When the process that started it goes away, the server finishes any turn still running and then shuts down, the same way it would on `SIGTERM` — so a killed editor, a crashed desktop app or a closed test harness cannot strand a server that holds its port and its database handles for weeks.
+
+**To daemonise it, pass `--no-parent-exit`** (or set `ATOMIC_AGENT_SERVE_NO_PARENT_EXIT=1`). That is the supported way to run `serve` in the background from a shell — including under `nohup` and with `& disown`, neither of which detaches the process from the shell, so neither survives on its own. A `serve` started with no parent at all, as under `launchd` or `systemd`, needs no flag.
+
+Each server records itself under `<stateDir>/serve/` and sweeps strays left by earlier runs; `atomic-agent serve --reap` does the same sweep by hand and prints what it found. The sweep signals a process only when it has positive evidence the server was abandoned — the exact process that started it is gone — *and* `/health` on the recorded port identifies it as that same atomic-agent, reparented and idle. A server marked as a daemon is never touched, no matter how long it runs; anything still working, and anything the sweep cannot confirm, is left alone and keeps its record.
+
 </details>
 
 <details>
