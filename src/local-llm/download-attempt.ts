@@ -57,13 +57,41 @@ export interface AttemptOptions {
 const PROGRESS_INTERVAL_MS = 200;
 const META_WRITE_INTERVAL_MS = 500;
 
-function baseHeaders(url: string, userAgent?: string): Record<string, string> {
+/**
+ * Hosts that legitimately serve GitHub release assets — the
+ * `github.com/.../releases/download/...` origin and the redirect targets
+ * GitHub sends for `objects.githubusercontent.com`, `raw.githubusercontent.com`,
+ * etc. Compared by exact hostname (not substring) so a lookalike host or a
+ * URL whose *path* contains `github.com` never receives a bearer token.
+ */
+const GITHUB_HOSTS: ReadonlySet<string> = new Set([
+  "github.com",
+  "api.github.com",
+  "objects.githubusercontent.com",
+  "raw.githubusercontent.com",
+  "github-releases.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+]);
+
+/** Whether `url` names a real GitHub host over https — never a lookalike. */
+export function isGitHubUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    return (
+      GITHUB_HOSTS.has(parsed.hostname) ||
+      parsed.hostname.endsWith(".githubusercontent.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function baseHeaders(url: string, userAgent?: string): Record<string, string> {
   const headers: Record<string, string> = {
     "User-Agent": userAgent ?? "atomic-agent/local-llm",
   };
-  const isGitHub =
-    url.includes("github.com") || url.includes("githubusercontent.com");
-  if (isGitHub) {
+  if (isGitHubUrl(url)) {
     const token = (
       process.env.GITHUB_TOKEN ||
       process.env.GH_TOKEN ||
