@@ -21,10 +21,34 @@ import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 export const COMPOSER_CHROME_ROWS = 8;
 
 /**
+ * The same count with the meta bar's height as a parameter.
+ *
+ * `COMPOSER_CHROME_ROWS` assumes a one-content-row bar. The bar can now
+ * take two or three — the route wraps rather than truncating, and the
+ * two-column form has always cost a second row — so the chrome has to
+ * follow it. That second row was in fact already unaccounted for: below
+ * 120 columns on a window 30 rows tall the bar stacked and painted four
+ * rows where this constant reserved three, and the composer quietly
+ * covered a row of transcript. Passing the planner's number fixes that
+ * as a side effect.
+ *
+ * `metaRows` comes from `selectMetaBarRows`, the same plan the bar
+ * clamps its own render to.
+ */
+export function composerChromeRows(metaRows = 1): number {
+  return COMPOSER_CHROME_ROWS - 1 + Math.max(1, metaRows);
+}
+
+/**
  * Rows the collapsed composer actually paints: the chrome plus its one
  * editor line. This is what the flex column reserves.
  */
 export const COMPOSER_COLLAPSED_ROWS = COMPOSER_CHROME_ROWS + 1;
+
+/** {@link COMPOSER_COLLAPSED_ROWS} with the bar's real height. */
+export function composerCollapsedRows(metaRows = 1): number {
+  return composerChromeRows(metaRows) + 1;
+}
 
 /**
  * Rows of the pane the expanded composer must always leave visible
@@ -45,10 +69,13 @@ const MIN_EDITOR_LINES = 3;
  * under the status bar, whose rows are outside the stage by
  * construction.
  */
-export function maxComposerEditorLines(stageRows: number): number {
+export function maxComposerEditorLines(
+  stageRows: number,
+  metaRows = 1,
+): number {
   return Math.max(
     MIN_EDITOR_LINES,
-    stageRows - COMPOSER_CHROME_ROWS - CONTEXT_ROWS_KEPT,
+    stageRows - composerChromeRows(metaRows) - CONTEXT_ROWS_KEPT,
   );
 }
 
@@ -61,8 +88,13 @@ export function maxComposerEditorLines(stageRows: number): number {
  * in-flow `PromptShell` used to take, so `computeChatViewportRows`'s
  * chrome budget still holds.
  */
-export function ComposerSlot(): ReactElement {
-  return <Box height={COMPOSER_COLLAPSED_ROWS} flexShrink={0} />;
+export function ComposerSlot({
+  metaRows = 1,
+}: {
+  /** Content rows the meta bar will paint — `selectMetaBarRows`. */
+  metaRows?: number;
+} = {}): ReactElement {
+  return <Box height={composerCollapsedRows(metaRows)} flexShrink={0} />;
 }
 
 /**
