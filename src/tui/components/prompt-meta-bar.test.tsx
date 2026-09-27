@@ -287,7 +287,6 @@ function renderMetaBarAt(
       backend={ROUTE.backend}
       provider={ROUTE.provider}
       model={model}
-      rightSlot={null}
       contextSlot={RIGHT_GROUP}
       modeSlot={null}
     />,
@@ -521,7 +520,6 @@ describe("the meta bar while the provider is down", () => {
             backend={ROUTE.backend}
             provider={ROUTE.provider}
             model={ROUTE.model}
-            rightSlot={null}
             contextSlot={null}
             modeSlot={null}
           />
