@@ -7,6 +7,7 @@ import {
   type LineRange,
   type ReadObservation,
 } from "./read-coverage.js";
+import { ProbeRuns, probeFamily } from "./wandering-spread.js";
 
 /**
  * Synthetic tool name used for batched-step diagnostics. A multi-call
@@ -32,7 +33,51 @@ export const LOOP_VETO_DENIED_REASON = "tool-loop";
  */
 export const LOOP_WARNING_BUCKET_SIZE = 10;
 
+/**
+ * Share of the history window that must be distinct probes on ONE tool
+ * before the window spread escalates on its own, whatever else the turn
+ * achieved between them (issue #458).
+ *
+ * The run spread (`ProbeRuns`) is what normally decides, and other work
+ * settles it — so a model that opens a page every couple of searches
+ * never reaches that cap. That is the behaviour the redirect asks for,
+ * but it must not become unbounded: the GAIA traces this detector was
+ * built for show ~35 re-formulated queries with barely a fetch between
+ * them. At 0.6 the ceiling is 18 of the default 30-call window: three of
+ * every five recent calls are distinct probes on one tool, which is
+ * churn on any reading, while the reported research fan-outs (12 probes
+ * among 28 and 48 calls) stay well below it.
+ *
+ * A SHARE, not a multiple of `wanderingEscalation`, for two reasons. It
+ * is reachable at every configuration — a multiple is not: at
+ * `escalation >= 15` a doubled ceiling needs a window of pure probes, in
+ * which case the run rule has already fired, leaving the ceiling dead.
+ * And it keeps `loopHistorySize` the only knob that moves the window, so
+ * turning the wandering knob cannot widen the ring the unrelated
+ * repeat / no-progress detectors walk.
+ */
+export const WANDERING_CEILING_SHARE = 0.6;
+
 export type LoopCheckLevel = "ok" | "warn" | "critical";
+
+/**
+ * Why a wandering loop must be stopped, and the spread the rule that
+ * fired measured — the number the veto and the forced reply quote, so
+ * each message describes the set of calls it is actually about.
+ */
+export interface WanderingStop {
+  /** True when the prospective call rides the breaker path. */
+  escalated: boolean;
+  /** Spread measured by the rule that fired; `0` for a non-probe tool. */
+  spread: number;
+  /**
+   * `"run"` — distinct probes since the turn last made progress outside
+   * this tool's family. `"ceiling"` — the absolute window cap
+   * (`WANDERING_CEILING_SHARE` of `loopHistorySize`). `null` when nothing
+   * fired.
+   */
+  rule: "run" | "ceiling" | null;
+}
 
 /**
  * Equivalent-run count at which the test-repeat detector (issue #118)
@@ -143,13 +188,16 @@ export interface ToolLoopTrackerOptions {
   /** Warn de-dup bucket size. Default `LOOP_WARNING_BUCKET_SIZE`. */
   warningBucketSize?: number;
   /**
-   * Distinct-args spread on a wandering-prone tool that fires a
-   * `wandering` warn (actionable redirect). Min 2. Default 6.
+   * Distinct-args spread on a wandering-prone tool, counted since the
+   * turn last made progress with another tool, that fires a `wandering`
+   * warn (actionable redirect). Min 2. Default 6.
    */
   wanderingThreshold?: number;
   /**
-   * Distinct-args spread on a wandering-prone tool that escalates to a
-   * forced graceful reply (the redirect did not land). Default 12.
+   * The same run spread at which a wandering loop escalates to a forced
+   * graceful reply (the redirect did not land). Default 12. The window
+   * spread escalates on its own at
+   * `WANDERING_CEILING_FACTOR x` this value, whatever else the turn did.
    */
   wanderingEscalation?: number;
 }
@@ -158,7 +206,7 @@ export interface LoopCheckVerdict {
   level: LoopCheckLevel;
   /**
    * Repeat count (warn), no-progress streak length (critical), or
-   * distinct-args spread (wandering).
+   * distinct-args run spread (wandering).
    */
   count: number;
   detector:
@@ -188,12 +236,7 @@ export interface LoopCheckVerdict {
  * only the distinct-spread wandering detector can bound that token burn.
  */
 export function isWanderingProneTool(tool: string): boolean {
-  return (
-    tool === "os.web.fetch" ||
-    tool === "os.web.search" ||
-    tool === "os.http.request" ||
-    tool.startsWith("browser.")
-  );
+  return probeFamily(tool) !== null;
 }
 
 interface HistoryEntry {
@@ -231,6 +274,10 @@ export class ToolLoopTracker {
   private readonly warningBucketSize: number;
   private readonly wanderingThreshold: number;
   private readonly wanderingEscalation: number;
+  /** Window-spread stop; see `WANDERING_CEILING_SHARE`. */
+  private readonly wanderingCeiling: number;
+  /** Window-spread warn, the rung below `wanderingCeiling`. */
+  private readonly wanderingWindowWarning: number;
   private readonly history: HistoryEntry[] = [];
   private readonly warningBuckets = new Map<string, number>();
   private consecutiveVetoSignature: string | null = null;
@@ -276,6 +323,13 @@ export class ToolLoopTracker {
    * the eviction order (see `MAX_TRACKED_OUTCOMES`).
    */
   private readonly outcomeCounts = new Map<string, number>();
+  /**
+   * Wandering runs (issue #458): distinct probe signatures per
+   * wandering-prone tool since the turn last completed a successful call
+   * to a different tool. This is the spread the detector acts on; the
+   * window spread is kept only for the absolute ceiling.
+   */
+  private readonly probeRuns = new ProbeRuns();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);
@@ -293,6 +347,24 @@ export class ToolLoopTracker {
       this.criticalThreshold,
       this.wanderingEscalation,
       options.historySize ?? 30,
+    );
+    // The window ladder, derived from the window so it is always
+    // reachable. Its warn sits at the same fraction of its stop as the
+    // run ladder's does, so neither ladder can hard-stop a turn that was
+    // never warned (min 2, and the warn always below the stop).
+    this.wanderingCeiling = Math.max(
+      2,
+      Math.ceil(this.historySize * WANDERING_CEILING_SHARE),
+    );
+    this.wanderingWindowWarning = Math.min(
+      this.wanderingCeiling - 1,
+      Math.max(
+        2,
+        Math.round(
+          (this.wanderingCeiling * this.wanderingThreshold) /
+            this.wanderingEscalation,
+        ),
+      ),
     );
     this.warningBucketSize = Math.max(
       1,
@@ -318,20 +390,20 @@ export class ToolLoopTracker {
       };
     }
     if (isWanderingProneTool(tool)) {
-      const spread = this.effectiveSpread(tool, argsHash);
-      // The spread is a property of the whole window, so it stays above the
-      // threshold after the model stops varying its argument and settles on
-      // repeating one. Classifying THIS call as wandering would then tell it
-      // "N different attempts" about a call that is a verbatim repeat -- the
-      // same kind of false statement the wandering wording exists to avoid.
-      // A repeat falls through to the repeat detector, which describes it
-      // accurately.
+      // A spread is a property of a whole run or window, so it stays above
+      // the threshold after the model stops varying its argument and settles
+      // on repeating one. Classifying THIS call as wandering would then tell
+      // it "N different attempts" about a call that is a verbatim repeat --
+      // the same kind of false statement the wandering wording exists to
+      // avoid. A repeat falls through to the repeat detector, which
+      // describes it accurately.
       const repeatsEarlierCall =
         getRepeatCount(this.history, tool, argsHash) > 0;
-      if (spread >= this.wanderingThreshold && !repeatsEarlierCall) {
+      const warn = this.wanderingWarning(tool, argsHash);
+      if (warn !== null && !repeatsEarlierCall) {
         return {
           level: "warn",
-          count: spread,
+          count: warn,
           detector: "wandering",
           // Per-tool key (not per-args) so the redirect notice is emitted
           // once per wandering episode, not once per distinct URL.
@@ -363,31 +435,73 @@ export class ToolLoopTracker {
   }
 
   /**
-   * Whether the wandering spread on `(tool, args)` has crossed the
-   * escalation threshold. Pure — call BEFORE `recordCall` (the prospective
-   * call is folded in via `effectiveSpread`). The agent loop maps a `true`
-   * here onto the breaker path (forced graceful reply).
+   * Whether a prospective `(tool, args)` must be stopped as a wandering
+   * loop, and the spread the rule that fired measured. Pure — call BEFORE
+   * `recordCall` (the prospective call is folded into both spreads). The
+   * agent loop maps an `escalated` onto the breaker path (forced graceful
+   * reply).
+   *
+   * Two rules, because they answer different questions (issue #458). The
+   * RUN spread asks "is this probing going anywhere?" — it is settled by
+   * any other tool succeeding, so 12 searches with a script run and a
+   * fetch between them never reach it. The window CEILING asks "how much
+   * of this turn is probing?" regardless of what else landed, so churn
+   * that hides behind an occasional fetch is still bounded.
    */
-  isWanderingEscalated(tool: string, args: unknown): boolean {
-    if (!isWanderingProneTool(tool)) return false;
+  wanderingStop(tool: string, args: unknown): WanderingStop {
+    if (!isWanderingProneTool(tool)) {
+      return { escalated: false, spread: 0, rule: null };
+    }
     const argsHash = hashToolCall(tool, args);
-    return this.effectiveSpread(tool, argsHash) >= this.wanderingEscalation;
+    const runSpread = this.probeRuns.spread(tool, argsHash);
+    if (runSpread >= this.wanderingEscalation) {
+      return { escalated: true, spread: runSpread, rule: "run" };
+    }
+    const windowSpread = this.effectiveSpread(tool, argsHash);
+    if (windowSpread >= this.wanderingCeiling) {
+      return { escalated: true, spread: windowSpread, rule: "ceiling" };
+    }
+    return { escalated: false, spread: runSpread, rule: null };
   }
 
   /**
-   * The wandering spread for a prospective `(tool, args)` — what
-   * `isWanderingEscalated` compares against the cap. `0` for a tool that
-   * is not wandering-prone. Pure; call BEFORE `recordCall`.
+   * The spread to warn about, or `null` when neither ladder has reached
+   * its warn rung. Both ladders warn, because either can end the turn:
+   * a stop the model was never nudged about is the redirect notice — and
+   * the `os.web.search` wording below it — being dead code in exactly the
+   * shapes that need it.
+   */
+  private wanderingWarning(tool: string, argsHash: string): number | null {
+    const runSpread = this.probeRuns.spread(tool, argsHash);
+    if (runSpread >= this.wanderingThreshold) return runSpread;
+    const windowSpread = this.effectiveSpread(tool, argsHash);
+    return windowSpread >= this.wanderingWindowWarning ? windowSpread : null;
+  }
+
+  /**
+   * Whether the wandering spread on `(tool, args)` has crossed a cap.
+   * Thin wrapper over `wanderingStop` for callers that only need the
+   * verdict.
+   */
+  isWanderingEscalated(tool: string, args: unknown): boolean {
+    return this.wanderingStop(tool, args).escalated;
+  }
+
+  /**
+   * The wandering spread for a prospective `(tool, args)` — the run
+   * spread the detector acts on, or the window spread when the ceiling is
+   * what stopped the call. `0` for a tool that is not wandering-prone.
+   * Pure; call BEFORE `recordCall`.
    */
   wanderingSpread(tool: string, args: unknown): number {
-    if (!isWanderingProneTool(tool)) return 0;
-    return this.effectiveSpread(tool, hashToolCall(tool, args));
+    return this.wanderingStop(tool, args).spread;
   }
 
   /**
    * Distinct count of completed (non-veto) `argsHash`es seen for `tool` in
    * the window, plus one when the prospective call introduces a new
    * signature (the current call is not yet in history at `check` time).
+   * Feeds the absolute ceiling only — see `wanderingStop`.
    */
   private effectiveSpread(tool: string, currentArgsHash: string): number {
     const seen = new Set<string>();
@@ -434,6 +548,10 @@ export class ToolLoopTracker {
       return { repeat: false, count: 0, fingerprint: "" };
     }
     this.patchLatestPending(tool, args, { resultHash });
+    // Wandering runs (issue #458). A call that landed either settles the
+    // other tools' runs (it is the progress they were missing) or joins
+    // its own. A vetoed call returned above: it never ran.
+    this.probeRuns.record(tool, hashToolCall(tool, args), result.status === "ok");
     if (this.consecutiveVetoSignature !== null) {
       const sig = hashToolCall(tool, args);
       if (sig !== this.consecutiveVetoSignature) {
@@ -1189,10 +1307,19 @@ function sanitizeTestSummary(raw: string): string | undefined {
  */
 export function formatWanderingRedirect(tool: string, spread: number): string {
   const lines = [
-    `You have called \`${tool}\` with ${spread} different arguments this turn without converging on the answer.`,
-    "This is a wandering loop. STOP probing more URLs/pages and change strategy:",
+    `You have called \`${tool}\` with ${spread} different arguments in a row without using what came back.`,
+    "This is a wandering loop. STOP and change strategy:",
   ];
-  if (tool === "os.web.fetch" || tool === "os.http.request") {
+  if (tool === "os.web.search") {
+    // The redirect must name the move that ENDS the run. For a search
+    // tool that is opening a result, not "stop probing pages" — the
+    // generic wording named no action a search tool can take, which is
+    // what a reporter's model was handed on the run that then hit the
+    // cap (issue #458).
+    lines.push(
+      "- You already have search results. Open the most promising one with `os.web.fetch` instead of re-phrasing the query.",
+    );
+  } else if (tool === "os.web.fetch" || tool === "os.http.request") {
     lines.push(
       "- Run `os.web.search` first to find the right page, then fetch that one URL — do not keep guessing URLs.",
     );
@@ -1213,14 +1340,14 @@ export function formatWanderingRedirect(tool: string, spread: number): string {
  * cap). Reused by the agent loop's forced graceful termination path.
  *
  * `detector` decides the wording, the same way it does for the veto. A
- * wandering stop's `count` is the spread of DISTINCT arguments in the
- * history window, counting the call that was blocked, and most of those
- * calls ran and may well have returned what the model needed, so
- * "no-progress loop", "blocked attempts" and "the repeated tool call"
- * would all be false. The count is not quoted as the cap: a parallel
- * batch is gated before any of its calls record, so the spread can pass
- * the cap before a call is refused. Nor is it "this turn": the window
- * holds the recent calls, not the whole turn.
+ * wandering stop's `count` is the spread of DISTINCT arguments measured
+ * by whichever rule fired (`WanderingStop.rule`), counting the call that
+ * was blocked, and most of those calls ran and may well have returned
+ * what the model needed, so "no-progress loop", "blocked attempts" and
+ * "the repeated tool call" would all be false. The count is not quoted
+ * as the cap: a parallel batch is gated before any of its calls record,
+ * so the spread can pass the cap before a call is refused. Nor is it
+ * "this turn": both rules read a recent slice of it, not the whole.
  *
  * A repeat stop's `count` is the no-progress STREAK, and most of that
  * streak ran: with the defaults the breaker trips on the 4th refusal
@@ -1272,9 +1399,12 @@ function formatLoopGuidance(
   if (mode === "veto" && wandering) {
     // Wandering: `count` is a spread of DISTINCT arguments, so calling
     // these "identical outcomes" would be flatly wrong.
+    // Not "and still no answer": most of those attempts ran, and in both
+    // reports on issue #458 they returned usable content. What is
+    // certainly true is that the turn kept probing without acting on it.
     header = target
-      ? `BLOCKED: \`${tool}\` — ${count} different attempts against \`${target}\` and still no answer.`
-      : `BLOCKED: \`${tool}\` — ${count} different attempts and still no answer.`;
+      ? `BLOCKED: \`${tool}\` — ${count} different attempts against \`${target}\` in a row without using what came back.`
+      : `BLOCKED: \`${tool}\` — ${count} different attempts in a row without using what came back.`;
   } else if (mode === "veto" && count > 1) {
     header = target
       ? `BLOCKED: \`${tool}\` — ${count} consecutive calls to \`${target}\` returned the same no-progress outcome.`
@@ -1296,7 +1426,11 @@ function formatLoopGuidance(
   // Actionable alternative, modelled on the wandering redirect: name the
   // next move, do not restate the failure mode.
   let webHint: string | null = null;
-  if (tool === "os.web.fetch" || tool === "os.http.request") {
+  if (tool === "os.web.search") {
+    webHint = wandering
+      ? "- You already have search results. Open the most promising one with `os.web.fetch` instead of re-phrasing the query."
+      : "- Re-phrasing will not change this result. Open one of the results you already have with `os.web.fetch`, or answer from what you have.";
+  } else if (tool === "os.web.fetch" || tool === "os.http.request") {
     if (wandering && target) {
       webHint = `- Stop guessing URLs on \`${target}\`. Run \`os.web.search\` for the fact you need and fetch a result from a DIFFERENT host.`;
     } else if (target) {

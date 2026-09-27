@@ -838,11 +838,14 @@ function runSyncLoopGate(
   }
   const { tool, args } = input.call;
   const breakerTripped = ctx.tracker.isBreakerTripped(tool, args);
-  // A wandering loop that crossed the escalation spread also ends the
-  // turn gracefully (the redirect notice did not land). It rides the same
-  // breaker path as the consecutive-veto streak.
-  const wanderingEscalated = ctx.tracker.isWanderingEscalated(tool, args);
-  const spreadAtGate = ctx.tracker.wanderingSpread(tool, args);
+  // A wandering loop that crossed a spread cap also ends the turn
+  // gracefully (the redirect notice did not land). It rides the same
+  // breaker path as the consecutive-veto streak. One call, two numbers:
+  // whether to stop, and the spread the rule that fired measured — the
+  // messages must quote the set of calls they are about (issue #458).
+  const wandering = ctx.tracker.wanderingStop(tool, args);
+  const wanderingEscalated = wandering.escalated;
+  const spreadAtGate = wandering.spread;
   const verdict = ctx.tracker.check(tool, args);
   ctx.tracker.recordCall(tool, args);
 
@@ -859,11 +862,12 @@ function runSyncLoopGate(
     // a spread of DISTINCT arguments; pass the detector so the wording
     // does not claim they were identical.
     //
-    // The verdict decides, not the escalation flag. `isWanderingEscalated`
-    // answers for the whole history window, so it stays true after the model
-    // stops wandering and settles on repeating one argument -- and borrowing
-    // it there would announce "N different attempts" about a verbatim
-    // repeat, quoting a count the verdict never established.
+    // The verdict decides, not the escalation flag. `wanderingStop` stays
+    // true after the model stops wandering and settles on repeating one
+    // argument -- and borrowing it there would announce "N different
+    // attempts" about a verbatim repeat, quoting a count the verdict never
+    // established. `check` reads BOTH ladders, so a stop on either one
+    // carries a `wandering` verdict here and is worded from its own spread.
     const detector =
       wanderingEscalated && verdict.detector === "wandering"
         ? "wandering"

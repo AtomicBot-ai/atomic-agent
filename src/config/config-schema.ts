@@ -455,10 +455,14 @@ export interface AtomicAgentConfig {
      * `loopHistorySize` — sliding window size for the tracker's history
      * ring (env `ATOMIC_AGENT_LOOP_HISTORY_SIZE`).
      * `loopWanderingThreshold` — distinct-args spread on a wandering-prone
-     * tool (web/http/browser) that injects an actionable redirect notice
-     * (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
-     * `loopWanderingEscalation` — distinct-args spread that escalates to a
-     * forced graceful reply (env `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`).
+     * tool (search/web/http/browser), counted since the turn last made
+     * progress outside that tool's family, that injects an actionable
+     * redirect notice (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
+     * `loopWanderingEscalation` — the same run spread at which the loop
+     * escalates to a forced graceful reply (env
+     * `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`). The window spread has its
+     * own rungs, derived from `loopHistorySize` — see
+     * `WANDERING_CEILING_SHARE`.
      * All env-only.
      */
     loopWarningThreshold: number;
@@ -3136,9 +3140,9 @@ export const ENV_DEFAULTS = {
   LOOP_BREAKER_VETO_STREAK: 3,
   /** Sliding window size for the loop tracker's history ring. */
   LOOP_HISTORY_SIZE: 30,
-  /** Distinct-args spread on a wandering-prone tool that redirects. */
+  /** Distinct-args run spread on a wandering-prone tool that redirects. */
   LOOP_WANDERING_THRESHOLD: 6,
-  /** Distinct-args spread that escalates a wandering loop to graceful reply. */
+  /** Run spread that escalates a wandering loop to a graceful reply. */
   LOOP_WANDERING_ESCALATION: 12,
 };
 

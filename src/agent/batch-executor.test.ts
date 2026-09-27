@@ -961,7 +961,7 @@ describe("executeBatch", () => {
     expect(body).not.toContain("undefined");
   });
 
-  // The wandering spread is a property of the history window, so it stays
+  // A wandering spread is a property of a whole run or window, so it stays
   // above the threshold once the model stops varying its argument. Reporting
   // a verbatim repeat as "N different attempts" is the same false statement
   // the wandering wording exists to avoid, in the mirror case.
