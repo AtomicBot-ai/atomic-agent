@@ -203,6 +203,7 @@ import {
   SESSION_TITLE_METADATA_KEY,
   SESSION_TITLE_TIMEOUT_MS,
   generateSessionTitle,
+  pruneSessions,
   readSessionTitle,
   shouldNameSession,
   type SessionLlmStamp,
@@ -1456,6 +1457,35 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
+  // `sessions.sqlite` and the traces beside it are the only state this
+  // runtime never shrinks (§"Session retention"). One bounded pass here,
+  // opt-in, and wrapped so that a prune can never be the reason a
+  // runtime fails to start — a retention pass that throws costs the
+  // operator nothing but disk.
+  if (config.sessions.retention.enabled) {
+    try {
+      const pruned = pruneSessions({
+        db: sessionStore.getDatabaseHandleForRetention(),
+        maxAgeDays: config.sessions.retention.maxAgeDays,
+        maxRows: config.sessions.retention.maxRows,
+        tracesDir: config.paths.tracesDir,
+        tasksDbFile: config.paths.tasksDbFile,
+      });
+      // Nothing on a no-op: an install inside its retention window would
+      // otherwise log a line every boot saying it did nothing.
+      if (pruned.deleted > 0) {
+        logger.info("pruned sessions past retention", {
+          ...pruned,
+          maxAgeDays: config.sessions.retention.maxAgeDays,
+          maxRows: config.sessions.retention.maxRows,
+        });
+      }
+    } catch (err) {
+      logger.warn("session retention pass failed; continuing", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   // The commands `os.shell.run` detached at the default timeout (F47).
   // One registry for the runtime, so the turn-end (`executeTurn`),
   // session-delete and shutdown paths below can stop what a session

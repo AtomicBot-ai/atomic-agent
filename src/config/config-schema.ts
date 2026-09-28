@@ -567,6 +567,30 @@ export interface AtomicAgentConfig {
   log: {
     level: LogLevel;
   };
+  /**
+   * Retention for `<stateDir>/sessions.sqlite` and the per-session trace
+   * files beside it. Mirrors `UserConfigFile.sessions`. Nothing in the
+   * runtime ever shrank either before this block: `delete(id)` is
+   * one-at-a-time and operator-driven, and the only bulk wipe is
+   * `atag uninstall`. See §"Session retention" in AGENTS.md.
+   */
+  sessions: {
+    retention: {
+      /**
+       * Master switch, default `false`. A session is the transcript of
+       * the operator's own work, so nothing deletes one until they ask:
+       * with this off the prune does not even open the table.
+       */
+      enabled: boolean;
+      /**
+       * Prune sessions whose `updated_at` is older than this; `null` is
+       * no age rule.
+       */
+      maxAgeDays: number | null;
+      /** Keep at most this many sessions, oldest first; `null` is no cap. */
+      maxRows: number | null;
+    };
+  };
   tracing: {
     trace: {
       /**
@@ -1762,6 +1786,33 @@ export interface UserConfigFile {
       maxJobs: number;
     };
   };
+  /**
+   * Session retention (config v73). One bounded prune of
+   * `sessions.sqlite` at startup, plus the trace file of every row it
+   * removed. Off by default — see the runtime type above for why — and
+   * a no-op end to end while it is off.
+   */
+  sessions: {
+    retention: {
+      /** Default `false`: the operator opts in. */
+      enabled: boolean;
+      /**
+       * Age cutoff in days against `updated_at`. Default 90. A positive
+       * integer, or `null` for no age rule (leaving `maxRows` as the
+       * only thing that prunes). Note that `undefined` takes the
+       * default and an explicit `null` does not — clearing the rule is
+       * a choice, not an omission.
+       */
+      maxAgeDays: number | null;
+      /**
+       * Hard cap on stored sessions; anything past it goes oldest
+       * first. Default `null` (no cap) — a row count means nothing
+       * without knowing how the operator works, so age is the rule that
+       * ships on.
+       */
+      maxRows: number | null;
+    };
+  };
   tracing: {
     trace: {
       enabled: boolean | null;
@@ -2500,6 +2551,10 @@ export interface UserConfigFile {
 // parsed away without a word (issue #466). Additive: an older file has
 // no field, takes the env default, and renders the same prompt. The env
 // var still overrides the file value.
+// v73: `sessions.retention` (`enabled` false, `maxAgeDays` 90, `maxRows`
+// null) — one bounded prune of `sessions.sqlite` and the matching trace
+// files at startup. Additive: an older file has no block and takes the
+// defaults, which prune nothing until the operator sets `enabled`.
 // v72: `agent.nameSessions` (default true) — one short completion per
 // session names it from its first prompt, so the rail and the header
 // show what the thread is about instead of the raw prompt. Additive: an
@@ -2508,7 +2563,7 @@ export interface UserConfigFile {
 // writes an OSC 9 notification plus a BEL to its own terminal when a
 // turn ends, so an operator who walked away finds out. Additive: an
 // older file has no block and takes the defaults.
-export const USER_CONFIG_VERSION = 72;
+export const USER_CONFIG_VERSION = 73;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2669,6 +2724,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   69,
   70,
   71,
+  72,
   USER_CONFIG_VERSION,
 ];
 
@@ -2797,6 +2853,20 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       // Three concurrent jobs is a server, a watcher and a build; more
       // is a model that has stopped waiting for anything.
       maxJobs: 3,
+    },
+  },
+  sessions: {
+    retention: {
+      // Off. Deleting an operator's transcripts is not a default.
+      enabled: false,
+      // A quarter: long enough that "what did I do on that project?"
+      // still has an answer, short enough that an install left running
+      // for a year is not carrying every session it ever had.
+      maxAgeDays: 90,
+      // No cap. Age is a statement about what is still interesting; a
+      // row count is a statement about disk, and only the operator
+      // knows whether theirs is the problem.
+      maxRows: null,
     },
   },
   tracing: {
@@ -3600,6 +3670,25 @@ function resolveEmbeddingModelId(
 export function parseBoolOrNull(raw: unknown, field: string): boolean | null {
   if (raw === null || raw === undefined) return null;
   return parseBool(raw, field);
+}
+
+/**
+ * Parse an optional cap: a positive integer, or `null` for "no limit".
+ *
+ * Takes its own fallback rather than reading `raw ?? default` at the call
+ * site, because the two absences are not the same thing when the default
+ * is a number: a missing key means "you decide" and must land on
+ * `fallback`, while an explicit `null` is the operator switching the rule
+ * off and `??` would quietly put the default back.
+ */
+function parseCapOrNull(
+  raw: unknown,
+  field: string,
+  fallback: number | null,
+): number | null {
+  if (raw === undefined) return fallback;
+  if (raw === null) return null;
+  return parsePositiveInt(raw, field);
 }
 
 export function parseNonEmptyString(raw: unknown, field: string): string {
@@ -4513,6 +4602,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (webSearch.exa as Record<string, unknown> | undefined) ?? {};
   const webSearchBrave =
     (webSearch.brave as Record<string, unknown> | undefined) ?? {};
+  const sessions = (obj.sessions as Record<string, unknown> | undefined) ?? {};
+  const sessionsRetention =
+    (sessions.retention as Record<string, unknown> | undefined) ?? {};
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
@@ -4949,6 +5041,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         maxJobs: parsePositiveInt(
           toolsShell.maxJobs ?? USER_CONFIG_DEFAULTS.tools.shell.maxJobs,
           "tools.shell.maxJobs",
+        ),
+      },
+    },
+    sessions: {
+      retention: {
+        enabled: parseBool(
+          sessionsRetention.enabled ??
+            USER_CONFIG_DEFAULTS.sessions.retention.enabled,
+          "sessions.retention.enabled",
+        ),
+        maxAgeDays: parseCapOrNull(
+          sessionsRetention.maxAgeDays,
+          "sessions.retention.maxAgeDays",
+          USER_CONFIG_DEFAULTS.sessions.retention.maxAgeDays,
+        ),
+        maxRows: parseCapOrNull(
+          sessionsRetention.maxRows,
+          "sessions.retention.maxRows",
+          USER_CONFIG_DEFAULTS.sessions.retention.maxRows,
         ),
       },
     },

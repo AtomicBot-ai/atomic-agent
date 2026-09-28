@@ -3,6 +3,12 @@ export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
 } from "./session-store.js";
+export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
+export type {
+  PruneSessionsOptions,
+  PruneSessionsResult,
+} from "./session-retention.js";
+export { readTaskPinnedSessionIds } from "./task-pinned-sessions.js";
 export { summarizeSessionState } from "./session-summary.js";
 export type { SessionSummary } from "./session-summary.js";
 export { normalizeSessionState } from "./normalize-session-state.js";

@@ -297,6 +297,19 @@ export class SessionStore {
     this.deleteStmt.run(id);
   }
 
+  /**
+   * The live `better-sqlite3` handle, for the startup retention pass
+   * (`pruneSessions`). The same connection on purpose: a second one
+   * would sit behind this one's WAL write lock for the whole prune,
+   * which is exactly the boot-time stall the batching exists to avoid.
+   *
+   * Do not stash the handle outside the runtime — its lifetime belongs
+   * to this store and it dies with `close()`.
+   */
+  getDatabaseHandleForRetention(): Database.Database {
+    return this.db;
+  }
+
   close(): void {
     this.db.close();
   }
