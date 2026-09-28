@@ -27,6 +27,7 @@ import {
   readSessionLlmStamp,
   SESSION_LLM_METADATA_KEY,
 } from "../session/session-llm.js";
+import { readSessionTitle } from "../session/session-title.js";
 import {
   buildSearchCacheKey,
   createPersistentSearchCache,
@@ -1015,6 +1016,181 @@ describe("createAgentRuntime", () => {
       await runtime.shutdown();
       delete process.env.ATOMIC_AGENT_TASKS_ENABLED;
       resetConfigCache();
+    }
+  });
+
+  // -----------------------------------------------------------------
+  // Session naming across teardown. Naming is fired as a bare `void`
+  // at the end of a turn and reads-modifies-writes the session store
+  // only once its completion comes back, up to 20 s later. A quit in
+  // that window closed the store under the continuation and
+  // better-sqlite3's `TypeError` left the process as an
+  // unhandledRejection — the same race the reflection decorators are
+  // pinned against in `memory/reflection-decorator-fire-safety.test.ts`.
+  // -----------------------------------------------------------------
+
+  /** A completer that answers agent turns, naming calls and sub-calls. */
+  function namingCompleter(
+    onTitleCall?: (signal: AbortSignal | undefined) => Promise<void>,
+  ): (params: {
+    sessionId: string;
+    signal?: AbortSignal;
+  }) => Promise<CompletionResult> {
+    return async (params) => {
+      if (params.sessionId.startsWith("title:")) {
+        await onTitleCall?.(params.signal);
+        return completion("Fix the abort chord");
+      }
+      // Reflection and the other sub-call partitions share this
+      // completer; keep them out of the agent-reply shape.
+      if (/^(reflection|rewriter|link|vote|distill):/.test(params.sessionId)) {
+        return completion("NONE\n");
+      }
+      return completion(
+        JSON.stringify({ tool: "reply", args: { text: "hi back" } }),
+      );
+    };
+  }
+
+  it("names a session from its first prompt after an answered turn", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(),
+      },
+    });
+    try {
+      const session = runtime.createSession();
+      await runtime.runTurn(session, "починить отмену турна", { maxSteps: 3 });
+      // Fire-and-forget: the name lands after the turn has returned.
+      await waitFor(
+        () =>
+          readSessionTitle(runtime.sessionStore.load(session.id)?.metadata) !==
+          null,
+      );
+      expect(
+        readSessionTitle(runtime.sessionStore.load(session.id)?.metadata),
+      ).toBe("Fix the abort chord");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("premise: a session-store read after shutdown throws a TypeError", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+      },
+    });
+    const session = runtime.createSession();
+    runtime.sessionStore.save(session);
+    expect(runtime.sessionStore.load(session.id)).not.toBeNull();
+    await runtime.shutdown();
+    let thrown: unknown;
+    try {
+      runtime.sessionStore.load(session.id);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect((thrown as Error).message).toContain(
+      "database connection is not open",
+    );
+  });
+
+  it("shutdown cuts an in-flight naming call before it can reach the closed store", async () => {
+    let releaseTitle: (() => void) | undefined;
+    let titleSignal: AbortSignal | undefined;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(async (signal) => {
+          titleSignal = signal;
+          await new Promise<void>((resolve) => {
+            releaseTitle = resolve;
+          });
+        }),
+      },
+    });
+    const session = runtime.createSession();
+    await runtime.runTurn(session, "починить отмену турна", { maxSteps: 3 });
+    await waitFor(() => releaseTitle !== undefined);
+
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown): void => {
+      rejections.push(err);
+    };
+    process.on("unhandledRejection", onRejection);
+    const loads = vi.spyOn(runtime.sessionStore, "load");
+    try {
+      await runtime.shutdown();
+      // Teardown owns the call: the completion does not outlive the
+      // runtime that asked for it.
+      expect(titleSignal?.aborted).toBe(true);
+      // The provider answers one tick too late — the live crash.
+      releaseTitle?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(loads).not.toHaveBeenCalled();
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
+  it("a naming call that does reach a dead store logs instead of rejecting", async () => {
+    const logs: LogRecord[] = [];
+    let releaseTitle: (() => void) | undefined;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      handlers: { logSinks: [(record) => logs.push(record)] },
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(async () => {
+          await new Promise<void>((resolve) => {
+            releaseTitle = resolve;
+          });
+        }),
+      },
+    });
+    const session = runtime.createSession();
+    await runtime.runTurn(session, "починить отмену турна", { maxSteps: 3 });
+    await waitFor(() => releaseTitle !== undefined);
+
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown): void => {
+      rejections.push(err);
+    };
+    process.on("unhandledRejection", onRejection);
+    try {
+      // Not the teardown path: the handle dies under the call with
+      // nothing aborting it, which is what any other store failure looks
+      // like from in here. The write must still not crash the process —
+      // and must still leave a line, or a real naming bug is invisible.
+      runtime.sessionStore.close();
+      releaseTitle?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(rejections).toEqual([]);
+      expect(
+        logs.filter(
+          (record) =>
+            record.level === "warn" &&
+            record.message === "session naming failed to store the title",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      await runtime.shutdown();
     }
   });
 

@@ -2616,6 +2616,17 @@ export async function createAgentRuntime(
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
   let swarmForShutdown: SwarmRegistry | null = null;
+  /**
+   * In-flight session-naming calls, so teardown can cut them.
+   *
+   * `nameSession` is fired as a bare `void` at the end of a turn and
+   * only reads and writes the session store once its completion comes
+   * back — up to `SESSION_TITLE_TIMEOUT_MS` later. `shutdown` closes
+   * that store, so a call still in flight is the reflection race again:
+   * aborting here settles the completion while the store is still open,
+   * and the naming call does not outlive the runtime that started it.
+   */
+  const pendingSessionNamings = new Set<AbortController>();
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
@@ -2634,6 +2645,9 @@ export async function createAgentRuntime(
     } catch {
       // runner already disposed
     }
+    // Same race, same reason, for session naming (`pendingSessionNamings`).
+    for (const naming of pendingSessionNamings) naming.abort();
+    pendingSessionNamings.clear();
     if (telegramChannelForShutdown) {
       try {
         await telegramChannelForShutdown.stop();
@@ -2949,38 +2963,60 @@ export async function createAgentRuntime(
       SESSION_TITLE_TIMEOUT_MS,
     ).unref?.();
     void timer;
-    const title = await generateSessionTitle(state, {
-      complete: async (params) => {
-        const result = await llmComplete({
-          ...params,
-          signal: abort.signal,
-        });
-        return { content: result.content, ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}) };
-      },
-      slotId: () => slotManager.sideCallSlotId(),
-      // Which wire shape this call has to take. A cloud link answers a
-      // bare prompt with an empty `content`, so the title has to be
-      // asked for the way every other sub-call asks.
-      toolTransport: resolveActiveLlmSlice().transport,
-      onError: (err: unknown) =>
-        logger.debug("session naming failed", {
-          sessionId: state.id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-    });
-    if (title === null) return;
-    const current = sessionStore.load(state.id) ?? state;
-    // Lost the race, or someone named it in between: the first name
-    // wins, because a label the operator has already navigated by must
-    // not move.
-    if (readSessionTitle(current.metadata) !== null) return;
-    sessionStore.save({
-      ...current,
-      metadata: {
-        ...current.metadata,
-        [SESSION_TITLE_METADATA_KEY]: title,
-      },
-    });
+    // Teardown's handle on this call, dropped again below so a quit
+    // after the call has settled aborts nothing.
+    pendingSessionNamings.add(abort);
+    try {
+      const title = await generateSessionTitle(state, {
+        complete: async (params) => {
+          const result = await llmComplete({
+            ...params,
+            signal: abort.signal,
+          });
+          return { content: result.content, ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}) };
+        },
+        slotId: () => slotManager.sideCallSlotId(),
+        // Which wire shape this call has to take. A cloud link answers a
+        // bare prompt with an empty `content`, so the title has to be
+        // asked for the way every other sub-call asks.
+        toolTransport: resolveActiveLlmSlice().transport,
+        onError: (err: unknown) =>
+          logger.debug("session naming failed", {
+            sessionId: state.id,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+      });
+      if (title === null) return;
+      // Deadline or teardown fired while the completion was in flight:
+      // the store below may already be closed, and a name is not worth
+      // a write into a runtime that is going away.
+      if (abort.signal.aborted) return;
+      const current = sessionStore.load(state.id) ?? state;
+      // Lost the race, or someone named it in between: the first name
+      // wins, because a label the operator has already navigated by must
+      // not move.
+      if (readSessionTitle(current.metadata) !== null) return;
+      sessionStore.save({
+        ...current,
+        metadata: {
+          ...current.metadata,
+          [SESSION_TITLE_METADATA_KEY]: title,
+        },
+      });
+    } catch (err) {
+      // `executeTurn` fires this as a bare `void`, so a throw out of the
+      // read-modify-write is an unhandled rejection — reported as a
+      // crash. Losing the teardown race by a tick is the known one
+      // (`TypeError: The database connection is not open`), but naming
+      // is a nicety either way: log it and leave the session showing
+      // its first prompt.
+      logger.warn("session naming failed to store the title", {
+        sessionId: state.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      pendingSessionNamings.delete(abort);
+    }
   };
 
   const executeTurn = async (
