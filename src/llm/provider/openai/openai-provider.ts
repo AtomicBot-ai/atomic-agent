@@ -455,6 +455,11 @@ export class OpenAiProvider implements LlmProvider {
           // The cancel is deliberately not awaited, like the reader cancel
           // in `LlamaServerClient.completeStream`: a cancel travelling
           // into a socket must never hang a consumer trying to walk away.
+          // Closing the consumer *is* awaited, because the cancel below
+          // needs the lock it gives back — so a consumer whose `finally`
+          // never settles would park this unwind. That is the shape of
+          // `createOpenAiStreamConsumer`'s contract, not an accident: its
+          // `finally` is a bare synchronous `releaseLock()`.
           // Both rejections are swallowed because we are already unwinding
           // — a transport that fails to close must not replace the error
           // the caller is already seeing, nor surface as an unhandled
