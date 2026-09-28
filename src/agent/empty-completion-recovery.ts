@@ -139,24 +139,39 @@ export function composeEmptyCompletionNotice(
  * that already differ in the fourth. Pinned by
  * `empty-completion-recovery.test.ts`.
  *
- * The split is worth keeping, and the volume argument it replaces had it
- * backwards: a merged cluster could not tell a turn the recovery saved
- * from one it lost. Apart, the `reason=empty` /
- * no-`cause_type` issue counts the first empties that ended a turn
- * outright and the `cause_type=ModelError` one counts the turns that
- * spent the retry and still lost — which is the only reading of this
- * recovery's effectiveness Sentry can give. So: never quote either
- * count as total empty volume, and do not merge the fingerprints
- * without putting that measurement somewhere else first.
+ * What the split separates is narrower than it looks, and narrower than
+ * the volume argument it replaces assumed. Three limits, in the order
+ * they bite:
+ *
+ *  - **A turn this recovery SAVED is in no Sentry issue at all.** The
+ *    loop clears `runError` and `continue`s, so the save emits no
+ *    `loop_failed` — and `loop_failed` is the only agent event
+ *    `bootstrap.ts` hands to `captureError`. Sentry sees losses and
+ *    nothing else, whichever way the two are grouped, so no arrangement
+ *    of these fingerprints can compare saves against losses.
+ *  - **What the split does separate** is a turn that SPENT its retry and
+ *    still lost (`cause_type=ModelError`) from one that never got a
+ *    retry (`reason=empty`, no `cause_type`).
+ *  - **The no-`cause_type` side is not one population.** `transport` and
+ *    `stage` are Sentry *tags*, not fingerprint elements, so every
+ *    `reason=empty` `ModelError` out of the step executor shares that
+ *    one fingerprint: the `native_tools`/`initial` shape this recovery
+ *    is eligible for, the grammar-link empty that has its own in-step
+ *    repair, and the post-repair empty. Filter on `tool_transport` and
+ *    `failure_stage` before that count means anything about this
+ *    recovery.
+ *
+ * So: never quote either count as total empty volume, and never read
+ * either as a save rate. The per-turn discriminator is in the trace, not
+ * in Sentry — a turn that spent its retry carries an
+ * `empty_completion_recovered` event and one that failed on the first
+ * empty does not.
  *
  * The tags (`reason`, `transport`, `stage`) are kept regardless, because
  * they are all Sentry ever learns about the completion itself: the
  * scrubber never transmits a message (`STATIC_MESSAGE_ERRORS` is empty by
  * design), so the rewritten sentence above only ever reaches the
  * operator's terminal.
- * The trace says the same thing per turn — one that spent its retry
- * carries an `empty_completion_recovered` event and one that failed on
- * the first empty does not.
  */
 export function repeatedEmptyCompletionError(err: ModelError): ModelError {
   return new ModelError(
