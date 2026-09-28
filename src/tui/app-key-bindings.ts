@@ -27,6 +27,7 @@ import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import {
   handleSessionMoveKey,
   handleSessionPinKey,
+  railTailInView,
 } from "./session-rail/index.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
@@ -87,6 +88,12 @@ export interface AppKeyCallbacks {
   onSessionSwitchRequested?(sessionId: string): void;
   /** Shift+↑/↓ in the rail: put the selected session on slot `toIndex`. */
   onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /**
+   * The cursor is at the end of the sessions the rail has loaded: ask
+   * the host for the next page. The rail reads the store one page at a
+   * time, so this is how the list past the first page is reached.
+   */
+  onSessionsEndReached?(): void;
   /** `p` in the rail, or a row's `↑`: pin the selected session, or release it. */
   onSessionPinToggled?(sessionId: string): void;
   /**
@@ -763,6 +770,14 @@ function handleSidebarKey(
       dispatch({ type: "sidebar_tasks_cursor_moved", delta: 1 });
     } else {
       dispatch({ type: "sidebar_cursor_moved", delta: 1 });
+      // The rail holds one page of the store. Reaching the foot of it is
+      // the request for the next one — asked for after the move, so a
+      // cursor already parked on the last row still asks.
+      if (
+        railTailInView(state.sidebarCursor + 1, state.recentSessions.length)
+      ) {
+        callbacks.onSessionsEndReached?.();
+      }
     }
     return true;
   }

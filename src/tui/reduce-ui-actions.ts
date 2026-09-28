@@ -302,6 +302,18 @@ export function reduceUiAction(
         recentSessions: action.sessions,
         sidebarCursor: Math.min(state.sidebarCursor, max),
         sidebarDrag: null,
+        // The picker is a view of this list, not a second list — the
+        // menu's "N recent" badge counts the rail's rows and advertises
+        // the picker with that number. An open picker follows it, cursor
+        // where the operator left it: the refresh that matters is the
+        // one their own ↓ asked for, and resetting to the top there
+        // would undo the walk that fetched the rows.
+        ...(state.sessionPickerOpen
+          ? {
+              sessionPickerList: action.sessions,
+              sessionPickerCursor: Math.min(state.sessionPickerCursor, max),
+            }
+          : {}),
       };
     }
     case "chat_focus_toggled":

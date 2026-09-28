@@ -57,6 +57,47 @@ describe("session picker reducer", () => {
     expect(pastTop.sessionPickerCursor).toBe(0);
   });
 
+  it("an open picker follows the rail's list and keeps its cursor", () => {
+    // The rail reads the store one page at a time, and the picker's ↓
+    // is one of the two ways to ask for the next page. The answer
+    // arrives as `recent_sessions_updated`, so an open picker has to
+    // take it — with the cursor where the operator left it, or the walk
+    // that fetched the rows would be undone by the rows arriving.
+    const initial = createInitialTuiState(fakeSession());
+    const primed = apply(initial, [
+      {
+        type: "session_picker_opened",
+        sessions: [entry({ sessionId: "a" }), entry({ sessionId: "b" })],
+      },
+      { type: "session_picker_cursor_moved", delta: 1 },
+    ]);
+    expect(primed.sessionPickerCursor).toBe(1);
+    const grown = reduceTuiState(primed, {
+      type: "recent_sessions_updated",
+      sessions: [
+        entry({ sessionId: "a" }),
+        entry({ sessionId: "b" }),
+        entry({ sessionId: "c" }),
+      ],
+    });
+    expect(grown.sessionPickerList.map((e) => e.sessionId)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(grown.sessionPickerCursor).toBe(1);
+  });
+
+  it("leaves the picker list alone while the picker is closed", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = reduceTuiState(initial, {
+      type: "recent_sessions_updated",
+      sessions: [entry({ sessionId: "a" })],
+    });
+    expect(next.sessionPickerOpen).toBe(false);
+    expect(next.sessionPickerList).toEqual([]);
+  });
+
   it("session_switched replaces transcript + cwd and closes the picker", () => {
     const initial = createInitialTuiState(fakeSession());
     const primed = apply(initial, [

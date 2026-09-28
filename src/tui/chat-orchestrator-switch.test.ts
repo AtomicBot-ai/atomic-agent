@@ -82,7 +82,8 @@ function makeHarness(
         });
       }),
     sessionStore: {
-      listSummaries: () => stored.map(summarizeSessionState),
+      listSummaryPage: ({ limit }: { limit: number }) =>
+        stored.map(summarizeSessionState).slice(0, limit),
       countUnreadable: () => 0,
       listRecent: () => stored,
       load: (id: string) => stored.find((s) => s.id === id) ?? null,

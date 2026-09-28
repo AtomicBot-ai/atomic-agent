@@ -9,7 +9,7 @@ import { harness, spokenTo } from "./rail-session-harness.js";
 describe("rail session list — boot", () => {
   it("boots with an empty rail and a notice when the store cannot list", async () => {
     const { orchestrator, rail, actions } = harness([], {
-      listSummaries: () => {
+      listSummaryPage: () => {
         throw new Error("database disk image is malformed");
       },
     });

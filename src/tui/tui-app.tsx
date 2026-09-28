@@ -89,6 +89,7 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import { Sidebar } from "./components/sidebar.js";
+import { railTailInView } from "./session-rail/index.js";
 import {
   countRunningTasks,
   selectSidebarTasks,
@@ -263,6 +264,13 @@ export interface TuiAppCallbacks {
    * resulting order and re-emits `recent_sessions_updated`.
    */
   onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /**
+   * The cursor reached the end of the sessions the rail has loaded (the
+   * rail's ↓ or wheel, the picker's ↓). The host reads the store one
+   * page at a time, so this is what fetches the next page and re-emits
+   * `recent_sessions_updated`.
+   */
+  onSessionsEndReached?(): void;
   /**
    * `p` on the focused rail row, or a click on a row's `↑`: pin that
    * session to the top block of the rail, or release it.
@@ -1749,6 +1757,18 @@ export function TuiApp({
     }
     if (state.sessionPickerOpen) {
       dispatch({ type: "session_picker_cursor_moved", delta: 1 });
+      // The picker lists the page the rail has loaded; walking to the
+      // foot of it fetches the next one. The re-emitted list reaches the
+      // open picker too (`recent_sessions_updated` keeps it in step), so
+      // the cursor carries on into rows that were not there a key ago.
+      if (
+        railTailInView(
+          state.sessionPickerCursor + 1,
+          state.sessionPickerList.length,
+        )
+      ) {
+        callbacks.onSessionsEndReached?.();
+      }
       return;
     }
     if (state.slashPaletteOpen) {
@@ -1759,8 +1779,11 @@ export function TuiApp({
   }, [
     state.slashPaletteOpen,
     state.sessionPickerOpen,
+    state.sessionPickerCursor,
+    state.sessionPickerList,
     state.themePickerOpen,
     state.themePickerCursor,
+    callbacks,
   ]);
 
   // Pin the layout to the live terminal height **only** under a real
