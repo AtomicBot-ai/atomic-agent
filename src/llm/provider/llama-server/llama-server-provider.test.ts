@@ -27,6 +27,13 @@ function fakeClient(
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff]);
 
+/**
+ * A budget no test in this file is meant to reach — `requestTimeoutMs` is
+ * a required constructor option, and the cases that do exercise the
+ * deadline pass their own (20 ms) instead.
+ */
+const ANY_TIMEOUT_MS = 30_000;
+
 function visionProvider(options: {
   fetchImpl: typeof fetch;
   requestTimeoutMs?: number;
@@ -37,6 +44,7 @@ function visionProvider(options: {
     visionAutoDetect: true,
     maxImageBytes: 1024,
     maxImagesPerCall: 2,
+    requestTimeoutMs: ANY_TIMEOUT_MS,
     baseUrlOverride: "http://test-llama:9999",
     ...options,
   });
@@ -136,6 +144,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     expect(provider.capabilities).toMatchObject({
       vision: true,
@@ -151,6 +160,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     expect(provider.capabilities).toMatchObject({
       vision: false,
@@ -165,6 +175,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: false,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     expect(provider.capabilities).toMatchObject({
       vision: true,
@@ -179,6 +190,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     await expect(
       provider.describeImage({
@@ -195,6 +207,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     await expect(
       provider.describeImage({ prompt: "x", images: [] }),
@@ -208,6 +221,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 4,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     await expect(
       provider.describeImage({
@@ -230,6 +244,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 1,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     await expect(
       provider.describeImage({
@@ -258,6 +273,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
       fetchImpl,
       baseUrlOverride: "http://test-llama:9999",
     });
@@ -324,6 +340,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
       fetchImpl,
       baseUrlOverride: "http://test-llama:9999",
     });
@@ -352,6 +369,7 @@ describe("LlamaServerProvider", () => {
       visionAutoDetect: true,
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
       fetchImpl,
       baseUrlOverride: "http://test-llama:9999",
     });
@@ -465,13 +483,61 @@ describe("LlamaServerProvider", () => {
       fetchImpl: bodyFetch(
         JSON.stringify({
           choices: [
-            { message: { content: "", reasoning_content: " a red square " } },
+            {
+              message: { content: "", reasoning_content: " a red square " },
+              finish_reason: "stop",
+            },
           ],
         }),
       ),
     });
     const result = await describeJpeg(provider);
     expect(result.text).toBe("a red square");
+  });
+
+  it("refuses to describe an image with a truncated think-stream", async () => {
+    // The likeliest way the rescue above ever fires on this path: 512
+    // tokens (vs 4096 on the OpenAI path) and a model that ignored
+    // `enable_thinking: false`, so `reasoning_content` is half a thought
+    // rather than the description in the wrong field.
+    const provider = visionProvider({
+      fetchImpl: bodyFetch(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                reasoning_content: "Let me look at the top-left corner. It",
+              },
+              finish_reason: "length",
+            },
+          ],
+        }),
+      ),
+    });
+    await expect(describeJpeg(provider)).rejects.toThrow(
+      /produced no description.*512-token cap/,
+    );
+  });
+
+  it("keeps a truncated answer that did reach the content channel", async () => {
+    // `length` only vetoes the rescue. A clipped description is still a
+    // description, and failing it would throw away the only answer the
+    // model gave.
+    const provider = visionProvider({
+      fetchImpl: bodyFetch(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: "a red square, and in the corner" },
+              finish_reason: "length",
+            },
+          ],
+        }),
+      ),
+    });
+    const result = await describeJpeg(provider);
+    expect(result.text).toBe("a red square, and in the corner");
   });
 });
 
@@ -498,6 +564,7 @@ describe("LlamaServerProvider — server chat template (F31)", () => {
       visionAutoDetect: false,
       maxImageBytes: 1024,
       maxImagesPerCall: 1,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     await provider.complete(request);
     await provider.complete({ ...request, chat: { ...request.chat, user: "TAIL2" } });
@@ -522,6 +589,7 @@ describe("LlamaServerProvider — server chat template (F31)", () => {
       visionAutoDetect: false,
       maxImageBytes: 1024,
       maxImagesPerCall: 1,
+      requestTimeoutMs: ANY_TIMEOUT_MS,
     });
     const { chat: _chat, ...plain } = request;
     await provider.complete(plain);

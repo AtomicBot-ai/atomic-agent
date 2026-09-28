@@ -7,6 +7,13 @@ import type { VisionRequest, VisionResult } from "../llm-provider.js";
 interface ChatCompletionResponse {
   choices?: Array<{
     message?: { content?: string; reasoning_content?: string };
+    /**
+     * `"stop"` when the model finished, `"length"` when it ran into the
+     * token cap. Load-bearing for the `reasoning_content` rescue below:
+     * unmodelled, a half-finished think-stream is indistinguishable
+     * from a complete answer.
+     */
+    finish_reason?: string;
   }>;
 }
 
@@ -117,9 +124,10 @@ export async function describeImageViaLlamaServer(opts: {
   }
   userContent.push({ type: "text", text: request.prompt });
 
+  const maxTokens = request.maxTokens ?? 512;
   const body = JSON.stringify({
     messages: [{ role: "user", content: userContent }],
-    max_tokens: request.maxTokens ?? 512,
+    max_tokens: maxTokens,
     temperature: request.temperature ?? 0.1,
     stream: false,
     chat_template_kwargs: { enable_thinking: false },
@@ -201,12 +209,26 @@ export async function describeImageViaLlamaServer(opts: {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`vision request failed: ${message}`);
   }
-  const message = json?.choices?.[0]?.message;
+  const choice = json?.choices?.[0];
+  const message = choice?.message;
   let text = (message?.content ?? "").trim();
   // Reasoning-only answer: `content` empty because the model parked the
   // description in its think channel. `describeImageViaOpenAi` already
   // rescues that; here it used to resolve as an empty description.
   if (text.length === 0 && typeof message?.reasoning_content === "string") {
+    // Except when the reply hit the token cap. This request asks for no
+    // reasoning channel at all (`enable_thinking: false` +
+    // `reasoning_format: "none"`), so a server answering with one has
+    // ignored both — and at 512 tokens, eight times tighter than the
+    // OpenAI path's 4096, that channel is most often a deliberation cut
+    // in half rather than a finished description in the wrong field.
+    // Handing it up would render half a thought to the user as "what is
+    // in the image"; failing names the cap, which is the knob to move.
+    if (choice?.finish_reason === "length") {
+      throw new Error(
+        `vision request produced no description: the reply hit its ${maxTokens}-token cap inside the model's reasoning channel`,
+      );
+    }
     text = message.reasoning_content.trim();
   }
 
