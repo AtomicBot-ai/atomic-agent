@@ -126,7 +126,15 @@ export function createOpenAiStreamConsumer(
             // `classifyFailure` would file as `transport` and
             // `shouldAdvance` as a provider-down signal — restarting the
             // completion the user just stopped on the next link.
-            await reader.cancel(signal.reason).catch(() => {});
+            //
+            // Not awaited, as in #501 and `readJsonBody`:
+            // `ReadableStreamCancel` closes the stream synchronously
+            // *before* it calls the source's cancel, so nothing below
+            // can observe whether that cancel settled — while awaiting a
+            // source whose cancel never settles would wedge this
+            // generator, and with it the `stream.return()` teardown
+            // above it.
+            void reader.cancel(signal.reason).catch(() => {});
             break;
           }
           const { done, value } = await reader.read();
