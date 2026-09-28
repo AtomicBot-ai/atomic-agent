@@ -190,13 +190,23 @@ The two memory hint sections are **deduplicated by id** — anything in
 ## 5. Token budget
 
 Defined in [src/prompt/token-budget.ts](src/prompt/token-budget.ts). Three
-caps, one safety net:
+enforced caps, each with its own key:
 
 | Cap | Default | Source |
 |---|---|---|
-| `agent.tokenBudget` | 6000 | `### loaded-skills` + `### session-facts` (shared via `truncateToTokens` on a combined string). Trimmed from the *tail* of the combined blob, so loaded-skill bodies are dropped before facts. |
+| `agent.sessionSectionsMaxTokens` | 0 → `agent.tokenBudget * 0.15` (450) | `### loaded-skills` + `### session-facts` (shared via `truncateToTokens` on a combined string). Trimmed from the *tail* of the combined blob, so loaded-skill bodies are dropped before facts. |
 | `agent.worldSnapshotMaxTokens` | 8000 | Cap on `### world`. The ARIA snapshot is already compressed upstream by `aria-compressor`; this is a pathological-input safety net. |
-| `agent.conversationMaxTokens` | 32000 | Cap on `### conversation`. When the active model profile carries a physical `contextWindow` (read once via `LlamaServerClient.fetchProps()` at bootstrap), the effective cap is further clamped by `computeEffectiveConversationCap` so that `stablePrefix + sessionParts + world + memory + completion + safety` still fits. |
+| `agent.conversationMaxTokens` | 0 → the model's context window | Cap on `### conversation`. When the active model profile carries a physical `contextWindow` (read once via `LlamaServerClient.fetchProps()` at bootstrap), the effective cap is further clamped by `computeEffectiveConversationCap` so that `stablePrefix + sessionParts + world + memory + completion + safety` still fits. `0` is `CONVERSATION_CAP_AUTO`; with no known window it falls back to 64000. |
+
+`agent.tokenBudget` (default 3000) is not a fourth cap. `defaultBudget`
+derives a `tokenBudget * 0.35` stable-prefix figure from it, and nothing
+reads that figure — the prefix is not trimmable, because a cut would land
+inside `### tools` or `### instructions` and take the grammar's tool
+vocabulary with it. What `tokenBudget` still decides is the default share
+behind `agent.sessionSectionsMaxTokens`, and setting that key takes even
+that over. To shrink the prefix itself, shrink its inputs:
+`skills.catalogTokenBudget` for `### skills`, the rare-tool tier split
+(`tool.view`) for `### tools`.
 
 Per-section memory caps live under `memory.*` (full table in `MEMORY.md`):
 

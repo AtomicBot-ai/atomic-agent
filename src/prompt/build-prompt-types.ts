@@ -110,6 +110,11 @@ export interface BuildPromptInput {
    * turn that carried it — see `request-section.ts`.
    */
   originalRequest?: string;
+  /**
+   * Overrides `agent.sessionSectionsMaxTokens` for this build. `0` (or
+   * omitted) keeps the `tokenBudget * 0.15` share.
+   */
+  sessionSectionsMaxTokens?: number;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;

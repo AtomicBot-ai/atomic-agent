@@ -2322,3 +2322,70 @@ describe("llm.runMode.fusion.reviewStallSteps (F41, config v69)", () => {
     });
   });
 });
+
+describe("agent.sessionSectionsMaxTokens (config v74)", () => {
+  it('defaults to the "use the tokenBudget share" sentinel', () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.agent.sessionSectionsMaxTokens).toBe(0);
+    expect(USER_CONFIG_DEFAULTS.agent.sessionSectionsMaxTokens).toBe(0);
+  });
+
+  it("round-trips a ceiling and rejects a negative one", () => {
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { sessionSectionsMaxTokens: 4000 },
+      }).agent.sessionSectionsMaxTokens,
+    ).toBe(4000);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { sessionSectionsMaxTokens: -1 },
+      }),
+    ).toThrow(/agent\.sessionSectionsMaxTokens/);
+  });
+
+  /**
+   * The upgrade has to be invisible: a v72 file keeps every field it set
+   * and inherits the sentinel, so the prompt it produced before the key
+   * existed is the prompt it produces after.
+   */
+  it("upgrades a v72 file to the sentinel with its other agent fields intact", () => {
+    const parsed = parseUserConfigFile({
+      version: 72,
+      agent: {
+        tokenBudget: 8000,
+        maxSteps: 40,
+        conversationMaxTokens: 24_000,
+        conversationMaxPairs: 50,
+        conversationLowWater: 0.5,
+        worldSnapshotMaxTokens: 12_000,
+        approvalLevel: 4,
+        readScope: "unrestricted",
+        nameSessions: false,
+      },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.agent.sessionSectionsMaxTokens).toBe(0);
+    expect(parsed.agent.tokenBudget).toBe(8000);
+    expect(parsed.agent.maxSteps).toBe(40);
+    expect(parsed.agent.conversationMaxTokens).toBe(24_000);
+    expect(parsed.agent.conversationMaxPairs).toBe(50);
+    expect(parsed.agent.conversationLowWater).toBe(0.5);
+    expect(parsed.agent.worldSnapshotMaxTokens).toBe(12_000);
+    expect(parsed.agent.approvalLevel).toBe(4);
+    expect(parsed.agent.readScope).toBe("unrestricted");
+    expect(parsed.agent.nameSessions).toBe(false);
+  });
+
+  /**
+   * v73 belongs to another open branch, so a file written by whichever
+   * build ships first must still load here — an input version is a claim
+   * about filling gaps, not about having produced the file.
+   */
+  it("accepts a v73 file as input", () => {
+    const parsed = parseUserConfigFile({ version: 73, agent: { maxSteps: 7 } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.agent.maxSteps).toBe(7);
+  });
+});

@@ -935,6 +935,76 @@ describe("buildPrompt", () => {
     expect(sessionTok).toBeLessThanOrEqual(prompt.limits.session);
   });
 
+  /**
+   * `agent.sessionSectionsMaxTokens` exists so this section can be
+   * raised without dragging `agent.tokenBudget` — and the whole upper
+   * prompt — up with it. The skill body here is far larger than either
+   * cap, so what survives is the cap itself.
+   */
+  it("caps the session section from sessionSectionsMaxTokens, not tokenBudget", () => {
+    const build = (sessionSectionsMaxTokens?: number) =>
+      buildPrompt({
+        session: mkSession({
+          loadedSkills: [
+            {
+              name: "huge",
+              version: "1.0.0",
+              body: "a".repeat(20_000),
+              loadedAt: Date.now(),
+            },
+          ],
+        }),
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        tokenBudget: 3000,
+        ...(sessionSectionsMaxTokens !== undefined
+          ? { sessionSectionsMaxTokens }
+          : {}),
+      });
+
+    // Unset: the historical `tokenBudget * 0.15`.
+    expect(build().limits.session).toBe(450);
+    const raised = build(4000);
+    expect(raised.limits.session).toBe(4000);
+    expect(raised.limits.total).toBe(3000);
+    const raisedTok = raised.tokens.loadedSkills + raised.tokens.sessionFacts;
+    expect(raisedTok).toBeGreaterThan(450);
+    expect(raisedTok).toBeLessThanOrEqual(4000);
+
+    // The prefix is the KV-cached head: this knob must not touch it.
+    expect(raised.stablePrefix).toBe(build().stablePrefix);
+
+    const lowered = build(120);
+    expect(lowered.limits.session).toBe(120);
+    expect(
+      lowered.tokens.loadedSkills + lowered.tokens.sessionFacts,
+    ).toBeLessThanOrEqual(120);
+  });
+
+  it("treats sessionSectionsMaxTokens 0 as the tokenBudget share", () => {
+    const common = {
+      session: mkSession({
+        loadedSkills: [
+          {
+            name: "huge",
+            version: "1.0.0",
+            body: "a".repeat(20_000),
+            loadedAt: Date.now(),
+          },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      tokenBudget: 6000,
+    };
+    const auto = buildPrompt({ ...common, sessionSectionsMaxTokens: 0 });
+    const omitted = buildPrompt(common);
+    expect(auto.limits.session).toBe(900);
+    expect(auto.text).toBe(omitted.text);
+  });
+
   it("folds older turns into a deterministic summary above the visible tail", () => {
     const base = mkSession();
     const longTurns: SessionState["turns"] = [];

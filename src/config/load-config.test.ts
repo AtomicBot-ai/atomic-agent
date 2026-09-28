@@ -58,6 +58,32 @@ describe("loadConfig", () => {
     expect(config.agent.conversationMaxPairs).toBe(200);
     expect(written.agent.conversationMaxTokens).toBe(0);
     expect(written.agent.conversationMaxPairs).toBe(200);
+    // The session-sections cap ships on its sentinel, so a first run
+    // keeps the `tokenBudget * 0.15` share it always had.
+    expect(config.agent.sessionSectionsMaxTokens).toBe(0);
+    expect(written.agent.sessionSectionsMaxTokens).toBe(0);
+  });
+
+  /**
+   * File-only, exactly like `worldSnapshotMaxTokens` and
+   * `conversationMaxTokens`: the prompt-section caps are a config-file
+   * surface, and inventing an env override for one of the three would
+   * make the set inconsistent to reason about.
+   */
+  it("reads agent.sessionSectionsMaxTokens from the file only", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      agent: { ...USER_CONFIG_DEFAULTS.agent, sessionSectionsMaxTokens: 4096 },
+    });
+    resetConfigCache();
+    expect(loadConfig().agent.sessionSectionsMaxTokens).toBe(4096);
+    process.env.ATOMIC_AGENT_SESSION_SECTIONS_MAX_TOKENS = "99";
+    resetConfigCache();
+    try {
+      expect(loadConfig().agent.sessionSectionsMaxTokens).toBe(4096);
+    } finally {
+      delete process.env.ATOMIC_AGENT_SESSION_SECTIONS_MAX_TOKENS;
+    }
   });
 
   it("maps ATOMIC_AGENT_LLAMA_MAX_TOKENS to completionMaxTokens with bounds", () => {

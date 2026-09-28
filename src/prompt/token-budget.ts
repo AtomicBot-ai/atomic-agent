@@ -1,5 +1,9 @@
 export interface TokenBudgetLimits {
   total: number;
+  /**
+   * Derived figure only: no code path reads it. Nothing trims the stable
+   * prefix and nothing reports this number — see {@link defaultBudget}.
+   */
   stablePrefix: number;
   session: number;
   worldSnapshot: number;
@@ -40,26 +44,62 @@ export function estimateTokensFromCounts(chars: number, words: number): number {
 }
 
 /**
+ * `agent.sessionSectionsMaxTokens: 0` — take the historical
+ * {@link SESSION_SECTIONS_BUDGET_SHARE} of `agent.tokenBudget` instead of
+ * a fixed ceiling, the same sentinel-means-"derive it"
+ * spelling {@link CONVERSATION_CAP_AUTO} uses.
+ *
+ * A fixed default cannot be the unset value here: the share is what the
+ * knob replaces, and anyone who had already moved `agent.tokenBudget`
+ * would have their session cap silently snap back to whatever number we
+ * picked for a budget of 3000.
+ */
+export const SESSION_SECTIONS_CAP_AUTO = 0;
+
+/**
+ * Share of `agent.tokenBudget` that bounds `### session-facts` +
+ * `### loaded-skills` when `agent.sessionSectionsMaxTokens` is left at
+ * {@link SESSION_SECTIONS_CAP_AUTO}. Exported so the config default and
+ * the prompt builder cannot drift apart.
+ */
+export const SESSION_SECTIONS_BUDGET_SHARE = 0.15;
+
+/**
  * Section splits driven by `total` (the `agent.tokenBudget` target for
- * the upper half of the prompt) and optional independent safety-net
- * caps for the lower half (conversation / world). Semantics per field:
- *  - `stablePrefix`, `session`: reported/enforced from `total` share.
+ * the upper half of the prompt) and optional independent caps that
+ * override a share. Semantics per field:
+ *  - `stablePrefix`: a `total * 0.35` share nothing reads. Kept because
+ *    it is on the public type; see the field's own note. The prefix is
+ *    not trimmable — dropping part of `### tools` or `### instructions`
+ *    would break tool calling — so there is no cap to enforce here, and
+ *    the elastic part of the prefix has its own knob
+ *    (`skills.catalogTokenBudget` for the `### skills` catalog).
+ *  - `session`: the cap `buildSessionSectionParts` enforces over
+ *    `### session-facts` + `### loaded-skills` combined. Falls back to a
+ *    `SESSION_SECTIONS_BUDGET_SHARE` share of `total`.
  *  - `worldSnapshot`: safety-net cap, enforced by `buildPrompt`. Falls
  *    back to a `total * 0.15` share when the caller did not supply one
  *    (keeps existing tests stable during the transition).
  *  - `conversation`: safety-net cap, same fallback policy.
  *
- * Both `conversation` and `worldSnapshot` live in the variable tail and
- * do NOT invalidate the KV cache when they grow.
+ * `conversation` and `worldSnapshot` live in the variable tail and do
+ * NOT invalidate the KV cache when they grow. `session` does not either
+ * — `### session-facts` and `### loaded-skills` are tail sections — but
+ * it is the one limit `agent.tokenBudget` still moves, which is why it
+ * needed a key of its own.
  */
 export function defaultBudget(
   total: number,
-  caps: { conversation?: number; worldSnapshot?: number } = {},
+  caps: {
+    session?: number;
+    conversation?: number;
+    worldSnapshot?: number;
+  } = {},
 ): TokenBudgetLimits {
   return {
     total,
     stablePrefix: Math.floor(total * 0.35),
-    session: Math.floor(total * 0.15),
+    session: caps.session ?? Math.floor(total * SESSION_SECTIONS_BUDGET_SHARE),
     worldSnapshot: caps.worldSnapshot ?? Math.floor(total * 0.15),
     conversation: caps.conversation ?? Math.floor(total * 0.35),
   };
