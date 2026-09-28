@@ -194,9 +194,9 @@ enforced caps, each with its own key:
 
 | Cap | Default | Source |
 |---|---|---|
-| `agent.sessionSectionsMaxTokens` | 0 → `agent.tokenBudget * 0.15` (450) | `### loaded-skills` + `### session-facts` (shared via `truncateToTokens` on a combined string). Trimmed from the *tail* of the combined blob, so loaded-skill bodies are dropped before facts. |
+| `agent.sessionSectionsMaxTokens` | 0 → `agent.tokenBudget * 0.15` (450) | `### loaded-skills` + `### session-facts` (shared via `truncateToTokens` on a combined string). Trimmed from the *tail* of the combined blob, so loaded-skill bodies are dropped before facts — and a cut past the `### loaded-skills` header drops the whole section with the `[truncated]` marker left behind in `### session-facts`. Enforced as written: no floor, and no clamp against the context window (AGENTS.md §"Prompt-section caps"). |
 | `agent.worldSnapshotMaxTokens` | 8000 | Cap on `### world`. The ARIA snapshot is already compressed upstream by `aria-compressor`; this is a pathological-input safety net. |
-| `agent.conversationMaxTokens` | 0 → the model's context window | Cap on `### conversation`. When the active model profile carries a physical `contextWindow` (read once via `LlamaServerClient.fetchProps()` at bootstrap), the effective cap is further clamped by `computeEffectiveConversationCap` so that `stablePrefix + sessionParts + world + memory + completion + safety` still fits. `0` is `CONVERSATION_CAP_AUTO`; with no known window it falls back to 64000. |
+| `agent.conversationMaxTokens` | 0 → the model's context window | Cap on `### conversation`. When the active model profile carries a physical `contextWindow` (read once via `LlamaServerClient.fetchProps()` at bootstrap), the effective cap is further clamped by `computeEffectiveConversationCap` so that `stablePrefix + sessionParts + world + memory + completion + safety` still fits — unless it cannot, in which case the cap stops at `CONVERSATION_CAP_FLOOR` (512) and the prompt overruns the window. `0` is `CONVERSATION_CAP_AUTO`; with no known window it falls back to 64000. |
 
 `agent.tokenBudget` (default 3000) is not a fourth cap. `defaultBudget`
 derives a `tokenBudget * 0.35` stable-prefix figure from it, and nothing

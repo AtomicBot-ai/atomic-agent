@@ -1735,6 +1735,13 @@ export interface UserConfigFile {
      * `computeEffectiveConversationCap` leaves the transcript, since
      * `sessionTokens` is subtracted from the window there.
      *
+     * Any other value is enforced verbatim: no floor at the bottom (a
+     * value too small for one token empties both sections) and no clamp
+     * against the model's context window at the top (past
+     * `CONVERSATION_CAP_FLOOR` the transcript has nothing left to give
+     * and the prompt overruns the window). Both are spelled out on
+     * `SESSION_SECTIONS_CAP_AUTO` with the reasons.
+     *
      * There is deliberately no sibling key for the stable prefix. Its
      * `tokenBudget * 0.35` figure is computed and then read by nothing:
      * the prefix cannot be trimmed without cutting `### tools` or

@@ -1,8 +1,12 @@
 export interface TokenBudgetLimits {
   total: number;
   /**
-   * Derived figure only: no code path reads it. Nothing trims the stable
-   * prefix and nothing reports this number — see {@link defaultBudget}.
+   * Derived figure only: nothing trims the stable prefix and nothing
+   * reports this number, and the only read of it in the tree is the
+   * assertion in `token-budget.test.ts` that pins the share. Left in
+   * place because `TokenBudgetLimits` is re-exported from
+   * `src/prompt/index.ts` — dropping the field is an API break, not a
+   * cleanup. See {@link defaultBudget}.
    */
   stablePrefix: number;
   session: number;
@@ -53,6 +57,28 @@ export function estimateTokensFromCounts(chars: number, words: number): number {
  * knob replaces, and anyone who had already moved `agent.tokenBudget`
  * would have their session cap silently snap back to whatever number we
  * picked for a budget of 3000.
+ *
+ * Every other positive value is enforced as written, with neither end
+ * guarded:
+ *  - No floor, unlike {@link CONVERSATION_CAP_FLOOR}. That floor exists
+ *    because the conversation cap is *derived* — it protects the
+ *    transcript from arithmetic the operator never chose. This number is
+ *    typed by hand, `0` already means "auto", and so a tiny value is the
+ *    only way left to say "drop these two sections". A floor would
+ *    silently ignore the figure in the config file, which is the quiet
+ *    override this key exists to remove. Below roughly two tokens both
+ *    sections vanish with no `[truncated]` marker — pre-existing in
+ *    `truncateToTokens`, reachable on `agent.tokenBudget` alone.
+ *  - No clamp against the model's context window. `buildPrompt` consumes
+ *    this cap before `### world`, the memory sections and
+ *    `### loaded-tools` are rendered, so the room the tail actually has
+ *    is not known yet; only `computeEffectiveConversationCap`, which
+ *    runs after all of them, can subtract them. Clamping here with what
+ *    is known at that point would buy a guarantee that is still false,
+ *    because `worldSnapshotMaxTokens` sits unclamped in the same tail.
+ *    Set above the window this cap squeezes the transcript to
+ *    `CONVERSATION_CAP_FLOOR` and then overflows the window; AGENTS.md
+ *    says so.
  */
 export const SESSION_SECTIONS_CAP_AUTO = 0;
 
@@ -76,7 +102,10 @@ export const SESSION_SECTIONS_BUDGET_SHARE = 0.15;
  *    (`skills.catalogTokenBudget` for the `### skills` catalog).
  *  - `session`: the cap `buildSessionSectionParts` enforces over
  *    `### session-facts` + `### loaded-skills` combined. Falls back to a
- *    `SESSION_SECTIONS_BUDGET_SHARE` share of `total`.
+ *    `SESSION_SECTIONS_BUDGET_SHARE` share of `total` when the caller
+ *    passes nothing or {@link SESSION_SECTIONS_CAP_AUTO}; any other
+ *    value is enforced verbatim, with no floor and no clamp against the
+ *    model's context window — see {@link SESSION_SECTIONS_CAP_AUTO}.
  *  - `worldSnapshot`: safety-net cap, enforced by `buildPrompt`. Falls
  *    back to a `total * 0.15` share when the caller did not supply one
  *    (keeps existing tests stable during the transition).
@@ -99,7 +128,11 @@ export function defaultBudget(
   return {
     total,
     stablePrefix: Math.floor(total * 0.35),
-    session: caps.session ?? Math.floor(total * SESSION_SECTIONS_BUDGET_SHARE),
+    // `||`, not `??`: `SESSION_SECTIONS_CAP_AUTO` is `0`, and a caller
+    // that passes the sentinel through is asking for the share. Under
+    // `??` it would reach `truncateToTokens(text, 0)` and empty both
+    // sections — the opposite of what the sentinel means.
+    session: caps.session || Math.floor(total * SESSION_SECTIONS_BUDGET_SHARE),
     worldSnapshot: caps.worldSnapshot ?? Math.floor(total * 0.15),
     conversation: caps.conversation ?? Math.floor(total * 0.35),
   };

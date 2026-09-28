@@ -18,7 +18,11 @@ import type {
   SkillCatalogEntry,
   ToolDescriptor,
 } from "./stable-prefix.js";
-import { estimateTokens, truncateToTokens } from "./token-budget.js";
+import {
+  CONVERSATION_CAP_FLOOR,
+  estimateTokens,
+  truncateToTokens,
+} from "./token-budget.js";
 import { ALSO_AVAILABLE_VIA_TOOL_VIEW } from "./stable-prefix.js";
 import {
   REQUEST_FOLLOW_UP_MARKER,
@@ -1003,6 +1007,80 @@ describe("buildPrompt", () => {
     const omitted = buildPrompt(common);
     expect(auto.limits.session).toBe(900);
     expect(auto.text).toBe(omitted.text);
+  });
+
+  /**
+   * The two documented limits of this cap, pinned so the AGENTS.md prose
+   * about them cannot rot the way the prose this key replaced did.
+   *
+   * It is enforced verbatim and never checked against the model's
+   * context window: `buildPrompt` consumes `limits.session` before
+   * `### world`, the memory sections and `### loaded-tools` exist, so
+   * the room the tail really has is only known later, in
+   * `computeEffectiveConversationCap`. Set above the window, the cap
+   * squeezes the transcript to `CONVERSATION_CAP_FLOOR` and the prompt
+   * then overruns the window anyway.
+   */
+  it("is not clamped to the context window", () => {
+    const prompt = buildPrompt({
+      session: mkSession({
+        loadedSkills: [
+          {
+            name: "huge",
+            version: "1.0.0",
+            body: "a".repeat(600_000),
+            loadedAt: Date.now(),
+          },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      tokenBudget: 3000,
+      sessionSectionsMaxTokens: 200_000,
+      profile: { ...PLAIN_INSTRUCT_PROFILE, contextWindow: 8192 },
+    });
+    expect(prompt.limits.session).toBe(200_000);
+    expect(prompt.conversationCapEffective).toBe(CONVERSATION_CAP_FLOOR);
+    expect(prompt.tokens.total).toBeGreaterThan(8192);
+  });
+
+  /**
+   * And it has no floor, deliberately: `0` already means "take the
+   * share", so a tiny positive value is the only way to ask for these
+   * two sections to go away. What is *not* deliberate is that they go
+   * away unannounced — `truncateToTokens` has no room for its own
+   * marker — which is pre-existing behaviour reachable from
+   * `agent.tokenBudget` alone. Pinned as-is so a later fix has to come
+   * past this test.
+   */
+  it("drops both session sections, unmarked, below one token", () => {
+    const prompt = buildPrompt({
+      session: mkSession({
+        knownFacts: [{ text: "x".repeat(50) }],
+        loadedSkills: [
+          {
+            name: "huge",
+            version: "1.0.0",
+            body: "a".repeat(2000),
+            loadedAt: Date.now(),
+          },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      tokenBudget: 3000,
+      sessionSectionsMaxTokens: 1,
+    });
+    expect(prompt.tail).not.toContain("### session-facts");
+    expect(prompt.tail).not.toContain("### loaded-skills");
+    expect(prompt.tail).not.toContain("[truncated]");
+    expect(prompt.tokens.sessionFacts).toBe(0);
+    expect(prompt.tokens.loadedSkills).toBe(0);
+    // The flags do record it — nothing in the runtime reads them.
+    expect(prompt.truncation.loadedSkills).toBe(true);
+    expect(prompt.truncation.sessionFacts).toBe(true);
   });
 
   it("folds older turns into a deterministic summary above the visible tail", () => {
