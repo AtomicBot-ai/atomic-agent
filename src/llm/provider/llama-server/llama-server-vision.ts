@@ -135,9 +135,15 @@ export async function describeImageViaLlamaServer(opts: {
   }
 
   const controller = new AbortController();
+  // The deadline has to cover the body, not just the headers. It used to
+  // be cleared the moment `fetchImpl` resolved, so a server that answered
+  // with headers and then stalled mid-body hung this call forever:
+  // `describeImage` takes no caller signal, which makes
+  // `requestTimeoutMs` the only bound this path has.
   const timer = setTimeout(() => controller.abort(), opts.requestTimeoutMs);
   const start = Date.now();
   let res: Response;
+  let rawBody: string;
   try {
     res = await opts.fetchImpl(url, {
       method: "POST",
@@ -145,6 +151,10 @@ export async function describeImageViaLlamaServer(opts: {
       body,
       signal: controller.signal,
     });
+    // Drain to text inside the deadline: both the success and the error
+    // branch below need the body, and an abort firing here surfaces as
+    // the same `vision request failed` as a header-phase timeout.
+    rawBody = await res.text();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`vision request failed: ${message}`);
@@ -152,14 +162,20 @@ export async function describeImageViaLlamaServer(opts: {
     clearTimeout(timer);
   }
   if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
     throw new Error(
-      `vision request returned http ${res.status}: ${errBody.slice(0, 200)}`,
+      `vision request returned http ${res.status}: ${rawBody.slice(0, 200)}`,
     );
   }
-  const json = (await res
-    .json()
-    .catch(() => null)) as ChatCompletionResponse | null;
+  let json: ChatCompletionResponse;
+  try {
+    json = JSON.parse(rawBody) as ChatCompletionResponse;
+  } catch (err) {
+    // A body that does not parse used to be swallowed into `null` and
+    // returned as an empty description, which the tool caller reads as
+    // "the model saw nothing" rather than "the server answered garbage".
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`vision request failed: ${message}`);
+  }
   const content = json?.choices?.[0]?.message?.content ?? "";
 
   return {

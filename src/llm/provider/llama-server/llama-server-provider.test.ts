@@ -263,6 +263,99 @@ describe("LlamaServerProvider", () => {
       }),
     ).rejects.toThrow(/http 500/);
   });
+
+  it("fails the request when the server stalls mid-body", async () => {
+    // Headers arrive, then the body never completes. undici errors a live
+    // response body when the request signal aborts, so the fake mirrors
+    // that — without it the abort would be invisible to `res.text()`.
+    const fetchImpl = vi.fn(
+      async (_url: unknown, init?: { signal?: AbortSignal }) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(new TextEncoder().encode('{"choices":'));
+              init?.signal?.addEventListener("abort", () => {
+                stream.error(
+                  Object.assign(new Error("This operation was aborted"), {
+                    name: "AbortError",
+                  }),
+                );
+              });
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    ) as unknown as typeof fetch;
+    const provider = new LlamaServerProvider(fakeClient(vi.fn()), {
+      getProfile: () => VISION_PROFILE,
+      visionEnabledByConfig: true,
+      visionAutoDetect: true,
+      maxImageBytes: 1024,
+      maxImagesPerCall: 2,
+      fetchImpl,
+      baseUrlOverride: "http://test-llama:9999",
+      requestTimeoutMs: 20,
+    });
+
+    // Bound the assertion itself: an unbounded body read never settles, so
+    // a regression has to fail as "hung" instead of stalling the suite.
+    const outcome = await Promise.race([
+      provider
+        .describeImage({
+          prompt: "x",
+          images: [
+            {
+              id: 1,
+              bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+              mimeType: "image/jpeg",
+            },
+          ],
+        })
+        .then(
+          (result) => ({ kind: "resolved", detail: result.text }),
+          (err: unknown) => ({
+            kind: "rejected",
+            detail: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+      new Promise<{ kind: string; detail: string }>((resolve) =>
+        setTimeout(() => resolve({ kind: "hung", detail: "" }), 1_000),
+      ),
+    ]);
+
+    expect(outcome.kind).toBe("rejected");
+    expect(outcome.detail).toMatch(/vision request failed/);
+  });
+
+  it("fails instead of describing nothing when a 200 body is not json", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response("not json at all", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const provider = new LlamaServerProvider(fakeClient(vi.fn()), {
+      getProfile: () => VISION_PROFILE,
+      visionEnabledByConfig: true,
+      visionAutoDetect: true,
+      maxImageBytes: 1024,
+      maxImagesPerCall: 2,
+      fetchImpl,
+      baseUrlOverride: "http://test-llama:9999",
+    });
+    await expect(
+      provider.describeImage({
+        prompt: "x",
+        images: [
+          {
+            id: 1,
+            bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+            mimeType: "image/jpeg",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/vision request failed/);
+  });
 });
 
 describe("LlamaServerProvider — server chat template (F31)", () => {
