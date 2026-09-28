@@ -508,3 +508,29 @@ describe("openai stream consumer generation id (F29)", () => {
     expect(readGenerationId(err)).toBe("gen-dead");
   });
 });
+
+describe("openai stream consumer: a provider that just closes", () => {
+  it("ends on a bare EOF, with a final finish_reason and no `[DONE]`", async () => {
+    // The documented case — some OpenAI-compatible providers send a final
+    // `finish_reason` and close without ever writing `[DONE]` — had no pin
+    // in this file: `terminalObserved` was only ever asserted for a body
+    // that does write it, or for the early stop. Bounded on purpose: the
+    // loop's exit on `done` is what keeps this from spinning forever, and
+    // a hang is not a failure a reader of the report can act on.
+    const body =
+      sseFrame({
+        id: "gen-eof",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "bye" }, finish_reason: "stop" }],
+      }) + "\n";
+    const drained = await Promise.race([
+      drain(body),
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000)),
+    ]);
+    expect(drained).not.toBe("hung");
+    if (drained === "hung") return;
+    expect(drained.content).toBe("bye");
+    expect(drained.finishReason).toBe("stop");
+    expect(drained.terminalObserved).toBe(true);
+  });
+});

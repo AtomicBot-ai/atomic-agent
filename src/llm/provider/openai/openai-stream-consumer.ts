@@ -107,26 +107,19 @@ export function createOpenAiStreamConsumer(
       // about the spec rather than about this function.
       let bodyCancelled = false;
       let onAbort: (() => void) | undefined;
-      // Raced against every read, not checked between them. When the
-      // provider goes quiet mid-stream this generator is parked inside
-      // `reader.read()` and nothing wakes it: `openAiFetch` detaches the
-      // caller's signal from the fetch's own controller the moment the
-      // response headers land, so an abort after that cannot error the
-      // body. Without the race, Esc is honoured only when the next byte
-      // arrives — in practice when undici's body timeout kills the socket,
-      // minutes later, with the turn still on screen. It carries the
-      // reason because that is what has to be thrown: see the head of the
-      // loop.
-      const abortRace = new Promise<{ abortReason: unknown }>((resolve) => {
-        if (!signal) return;
-        const fire = (): void => resolve({ abortReason: signal.reason });
-        if (signal.aborted) {
-          fire();
-          return;
-        }
-        onAbort = fire;
+      // Resolves the *current* read's abort promise, and only while a read
+      // is outstanding. One listener for the whole generator (detached in
+      // the `finally`), but a fresh promise per read: racing one long-lived
+      // promise instead retains every iteration's `Promise.race` reaction
+      // for as long as it stays unsettled, which on a stream nobody aborts
+      // is the whole completion — ~550 B per read, ~18 MB over the 33,678
+      // tokens of the runaway transcript below, in the process that is also
+      // holding the model.
+      let wake: ((woken: { abortReason: unknown }) => void) | undefined;
+      if (signal) {
+        onAbort = (): void => wake?.({ abortReason: signal.reason });
         signal.addEventListener("abort", onAbort, { once: true });
-      });
+      }
       try {
         while (true) {
           // A cancelled turn has to *fail*, not return the prefix that
@@ -137,8 +130,26 @@ export function createOpenAiStreamConsumer(
           // a completion the user just told us to drop. Thrown from inside
           // the `try` so the cancellation still carries the generation id —
           // whatever streamed was billed.
+          //
+          // This is also what honours an abort that landed while the
+          // generator was suspended at a `yield`, where there is no read to
+          // wake and `wake` is unset: the next step throws here instead.
           signal?.throwIfAborted();
-          const next = await Promise.race([reader.read(), abortRace]);
+          // Raced against every read, not sampled between them. When the
+          // provider goes quiet mid-stream this generator is parked inside
+          // `reader.read()` and nothing wakes it: `openAiFetch` detaches
+          // the caller's signal from the fetch's own controller the moment
+          // the response headers land, so an abort after that cannot error
+          // the body. Without the race, Esc is honoured only when the next
+          // byte arrives — in practice when undici's body timeout kills the
+          // socket, minutes later, with the turn still on screen.
+          const abortOnce = new Promise<{ abortReason: unknown }>(
+            (resolve) => {
+              wake = resolve;
+            },
+          );
+          const next = await Promise.race([reader.read(), abortOnce]);
+          wake = undefined;
           if ("abortReason" in next) throw next.abortReason;
           const { done, value } = next;
           if (done) {
