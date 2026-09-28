@@ -490,6 +490,57 @@ export function workerFailureHint(message: string): string | undefined {
   return undefined;
 }
 
+/**
+ * The transport failures that name nothing.
+ *
+ * Node's fetch collapses a whole family of socket outcomes into the bare
+ * string `fetch failed` — the 300-second `UND_ERR_HEADERS_TIMEOUT` among
+ * them — and undici's own words for the rest (`terminated`, `socket hang
+ * up`, `other side closed`) tell a reader no more. Not one of them says
+ * what the server did, which is why a worker that dies on one before its
+ * first token has to be diagnosed from its shape instead of its message.
+ *
+ * `ECONNREFUSED` and the DNS errors are deliberately absent: those name
+ * the fault themselves, and a message that already tells the operator
+ * what happened must keep reading the way it reads today.
+ */
+const OPAQUE_TRANSPORT =
+  /fetch failed|socket hang up|other side closed|premature close|\bterminated\b|\bECONNRESET\b|\bEPIPE\b|\bUND_ERR_\w+/i;
+
+/**
+ * The `queued` outcome's diagnosis, reached through the other door.
+ *
+ * A worker whose very first request dies on the transport never gets as
+ * far as the queue watchdog, so it comes back `failed` carrying whatever
+ * the socket said — in the field, twice in a row, a row whose whole
+ * content was `error: fetch failed` over zero steps and 306 seconds. But
+ * zero steps and a `null` `queueWaitMs` are the same two facts the
+ * `queued` outcome reports: the request went out and the server answered
+ * nothing. So the remedy is the same one, and it splits the same way —
+ * alone on the leg there was nothing to queue behind and the daemon is
+ * the suspect, alongside others the fan-out is simply too wide.
+ *
+ * `undefined` for everything else, and deliberately. A worker that took
+ * a step, one that was served and only then failed, and any message
+ * `workerFailureHint` already recognises all keep the row they have; an
+ * absent `queueWaitMs` is not a `null` one, so a row nobody measured is
+ * a row nothing is claimed about. The hint is added beside the error,
+ * never in place of it: the socket's own word is the only evidence an
+ * operator has that the request was even sent.
+ */
+export function unservedWorkerHint(
+  result: WorkerTaskResult,
+  ranAlone: boolean,
+): string | undefined {
+  if (result.status !== "failed") return undefined;
+  if (result.stepCount > 0) return undefined;
+  if (result.queueWaitMs !== null) return undefined;
+  if (result.error === undefined) return undefined;
+  if (workerFailureHint(result.error) !== undefined) return undefined;
+  if (!OPAQUE_TRANSPORT.test(result.error)) return undefined;
+  return ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED;
+}
+
 const NO_REPLY = "(the worker produced no reply)";
 
 /** How many tool results a hand-back's findings keep, and how much of each. */
