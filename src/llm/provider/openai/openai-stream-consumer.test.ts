@@ -514,21 +514,20 @@ describe("openai stream consumer: a provider that just closes", () => {
     // The documented case — some OpenAI-compatible providers send a final
     // `finish_reason` and close without ever writing `[DONE]` — had no pin
     // in this file: `terminalObserved` was only ever asserted for a body
-    // that does write it, or for the early stop. Bounded on purpose: the
-    // loop's exit on `done` is what keeps this from spinning forever, and
-    // a hang is not a failure a reader of the report can act on.
-    const body =
+    // that does write it, or `false` for the early stop.
+    //
+    // Deliberately unbounded. Break the loop's exit on `done` and this does
+    // not fail, it wedges: a read on a closed stream resolves immediately,
+    // so the loop degenerates into a microtask loop that starves the timer
+    // queue and with it vitest's own `testTimeout`. No in-process assertion
+    // can catch that, which is the argument for having the case at all.
+    const drained = await drain(
       sseFrame({
         id: "gen-eof",
         model: "test-model",
         choices: [{ index: 0, delta: { content: "bye" }, finish_reason: "stop" }],
-      }) + "\n";
-    const drained = await Promise.race([
-      drain(body),
-      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000)),
-    ]);
-    expect(drained).not.toBe("hung");
-    if (drained === "hung") return;
+      }) + "\n",
+    );
     expect(drained.content).toBe("bye");
     expect(drained.finishReason).toBe("stop");
     expect(drained.terminalObserved).toBe(true);
