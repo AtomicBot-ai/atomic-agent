@@ -413,10 +413,18 @@ export class ChatOrchestrator {
    * listeners. Idempotent — callers can invoke before any operation
    * that needs a live session id (`sendMessage`, opening the working
    * dir for skill scripts, …).
+   *
+   * Deferred (`persist: false`): the row is written by the first turn,
+   * not by the allocation. A session nobody typed into used to leave a
+   * row the rail hides — it lists threads that have a first prompt — so
+   * there was no row to press `x` on and it could never be deleted.
+   * Nothing on this side needs the row earlier: `runTurn` falls back to
+   * the caller's copy when the store cannot answer for the id, and
+   * `executeTurn` opens the trace recorder itself.
    */
   private ensureSession(): SessionState {
     if (this.session) return this.session;
-    this.session = this.runtime.createSession();
+    this.session = this.runtime.createSession({ persist: false });
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
     this.refreshRecentSessions();
     return this.session;
@@ -504,10 +512,11 @@ export class ChatOrchestrator {
 
   /**
    * The rail lists threads, not allocations. A session exists the moment
-   * `+ new` mints it — `runtime.createSession` persists it immediately,
-   * and scheduled tasks, webhooks and Telegram all depend on that — but
-   * an unnamed row is noise: it says "(empty)" until someone types, and
-   * two of them are indistinguishable.
+   * `+ new` mints it — and a scheduled task, a webhook or a Telegram
+   * chat persists its own immediately, because something else holds the
+   * id before the first turn — but an unnamed row is noise: it says
+   * "(empty)" until someone types, and two of them are
+   * indistinguishable.
    *
    * So the list shows sessions that have been *spoken to*. The catch is
    * timing: the first user turn only reaches SQLite when the whole turn
@@ -536,8 +545,9 @@ export class ChatOrchestrator {
   /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
     // Every stored thread, not a window of them: the rail and the picker
-    // page their own rows. Every `+ new` and every scheduled task mints
-    // a persisted, unnamed session; those are hidden here (see
+    // page their own rows. The TUI's own sessions wait for their first
+    // turn to be saved, but a scheduled task or a webhook still mints a
+    // persisted, unnamed one; those are hidden here (see
     // `hasFirstPrompt`), and with no LIMIT in SQL there is no window for
     // them to squat and push real conversations out of.
     const stored = this.runtime.sessionStore
@@ -968,7 +978,10 @@ export class ChatOrchestrator {
     // exceptions of its own; the previous thread's grants are cleared
     // on leave (or, if its turn is still running, when that turn ends).
     const notices = this.leaveCurrentSession();
-    this.session = this.runtime.createSession();
+    // Deferred like `ensureSession`'s, and for the same reason: a `+ new`
+    // the operator never types into leaves no row behind. The one left
+    // here is dropped as soon as the next `+ new` or switch replaces it.
+    this.session = this.runtime.createSession({ persist: false });
     this.clearQueue();
     clearTtyScreen(process.stdout);
     this.bus.emit({

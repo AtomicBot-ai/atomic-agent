@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { recordTurn } from "../session/session-state.js";
-import { userTurn } from "../session/conversation-turn.js";
 import {
   blank,
   cloudGateFacts,
@@ -50,14 +48,11 @@ describe("rail session list", () => {
     const { orchestrator, rail } = harness(stored);
     orchestrator.newSession();
     orchestrator.sendMessage("first prompt");
-    // The turn settles and the store now has the user turn.
-    const created = stored.find((s) => s.id === "s-new-1");
-    if (created) {
-      stored[stored.indexOf(created)] = recordTurn(
-        created,
-        userTurn("first prompt"),
-      );
-    }
+    // Nothing is stored yet: the session is deferred, so its first row is
+    // the one `executeTurn` writes when the turn settles — carrying the
+    // user turn, which is what retires the stand-in.
+    expect(stored.map((s) => s.id)).toEqual(["s-old"]);
+    stored.unshift(spokenTo("s-new-1", "first prompt"));
     orchestrator.refreshRecentSessions();
     const ids = rail().map((entry) => entry.sessionId);
     expect(ids).toEqual(["s-new-1", "s-old"]);
@@ -84,9 +79,10 @@ describe("rail session list", () => {
   });
 
   it("does not let unnamed sessions push real threads out of the list", () => {
-    // Every `+ new` persists an unnamed session, and scheduled tasks
-    // mint one each. With no window to squat there is nothing for them
-    // to push out — every real thread is listed, every blank one hidden.
+    // Scheduled tasks and webhooks each persist an unnamed session, and
+    // stores written before the TUI deferred its own are full of them.
+    // With no window to squat there is nothing for them to push out —
+    // every real thread is listed, every blank one hidden.
     const stored = [
       ...Array.from({ length: 60 }, (_, i) => blank(`s-blank-${i}`)),
       ...Array.from({ length: 30 }, (_, i) =>
