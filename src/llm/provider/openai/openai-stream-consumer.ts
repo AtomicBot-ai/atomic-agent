@@ -113,8 +113,8 @@ export function createOpenAiStreamConsumer(
       // promise instead retains every iteration's `Promise.race` reaction
       // for as long as it stays unsettled, which on a stream nobody aborts
       // is the whole completion — ~550 B per read, ~18 MB over the 33,678
-      // tokens of the runaway transcript below, in the process that is also
-      // holding the model.
+      // tokens of the runaway `fabrication` guards against above, in the
+      // process that is also holding the model.
       let wake: ((woken: { abortReason: unknown }) => void) | undefined;
       if (signal) {
         onAbort = (): void => wake?.({ abortReason: signal.reason });
