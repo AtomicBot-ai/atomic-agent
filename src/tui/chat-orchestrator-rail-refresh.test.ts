@@ -20,15 +20,17 @@ import type { TuiAction } from "./tui-action.js";
  * store without waiting for the turn's tail, so a tail that lands after
  * teardown reads a dead SQLite handle. better-sqlite3 answers that with
  * a `TypeError`, and a throw from inside `finally` replaces the turn's
- * outcome and skips everything after the block — including
- * `this.queue.shift()`, so the next parked message never runs — while
+ * outcome and skips everything after the block, while
  * `void this.runOneTurn(...)` turns the escape into an unhandled
- * rejection the crash reporter files.
+ * rejection the crash reporter files. In the field that rejection is the
+ * whole symptom: `shutdown()` calls `abortCurrentTurn()` first, so the
+ * queue is already empty by the time the tail runs.
  *
- * These tests pin the three halves of that: the store really does throw
- * a `TypeError` once closed, a throwing repaint no longer costs the turn
- * its tail, and a repaint that fails for any OTHER reason still says so
- * out loud.
+ * The queue here is therefore a deliberately synthetic setup — the store
+ * closed mid-turn with a message still parked. It earns its place by
+ * pinning the control-flow escape itself (a `finally` that throws skips
+ * `this.queue.shift()`), which is the mechanism the real symptom rides
+ * on and the one thing an "it no longer throws" assertion cannot see.
  */
 
 /** Hermetic gate facts: never read the developer's real config/disk. */
@@ -136,7 +138,10 @@ describe("ChatOrchestrator rail refresh during teardown", () => {
     const onRejection = (reason: unknown): void => {
       rejections.push(reason);
     };
-    process.on("unhandledRejection", onRejection);
+    // Vitest installs its own handler; prepend so ours observes first and
+    // keep the runner's in place — the shape
+    // `agent-loop-reflection-fire-safety.test.ts` uses for the same job.
+    process.prependListener("unhandledRejection", onRejection);
     try {
       let storeClosed = false;
       const first = deferred("s1");
@@ -182,8 +187,8 @@ describe("ChatOrchestrator rail refresh during teardown", () => {
       await settle();
 
       // The tail after the `finally` ran: the parked message drained and
-      // the strip was re-synced. This is the consequence, not the
-      // symptom — before the guard, `seen` stayed `["first"]`.
+      // the strip was re-synced. Before the guard, `seen` stayed
+      // `["first"]` — that is the escape, observed.
       expect(seen).toEqual(["first", "second"]);
       expect(queueSnapshots(actions).at(-1)).toEqual([]);
       // The rail skipped its repaint rather than painting a wrong list:
@@ -241,6 +246,7 @@ describe("ChatOrchestrator rail refresh during teardown", () => {
 
     orchestrator.sendMessage("first");
     orchestrator.sendMessage("second");
+    const repaintsBeforeBreak = repaints(actions).length;
     broken = true;
     first.resolve();
     await first.promise;
@@ -254,7 +260,12 @@ describe("ChatOrchestrator rail refresh during teardown", () => {
     expect(feedLines(actions)).toContain(
       "session list unavailable: disk I/O error",
     );
-    // Not swallowed into the debug log where nobody looks.
+    // Reported, not repainted: the rail keeps the rows it had rather than
+    // going empty, because a read that failed is not "no threads".
+    expect(repaints(actions).length).toBe(repaintsBeforeBreak);
+    expect(repaintsBeforeBreak).toBeGreaterThan(0);
+    // Not swallowed into the debug log, which at the shipping
+    // `log.level=info` nobody would ever see.
     expect(debugLines).toEqual([]);
 
     second.resolve();
@@ -277,9 +288,104 @@ describe("ChatOrchestrator rail refresh during teardown", () => {
         readGateFacts: cloudGateFacts,
       },
     );
-    // Every one of the thirteen call sites is a repaint; none of them
-    // wants an exception.
+    // All nine of its call sites in `chat-orchestrator.ts` (seven direct,
+    // two handed to sub-orchestrators as a callback) are repaints; none of
+    // them wants an exception.
     expect(() => orchestrator.refreshRecentSessions()).not.toThrow();
+  });
+});
+
+/**
+ * How narrow the predicate is *is* the fix. Swallowing every session-store
+ * failure would be the other half of this bug, so each of these is a real
+ * error that reaches this code path and must stay visible — including the
+ * one better-sqlite3 raises two lines below the closed-handle throw.
+ */
+describe("which rail failures count as the store being gone", () => {
+  /**
+   * One good refresh, then a refresh whose read throws `err`. Returns
+   * what the second one said and whether it repainted.
+   */
+  function refreshAfter(err: unknown): {
+    feed: readonly string[];
+    debugLines: readonly string[];
+    newRepaints: number;
+  } {
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const debugLines: string[] = [];
+    let live = true;
+    const orchestrator = new ChatOrchestrator(
+      stubRuntime({
+        runTurn: () => new Promise(() => undefined),
+        listSummaries: () => {
+          if (!live) throw err;
+          return [];
+        },
+        onDebug: (message) => debugLines.push(message),
+      }),
+      bus,
+      {
+        maxSteps: 5,
+        llamaUrl: "http://127.0.0.1:8080",
+        readGateFacts: cloudGateFacts,
+      },
+    );
+    orchestrator.refreshRecentSessions();
+    const repaintsBefore = repaints(actions).length;
+    expect(repaintsBefore).toBe(1);
+    live = false;
+    orchestrator.refreshRecentSessions();
+    return {
+      feed: feedLines(actions),
+      debugLines,
+      newRepaints: repaints(actions).length - repaintsBefore,
+    };
+  }
+
+  const visible: readonly [string, Error][] = [
+    [
+      // `macros.cpp:62`, two lines below the closed-handle throw: a LIVE
+      // store refusing a re-entrant read. Same constructor, same first
+      // two words, entirely different fault — and the one that makes the
+      // exact-wording match load-bearing.
+      "better-sqlite3's sibling TypeError for a busy connection",
+      new TypeError("This database connection is busy executing a query"),
+    ],
+    [
+      // A bug in `toPickerEntry` / `sessionRail.arrange`, i.e. the rail's
+      // own code. Nothing to do with the store, must not go quiet.
+      "an ordinary TypeError from the rail's own row mapping",
+      new TypeError("row.map is not a function"),
+    ],
+    [
+      // The closed-handle wording arriving on something better-sqlite3
+      // did not throw — a rethrow or a wrapper — is not the raw race the
+      // guard is allowed to swallow.
+      "the closed-handle wording on an Error that is not a TypeError",
+      new Error("The database connection is not open"),
+    ],
+  ];
+
+  it.each(visible)("still reports %s", (_what, err) => {
+    const { feed, debugLines, newRepaints } = refreshAfter(err);
+    expect(feed).toEqual([`session list unavailable: ${err.message}`]);
+    // Not demoted to a debug line, which at the shipping `log.level=info`
+    // nobody would ever see.
+    expect(debugLines).toEqual([]);
+    // And the rail keeps the rows it had: a read that failed is not the
+    // same answer as "there are no threads".
+    expect(newRepaints).toBe(0);
+  });
+
+  it("goes quiet only for the closed handle", () => {
+    const { feed, debugLines, newRepaints } = refreshAfter(
+      new TypeError("The database connection is not open"),
+    );
+    expect(feed).toEqual([]);
+    expect(debugLines).toHaveLength(1);
+    expect(newRepaints).toBe(0);
   });
 });
 
