@@ -101,10 +101,46 @@ export function createOpenAiStreamConsumer(
       // limit. Plain `content` only; the reasoning channel is scratch space.
       const fabrication = createFabricatedTranscriptWatcher();
       let earlyStop: CompletionEarlyStop | undefined;
+      // Whether something in here has already closed the body, so the
+      // `finally` closes it exactly once. A second cancel is a no-op on a
+      // stream that is already closed, but "exactly once" is then a fact
+      // about the spec rather than about this function.
+      let bodyCancelled = false;
+      let onAbort: (() => void) | undefined;
+      // Raced against every read, not checked between them. When the
+      // provider goes quiet mid-stream this generator is parked inside
+      // `reader.read()` and nothing wakes it: `openAiFetch` detaches the
+      // caller's signal from the fetch's own controller the moment the
+      // response headers land, so an abort after that cannot error the
+      // body. Without the race, Esc is honoured only when the next byte
+      // arrives — in practice when undici's body timeout kills the socket,
+      // minutes later, with the turn still on screen. It carries the
+      // reason because that is what has to be thrown: see the head of the
+      // loop.
+      const abortRace = new Promise<{ abortReason: unknown }>((resolve) => {
+        if (!signal) return;
+        const fire = (): void => resolve({ abortReason: signal.reason });
+        if (signal.aborted) {
+          fire();
+          return;
+        }
+        onAbort = fire;
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
       try {
         while (true) {
-          if (signal?.aborted) break;
-          const { done, value } = await reader.read();
+          // A cancelled turn has to *fail*, not return the prefix that
+          // arrived before Esc: `completeStream` turns any throw under an
+          // aborted signal into `signal.reason`, which classifies as
+          // `cancelled` and keeps the fallback chain from reading the stop
+          // as a dead provider, while a normal return would hand the step
+          // a completion the user just told us to drop. Thrown from inside
+          // the `try` so the cancellation still carries the generation id —
+          // whatever streamed was billed.
+          signal?.throwIfAborted();
+          const next = await Promise.race([reader.read(), abortRace]);
+          if ("abortReason" in next) throw next.abortReason;
+          const { done, value } = next;
           if (done) {
             // Flush TextDecoder state and treat a final non-empty SSE event
             // as an implicit last boundary. Some providers/proxies close the
@@ -199,6 +235,7 @@ export function createOpenAiStreamConsumer(
             // upstream supports it — when its client goes away. A body
             // that is already closed makes this a no-op.
             await reader.cancel(FABRICATED_TRANSCRIPT_STOP).catch(() => {});
+            bodyCancelled = true;
             break;
           }
           if (done) break;
@@ -209,6 +246,23 @@ export function createOpenAiStreamConsumer(
         // on the error so the trace row can name the generation.
         throw attachGenerationId(err, generationId);
       } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+        // An abort leaves the body open with a read still outstanding, and
+        // an unread body holds its socket: cancelling closes the
+        // connection, and a routing provider (OpenRouter) stops the
+        // generation — and the billing — when its client goes away. (A
+        // body that died on its own is already gone and takes this as a
+        // swallowed no-op.)
+        //
+        // Cancelled before `releaseLock`, which would instead reject the
+        // read this loop walked away from with a `TypeError` nobody is
+        // left to catch; cancelling resolves that read as `done` and
+        // leaves nothing pending for the release to error. Not awaited,
+        // like `LlamaServerClient`'s own release: a cancel travelling into
+        // a socket must never hang a consumer trying to walk away.
+        if (signal?.aborted && !bodyCancelled) {
+          void reader.cancel(signal.reason).catch(() => {});
+        }
         reader.releaseLock();
       }
       yield { delta: "", reasoningDelta: "", done: true };
