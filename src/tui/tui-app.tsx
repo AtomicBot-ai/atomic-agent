@@ -2341,6 +2341,7 @@ export function TuiApp({
                       sessions={state.sessionPickerList}
                       cursor={state.sessionPickerCursor}
                       currentSessionId={state.session.sessionId}
+                      morePages={state.recentSessionsMorePages}
                     />
                   </Box>
                 ) : null}
