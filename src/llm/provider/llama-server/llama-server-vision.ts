@@ -6,7 +6,7 @@ import type { VisionRequest, VisionResult } from "../llm-provider.js";
 
 interface ChatCompletionResponse {
   choices?: Array<{
-    message?: { content?: string };
+    message?: { content?: string; reasoning_content?: string };
   }>;
 }
 
@@ -136,14 +136,29 @@ export async function describeImageViaLlamaServer(opts: {
 
   const controller = new AbortController();
   // The deadline has to cover the body, not just the headers. It used to
-  // be cleared the moment `fetchImpl` resolved, so a server that answered
-  // with headers and then stalled mid-body hung this call forever:
-  // `describeImage` takes no caller signal, which makes
-  // `requestTimeoutMs` the only bound this path has.
+  // be cleared the moment `fetchImpl` resolved, so everything after the
+  // status line ran with no deadline of ours at all — and undici's own
+  // `bodyTimeout` is an *inactivity* timer, which a server dribbling one
+  // byte at a time resets forever.
   const timer = setTimeout(() => controller.abort(), opts.requestTimeoutMs);
+  // The caller's signal is the user's Esc (`ToolContext.signal` reaches
+  // here through `vision.describe`). Unlinked, a cancelled turn left a
+  // wedged vision call holding the socket and the slot until the
+  // deadline; linked the same way `LlamaServerClient.complete()` links
+  // it, the abort reason reaches the caller as the failure.
+  const externalSignal = request.signal;
+  // Carrying the caller's reason across is what keeps the failure
+  // readable: aborting our own controller bare would report every user
+  // cancel as "This operation was aborted".
+  const onAbort = (): void => controller.abort(externalSignal?.reason);
+  if (externalSignal) {
+    if (externalSignal.aborted) onAbort();
+    else externalSignal.addEventListener("abort", onAbort, { once: true });
+  }
   const start = Date.now();
   let res: Response;
-  let rawBody: string;
+  let rawBody = "";
+  let bodyError: Error | null = null;
   try {
     res = await opts.fetchImpl(url, {
       method: "POST",
@@ -152,19 +167,29 @@ export async function describeImageViaLlamaServer(opts: {
       signal: controller.signal,
     });
     // Drain to text inside the deadline: both the success and the error
-    // branch below need the body, and an abort firing here surfaces as
-    // the same `vision request failed` as a header-phase timeout.
-    rawBody = await res.text();
+    // branch below need the body.
+    try {
+      rawBody = await res.text();
+    } catch (err) {
+      // Held, not thrown: a non-2xx still has a status worth reporting,
+      // and an abort that landed while reading its error body must not
+      // downgrade a diagnosable `http 500` to "something aborted".
+      bodyError = err instanceof Error ? err : new Error(String(err));
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`vision request failed: ${message}`);
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onAbort);
   }
   if (!res.ok) {
     throw new Error(
       `vision request returned http ${res.status}: ${rawBody.slice(0, 200)}`,
     );
+  }
+  if (bodyError) {
+    throw new Error(`vision request failed: ${bodyError.message}`);
   }
   let json: ChatCompletionResponse;
   try {
@@ -176,10 +201,17 @@ export async function describeImageViaLlamaServer(opts: {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`vision request failed: ${message}`);
   }
-  const content = json?.choices?.[0]?.message?.content ?? "";
+  const message = json?.choices?.[0]?.message;
+  let text = (message?.content ?? "").trim();
+  // Reasoning-only answer: `content` empty because the model parked the
+  // description in its think channel. `describeImageViaOpenAi` already
+  // rescues that; here it used to resolve as an empty description.
+  if (text.length === 0 && typeof message?.reasoning_content === "string") {
+    text = message.reasoning_content.trim();
+  }
 
   return {
-    text: content.trim(),
+    text,
     durationMs: Date.now() - start,
   };
 }

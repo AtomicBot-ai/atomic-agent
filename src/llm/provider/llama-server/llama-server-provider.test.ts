@@ -1,10 +1,12 @@
+import { getEventListeners } from "node:events";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../model-profile.js";
 import type { ModelProfile } from "../../model-profile.js";
 import { LlamaServerProvider } from "./llama-server-provider.js";
-import { VisionUnsupportedError } from "../llm-provider.js";
+import { VisionUnsupportedError, type VisionResult } from "../llm-provider.js";
 
 const VISION_PROFILE: ModelProfile = {
   ...PLAIN_INSTRUCT_PROFILE,
@@ -21,6 +23,109 @@ function fakeClient(
   applyTemplate?: LlamaServerClient["applyTemplate"],
 ): LlamaServerClient {
   return { complete, applyTemplate } as unknown as LlamaServerClient;
+}
+
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff]);
+
+function visionProvider(options: {
+  fetchImpl: typeof fetch;
+  requestTimeoutMs?: number;
+}): LlamaServerProvider {
+  return new LlamaServerProvider(fakeClient(vi.fn()), {
+    getProfile: () => VISION_PROFILE,
+    visionEnabledByConfig: true,
+    visionAutoDetect: true,
+    maxImageBytes: 1024,
+    maxImagesPerCall: 2,
+    baseUrlOverride: "http://test-llama:9999",
+    ...options,
+  });
+}
+
+function describeJpeg(
+  provider: LlamaServerProvider,
+  signal?: AbortSignal,
+): Promise<VisionResult> {
+  return provider.describeImage({
+    prompt: "x",
+    images: [{ id: 1, bytes: JPEG_BYTES, mimeType: "image/jpeg" }],
+    ...(signal ? { signal } : {}),
+  });
+}
+
+function bodyFetch(body: string, status = 200): typeof fetch {
+  return vi.fn(
+    async () =>
+      new Response(body, {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+  ) as unknown as typeof fetch;
+}
+
+function jsonFetch(content: string): typeof fetch {
+  return bodyFetch(JSON.stringify({ choices: [{ message: { content } }] }));
+}
+
+/**
+ * A server that sends headers and then never finishes the body. The
+ * stream errors with the request signal's abort reason, mirroring real
+ * undici: measured on Node 25, a fetch aborted while `res.text()` is
+ * pending rejects with `signal.reason` itself, or with
+ * `AbortError: This operation was aborted` when the abort carried none —
+ * and a signal already aborted at call time rejects the fetch outright.
+ * Without that, an abort would be invisible to the body read.
+ */
+function stallingFetch(
+  opts: { status?: number; prefix?: string } = {},
+): typeof fetch {
+  const { status = 200, prefix = '{"choices":' } = opts;
+  return vi.fn(async (_url: unknown, init?: { signal?: AbortSignal }) => {
+    if (init?.signal?.aborted) throw init.signal.reason;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(new TextEncoder().encode(prefix));
+          init?.signal?.addEventListener("abort", () => {
+            stream.error(
+              init.signal?.reason ??
+                Object.assign(new Error("This operation was aborted"), {
+                  name: "AbortError",
+                }),
+            );
+          });
+        },
+      }),
+      { status, headers: { "content-type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+}
+
+/**
+ * Bound the assertion itself: an unbounded body read never settles, so a
+ * regression fails as "hung" with a real diff instead of stalling the
+ * suite until vitest's own timeout.
+ */
+async function settledWithin(
+  ms: number,
+  call: Promise<VisionResult>,
+): Promise<{ kind: string; detail: string }> {
+  let timer: NodeJS.Timeout | undefined;
+  const outcome = await Promise.race([
+    call.then(
+      (result) => ({ kind: "resolved", detail: result.text }),
+      (err: unknown) => ({
+        kind: "rejected",
+        detail: err instanceof Error ? err.message : String(err),
+      }),
+    ),
+    new Promise<{ kind: string; detail: string }>((resolve) => {
+      timer = setTimeout(() => resolve({ kind: "hung", detail: "" }), ms);
+      timer.unref();
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return outcome;
 }
 
 describe("LlamaServerProvider", () => {
@@ -237,7 +342,7 @@ describe("LlamaServerProvider", () => {
     expect(url.startsWith("data:image/jpeg;base64,")).toBe(true);
   });
 
-  it("throws when llama-server returns a non-2xx response", async () => {
+  it("throws when llama-server returns a non-2xx response, body preview and all", async () => {
     const fetchImpl = vi.fn(async () => {
       return new Response("boom", { status: 500 });
     }) as unknown as typeof fetch;
@@ -261,100 +366,112 @@ describe("LlamaServerProvider", () => {
           },
         ],
       }),
-    ).rejects.toThrow(/http 500/);
+    ).rejects.toThrow(/http 500: boom/);
   });
 
   it("fails the request when the server stalls mid-body", async () => {
-    // Headers arrive, then the body never completes. undici errors a live
-    // response body when the request signal aborts, so the fake mirrors
-    // that — without it the abort would be invisible to `res.text()`.
-    const fetchImpl = vi.fn(
-      async (_url: unknown, init?: { signal?: AbortSignal }) =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(stream) {
-              stream.enqueue(new TextEncoder().encode('{"choices":'));
-              init?.signal?.addEventListener("abort", () => {
-                stream.error(
-                  Object.assign(new Error("This operation was aborted"), {
-                    name: "AbortError",
-                  }),
-                );
-              });
-            },
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-    ) as unknown as typeof fetch;
-    const provider = new LlamaServerProvider(fakeClient(vi.fn()), {
-      getProfile: () => VISION_PROFILE,
-      visionEnabledByConfig: true,
-      visionAutoDetect: true,
-      maxImageBytes: 1024,
-      maxImagesPerCall: 2,
-      fetchImpl,
-      baseUrlOverride: "http://test-llama:9999",
-      requestTimeoutMs: 20,
-    });
+    const fetchImpl = stallingFetch();
+    const provider = visionProvider({ fetchImpl, requestTimeoutMs: 20 });
 
-    // Bound the assertion itself: an unbounded body read never settles, so
-    // a regression has to fail as "hung" instead of stalling the suite.
-    const outcome = await Promise.race([
-      provider
-        .describeImage({
-          prompt: "x",
-          images: [
-            {
-              id: 1,
-              bytes: new Uint8Array([0xff, 0xd8, 0xff]),
-              mimeType: "image/jpeg",
-            },
-          ],
-        })
-        .then(
-          (result) => ({ kind: "resolved", detail: result.text }),
-          (err: unknown) => ({
-            kind: "rejected",
-            detail: err instanceof Error ? err.message : String(err),
-          }),
-        ),
-      new Promise<{ kind: string; detail: string }>((resolve) =>
-        setTimeout(() => resolve({ kind: "hung", detail: "" }), 1_000),
-      ),
-    ]);
+    const outcome = await settledWithin(1_000, describeJpeg(provider));
 
     expect(outcome.kind).toBe("rejected");
+    // The abort reason, not just the wrapper: a body read that fails for
+    // any other reason (a `JSON.parse("")` on a swallowed read, say)
+    // produces the same `vision request failed` prefix.
     expect(outcome.detail).toMatch(/vision request failed/);
+    expect(outcome.detail).toMatch(/abort/i);
+  });
+
+  it("settles on the caller's abort instead of waiting out the deadline", async () => {
+    // What the user's Esc does: `vision.describe` passes `ctx.signal`
+    // down as `VisionRequest.signal`, and a wedged server has to let go
+    // of it long before `requestTimeoutMs`.
+    const fetchImpl = stallingFetch();
+    const provider = visionProvider({ fetchImpl, requestTimeoutMs: 10_000 });
+    const caller = new AbortController();
+    const call = describeJpeg(provider, caller.signal);
+    setTimeout(() => caller.abort(new Error("turn cancelled")), 10).unref();
+
+    const outcome = await settledWithin(1_000, call);
+
+    expect(outcome.kind).toBe("rejected");
+    expect(outcome.detail).toMatch(/turn cancelled/);
+  });
+
+  it("obeys a caller signal that is already aborted", async () => {
+    const fetchImpl = stallingFetch();
+    const provider = visionProvider({ fetchImpl, requestTimeoutMs: 10_000 });
+
+    const outcome = await settledWithin(
+      1_000,
+      describeJpeg(provider, AbortSignal.abort(new Error("already gone"))),
+    );
+
+    expect(outcome.kind).toBe("rejected");
+    expect(outcome.detail).toMatch(/already gone/);
+  });
+
+  it("keeps the http status when the error body is the thing that stalls", async () => {
+    // The deadline now covers the error body too, so a 500 whose body
+    // never completes must still report the status the retry/report path
+    // reads, not the abort that ended the read.
+    const fetchImpl = stallingFetch({ status: 500, prefix: "partial" });
+    const provider = visionProvider({ fetchImpl, requestTimeoutMs: 20 });
+
+    const outcome = await settledWithin(1_000, describeJpeg(provider));
+
+    expect(outcome.kind).toBe("rejected");
+    expect(outcome.detail).toMatch(/http 500/);
+  });
+
+  it("clears its deadline and unlinks the caller signal when the call settles", async () => {
+    // A leaked 120 s timer holds the CLI's event loop open at exit, and a
+    // leaked listener accumulates on the turn's signal, one per image the
+    // model looks at.
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    try {
+      const provider = visionProvider({ fetchImpl: jsonFetch("ok") });
+      await describeJpeg(provider, caller.signal);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(getEventListeners(caller.signal, "abort")).toHaveLength(0);
   });
 
   it("fails instead of describing nothing when a 200 body is not json", async () => {
-    const fetchImpl = vi.fn(async () => {
-      return new Response("not json at all", {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }) as unknown as typeof fetch;
-    const provider = new LlamaServerProvider(fakeClient(vi.fn()), {
-      getProfile: () => VISION_PROFILE,
-      visionEnabledByConfig: true,
-      visionAutoDetect: true,
-      maxImageBytes: 1024,
-      maxImagesPerCall: 2,
-      fetchImpl,
-      baseUrlOverride: "http://test-llama:9999",
+    const provider = visionProvider({
+      fetchImpl: bodyFetch("not json at all"),
     });
-    await expect(
-      provider.describeImage({
-        prompt: "x",
-        images: [
-          {
-            id: 1,
-            bytes: new Uint8Array([0xff, 0xd8, 0xff]),
-            mimeType: "image/jpeg",
-          },
-        ],
-      }),
-    ).rejects.toThrow(/vision request failed/);
+    await expect(describeJpeg(provider)).rejects.toThrow(
+      /vision request failed/,
+    );
+  });
+
+  it("fails instead of describing nothing when a 200 body is empty", async () => {
+    // What undici hands back when the stream closes early: a 200 whose
+    // body is the empty string. Parsed leniently it would be an object
+    // with no choices, i.e. another silently empty description.
+    const provider = visionProvider({ fetchImpl: bodyFetch("") });
+    await expect(describeJpeg(provider)).rejects.toThrow(
+      /vision request failed/,
+    );
+  });
+
+  it("rescues a reasoning-only answer the way the openai path does", async () => {
+    const provider = visionProvider({
+      fetchImpl: bodyFetch(
+        JSON.stringify({
+          choices: [
+            { message: { content: "", reasoning_content: " a red square " } },
+          ],
+        }),
+      ),
+    });
+    const result = await describeJpeg(provider);
+    expect(result.text).toBe("a red square");
   });
 });
 
