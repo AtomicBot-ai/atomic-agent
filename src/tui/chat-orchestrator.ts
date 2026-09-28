@@ -534,9 +534,14 @@ export class ChatOrchestrator {
   private readonly pendingRows = new Map<string, SessionPickerEntry>();
 
   refreshRecentSessions(): void {
+    // Built before the flag is read, not inline with it: `railTailReached`
+    // is what the walk inside `railSessions` learned, so reading it first
+    // would answer for the walk before this one.
+    const sessions = this.railSessions();
     this.bus.emit({
       type: "recent_sessions_updated",
-      sessions: this.railSessions(),
+      sessions,
+      morePages: !this.railTailReached,
     });
   }
 

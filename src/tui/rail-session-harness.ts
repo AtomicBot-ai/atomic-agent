@@ -174,5 +174,13 @@ export function harness(stored: StoredSession[], options: StubOptions = {}) {
     lastOf("recent_sessions_updated");
   const picker = (): readonly SessionPickerEntry[] =>
     lastOf("session_picker_opened");
-  return { orchestrator, rail, picker, actions, written, pins };
+  /** `morePages` on the last rail refresh: does the store hold more? */
+  const morePages = (): boolean | null => {
+    for (let i = actions.length - 1; i >= 0; i -= 1) {
+      const action = actions[i];
+      if (action?.type === "recent_sessions_updated") return action.morePages;
+    }
+    return null;
+  };
+  return { orchestrator, rail, picker, morePages, actions, written, pins };
 }

@@ -624,6 +624,14 @@ export interface TuiState {
    */
   recentSessions: readonly SessionPickerEntry[];
   /**
+   * Does the store hold sessions beyond the ones in `recentSessions`?
+   * The rail reads the store one page at a time, so the length of that
+   * list is "what is loaded", never "what exists" — anything that counts
+   * it for the operator has to say which of the two it means. `false`
+   * before the first refresh: an empty list with nothing behind it.
+   */
+  recentSessionsMorePages: boolean;
+  /**
    * Which surface owns keyboard focus inside the chat layout: the
    * editor (default) or the sidebar's panes (Sessions / Tasks). Tab
    * cycles `editor → sidebar(sessions) → sidebar(tasks) → editor` when
@@ -891,6 +899,7 @@ export function createInitialTuiState(
     llmHealth: createInitialLlmHealthState(session?.localBackendConfigured),
     telegramPanel: createInitialTelegramPanelState(),
     recentSessions: [],
+    recentSessionsMorePages: false,
     chatFocus: "editor",
     sidebarSection: "sessions",
     sidebarCollapsed: false,

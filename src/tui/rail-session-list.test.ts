@@ -110,6 +110,24 @@ describe("rail session list", () => {
     );
   });
 
+  it("says whether the store holds more than the page it handed back", () => {
+    // What the menu's `40+ recents` badge is built from: a full page
+    // says nothing about the rest of the table, so the flag rides with
+    // the rows rather than being guessed from their count.
+    const stored = manyThreads(RAIL_PAGE_SIZE + 5);
+    const { orchestrator, morePages } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    expect(morePages()).toBe(true);
+    orchestrator.loadMoreSessions();
+    expect(morePages()).toBe(false);
+  });
+
+  it("says there is no more when the first page is the whole table", () => {
+    const { orchestrator, morePages } = harness(manyThreads(3));
+    orchestrator.refreshRecentSessions();
+    expect(morePages()).toBe(false);
+  });
+
   it("stops asking once the store has answered short", () => {
     // Holding ↓ on the last row must not fire a store read per key.
     const stored = manyThreads(RAIL_PAGE_SIZE + 5);

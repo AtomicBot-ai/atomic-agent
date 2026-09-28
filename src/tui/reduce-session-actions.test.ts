@@ -74,6 +74,7 @@ describe("session picker reducer", () => {
     expect(primed.sessionPickerCursor).toBe(1);
     const grown = reduceTuiState(primed, {
       type: "recent_sessions_updated",
+      morePages: false,
       sessions: [
         entry({ sessionId: "a" }),
         entry({ sessionId: "b" }),
@@ -92,6 +93,7 @@ describe("session picker reducer", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = reduceTuiState(initial, {
       type: "recent_sessions_updated",
+      morePages: false,
       sessions: [entry({ sessionId: "a" })],
     });
     expect(next.sessionPickerOpen).toBe(false);

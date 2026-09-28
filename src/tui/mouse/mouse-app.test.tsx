@@ -209,6 +209,7 @@ function mountApp(): {
     seedSessions: () => {
       bus.emit({
         type: "recent_sessions_updated",
+        morePages: false,
         sessions: [
           {
             sessionId: "s-1",

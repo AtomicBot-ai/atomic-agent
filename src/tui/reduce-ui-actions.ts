@@ -300,6 +300,7 @@ export function reduceUiAction(
       return {
         ...state,
         recentSessions: action.sessions,
+        recentSessionsMorePages: action.morePages,
         sidebarCursor: Math.min(state.sidebarCursor, max),
         sidebarDrag: null,
         // The picker is a view of this list, not a second list — the
