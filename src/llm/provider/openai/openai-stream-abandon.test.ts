@@ -20,15 +20,30 @@ interface WatchedConsumer {
   releases: () => number;
 }
 
+/** The chunk that stands in for a `data: [DONE]` SSE event. */
+const TERMINAL = "[DONE]";
+
 /**
  * A consumer shaped like `createOpenAiStreamConsumer`: it holds a reader
  * for the life of the stream, yields one chunk per read, and gives the
  * lock back in a `finally`. The lock matters — `body.cancel()` on a
  * stream that is still locked rejects, so only a release that closes this
  * generator *before* cancelling can reach the body.
+ *
+ * Both of the real consumer's terminal paths are here, because they leave
+ * the body in opposite states: a `[DONE]` event makes it `return` from
+ * inside the read loop with the body still open, while a bare EOF falls
+ * out of the loop with the body already closed.
  */
 function watchedConsumer(): WatchedConsumer {
   let releases = 0;
+  const final = {
+    content: "hi",
+    reasoningContent: "",
+    finishReason: "stop",
+    modelId: "qwen-test",
+    terminalObserved: true,
+  } as const;
   const consumer: StreamConsumer = {
     async *consume(body) {
       if (!body) return;
@@ -38,24 +53,19 @@ function watchedConsumer(): WatchedConsumer {
         for (;;) {
           const next = await reader.read();
           if (next.done) break;
-          yield {
-            delta: decoder.decode(next.value),
-            reasoningDelta: "",
-            done: false,
-          };
+          const text = decoder.decode(next.value);
+          if (text === TERMINAL) {
+            yield { delta: "", reasoningDelta: "", done: true };
+            return final;
+          }
+          yield { delta: text, reasoningDelta: "", done: false };
         }
       } finally {
         releases += 1;
         reader.releaseLock();
       }
       yield { delta: "", reasoningDelta: "", done: true };
-      return {
-        content: "hi",
-        reasoningContent: "",
-        finishReason: "stop",
-        modelId: "qwen-test",
-        terminalObserved: true,
-      };
+      return final;
     },
   };
   return { consumer, releases: () => releases };
@@ -146,8 +156,14 @@ describe("OpenAiProvider.completeStream transport release", () => {
     expect(open.cancels()).toBe(1);
   });
 
-  it("leaves a fully drained stream to release itself, exactly once", async () => {
-    const open = body(["one", "two"], true);
+  it("leaves a stream that ended on its terminal event alone, body still open", async () => {
+    // The body is deliberately never closed: `[DONE]` is how an
+    // OpenAI-compatible provider normally ends a completion, and the
+    // connection stays open behind it for keep-alive. So this is the one
+    // shape in which the release is observable on the drained path — it
+    // would cancel a body that the consumer finished with on purpose,
+    // tearing down a socket the caller is done with but the pool is not.
+    const open = body(["one", "two", TERMINAL], false);
     const watched = watchedConsumer();
     const stream = provider(open, watched.consumer).completeStream({
       prompt: "hi",
@@ -165,8 +181,7 @@ describe("OpenAiProvider.completeStream transport release", () => {
     expect(deltas).toEqual(["one", "two"]);
 
     // The consumer reached its own `done`: it released itself, and the
-    // block that covers an abandon must not fire a second time — nor
-    // cancel a body that has already ended.
+    // block that covers an abandon must not fire a second time.
     await tick();
     expect(watched.releases()).toBe(1);
     expect(open.cancels()).toBe(0);
@@ -174,5 +189,25 @@ describe("OpenAiProvider.completeStream transport release", () => {
       done: true,
       value: undefined,
     });
+  });
+
+  it("leaves a stream that ended at EOF alone too", async () => {
+    const open = body(["one", "two"], true);
+    const watched = watchedConsumer();
+    const stream = provider(open, watched.consumer).completeStream({
+      prompt: "hi",
+    });
+
+    const deltas: string[] = [];
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) break;
+      deltas.push(next.value.delta);
+    }
+    expect(deltas).toEqual(["one", "two"]);
+
+    await tick();
+    expect(watched.releases()).toBe(1);
+    expect(open.cancels()).toBe(0);
   });
 });
