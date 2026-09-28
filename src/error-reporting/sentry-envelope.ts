@@ -75,9 +75,17 @@ export function buildEnvelope(
     // one issue per underlying cause class / failing tool / model-failure
     // reason / transport target, instead of every occurrence landing in a
     // single undiagnosable issue. `causeType` is checked first because it
-    // is only ever populated on the generic-wrapper path (see
-    // `toLlmFailure`'s catch-all) where `tool` is always the useless
-    // literal `"unknown"`.
+    // is the more specific of the two wherever BOTH are set, and the only
+    // wrapper that sets both is `toLlmFailure`'s catch-all, whose `tool`
+    // is the useless literal `"unknown"`. The order never costs a real
+    // tool name: `step-executor.ts`'s unregistered-tool throw is the one
+    // `ToolExecutionError` carrying a genuine one, and it passes no cause.
+    //
+    // Do NOT read that order as "`causeType` is rare". `toLlmFailure`
+    // attaches `{ cause }` on every arm it wraps — `CancelledError`,
+    // `TransportError` and `GrammarError` alike — as do the llama-server
+    // and OpenAI clients, so most reported failures discriminate on
+    // `causeType`, with `tool` *undefined* rather than `"unknown"`.
     fingerprint: [
       "{{ default }}",
       ev.errorType,
