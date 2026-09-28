@@ -117,8 +117,10 @@ export type VoteTraceEvent =
        * `observeVoteRunnerHealth`), so this variant exists for the
        * routes that end a vote turn before `run()` is reached — the
        * `vote-aware-reflection` decorator's bail-outs, which nothing
-       * downstream can narrate. Same sink, one event type, one
-       * stream.
+       * downstream can narrate. A distinct `TraceEvent` type from the
+       * per-vote rows, but the same union, the same sink and the same
+       * stream. `finish()`'s own outcomes are still unreported — see
+       * `TraceVote` in `trace-event.ts`.
        */
       type: "run";
       sessionId: string;

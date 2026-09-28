@@ -25,10 +25,15 @@ import { createVoteAwareReflectionRunner } from "./vote-aware-reflection.js";
  * runner: `runOne`'s `minCandidates` gate reports `skipped` in its
  * *result* and a debug log, and the runner's trace sink carries only
  * per-vote rows — forwarding would leave the trace exactly as mute.
- * So the decorator emits both rows itself, and these pin the three
- * outcomes a trace reader has to be able to separate: nothing
- * surfaced, the stores could not be read, and voting switched off (no
- * row at all).
+ * So the decorator emits both rows itself, and these pin what a trace
+ * reader has to be able to separate on the routes that never reach the
+ * runner: nothing was surfaced, ids were surfaced and hydrated into
+ * nothing, and the stores could not be read.
+ *
+ * Scope, so nobody reads more into these than they pin: a *missing*
+ * `vote` row still has more than one cause, because `runOne`'s
+ * `finish()` writes no row either — see `TraceVote` in
+ * `trace-event.ts`.
  */
 
 interface Fixture {
@@ -212,9 +217,11 @@ describe("vote-aware reflection reports the turns it drops", () => {
     expect(event.outcome).toBe("skipped");
     expect(event.candidates).toBe(0);
     expect(event.reason).not.toContain("hydration");
+    // Nothing was surfaced, and the reason says so with the number.
+    expect(event.reason).toBe("candidates=0 of 0 surfaced ids");
   });
 
-  it("emits a skipped trace when the surfaced ids hydrate into no rows", async () => {
+  it("separates surfaced-but-unhydratable ids from nothing surfaced", async () => {
     const traces: VoteTraceEvent[] = [];
     const calls: number[] = [];
     const runner = build({
@@ -237,6 +244,10 @@ describe("vote-aware reflection reports the turns it drops", () => {
     const event = traces[0]!;
     if (event.type !== "run") throw new Error("expected a run-level event");
     expect(event.outcome).toBe("skipped");
+    // The same `skipped { candidates: 0 }` as the turn that surfaced
+    // nothing, so the reason is the only thing that can tell a reader
+    // the stores dropped an id they were handed.
+    expect(event.reason).toBe("candidates=0 of 1 surfaced ids");
   });
 
   it("keeps reflect() fire-safe when the trace sink itself throws", async () => {

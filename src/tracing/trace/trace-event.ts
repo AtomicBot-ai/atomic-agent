@@ -399,11 +399,17 @@ export interface TraceVoteRejected extends TraceEventBase {
  * Run-level outcome of one vote sub-call, as opposed to the per-vote
  * `vote_applied` / `vote_rejected` rows above. Emitted only for the
  * routes that end a vote turn *before* `VoteRunner.run` is reached —
- * the `vote-aware-reflection` decorator's two bail-outs. Everything
- * the runner itself decides is reported through `run()`'s result
- * (`observeVoteRunnerHealth` reads it there) plus the per-vote rows,
- * so without this row an empty candidate set and a store that could
- * not be read both look exactly like `memory.voting.enabled=false`.
+ * the `vote-aware-reflection` decorator's two bail-outs — because
+ * without it an empty candidate set and a store that could not be read
+ * both look exactly like `memory.voting.enabled=false`.
+ *
+ * It is deliberately NOT the whole of a vote turn's outcomes: what the
+ * runner itself decides travels in `run()`'s result, where
+ * `observeVoteRunnerHealth` reads it, and `runOne`'s `finish()` writes
+ * a metric and a log line but no row — so a `none` / `timeout` /
+ * `failed` run is still trace-silent. Widening `outcome` and routing
+ * `finish()` through here too is the follow-up (see AGENTS.md phase 7a,
+ * out of scope).
  */
 export interface TraceVote extends TraceEventBase {
   type: "vote";

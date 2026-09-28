@@ -68,8 +68,8 @@ export function createVoteAwareReflectionRunner(args: {
    * Optional trace sink for the two outcomes no other layer can
    * report, both of which return before `voteRunner.run()`. Shape
    * mirrors `VoteRunnerDeps.emitTrace` so bootstrap binds one sink to
-   * both and the trace carries a single event type. Fire-safe: a
-   * throwing sink is swallowed.
+   * both and every vote row lands in one stream. Fire-safe: a throwing
+   * sink is swallowed.
    */
   emitTrace?: (event: VoteTraceEvent) => void;
 }): ReflectionRunner {
@@ -131,12 +131,19 @@ export function createVoteAwareReflectionRunner(args: {
         // A turn that surfaced nothing is a legitimate skip, but it
         // still has to be visible as one — see the note above the
         // factory on why the runner cannot report it from here.
+        //
+        // The reason names both numbers (the way the link runner's
+        // gate does) because an empty candidate list has two causes a
+        // reader has to separate: nothing was surfaced at all, or ids
+        // were surfaced and every one of them hydrated into no row —
+        // the evicted/stale-read shape, which points at the stores
+        // rather than at the turn.
         safeEmit({
           type: "run",
           sessionId: input.sessionId,
           outcome: "skipped",
           candidates: 0,
-          reason: "no candidates surfaced",
+          reason: `candidates=0 of ${countSurfacedIds(input, args)} surfaced ids`,
         });
         return;
       }
@@ -159,6 +166,27 @@ export function createVoteAwareReflectionRunner(args: {
       args.voteRunner.abortPending(options);
     },
   };
+}
+
+/**
+ * Ids this turn offered the decorator, counting only the kinds whose
+ * store is actually wired — an id for a kind that is switched off was
+ * never a candidate, so counting it would read as a hydration miss.
+ */
+function countSurfacedIds(
+  input: ReflectionInput,
+  args: {
+    lessonStore: LessonStore | null;
+    profileStore: ProfileStore | null;
+    procedureStore?: ProcedureStore | null;
+  },
+): number {
+  return (
+    (input.recalledMemoryIds?.length ?? 0) +
+    (args.lessonStore ? (input.recalledLessonIds?.length ?? 0) : 0) +
+    (args.profileStore ? (input.recalledProfileFactIds?.length ?? 0) : 0) +
+    (args.procedureStore ? (input.recalledProcedureIds?.length ?? 0) : 0)
+  );
 }
 
 function hydrateCandidates(

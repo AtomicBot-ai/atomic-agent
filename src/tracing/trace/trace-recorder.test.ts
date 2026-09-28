@@ -833,12 +833,18 @@ describe("createTraceRecorder", () => {
       direction: null,
       reason: "malformed",
     });
-    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
+    rec.recordVote({
+      outcome: "skipped",
+      candidates: 0,
+      reason: "candidates=0 of 0 surfaced ids",
+    });
+    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]);
     expect(events.map((e) => e.type)).toEqual([
       "session_started",
       "turn_started",
       "vote_applied",
       "vote_rejected",
+      "vote",
     ]);
   });
 
@@ -886,18 +892,22 @@ describe("createTraceRecorder", () => {
   it("emits vote with the outcome, the reason and candidates", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-vote-run", emit, now });
+    // An agent event first: the row's `seq` has to come from the
+    // recorder's counter, which a constant would also satisfy on a
+    // fresh recorder.
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
     rec.recordVote({
       outcome: "skipped",
       candidates: 0,
-      reason: "no candidates surfaced",
+      reason: "candidates=0 of 0 surfaced ids",
     });
-    expect(events[0]).toMatchObject({
+    expect(events[1]).toMatchObject({
       type: "vote",
       sessionId: "s-vote-run",
-      seq: 0,
+      seq: 1,
       outcome: "skipped",
       candidates: 0,
-      reason: "no candidates surfaced",
+      reason: "candidates=0 of 0 surfaced ids",
     });
   });
 
