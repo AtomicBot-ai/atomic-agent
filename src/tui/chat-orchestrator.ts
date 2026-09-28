@@ -379,13 +379,20 @@ export class ChatOrchestrator {
   start(): void {
     if (this.started) return;
     this.started = true;
-    // The rail is the one boot step that reads every stored row. A store
-    // that cannot answer must not abort the rest of the boot — the
-    // chat, the poller and the channels work without a session list.
-    // `refreshRecentSessions` reports its own failures now; this still
-    // has to cover `countUnreadable()`, which reads the same store.
+    // The rail and the unreadable-row count are the boot's only reads of
+    // every stored row. A store that cannot answer must not abort the
+    // rest of the boot — the chat, the poller and the channels work
+    // without a session list.
+    //
+    // `refreshRecentSessions` reports its own failure now, so it needs no
+    // guard; what is left to cover is `countUnreadable()`. Both speak on
+    // the same `session list unavailable:` line, so a store that fails
+    // BOTH reads — `database disk image is malformed` is the one that
+    // does — must still say it once, the way it did before the rail grew
+    // a guard of its own.
+    const noticesBeforeRail = this.sessionListNotices;
+    this.refreshRecentSessions();
     try {
-      this.refreshRecentSessions();
       const unreadable = this.runtime.sessionStore.countUnreadable();
       if (unreadable > 0) {
         this.bus.emit({
@@ -394,8 +401,10 @@ export class ChatOrchestrator {
         });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.noteSessionListUnavailable(message);
+      if (this.sessionListNotices === noticesBeforeRail) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.noteSessionListUnavailable(message);
+      }
     }
     this.llmHealth.start();
     this.telegram.start();
@@ -530,9 +539,10 @@ export class ChatOrchestrator {
    * end one. `runOneTurn` calls this from its `finally`, where a throw
    * replaces the turn's result and skips the whole tail after the block
    * — the background-turn notice, the mid-turn re-attach re-emit, and
-   * `this.queue.shift()`, so the next parked message never drains — and
-   * since both call sites are `void this.runOneTurn(...)` the rejection
-   * is unhandled and lands in the crash reporter.
+   * `this.queue.shift()` — and since every one of the three `runOneTurn`
+   * call sites is a bare `void this.runOneTurn(...)`, including the
+   * queue-drain recursion inside `runOneTurn` itself, the rejection is
+   * unhandled and lands in the crash reporter.
    *
    * The throw that actually happens is the shutdown race: `shutdown()`
    * aborts the running turn and then closes the session store without
@@ -540,13 +550,20 @@ export class ChatOrchestrator {
    * a dead SQLite handle — better-sqlite3 answers any statement after
    * `db.close()` with `TypeError: The database connection is not open`
    * (the memory decorators hit the same wall, see PR #496). That one is
-   * expected: skip the emit, leave a debug line, let the process finish
-   * exiting.
+   * expected: skip the emit, leave a line at `log.level=debug` — the
+   * shipping default is `info`, so it costs an operator nothing — and let
+   * the process finish exiting.
    *
    * Anything else is a real rail fault and stays visible, under the same
    * `session list unavailable:` line `start()` has always used for a
    * store that cannot list — a repaint that silently stops is how a rail
    * goes stale and lies about which threads exist.
+   *
+   * The guard sits here rather than in `railSessions()` or the SQL because
+   * this method is the funnel: nine call sites in this file (seven direct,
+   * plus the two callbacks handed to `ImportOrchestrator` and
+   * `SessionRailOrchestrator`, which call it from four places of their
+   * own) and every one of them only wants a repaint.
    */
   refreshRecentSessions(): void {
     let sessions: SessionPickerEntry[];
@@ -566,7 +583,15 @@ export class ChatOrchestrator {
     this.bus.emit({ type: "recent_sessions_updated", sessions });
   }
 
+  /**
+   * How many `session list unavailable:` lines this orchestrator has
+   * emitted. Only `start()` reads it, to tell whether the rail already
+   * spoke for a store that is about to fail its second boot read too.
+   */
+  private sessionListNotices = 0;
+
   private noteSessionListUnavailable(message: string): void {
+    this.sessionListNotices += 1;
     this.bus.emit({
       type: "runtime_info",
       line: `session list unavailable: ${message}`,
@@ -1480,9 +1505,13 @@ export class ChatOrchestrator {
  * Is this the store answering "I am gone", rather than failing at its
  * job? better-sqlite3 has no error code for it: a statement run after
  * `db.close()` raises a plain `TypeError` whose message is the only
- * evidence (`node_modules/better-sqlite3/src/util/macros.cpp`). Matching
- * the message is therefore the whole test — deliberately narrow, because
- * everything it does not match stays a visible fault.
+ * evidence (`better-sqlite3/src/util/macros.cpp:59`). Matching the
+ * message is therefore the whole test, and it has to be this exact
+ * message: two lines below the closed-handle throw the same file raises
+ * `TypeError: This database connection is busy executing a query`
+ * (`macros.cpp:62`), which is a live store refusing a re-entrant read —
+ * a real fault the operator must see. Anything broader than an exact
+ * wording match would bin that one too.
  */
 function isStoreGoneError(err: unknown): boolean {
   return (
