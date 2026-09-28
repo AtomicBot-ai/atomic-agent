@@ -204,6 +204,7 @@ import {
   SESSION_TITLE_TIMEOUT_MS,
   generateSessionTitle,
   pruneSessions,
+  readSessionPins,
   readSessionTitle,
   shouldNameSession,
   type SessionLlmStamp,
@@ -212,7 +213,10 @@ import {
 
 import { TaskRunner, TaskStore } from "../tasks/index.js";
 import { Scheduler } from "../scheduler/index.js";
-import { WebhookSessionStore } from "../http/webhook-session-store.js";
+import {
+  WEBHOOK_SESSIONS_FILENAME,
+  WebhookSessionStore,
+} from "../http/webhook-session-store.js";
 
 import { resolveComposioServerConfig } from "../composio/index.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
@@ -1469,7 +1473,17 @@ export async function createAgentRuntime(
         maxAgeDays: config.sessions.retention.maxAgeDays,
         maxRows: config.sessions.retention.maxRows,
         tracesDir: config.paths.tracesDir,
-        tasksDbFile: config.paths.tasksDbFile,
+        // Read here, not inside the prune: what points at a session is
+        // this runtime's knowledge, and both files are read before the
+        // stores that own them exist (the task queue and the webhook
+        // map are both built hundreds of lines below).
+        keepSessionIds: readSessionPins({
+          tasksDbFile: config.paths.tasksDbFile,
+          webhookSessionsFile: resolve(
+            config.paths.stateDir,
+            WEBHOOK_SESSIONS_FILENAME,
+          ),
+        }),
       });
       // Nothing on a no-op: an install inside its retention window would
       // otherwise log a line every boot saying it did nothing.
@@ -2136,7 +2150,7 @@ export async function createAgentRuntime(
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
-    resolve(config.paths.stateDir, "webhook-sessions.json"),
+    resolve(config.paths.stateDir, WEBHOOK_SESSIONS_FILENAME),
   );
   const recoveredStale = taskStore.recoverStale(config.tasks.staleAfterMs);
   if (recoveredStale > 0) {

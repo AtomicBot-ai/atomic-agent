@@ -4,7 +4,6 @@ import { resolve, sep } from "node:path";
 import type Database from "better-sqlite3";
 import { traceFilePath } from "../tracing/trace/trace-sink.js";
 import type { SessionStatus } from "./session-state.js";
-import { readTaskPinnedSessionIds } from "./task-pinned-sessions.js";
 
 /**
  * One bounded retention pass over the `sessions` table, run at startup.
@@ -87,9 +86,12 @@ export interface PruneSessionsOptions {
   now?: number;
   /** `<stateDir>/traces`. Omitted leaves trace files alone. */
   tracesDir?: string | null;
-  /** `<stateDir>/tasks.sqlite`. Omitted skips the task-pinned check. */
-  tasksDbFile?: string | null;
-  /** Ids the caller knows are in use, whatever the table says. */
+  /**
+   * Ids nothing may delete, whatever the rules say — everything outside
+   * this table that points at a session by id. `readSessionPins` collects
+   * them; the prune itself does not go looking, so a new pin source is
+   * one reader there rather than an option here.
+   */
   keepSessionIds?: Iterable<string>;
 }
 
@@ -127,11 +129,8 @@ export function pruneSessions(
     tracesRemoved: 0,
     vacuumed: false,
   };
-  const keep = new Set(options.keepSessionIds ?? []);
-  for (const id of readTaskPinnedSessionIds(options.tasksDbFile)) keep.add(id);
-
   try {
-    fillKeepTable(db, keep);
+    fillKeepTable(db, new Set(options.keepSessionIds ?? []));
     const sweep = (where: string, ...params: number[]): number =>
       deleteInBatches(db, where, params, tracesDir, result);
 

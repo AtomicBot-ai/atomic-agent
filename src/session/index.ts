@@ -8,7 +8,11 @@ export type {
   PruneSessionsOptions,
   PruneSessionsResult,
 } from "./session-retention.js";
-export { readTaskPinnedSessionIds } from "./task-pinned-sessions.js";
+export {
+  readSessionPins,
+  readTaskPinnedSessionIds,
+  readWebhookPinnedSessionIds,
+} from "./session-pins.js";
 export { summarizeSessionState } from "./session-summary.js";
 export type { SessionSummary } from "./session-summary.js";
 export { normalizeSessionState } from "./normalize-session-state.js";

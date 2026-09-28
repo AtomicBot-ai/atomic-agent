@@ -11,6 +11,11 @@ import { join } from "node:path";
 
 import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
+import {
+  readSessionPins,
+  readTaskPinnedSessionIds,
+  readWebhookPinnedSessionIds,
+} from "./session-pins.js";
 import { pruneSessions } from "./session-retention.js";
 import { SessionStore } from "./session-store.js";
 import type { SessionStatus } from "./session-state.js";
@@ -89,6 +94,17 @@ describe("pruneSessions", () => {
       insert.run(`task-${index}`, sessionId),
     );
     tasks.close();
+    return file;
+  }
+
+  /** `webhook-sessions.json` as `WebhookSessionStore` writes it. */
+  function seedWebhooks(map: Record<string, unknown> | string): string {
+    const file = join(tmp, "webhook-sessions.json");
+    writeFileSync(
+      file,
+      typeof map === "string" ? map : JSON.stringify(map),
+      "utf8",
+    );
     return file;
   }
 
@@ -178,38 +194,6 @@ describe("pruneSessions", () => {
     expect(remaining()).toEqual(["busy"]);
   });
 
-  it("never deletes a session a scheduled task points at", () => {
-    seed({ id: "pinned", ageDays: 400 }, { id: "loose", ageDays: 400 });
-    const tasksDbFile = seedTasks(["pinned", null]);
-
-    const result = prune({ maxAgeDays: 90, tasksDbFile });
-
-    expect(result.deleted).toBe(1);
-    expect(remaining()).toEqual(["pinned"]);
-  });
-
-  it("prunes normally when tasks.sqlite does not exist", () => {
-    seed({ id: "loose", ageDays: 400 });
-
-    const result = prune({
-      maxAgeDays: 90,
-      tasksDbFile: join(tmp, "no-such-tasks.sqlite"),
-    });
-
-    expect(result.deleted).toBe(1);
-    expect(remaining()).toEqual([]);
-  });
-
-  it("prunes normally when tasks.sqlite has no tasks table", () => {
-    seed({ id: "loose", ageDays: 400 });
-    const file = join(tmp, "empty-tasks.sqlite");
-    const empty = new DatabaseCtor(file);
-    empty.exec(`CREATE TABLE schema_meta (key TEXT PRIMARY KEY)`);
-    empty.close();
-
-    expect(prune({ maxAgeDays: 90, tasksDbFile: file }).deleted).toBe(1);
-  });
-
   it("honours keepSessionIds from the caller", () => {
     seed({ id: "held", ageDays: 400 }, { id: "loose", ageDays: 400 });
 
@@ -217,6 +201,102 @@ describe("pruneSessions", () => {
 
     expect(result.deleted).toBe(1);
     expect(remaining()).toEqual(["held"]);
+  });
+
+  // The two things outside this table that point at a session by id, fed
+  // in through the one seam the prune has for them.
+  describe("pins read off disk", () => {
+    it("never deletes a session a scheduled task points at", () => {
+      seed({ id: "pinned", ageDays: 400 }, { id: "loose", ageDays: 400 });
+      const tasksDbFile = seedTasks(["pinned", null]);
+
+      const result = prune({
+        maxAgeDays: 90,
+        keepSessionIds: readSessionPins({ tasksDbFile }),
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(remaining()).toEqual(["pinned"]);
+    });
+
+    it("never deletes a session a persistent webhook binding reuses", () => {
+      seed({ id: "hooked", ageDays: 400 }, { id: "loose", ageDays: 400 });
+      const webhookSessionsFile = seedWebhooks({ deploy: "hooked" });
+
+      const result = prune({
+        maxAgeDays: 90,
+        keepSessionIds: readSessionPins({ webhookSessionsFile }),
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(remaining()).toEqual(["hooked"]);
+    });
+
+    it("collects both sources at once, deduped", () => {
+      seed(
+        { id: "both", ageDays: 400 },
+        { id: "task-only", ageDays: 400 },
+        { id: "hook-only", ageDays: 400 },
+        { id: "loose", ageDays: 400 },
+      );
+      const pins = readSessionPins({
+        tasksDbFile: seedTasks(["both", "task-only"]),
+        webhookSessionsFile: seedWebhooks({ a: "both", b: "hook-only" }),
+      });
+      expect(pins.sort()).toEqual(["both", "hook-only", "task-only"]);
+
+      const result = prune({ maxAgeDays: 90, keepSessionIds: pins });
+
+      expect(result.deleted).toBe(1);
+      expect(remaining()).toEqual(["both", "hook-only", "task-only"]);
+    });
+
+    // A binding can already point at nothing — the operator deleted the
+    // session by hand. The id pins a row that is not there, which is not
+    // an error and must not stop the rest of the prune.
+    it("prunes around a binding that points at an already-missing session", () => {
+      seed({ id: "loose", ageDays: 400 });
+      const webhookSessionsFile = seedWebhooks({ deploy: "s-long-gone" });
+
+      const result = prune({
+        maxAgeDays: 90,
+        keepSessionIds: readSessionPins({ webhookSessionsFile }),
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(remaining()).toEqual([]);
+    });
+
+    it("reads no pins from files that are absent, corrupt or the wrong shape", () => {
+      const webhookPins = (map: Record<string, unknown> | string): string[] =>
+        readWebhookPinnedSessionIds(seedWebhooks(map));
+
+      expect(readSessionPins({})).toEqual([]);
+      expect(readTaskPinnedSessionIds(join(tmp, "no-such.sqlite"))).toEqual([]);
+      expect(readWebhookPinnedSessionIds(join(tmp, "no-such.json"))).toEqual([]);
+      // Half-written JSON, a JSON array, and entries that are not ids:
+      // `WebhookSessionStore` reads each of these as an empty map too.
+      expect(webhookPins('{"deploy": "s1')).toEqual([]);
+      expect(webhookPins('["s1"]')).toEqual([]);
+      expect(webhookPins({ a: "", b: 7, c: null })).toEqual([]);
+    });
+
+    it("reads no pins from a tasks.sqlite with no tasks table", () => {
+      const file = join(tmp, "empty-tasks.sqlite");
+      const empty = new DatabaseCtor(file);
+      empty.exec(`CREATE TABLE schema_meta (key TEXT PRIMARY KEY)`);
+      empty.close();
+
+      expect(readTaskPinnedSessionIds(file)).toEqual([]);
+
+      seed({ id: "loose", ageDays: 400 });
+      expect(
+        prune({
+          maxAgeDays: 90,
+          keepSessionIds: readSessionPins({ tasksDbFile: file }),
+        }).deleted,
+      ).toBe(1);
+    });
   });
 
   it("deletes turnCount = 0 rows past the grace period, not inside it", () => {

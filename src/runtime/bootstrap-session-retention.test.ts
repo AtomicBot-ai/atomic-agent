@@ -15,7 +15,9 @@ import {
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import { WEBHOOK_SESSIONS_FILENAME } from "../http/webhook-session-store.js";
 import { SessionStore } from "../session/index.js";
+import { TaskStore } from "../tasks/index.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
 
@@ -110,13 +112,17 @@ describe("session retention through bootstrap", () => {
     await runtime.shutdown();
   }
 
-  it("prunes past the age cutoff and logs one line with the counts", async () => {
-    const tracePath = seedAncientSession("ancient");
+  function enableRetention(): void {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
       sessions: { retention: { enabled: true, maxAgeDays: 90, maxRows: null } },
     });
     resetConfigCache();
+  }
+
+  it("prunes past the age cutoff and logs one line with the counts", async () => {
+    const tracePath = seedAncientSession("ancient");
+    enableRetention();
     const logs: LogRecord[] = [];
 
     await boot(logs);
@@ -132,6 +138,44 @@ describe("session retention through bootstrap", () => {
       tracesRemoved: 1,
       maxAgeDays: 90,
     });
+  });
+
+  // The pins are read off disk at the prune site, before either store
+  // that owns those files exists. This is the end that proves the wiring:
+  // the same boot that takes the loose row leaves both pinned ones.
+  it("spares a session pinned by a webhook binding or a scheduled task", async () => {
+    seedAncientSession("hooked");
+    seedAncientSession("tasked");
+    seedAncientSession("loose");
+    writeFileSync(
+      join(stateDir, WEBHOOK_SESSIONS_FILENAME),
+      JSON.stringify({ deploy: "hooked" }),
+      "utf8",
+    );
+    const tasks = new TaskStore({ dbFile: join(stateDir, "tasks.sqlite") });
+    // Scheduled for tomorrow so `listDue` cannot pick it up and run a
+    // turn during this boot; the pin is the row, not the run.
+    const tomorrow = Date.now() + 24 * 60 * 60 * 1000;
+    tasks.create({
+      sessionId: "tasked",
+      userMessage: "nightly sweep",
+      origin: "cli",
+      maxAttempts: 3,
+      schedule: { kind: "at", at: tomorrow },
+      scheduledFor: tomorrow,
+    });
+    tasks.close();
+    enableRetention();
+    const logs: LogRecord[] = [];
+
+    await boot(logs);
+
+    expect(surviving().sort()).toEqual(["hooked", "tasked"]);
+    expect(
+      logs.filter(
+        (record) => record.message === "pruned sessions past retention",
+      )[0]?.context,
+    ).toMatchObject({ deleted: 1 });
   });
 
   it("leaves everything alone, and says nothing, with the shipped defaults", async () => {
