@@ -248,51 +248,19 @@ describe("buildEnvelope", () => {
     expect(payload.tags.upstream_error_type).toBeUndefined();
   });
 
-  it("splits one provider bucket by upstream error type and by status", () => {
-    // Every provider failure shares causeType `OpenAiHttpError`, so the
-    // existing discriminator cannot tell these three apart: a context
-    // window that is too small, a wrong model id, and a dead proxy all
-    // landed in one issue.
-    const base = {
-      errorType: "TransportError",
-      causeType: "OpenAiHttpError",
-      source: "llm_failure",
-      category: "transport",
-      transportHost: "127.0.0.1:8095",
-      frames: [{ filename: "openai-http.js", lineno: 519 }],
-    } as const;
-    const contextTooSmall = parseEventPayload(
-      buildEnvelope(
-        DSN,
-        { ...base, httpStatus: 400, upstreamErrorType: "exceed_context_size_error" },
-        META,
-      ).body,
-    ).fingerprint;
-    const badModelId = parseEventPayload(
-      buildEnvelope(
-        DSN,
-        { ...base, httpStatus: 404, upstreamErrorType: "invalid_request_error" },
-        META,
-      ).body,
-    ).fingerprint;
-    const deadProxy = parseEventPayload(
-      buildEnvelope(DSN, { ...base, httpStatus: 502 }, META).body,
-    ).fingerprint;
-    expect(contextTooSmall).not.toEqual(badModelId);
-    expect(contextTooSmall).not.toEqual(deadProxy);
-    expect(badModelId).not.toEqual(deadProxy);
-  });
-
   it("splits two same-status failures whose only difference is the upstream type", () => {
-    // The status alone is not enough either: llama.cpp answers both a
-    // too-large prompt and a malformed request with 400.
+    // Every provider failure shares causeType `OpenAiHttpError`, so the
+    // existing discriminator cannot tell these two apart: llama.cpp
+    // answers both a too-large prompt and a malformed request with 400,
+    // and both landed in one issue.
     const base = {
       errorType: "TransportError",
       causeType: "OpenAiHttpError",
       source: "llm_failure",
       category: "transport",
       httpStatus: 400,
-      frames: [] as never[],
+      transportHost: "127.0.0.1:8095",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
     } as const;
     const exceeded = parseEventPayload(
       buildEnvelope(
@@ -311,10 +279,34 @@ describe("buildEnvelope", () => {
     expect(exceeded).not.toEqual(invalid);
   });
 
-  it("adds only empty slots for an event with neither status nor upstream type", () => {
-    // The two new slots must not introduce a *distinction* among events
-    // that carry neither field — the change has nothing to say about
-    // those issues.
+  it("keeps the status out of the fingerprint — two statuses still group as one", () => {
+    // Deliberate, and the reason this PR does not re-group anything live:
+    // `http_status` is already a tag on every transport issue, so adding
+    // it here would give every one of them a new shortId. Pinned so that
+    // a future PR that wants the status split has to say so out loud and
+    // ship the release note with it.
+    const base = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      transportHost: "127.0.0.1:8095",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
+    } as const;
+    const contextTooSmall = parseEventPayload(
+      buildEnvelope(DSN, { ...base, httpStatus: 400 }, META).body,
+    ).fingerprint;
+    const deadProxy = parseEventPayload(
+      buildEnvelope(DSN, { ...base, httpStatus: 502 }, META).body,
+    ).fingerprint;
+    expect(contextTooSmall).toEqual(deadProxy);
+  });
+
+  it("leaves an untagged event's fingerprint exactly as it was", () => {
+    // The element is spread in, not defaulted to `""`, so an event with
+    // no upstream type keeps the fingerprint it has on `main` element for
+    // element — nothing already live re-groups. This array is the literal
+    // `main` output; changing it means re-grouping live issues.
     const ev: ScrubbedErrorEvent = {
       errorType: "ToolExecutionError",
       causeType: "RangeError",
@@ -329,9 +321,28 @@ describe("buildEnvelope", () => {
       "ToolExecutionError",
       "tool",
       "RangeError",
-      "",
-      "",
       "build-prompt.js",
+    ]);
+  });
+
+  it("adds exactly one element for a tagged event", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      httpStatus: 400,
+      upstreamErrorType: "exceed_context_size_error",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    expect(payload.fingerprint).toEqual([
+      "{{ default }}",
+      "TransportError",
+      "transport",
+      "OpenAiHttpError",
+      "exceed_context_size_error",
+      "openai-http.js",
     ]);
   });
 });

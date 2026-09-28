@@ -706,7 +706,6 @@ describe("humanizeOpenAiHttpError", () => {
     const err = new OpenAiHttpError("raw", 500, "https://api.x.ai/v1/y");
     expect(humanizeOpenAiHttpError(err)).toContain('"api.x.ai"');
   });
-
 });
 
 describe("classification", () => {

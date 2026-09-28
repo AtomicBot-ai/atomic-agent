@@ -82,27 +82,26 @@ export function buildEnvelope(
     // `toLlmFailure`'s catch-all) where `tool` is always the useless
     // literal `"unknown"`.
     //
-    // `upstreamErrorType` and `httpStatus` are separate elements rather
-    // than more `??` fallbacks because on the provider path the
-    // discriminator above is always won by `causeType`
-    // (`OpenAiHttpError`), which every provider failure shares. That is
-    // how one issue came to hold 400s, 404s, 413s and 502s from
-    // unrelated causes under a single shortId: a context window that is
-    // too small, a wrong model id and a dead proxy are not one bug and
-    // must not be one issue.
+    // `upstreamErrorType` is a separate element rather than one more `??`
+    // fallback because on the provider path the discriminator above is
+    // always won by `causeType` (`OpenAiHttpError`), which every provider
+    // failure shares — so a context window that is too small and a wrong
+    // model id landed under a single shortId with nothing to tell them
+    // apart.
     //
-    // This re-groups every live issue that carries an `http_status` —
-    // intended, and a one-off. Both slots are the empty string when
-    // absent so that events carrying neither contribute no new bytes to
-    // the fingerprint, but whether that leaves their hash byte-identical
-    // is Sentry's business, not ours: assume a one-time re-group.
+    // Spread, not `?? ""`: an event without the field must keep the
+    // fingerprint it has today, element for element, so nothing that is
+    // already live re-groups. Only events that actually carry an upstream
+    // type get the extra element, and no such event exists yet. The same
+    // argument does NOT hold for `httpStatus`, which is already live on
+    // every transport issue — putting it here re-groups all of them, so
+    // it is deliberately left out. See the follow-up note in the PR.
     fingerprint: [
       "{{ default }}",
       ev.errorType,
       ev.category ?? "",
       ev.causeType ?? ev.tool ?? ev.reason ?? ev.transportHost ?? "",
-      ev.upstreamErrorType ?? "",
-      ev.httpStatus !== undefined ? String(ev.httpStatus) : "",
+      ...(ev.upstreamErrorType !== undefined ? [ev.upstreamErrorType] : []),
       topFrame,
     ],
     exception: {

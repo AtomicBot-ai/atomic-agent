@@ -146,9 +146,17 @@ const SAFE_CODE_RE = /^[A-Z][A-Z0-9_]*$/;
  * wrote. Lowercase snake_case, 48 characters at most — which admits
  * every type llama.cpp and OpenAI actually define
  * (`exceed_context_size_error`, `invalid_request_error`, `server_error`,
- * `unavailable_error`, `insufficient_quota`) and excludes anything
- * carrying a space, a `/` or `\`, punctuation, a capital or a non-ASCII
- * byte — i.e. every shape prose or a prompt fragment would take.
+ * `unavailable_error`, `insufficient_quota`, `not_found_error`,
+ * `authentication_error`) and excludes anything carrying a space, a `/`
+ * or `\`, punctuation, a capital or a non-ASCII byte.
+ *
+ * What it does NOT exclude: a single lowercase word. `resignation`,
+ * `config_json` and 48 unbroken characters of a prompt all pass, because
+ * nothing here can tell one token of prose from one token of enum. The
+ * pattern buys the *multi-word* case — which is every shape a sentence,
+ * a path or a real prompt fragment actually takes — not the single-token
+ * one. {@link SAFE_CODE_RE} has had the identical property since it was
+ * written; the bound is the backstop for both.
  */
 const SAFE_UPSTREAM_ERROR_TYPE_RE = /^[a-z][a-z0-9_]{0,47}$/;
 
@@ -321,7 +329,14 @@ export function extractSafeTransportHost(err: unknown): string | undefined {
  * builds, and that wrapper copies only `status` and `url` off the
  * `OpenAiHttpError` underneath — the parsed body stays on the cause. A
  * link whose `.type` fails validation does not stop the walk; a valid
- * one further down is still worth having.
+ * one further down is still worth having, and `MAX_CAUSE_DEPTH` is what
+ * ends the walk.
+ *
+ * The walk takes the outermost link that has a `.body` at all rather than
+ * looking for an `OpenAiHttpError` specifically — `extractSafeTransportHost`
+ * reads `.url` the same duck-typed way. `OpenAiHttpError` is the only
+ * class in this project that carries a `.body`, so there is nothing else
+ * to shadow it today; a second one would have to be checked here.
  */
 export function extractSafeUpstreamErrorType(
   err: unknown,

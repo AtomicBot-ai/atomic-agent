@@ -205,8 +205,43 @@ describe("extractSafeUpstreamErrorType", () => {
       "Error: invalid_request",
       "a".repeat(500),
       "exceed_context_size_error ", // trailing space is not the enum
+      // A capital anywhere is out, including the all-caps constant name
+      // llama.cpp uses internally (`ERROR_TYPE_EXCEED_CONTEXT_SIZE`) —
+      // the enum on the wire is lowercase, and `[A-Z]` is the cheapest
+      // way for prose to sneak past a snake_case pattern.
+      "EXCEED_CONTEXT_SIZE_ERROR",
+      "Exceed_Context_Size_Error",
     ];
     for (const type of hostile) {
+      expect(extractSafeUpstreamErrorType({ body: { type } })).toBeUndefined();
+    }
+  });
+
+  it("keeps a 48-character type and drops a 49-character one", () => {
+    // The bound is the reason a prompt fragment cannot arrive truncated
+    // to something that still reads as one: pin both sides of it, or a
+    // widened bound goes unnoticed.
+    expect(
+      extractSafeUpstreamErrorType({ body: { type: "a".repeat(48) } }),
+    ).toBe("a".repeat(48));
+    expect(
+      extractSafeUpstreamErrorType({ body: { type: "a".repeat(49) } }),
+    ).toBeUndefined();
+  });
+
+  it("drops a non-string type instead of coercing it", () => {
+    // `String(["exceed_context_size_error"])` is a *valid* type — an
+    // array is how a coercing check quietly accepts a caller-controlled
+    // value it never validated. The check is `typeof type === "string"`,
+    // and these pin that.
+    for (const type of [
+      123,
+      {},
+      ["exceed_context_size_error"],
+      Symbol("exceed_context_size_error"),
+      true,
+      null,
+    ]) {
       expect(extractSafeUpstreamErrorType({ body: { type } })).toBeUndefined();
     }
   });
@@ -228,10 +263,24 @@ describe("extractSafeUpstreamErrorType", () => {
     expect(extractSafeUpstreamErrorType(null)).toBeUndefined();
   });
 
-  it("terminates on a self-referential cause chain", () => {
-    const err: { body?: unknown; cause?: unknown } = {};
-    err.cause = err;
-    expect(extractSafeUpstreamErrorType(err)).toBeUndefined();
+  it("stops at the depth cap rather than walking an unbounded chain", () => {
+    // `MAX_CAUSE_DEPTH` is what terminates this walk, so that is what
+    // gets asserted: a valid type one link past the cap is not reached.
+    // The `next === current` break mirrors the sibling walk in
+    // `readHttpStatusAndCode` and keeps the intent local, but it is not
+    // independently observable through the return value — the cap already
+    // ends a self-referential chain, which the last case pins.
+    const chain = (depth: number): unknown =>
+      depth === 0
+        ? { body: { type: "exceed_context_size_error" } }
+        : { cause: chain(depth - 1) };
+    expect(extractSafeUpstreamErrorType(chain(4))).toBe(
+      "exceed_context_size_error",
+    );
+    expect(extractSafeUpstreamErrorType(chain(5))).toBeUndefined();
+    const cycle: { body?: unknown; cause?: unknown } = {};
+    cycle.cause = cycle;
+    expect(extractSafeUpstreamErrorType(cycle)).toBeUndefined();
   });
 });
 
