@@ -222,4 +222,116 @@ describe("buildEnvelope", () => {
     expect(frames[0]!.filename).toBe("inner.ts");
     expect(payload.fingerprint.at(-1)).toBe("inner.ts");
   });
+
+  it("stamps an upstream_error_type tag when the scrubbed event carries one", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      httpStatus: 400,
+      transportHost: "127.0.0.1:8095",
+      upstreamErrorType: "exceed_context_size_error",
+      frames: [],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    expect(payload.tags.upstream_error_type).toBe("exceed_context_size_error");
+  });
+
+  it("omits upstream_error_type when the scrubbed event has none", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      source: "llm_failure",
+      frames: [],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    expect(payload.tags.upstream_error_type).toBeUndefined();
+  });
+
+  it("splits one provider bucket by upstream error type and by status", () => {
+    // Every provider failure shares causeType `OpenAiHttpError`, so the
+    // existing discriminator cannot tell these three apart: a context
+    // window that is too small, a wrong model id, and a dead proxy all
+    // landed in one issue.
+    const base = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      transportHost: "127.0.0.1:8095",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
+    } as const;
+    const contextTooSmall = parseEventPayload(
+      buildEnvelope(
+        DSN,
+        { ...base, httpStatus: 400, upstreamErrorType: "exceed_context_size_error" },
+        META,
+      ).body,
+    ).fingerprint;
+    const badModelId = parseEventPayload(
+      buildEnvelope(
+        DSN,
+        { ...base, httpStatus: 404, upstreamErrorType: "invalid_request_error" },
+        META,
+      ).body,
+    ).fingerprint;
+    const deadProxy = parseEventPayload(
+      buildEnvelope(DSN, { ...base, httpStatus: 502 }, META).body,
+    ).fingerprint;
+    expect(contextTooSmall).not.toEqual(badModelId);
+    expect(contextTooSmall).not.toEqual(deadProxy);
+    expect(badModelId).not.toEqual(deadProxy);
+  });
+
+  it("splits two same-status failures whose only difference is the upstream type", () => {
+    // The status alone is not enough either: llama.cpp answers both a
+    // too-large prompt and a malformed request with 400.
+    const base = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      httpStatus: 400,
+      frames: [] as never[],
+    } as const;
+    const exceeded = parseEventPayload(
+      buildEnvelope(
+        DSN,
+        { ...base, upstreamErrorType: "exceed_context_size_error" },
+        META,
+      ).body,
+    ).fingerprint;
+    const invalid = parseEventPayload(
+      buildEnvelope(
+        DSN,
+        { ...base, upstreamErrorType: "invalid_request_error" },
+        META,
+      ).body,
+    ).fingerprint;
+    expect(exceeded).not.toEqual(invalid);
+  });
+
+  it("adds only empty slots for an event with neither status nor upstream type", () => {
+    // The two new slots must not introduce a *distinction* among events
+    // that carry neither field — the change has nothing to say about
+    // those issues.
+    const ev: ScrubbedErrorEvent = {
+      errorType: "ToolExecutionError",
+      causeType: "RangeError",
+      source: "llm_failure",
+      category: "tool",
+      tool: "unknown",
+      frames: [{ filename: "build-prompt.js", lineno: 87 }],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    expect(payload.fingerprint).toEqual([
+      "{{ default }}",
+      "ToolExecutionError",
+      "tool",
+      "RangeError",
+      "",
+      "",
+      "build-prompt.js",
+    ]);
+  });
 });

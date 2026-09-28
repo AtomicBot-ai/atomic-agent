@@ -54,6 +54,9 @@ export function buildEnvelope(
   if (ev.failureStage) tags.failure_stage = ev.failureStage;
   if (ev.tool) tags.tool = ev.tool;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
+  if (ev.upstreamErrorType) {
+    tags.upstream_error_type = ev.upstreamErrorType;
+  }
 
   // `frames[0]` is the innermost frame (V8 lists the throw site first),
   // i.e. where the failure actually originated. `.at(-1)` would instead
@@ -78,11 +81,28 @@ export function buildEnvelope(
     // is only ever populated on the generic-wrapper path (see
     // `toLlmFailure`'s catch-all) where `tool` is always the useless
     // literal `"unknown"`.
+    //
+    // `upstreamErrorType` and `httpStatus` are separate elements rather
+    // than more `??` fallbacks because on the provider path the
+    // discriminator above is always won by `causeType`
+    // (`OpenAiHttpError`), which every provider failure shares. That is
+    // how one issue came to hold 400s, 404s, 413s and 502s from
+    // unrelated causes under a single shortId: a context window that is
+    // too small, a wrong model id and a dead proxy are not one bug and
+    // must not be one issue.
+    //
+    // This re-groups every live issue that carries an `http_status` —
+    // intended, and a one-off. Both slots are the empty string when
+    // absent so that events carrying neither contribute no new bytes to
+    // the fingerprint, but whether that leaves their hash byte-identical
+    // is Sentry's business, not ours: assume a one-time re-group.
     fingerprint: [
       "{{ default }}",
       ev.errorType,
       ev.category ?? "",
       ev.causeType ?? ev.tool ?? ev.reason ?? ev.transportHost ?? "",
+      ev.upstreamErrorType ?? "",
+      ev.httpStatus !== undefined ? String(ev.httpStatus) : "",
       topFrame,
     ],
     exception: {

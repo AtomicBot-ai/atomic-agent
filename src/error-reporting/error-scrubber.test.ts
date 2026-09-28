@@ -7,6 +7,7 @@ import {
   extractSafeFailureStage,
   extractSafeToolTransport,
   extractSafeTransportHost,
+  extractSafeUpstreamErrorType,
   sanitizeStack,
   scrubError,
 } from "./error-scrubber.js";
@@ -176,6 +177,61 @@ describe("extractSafeTransportHost", () => {
   it("drops a malformed url", () => {
     expect(extractSafeTransportHost({ url: "not a url" })).toBeUndefined();
     expect(extractSafeTransportHost({})).toBeUndefined();
+  });
+});
+
+describe("extractSafeUpstreamErrorType", () => {
+  it("keeps the enum-shaped types llama.cpp and OpenAI actually send", () => {
+    for (const type of [
+      "exceed_context_size_error",
+      "invalid_request_error",
+      "server_error",
+      "unavailable_error",
+      "insufficient_quota",
+    ]) {
+      expect(extractSafeUpstreamErrorType({ body: { type } })).toBe(type);
+    }
+  });
+
+  it("drops freeform server text — the whole point of the allowlist", () => {
+    // Everything a local server is free to put in `error.type`, and
+    // exactly what must never reach Sentry. Dropped, never truncated:
+    // the first 48 characters of a prompt are still the user's prompt.
+    const hostile = [
+      "the request exceeds the available context size, try increasing it",
+      "/Users/alex/notes/salary-negotiation.md",
+      "C:\\Users\\alex\\Documents\\passwords.txt",
+      "превышен размер контекста",
+      "Error: invalid_request",
+      "a".repeat(500),
+      "exceed_context_size_error ", // trailing space is not the enum
+    ];
+    for (const type of hostile) {
+      expect(extractSafeUpstreamErrorType({ body: { type } })).toBeUndefined();
+    }
+  });
+
+  it("reads through the wrapper to the cause that carries the body", () => {
+    // The scrubbed error is the `TransportError` wrapper `toLlmFailure`
+    // builds; it copies `status`/`url` but not the parsed body, so
+    // reading only the top object finds nothing.
+    const cause = { body: { type: "exceed_context_size_error", text: "…" } };
+    expect(extractSafeUpstreamErrorType({ status: 400, cause })).toBe(
+      "exceed_context_size_error",
+    );
+  });
+
+  it("ignores a non-object body and a missing one", () => {
+    expect(extractSafeUpstreamErrorType({ body: "boom" })).toBeUndefined();
+    expect(extractSafeUpstreamErrorType({ body: null })).toBeUndefined();
+    expect(extractSafeUpstreamErrorType({})).toBeUndefined();
+    expect(extractSafeUpstreamErrorType(null)).toBeUndefined();
+  });
+
+  it("terminates on a self-referential cause chain", () => {
+    const err: { body?: unknown; cause?: unknown } = {};
+    err.cause = err;
+    expect(extractSafeUpstreamErrorType(err)).toBeUndefined();
   });
 });
 
@@ -376,5 +432,47 @@ describe("scrubError", () => {
     ].join("\n");
     const ev = scrubError(wrapper, { source: "llm_failure" });
     expect(ev.frames.map((f) => f.filename)).toEqual(["prime-stream.js"]);
+  });
+
+  it("carries the upstream error type off the provider error underneath", () => {
+    const cause = Object.assign(new Error("openai provider 400: …"), {
+      name: "OpenAiHttpError",
+      status: 400,
+      body: {
+        type: "exceed_context_size_error",
+        message:
+          "request (14612 tokens) exceeds the available context size (12800 tokens), try increasing it",
+        text: '{"error":{"code":400,"message":"request (14612 tokens) …"}}',
+      },
+    });
+    const wrapper = Object.assign(new Error("humanized"), {
+      name: "TransportError",
+      status: 400,
+      url: "http://127.0.0.1:8095/v1/chat/completions",
+      cause,
+    });
+    const ev = scrubError(wrapper, {
+      source: "llm_failure",
+      category: "transport",
+    });
+    expect(ev.upstreamErrorType).toBe("exceed_context_size_error");
+    // The body's prose and raw text stay behind: only `.type` travels.
+    expect(JSON.stringify(ev)).not.toContain("14612");
+    expect(JSON.stringify(ev)).not.toContain("exceeds the available");
+  });
+
+  it("omits the upstream error type when the body's is freeform", () => {
+    const cause = Object.assign(new Error("boom"), {
+      name: "OpenAiHttpError",
+      status: 400,
+      body: { type: "prompt too long: 'draft my resignation letter'" },
+    });
+    const wrapper = Object.assign(new Error("humanized"), {
+      name: "TransportError",
+      cause,
+    });
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.upstreamErrorType).toBeUndefined();
+    expect(JSON.stringify(ev)).not.toContain("resignation");
   });
 });
