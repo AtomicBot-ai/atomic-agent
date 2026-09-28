@@ -2623,8 +2623,12 @@ export async function createAgentRuntime(
    * only reads and writes the session store once its completion comes
    * back — up to `SESSION_TITLE_TIMEOUT_MS` later. `shutdown` closes
    * that store, so a call still in flight is the reflection race again:
-   * aborting here settles the completion while the store is still open,
-   * and the naming call does not outlive the runtime that started it.
+   * aborting here settles the completion instead of leaving a side-call
+   * slot and an HTTP read outstanding while the runtime goes away.
+   *
+   * The abort is not what keeps the store write safe — an abort a
+   * provider ignores would still let the continuation run. That is
+   * `shutdownCalled`'s job, checked on both sides of the completion.
    */
   const pendingSessionNamings = new Set<AbortController>();
   let shutdownCalled = false;
@@ -2954,6 +2958,12 @@ export async function createAgentRuntime(
    * write has to happen when the answer arrives, not before.
    */
   const nameSession = async (state: SessionState): Promise<void> => {
+    // A turn can finish *during* teardown — `shutdown` aborts the set
+    // below and then awaits channel/MCP/browser teardown before the
+    // stores close, and a turn completing in that window would register
+    // a fresh controller into a set nothing will visit again. Naming a
+    // session a quit is already discarding buys nothing, so don't start.
+    if (shutdownCalled) return;
     // Its own deadline: the turn is over, nothing is waiting on this,
     // and a naming call that hangs must not hold a slot for the next
     // turn to queue behind.
@@ -2987,10 +2997,14 @@ export async function createAgentRuntime(
           }),
       });
       if (title === null) return;
-      // Deadline or teardown fired while the completion was in flight:
-      // the store below may already be closed, and a name is not worth
-      // a write into a runtime that is going away.
-      if (abort.signal.aborted) return;
+      // Teardown started while the completion was in flight: the store
+      // below is closing, and a name is not worth a write into a runtime
+      // that is going away. Keyed on teardown, not on `abort.signal`,
+      // because the signal also carries the 20 s deadline — and that
+      // deadline exists only to stop a hung call holding a side-call
+      // slot, not to veto a title that did arrive. Nothing awaits
+      // between here and the save, so the store cannot close under it.
+      if (shutdownCalled) return;
       const current = sessionStore.load(state.id) ?? state;
       // Lost the race, or someone named it in between: the first name
       // wins, because a label the operator has already navigated by must
