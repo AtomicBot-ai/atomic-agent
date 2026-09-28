@@ -115,7 +115,17 @@ export class GrammarError extends LlmFailure {
  *    `reason=empty` + `transport=native_tools` pair at `repair` when the
  *    repair is empty too. Without `stage` those two are one bucket.
  *
- * Both are diagnostic only — nothing branches on either.
+ * Both started out diagnostic, but the pair is now load-bearing control
+ * flow: `isRecoverableEmptyCompletion` (`src/agent/empty-completion-recovery.ts`)
+ * gates the agent loop's one empty-completion retry on
+ * `transport === "native_tools" && stage === "initial"` exactly, so the
+ * two other `reason=empty` shapes the split above describes never reach
+ * it. That is the only branch on these fields; the rest of their readers
+ * only report them — the scrubber lifts both onto the `tool_transport` /
+ * `failure_stage` Sentry tags, and `detectModelFailure` words its
+ * truncated message off the same `stage` value one step earlier, from its
+ * own option. So leaving either off a `reason=empty` throw silently
+ * withdraws the retry: tag them at the throw site.
  */
 export class ModelError extends LlmFailure {
   readonly category = "model" as const;
