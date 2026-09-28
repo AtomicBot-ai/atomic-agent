@@ -246,7 +246,13 @@ export function PromptMetaBar({
             number, not the content's — a column that painted fewer rows
             than were reserved would leave a blank stripe, and one that
             painted more would hide a row of transcript. Fixing it makes
-            the bar exactly as tall as `ComposerSlot` reserved. */}
+            the bar exactly as tall as `ComposerSlot` reserved.
+
+            This and `MetaLeft`'s own `height` are belt and braces, and
+            deliberately both: a vacuity run defeating either one alone
+            changed no frame, defeating the pair made the bar paint six
+            rows where five were planned. Keeping one would work until
+            the other moved. */}
         <Box
           flexDirection="column"
           flexGrow={1}
