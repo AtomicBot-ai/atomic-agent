@@ -48,6 +48,8 @@ const CONTENT_ONLY_EVENTS: ReadonlySet<string> = new Set([
   "procedure_created",
   "vote_applied",
   "vote_rejected",
+  // Its `reason` quotes a store error verbatim, which can carry a path.
+  "vote",
   "lesson_deprecated",
   "procedure_deprecated",
 ]);

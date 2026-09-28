@@ -167,7 +167,10 @@ import {
   createVoteRunner,
   createVoteAwareReflectionRunner,
 } from "../memory/voting/index.js";
-import type { VoteRunnerLlmComplete } from "../memory/voting/index.js";
+import type {
+  VoteRunnerLlmComplete,
+  VoteTraceEvent,
+} from "../memory/voting/index.js";
 import {
   createMemoryHealthAnnouncer,
   observeVoteRunnerHealth,
@@ -2269,6 +2272,58 @@ export async function createAgentRuntime(
           : {}),
       }),
     );
+    // Memory-v2 phase 7a — wire trace emission through the
+    // per-session recorder owned by the runtime. The recorder map
+    // (`recorders`) is keyed by sessionId; we resolve it lazily on
+    // every event so a session created after the runtime booted is
+    // still observable. Reflection runs fire-and-forget after
+    // `turn_finished`, so a missing recorder is a normal "tracing
+    // disabled for this session" outcome, not an error.
+    //
+    // Shared by the runner and the decorator: the decorator's two
+    // bail-outs return before `run()` is reached, so they are the only
+    // ones that can report those turns, and their row must land in the
+    // same stream under the same event type or the trace still reads
+    // as "voting off".
+    const emitVoteTrace = (event: VoteTraceEvent) => {
+      const recorder = touchRecorder(event.sessionId);
+      if (event.type === "run") {
+        recorder?.recordVote({
+          outcome: event.outcome,
+          ...(typeof event.candidates === "number"
+            ? { candidates: event.candidates }
+            : {}),
+          reason: event.reason,
+        });
+        // The runner's outcomes reach the health tracker through
+        // `observeVoteRunnerHealth`; a pre-runner bail-out has no
+        // result to read, so it folds itself in here.
+        memoryHealth.observe(
+          event.sessionId,
+          "vote",
+          event.outcome,
+          event.reason,
+        );
+        return;
+      }
+      if (!recorder) return;
+      if (event.type === "applied") {
+        recorder.recordVoteApplied({
+          kind: event.kind,
+          targetId: event.targetId,
+          direction: event.direction,
+          score: event.score,
+          clampHit: event.clampHit,
+        });
+      } else {
+        recorder.recordVoteRejected({
+          kind: event.kind,
+          targetId: event.targetId,
+          direction: event.direction,
+          reason: event.reason,
+        });
+      }
+    };
     const voteRunner = createVoteRunner({
       llmComplete: voteLlmComplete,
       voteStore,
@@ -2278,34 +2333,7 @@ export async function createAgentRuntime(
       eventLogMaxRows: config.memory.voting.eventLogMaxRows,
       logger,
       metrics,
-      // Memory-v2 phase 7a — wire trace emission through the
-      // per-session recorder owned by the runtime. The recorder
-      // map (`recorders`) is keyed by sessionId; we resolve it
-      // lazily on every event so a session created after the
-      // runtime booted is still observable. Reflection runs
-      // fire-and-forget after `turn_finished`, so a missing
-      // recorder is a normal "tracing disabled for this session"
-      // outcome, not an error.
-      emitTrace: (event) => {
-        const recorder = touchRecorder(event.sessionId);
-        if (!recorder) return;
-        if (event.type === "applied") {
-          recorder.recordVoteApplied({
-            kind: event.kind,
-            targetId: event.targetId,
-            direction: event.direction,
-            score: event.score,
-            clampHit: event.clampHit,
-          });
-        } else {
-          recorder.recordVoteRejected({
-            kind: event.kind,
-            targetId: event.targetId,
-            direction: event.direction,
-            reason: event.reason,
-          });
-        }
-      },
+      emitTrace: emitVoteTrace,
     });
     reflectionRunner = createVoteAwareReflectionRunner({
       reflection: reflectionRunner,
@@ -2317,6 +2345,7 @@ export async function createAgentRuntime(
       profileStore,
       procedureStore: config.memory.procedures.enabled ? procedureStore : null,
       logger,
+      emitTrace: emitVoteTrace,
     });
   }
 

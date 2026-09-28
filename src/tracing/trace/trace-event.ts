@@ -39,6 +39,7 @@ export type TraceEvent =
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
+  | TraceVote
   | TraceProcedureCreated
   | TraceProcedureDeprecated
   | TraceProfileClipped
@@ -391,6 +392,24 @@ export interface TraceVoteRejected extends TraceEventBase {
   kind: "memory" | "lesson" | "profile" | "procedure" | "unknown";
   targetId: number | null;
   direction: 1 | -1 | null;
+  reason: string;
+}
+
+/**
+ * Run-level outcome of one vote sub-call, as opposed to the per-vote
+ * `vote_applied` / `vote_rejected` rows above. Emitted only for the
+ * routes that end a vote turn *before* `VoteRunner.run` is reached —
+ * the `vote-aware-reflection` decorator's two bail-outs. Everything
+ * the runner itself decides is reported through `run()`'s result
+ * (`observeVoteRunnerHealth` reads it there) plus the per-vote rows,
+ * so without this row an empty candidate set and a store that could
+ * not be read both look exactly like `memory.voting.enabled=false`.
+ */
+export interface TraceVote extends TraceEventBase {
+  type: "vote";
+  outcome: "skipped" | "failed";
+  /** Candidates that survived hydration — `0` on a skip. */
+  candidates?: number;
   reason: string;
 }
 

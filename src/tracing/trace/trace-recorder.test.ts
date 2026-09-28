@@ -881,6 +881,37 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  // The run-level `vote` row: the decorator's two pre-runner
+  // bail-outs are the only place a vote turn's outcome can be said.
+  it("emits vote with the outcome, the reason and candidates", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-run", emit, now });
+    rec.recordVote({
+      outcome: "skipped",
+      candidates: 0,
+      reason: "no candidates surfaced",
+    });
+    expect(events[0]).toMatchObject({
+      type: "vote",
+      sessionId: "s-vote-run",
+      seq: 0,
+      outcome: "skipped",
+      candidates: 0,
+      reason: "no candidates surfaced",
+    });
+  });
+
+  it("omits vote candidates when the count is unknown", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-fail", emit, now });
+    rec.recordVote({
+      outcome: "failed",
+      reason: "candidate hydration failed: boom",
+    });
+    expect(events[0]).toMatchObject({ type: "vote", outcome: "failed" });
+    expect(events[0]).not.toHaveProperty("candidates");
+  });
+
   it("emits query_rewriter with outcome only", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-rw", emit, now });

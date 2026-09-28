@@ -80,6 +80,19 @@ export interface TraceRecorder {
     reason: string;
   }): void;
   /**
+   * Emit the run-level `vote` trace event for a vote turn that ended
+   * before `VoteRunner.run` was reached — the `vote-aware-reflection`
+   * decorator's bail-outs. The runner's own outcomes travel in
+   * `run()`'s result, so this is the only row that separates "nothing
+   * surfaced" and "the stores could not be read" from voting being
+   * switched off.
+   */
+  recordVote(payload: {
+    outcome: "skipped" | "failed";
+    candidates?: number;
+    reason: string;
+  }): void;
+  /**
    * Memory-v2. Emit a `reflection` trace event for the end-of-turn
    * SET/NOTE/EVOLVE extraction sub-call. Fired fire-and-forget after
    * `turn_finished`; the recorder owns the monotonic `seq`.
@@ -337,6 +350,19 @@ export function createTraceRecorder(
         kind: payload.kind,
         targetId: payload.targetId,
         direction: payload.direction,
+        reason: payload.reason,
+      });
+    },
+    recordVote(payload) {
+      push({
+        type: "vote",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        outcome: payload.outcome,
+        ...(typeof payload.candidates === "number"
+          ? { candidates: payload.candidates }
+          : {}),
         reason: payload.reason,
       });
     },
