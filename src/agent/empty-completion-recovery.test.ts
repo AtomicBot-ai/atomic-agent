@@ -153,12 +153,49 @@ describe("Sentry grouping of a doubled empty", () => {
     // passes `{ cause: err }`, and `causeType` wins over `reason`.
     expect(firstPrint[3]).toBe("empty");
     expect(doubledPrint[3]).toBe("ModelError");
-    // Slot 4 is the top frame, and it is IDENTICAL: `pickFrames` prefers
-    // the cause's stack. It cannot rescue the grouping — a fingerprint is
-    // equal only element-wise.
-    expect(doubledPrint[4]).toBe(firstPrint[4]);
+    // The LAST slot is the top frame, and it is IDENTICAL: `pickFrames`
+    // prefers the cause's stack, so the wrapper reports the frame where
+    // the original was constructed, not its own. It cannot rescue the
+    // grouping — a fingerprint is equal only element-wise.
+    //
+    // Anchored on the length and on the frame's actual value, not on a
+    // bare index: `expect(doubledPrint[4]).toBe(firstPrint[4])` passes
+    // vacuously (`undefined === undefined`) the moment `topFrame` moves
+    // or leaves the fingerprint, which is exactly the edit this assertion
+    // exists to catch. `toHaveLength(5)` is deliberate: a PR that adds a
+    // fingerprint element MUST fail here and update the count knowingly.
+    expect(firstPrint).toHaveLength(5);
+    expect(firstPrint.at(-1)).toBe("empty-completion-recovery.test.ts");
+    expect(doubledPrint.at(-1)).toBe(firstPrint.at(-1));
     // Everything else matches too, which is why the split is easy to miss.
     expect(doubledPrint.slice(0, 3)).toEqual(firstPrint.slice(0, 3));
+  });
+
+  it("puts the grammar and post-repair empties in the SAME issue as the recoverable one", () => {
+    // `transport` and `stage` are Sentry tags, never fingerprint
+    // elements, so all three `reason=empty` shapes the step executor can
+    // throw share one issue — and only the first of them is eligible for
+    // the recovery. Any volume read off the no-`cause_type` bucket has to
+    // be filtered on `tool_transport` / `failure_stage` first. This pins
+    // the conflation the doc comment describes; it is not an endorsement.
+    const recoverable = fingerprintOf(emptyOn("native_tools", "initial"));
+    const grammarInitial = fingerprintOf(emptyOn("grammar", "initial"));
+    const nativeRepair = fingerprintOf(emptyOn("native_tools", "repair"));
+    // The untagged shape too: the fields contribute nothing to grouping.
+    const bare = fingerprintOf(new ModelError("empty", "nothing came back"));
+
+    expect(grammarInitial).toEqual(recoverable);
+    expect(nativeRepair).toEqual(recoverable);
+    expect(bare).toEqual(recoverable);
+    expect(recoverable[3]).toBe("empty");
+
+    // The tags DO tell them apart — which is the whole remedy.
+    expect(tagsOf(emptyOn("grammar", "initial")).tool_transport).toBe(
+      "grammar",
+    );
+    expect(tagsOf(emptyOn("native_tools", "repair")).failure_stage).toBe(
+      "repair",
+    );
   });
 
   it("leaves the operator-facing rewrite out of the payload", () => {
