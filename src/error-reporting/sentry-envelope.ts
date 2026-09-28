@@ -83,11 +83,11 @@ export function buildEnvelope(
     // literal `"unknown"`.
     //
     // `upstreamErrorType` is a separate element rather than one more `??`
-    // fallback because on the provider path the discriminator above is
-    // always won by `causeType` (`OpenAiHttpError`), which every provider
-    // failure shares — so a context window that is too small and a wrong
-    // model id landed under a single shortId with nothing to tell them
-    // apart.
+    // fallback because on the provider path the discriminator above has
+    // nothing left to separate: every provider failure shares the single
+    // value `OpenAiHttpError`, so a context window that is too small and
+    // a wrong model id land under one shortId with nothing in the event
+    // to tell them apart.
     //
     // Spread, not `?? ""`: an event without the field must keep the
     // fingerprint it has today, element for element, so nothing that is
