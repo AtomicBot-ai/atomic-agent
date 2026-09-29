@@ -66,7 +66,16 @@ atag
 > Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI — it opens a new terminal window with a fresh atomic-agent in the same directory.
 
 > [!TIP]
-> Coming from another agent? The first run offers to bring your data over from **Hermes, OpenClaw, Claude Code, Codex, Pi, or Oh-My-Pi** — skills, memory, MCP servers, sessions, cron jobs, and (opt-in) provider keys, with a dry-run preview before anything is written. Later, run `/import` in the TUI or `atomic-agent import <hermes|openclaw|claude-code|codex|pi|oh-my-pi>` from the shell.
+> Coming from another agent? The first run offers to bring your data over, with a dry-run preview before anything is written. What moves depends on the source:
+>
+> - **Claude Code:** skills, memory, MCP servers, sessions, and (opt-in) provider keys
+> - **Codex:** skills, memory, sessions, and (opt-in) provider keys
+> - **Oh-My-Pi:** skills, MCP servers, and sessions
+> - **Pi:** skills and sessions
+> - **Hermes:** sessions, cron jobs, and (opt-in) provider keys
+> - **OpenClaw:** sessions and cron jobs
+>
+> Later, run `/import` in the TUI or `atomic-agent import <hermes|openclaw|claude-code|codex|pi|oh-my-pi>` from the shell.
 
 ### Uninstall
 
