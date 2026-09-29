@@ -103,7 +103,40 @@ export function createOpenAiStreamConsumer(
       let earlyStop: CompletionEarlyStop | undefined;
       try {
         while (true) {
-          if (signal?.aborted) break;
+          if (signal?.aborted) {
+            // The operator stopped the turn (Esc+1, `/abort`, Ctrl+C).
+            // Breaking alone leaves the request open with a body nobody
+            // reads, for the life of the process: `openAiFetch` detaches
+            // this signal from the fetch's own `AbortController` the
+            // moment the response resolves — it must, because the
+            // consumer owns the signal from then on — and never hands
+            // that controller out, so cancelling the body is the only
+            // thing left that can close the socket. An
+            // openai-compatible local server frees its llama.cpp slot
+            // when the *connection* closes, not when its client stops
+            // reading (#501), so an undrained body also keeps a slot
+            // that every later completion queues behind.
+            //
+            // Cancelled through the reader rather than the stream: the
+            // stream is still locked here, and `cancel()` on a locked
+            // stream is refused — the same reason `readJsonBody` reaches
+            // for the reader on the unary path. The rejection is
+            // swallowed: the caller is already seeing a cancellation and
+            // must not get a transport failure instead, which
+            // `classifyFailure` would file as `transport` and
+            // `shouldAdvance` as a provider-down signal — restarting the
+            // completion the user just stopped on the next link.
+            //
+            // Not awaited, as in #501 and `readJsonBody`:
+            // `ReadableStreamCancel` closes the stream synchronously
+            // *before* it calls the source's cancel, so nothing below
+            // can observe whether that cancel settled — while awaiting a
+            // source whose cancel never settles would wedge this
+            // generator, and with it the `stream.return()` teardown
+            // above it.
+            void reader.cancel(signal.reason).catch(() => {});
+            break;
+          }
           const { done, value } = await reader.read();
           if (done) {
             // Flush TextDecoder state and treat a final non-empty SSE event
