@@ -27,6 +27,7 @@ export {
   BATCH_LOOP_LABEL,
   LOOP_VETO_DENIED_REASON,
   LOOP_WARNING_BUCKET_SIZE,
+  WANDERING_CEILING_SHARE,
   TEST_REPEAT_WARNING_THRESHOLD,
   READ_REPEAT_WARNING_THRESHOLD,
 } from "./loop-detector.js";
@@ -34,6 +35,7 @@ export type {
   ToolLoopTrackerOptions,
   LoopCheckVerdict,
   LoopCheckLevel,
+  WanderingStop,
   TestRepeatCheck,
   ReadRepeatCheck,
 } from "./loop-detector.js";
