@@ -279,6 +279,13 @@ export class ChatOrchestrator {
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
       },
+      onManagedPortMoved: async (url) => {
+        // Same three steps as saving a URL by hand: the provider's base
+        // URL was frozen at boot, the header and the poller read it too.
+        await runtime.reloadLlmProvider("local-llama");
+        bus.emit({ type: "llama_url_changed", url });
+        this.llmHealth.updateUrl(url);
+      },
       onManagedModelActivated: () => {
         // The operator put a model live and it actually serves — the
         // local equivalent of a verified cloud key. Deliberately NOT on
