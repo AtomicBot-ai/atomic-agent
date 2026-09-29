@@ -354,6 +354,111 @@ describe("openai stream consumer generation id (F29)", () => {
     expect(readGenerationId(err)).toBe("gen-504");
   });
 
+  it("throws when a chunk finishes with an error after content has streamed", async () => {
+    // Gemini through OpenRouter: the prose before a function call, then the
+    // call abandoned as MALFORMED_FUNCTION_CALL and no error object at all.
+    // Taken as a stop, that prose became the assistant's answer.
+    const body =
+      sseFrame({
+        id: "gen-malformed",
+        model: "google/gemini-3.8-flash",
+        choices: [
+          {
+            index: 0,
+            delta: { content: "I am delegating the implementation across 3 parallel tasks" },
+            finish_reason: null,
+          },
+        ],
+      }) +
+      sseFrame({
+        id: "gen-malformed",
+        model: "google/gemini-3.8-flash",
+        choices: [
+          {
+            index: 0,
+            delta: { content: "" },
+            finish_reason: "error",
+            native_finish_reason: "MALFORMED_FUNCTION_CALL",
+          },
+        ],
+      }) +
+      DONE;
+    const consumer = createOpenAiStreamConsumer("delta_reasoning");
+    const iterator = consumer.consume(bodyOf(body), undefined);
+    let err: unknown;
+    try {
+      for (;;) {
+        const step = await iterator.next();
+        if (step.done) break;
+      }
+    } catch (caught) {
+      err = caught;
+    }
+    expect(err).toBeInstanceOf(OpenAiSseError);
+    expect((err as OpenAiSseError).status).toBe(502);
+    expect((err as OpenAiSseError).message).toBe(
+      "the provider ended the completion with an error (MALFORMED_FUNCTION_CALL)",
+    );
+    expect((err as OpenAiSseError).generationId).toBe("gen-malformed");
+  });
+
+  it("reads an error finish whatever case the service sends it in", async () => {
+    const body =
+      sseFrame({
+        id: "gen-upper",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "half a sentence" }, finish_reason: null }],
+      }) +
+      sseFrame({
+        id: "gen-upper",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "" }, finish_reason: "ERROR" }],
+      }) +
+      DONE;
+    const consumer = createOpenAiStreamConsumer("delta_reasoning");
+    const iterator = consumer.consume(bodyOf(body), undefined);
+    const err = await (async () => {
+      try {
+        for (;;) {
+          const step = await iterator.next();
+          if (step.done) return null;
+        }
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    expect(err).toBeInstanceOf(OpenAiSseError);
+    expect((err as OpenAiSseError).message).toBe(
+      "the provider ended the completion with an error",
+    );
+  });
+
+  it("leaves an error finish on the first event to the empty-completion path", async () => {
+    // Nothing streamed yet, so the throw would land before the stream is
+    // primed — where the fallback chain swaps links and arms a cooldown. An
+    // empty completion is recovered in place instead (`isRecoverableEmptyCompletion`),
+    // which is the right answer for a model that simply botched one call.
+    const result = await drain(
+      sseFrame({
+        id: "gen-first-event",
+        model: "google/gemini-3.8-flash",
+        choices: [
+          {
+            index: 0,
+            delta: { content: "" },
+            finish_reason: "error",
+            native_finish_reason: "MALFORMED_FUNCTION_CALL",
+          },
+        ],
+      }) + "data: [DONE]\n\n",
+    );
+    expect(result.content).toBe("");
+    // No text and no tool call: exactly the shape the empty-completion
+    // recovery is keyed on.
+    expect(result.toolCalls).toBeUndefined();
+    expect(result.finishReason).toBe("error");
+  });
+
   it("attaches the id to a body that died after output", async () => {
     const chunk = new TextEncoder().encode(
       sseFrame({
