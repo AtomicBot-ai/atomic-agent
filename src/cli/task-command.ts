@@ -2,6 +2,7 @@ import { getConfig } from "../config/index.js";
 import {
   TaskStore,
   TaskValidationError,
+  resolveScheduledFor,
   type TaskRecord,
   type TaskSchedule,
   type TaskStatus,
@@ -23,7 +24,7 @@ const HELP =
     "  show <id>                 Print one task as JSON",
     "  create [--session <id>] --message <text>",
     "         [--max-attempts N] [--max-steps N]",
-    "         [--at <unix-ms> | --cron <expr> | --every <seconds>] [--tz <iana>]",
+    "         [--at <unix-ms|iso-8601> | --cron <expr> | --every <seconds>] [--tz <iana>]",
     "         [--notify telegram]",
     "                            Persist a new task (origin=cli). Omit --session for a",
     "                            lazy one-shot (fresh ephemeral session at run time) or",
@@ -147,7 +148,7 @@ async function handleCreate(args: string[]): Promise<number> {
 
   if (!message) {
     process.stderr.write(
-      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N]\n",
+      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N]\n",
     );
     return 1;
   }
@@ -187,9 +188,11 @@ async function handleCreate(args: string[]): Promise<number> {
 
   let schedule: TaskSchedule | null = null;
   if (atRaw !== undefined) {
-    const at = Number.parseInt(atRaw, 10);
-    if (!Number.isFinite(at)) {
-      process.stderr.write("--at must be a Unix timestamp in milliseconds\n");
+    const at = parseAtTime(atRaw);
+    if (at === null) {
+      process.stderr.write(
+        `--at must be a Unix timestamp in milliseconds or an ISO-8601 time, got: ${atRaw}\n`,
+      );
       return 1;
     }
     schedule = { kind: "at", at };
@@ -255,7 +258,9 @@ async function handleCreate(args: string[]): Promise<number> {
       maxAttempts,
       maxSteps,
       ...(notify ? { notify } : {}),
-      ...(schedule ? { schedule } : {}),
+      ...(schedule
+        ? { schedule, scheduledFor: resolveScheduledFor(schedule, Date.now()) }
+        : {}),
     });
     process.stdout.write(`${JSON.stringify(created, null, 2)}\n`);
     return 0;
@@ -268,6 +273,17 @@ async function handleCreate(args: string[]): Promise<number> {
   } finally {
     store.close();
   }
+}
+
+/**
+ * `--at` accepts all-digit Unix milliseconds or anything `Date.parse`
+ * understands (ISO-8601). A bare `parseInt` would read
+ * "2030-01-01T09:00:00Z" as 2030 ms (1970) and fire on the next tick.
+ */
+function parseAtTime(raw: string): number | null {
+  const trimmed = raw.trim();
+  const at = /^\d+$/.test(trimmed) ? Number(trimmed) : Date.parse(trimmed);
+  return Number.isFinite(at) ? at : null;
 }
 
 function handleCancel(args: string[]): number {
