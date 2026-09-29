@@ -46,6 +46,7 @@ import {
   ModelProfileManager,
   PLAIN_INSTRUCT_PROFILE,
 } from "../llm/index.js";
+import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { checkProfileGrammarAligned } from "../llm/profile-invariants.js";
 import { DEFAULT_SLOT_COUNT, SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
@@ -761,6 +762,13 @@ export async function createAgentRuntime(
   options: CreateAgentRuntimeOptions,
 ): Promise<AgentRuntime> {
   const config = getConfig();
+  // Before anything can make a request: Node's global `fetch` applies a
+  // 300 s deadline of its own under every AbortSignal this codebase
+  // arms, which made `firstTokenTimeoutMs`, `streamTotalTimeoutMs`, the
+  // `/slots` unreachable budget and a Fusion worker's queue budget all
+  // unreachable, and turned a wedged llama-server into a bare
+  // `fetch failed` at 306 s. See `installTransportDeadlines`.
+  installTransportDeadlines(config);
   const workingDir = resolve(options.workingDir);
 
   const logSinks: LogSink[] = options.handlers?.logSinks ?? [];
