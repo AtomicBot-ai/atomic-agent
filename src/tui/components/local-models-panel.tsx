@@ -236,6 +236,88 @@ function DownloadBanner({
   );
 }
 
+/**
+ * One chat model's detail view: description, files on disk, RAM/VRAM
+ * fit and what Enter does next. Shared by the Models tab and the LLM
+ * tab's Local pane (`i`).
+ */
+export function LocalModelDetail({
+  row,
+  panel,
+}: {
+  row: LocalModelRow;
+  panel: LocalModelsPanelState;
+}): ReactElement {
+  const m = row.def;
+  // A pull for this very row is in flight: offering "Enter — download"
+  // again is both wrong and re-triggerable.
+  const rowPull =
+    panel.pull &&
+    !panel.pull.error &&
+    panel.pull.kind === "chat" &&
+    panel.pull.modelId === row.id
+      ? panel.pull
+      : null;
+  const enterHint = rowPull
+    ? rowPull.totalBytes > 0
+      ? `downloading… ${rowPull.percent}% · x cancel`
+      : "downloading… · x cancel"
+    : !row.downloaded
+      ? row.def.supportsVision
+        ? "Enter — download (gguf + mmproj)"
+        : "Enter — download"
+      : row.mmprojStatus === "missing"
+        ? "Enter — download mmproj"
+        : !row.active
+          ? "Enter — set active"
+          : "Enter — already active";
+  const fit = classifyRamFit(m, panel.totalRamGb);
+  const vramFit = classifyVramFit(m, panel.gpuBudgetGb);
+  return (
+    <Box flexDirection="column">
+      <Text bold color={theme.colors.accentSoft}>
+        {m.name}
+        {m.tag ? <Text color={theme.colors.accent}> [{m.tag}]</Text> : null}
+      </Text>
+      <Text color={theme.colors.muted}>{m.id}</Text>
+      <Text>{m.description}</Text>
+      <Text color={row.downloaded ? "green" : theme.colors.muted}>
+        status: {row.downloaded ? "downloaded" : "not downloaded"}
+        {row.active ? " · active" : ""}
+      </Text>
+      {row.def.supportsVision ? (
+        <Text
+          color={
+            row.mmprojStatus === "downloaded"
+              ? "green"
+              : row.mmprojStatus === "missing"
+                ? "yellow"
+                : theme.colors.muted
+          }
+        >
+          mmproj: {row.mmprojStatus}
+        </Text>
+      ) : null}
+      <Text color={theme.colors.muted}>
+        RAM {m.minRamGb}–{m.recommendedRamGb} GB · ctx {m.contextLabel} ·{" "}
+        {m.sizeLabel}
+      </Text>
+      {fit && panel.totalRamGb !== null ? (
+        <Text color={ramFitColor(fit)}>
+          host RAM {panel.totalRamGb} GB — {ramFitLabel(fit, m)}
+        </Text>
+      ) : null}
+      {vramFit === "insufficient" && panel.gpuBudgetGb !== null ? (
+        <Text color={theme.colors.warnStrong}>
+          Not enough VRAM — needs ~{estimateModelVramNeedGb(m).toFixed(1)} GB,
+          GPU ~{panel.gpuBudgetGb.toFixed(1)} GB — may fail to load / crash
+        </Text>
+      ) : null}
+      <Text color={theme.colors.muted}>{enterHint} · Esc back</Text>
+    </Box>
+  );
+}
+
 export function LocalModelsPanel({
   panel,
   maxRows = 12,
@@ -257,75 +339,7 @@ export function LocalModelsPanel({
     if (!ref || ref.kind !== "chat") {
       return <Text color={theme.colors.muted}>(no row)</Text>;
     }
-    const row = ref.row;
-    const m = row.def;
-    // A pull for this very row is in flight: offering "Enter — download"
-    // again is both wrong and re-triggerable.
-    const rowPull =
-      panel.pull &&
-      !panel.pull.error &&
-      panel.pull.kind === "chat" &&
-      panel.pull.modelId === row.id
-        ? panel.pull
-        : null;
-    const enterHint = rowPull
-      ? rowPull.totalBytes > 0
-        ? `downloading… ${rowPull.percent}% · x cancel`
-        : "downloading… · x cancel"
-      : !row.downloaded
-        ? row.def.supportsVision
-          ? "Enter — download (gguf + mmproj)"
-          : "Enter — download"
-        : row.mmprojStatus === "missing"
-          ? "Enter — download mmproj"
-          : !row.active
-            ? "Enter — set active"
-            : "Enter — already active";
-    const fit = classifyRamFit(m, panel.totalRamGb);
-    const vramFit = classifyVramFit(m, panel.gpuBudgetGb);
-    return (
-      <Box flexDirection="column">
-        <Text bold color={theme.colors.accentSoft}>
-          {m.name}
-          {m.tag ? <Text color={theme.colors.accent}> [{m.tag}]</Text> : null}
-        </Text>
-        <Text color={theme.colors.muted}>{m.id}</Text>
-        <Text>{m.description}</Text>
-        <Text color={row.downloaded ? "green" : theme.colors.muted}>
-          status: {row.downloaded ? "downloaded" : "not downloaded"}
-          {row.active ? " · active" : ""}
-        </Text>
-        {row.def.supportsVision ? (
-          <Text
-            color={
-              row.mmprojStatus === "downloaded"
-                ? "green"
-                : row.mmprojStatus === "missing"
-                  ? "yellow"
-                  : theme.colors.muted
-            }
-          >
-            mmproj: {row.mmprojStatus}
-          </Text>
-        ) : null}
-        <Text color={theme.colors.muted}>
-          RAM {m.minRamGb}–{m.recommendedRamGb} GB · ctx {m.contextLabel} ·{" "}
-          {m.sizeLabel}
-        </Text>
-        {fit && panel.totalRamGb !== null ? (
-          <Text color={ramFitColor(fit)}>
-            host RAM {panel.totalRamGb} GB — {ramFitLabel(fit, m)}
-          </Text>
-        ) : null}
-        {vramFit === "insufficient" && panel.gpuBudgetGb !== null ? (
-          <Text color={theme.colors.warnStrong}>
-            Not enough VRAM — needs ~{estimateModelVramNeedGb(m).toFixed(1)} GB,
-            GPU ~{panel.gpuBudgetGb.toFixed(1)} GB — may fail to load / crash
-          </Text>
-        ) : null}
-        <Text color={theme.colors.muted}>{enterHint} · Esc back</Text>
-      </Box>
-    );
+    return <LocalModelDetail row={ref.row} panel={panel} />;
   }
   // `maxRows` is the TOTAL budget for the tab content. Split it between
   // the (possibly open) modals, the status footer, and the windowed

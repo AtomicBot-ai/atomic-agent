@@ -241,6 +241,9 @@ export function isPanelModalOpen(state: TuiState): boolean {
       state.llmPanel.externalUrlDraft !== null ||
       state.llmPanel.externalCompatSteerUrl !== null ||
       state.llmPanel.stopLocalDaemonsPrompt !== null ||
+      // The Local pane's model detail view owns Esc (back to the list).
+      (state.llmPanel.mode === "local" &&
+        state.localModelsPanel.mode === "detail") ||
       // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
       // must not cycle the nav away mid-typing.
       (state.llmPanel.mode === "cloud" &&
