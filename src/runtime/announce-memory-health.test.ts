@@ -5,10 +5,13 @@ import type {
   VoteRunner,
   VoteRunnerResult,
 } from "../memory/voting/vote-runner.js";
+import type { TraceRecorder } from "../tracing/trace/trace-recorder.js";
 
 import {
   createMemoryHealthAnnouncer,
+  createVoteTraceSink,
   observeVoteRunnerHealth,
+  type MemoryHealthAnnouncer,
 } from "./announce-memory-health.js";
 
 function harness() {
@@ -77,6 +80,122 @@ describe("createMemoryHealthAnnouncer", () => {
     expect(() => {
       for (let i = 0; i < 3; i += 1) announcer.observe("s", "vote", "failed");
     }).not.toThrow();
+  });
+});
+
+/**
+ * The sink is the whole of what makes a vote turn observable, and the
+ * split between its two branches is what keeps the health fold honest:
+ * the runner's outcomes are already folded by `observeVoteRunnerHealth`
+ * from `run()`'s result, the decorator's are not folded anywhere else.
+ */
+describe("createVoteTraceSink", () => {
+  function sinkHarness(opts?: { traced?: boolean }) {
+    const recordVote = vi.fn();
+    const recordVoteApplied = vi.fn();
+    const recordVoteRejected = vi.fn();
+    const observe = vi.fn();
+    const recorder = {
+      recordVote,
+      recordVoteApplied,
+      recordVoteRejected,
+    } as unknown as TraceRecorder;
+    const health: MemoryHealthAnnouncer = { observe };
+    const sink = createVoteTraceSink({
+      resolveRecorder: () => (opts?.traced === false ? undefined : recorder),
+      health,
+    });
+    return { sink, recordVote, recordVoteApplied, recordVoteRejected, observe };
+  }
+
+  it("writes the run row and folds its outcome into health", () => {
+    const h = sinkHarness();
+    h.sink({
+      type: "run",
+      sessionId: "s-run",
+      outcome: "failed",
+      reason: "candidate hydration failed: boom",
+    });
+    expect(h.recordVote).toHaveBeenCalledWith({
+      outcome: "failed",
+      reason: "candidate hydration failed: boom",
+    });
+    expect(h.observe).toHaveBeenCalledWith(
+      "s-run",
+      "vote",
+      "failed",
+      "candidate hydration failed: boom",
+    );
+    expect(h.recordVoteApplied).not.toHaveBeenCalled();
+  });
+
+  it("carries the candidate count when the row has one", () => {
+    const h = sinkHarness();
+    h.sink({
+      type: "run",
+      sessionId: "s-skip",
+      outcome: "skipped",
+      candidates: 0,
+      reason: "no candidates surfaced",
+    });
+    expect(h.recordVote).toHaveBeenCalledWith({
+      outcome: "skipped",
+      candidates: 0,
+      reason: "no candidates surfaced",
+    });
+  });
+
+  it("does not fold per-vote rows into health — the runner's result already did", () => {
+    const h = sinkHarness();
+    h.sink({
+      type: "applied",
+      sessionId: "s-vote",
+      kind: "memory",
+      targetId: 4,
+      direction: 1,
+      score: 2,
+      clampHit: false,
+    });
+    h.sink({
+      type: "rejected",
+      sessionId: "s-vote",
+      kind: "lesson",
+      targetId: null,
+      direction: -1,
+      reason: "not in allowlist",
+    });
+    expect(h.recordVoteApplied).toHaveBeenCalledWith({
+      kind: "memory",
+      targetId: 4,
+      direction: 1,
+      score: 2,
+      clampHit: false,
+    });
+    expect(h.recordVoteRejected).toHaveBeenCalledWith({
+      kind: "lesson",
+      targetId: null,
+      direction: -1,
+      reason: "not in allowlist",
+    });
+    expect(h.observe).not.toHaveBeenCalled();
+    expect(h.recordVote).not.toHaveBeenCalled();
+  });
+
+  it("still folds health for a session with tracing off", () => {
+    const h = sinkHarness({ traced: false });
+    h.sink({
+      type: "run",
+      sessionId: "s-untraced",
+      outcome: "failed",
+      reason: "candidate hydration failed: boom",
+    });
+    expect(h.recordVote).not.toHaveBeenCalled();
+    expect(h.observe).toHaveBeenCalledWith(
+      "s-untraced",
+      "vote",
+      "failed",
+      "candidate hydration failed: boom",
+    );
   });
 });
 

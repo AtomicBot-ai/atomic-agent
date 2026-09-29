@@ -109,6 +109,25 @@ export type VoteTraceEvent =
       targetId: number | null;
       direction: 1 | -1 | null;
       reason: string;
+    }
+  | {
+      /**
+       * Run-level outcome, not a vote. `runOne` reports its own
+       * outcomes through `VoteRunnerResult` (read by
+       * `observeVoteRunnerHealth`), so this variant exists for the
+       * routes that end a vote turn before `run()` is reached — the
+       * `vote-aware-reflection` decorator's bail-outs, which nothing
+       * downstream can narrate. A distinct `TraceEvent` type from the
+       * per-vote rows, but the same union, the same sink and the same
+       * stream. `finish()`'s own outcomes are still unreported — see
+       * `TraceVote` in `trace-event.ts`.
+       */
+      type: "run";
+      sessionId: string;
+      outcome: "skipped" | "failed";
+      /** Candidates that survived hydration — `0` on a skip. */
+      candidates?: number;
+      reason: string;
     };
 
 export interface VoteRunnerDeps {

@@ -170,6 +170,7 @@ import {
 import type { VoteRunnerLlmComplete } from "../memory/voting/index.js";
 import {
   createMemoryHealthAnnouncer,
+  createVoteTraceSink,
   observeVoteRunnerHealth,
 } from "./announce-memory-health.js";
 
@@ -2329,6 +2330,18 @@ export async function createAgentRuntime(
           : {}),
       }),
     );
+    // Memory-v2 phase 7a — one sink for both legs of voting: the
+    // runner's per-vote rows and the decorator's run-level row. The
+    // decorator's two bail-outs return before `run()` is reached, so
+    // they are the only ones that can report those turns, and their
+    // row has to land in the same stream or the trace still reads as
+    // "voting off". Extracted (`createVoteTraceSink`) because nothing
+    // could reach it from in here — see its own doc for which branch
+    // folds health and why.
+    const emitVoteTrace = createVoteTraceSink({
+      resolveRecorder: touchRecorder,
+      health: memoryHealth,
+    });
     const voteRunner = createVoteRunner({
       llmComplete: voteLlmComplete,
       voteStore,
@@ -2338,34 +2351,7 @@ export async function createAgentRuntime(
       eventLogMaxRows: config.memory.voting.eventLogMaxRows,
       logger,
       metrics,
-      // Memory-v2 phase 7a — wire trace emission through the
-      // per-session recorder owned by the runtime. The recorder
-      // map (`recorders`) is keyed by sessionId; we resolve it
-      // lazily on every event so a session created after the
-      // runtime booted is still observable. Reflection runs
-      // fire-and-forget after `turn_finished`, so a missing
-      // recorder is a normal "tracing disabled for this session"
-      // outcome, not an error.
-      emitTrace: (event) => {
-        const recorder = touchRecorder(event.sessionId);
-        if (!recorder) return;
-        if (event.type === "applied") {
-          recorder.recordVoteApplied({
-            kind: event.kind,
-            targetId: event.targetId,
-            direction: event.direction,
-            score: event.score,
-            clampHit: event.clampHit,
-          });
-        } else {
-          recorder.recordVoteRejected({
-            kind: event.kind,
-            targetId: event.targetId,
-            direction: event.direction,
-            reason: event.reason,
-          });
-        }
-      },
+      emitTrace: emitVoteTrace,
     });
     reflectionRunner = createVoteAwareReflectionRunner({
       reflection: reflectionRunner,
@@ -2377,6 +2363,7 @@ export async function createAgentRuntime(
       profileStore,
       procedureStore: config.memory.procedures.enabled ? procedureStore : null,
       logger,
+      emitTrace: emitVoteTrace,
     });
   }
 

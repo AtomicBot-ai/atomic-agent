@@ -10,7 +10,7 @@ import type {
 } from "../reflection/reflection-runner.js";
 
 import type { VoteCandidate } from "./vote-prompt.js";
-import type { VoteRunner } from "./vote-runner.js";
+import type { VoteRunner, VoteTraceEvent } from "./vote-runner.js";
 
 /**
  * Memory-v2 phase 7a. Decorator that composes the existing
@@ -36,8 +36,19 @@ import type { VoteRunner } from "./vote-runner.js";
  * The decorator builds the per-kind allowlist by hydrating ids
  * from the three stores. Skipped kinds (no surfaced ids, no
  * matching rows after a stale read) simply do not contribute
- * candidates; when the merged candidate list is empty the runner
- * itself short-circuits to `skipped`.
+ * candidates.
+ *
+ * Both routes that end the turn here — an empty merged candidate
+ * list, and a hydration throw — return before `voteRunner.run()`,
+ * so the decorator narrates them itself through `emitTrace`.
+ * Delegating the empty set to the runner the way link-gen does
+ * (PR #496) is not available on this side: the runner's
+ * `minCandidates` gate answers with `skipped` in its *result* and a
+ * debug log, and its trace sink only ever carries per-vote rows, so
+ * forwarding would leave the trace as silent as the bug. Without
+ * both rows, "nothing surfaced this turn", "the stores could not be
+ * read" and `memory.voting.enabled=false` are one indistinguishable
+ * absence in the trace.
  *
  * `abortPending` is forwarded to both runners.
  */
@@ -53,8 +64,30 @@ export function createVoteAwareReflectionRunner(args: {
   previewChars?: number;
   /** Reports a hydration failure — see the guard in `reflect`. */
   logger?: StructuredLogger;
+  /**
+   * Optional trace sink for the two outcomes no other layer can
+   * report, both of which return before `voteRunner.run()`. Shape
+   * mirrors `VoteRunnerDeps.emitTrace` so bootstrap binds one sink to
+   * both and every vote row lands in one stream. Fire-safe: a throwing
+   * sink is swallowed.
+   */
+  emitTrace?: (event: VoteTraceEvent) => void;
 }): ReflectionRunner {
   const previewChars = args.previewChars ?? 80;
+  // Both call sites sit on the shutdown race this file exists for, so
+  // the sink runs while the runtime tears down and the per-session
+  // recorder it resolves may already be gone. The agent loop calls
+  // `reflect()` as a bare `void`, so an unguarded throw here would
+  // surface as an unhandled rejection — the very failure mode the
+  // hydration guard below was added to kill.
+  const safeEmit = (event: VoteTraceEvent): void => {
+    if (!args.emitTrace) return;
+    try {
+      args.emitTrace(event);
+    } catch {
+      // A sink hiccup must never derail reflection — swallow.
+    }
+  };
   return {
     async reflect(input: ReflectionInput): Promise<void> {
       try {
@@ -74,15 +107,46 @@ export function createVoteAwareReflectionRunner(args: {
       try {
         candidates = hydrateCandidates(input, args, previewChars);
       } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
         // Swallowing without a word would trade a visible crash for
         // silent curation loss, so the failure still gets a line.
         args.logger?.warn("vote candidate hydration failed", {
           sessionId: input.sessionId,
-          error: err instanceof Error ? err.message : String(err),
+          error: reason,
+        });
+        // The log left the *trace* silent: `run()` is never reached,
+        // so no per-vote row and no result-borne outcome exists, and
+        // the turn reads exactly like one with voting switched off.
+        // The reason names hydration so a dead SQLite handle is never
+        // read as a quiet "nothing to vote on".
+        safeEmit({
+          type: "run",
+          sessionId: input.sessionId,
+          outcome: "failed",
+          reason: `candidate hydration failed: ${reason}`,
         });
         return;
       }
-      if (candidates.length === 0) return;
+      if (candidates.length === 0) {
+        // A turn that surfaced nothing is a legitimate skip, but it
+        // still has to be visible as one — see the note above the
+        // factory on why the runner cannot report it from here.
+        //
+        // The reason names both numbers (the way the link runner's
+        // gate does) because an empty candidate list has two causes a
+        // reader has to separate: nothing was surfaced at all, or ids
+        // were surfaced and every one of them hydrated into no row —
+        // the evicted/stale-read shape, which points at the stores
+        // rather than at the turn.
+        safeEmit({
+          type: "run",
+          sessionId: input.sessionId,
+          outcome: "skipped",
+          candidates: 0,
+          reason: `candidates=0 of ${countSurfacedIds(input, args)} surfaced ids`,
+        });
+        return;
+      }
       try {
         await args.voteRunner.run({
           sessionId: input.sessionId,
@@ -102,6 +166,27 @@ export function createVoteAwareReflectionRunner(args: {
       args.voteRunner.abortPending(options);
     },
   };
+}
+
+/**
+ * Ids this turn offered the decorator, counting only the kinds whose
+ * store is actually wired — an id for a kind that is switched off was
+ * never a candidate, so counting it would read as a hydration miss.
+ */
+function countSurfacedIds(
+  input: ReflectionInput,
+  args: {
+    lessonStore: LessonStore | null;
+    profileStore: ProfileStore | null;
+    procedureStore?: ProcedureStore | null;
+  },
+): number {
+  return (
+    (input.recalledMemoryIds?.length ?? 0) +
+    (args.lessonStore ? (input.recalledLessonIds?.length ?? 0) : 0) +
+    (args.profileStore ? (input.recalledProfileFactIds?.length ?? 0) : 0) +
+    (args.procedureStore ? (input.recalledProcedureIds?.length ?? 0) : 0)
+  );
 }
 
 function hydrateCandidates(
