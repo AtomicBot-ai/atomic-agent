@@ -538,8 +538,23 @@ export interface AgentRuntime {
   /**
    * Create a fresh session state (id, workingDir, optional metadata),
    * persist it, and return it. User messages are fed through `runTurn`.
+   *
+   * `persist: false` keeps the state in memory only — no row, no trace
+   * file — until something saves it, which for a chat session is its
+   * first turn: `executeTurn` opens the recorder and saves the result.
+   * The TUI mints its sessions that way because an allocation nobody
+   * types into left a row the session rail hides (it lists threads that
+   * have a first prompt), so there was no row to press `x` on and
+   * nothing could ever delete it. Every caller that hands the id to
+   * something else before that first turn takes the default: a durable
+   * task writes `session_id` into `tasks.sqlite`, a webhook and a
+   * Telegram chat remember a mapping, and each expects a later `load`
+   * to answer.
    */
-  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
+  createSession(input?: {
+    metadata?: Record<string, unknown>;
+    persist?: boolean;
+  }): SessionState;
   /**
    * Drive one chat turn: append the user message, run the agent loop
    * until the model emits `reply` (or `finish`), persist the resulting
@@ -612,7 +627,8 @@ export interface AgentRuntime {
   ): Promise<RunTurnResult>;
   /**
    * Mint an in-memory fusion worker session stamped with `meta`. Unlike
-   * `createSession` it is NOT persisted and opens no trace recorder; a
+   * `createSession` — whose deferred form is saved by its first turn —
+   * a worker is never persisted and opens no trace recorder; a
    * turn run on it is `ephemeral` (no memory recall, reflection or
    * lesson bump) and is never saved, so the id never reaches the session
    * list. The orchestrator reads the returned transcript and discards
@@ -2852,13 +2868,17 @@ export async function createAgentRuntime(
   };
 
   const createSession = (
-    input: { metadata?: Record<string, unknown> } = {},
+    input: { metadata?: Record<string, unknown>; persist?: boolean } = {},
   ): SessionState => {
     const state = createEmptySessionState({
       id: `s-${randomUUID()}`,
       workingDir,
       ...(input.metadata ? { metadata: input.metadata } : {}),
     });
+    // Deferred: the first turn writes the row and opens the recorder, so
+    // an allocation nobody speaks to leaves nothing behind — neither a
+    // row nor a trace file. See `AgentRuntime.createSession`.
+    if (input.persist === false) return state;
     sessionStore.save(state);
     ensureRecorder(state);
     return state;

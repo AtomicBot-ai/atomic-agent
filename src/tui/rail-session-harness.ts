@@ -30,10 +30,10 @@ export const cloudGateFacts = (): LocalTurnGateFacts => ({
 });
 
 /**
- * The rail lists threads that have been spoken to. `+ new` mints a
- * session immediately — the store row has to exist for scheduled tasks
- * and webhooks that hold only an id — but an unnamed row says nothing,
- * so it stays off the list until its first prompt names it.
+ * The rail lists threads that have been spoken to. A stored row with no
+ * user turn is one a scheduled task or a webhook wrote — the row has to
+ * exist for the id they hold — but an unnamed row says nothing, so it
+ * stays off the list until its first prompt names it.
  */
 export function blank(id: string) {
   return createEmptySessionState({ id, workingDir: "/tmp" });
@@ -74,10 +74,13 @@ export function stubRuntime(
 ): AgentRuntime {
   let created = 0;
   return {
-    createSession: () => {
+    // The runtime's own contract: a deferred session (`persist: false`,
+    // what the TUI mints) reaches the store only when something saves
+    // it — its first turn — while a scheduled task's is written at once.
+    createSession: (input?: { persist?: boolean }) => {
       created += 1;
       const fresh = blank(`s-new-${created}`);
-      stored.unshift(fresh);
+      if (input?.persist !== false) stored.unshift(fresh);
       return fresh;
     },
     steer: () => false,
@@ -90,6 +93,14 @@ export function stubRuntime(
       countUnreadable: countUnreadable ?? (() => 0),
       listRecent: (limit: number) => stored.slice(0, limit),
       load: (id: string) => stored.find((s) => s.id === id) ?? null,
+      // An upsert, like the real store's `save`: it INSERTs a session
+      // that has no row yet (a deferred one the operator stamped a model
+      // onto) and overwrites the row of one that has.
+      save: (state: StoredSession) => {
+        const at = stored.findIndex((s) => s.id === state.id);
+        if (at >= 0) stored[at] = state;
+        else stored.unshift(state);
+      },
       delete: (id: string) => {
         const at = stored.findIndex((s) => s.id === id);
         if (at >= 0) stored.splice(at, 1);
@@ -99,6 +110,9 @@ export function stubRuntime(
       clearSessionGrants: () => undefined,
       denyPendingForSession: () => 0,
       sessionGrants: () => [],
+      // Switching into a thread re-raises the prompt its parked turn
+      // asked off screen; nothing is ever parked in these tests.
+      pendingRequestForSession: () => null,
     },
     // Deleting checks every origin's turns, not just the TUI's.
     turnController: { isBusy: () => false },
@@ -153,5 +167,8 @@ export function harness(stored: StoredSession[], options: StubOptions = {}) {
     lastOf("recent_sessions_updated");
   const picker = (): readonly SessionPickerEntry[] =>
     lastOf("session_picker_opened");
-  return { orchestrator, rail, picker, actions, written, pins };
+  // `bus` is returned for the cases that have to arrive the way the app
+  // sends them: a model pick reaches the orchestrator as an action, not
+  // as a method call.
+  return { orchestrator, bus, rail, picker, actions, written, pins };
 }
