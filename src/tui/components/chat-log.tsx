@@ -2,6 +2,7 @@ import { Box, Text, measureElement, type DOMElement } from "ink";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { computeChatViewportRows } from "../layout.js";
+import { selectExtraChromeRows } from "../select-chrome-rows.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
@@ -85,9 +86,16 @@ export function ChatLog({
   // All hooks must run unconditionally — only the JSX branches on
   // `isEmpty`. Compute viewport / measured-K / clamp regardless,
   // even when the early return for the splash branch fires below.
+  // Rows the composer's adaptive chrome is spending over its one-row
+  // baseline — the wrapped hint strip, today. They come out of the
+  // transcript: `CHROME_ROWS` counts one row for the strip, and a
+  // viewport that ignored the surplus would keep its bottom lines hidden
+  // behind the composer.
+  const extraChromeRows = selectExtraChromeRows(state, terminalSize);
   const viewport = computeChatViewportRows(
     terminalSize.rows,
     terminalSize.columns,
+    extraChromeRows,
   );
   // First-frame fallback for `K` until the post-mount `measureElement`
   // call returns the truth. Estimates are unreliable (text wraps, Yoga
@@ -132,7 +140,7 @@ export function ChatLog({
   if (isEmpty) {
     return (
       <Box flexDirection="column" flexGrow={1} justifyContent="center">
-        <SplashBanner />
+        <SplashBanner extraChromeRows={extraChromeRows} />
       </Box>
     );
   }
