@@ -240,6 +240,30 @@ describe("loadConfig", () => {
     });
   });
 
+  it("maps llm.openrouter from the file onto the runtime config (#548)", () => {
+    // The provider factory reads `config.llm.openrouter.preferCacheRoutes`
+    // and treats absence as `true`; dropping the block here made `false`
+    // in the file a no-op.
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        activeTextProvider: "openrouter",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
+        ],
+        openrouter: { preferCacheRoutes: false },
+      },
+    });
+    expect(loadConfig().llm?.openrouter).toEqual({ preferCacheRoutes: false });
+  });
+
   it("keeps non-user-facing knobs on environment variables", () => {
     process.env.ATOMIC_AGENT_LLAMA_API_KEY = "secret";
     process.env.ATOMIC_AGENT_BROWSER_CHANNEL = "msedge";
