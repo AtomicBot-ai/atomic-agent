@@ -80,6 +80,8 @@ export interface StubOptions {
   settleTurns?: boolean;
   listSummaryPage?: (options: SessionSummaryPageOptions) => SessionSummary[];
   countUnreadable?: () => number;
+  /** Every `logger.debug` message the orchestrator wrote, in order. */
+  debugLines?: string[];
   /** Seed for `tui.sessionRail.order` — the operator's manual order. */
   order?: string[];
   /** Seed for `tui.sessionRail.pinned`. */
@@ -88,7 +90,12 @@ export interface StubOptions {
 
 export function stubRuntime(
   stored: StoredSession[],
-  { settleTurns = false, listSummaryPage, countUnreadable }: StubOptions = {},
+  {
+    settleTurns = false,
+    listSummaryPage,
+    countUnreadable,
+    debugLines,
+  }: StubOptions = {},
 ): AgentRuntime {
   let created = 0;
   return {
@@ -147,6 +154,17 @@ export function stubRuntime(
     },
     profileStore: { list: () => [] },
     skillCatalog: [],
+    // `AgentRuntime.logger` is required (`bootstrap.ts`), but the TUI had
+    // no use for it until the rail's store-gone branch, so this stub —
+    // like every other one under `src/tui` — used to omit it. Without it
+    // that branch throws from inside its own catch and a store-gone test
+    // reads as a rail bug.
+    logger: {
+      debug: (message: string) => debugLines?.push(message),
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+    },
   } as unknown as AgentRuntime;
 }
 
