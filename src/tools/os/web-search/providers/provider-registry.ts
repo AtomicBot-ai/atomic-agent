@@ -1,4 +1,5 @@
 import type { AtomicAgentConfig } from "../../../../config/index.js";
+import { createAnySearchProvider } from "./anysearch-provider.js";
 import { createBraveProvider } from "./brave-provider.js";
 import { createDuckDuckGoProvider } from "./duckduckgo-provider.js";
 import { createExaProvider } from "./exa-provider.js";
@@ -35,5 +36,7 @@ export function resolveProviderByName(
       return createExaProvider(search.exa, deps);
     case "brave":
       return createBraveProvider(search.brave, deps);
+    case "anysearch":
+      return createAnySearchProvider(search.anysearch, deps);
   }
 }

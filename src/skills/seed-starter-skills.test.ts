@@ -36,6 +36,11 @@ describe("seedStarterSkillsIfMissing", () => {
     expect(first.sourceDir).toBe(source);
     expect(first.installed.length).toBeGreaterThan(0);
     expect(first.installed).toContain("skill-creator");
+    expect(first.installed).toContain("anysearch");
+    expect(existsSync(join(globalDir, "anysearch", "SKILL.md"))).toBe(true);
+    expect(
+      existsSync(join(globalDir, "anysearch", "scripts", "batch-search.js")),
+    ).toBe(true);
 
     const hijack = join(globalDir, "skill-creator", "SKILL.md");
     writeFileSync(hijack, "stale-content", "utf8");

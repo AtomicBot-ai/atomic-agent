@@ -84,7 +84,9 @@ describe("createDuckDuckGoProvider", () => {
       runCommand: runCommandReturning("<div>No results found.</div>"),
       lookup: publicLookup,
     });
-    await expect(provider.search(baseOptions)).resolves.toEqual([]);
+    await expect(provider.search(baseOptions)).resolves.toEqual({
+      results: [],
+    });
   });
 });
 

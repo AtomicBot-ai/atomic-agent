@@ -46,7 +46,7 @@ export function createDuckDuckGoProvider(
       if (results.length === 0 && isBotChallenge(response.body)) {
         throw new WebSearchBlockedError("duckduckgo");
       }
-      return results;
+      return { results };
     },
   };
 }

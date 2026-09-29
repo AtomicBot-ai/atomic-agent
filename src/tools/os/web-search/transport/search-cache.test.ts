@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  buildSearchCacheExtras,
   buildSearchCacheKey,
   createPersistentSearchCache,
   createSearchCache,
@@ -73,6 +74,20 @@ describe("search-cache", () => {
     expect(a).not.toBe(b);
     expect(a).toBe(c); // case-insensitive, trimmed
     expect(a).not.toBe(d);
+  });
+
+  it("keeps vertical routing extras out of the plain-query key", () => {
+    const plain = buildSearchCacheKey("anysearch", "AAPL", 5);
+    const tagged = buildSearchCacheKey(
+      "anysearch",
+      "AAPL",
+      5,
+      buildSearchCacheExtras({
+        tag: "finance.quote",
+        params: { symbol: "AAPL" },
+      }),
+    );
+    expect(plain).not.toBe(tagged);
   });
 });
 
