@@ -767,3 +767,68 @@ describe("llm.openrouter", () => {
     expect(() => parseUserConfigFile(withOpenRouter(["x"]))).toThrow(/llm\.openrouter/);
   });
 });
+
+describe("llm.activeEmbeddingProvider default", () => {
+  const ollama = {
+    id: "ollama",
+    kind: "openai-compatible",
+    baseUrl: "http://localhost:11434",
+    apiKeyEnvVar: "OLLAMA_API_KEY",
+    defaultChatModel: "qwen3:8b",
+  };
+
+  it("accepts a hand-written block without a local-llama entry (#550)", () => {
+    const parsed = parseUserConfigFile({
+      llm: { activeTextProvider: "ollama", providers: [ollama] },
+    });
+    expect(parsed.llm?.activeTextProvider).toBe("ollama");
+    expect(parsed.llm?.activeEmbeddingProvider).toBe("ollama");
+    // The parsed block is what migration and TUI edits write back.
+    expect(parseUserConfigFile(parsed).llm?.activeEmbeddingProvider).toBe(
+      "ollama",
+    );
+  });
+
+  it("prefers a provider that can embed over the text provider", () => {
+    const parsed = parseUserConfigFile({
+      llm: {
+        activeTextProvider: "ollama",
+        providers: [
+          ollama,
+          {
+            id: "emb",
+            kind: "openai-compatible",
+            baseUrl: "http://localhost:8081",
+            defaultEmbeddingModel: "nomic-embed-text",
+          },
+        ],
+      },
+    });
+    expect(parsed.llm?.activeEmbeddingProvider).toBe("emb");
+  });
+
+  it("keeps local-llama when it is configured", () => {
+    const parsed = parseUserConfigFile({
+      llm: {
+        activeTextProvider: "ollama",
+        providers: [
+          ollama,
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+        ],
+      },
+    });
+    expect(parsed.llm?.activeEmbeddingProvider).toBe("local-llama");
+  });
+
+  it("still rejects an explicitly set unknown id", () => {
+    expect(() =>
+      parseUserConfigFile({
+        llm: {
+          activeTextProvider: "ollama",
+          activeEmbeddingProvider: "local-llama",
+          providers: [ollama],
+        },
+      }),
+    ).toThrow(/llm\.activeEmbeddingProvider: unknown provider id "local-llama"/);
+  });
+});
