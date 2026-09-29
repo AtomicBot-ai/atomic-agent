@@ -126,6 +126,7 @@ The TUI is clickable:
 - every list row (skills, tasks, memory, MCP, models, providers)
 - the session, theme, and slash pickers
 - approval buttons and tool cards
+- the buttons under a chat message: `[copy]`, `[try again]`, and `[switch back]` on a notice about a turn left running in another thread
 - the prompt itself: clicking in the input places the caret
 
 A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.

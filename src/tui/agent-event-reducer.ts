@@ -128,6 +128,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         role: "system",
         text: action.text,
         ...(action.variant ? { variant: action.variant } : {}),
+        ...(action.switchToSessionId
+          ? { switchToSessionId: action.switchToSessionId }
+          : {}),
       });
     case "session_created":
       return {

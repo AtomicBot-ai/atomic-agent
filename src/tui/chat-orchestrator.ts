@@ -77,6 +77,23 @@ const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
 
 /**
+ * A line `notify` puts in the transcript, plus — for the ones that are
+ * about another thread — the id of that thread.
+ *
+ * Only notices whose own words send the operator somewhere carry it:
+ * "switch back to watch or stop it", "open it from the sidebar to read
+ * the reply". The transcript turns that id into a `[switch back]`
+ * button (`ChatMessage.switchToSessionId`), so the sentence and the way
+ * to act on it arrive together. A notice about lost work — dropped
+ * steers, a denied approval — names its session too, but going there
+ * undoes none of it, so it stays a plain line.
+ */
+interface TranscriptNotice {
+  text: string;
+  switchToSessionId?: string;
+}
+
+/**
  * Hard cap on messages parked behind the running turn.
  *
  * Nothing bounded this before because nothing could reach it: the editor
@@ -849,8 +866,8 @@ export class ChatOrchestrator {
    * pending approval is just as unanswerable once its transcript is
    * gone, and skipping it would park that turn forever.
    */
-  private leaveCurrentSession(): string[] {
-    const notices: string[] = [];
+  private leaveCurrentSession(): TranscriptNotice[] {
+    const notices: TranscriptNotice[] = [];
     const previous = this.session;
     if (!previous) return notices;
     // Denied for ANY pending approval on the thread being left, not
@@ -865,9 +882,9 @@ export class ChatOrchestrator {
       SWITCHED_AWAY_APPROVAL_REASON,
     );
     if (denied > 0) {
-      notices.push(
-        "the pending approval was denied — you switched away while it waited for an answer",
-      );
+      notices.push({
+        text: "the pending approval was denied — you switched away while it waited for an answer",
+      });
     }
     if (!this.currentController) {
       this.runtime.approvals.clearSessionGrants(previous.id);
@@ -878,13 +895,19 @@ export class ChatOrchestrator {
       this.queue.length = 0;
       this.droppedWhileFull = 0;
       this.emitQueue();
-      notices.push(formatDroppedQueueOnSwitchNotice(dropped));
+      notices.push({ text: formatDroppedQueueOnSwitchNotice(dropped) });
     }
     this.steeredAhead = 0;
     this.detachedTurns.park(previous.id, this.currentController);
     this.currentController = null;
     this.reattachedMidTurn = false;
-    notices.push(formatDetachedTurnNotice(previous.id));
+    // The one notice that names a thread still working for the
+    // operator: it carries the id so the transcript can offer the way
+    // back, not just the sentence.
+    notices.push({
+      text: formatDetachedTurnNotice(previous.id),
+      switchToSessionId: previous.id,
+    });
     return notices;
   }
 
@@ -1137,9 +1160,16 @@ export class ChatOrchestrator {
    * parked work, a refused submission) are things the operator typed and
    * must not lose silently.
    */
-  private notify(line: string): void {
-    this.bus.emit({ type: "runtime_info", line });
-    this.bus.emit({ type: "system_message", text: line, variant: "warn" });
+  private notify(notice: string | TranscriptNotice): void {
+    const { text, switchToSessionId }: TranscriptNotice =
+      typeof notice === "string" ? { text: notice } : notice;
+    this.bus.emit({ type: "runtime_info", line: text });
+    this.bus.emit({
+      type: "system_message",
+      text,
+      variant: "warn",
+      ...(switchToSessionId ? { switchToSessionId } : {}),
+    });
   }
 
   /**
@@ -1265,7 +1295,10 @@ export class ChatOrchestrator {
       } else {
         // The failure belongs to a thread that is off screen; a bare
         // "turn error" would read as the visible thread's. Name it.
-        this.notify(formatBackgroundTurnFailed(turnSessionId, msg));
+        this.notify({
+          text: formatBackgroundTurnFailed(turnSessionId, msg),
+          switchToSessionId: turnSessionId,
+        });
       }
       this.exitCode = 1;
     } finally {
@@ -1287,7 +1320,10 @@ export class ChatOrchestrator {
       // Finished in the background: the reply is saved in its own
       // session (the rail just refreshed). The visible thread's queue
       // is not this turn's to drain.
-      this.notify(formatBackgroundTurnFinished(turnSessionId));
+      this.notify({
+        text: formatBackgroundTurnFinished(turnSessionId),
+        switchToSessionId: turnSessionId,
+      });
       return;
     }
     if (this.reattachedMidTurn) {
