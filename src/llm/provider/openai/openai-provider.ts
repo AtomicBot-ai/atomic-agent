@@ -403,27 +403,73 @@ export class OpenAiProvider implements LlmProvider {
         accumulatedReasoning = "";
         streamFinal = undefined;
         const stream = this.streamConsumer.consume(res.body, request.signal);
-        while (true) {
-          const next = await stream.next();
-          if (next.done) {
-            streamFinal = next.value;
-            streamEnded = true;
-            break attempts;
+        // Whether this pump reached the consumer's own `done`. A pump that
+        // did not has abandoned a live stream; see the release below.
+        let drained = false;
+        try {
+          while (true) {
+            const next = await stream.next();
+            if (next.done) {
+              streamFinal = next.value;
+              streamEnded = true;
+              drained = true;
+              break attempts;
+            }
+            const chunk = next.value;
+            if (chunk.delta) accumulated += chunk.delta;
+            if (chunk.reasoningDelta)
+              accumulatedReasoning += chunk.reasoningDelta;
+            if (!chunk.done) {
+              // Set before the yield, deliberately: a caller that throws
+              // into this generator (`generator.throw()`, which is how a
+              // consumer reports its own failure into a stream it is
+              // draining) resumes us *inside* the catch below, with the
+              // yield never having returned. Set after the yield, that
+              // error would find `committed === false` and replay a
+              // completion the caller has already shown part of.
+              committed = true;
+              yield chunk;
+            }
           }
-          const chunk = next.value;
-          if (chunk.delta) accumulated += chunk.delta;
-          if (chunk.reasoningDelta)
-            accumulatedReasoning += chunk.reasoningDelta;
-          if (!chunk.done) {
-            // Set before the yield, deliberately: a caller that throws
-            // into this generator (`generator.throw()`, which is how a
-            // consumer reports its own failure into a stream it is
-            // draining) resumes us *inside* the catch below, with the
-            // yield never having returned. Set after the yield, that
-            // error would find `committed === false` and replay a
-            // completion the caller has already shown part of.
-            committed = true;
-            yield chunk;
+        } finally {
+          // Release this attempt's transport on every exit that is not the
+          // consumer's own `done`.
+          //
+          // This pump cannot be a `yield*`/`for await` — the loop decides
+          // which chunks reach the caller and when to leave the retry loop
+          // — and a hand-run inner iterator is NOT closed when this
+          // generator is closed: `yield*` forwards a `.return()`, a manual
+          // pump swallows it. So a consumer that walks away at the `yield`
+          // above (a `.return()` down the chain, a `break` out of its
+          // `for await`, an exception thrown back into us) left the
+          // consumer suspended at its own `yield` forever, with the reader
+          // lock still held and a fetch body nobody reads.
+          //
+          // Order matters: closing the consumer runs its own `finally`,
+          // whose `releaseLock()` is what makes the body cancellable at
+          // all, and the cancel is what actually ends the request —
+          // `openAiFetch` detaches the caller's abort listener the moment
+          // the headers land, so after the open nothing but a cancel of
+          // this body can close the socket.
+          //
+          // The cancel is deliberately not awaited, like the reader cancel
+          // in `LlamaServerClient.completeStream`: a cancel travelling
+          // into a socket must never hang a consumer trying to walk away.
+          // Closing the consumer *is* awaited, because the cancel below
+          // needs the lock it gives back — so a consumer whose `finally`
+          // never settles would park this unwind. That is the shape of
+          // `createOpenAiStreamConsumer`'s contract, not an accident: its
+          // `finally` is a bare synchronous `releaseLock()`.
+          // Both rejections are swallowed because we are already unwinding
+          // — a transport that fails to close must not replace the error
+          // the caller is already seeing, nor surface as an unhandled
+          // rejection — and both calls are no-ops where they are not
+          // needed: closing a generator that already finished returns at
+          // once, and a body that has ended or errored takes the cancel
+          // into that same swallow.
+          if (!drained) {
+            await stream.return(undefined).catch(() => undefined);
+            void res.body.cancel().catch(() => undefined);
           }
         }
       } catch (err) {
@@ -454,12 +500,15 @@ export class OpenAiProvider implements LlmProvider {
         // loop classifies, carrying the generation id for the trace.
         if (err instanceof OpenAiSseError) throw this.httpErrorFromSse(err, path);
         if (!canReopenStream(err, committed, budget)) throw err;
-        // No `res.body.cancel()` here, on purpose. The only way to reach
-        // this line with a response in hand is `isNetworkError(err)` on
-        // an error raised by the body reader — i.e. the stream is already
-        // errored, `cancel()` on an errored stream rejects with the
-        // stored error, and undici has already destroyed the socket. A
-        // cancel call would be a swallowed no-op dressed up as hygiene.
+        // Nothing to release here: the dead attempt's transport went
+        // through the block above on the way out, and on this path it is
+        // a no-op either way. The only way to reach this line with a
+        // response in hand is `isNetworkError(err)` on an error raised by
+        // the body reader — i.e. the stream is already errored, `cancel()`
+        // on an errored stream rejects with the stored error, and undici
+        // has already destroyed the socket. The reopen below gets its own
+        // `res`, so the stream this loop is about to use is never the one
+        // that was released.
         await openAiRetryBackoff(
           OPENAI_MAX_ATTEMPTS - budget.remaining,
           request.signal,
