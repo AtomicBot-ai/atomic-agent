@@ -138,13 +138,26 @@ function lastSwitch(actions: readonly TuiAction[]) {
   return null;
 }
 
+function systemMessages(
+  actions: readonly TuiAction[],
+): Extract<TuiAction, { type: "system_message" }>[] {
+  return actions.filter(
+    (a): a is Extract<TuiAction, { type: "system_message" }> =>
+      a.type === "system_message",
+  );
+}
+
 function warnTexts(actions: readonly TuiAction[]): string[] {
-  return actions
-    .filter(
-      (a): a is Extract<TuiAction, { type: "system_message" }> =>
-        a.type === "system_message",
-    )
-    .map((a) => a.text);
+  return systemMessages(actions).map((a) => a.text);
+}
+
+/** The session a notice offers to open, or undefined when it offers none. */
+function switchTarget(
+  actions: readonly TuiAction[],
+  needle: string,
+): string | undefined {
+  const notice = systemMessages(actions).find((a) => a.text.includes(needle));
+  return notice?.switchToSessionId;
 }
 
 async function settle() {
@@ -392,6 +405,31 @@ describe("ChatOrchestrator new/switch session while a turn is running", () => {
     expect(userEvent?.type === "user_message" && userEvent.text).toBe(
       "first prompt",
     );
+  });
+
+  it("the detach notice carries the thread it names, so the transcript can offer the way back", () => {
+    const { orchestrator, actions, turns } = makeHarness();
+    orchestrator.sendMessage("long running work");
+    const detached = turns[0]?.sessionId;
+
+    orchestrator.newSession();
+
+    expect(switchTarget(actions, "continues in the background")).toBe(detached);
+    // The notices about lost work name a session too, and offer nothing
+    // — going there brings none of it back.
+    expect(switchTarget(actions, "dropped")).toBeUndefined();
+  });
+
+  it("the background-turn-finished notice offers the thread holding the reply", async () => {
+    const { orchestrator, actions, turns } = makeHarness();
+    orchestrator.sendMessage("old thread work");
+    const detached = turns[0]?.sessionId;
+    orchestrator.newSession();
+
+    turns[0]?.resolve();
+    await settle();
+
+    expect(switchTarget(actions, "background turn finished")).toBe(detached);
   });
 
   it("a second switch-back replays the turn once, not twice", () => {

@@ -1925,6 +1925,28 @@ describe("update banner state", () => {
   });
 });
 
+describe("a notice that names another thread keeps the id, not just the sentence", () => {
+  it("carries system_message.switchToSessionId onto the chat message", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "system_message",
+        text: "the running turn continues in the background on session s-old — switch back to watch or stop it",
+        variant: "warn",
+        switchToSessionId: "s-old",
+      },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system[0]?.switchToSessionId).toBe("s-old");
+  });
+
+  it("leaves it unset on a notice that names no thread", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "system_message", text: "queue cleared" },
+    ]);
+    expect(next.messages[0]?.switchToSessionId).toBeUndefined();
+  });
+});
+
 describe("a fallover away from the primary is said in the chat, not only the feed", () => {
   const away = {
     type: "provider_switched" as const,

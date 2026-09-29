@@ -171,6 +171,17 @@ export interface ChatMessage {
    * pane that changes it back is one most operators have never opened.
    */
   action?: "configure-fallback";
+  /**
+   * A session this notice offers to open, rendered as a `[switch back]`
+   * button beside `[copy]`. Set on the notices that name a thread the
+   * operator left mid-turn — the detach notice and the one announcing
+   * that the backgrounded turn finished. Both end in an instruction to
+   * go there ("switch back to watch or stop it", "open it from the
+   * sidebar to read the reply"), and until now the only ways were the
+   * rail and the picker: the notice names the session it is about, so
+   * it is also the shortest way into it.
+   */
+  switchToSessionId?: string;
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */

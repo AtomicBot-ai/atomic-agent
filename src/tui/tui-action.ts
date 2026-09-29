@@ -41,7 +41,13 @@ import type { ContextUsageState } from "../session/context-usage.js";
 export type TuiAction =
   | { type: "runtime_info"; line: string }
   /** Append a local system message directly into the chat transcript. */
-  | { type: "system_message"; text: string; variant?: "normal" | "warn" }
+  | {
+      type: "system_message";
+      text: string;
+      variant?: "normal" | "warn";
+      /** See {@link ChatMessage.switchToSessionId}. */
+      switchToSessionId?: string;
+    }
   | {
       type: "agent_event";
       event: AgentLoopEvent;
