@@ -285,7 +285,7 @@ A reply the server cut short arrives as `finish_reason: "length"` on every OpenA
 as `truncated: true` from llama-server, and it used to end the turn on the spot — `Turn failed [model]:
 model response truncated`, with no token count on a streamed reply because the request never asked for
 one. Different walls produce it, and they want different remedies: a reasoning model that spent the
-whole reply cap (`max_tokens` / `n_predict` = `localModels.completionMaxTokens`, 8192) before it emitted
+whole reply cap (`max_tokens` / `n_predict` = `localModels.completionMaxTokens`, default 16384) before it emitted
 the tool call needs a **bigger cap**; a server whose context window filled mid-reply (llama.cpp `-c`,
 Lemonade's auto-sizing — both routinely below the model's advertised window) needs a **smaller prompt**;
 a provider that clamps the model's output below our cap needs a **lower cap** and nothing else.
@@ -687,7 +687,7 @@ How many tokens one reply may run to. Two different questions, and they used to 
 
 Note reasoning models spend the same budget on thinking: a cap of N is a cap on reasoning **plus** output, so a low one can be exhausted before the model emits a single byte of content. That is exactly what a truncated completion with empty `content` and a long `reasoningContent` means in a trace.
 
-**Local: a runaway guard, not a memory guard.** `localModels.completionMaxTokens` becomes llama.cpp's `n_predict`. `0` means no client-side cap — generate until a stop token or until the context window fills, which is the real ceiling on a local run. What a positive cap actually buys is a bound on *time* and on a degenerate loop; the machine's memory exposure is committed at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply. Config v52 accepts `0`; the default stays 8192.
+**Local: a runaway guard, not a memory guard.** `localModels.completionMaxTokens` becomes llama.cpp's `n_predict`. `0` means no client-side cap — generate until a stop token or until the context window fills, which is the real ceiling on a local run. What a positive cap actually buys is a bound on *time* and on a degenerate loop; the machine's memory exposure is committed at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply. Config v52 accepts `0`; the default is 16384.
 
 Pinned by [src/llm/resolve-n-predict.test.ts](src/llm/resolve-n-predict.test.ts), [src/llm/provider/openai/openai-build-body.test.ts](src/llm/provider/openai/openai-build-body.test.ts), [src/config/config-schema.test.ts](src/config/config-schema.test.ts) and [src/config/llm-config.test.ts](src/config/llm-config.test.ts).
 
