@@ -123,6 +123,58 @@ describe("handleIntegrationsTabKey", () => {
     );
   });
 
+  it("opens the editor on Enter over a text field, as e does (issue #552)", () => {
+    const { ctx: c, dispatch } = ctx(
+      stateWith({ mode: "detail", selectedField: 0 }),
+    );
+    expect(handleIntegrationsTabKey("\r", emptyKey({ return: true }), c)).toBe(
+      true,
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "integrations_edit_started",
+    });
+  });
+
+  it("does not open the editor on Enter over a read-only field", () => {
+    const readonlyRow: IntegrationRow = {
+      ...ROW,
+      fields: [{ ...ROW.fields[0]!, readonly: true }],
+    };
+    const { ctx: c, dispatch } = ctx(
+      stateWith({ mode: "detail", selectedField: 0, rows: [readonlyRow] }),
+    );
+    expect(handleIntegrationsTabKey("\r", emptyKey({ return: true }), c)).toBe(
+      true,
+    );
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("flips a toggle on Enter instead of opening the editor", () => {
+    const onIntegrationFieldToggleRequested = vi.fn();
+    const toggleRow: IntegrationRow = {
+      ...ROW,
+      fields: [
+        {
+          key: "enabled",
+          label: "Enabled",
+          kind: "boolean",
+          display: "off",
+          present: true,
+        },
+      ],
+    };
+    const { ctx: c, dispatch } = ctx(
+      stateWith({ mode: "detail", selectedField: 0, rows: [toggleRow] }),
+      { onIntegrationFieldToggleRequested },
+    );
+    handleIntegrationsTabKey("\r", emptyKey({ return: true }), c);
+    expect(onIntegrationFieldToggleRequested).toHaveBeenCalledWith(
+      "composio",
+      "enabled",
+    );
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("does not try to clear a field that has no value", () => {
     const onIntegrationFieldClearRequested = vi.fn();
     const { ctx: c } = ctx(stateWith({ mode: "detail", selectedField: 0 }), {

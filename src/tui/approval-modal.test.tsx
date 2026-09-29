@@ -110,6 +110,19 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("never granted for the session");
   });
 
+  it("names the category in the never-granted note (issue #552)", () => {
+    // `email` and `fusion_fanout` are never grantable either; the note
+    // used to call every one of them a trust-config write.
+    for (const [category, label] of [
+      ["email", "e-mail send"],
+      ["fusion_fanout", "fusion · fan-out"],
+    ] as const) {
+      const frame = frameOf(request({ category })).replace(/\s+/g, " ");
+      expect(frame).toContain(`${label} is never granted for the session`);
+      expect(frame).not.toContain("trust-config");
+    }
+  });
+
   it("offers the retarget button only when the request carries a path", () => {
     // The shell request has no target to move; the write does.
     expect(frameOf(request())).not.toContain("edit target path");
