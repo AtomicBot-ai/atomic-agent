@@ -453,10 +453,14 @@ export const WORKER_HINT_SATURATED =
 export const WORKER_HINT_QUOTA =
   "provider credit/quota exhausted — retrying will not help";
 /**
- * The client's `/slots` watchdog proved the server answers nothing at
- * all (`first-token-unreachable`). That is evidence `WORKER_HINT_QUEUED`
- * and `WORKER_HINT_SATURATED` do not have: the server is not full, it is
- * gone, and narrowing the fan-out on a dead daemon wastes another wave.
+ * The client's watchdog proved the server answers nothing at all —
+ * either no connection was made (`first-token-unreachable`) or one was
+ * made and nothing came back on any endpoint
+ * (`first-token-unresponsive`). Either way it is evidence
+ * `WORKER_HINT_QUEUED` and `WORKER_HINT_SATURATED` do not have: the
+ * server is not full, and narrowing the fan-out on a daemon that is
+ * answering nobody wastes another wave. The remedy is the same for
+ * both, which is why they share a hint.
  */
 export const WORKER_HINT_UNREACHABLE =
   "the local server stopped answering entirely: restart the daemon before re-delegating — fewer workers will not help";
@@ -465,7 +469,8 @@ const CONTEXT_EXCEEDED =
   /context size has been exceeded|ran out of context|exceeds? the (?:available )?context|context (?:size|length|window) (?:exceeded|was exceeded)/i;
 const SERVER_SATURATED =
   /no first token|first[- ]token timeout|sent no data for \d+\s*ms|idle timeout/i;
-const SERVER_UNREACHABLE = /stopped answering GET \/slots|it is unreachable/i;
+const SERVER_UNREACHABLE =
+  /stopped answering GET \/slots|it is unreachable|accepted the connection and answered nothing/i;
 const CREDIT_OR_QUOTA =
   /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of credits?|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
 

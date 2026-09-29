@@ -927,6 +927,14 @@ describe("LlamaServerClient.completeStream deadlines", () => {
        * the timers alone decide, as before the watch existed.
        */
       slots?: (init: RequestInit) => Promise<Response>;
+      /**
+       * Answers the watch's `GET /health`. Default: 200, which is what
+       * a llama-server always does — the route posts no task and never
+       * touches the inference loop, so it answers however deep in a
+       * decode the model is. A test that wants the wedged-daemon case
+       * makes this one hang or throw too.
+       */
+      health?: (init: RequestInit) => Promise<Response>;
       slotsPollIntervalMs?: number;
       slotsPollTimeoutMs?: number;
     } = {},
@@ -934,9 +942,11 @@ describe("LlamaServerClient.completeStream deadlines", () => {
     client: LlamaServerClient;
     opened: () => PushableStream;
     slotsPolls: () => number;
+    healthPolls: () => number;
   } {
     let handle: PushableStream | null = null;
     let polls = 0;
+    let healths = 0;
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
       requestTimeoutMs,
@@ -951,6 +961,15 @@ describe("LlamaServerClient.completeStream deadlines", () => {
         ? {}
         : { slotsPollTimeoutMs: options.slotsPollTimeoutMs }),
       fetchImpl: createMockFetch(async (url, init) => {
+        if (url.endsWith("/health")) {
+          healths += 1;
+          return options.health
+            ? options.health(init)
+            : new Response("{}", {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              });
+        }
         if (init.method === "GET" || url.endsWith("/slots")) {
           polls += 1;
           return options.slots
@@ -971,6 +990,7 @@ describe("LlamaServerClient.completeStream deadlines", () => {
         return handle;
       },
       slotsPolls: () => polls,
+      healthPolls: () => healths,
     };
   }
 
@@ -1613,6 +1633,193 @@ describe("LlamaServerClient.completeStream deadlines", () => {
       expect(chunk.done).toBe(false);
       expect(chunk.value.delta).toBe("hi");
       opened().close();
+    });
+
+    /** A `/slots` or `/health` handler that never answers, as a wedged
+     * server's endpoint does: it hangs until the poll's own deadline
+     * aborts it. */
+    const hangs = (count?: { n: number }) => (init: RequestInit) => {
+      if (count) count.n += 1;
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          reject(
+            Object.assign(new Error("The operation was aborted"), {
+              name: "AbortError",
+            }),
+          );
+        });
+      });
+    };
+
+    it("ends the wait when nothing answers on either endpoint", async () => {
+      // The third state, and the one neither existing kind could name.
+      // Measured in the field: a llama-server whose running task was
+      // cancelled mid prompt-eval logged not one line for the 18 minutes
+      // until it was killed, and answered nothing in that window. The
+      // connection was made every time, so `first-token-unreachable`
+      // could not fire; `/slots` never answered, so `first-token-stall`
+      // could not either; and the request sat there until the transport
+      // gave up with a message that named nothing.
+      vi.useFakeTimers();
+      const slotsCount = { n: 0 };
+      const healthCount = { n: 0 };
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 4 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: hangs(slotsCount),
+        health: hangs(healthCount),
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+
+      // Twice the budget, because a tick where both probes hang costs
+      // the interval PLUS their own deadline before the next one is
+      // scheduled — the run reaches its budget in wall time, not in
+      // poll count.
+      await vi.advanceTimersByTimeAsync(2 * SLOTS_UNREACHABLE_BUDGET_MS);
+      const err = (await failure) as LlamaServerError;
+      expect(err).toBeInstanceOf(LlamaServerError);
+      expect(err.timedOut).toBe(true);
+      expect(err.message).toContain("accepted the connection and answered nothing");
+      expect(err.message).toContain("listening and not serving");
+      // Both halves were tried on every tick, and the floor was cleared.
+      expect(healthCount.n).toBeGreaterThanOrEqual(SLOTS_UNREACHABLE_MIN_POLLS);
+      expect(slotsCount.n).toBeGreaterThanOrEqual(SLOTS_UNREACHABLE_MIN_POLLS);
+    });
+
+    it("never fires while /health answers, however long /slots hangs", async () => {
+      // The safety property, and the reason this is a second probe
+      // rather than a loosening of the /slots rule. A busy llama-server
+      // cannot serve /slots from a loop sitting inside llama_decode, so
+      // every poll times out for the whole eval — but /health posts no
+      // task and never touches the server context, so it answers in
+      // microseconds throughout. Counting a hung /slots as silence is
+      // what killed a healthy 14-minute prompt eval at ten.
+      vi.useFakeTimers();
+      const healthCount = { n: 0 };
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 30 * 60_000,
+        slots: hangs(),
+        health: async () => {
+          healthCount.n += 1;
+          return new Response("{}", { status: 200 });
+        },
+      });
+      const first = client
+        .completeStream({ prompt: "a very long prompt", sessionId: "s", slotId: 0 })
+        .next();
+
+      // Two unreachable budgets of hung /slots, and not one abort —
+      // still well inside the 30-minute first-token budget.
+      await vi.advanceTimersByTimeAsync(2 * SLOTS_UNREACHABLE_BUDGET_MS);
+      expect(healthCount.n).toBeGreaterThan(SLOTS_UNREACHABLE_MIN_POLLS);
+      opened().push('data: {"content":"hi","stop":false}\n\n');
+      const chunk = await first;
+      expect(chunk.done).toBe(false);
+      expect(chunk.value.delta).toBe("hi");
+      opened().close();
+    });
+
+    it("treats any answer from /health as life, 404 included", async () => {
+      // A local server that is not llama.cpp has no /health. The
+      // question was only ever whether something replied, so a 404 is
+      // an answer and resets the run — a server without the endpoint
+      // must never be read as a wedged one.
+      vi.useFakeTimers();
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 4 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: hangs(),
+        health: async () => new Response("not found", { status: 404 }),
+      });
+      const first = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next();
+      await vi.advanceTimersByTimeAsync(3 * SLOTS_UNREACHABLE_BUDGET_MS);
+      opened().push('data: {"content":"ok","stop":false}\n\n');
+      expect((await first).done).toBe(false);
+      opened().close();
+    });
+
+    it("lets one answer anywhere reset the run", async () => {
+      // Hysteresis, same as the refused run: the verdict needs an
+      // unbroken stretch of silence, so a daemon being bounced under a
+      // running turn costs nothing.
+      vi.useFakeTimers();
+      let ticks = 0;
+      const { client, opened } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 8 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: hangs(),
+        health: (init: RequestInit) => {
+          ticks += 1;
+          // One answer every 6 polls — well inside the 8-poll floor.
+          if (ticks % 6 === 0) {
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          }
+          return hangs()(init);
+        },
+      });
+      const first = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next();
+      await vi.advanceTimersByTimeAsync(4 * SLOTS_UNREACHABLE_BUDGET_MS);
+      opened().push('data: {"content":"ok","stop":false}\n\n');
+      expect((await first).done).toBe(false);
+      opened().close();
+    });
+
+    it("prefers the refused verdict when the connection was never made", async () => {
+      // Both runs are satisfied at once when a daemon is gone: nothing
+      // answers, and nothing is listening either. The stronger reading
+      // wins, because "the daemon is gone" is the one an operator can
+      // act on without checking anything else.
+      vi.useFakeTimers();
+      const refused = () =>
+        Promise.reject(
+          Object.assign(new Error("connect ECONNREFUSED"), {
+            code: "ECONNREFUSED",
+          }),
+        );
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 4 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: refused,
+        health: refused,
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(SLOTS_UNREACHABLE_BUDGET_MS + SLOTS_POLL_INTERVAL_MS);
+      const err = (await failure) as LlamaServerError;
+      expect(err.message).toContain("stopped answering GET /slots entirely");
+      expect(err.message).not.toContain("listening and not serving");
+    });
+
+    it("still watches a build without /slots, on /health alone", async () => {
+      // What the latch used to cost: with the watch stopped for good,
+      // a server with no /slots endpoint had nothing bounding the wait
+      // but the 30-minute first-token budget — on exactly the builds
+      // the watch was written to help. /health does not need /slots.
+      vi.useFakeTimers();
+      let slotsPolls = 0;
+      const { client } = streamingClient(60_000, {
+        firstTokenTimeoutMs: 4 * SLOTS_UNREACHABLE_BUDGET_MS,
+        slots: async () => {
+          slotsPolls += 1;
+          return new Response("slots endpoint disabled", { status: 501 });
+        },
+        health: hangs(),
+      });
+      const failure = client
+        .completeStream({ prompt: "p", sessionId: "s", slotId: 0 })
+        .next()
+        .catch((err: unknown) => err);
+      await vi.advanceTimersByTimeAsync(2 * SLOTS_UNREACHABLE_BUDGET_MS);
+      const err = (await failure) as LlamaServerError;
+      expect(err.message).toContain("accepted the connection and answered nothing");
+      // Still latched: /slots was asked once and never again.
+      expect(slotsPolls).toBe(1);
+      expect(client.slotsWatchUnavailable()).toBe(true);
     });
 
     it("counts only polls that prove nothing is listening", () => {

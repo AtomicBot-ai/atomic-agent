@@ -745,6 +745,13 @@ describe("workerFailureHint", () => {
       "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll reached a listening socket (connection refused / host unreachable, never a timeout), so the server is not merely busy, it is unreachable; check that llama-server is still alive and restart it before retrying (running fewer workers will not help)",
       WORKER_HINT_UNREACHABLE,
     ],
+    [
+      // The other half of the same watchdog: the connection WAS made
+      // and nothing came back on any endpoint. Different evidence, same
+      // remedy — a daemon answering nobody does not get narrower.
+      "llama-server accepted the connection and answered nothing for 600000ms while this request waited for its first token — neither GET /slots nor GET /health produced a reply, and /health is served without touching the inference loop, so a server that is merely busy still answers it; this daemon is listening and not serving. Restart it before retrying (waiting longer and running fewer workers will both not help)",
+      WORKER_HINT_UNREACHABLE,
+    ],
     ["openrouter HTTP 402: Payment Required", WORKER_HINT_QUOTA],
     ["HTTP 429: Too Many Requests", WORKER_HINT_QUOTA],
     ["insufficient credits on this API key", WORKER_HINT_QUOTA],
@@ -759,6 +766,18 @@ describe("workerFailureHint", () => {
     expect(hint).toBeDefined();
     expect(hint).not.toBe(WORKER_HINT_SATURATED);
     expect(hint).toContain("restart the daemon");
+  });
+
+  it("sends a wedged server to a restart too, not to a narrower fan-out", () => {
+    // It names no slots and no refusal, and on the words alone
+    // "answered nothing … waited for its first token" reads as
+    // saturation. The remedy for a daemon that is listening and not
+    // serving is the same restart an absent one gets.
+    const hint = workerFailureHint(
+      "llama-server accepted the connection and answered nothing for 600000ms while this request waited for its first token; this daemon is listening and not serving",
+    );
+    expect(hint).toBe(WORKER_HINT_UNREACHABLE);
+    expect(hint).not.toBe(WORKER_HINT_SATURATED);
   });
 
   it("stays silent on failures it has no remedy for", () => {

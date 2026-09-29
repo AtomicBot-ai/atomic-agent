@@ -541,20 +541,24 @@ function isWaitableOutage(err: unknown): boolean {
  * client had already written, which names the deadline and the knob
  * that raises it (issue #490 reports exactly this pair of runs).
  *
- * The timeout KIND is deliberately not inspected, and the five do not
- * cost the same, so here is what is actually being traded away:
+ * The timeout KIND is deliberately not inspected, and they do not cost
+ * the same, so here is what is actually being traded away:
  *
- *   first-token        30 min   `firstTokenTimeoutMs`
- *   stream-total        6 h     `streamTotalTimeoutMs`
- *   first-token-stall  300 s    `requestTimeoutMs`
- *   idle               300 s    `requestTimeoutMs`
- *   total              300 s    `requestTimeoutMs`
+ *   first-token              30 min   `firstTokenTimeoutMs`
+ *   stream-total              6 h     `streamTotalTimeoutMs`
+ *   first-token-unreachable  10 min   `SLOTS_UNREACHABLE_BUDGET_MS`
+ *   first-token-unresponsive 10 min   `SLOTS_UNREACHABLE_BUDGET_MS`
+ *   first-token-stall        300 s    `requestTimeoutMs`
+ *   idle                     300 s    `requestTimeoutMs`
+ *   total                    300 s    `requestTimeoutMs`
  *
- * Only the first is the 45-minute-worker disaster in #490. Two of the
- * others carry their own positive evidence that the server is alive:
+ * Only the first is the 45-minute-worker disaster in #490. Four of the
+ * others carry their own positive evidence about the server:
  * `first-token-stall` fires only because `/slots` kept answering right
- * up to the verdict, and `stream-total` only because data kept arriving
- * for six hours. `idle` does NOT — it means the socket is still open
+ * up to the verdict, `stream-total` only because data kept arriving for
+ * six hours, and the two ten-minute kinds only after an unbroken run of
+ * polls proved the daemon is gone or wedged — for which replaying the
+ * step is the one thing that cannot help. `idle` does NOT — it means the socket is still open
  * and nothing has come down it for a whole `requestTimeoutMs`, so what
  * it proves is five minutes stale. A server that actually died mid-turn
  * usually closes the socket instead, which arrives as `ECONNRESET` with
