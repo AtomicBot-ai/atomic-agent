@@ -381,9 +381,9 @@ describe("HotkeyHint queue affordances", () => {
       // The one chip in the running strip with no shed rank. A draft
       // lengthens the Esc chip to `abort, draft kept`, and at `shed: 3`
       // that was enough to drop `[⏎] steer` at every width up to 112 —
-      // in the one state the chip exists for, and the one state where
-      // the meta row above has dropped its own copy of the hint to make
-      // room for the provider-outage numbers. `ctrl+t` may still go.
+      // in the one state the chip exists for — and, now that the meta row
+      // no longer carries its own copy of the hint, the only place on
+      // screen that says what Enter will do. `ctrl+t` may still go.
       const out = renderHint(
         chatState({
           status: "running",
