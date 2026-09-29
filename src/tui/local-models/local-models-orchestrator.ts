@@ -74,6 +74,7 @@ import {
   type HuggingFaceRepoChoices,
   type LocalModelDef,
   type LocalModelId,
+  fetchServedModelIds,
 } from "../../local-llm/index.js";
 import {
   classifyVramFit,
@@ -2590,6 +2591,20 @@ export class LocalModelsOrchestrator {
       dataDir,
       cfg.localModels.managed.port,
     );
+    if (running.running && !(await this.servesConfiguredModel(mid))) {
+      // Ours by pid, but it serves another model (the config moved on
+      // while it ran). Adopting it would answer every turn with the
+      // wrong weights — bounce it onto the configured one.
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: the running server is not ${def.name} — restarting it`,
+      });
+      if (await this.stopChatDaemonOnly()) {
+        await this.startDaemon({ backendAlreadyChecked: true });
+      }
+      this.scheduleBackendAutoUpdate(dataDir);
+      return;
+    }
     if (running.running) {
       // Already started by a previous TUI session; adopt it.
       this.daemonSupervised = true;
@@ -2607,6 +2622,17 @@ export class LocalModelsOrchestrator {
     // not run one, because the deferred pass below owns it.
     await this.startDaemon({ backendAlreadyChecked: true });
     this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /**
+   * Whether the managed port serves `modelId` (`/v1/models` lists the
+   * `-a` alias). A server that does not answer the route — still
+   * loading, or a build without it — is given the benefit of the doubt:
+   * only a positive "something else" is a mismatch.
+   */
+  private async servesConfiguredModel(modelId: string): Promise<boolean> {
+    const served = await fetchServedModelIds(getConfig().localModels.managed.port);
+    return served === null || served.includes(modelId);
   }
 
   /**

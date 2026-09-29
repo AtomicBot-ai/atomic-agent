@@ -49,6 +49,7 @@ import {
   type LocalModelId,
 } from "./models-catalog.js";
 import { resolvePlatformAsset } from "./platform-assets.js";
+import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
 
 export interface DaemonStartOptions {
   dataDir: string;
@@ -648,30 +649,6 @@ export class DaemonHealthError extends Error {
   }
 }
 
-async function waitForHealthOkWithLog(
-  dataDir: string,
-  port: number,
-  timeoutMs: number,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const r = await probeLlamaHealth(port);
-    if (r === "ok") return;
-    await new Promise((r2) => setTimeout(r2, 500));
-  }
-  let tail = "";
-  try {
-    const logPath = resolveLogFilePath(dataDir);
-    const buf = readFileSync(logPath, "utf-8");
-    tail = buf.length > 4096 ? buf.slice(-4096) : buf;
-  } catch {
-    tail = "(no log)";
-  }
-  throw new DaemonHealthError(
-    `llama-server did not become healthy within ${timeoutMs}ms. Log tail:\n${tail}`,
-  );
-}
-
 export interface DaemonStartResult {
   pid: number;
   /**
@@ -696,6 +673,7 @@ export async function startDaemon(
   if (existing !== null) {
     throw new Error(`already running at pid ${existing}`);
   }
+  await assertPortFree(opts.port);
 
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(opts.dataDir, binaryName);
@@ -812,7 +790,21 @@ export async function startDaemon(
       throw new Error("spawn failed: no pid");
     }
     writeFileSync(pidPath, String(child.pid), "utf-8");
-    await waitForHealthOkWithLog(opts.dataDir, opts.port, 30_000);
+    try {
+      await waitForOwnDaemon({
+        child,
+        port: opts.port,
+        alias: model.id,
+        timeoutMs: 30_000,
+        label: "llama-server",
+        probeHealth: probeLlamaHealth,
+        readLog: () => readFileSync(resolveLogFilePath(opts.dataDir), "utf-8"),
+        makeHealthError: (m) => new DaemonHealthError(m),
+      });
+    } catch (err) {
+      abandonChild(child.pid, pidPath);
+      throw err;
+    }
     // A stale record must never outlive the daemon it described: drop
     // it before the probe so a skipped or failed probe leaves nothing
     // behind that `readThroughputRecord` could mistake (it also checks
@@ -951,8 +943,10 @@ export async function getDaemonStatus(
     running: pid !== null,
     pid,
     port,
-    healthy: h === "ok",
-    loading: h === "loading",
+    // Health on the port is ours only while our pid is alive: another
+    // server answering there is not this daemon being up.
+    healthy: pid !== null && h === "ok",
+    loading: pid !== null && h === "loading",
   };
 }
 
@@ -964,7 +958,7 @@ export async function getDaemonStatus(
 // flag set, model resolution, and pid/log file names diverge enough
 // that an `if (role === "embedding") ...` ladder inside `startDaemon`
 // would be more confusing than two narrow functions sharing the few
-// genuinely common helpers (`waitForHealthOkWithLog`, `probeLlamaHealth`).
+// genuinely common helpers (`waitForOwnDaemon`, `probeLlamaHealth`).
 // ---------------------------------------------------------------------
 
 export interface EmbeddingDaemonStartOptions {
@@ -1026,6 +1020,7 @@ export async function startEmbeddingDaemon(
   if (existing !== null) {
     throw new Error(`embedding daemon already running at pid ${existing}`);
   }
+  await assertPortFree(opts.port);
 
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(opts.dataDir, binaryName);
@@ -1061,35 +1056,44 @@ export async function startEmbeddingDaemon(
       throw new Error("spawn failed: no pid");
     }
     writeFileSync(pidPath, String(child.pid), "utf-8");
-    await waitForEmbeddingHealthOkWithLog(opts.dataDir, opts.port, 30_000);
+    try {
+      await waitForOwnDaemon({
+        child,
+        port: opts.port,
+        alias: model.id,
+        timeoutMs: 30_000,
+        label: "embedding llama-server",
+        probeHealth: probeLlamaHealth,
+        readLog: () =>
+          readFileSync(resolveEmbeddingLogFilePath(opts.dataDir), "utf-8"),
+        makeHealthError: (m) => new Error(m),
+      });
+    } catch (err) {
+      abandonChild(child.pid, pidPath);
+      throw err;
+    }
     return { pid: child.pid };
   } finally {
     closeSync(logFd);
   }
 }
 
-async function waitForEmbeddingHealthOkWithLog(
-  dataDir: string,
-  port: number,
-  timeoutMs: number,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const r = await probeLlamaHealth(port);
-    if (r === "ok") return;
-    await new Promise((r2) => setTimeout(r2, 500));
-  }
-  let tail = "";
+/**
+ * A launch that failed after the spawn must not leave its child behind
+ * or a pid file naming it: kill it if it is still up (a child that
+ * loaded but serves the wrong thing) and forget it either way.
+ */
+function abandonChild(pid: number, pidPath: string): void {
   try {
-    const logPath = resolveEmbeddingLogFilePath(dataDir);
-    const buf = readFileSync(logPath, "utf-8");
-    tail = buf.length > 4096 ? buf.slice(-4096) : buf;
+    process.kill(pid, "SIGKILL");
   } catch {
-    tail = "(no log)";
+    /* already gone */
   }
-  throw new Error(
-    `embedding llama-server did not become healthy within ${timeoutMs}ms. Log tail:\n${tail}`,
-  );
+  try {
+    unlinkSync(pidPath);
+  } catch {
+    /* never written or already dropped */
+  }
 }
 
 export async function stopEmbeddingDaemon(
@@ -1176,8 +1180,10 @@ export async function getEmbeddingDaemonStatus(
     running: pid !== null,
     pid,
     port,
-    healthy: h === "ok",
-    loading: h === "loading",
+    // Health on the port is ours only while our pid is alive: another
+    // server answering there is not this daemon being up.
+    healthy: pid !== null && h === "ok",
+    loading: pid !== null && h === "loading",
   };
 }
 
