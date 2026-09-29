@@ -16,8 +16,8 @@ Drives your browser, edits files, runs approved commands, and remembers context 
 [![Node.js](https://img.shields.io/badge/node-%3E%3D25.7-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/typescript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 ![Local first](https://img.shields.io/badge/local--first-agent-7C3AED)
-![Private by default](https://img.shields.io/badge/private--by--default-local-059669)
-![No per-token fees](https://img.shields.io/badge/no%20per--token%20fees-llama.cpp-111827)
+![State on your disk](https://img.shields.io/badge/state-on%20your%20disk-059669)
+![Free with local models](https://img.shields.io/badge/free%20with-local%20models-111827)
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
@@ -29,7 +29,7 @@ Drives your browser, edits files, runs approved commands, and remembers context 
 
 ---
 
-A local-first AI agent that runs the control loop and all state on your machine. It drives your desktop: browse, read and edit files, run approved shell commands, inspect documents, remember context across sessions, schedule follow-ups, and call external tools over MCP. Embed it in your own apps over HTTP or a Tauri sidecar. `llama.cpp` first, so small quantized models stay useful for long, multi-step work on consumer hardware.
+A local-first AI agent that runs the control loop and all state on your machine. It works across your machine: browse the web, read and edit files, run approved shell commands, inspect documents, remember context across sessions, schedule follow-ups, and call external tools over MCP. Run it on a local model, a cloud model, or both at once in **Fusion** mode, where one model plans and a pool of workers executes. Embed it in your own apps over HTTP or a Tauri sidecar. `llama.cpp` first, so small quantized models stay useful for long, multi-step work on consumer hardware.
 
 ## Quick Install
 
@@ -48,7 +48,7 @@ irm https://atomicagent.io/install.ps1 | iex
 The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place — `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git.
 
 > [!NOTE]
-> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64.
+> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
 
 ### Run
 
@@ -85,7 +85,7 @@ One command removes everything — the state directory (config, memory, sessions
 atomic-agent uninstall
 ```
 
-It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`).
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`).
 
 ### Troubleshooting
 
@@ -153,7 +153,7 @@ Full reproducible write-up: [`GAIA-L1-EXPERIMENT.md`](eval-agents/docs/GAIA-L1-E
 The control loop and all state run on your machine, not a hosted service:
 
 - **State lives on your disk.** Sessions, memory, tasks, traces, skills, browser profile, config, and `.env` secrets live under `<stateDir>` as plain files and SQLite databases. See [Privacy and Egress](#privacy-and-egress) for what can leave the machine and how to switch it off.
-- **No API costs.** Run quantized models locally through `llama.cpp`. Bring your own `llama-server` or let the CLI manage one.
+- **No API costs with local models.** Run quantized models locally through `llama.cpp`. Bring your own `llama-server` or let the CLI manage one. Cloud providers and Fusion are opt-in.
 - **Nothing is hidden.** Inspect the prompt, replay trace drift, edit skills, and swap parts without waiting for a vendor. Plain local models, SQLite files, and NDJSON traces.
 - **Runs on your hardware.** Small quantized models run on everyday consumer GPUs and CPUs, no datacenter needed.
 
@@ -175,10 +175,10 @@ flowchart LR
 ```
 
 1. **Prompt:** a compact prompt goes to the local model.
-2. **Decide:** the model returns one JSON array of tool calls, grammar-checked so the format is always valid.
+2. **Decide:** the model returns one JSON array of tool calls. On a local `llama-server` the output is grammar-constrained (GBNF) so the format is always valid; cloud providers use native tool calling.
 3. **Run:** the core executes them; independent reads run in parallel, risky actions ask first.
 4. **Compress:** results and state are summarized, not pasted back in full.
-5. **Repeat:** loop again until reply, finish, cancel, or a max-step limit.
+5. **Repeat:** loop again until reply, finish, or cancel. Long jobs keep going past 25-step checkpoints while they make progress, bounded by a per-task ceiling (1000 steps or 2 hours by default), and end with a summary rather than a cut-off.
 
 The model chooses actions. Atomic Agent owns the loop, the state, the approvals, the traces, the stop conditions, and the failure boundaries.
 
@@ -190,16 +190,16 @@ We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-lla
 - **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality usable while small models fit on consumer hardware.
 - **Custom speculative decoding:** purpose-built Gemma 4 MTP and Qwen 3.6 NextN heads reuse the loaded model (no second context, tokenizer, or model load) for +30-50% throughput.
 - **Curated quantized models:** hand-picked GGUF quants that keep quality usable while fitting real VRAM budgets.
-- **Managed mode:** the CLI downloads, pins, and runs the backend and models for you, no manual `llama.cpp` setup.
+- **Managed mode:** the CLI downloads, keeps up to date, and runs the backend and models for you, no manual `llama.cpp` setup. Set `localModels.managed.autoUpdate: false` to pin the backend.
 
 ### Tuned for Small Local Models
 
 Atomic Agent's prompt is engineered so a small model never wastes tokens or breaks format:
 
-- **Stable prefix:** persona, rules, tools, skills, capabilities, and instructions stay byte-stable inside a session so `cache_prompt` and `slot_id` can reuse KV-cache instead of re-encoding the prompt every turn.
+- **Stable prefix:** persona, rules, tools, skills, capabilities, and instructions stay byte-stable inside a session so, on a local `llama-server`, `cache_prompt` and slot pinning can reuse KV-cache instead of re-encoding the prompt every turn.
 - **Bounded tail:** conversation, memory, world state, recalled notes, lessons, procedures, and loaded skill bodies are clipped into a predictable prompt budget.
 - **Externalized state:** sessions, memory, tasks, skills, traces, browser snapshots, and model config live outside the prompt.
-- **GBNF tool calls:** completions are constrained into a JSON array of tool calls, including the solo case `[{...}]`.
+- **GBNF tool calls:** on local backends, completions are constrained into a JSON array of tool calls, including the solo case `[{...}]`.
 - **Parallel read batches:** independent read-only calls can run concurrently after a single inference; dangerous actions remain approval-gated.
 - **Compact browser view:** ordinary web operation uses accessibility / ARIA snapshots clipped to a character budget (24k by default) instead of screenshot-heavy page dumps.
 
@@ -211,19 +211,20 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 
 | Area | Capabilities |
 |---|---|
-| **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Chromium). |
+| **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Brave / Chromium). |
 | **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
-| **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools — init, add, commit, checkout — behind the same approval ladder as file writes (no remotes, no network). |
+| **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools (init, add, commit, checkout, merge) behind the same approval ladder as file writes. Remote sync (clone, fetch, pull, push, remote) is off by default; turn on `git.remoteSync` in the Integrations tab and every sync is approval-gated. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
-| **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |
+| **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
-| **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
-| **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
+| **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. |
+| **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, plus one-click presets for Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, Atomic Chat and more, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
+| **Telegram & Discord** | Remote control from your phone with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. Run several bots at once from the Swarm tab (`/swarm`), each with its own token and owner. |
 | **[Composio](https://composio.dev)** | Connect 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) with OAuth handled for you. Set up from the Integrations tab; tools arrive as `mcp.composio.*` and every write to a real account stays approval-gated. |
 
 ### Memory That Grows Outside the Prompt
@@ -257,11 +258,11 @@ atomic-agent task list
 atomic-agent trace list --limit 10
 ```
 
-**The context readout.** The chip at the right of the composer gauges the prompt against the model's real context window — `8/20 tasks · 39.9k/48k` — so you can see whether there is room for what you are about to send. History is limited in **tasks**, not tokens: one task is a thing you asked plus everything the agent did answering it, and `agent.conversationMaxPairs` (1-100, default 20) says how many the prompt carries. Tokens are the wrong unit to steer with — nobody thinks in them — but they are still the ceiling underneath, because one task can run twenty tool calls and no task count keeps a prompt inside the window on its own. Once history has been dropped it says so in words (`· 3 tasks lost`) and turns violet: that is the point where the agent stops knowing things it knew a minute ago, and answers quietly start getting less consistent. Cloud models take their window from the model catalogue, so the gauge is drawn against a real scale there too; when nothing knows the window at all it falls back to the transcript's own ceiling, labelled `cap` so the number cannot be mistaken for one.
+**The context readout.** The chip at the right of the composer shows a bar and `8/20 tasks · 39.9k/48k cap · 262k`: the transcript against the ceiling it is packed to, with the model's context window as the last figure, so you can see whether there is room for what you are about to send. History is limited in **tasks**, not tokens: one task is a thing you asked plus everything the agent did answering it, and `agent.conversationMaxPairs` (1-1000, default 200) says how many the prompt carries. Tokens are the wrong unit to steer with — nobody thinks in them — but they are still the ceiling underneath, because one task can run twenty tool calls and no task count keeps a prompt inside the window on its own. Once history has been dropped it says so in words (`· 3 tasks lost`) and turns violet: that is the point where the agent stops knowing things it knew a minute ago, and answers quietly start getting less consistent. Cloud models take their window from the model catalogue, so the gauge is drawn against a real scale there too; when nothing has set a scale yet it shows only the running total.
 
 Click the chip (or `/context`) for the breakdown, and for the one control that matters: a selector for how many tasks the next prompt carries, with a button either side of the number (`-` and `+` from the keyboard). Every figure above it — the total, the percentage, the `conversation` row, the free space — recalculates as you move it, so the cost of the choice is on screen while you are making it rather than one turn later. Each step applies immediately; there is nothing to confirm.
 
-`agent.conversationMaxTokens` still exists as the ceiling underneath, and `0` makes it fill whatever the window leaves — worth setting if you size your own `llama-server` with `-c`. It is no longer something you have to think about: the task count is the limit you steer with, and the token cap only intervenes when a single task is large enough to threaten the window on its own.
+`agent.conversationMaxTokens` still exists as the ceiling underneath. Its default, `0`, fills whatever the window leaves (64k when the window is unknown); set a number to pin a tighter ceiling, for example on a metered cloud model. It is no longer something you have to think about: the task count is the limit you steer with, and the token cap only intervenes when a single task is large enough to threaten the window on its own.
 
 Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
@@ -269,7 +270,7 @@ Handy slash commands: `/help` lists every command, `/tools` lists the built-in t
 
 | mode | |
 |---|---|
-| `default` | approvals follow the level set on the Privacy tab |
+| `default` | approvals follow your configured approval level (`agent.approvalLevel` in `config.json`) |
 | `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. When the plan lands, three buttons appear **under the plan itself**, beside its `[copy]` row: run it in `auto`, run it in `bypass permissions`, or dismiss it. Typing instead keeps you in plan mode and revises the plan — the composer says so while the offer is up. |
 | `auto` | file writes inside this workspace stop asking; everything else still does |
 | `bypass permissions` | nothing asks, for this session. Hardline shell-guard rules still block. |
@@ -283,11 +284,11 @@ All four are session state and none are written to `config.json` — a `bypass` 
 
 On a `shell` prompt `ctrl+b` grants the command's *shape* for the session (`git`, `npm`) instead of the whole category — except for `bash -c`-style interpreters, where the binary name hides what actually runs, so no shape grant is offered. The retarget and the shape grant share `ctrl+b` because they can never both be on screen: one is `os.fs.write` only, the other `shell` only.
 
-**Look.** The TUI ships with the `classic-dark` palette: an indigo rail, raised `+ new` / `≡ Menu` / `send →` controls, a `RUN` badge and session title in the top bar, `AGENT` / `YOU` labels on the transcript, and green tool results. Five more ship with it — `classic-light`, `toxic-green`, `khorne-red`, `darky-dark` and `moon-yellow`. `/theme` lists them, `/theme <name>` switches, and the choice persists.
+**Look.** The TUI defaults to the `classic-dark` palette (`classic-light` when it detects a light terminal): an indigo rail, raised `+ new` / `≡ Menu` / `send →` controls, the session title in the top bar, `AGENT` / `YOU` labels on the transcript, and green tool results. Five more ship with it — `classic-light`, `toxic-green`, `khorne-red`, `darky-dark` and `moon-yellow`. `/theme` lists them, `/theme <name>` switches, and the choice persists.
 
 All six are designed here rather than transcribed from upstream terminal themes, and every colour pair the UI paints is held to WCAG AA by `theme-contrast.test.ts`. The registry that preceded them carried twelve palettes and failed that check on 154 of its 396 pairs — including light text on the light status-bar ground at 1.09:1. Configs naming one of the retired themes are rehomed to the nearest surviving palette rather than silently reset.
 
-**Small windows.** The layout degrades as the window shrinks — the right rail drops at 100 columns, the splash art steps down through three sizes, the chrome grows a row under 60 columns — down to a floor of **40x16**. Below that it stops: Ink overlaps a frame taller than the terminal instead of clipping it, so a 16-row UI in a 10-row window is two UIs painted over each other rather than a cramped one. Under the floor the app draws a single card saying what it needs and what it has, on the main screen and the first-run screen alike, and goes back to the real UI as soon as the window is dragged big enough.
+**Small windows.** The layout degrades as the window shrinks — the right rail drops at 100 columns, the splash art steps down through three sizes, the chrome grows under 60 columns — down to a floor of **40x16**. Below that it stops: Ink overlaps a frame taller than the terminal instead of clipping it, so a 16-row UI in a 10-row window is two UIs painted over each other rather than a cramped one. Under the floor the app draws a single card saying what it needs and what it has, on the main screen and the first-run screen alike, and goes back to the real UI as soon as the window is dragged big enough.
 
 **Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as Esc on an idle prompt), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
 
@@ -302,7 +303,7 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 <details>
 <summary><b>Run modes: Local · Cloud · Fusion</b></summary>
 
-`local` and `cloud` are the two routes the composer always offered. **Fusion** adds a third: a cloud model orchestrates and several local llama-server workers execute the parts it delegates, so cloud tokens pay only for the heavy thinking. The block is additive and `llm.activeTextProvider` stays authoritative:
+`local` and `cloud` are the two routes the composer always offered. **Fusion** adds a third: one model orchestrates and a pool of workers executes the parts it delegates. The usual pairing is a cloud orchestrator with local llama-server workers, but neither leg is tied to a kind: a local model can plan for cloud workers, and `/runmode swap` trades the two legs. The only rule is that the legs are two different providers. The block is additive and `llm.activeTextProvider` stays authoritative:
 
 ```json
 "llm": {
@@ -315,12 +316,12 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 "localModels": { "managed": { "parallel": 3 } }
 ```
 
-`workers` (1..8) caps how many workers run at once; `localModels.managed.parallel` is the llama-server `--parallel` slot count that lets them actually run concurrently (default 2, applied on the next daemon start). The orchestrator model is the provider's `defaultChatModel`; the worker model is the one the managed daemon serves.
+`workers` (1..8, default 2) is the default fan-out width when the orchestrator does not name one; it is not a ceiling, and the orchestrator can ask for more on a given call. What bounds the width on a local leg is `localModels.managed.parallel`, the llama-server `--parallel` slot count (default `"auto"`, sized from the daemon's context; a number pins it; applied on the next daemon start). On a cloud worker leg the width is capped by `cloudWorkers` (1..32, default 4). The orchestrator model is the provider's `defaultChatModel`; on a local leg the worker model is the one the managed daemon serves. `reviewStallSteps` (default 6, `0` disables) nudges an orchestrator that keeps reading instead of delegating or replying.
 
-In the TUI, fusion is the last row of the composer's **Where it runs** switch (`ctrl+r`, or click the backend word): it needs a cloud provider with a key and a downloaded local model, and says which one is missing otherwise. While it is on, the backend word is an orange chip and the composer and the chat bubbles take the same tint. `/runmode local|cloud|fusion` and `ctrl+g 1/2/3` pick a mode from the keyboard; `/runmode status` says what the mode resolves to.
+In the TUI, fusion is the last row of the composer's **Where it runs** switch (`ctrl+r`, or click the backend word): it needs two providers that can answer, one per leg, and says which one is missing otherwise. While it is on, the backend word is an orange chip and the composer and the chat bubbles take the same tint. `/runmode local|cloud|fusion` and `ctrl+g 1/2/3` pick a mode from the keyboard; `/runmode swap` trades the orchestrator and worker legs; `/runmode status` says what the mode resolves to.
 
-On the fusion route the strip gains a fourth control, **Workers** (`→` past the model, or click the worker count): it picks the local model the workers run and how many run at once, and `/runmode workers N` does the same from the keyboard. The provider and model controls address the cloud orchestrator; the worker count also sets `localModels.managed.parallel`, so restart the local daemon to apply it.
-Once fusion is on, the cloud model gains one tool — `fusion.delegate` — and prompt guidance telling it to plan first and hand the independent bulk down: reading many files, first drafts, boilerplate, tests, wide searches. Each part it delegates runs as its own throwaway local turn (several at a time), and their replies come back into the same call for the orchestrator to check and merge; you see each worker start and finish in the chat feed. Workers cannot delegate further, cannot reach you, and cannot get an approval — anything that needs a person comes back up to the orchestrator to run.
+On the fusion route the strip gains a fourth control, **Workers** (`→` past the model, or click the worker count): it picks the worker model and the default fan-out width, and `/runmode workers N` does the same from the keyboard. The provider and model controls address the orchestrator leg. On a local worker leg the worker count also sets `localModels.managed.parallel`, so restart the local daemon to apply it.
+Once fusion is on, the orchestrator gains one tool, `fusion.delegate`, and prompt guidance telling it to plan first and hand the independent bulk down: reading many files, first drafts, boilerplate, tests, wide searches. Each part it delegates runs as its own throwaway worker turn (several at a time), and their replies come back into the same call for the orchestrator to check and merge; you see each worker start and finish in the chat feed. The orchestrator itself does not run mutating tools. Workers cannot delegate further, cannot reach you, and cannot schedule tasks or write memory. Approving a fan-out lets its workers write and run commands inside the directories it names; anything outside them comes back as a named path, and the orchestrator sends the task out again with that path so you can approve the wider scope.
 
 </details>
 
@@ -383,11 +384,16 @@ Every term has to match (`claude vision` is not a substring of any id), a size t
 <details>
 <summary><b>External <code>llama-server</code></b></summary>
 
-Already have your own `llama.cpp` process? Point `atomic-agent` at it:
+Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:8080`), or save the URL in the TUI's LLM tab, External pane:
+
+```jsonc
+// <stateDir>/config.json
+{
+  "localModels": { "mode": "external", "url": "http://127.0.0.1:8080" }
+}
+```
 
 ```bash
-export ATOMIC_AGENT_LLAMA_URL=http://127.0.0.1:8080
-
 ./llama-server -m Qwen3.5-9B-Q4_K_M.gguf \
   --slots 4 \
   --parallel 4 \
@@ -495,7 +501,7 @@ The channel belongs to the runtime, not to the TUI: `atomic-agent serve` boots i
 
 While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
 
-Send the bot a photo, document, voice note or any other file and it is saved under `~/.atomic-agent/inbox/telegram/`; the agent gets the path together with your caption and reads it with its file and vision tools. Albums arrive as one message. Telegram lets bots fetch files up to 20 MB; anything larger gets a clear "could not receive" reply.
+Send the bot a photo, document, voice note or any other file and it is saved under `<stateDir>/inbox/telegram/` (by default `~/.atomic-agent/inbox/telegram/`), one folder per day; the agent gets the path together with your caption and reads it with its file and vision tools. Albums arrive as one message. Telegram lets bots fetch files up to 20 MB; anything larger gets a clear "could not receive" reply.
 
 Ask for a file and you get a file: when the agent attaches something to its reply (a report it wrote, a screenshot, a converted document) it arrives as a Telegram message right after the text — images inline, everything else as a document, up to Telegram's 50 MB bot limit.
 
@@ -558,7 +564,7 @@ The TUI MCP panel supports live add / remove without restarting the process. Whe
 
 Everything Atomic Agent does is inspectable and interruptible:
 
-- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, and untrusted MCP tools are gated by policy.
+- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, untrusted MCP tools (except ones the server marks read-only), git writes and remote sync, trash and restore, GitHub and e-mail sends, reads outside the working scope, Fusion fan-out, and non-web browser navigation are gated by policy.
 - **Append-only traces:** prompts, completions, tool invocations, outcomes, failure categories, votes, and lifecycle events recorded as local NDJSON.
 - **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
 - **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures classified across events, traces, metrics, TUI, sidecar, and HTTP.
@@ -573,7 +579,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, and turn-shape numbers (latency, step count, outcome), never message content, file paths, or tool arguments. It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up — the provider name and whether it is local or cloud, never the key, the URL, or the host. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
+Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, your OS platform and app version, and turn-shape numbers (latency, step count, outcome, token counts, estimated cost), never message content, file paths, or tool arguments. It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up — the provider name and whether it is local or cloud, never the key, the URL, or the host. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
 
 Local-first bounds where control lives, not where packets go. Network egress happens when:
 
@@ -583,9 +589,13 @@ Local-first bounds where control lives, not where packets go. Network egress hap
 - a configured cloud LLM or embedding provider receives its request;
 - a `subscription-cli` provider is active and the vendor CLI (`claude` or `codex`) receives your prompt on its stdin, then sends it on under its own account;
 - an MCP server receives a tool call you routed to it;
-- the Telegram channel is enabled and the bot exchanges messages with your paired chat, including opt-in scheduled task reports;
-- you install a skill from ClawHub;
-- the TUI checks GitHub Releases for a newer version at startup (set `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP=false` to skip);
+- the Telegram or Discord channel (or a Swarm bot) is enabled and exchanges messages with your paired chat, including opt-in scheduled task reports;
+- Composio is set up and its tools run through Composio's servers;
+- the agent's e-mail integration reads or sends mail;
+- the GitHub tools open issues or pull requests, or `git.remoteSync` is on and a repository syncs;
+- managed mode downloads a model from Hugging Face or the `llama.cpp` backend from GitHub Releases;
+- you install a skill from ClawHub or a GitHub skill repo;
+- the TUI checks GitHub Releases for a newer version at startup (set `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP=false` to skip), or `atomic-agent update` fetches the installer;
 - analytics or crash reporting is enabled, as described above.
 
 > [!NOTE]
@@ -600,14 +610,14 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 
 - Node.js for development; release bundles ship as Node SEA binaries.
 - A reachable `llama-server`, either managed by `atomic-agent models` or launched externally.
-- Managed mode picks the GPU backend automatically: Metal on Apple Silicon, CUDA on Windows when `nvidia-smi` reports a supported driver (including the reworked driver 610+ headers) with Vulkan as the fallback, Vulkan on Linux, CUDA on Linux arm64 when an NVIDIA GB10 (DGX Spark) is present and CPU on the same build elsewhere, CPU when no GPU is usable.
+- Managed mode picks the GPU backend automatically: Metal on Apple Silicon, CUDA on Windows when `nvidia-smi` reports a supported driver (including the reworked driver 610+ headers) with Vulkan as the fallback, Vulkan on Linux, a single CUDA-enabled build on Linux arm64 (tuned for the NVIDIA GB10 in DGX Spark) that uses the GPU when an NVIDIA driver is present and the CPU otherwise, CPU when no GPU is usable.
 - Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
 - `git` for git tools.
 - macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.
 
 **Linux notes:**
 - **Desktop tools** (install via your package manager): `ripgrep` (file search; bundled binary used when present), `xclip`/`xsel` (X11) or `wl-clipboard` (Wayland) for clipboard, `libnotify-bin` for notifications, `wmctrl` for window control (X11/XWayland only), `gio` (glib2) or `trash-cli` for `fs.trash`.
-- **Browser:** Chromium-family sandboxing can fail under some Linux setups (containers, certain kernels). If Chrome refuses to launch, run it with `--no-sandbox`.
+- **Browser:** Chromium-family sandboxing can fail under some Linux setups (containers, certain kernels). If Chrome refuses to launch, set `ATOMIC_AGENT_BROWSER_NO_SANDBOX=1` so the agent starts it with `--no-sandbox` (containers and CI only).
 - **GPU acceleration (managed mode):** the backend always starts and falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver. Intel/AMD: `mesa-vulkan-drivers` (+ `vulkan-loader`/`libvulkan1`); NVIDIA: the stock proprietary driver bundles its Vulkan ICD. Device auto-selected at start; override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab. Multi-GPU: set `localModels.managed.tensorSplit` in `config.json` (e.g. `[3, 1]` for a 75%/25% layer split) to launch llama-server with `--split-mode layer --tensor-split` across every visible GPU; combine with `use-device Vulkan0,Vulkan1` to restrict which devices join the split.
 
 </details>
@@ -623,7 +633,7 @@ Cloud models are **uncapped by default** — the service applies the model's own
 
 Reasoning models spend that same budget on thinking, so a low ceiling can be used up before any answer appears.
 
-Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `8192`). Set it to `0` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
+Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `16384`). Set it to `0` in `config.json` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
 
 </details>
 
@@ -668,12 +678,16 @@ User-facing configuration lives in `<stateDir>/config.json`.
 
 Useful environment variables:
 - `ATOMIC_AGENT_STATE_DIR`: state, config, skills, browser profile, memory, tasks, traces. Default: `~/.atomic-agent`.
-- `ATOMIC_AGENT_LLAMA_URL`: external `llama-server` URL.
 - `ATOMIC_AGENT_LLAMA_API_KEY`: optional bearer token for `llama-server`.
-- `ATOMIC_AGENT_LLAMA_MAX_TOKENS`: completion cap.
+- `ATOMIC_AGENT_LLAMA_MAX_TOKENS`: completion cap, clamped to 64-131072.
 - `ATOMIC_AGENT_BROWSER_CHANNEL`: `chrome`, `msedge`, or `chromium`.
 - `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH`: explicit Chromium-family executable path.
 - `ATOMIC_AGENT_BROWSER_CDP_URL`: attach to an already-running browser via CDP.
+- `ATOMIC_AGENT_BROWSER_HEADLESS`: `1` to run the browser headless.
+- `ATOMIC_AGENT_BROWSER_NO_SANDBOX`: `1` to launch the browser with `--no-sandbox` (containers and CI only).
+- `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP`: `false` to skip the TUI's update check.
+
+The external `llama-server` URL is set in `config.json` (`localModels.url`), not through the environment.
 
 Secrets for skills and channels belong in `<stateDir>/.env`, not in `config.json`:
 
@@ -786,7 +800,7 @@ Core docs:
 - [PROMPT.md](PROMPT.md): prompt anatomy
 - [MEMORY_GUIDE.md](MEMORY_GUIDE.md): memory end to end, with worked examples
 - [MEMORY.md](MEMORY.md): memory and recall internals
-- [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) / [MEMORY_FABRIC_V2.5.md](MEMORY_FABRIC_V2.5.md): memory roadmap
+- [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) / [MEMORY_FABRIC_V2.5.md](MEMORY_FABRIC_V2.5.md): memory fabric design
 - [SKILLS.md](SKILLS.md): skill format
 - [BUNDLING.md](BUNDLING.md): release packaging
 - [AGENTS.md](AGENTS.md): contributor invariants
