@@ -238,6 +238,12 @@ export {
   fetchServedModelIds,
   PortTakenError,
 } from "./daemon-launch-guard.js";
+export {
+  describeReclaim,
+  reclaimManagedPort,
+  type ReclaimOutcome,
+  type ReclaimRequest,
+} from "./port-reclaim.js";
 
 export {
   huggingFaceToken,

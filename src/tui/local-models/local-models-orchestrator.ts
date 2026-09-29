@@ -95,6 +95,11 @@ import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
 import { DaemonSupervisor } from "./daemon-supervisor.js";
+import {
+  clearChatPort,
+  clearEmbeddingPort,
+  type PortClearanceDeps,
+} from "./local-models-port-clearance.js";
 import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
 import {
   resolveLocalLegRole,
@@ -154,6 +159,12 @@ export interface LocalModelsOrchestratorHooks {
   onManagedModelSelected?: (modelId: LocalModelId) => void;
   /** Fired after a successful chat daemon (re)start for the active model. */
   onManagedDaemonRestarted?: () => void;
+  /**
+   * The managed chat port moved because another process holds the
+   * configured one (already persisted): rebuild the route's provider and
+   * point the health poller at `url`.
+   */
+  onManagedPortMoved?: (url: string) => void | Promise<void>;
   /**
    * Fired when the operator deliberately puts a local model live and it
    * actually serves — an explicit setup act, never the launch-time
@@ -1681,11 +1692,30 @@ export class LocalModelsOrchestrator {
         resolvedLlm,
         resolveRunMode(resolvedLlm, { managedModelId: mid }),
       );
+      const clearance = this.portClearanceDeps();
+      const chatClear = await clearChatPort(cfg, mid, clearance);
+      if (chatClear.adoptedPid !== null) {
+        this.daemonSupervised = true;
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ready — pid ${chatClear.adoptedPid} on http://127.0.0.1:${chatClear.port}`,
+        });
+        await this.ensureEmbeddingPaired();
+        this.hooks?.onManagedModelSelected?.(mid);
+        this.hooks?.onManagedDaemonRestarted?.();
+        return true;
+      }
+      const embClear = await clearEmbeddingPort(
+        cfg,
+        embedding,
+        chatClear.port,
+        clearance,
+      );
       const result = await startChatAndEmbeddingDaemons({
         chat: {
           dataDir,
           modelId: mid,
-          port: cfg.localModels.managed.port,
+          port: chatClear.port,
           chatTemplateFile: tpl,
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
@@ -1695,15 +1725,15 @@ export class LocalModelsOrchestrator {
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),
         },
-        embedding: embedding
-          ? { ...embedding, ...(device ? { device } : {}) }
-          : embedding,
+        embedding: embClear.options
+          ? { ...embClear.options, ...(device ? { device } : {}) }
+          : undefined,
       });
       this.daemonSupervised = true;
       this.supervisor.noteStarted();
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${cfg.localModels.managed.port}${
+        line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${chatClear.port}${
           result.chat.tokensPerSecond === null
             ? ""
             : ` · ~${roundTokensPerSecond(result.chat.tokensPerSecond)} tok/s`
@@ -1717,7 +1747,12 @@ export class LocalModelsOrchestrator {
             : `local-llm: vision disabled — mmproj not downloaded for ${def.id}`,
         });
       }
-      this.reportEmbeddingStartOutcome(result.embedding, embedding);
+      this.reportEmbeddingStartOutcome(
+        embClear.adoptedPid !== null
+          ? { pid: embClear.adoptedPid }
+          : result.embedding,
+        embClear.adoptedPid !== null ? embedding : embClear.options,
+      );
       // Refresh the tray / prompt model label for EVERY start path
       // (pull auto-start, `s`, autoStart, setActive). The health poller
       // caches the model name per URL (`modelFetchedForUrl`) and would
@@ -2680,6 +2715,14 @@ export class LocalModelsOrchestrator {
     // not run one, because the deferred pass below owns it.
     await this.startDaemon({ backendAlreadyChecked: true });
     this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /** How a start reports and persists what it did to a held port. */
+  private portClearanceDeps(): PortClearanceDeps {
+    return {
+      say: (line) => this.bus.emit({ type: "runtime_info", line }),
+      onChatPortMoved: (url) => this.hooks?.onManagedPortMoved?.(url),
+    };
   }
 
   /**
