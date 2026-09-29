@@ -66,6 +66,40 @@ describe("openAiPostJson", () => {
     expect((err as OpenAiHttpError).message).toContain("bad key");
   });
 
+  it("retains the upstream error type off a llama.cpp context-size refusal", async () => {
+    // `body.type` is what the Sentry scrubber reads to name the failure
+    // (`upstream_error_type`): the message never travels, so this field
+    // is the only thing that says *why* a provider refused a turn.
+    // The body is llama.cpp's own shape — `ERROR_TYPE_EXCEED_CONTEXT_SIZE`
+    // answered as a 400, per the strings in the llama-server build this
+    // project ships — driven through the real HTTP path rather than a
+    // hand-built error object.
+    const fetchImpl = vi.fn(async () =>
+      errorResponse(
+        400,
+        JSON.stringify({
+          error: {
+            code: 400,
+            message:
+              "the request exceeds the available context size, try increasing it",
+            type: "exceed_context_size_error",
+          },
+        }),
+        { "content-type": "application/json" },
+      ),
+    );
+    const err = await openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/v1/chat/completions",
+      {},
+      {},
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenAiHttpError);
+    expect((err as OpenAiHttpError).body?.type).toBe(
+      "exceed_context_size_error",
+    );
+  });
+
   it("does not retry deterministic 4xx failures", async () => {
     const fetchImpl = vi.fn(async () => errorResponse(401));
     await expect(
