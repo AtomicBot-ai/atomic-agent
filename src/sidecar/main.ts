@@ -323,8 +323,14 @@ export async function bootstrapSidecar(): Promise<{
             `active session changed during queued send_message for ${sessionId}`,
           );
         }
+        const { maxSteps } = request.payload;
         return runtime.executeTurn(active.session, request.payload.text, {
-          maxSteps: request.payload.maxSteps ?? runtime.config.agent.maxSteps,
+          // Only a client-supplied `maxSteps` becomes a ceiling. Filling
+          // in `agent.maxSteps` (the leg length) made every task stop at
+          // the first leg instead of running to `agent.task.maxSteps`.
+          // `typeof` rather than `=== undefined`: a JSON client may send
+          // `null`, which the old `??` also treated as "not given".
+          ...(typeof maxSteps === "number" ? { maxSteps } : {}),
           signal: active.controller.signal,
         });
       },
