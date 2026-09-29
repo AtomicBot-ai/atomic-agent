@@ -29,6 +29,7 @@ import {
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
 import { isNativeShapeRejection } from "./openai-native-messages.js";
+import { OPENAI_DEFAULT_REQUEST_TIMEOUT_MS } from "../../transport-deadlines.js";
 import {
   buildOpenAiHeaders,
   createOpenAiAttemptBudget,
@@ -214,7 +215,8 @@ export class OpenAiProvider implements LlmProvider {
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
       ...(options.apiKeyHeader ? { apiKeyHeader: options.apiKeyHeader } : {}),
-      requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
+      requestTimeoutMs:
+        options.requestTimeoutMs ?? OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,
       ...(options.logger ? { logger: options.logger } : {}),

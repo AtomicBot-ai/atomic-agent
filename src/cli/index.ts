@@ -18,6 +18,7 @@ import { importCommand } from "./import-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { tuiCommand } from "../tui/index.js";
+import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { getAppVersion } from "../version.js";
 
 interface CommandDescriptor {
@@ -180,6 +181,16 @@ function userArgsFromArgv(): string[] {
   }
   return argv.slice(2);
 }
+
+// Before any command can issue a request: undici applies a 300 s deadline
+// of its own beneath every AbortSignal this process arms, and a request
+// that hits it fails as a bare `fetch failed` naming nothing. Installed
+// here without a config — `getConfig()` writes a config file on first
+// use, which an install or `--help` must not do — so this is the floor
+// off the shipped defaults; `createAgentRuntime` widens it from the real
+// config when a command actually builds a runtime. See
+// `installTransportDeadlines`.
+installTransportDeadlines();
 
 async function main(): Promise<number> {
   const [command, ...rest] = userArgsFromArgv();

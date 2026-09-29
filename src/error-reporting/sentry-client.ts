@@ -19,8 +19,11 @@ export type FetchLike = (
     method: string;
     headers: Record<string, string>;
     body: string;
+    signal?: AbortSignal;
   },
 ) => Promise<{ ok: boolean; status: number }>;
+/** `flush()` gives in-flight sends 2 s; a send past this is orphaned. */
+const SENTRY_SEND_TIMEOUT_MS = 10_000;
 
 export interface SentryClientOptions {
   dsn: ParsedSentryDsn;
@@ -77,6 +80,12 @@ export class SentryClient {
   private async send(body: string): Promise<void> {
     await this.fetchImpl(this.options.dsn.envelopeUrl, {
       method: "POST",
+      // `flush()` waits 2 s for in-flight sends and then gives up, so a
+      // send that outlives this is holding a socket nobody is waiting
+      // on. It had no clock of its own and inherited the transport's,
+      // which is no longer five minutes — see
+      // `installTransportDeadlines`.
+      signal: AbortSignal.timeout(SENTRY_SEND_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/x-sentry-envelope",
         "X-Sentry-Auth": buildSentryAuthHeader(

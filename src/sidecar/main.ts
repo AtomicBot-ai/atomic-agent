@@ -8,6 +8,7 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-registry.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type {
@@ -460,5 +461,9 @@ export async function bootstrapSidecar(): Promise<{
 
 const invokedDirectly = import.meta.url === `file://${process.argv[1]}`;
 if (invokedDirectly) {
+  // The sidecar does not go through `src/cli/index.ts`, so it installs
+  // the floor itself — see `installTransportDeadlines`. Idempotent and
+  // monotone, so `createAgentRuntime` widening it later is free.
+  installTransportDeadlines();
   void bootstrapSidecar();
 }
