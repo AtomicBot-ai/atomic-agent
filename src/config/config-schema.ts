@@ -2187,8 +2187,10 @@ export interface UserConfigFile {
      * referential (short, pronouns, conjunction-starter), one LLM
      * call rewrites it into a self-contained query using the last
      * few turns of conversation; otherwise the raw message is used
-     * as today. The rewriter uses `slotId = -1` so the **main agent
-     * slot** and the **reflection slot** are both untouched.
+     * as today. The rewriter runs on the side-call slot
+     * (`slotManager.sideCallSlotId()`: the reserved reflection slot,
+     * or `-1` when only one slot exists), so the **main agent slot**
+     * is untouched.
      *
      * `retrieve.rewriter` keys:
      *  - `enabled`       master switch. Default `true`.
@@ -3076,8 +3078,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     retrieve: {
       rewriter: {
         // v2.5 (v18) — heuristic-gated query rewriter before recall.
-        // Uses `slotId=-1` so the main agent and reflection slots stay
-        // untouched.
+        // Runs on the side-call slot (`sideCallSlotId()`; `-1` only when
+        // there is a single slot) so the main agent slot stays untouched.
         enabled: true,
         timeoutMs: 10_000,
         historyTurns: 3,

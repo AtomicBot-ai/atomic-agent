@@ -268,7 +268,7 @@ function hint(panel: IntegrationsPanelState): string {
         ? "enter toggle"
         : field?.readonly
           ? "assigned"
-          : "e edit · d clear";
+          : "enter/e edit · d clear";
     return `↑/↓ field · ${verb} · esc back`;
   }
   return "↑/↓ move · enter open · r refresh";

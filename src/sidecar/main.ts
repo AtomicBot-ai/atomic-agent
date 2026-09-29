@@ -23,6 +23,7 @@ import type {
 } from "./sidecar-events.js";
 import type { SessionState } from "../session/index.js";
 import { installSkill, uninstallSkill } from "../skills/index.js";
+import { getAppVersion } from "../version.js";
 
 interface ActiveSession {
   session: SessionState;
@@ -246,7 +247,7 @@ export async function bootstrapSidecar(): Promise<{
     ok: true,
     llamaUrl: config.localModels.url,
     stateDir: config.paths.stateDir,
-    version: "0.1.0",
+    version: getAppVersion(),
   }));
 
   router.register<StartSessionPayload, { sessionId: string }>(

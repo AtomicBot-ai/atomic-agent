@@ -6,7 +6,11 @@ import {
   type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
-import { formatApprovalCategory } from "../approval/approval-level.js";
+import {
+  formatApprovalCategory,
+  formatNeverGrantedNote,
+  type ApprovalCategory,
+} from "../approval/approval-level.js";
 import {
   APPROVAL_CHORDS,
   canEditPath,
@@ -200,12 +204,14 @@ export function ApprovalModal({
           </Box>
         </Box>
       )}
-      {editing ? null : <Text color="gray">{footerHint(grantCategory)}</Text>}
+      {editing ? null : (
+        <Text color="gray">{footerHint(grantCategory, request.category)}</Text>
+      )}
     </Box>
   );
 }
 
-function footerHint(grantable: boolean): string {
+function footerHint(grantable: boolean, category: ApprovalCategory): string {
   // The composer stays live under this prompt, and that is a feature:
   // the operator can answer the agent in words instead of a verdict.
   // What it no longer costs is the buttons — every one of them is a
@@ -214,7 +220,7 @@ function footerHint(grantable: boolean): string {
   const typing =
     "the composer stays live — type to answer the agent instead (enter cancels this call and sends it)";
   if (!grantable) {
-    return `trust-config writes are never granted for the session; approve covers this call only · ${typing}`;
+    return `${formatNeverGrantedNote(category)}; approve covers this call only · ${typing}`;
   }
   return `approve covers this call once; the session grants last until the app exits (never persisted); loosen the standing stance with the coding-mode control in the composer · ${typing}`;
 }
