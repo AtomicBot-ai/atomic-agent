@@ -1,6 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import {
+  CONVERSATION_MAX_PAIRS_MAX,
+  CONVERSATION_MAX_PAIRS_MIN,
+} from "../../config/config-schema.js";
+import {
   MouseTarget,
   useMouseCommands,
   useMouseTarget,
@@ -282,7 +286,7 @@ function TaskSelector({
   onStep?: (delta: number) => void;
 }): ReactElement {
   const label = " tasks per turn".padEnd(LABEL_WIDTH);
-  const value = String(selected).padStart(3);
+  const value = String(selected).padStart(String(PAIRS_MAX).length);
   return (
     <Box>
       <Text color={chromeTheme.colors.railForeground}>{label}</Text>
@@ -303,18 +307,19 @@ function TaskSelector({
         {...(onStep ? { onPress: () => onStep(1) } : {})}
       />
       <Text color={chromeTheme.colors.railMuted}>
+        {/* Range first: at four digits the tail is what gets cut. */}
         {fitToWidth(
-          `  sent each turn (${PAIRS_MIN}-${PAIRS_MAX})`,
-          Math.max(0, inner - LABEL_WIDTH - 11),
+          `  (${PAIRS_MIN}-${PAIRS_MAX}) sent each turn`,
+          Math.max(0, inner - LABEL_WIDTH - 8 - value.length),
         )}
       </Text>
     </Box>
   );
 }
 
-/** The bounds the schema enforces, mirrored so the UI cannot offer more. */
-const PAIRS_MIN = 1;
-const PAIRS_MAX = 100;
+/** The bounds the schema enforces, so the UI can offer neither more nor less. */
+const PAIRS_MIN = CONVERSATION_MAX_PAIRS_MIN;
+const PAIRS_MAX = CONVERSATION_MAX_PAIRS_MAX;
 
 function StepButton({
   glyph,

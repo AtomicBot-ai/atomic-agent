@@ -10,6 +10,10 @@ import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
+import {
+  CONVERSATION_MAX_PAIRS_MAX,
+  CONVERSATION_MAX_PAIRS_MIN,
+} from "../config/config-schema.js";
 import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
 import {
   emitTerminalNotification,
@@ -1972,7 +1976,10 @@ export function TuiApp({
       selectedPairsRef.current ??
       stateRef.current.contextPanelPairsDraft ??
       cap;
-    const next = Math.max(1, Math.min(100, current + delta));
+    const next = Math.max(
+      CONVERSATION_MAX_PAIRS_MIN,
+      Math.min(CONVERSATION_MAX_PAIRS_MAX, current + delta),
+    );
     if (next === current) return;
     // Write first, then move the number. The other order leaves the
     // panel showing a value the config never took: the write is

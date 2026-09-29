@@ -152,10 +152,17 @@ describe("selecting a task count", () => {
       reduceUiAction(chose(1), { type: "context_pairs_selected", pairs: 0 })
         ?.contextPanelPairsDraft,
     ).toBe(1);
+    // The schema accepts up to 1000 and defaults to 200: a selector
+    // capped at 100 opened above its own max and dropped to 100 on the
+    // first press.
     expect(
       reduceUiAction(chose(1), { type: "context_pairs_selected", pairs: 500 })
         ?.contextPanelPairsDraft,
-    ).toBe(100);
+    ).toBe(500);
+    expect(
+      reduceUiAction(chose(1), { type: "context_pairs_selected", pairs: 5000 })
+        ?.contextPanelPairsDraft,
+    ).toBe(1000);
   });
 
   it("ignores a selection while the panel is closed", () => {
