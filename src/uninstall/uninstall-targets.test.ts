@@ -47,7 +47,7 @@ describe("planUninstallTargets", () => {
     ]);
   });
 
-  it("uses .exe names on windows", () => {
+  it("uses the .exe binary and the .cmd alias install.ps1 writes on windows", () => {
     const program = planUninstallTargets(
       input({
         platform: "win32",
@@ -57,7 +57,7 @@ describe("planUninstallTargets", () => {
     ).filter((t) => t.group === "program");
     expect(program.slice(0, 2).map((t) => t.path.replace(/\\/g, "/"))).toEqual([
       "C:/Users/op/bin/atomic-agent.exe",
-      "C:/Users/op/bin/atag.exe",
+      "C:/Users/op/bin/atag.cmd",
     ]);
   });
 
