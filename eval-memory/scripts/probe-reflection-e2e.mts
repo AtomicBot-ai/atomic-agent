@@ -23,7 +23,6 @@ const PROMPTS = SESSIONS.map(
 );
 
 const URL_LLM = process.env.ATOMIC_AGENT_EVAL_LLAMA_URL ?? "http://127.0.0.1:19091";
-process.env.ATOMIC_AGENT_LLAMA_URL = URL_LLM;
 
 const t0 = Date.now();
 console.log(`[e2e-probe] starting full_v2 scenario with ${PROMPTS.length} prompts`);

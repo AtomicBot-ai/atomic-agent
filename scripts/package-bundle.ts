@@ -8,7 +8,7 @@
  *   README.txt                     short usage note + requirements
  *
  * The bundle does NOT include llama-server: operators run it on their
- * own machine and point the agent at it via ATOMIC_AGENT_LLAMA_URL.
+ * own machine and point the agent at it via `localModels.url` in config.json.
  *
  * Usage:
  *   npx tsx scripts/package-bundle.ts           # package for current host
@@ -270,10 +270,9 @@ async function main(): Promise<number> {
     "",
     "Requirements:",
     "  - External llama.cpp server reachable via HTTP, or use `atomic-agent models`",
-    "    for managed local models. Set ATOMIC_AGENT_LLAMA_URL if using external",
-    "    server only.",
+    "    for managed local models.",
     "  - Point the runtime at the server (if external), e.g.",
-    "      ATOMIC_AGENT_LLAMA_URL=http://127.0.0.1:8080",
+    "      atomic-agent config set localModels.url http://127.0.0.1:8080",
     "  - Install Google Chrome or Microsoft Edge (stable channel). Playwright",
     "    browsers are NOT bundled; playwright-core attaches to the system",
     "    browser via --channel=chrome|msedge.",
