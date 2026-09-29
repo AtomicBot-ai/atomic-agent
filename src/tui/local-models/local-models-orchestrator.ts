@@ -75,6 +75,8 @@ import {
   type LocalModelDef,
   type LocalModelId,
   fetchServedModelIds,
+  describeServerFault,
+  readRunningPid,
 } from "../../local-llm/index.js";
 import {
   classifyVramFit,
@@ -92,6 +94,7 @@ import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
 import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
+import { DaemonSupervisor } from "./daemon-supervisor.js";
 import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
 import {
   resolveLocalLegRole,
@@ -187,8 +190,21 @@ export class LocalModelsOrchestrator {
   private timer: ReturnType<typeof setInterval> | null = null;
   private logsTimer: ReturnType<typeof setInterval> | null = null;
   private activeTimer: ReturnType<typeof setInterval> | null = null;
-  /** True while a daemon the TUI owns is running; used by `shutdown()`. */
-  private daemonSupervised = false;
+  private supervised = false;
+  /**
+   * True while a daemon the TUI owns is running; used by `shutdown()`.
+   * Taking ownership — a start, or adopting a running daemon, by any
+   * path — is also what arms the supervisor: its timer must run from
+   * the moment there is something to watch, not from whenever the LLM
+   * pane happens to be opened.
+   */
+  private get daemonSupervised(): boolean {
+    return this.supervised;
+  }
+  private set daemonSupervised(owned: boolean) {
+    this.supervised = owned;
+    if (owned) this.supervisor.start();
+  }
   /**
    * Chat and embedding pulls are independent channels, one watched
    * worker each. A new pull of a kind detaches the watch on the previous
@@ -225,6 +241,25 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
+  /** Restarts a daemon this TUI owns when it dies (`autoRestart`). */
+  private readonly supervisor = new DaemonSupervisor({
+    enabled: () => {
+      const cfg = getConfig();
+      return cfg.localModels.mode === "managed" && cfg.localModels.managed.autoRestart;
+    },
+    owns: () => this.daemonSupervised,
+    pidAlive: async () => readRunningPid(getConfig().paths.localModelsDataDir) !== null,
+    restart: () => this.restartOwnedDaemon(),
+    say: (line) => this.bus.emit({ type: "runtime_info", line }),
+    describeFault: () => {
+      try {
+        const log = readLogTail(resolveLogFilePath(getConfig().paths.localModelsDataDir));
+        return describeServerFault(log.text)?.summary ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
   /**
    * Devices enumerated via `llama-server --list-devices`, cached for the
    * process lifetime. `null` until a successful enumeration with the
@@ -288,6 +323,7 @@ export class LocalModelsOrchestrator {
   }
 
   async shutdown(): Promise<void> {
+    this.supervisor.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     // The workers are on their own: quitting must not stop a download.
@@ -1664,6 +1700,7 @@ export class LocalModelsOrchestrator {
           : embedding,
       });
       this.daemonSupervised = true;
+      this.supervisor.noteStarted();
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${cfg.localModels.managed.port}${
@@ -1890,6 +1927,26 @@ export class LocalModelsOrchestrator {
    * points at it, so nothing in the TUI can ever stop it, and it keeps
    * the port and the VRAM. Concurrent callers share the one restart.
    */
+  /**
+   * The supervisor's restart: the same single-flight slot and stop-first
+   * order as `restartDaemon`, without its route check — a daemon this
+   * TUI owns keeps serving Fusion workers and the fallback chain's local
+   * link while a cloud route is active, and a dead one helps neither.
+   */
+  private restartOwnedDaemon(): Promise<boolean> {
+    if (this.restartInFlight) return this.restartInFlight;
+    const inFlight = (async () => {
+      const stopped = await this.stopChatDaemonOnly({
+        stoppedLine: "local-llm: chat daemon stopped — bringing it back up…",
+      });
+      return stopped ? await this.startDaemon() : false;
+    })().finally(() => {
+      this.restartInFlight = null;
+    });
+    this.restartInFlight = inFlight;
+    return inFlight;
+  }
+
   async restartDaemon(): Promise<boolean> {
     if (this.restartInFlight) {
       this.bus.emit({
@@ -2608,6 +2665,7 @@ export class LocalModelsOrchestrator {
     if (running.running) {
       // Already started by a previous TUI session; adopt it.
       this.daemonSupervised = true;
+      this.supervisor.noteStarted();
       // The chat daemon may have been started before the embedding
       // model was downloaded / configured. Reconcile the embedding
       // side to the current intent so the pairing invariant holds

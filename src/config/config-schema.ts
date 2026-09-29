@@ -1569,6 +1569,16 @@ export interface UserManagedLocalLlmConfig {
    * Added in config v34; older files transparently get `true`.
    */
   stopOnExit: boolean;
+  /**
+   * Bring the managed chat daemon back by itself when it dies (or, from
+   * the wedge watchdog, stops answering) while this TUI owns it. `true`
+   * (default): a crashed or killed llama-server is restarted within a
+   * few seconds and a parked turn resumes on it; three deaths within a
+   * minute of their start stop the retries and name the fault. `false`:
+   * a dead daemon stays dead until `/llm restart` or `R`. Files that
+   * predate the key get `true`.
+   */
+  autoRestart: boolean;
 }
 
 /**
@@ -2811,6 +2821,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       dataDirOverride: null,
       autoUpdate: true,
       stopOnExit: true,
+      autoRestart: true,
       device: "auto",
       backendVariant: "auto",
       contextSize: 0,
@@ -4770,6 +4781,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.stopOnExit ??
         USER_CONFIG_DEFAULTS.localModels.managed.stopOnExit,
       "localModels.managed.stopOnExit",
+    ),
+    autoRestart: parseBool(
+      rawManaged.autoRestart ??
+        USER_CONFIG_DEFAULTS.localModels.managed.autoRestart,
+      "localModels.managed.autoRestart",
     ),
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
