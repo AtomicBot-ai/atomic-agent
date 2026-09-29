@@ -286,6 +286,13 @@ export interface AtomicAgentConfig {
     localModelsDataDir: string;
   };
   agent: {
+    /**
+     * Compact target for the upper prompt. Its only remaining effect on
+     * a built prompt is the `### session-facts` + `### loaded-skills`
+     * share, and `sessionSectionsMaxTokens` now overrides that directly;
+     * the stable prefix is sized by what it contains, not by this
+     * number.
+     */
     tokenBudget: number;
     /**
      * Steps in one *leg* of a task — a checkpoint interval, not the end
@@ -393,6 +400,13 @@ export interface AtomicAgentConfig {
      * enough every step (the old behaviour).
      */
     conversationLowWater: number;
+    /**
+     * Ceiling for `### session-facts` + `### loaded-skills` combined —
+     * the one prompt limit `tokenBudget` still moves. `0` keeps the
+     * historical `tokenBudget * 0.15` share
+     * (`SESSION_SECTIONS_CAP_AUTO`).
+     */
+    sessionSectionsMaxTokens: number;
     /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
@@ -1737,6 +1751,33 @@ export interface UserConfigFile {
      * held to at most `0.5`. `1` restores cutting just enough per step.
      */
     conversationLowWater: number;
+    /**
+     * Ceiling on `### session-facts` + `### loaded-skills` combined
+     * (config v74). One cap over two sections because one
+     * `truncateToTokens` call trims the two as a single blob, facts
+     * first, so the skill bodies at its tail are what a cut takes.
+     *
+     * `0` is `SESSION_SECTIONS_CAP_AUTO`: keep the historical
+     * `tokenBudget * 0.15`. Raising it costs no KV cache — both sections
+     * sit in the variable tail — but it does eat into the room
+     * `computeEffectiveConversationCap` leaves the transcript, since
+     * `sessionTokens` is subtracted from the window there.
+     *
+     * Any other value is enforced verbatim: no floor at the bottom (a
+     * value too small for one token empties both sections) and no clamp
+     * against the model's context window at the top (past
+     * `CONVERSATION_CAP_FLOOR` the transcript has nothing left to give
+     * and the prompt overruns the window). Both are spelled out on
+     * `SESSION_SECTIONS_CAP_AUTO` with the reasons.
+     *
+     * There is deliberately no sibling key for the stable prefix. Its
+     * `tokenBudget * 0.35` figure is computed and then read by nothing:
+     * the prefix cannot be trimmed without cutting `### tools` or
+     * `### instructions` out from under the grammar. Size the prefix
+     * with `skills.catalogTokenBudget` (its one elastic section) and the
+     * `tool.view` tier split instead.
+     */
+    sessionSectionsMaxTokens: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -2555,6 +2596,11 @@ export interface UserConfigFile {
 // parsed away without a word (issue #466). Additive: an older file has
 // no field, takes the env default, and renders the same prompt. The env
 // var still overrides the file value.
+// v74: `agent.sessionSectionsMaxTokens` (default 0) — the
+// `### session-facts` + `### loaded-skills` cap, until now reachable only
+// by scaling all of `agent.tokenBudget`. `0` is the sentinel for "keep
+// the `tokenBudget * 0.15` share", so an older file renders a
+// byte-identical prompt.
 // v73: `sessions.retention` (`enabled` false, `maxAgeDays` 90, `maxRows`
 // null) — one bounded prune of `sessions.sqlite` and the matching trace
 // files at startup. Additive: an older file has no block and takes the
@@ -2567,7 +2613,7 @@ export interface UserConfigFile {
 // writes an OSC 9 notification plus a BEL to its own terminal when a
 // turn ends, so an operator who walked away finds out. Additive: an
 // older file has no block and takes the defaults.
-export const USER_CONFIG_VERSION = 73;
+export const USER_CONFIG_VERSION = 74;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2729,6 +2775,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   70,
   71,
   72,
+  73,
   USER_CONFIG_VERSION,
 ];
 
@@ -2804,6 +2851,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     conversationMaxPairs: 200,
     nameSessions: true,
     conversationLowWater: 0.65,
+    // `0` = keep the `tokenBudget * 0.15` share (SESSION_SECTIONS_CAP_AUTO).
+    sessionSectionsMaxTokens: 0,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -4895,6 +4944,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationLowWater ??
           USER_CONFIG_DEFAULTS.agent.conversationLowWater,
         "agent.conversationLowWater",
+      ),
+      // Non-negative like `conversationMaxTokens`, and for the same
+      // reason: `0` is the "derive it from the share" sentinel
+      // (`SESSION_SECTIONS_CAP_AUTO`), not a request for no session
+      // sections at all.
+      sessionSectionsMaxTokens: parseNonNegativeInt(
+        agent.sessionSectionsMaxTokens ??
+          USER_CONFIG_DEFAULTS.agent.sessionSectionsMaxTokens,
+        "agent.sessionSectionsMaxTokens",
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??
