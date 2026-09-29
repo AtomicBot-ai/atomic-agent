@@ -1765,7 +1765,7 @@ Added to [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
 
 `atomic-agent task create` now accepts scheduling flags:
 
-- `--at <unix-ms>` — one-shot at absolute time.
+- `--at <unix-ms|iso-8601>` — one-shot at absolute time.
 - `--cron "<expr>" [--tz <iana>]` — recurring cron (allocates a persistent session eagerly, so this path boots the full runtime).
 - `--every <seconds>` — recurring interval.
 - `--session <id>` is now optional; omit for one-shot ephemeral or let recurring allocate its own.
