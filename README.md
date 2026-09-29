@@ -220,9 +220,9 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
 | **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools (init, add, commit, checkout, merge) behind the same approval ladder as file writes. Remote sync (clone, fetch, pull, push, remote) is off by default; turn on `git.remoteSync` in the Integrations tab and every sync is approval-gated. |
-| **GitHub** | Act on GitHub as you once a token is saved in the Integrations tab: list and open pull requests and issues, and comment on issues. Every write asks first. `/report` files a bug report with your logs at the privacy level you pick and sends nothing until you confirm. |
-| **E-mail** | Give the agent its own `@atomicmail.ai` inbox from the Integrations tab (Atomic Mail) to read mail and send plain-text messages; every send asks first. Background model downloads can mail you when they finish. |
-| **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory, with checks like `exit 0` or `status 200`. |
+| **GitHub** | Act on GitHub as you once a token is saved in the Integrations tab: list pull requests and issues, create them, and comment on issues. Writes are approval-gated. `/report` files a bug report with your logs at the privacy level you pick and sends nothing until you confirm. |
+| **E-mail** | Give the agent its own `@atomicmail.ai` inbox from the Integrations tab (Atomic Mail) to list its inbox (sender, subject, preview) and send plain-text messages; sends are approval-gated and cannot be granted for the session. Background model downloads can mail you when they finish. |
+| **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory (off macOS, build and dependency folders are linked rather than copied, and a tree over 2 GB runs in place), with checks like `exit 0` or `status 200`. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
@@ -433,7 +433,7 @@ atomic-agent serve \
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
-`serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time (see Channels below), so keep the bots in this process or the TUI, not both.
+`serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time; see Channels below.
 
 </details>
 
@@ -476,11 +476,11 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 DISCORD_BOT_TOKEN=your-discord-bot-token
 ```
 
-Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
+Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it or reply to it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
 
 Channels belong to the runtime, not to the TUI: `atomic-agent serve` boots them the same way, so the bots keep answering with no terminal UI open. Each bot is guarded by its own lockfile in the state dir; a second process that tries to start the same bot leaves it down with `already running in another atomic-agent (pid N)` and does not retry, so start bots from `serve` or from the TUI, not from both.
 
-**Telegram.** Pair from the TUI: pairing mode makes the first DM the owner. While a turn runs, the bot keeps one silent progress bubble updated with step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`. Files you send are saved under `<stateDir>/inbox/telegram/`, one folder per day, and the agent gets the path with your caption (albums arrive as one message; Telegram lets bots fetch up to 20 MB). Files the agent attaches to a reply follow the text, images inline and the rest as documents, up to Telegram's 50 MB bot limit. Scheduled tasks can report back: `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or `notify: "telegram"` when the agent schedules it) posts each run's result to your paired DM. Reporting is per task, Telegram only; if the channel is down the report is skipped with a logged warning.
+**Telegram.** Pair from the TUI: pairing mode makes the first DM the owner. In groups, turn off the bot's privacy mode in @BotFather, or plain @mentions are not delivered to it. While a turn runs, the bot keeps one silent progress bubble updated with step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`. Files you send in the DM are saved under `<stateDir>/inbox/telegram/`, one folder per day, and the agent gets the path with your caption (albums arrive as one message; Telegram lets bots fetch up to 20 MB). Files the agent attaches to a reply follow the text, images inline and the rest as documents, up to Telegram's 50 MB bot limit. Scheduled tasks can report back: `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or `notify: "telegram"` when the agent schedules it) posts each run's result to your paired DM. Reporting is per task, Telegram only; if the channel is down the report is skipped with a logged warning.
 
 **Discord.** There is no pairing: put your user id (as a string) in `ownerUserIds`; an empty list refuses every message. The bot needs no privileged intents, because Discord delivers DMs and @mentions without them. Inbound files up to 50 MB go to `<stateDir>/inbox/discord/`; reply attachments are uploaded one message each, within your server's upload limit. There is no progress bubble.
 
@@ -559,11 +559,10 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **No-progress guard:** repeated identical tool calls draw a warning at 3 repeats and a hard veto at 5; after 3 consecutive vetoes the agent is forced into a graceful reply.
 - **Per-session FIFO:** every surface enters the same `TurnController`; one session stays ordered while different sessions run concurrently.
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, MCP config, and traces are ordinary local files or SQLite databases.
-- **Replaced files come back:** before a write replaces a file, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per directory, files up to 5 MB), and `os.fs.restore` puts it back.
+- **Replaced files come back:** before a write replaces a file the agent did not create this session, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per working directory, files up to 5 MB), and `os.fs.restore` puts it back.
 - **Deletes go to the Trash:** `os.fs.trash` moves files to the system Trash or Recycle Bin instead of deleting them, behind approval.
-- **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill (1-hour cap, 3 jobs per session).
+- **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill; it stops when the turn ends unless kept (1-hour cap from start, 3 jobs per session).
 - **Reads stay in the workspace:** with `agent.readScope` at its default, `working-dir`, a read outside the working directory asks first; `unrestricted` turns this off.
-- **Verification runs on a copy:** `verify.run` works in a temporary copy of the working directory, so nothing it writes reaches your files (trees over 2 GB run in place).
 
 > [!IMPORTANT]
 > Treat traces and `<stateDir>/.env` as sensitive local artifacts. Secret redaction and per-tool environment filtering are not complete isolation layers.

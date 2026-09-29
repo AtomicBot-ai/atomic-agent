@@ -1,6 +1,6 @@
 # Atomic Agent TUI
 
-Atomic Agent has two front ends. Use the CLI for simple sessions, automation, and debugging. Use the TUI for an interactive control console: approvals, logs, models, skills, tasks, memory, MCP, Telegram, and traces.
+Atomic Agent has two front ends. Use the CLI for simple sessions, automation, and debugging. Use the TUI for an interactive control console: approvals, logs, models, skills, tasks, memory, MCP, channels, and traces.
 
 ```bash
 atomic-agent run --cwd /path/to/work
