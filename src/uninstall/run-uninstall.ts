@@ -4,6 +4,11 @@ import { join } from "node:path";
 
 import { isSafeToRemove, type UninstallTarget } from "./uninstall-targets.js";
 import { stripInstallerPathLine } from "./strip-installer-path-line.js";
+import {
+  createUserPathStore,
+  removeUserPathEntry,
+  type UserPathStore,
+} from "./windows-user-path.js";
 
 /** Rc files `install.sh` can have written its PATH stanza into. */
 export function installerRcCandidates(homeDir: string): readonly string[] {
@@ -27,6 +32,11 @@ export interface UninstallResult {
   readonly removed: readonly RemovalOutcome[];
   /** Rc files whose installer stanza was taken out. */
   readonly rcFilesEdited: readonly string[];
+  /**
+   * The directory taken out of the Windows user `Path`, when there was
+   * one to take out. Absent everywhere else.
+   */
+  readonly userPathEntryRemoved?: string;
   /** True when every removal succeeded. */
   readonly complete: boolean;
 }
@@ -34,8 +44,17 @@ export interface UninstallResult {
 export interface RunUninstallOptions {
   readonly targets: readonly UninstallTarget[];
   readonly homeDir?: string;
-  /** Skip rc-file editing (`--keep-path`). */
+  readonly platform?: NodeJS.Platform;
+  /**
+   * The install dir `install.ps1` added to the user `Path`. Only set when
+   * the plan found an installed binary there: under a dev runtime this
+   * would be node's own directory, which is not ours to take off `Path`.
+   */
+  readonly installDir?: string;
+  /** Skip rc-file and user-`Path` editing (`--keep-path`). */
   readonly keepPathEntry?: boolean;
+  /** The Windows user `Path`. Defaults to PowerShell; injected by tests. */
+  readonly userPathStore?: UserPathStore;
   /** Per-step progress, so the TUI and the CLI can narrate the same run. */
   readonly onProgress?: (message: string) => void;
 }
@@ -82,7 +101,31 @@ export async function runUninstall(
     }
   }
 
+  const platform = options.platform ?? process.platform;
   const rcFilesEdited: string[] = [];
+  let userPathEntryRemoved: string | undefined;
+  if (!options.keepPathEntry && platform === "win32" && options.installDir) {
+    // install.ps1 does not write an rc file; its PATH entry lives in
+    // HKCU\Environment, so that is where it has to come back out of.
+    const installDir = options.installDir;
+    const store = options.userPathStore ?? createUserPathStore();
+    try {
+      const current = await store.read();
+      const next =
+        current === null ? null : removeUserPathEntry(current, installDir);
+      if (next?.changed) {
+        await store.write(next.value);
+        progress(`removed ${installDir} from your user PATH`);
+        userPathEntryRemoved = installDir;
+      }
+    } catch (err) {
+      removed.push({
+        path: `user PATH entry ${installDir}`,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   if (!options.keepPathEntry) {
     for (const rc of installerRcCandidates(home)) {
       let content: string;
@@ -110,6 +153,7 @@ export async function runUninstall(
   return {
     removed,
     rcFilesEdited,
+    ...(userPathEntryRemoved ? { userPathEntryRemoved } : {}),
     complete: removed.every((entry) => entry.ok),
   };
 }

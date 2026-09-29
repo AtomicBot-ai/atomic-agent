@@ -27,6 +27,13 @@ export {
 } from "./run-uninstall.js";
 export {
   resolveUninstallPlan,
+  pathEntryToRemove,
   type ResolvedUninstallPlan,
   type ResolveUninstallPlanOptions,
 } from "./resolve-uninstall-plan.js";
+export {
+  removeUserPathEntry,
+  createUserPathStore,
+  type UserPathStore,
+  type RemovePathEntryResult,
+} from "./windows-user-path.js";
