@@ -232,6 +232,24 @@ describe("loadConfig", () => {
     expect(config.paths.tracesDir).toBe(join(stateDir, "traces"));
   });
 
+  it("surfaces sessions.retention, off, with the file's caps", () => {
+    expect(loadConfig().sessions.retention).toEqual({
+      enabled: false,
+      maxAgeDays: 90,
+      maxRows: null,
+    });
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      sessions: { retention: { enabled: true, maxAgeDays: null, maxRows: 250 } },
+    });
+    resetConfigCache();
+    expect(loadConfig().sessions.retention).toEqual({
+      enabled: true,
+      maxAgeDays: null,
+      maxRows: 250,
+    });
+  });
+
   it("tracing.trace defaults expose the per-session NDJSON dir", () => {
     const config = loadConfig();
     expect(config.tracing.trace.enabled).toBeNull();

@@ -785,6 +785,66 @@ describe("parseUserConfigFile", () => {
     expect(() => parseUserConfigFile("oops")).toThrow(ConfigValidationError);
   });
 
+  // Config v73. Retention deletes the operator's own transcripts, so the
+  // default has to be "do nothing" and a file written before v73 has to
+  // land on it.
+  it("leaves sessions.retention off by default", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.sessions.retention.enabled).toBe(false);
+    expect(parsed.sessions.retention.maxAgeDays).toBe(90);
+    expect(parsed.sessions.retention.maxRows).toBeNull();
+    expect(parsed.sessions.retention).toEqual(
+      USER_CONFIG_DEFAULTS.sessions.retention,
+    );
+  });
+
+  it("gives a pre-v73 file the sessions.retention defaults", () => {
+    const parsed = parseUserConfigFile({ version: 72 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.sessions.retention).toEqual(
+      USER_CONFIG_DEFAULTS.sessions.retention,
+    );
+  });
+
+  it("accepts explicit sessions.retention values", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      sessions: { retention: { enabled: true, maxAgeDays: 30, maxRows: 500 } },
+    });
+    expect(parsed.sessions.retention).toEqual({
+      enabled: true,
+      maxAgeDays: 30,
+      maxRows: 500,
+    });
+  });
+
+  // `raw ?? default` would put 90 back and keep pruning by age — the one
+  // thing an operator writing `null` there is asking it not to do.
+  it("keeps an explicit null sessions.retention.maxAgeDays", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      sessions: { retention: { enabled: true, maxAgeDays: null } },
+    });
+    expect(parsed.sessions.retention.maxAgeDays).toBeNull();
+  });
+
+  it("rejects non-positive sessions.retention caps", () => {
+    for (const retention of [{ maxAgeDays: 0 }, { maxAgeDays: -1 }]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          sessions: { retention },
+        }),
+      ).toThrow(/sessions.retention.maxAgeDays/);
+    }
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        sessions: { retention: { maxRows: 0 } },
+      }),
+    ).toThrow(/sessions.retention.maxRows/);
+  });
+
   it("applies tracing.trace defaults when unspecified", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.tracing.trace.enabled).toBeNull();

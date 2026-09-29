@@ -424,6 +424,13 @@ export function loadConfig(): AtomicAgentConfig {
       ),
       repo: readEnv("ATOMIC_AGENT_REPO") ?? ENV_DEFAULTS.UPDATE_REPO,
     },
+    sessions: {
+      retention: {
+        enabled: user.sessions.retention.enabled,
+        maxAgeDays: user.sessions.retention.maxAgeDays,
+        maxRows: user.sessions.retention.maxRows,
+      },
+    },
     tracing: {
       trace: {
         enabled: user.tracing.trace.enabled,
