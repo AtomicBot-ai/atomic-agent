@@ -69,6 +69,13 @@ export function registerBuiltInProviderKinds(): void {
       maxImageBytes: config.vision.maxImageBytes,
       maxImagesPerCall: config.vision.maxImagesPerCall,
       baseUrlOverride: ctx.entry.url,
+      // The vision call's whole-request budget. Unforwarded it fell back
+      // to the provider's own hardcoded 120 s, which no knob reached,
+      // while text completions against the same server followed
+      // `localModels.requestTimeoutMs` — the entry's override first, as
+      // the openai-compatible kind does.
+      requestTimeoutMs:
+        ctx.entry.requestTimeoutMs ?? config.localModels.requestTimeoutMs,
       ...(ctx.getModelId ? { getModelId: ctx.getModelId } : {}),
       logger: ctx.logger,
     });

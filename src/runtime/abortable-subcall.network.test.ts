@@ -97,6 +97,7 @@ function providerFor(kind: Kind, url: string): LlmProvider {
       visionAutoDetect: false,
       maxImageBytes: 1,
       maxImagesPerCall: 1,
+      requestTimeoutMs: 30_000,
       baseUrlOverride: url,
     },
   );

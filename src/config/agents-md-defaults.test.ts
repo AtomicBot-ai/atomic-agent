@@ -103,6 +103,7 @@ const ENV_KEY_BY_DOC_KEY: Readonly<Record<string, keyof typeof ENV_DEFAULTS>> =
     "agent.loopHistorySize": "LOOP_HISTORY_SIZE",
     "agent.loopWanderingThreshold": "LOOP_WANDERING_THRESHOLD",
     "agent.loopWanderingEscalation": "LOOP_WANDERING_ESCALATION",
+    "localModels.requestTimeoutMs": "REQUEST_TIMEOUT_MS",
     "llama.completionRetries": "COMPLETION_RETRIES",
     "llama.completionRetryBackoffMs": "COMPLETION_RETRY_BACKOFF_MS",
     "tasks.enabled": "TASKS_ENABLED",
