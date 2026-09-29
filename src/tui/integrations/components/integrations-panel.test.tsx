@@ -90,6 +90,26 @@ describe("IntegrationsPanel", () => {
     expect(out).toContain("enter save");
   });
 
+  it("masks a secret field while it is being typed", () => {
+    // Screens get shared and recorded: a bot token must not be readable
+    // in the frame before it is saved, only after.
+    const typed = "1234567:abcdefghijklmnopqrstuvwxyz0123456789";
+    const row: IntegrationRow = {
+      ...COMPOSIO,
+      fields: [{ ...COMPOSIO.fields[0]!, secret: true }],
+    };
+    const { lastFrame } = render(
+      <IntegrationsPanel
+        panel={panelOf({ rows: [row], mode: "edit", editBuffer: typed })}
+      />,
+    );
+    const out = flat(lastFrame());
+    expect(out).not.toContain(typed);
+    expect(out).not.toContain("abcdefghij");
+    expect(out).toContain("•".repeat(32));
+    expect(out).toContain("enter save");
+  });
+
   it("walks the operator through setup while the integration is not connected", () => {
     // A field labelled "Bot token" is self-explanatory only to someone
     // who has already made a bot. The steps are the difference between

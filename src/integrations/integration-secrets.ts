@@ -95,6 +95,11 @@ export function displayFieldValue(
 ): string {
   if (value === undefined) return "—";
   if (!field.secret) return value;
+  return maskSecret(value);
+}
+
+/** Bullets in place of a secret, capped at 32 so it fits the pane. */
+export function maskSecret(value: string): string {
   const masked = "•".repeat(Math.min(value.length, 32));
   return value.length > 32 ? `${masked}+${value.length - 32}` : masked;
 }

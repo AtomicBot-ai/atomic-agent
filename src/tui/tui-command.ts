@@ -731,8 +731,6 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTelegramSetEnabledRequested: (enabled) =>
           orchestrator.telegram.setEnabled(enabled),
         onTelegramRestartRequested: () => orchestrator.telegram.restart(),
-        onTelegramTokenPromptOpenRequested: () =>
-          bus.emit({ type: "telegram_token_prompt_opened" }),
         onTelegramTokenSubmitted: (buffer) =>
           orchestrator.telegram.submitToken(buffer),
         onTelegramClearTokenRequested: () => orchestrator.telegram.clearToken(),
