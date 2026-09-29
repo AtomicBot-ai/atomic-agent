@@ -180,6 +180,32 @@ export function createOpenAiStreamConsumer(
                 generationId,
               );
             }
+            // A service can abandon its own generation with a finish reason
+            // instead of an error object: Gemini through OpenRouter ends a
+            // malformed function call with `finish_reason: "error"` and
+            // `native_finish_reason: "MALFORMED_FUNCTION_CALL"`, after the
+            // prose it wrote on the way to the call. Read as an ordinary stop
+            // that prose becomes the turn's answer and the call is never made
+            // — a Fusion turn ended in 36 s with a plan and an empty folder.
+            //
+            // Only once something has streamed: thrown here the error reaches
+            // the loop past the point where a link can be swapped, so the step
+            // parks and retries on the same provider, which is what a
+            // malformed call needs. An error finish on the FIRST event is
+            // left alone deliberately — it ends as an empty completion, and
+            // `isRecoverableEmptyCompletion` already retries that in place
+            // rather than quarantining the link.
+            if (
+              chunk.finishReason?.toLowerCase() === "error" &&
+              (content.length > 0 || reasoningContent.length > 0)
+            ) {
+              const native = chunk.nativeFinishReason;
+              throw new OpenAiSseError(
+                502,
+                `the provider ended the completion with an error${native === null ? "" : ` (${native})`}`,
+                generationId,
+              );
+            }
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
             if (chunk.finishReason !== null) terminalObserved = true;
