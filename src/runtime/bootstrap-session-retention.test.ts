@@ -93,7 +93,7 @@ describe("session retention through bootstrap", () => {
       dbFile: join(stateDir, "sessions.sqlite"),
     });
     try {
-      return store.listSummaries().map((row) => row.id);
+      return store.listRecent(1000).map((session) => session.id);
     } finally {
       store.close();
     }

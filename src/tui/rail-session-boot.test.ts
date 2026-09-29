@@ -74,7 +74,7 @@ describe("rail session list — boot", () => {
     // catch — one store fault, one line, the way it read before the rail
     // grew a guard of its own.
     const { orchestrator, actions } = harness([], {
-      listSummaries: () => {
+      listSummaryPage: () => {
         throw new Error("database disk image is malformed");
       },
       countUnreadable: () => {

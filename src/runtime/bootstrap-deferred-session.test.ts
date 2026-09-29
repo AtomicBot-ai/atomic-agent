@@ -85,7 +85,9 @@ describe("createAgentRuntime deferred sessions", () => {
     try {
       const session = runtime.createSession({ persist: false });
       expect(runtime.sessionStore.load(session.id)).toBeNull();
-      expect(runtime.sessionStore.listSummaries()).toEqual([]);
+      // `listRecent`, not the rail's page: the page hides a row with no
+      // first prompt, so only a read of every row proves none was written.
+      expect(runtime.sessionStore.listRecent(1000)).toEqual([]);
       expect(existsSync(tracePath(session.id))).toBe(false);
       expect(
         traced.some(
@@ -104,7 +106,8 @@ describe("createAgentRuntime deferred sessions", () => {
       const result = await runtime.runTurn(session, "hello", { maxSteps: 3 });
       expect(result.reason).toBe("reply");
       // One row, carrying the prompt that makes it visible on the rail.
-      const rows = runtime.sessionStore.listSummaries();
+      expect(runtime.sessionStore.listRecent(1000)).toHaveLength(1);
+      const rows = runtime.sessionStore.listSummaryPage({ limit: 1000 });
       expect(rows.map((row) => [row.id, row.firstPrompt])).toEqual([
         [session.id, "hello"],
       ]);
