@@ -5,6 +5,8 @@ import type { TuiState } from "./tui-state.js";
 import {
   selectExtraChromeRows,
   selectHintRows,
+  selectMetaBarFit,
+  selectMetaBarRows,
   selectRailVisible,
 } from "./select-chrome-rows.js";
 import {
@@ -105,6 +107,56 @@ describe("selectExtraChromeRows", () => {
   it("is zero when nothing wraps", () => {
     expect(selectExtraChromeRows(chatState(), { columns: 240, rows: 40 })).toBe(
       0,
+    );
+  });
+});
+
+/**
+ * The bar's own surplus. `TuiApp` hands the very same fit to
+ * `PromptMetaBar`, so what is measured here is what gets painted.
+ */
+describe("selectMetaBarFit", () => {
+  it("measures the bar, not the terminal", () => {
+    const fit = selectMetaBarFit(chatState(), COMMON);
+    expect(fit.barColumns).toBeGreaterThan(0);
+    expect(fit.barColumns).toBeLessThan(COMMON.columns);
+    expect(fit.terminalRows).toBe(COMMON.rows);
+  });
+
+  it("always measures a mode chip, which is always drawn", () => {
+    expect(selectMetaBarFit(chatState(), COMMON).modeWidth).toBeGreaterThan(0);
+  });
+
+  it("never goes negative on a terminal narrower than the frame", () => {
+    expect(
+      selectMetaBarFit(chatState(), { columns: 2, rows: 40 }).barColumns,
+    ).toBe(0);
+  });
+});
+
+describe("selectMetaBarRows", () => {
+  it("is at least one row at every size", () => {
+    for (const rows of [16, 24, 30, 40, 60]) {
+      for (const columns of [40, 60, 80, 100, 120, 170, 200]) {
+        expect(
+          selectMetaBarRows(chatState(), { columns, rows }),
+        ).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+
+  it("holds a short window to the single row the bar always had", () => {
+    expect(selectMetaBarRows(chatState(), { columns: 80, rows: 24 })).toBe(1);
+  });
+});
+
+describe("selectExtraChromeRows counts both adaptive rows", () => {
+  it("is the hint strip's surplus plus the bar's", () => {
+    const size = COMMON;
+    expect(selectExtraChromeRows(chatState(), size)).toBe(
+      selectHintRows(chatState(), size) -
+        1 +
+        (selectMetaBarRows(chatState(), size) - 1),
     );
   });
 });

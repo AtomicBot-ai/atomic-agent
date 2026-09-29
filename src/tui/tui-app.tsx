@@ -54,7 +54,7 @@ import {
 } from "./app-key-bindings.js";
 import { appChromeRows } from "./components/debug-pane.js";
 import {
-  COMPOSER_COLLAPSED_ROWS,
+  composerCollapsedRows,
   ComposerOverlay,
   ComposerSlot,
   maxComposerEditorLines,
@@ -114,6 +114,8 @@ import {
 } from "./layout.js";
 import {
   selectExtraChromeRows,
+  selectMetaBarFit,
+  selectMetaBarRows,
   selectRailVisible,
 } from "./select-chrome-rows.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
@@ -1110,6 +1112,13 @@ export function TuiApp({
   // cannot drift — see `select-chrome-rows.ts`.
   const hintRowBudget = computeHintRowBudget(terminalSize.rows);
   const extraChromeRows = selectExtraChromeRows(state, terminalSize);
+  // The bar's shape and height, decided once. `PromptMetaBar` clamps its
+  // render to the same plan, `ComposerSlot` reserves it, and the chat
+  // viewport has already given up the surplus through
+  // `selectExtraChromeRows` — all three off this one computation, so
+  // none of them can disagree about how tall the composer is.
+  const metaBarFit = selectMetaBarFit(state, terminalSize);
+  const metaBarRows = selectMetaBarRows(state, terminalSize);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   /**
    * The composer belongs to the Run screen. Observe and Manage are for
@@ -1808,7 +1817,10 @@ export function TuiApp({
   // re-expands the moment the modal closes.
   const composerMaxEditorLines = modalOwnsInput
     ? 1
-    : maxComposerEditorLines(menuPaneRows + COMPOSER_COLLAPSED_ROWS);
+    : maxComposerEditorLines(
+        menuPaneRows + composerCollapsedRows(metaBarRows),
+        metaBarRows,
+      );
   const promptLlm = selectPromptLlmMeta(state);
   // The backend control carries the health dot the standalone pill used
   // to: `selectComposerBackendMeta` keeps the `localConfigured` guard
@@ -2348,7 +2360,7 @@ export function TuiApp({
                 every newline compressed the chat log and reflowed the
                 whole screen.
               */}
-                    <ComposerSlot />
+                    <ComposerSlot metaRows={metaBarRows} />
                     <ComposerOverlay>
                       <PromptShell
                         fusion={promptBackend.kind === "fusion"}
@@ -2379,6 +2391,7 @@ export function TuiApp({
                         leftSlot={promptLeftSlot}
                         contextSlot={promptContextSlot}
                         modeSlot={promptModeSlot}
+                        fit={metaBarFit}
                         running={state.status === "running"}
                         onStop={onStopRun}
                         focus={editorFocus}
@@ -2429,7 +2442,7 @@ export function TuiApp({
                   paneTop={2}
                   availableRows={
                     menuPaneRows +
-                    (composerVisible ? COMPOSER_COLLAPSED_ROWS : 0)
+                    (composerVisible ? composerCollapsedRows(metaBarRows) : 0)
                   }
                   availableColumns={
                     terminalSize.columns -

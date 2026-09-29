@@ -7,6 +7,12 @@ import {
 import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
 import { fusionBarGround, fusionInk } from "../theme/fusion-tint.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import {
+  MODE_STACK_LABEL,
+  planMetaBar,
+  type MetaBarParts,
+  type MetaBarPlan,
+} from "./meta-bar-rows.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -77,6 +83,24 @@ export interface PromptMetaBarProps {
    * then under what rules.
    */
   modeSlot: ReactElement | null;
+  /**
+   * How many columns the bar actually has, and how many rows the window
+   * does — what {@link planMetaBar} needs to decide the bar's shape and
+   * its height.
+   *
+   * `barColumns` is the bar's own inner width, NOT the terminal's: the
+   * rail and the composer's frame take about forty columns between them.
+   * `TuiApp` is the only caller that knows it, which is why it comes
+   * down as a prop rather than off `useTerminalSize()` — and why the
+   * fallback below reads the stdout width, which is exactly the bar's
+   * width under `ink-testing-library`'s sized stdout.
+   */
+  fit?: Pick<MetaBarParts, "barColumns" | "terminalRows"> & {
+    routeWidth: number;
+    noticeWidth: number;
+    contextWidth: number;
+    modeWidth: number;
+  };
   /**
    * Layer the route controls register their click targets on. The
    * composer floats over the chat log behind a raised mouse backstop
@@ -188,11 +212,13 @@ export function PromptMetaBar({
   fusion = false,
   contextSlot,
   modeSlot,
+  fit,
   mouseLayer,
 }: PromptMetaBarProps): ReactElement {
   const { columns, rows } = useTerminalSize();
   const ground = fusion ? fusionBarGround() : theme.colors.railBackground;
   const label = fusion ? fusionInk() : theme.colors.railMuted;
+  const plan = fit ? planMetaBar(fit) : legacyPlan(columns, rows);
   const left = (
     <MetaLeft
       leftSlot={leftSlot}
@@ -202,9 +228,11 @@ export function PromptMetaBar({
       needsModelDownload={needsModelDownload ?? false}
       fusion={fusion}
       mouseLayer={mouseLayer}
+      // The route wraps only where the plan left it a row to wrap onto.
+      maxRows={plan.routeRows}
     />
   );
-  if (columns > 0 && columns < STACK_BELOW_COLUMNS && rows >= STACK_MIN_ROWS) {
+  if (plan.stacked) {
     return (
       <Box
         flexDirection="row"
@@ -214,12 +242,23 @@ export function PromptMetaBar({
         paddingY={1}
       >
         {/* Route above its own gauge: both get the column's full width
-            instead of a quarter of the row's. */}
+            instead of a quarter of the row's. `height` is the planner's
+            number, not the content's — a column that painted fewer rows
+            than were reserved would leave a blank stripe, and one that
+            painted more would hide a row of transcript. Fixing it makes
+            the bar exactly as tall as `ComposerSlot` reserved.
+
+            This and `MetaLeft`'s own `height` are belt and braces, and
+            deliberately both: a vacuity run defeating either one alone
+            changed no frame, defeating the pair made the bar paint six
+            rows where five were planned. Keeping one would work until
+            the other moved. */}
         <Box
           flexDirection="column"
           flexGrow={1}
           flexShrink={1}
           minWidth={0}
+          height={plan.rows}
           overflow="hidden"
         >
           {left}
@@ -239,7 +278,7 @@ export function PromptMetaBar({
         >
           {modeSlot ? (
             <>
-              <Text color={label}>Coding mode:</Text>
+              <Text color={label}>{MODE_STACK_LABEL}</Text>
               <Box flexShrink={0}>{modeSlot}</Box>
             </>
           ) : null}
@@ -282,6 +321,32 @@ export function PromptMetaBar({
   );
 }
 
+/**
+ * The shape the bar picked before it could measure itself, kept for the
+ * callers that cannot supply a `fit`: component tests and the
+ * onboarding wizard's separate Ink tree, neither of which knows the
+ * bar's real width. Both render the bar with opaque slot elements,
+ * whose widths this file has no way to read — measuring them would need
+ * a layout pass Ink does not have.
+ *
+ * So the rule is: a caller that knows the widths gets the measured
+ * behaviour, and one that does not gets exactly what this component did
+ * before. `TuiApp`, the only caller whose output an operator ever sees,
+ * is the first kind.
+ */
+function legacyPlan(columns: number, rows: number): MetaBarPlan {
+  const stacked =
+    columns > 0 && columns < STACK_BELOW_COLUMNS && rows >= STACK_MIN_ROWS;
+  // `routeRows: 1` on purpose: a caller that cannot measure gets no
+  // wrapping, only the shape this component always picked.
+  return {
+    rows: stacked ? 2 : 1,
+    stacked,
+    leftColumns: Math.max(0, columns),
+    routeRows: 1,
+  };
+}
+
 interface MetaLeftProps {
   leftSlot: ReactElement | null;
   backend: ComposerBackendMeta | null;
@@ -289,6 +354,15 @@ interface MetaLeftProps {
   provider: string | null;
   needsModelDownload: boolean;
   fusion: boolean;
+  /**
+   * Rows the route may occupy. At 1 it is the single clipped row it has
+   * always been. Above that it wraps — between controls, never inside
+   * one, because the break is Yoga's `flexWrap` over the row's Boxes and
+   * each Box still carries its own `wrap="truncate"`. So a route that
+   * does not fit breaks at a ` · ` and the model keeps its own line,
+   * rather than the provider being cut to `aiml…`.
+   */
+  maxRows: number;
   mouseLayer?: number;
 }
 
@@ -319,6 +393,7 @@ function MetaLeft({
   provider,
   needsModelDownload,
   fusion,
+  maxRows,
   mouseLayer,
 }: MetaLeftProps): ReactElement {
   if (!leftSlot && !backend && !model && !provider && !needsModelDownload) {
@@ -334,13 +409,16 @@ function MetaLeft({
       flexGrow={1}
       flexShrink={1}
       minWidth={0}
-      // One row, clipped. Ink wraps rather than clips, and a second line
-      // here would take the composer's bottom border down with it. The
+      // Exactly `maxRows` tall, clipped. Ink wraps rather than clips, and
+      // an unbudgeted second line here would take the composer's bottom
+      // border down with it — so the height is the planner's number, and
+      // `flexWrap` is only switched on once that number leaves room. The
       // slot is rendered as it arrives — it can be a click target, and a
       // click target is a Box, which Ink cannot nest inside a `<Text>` —
       // so this file can no longer impose `wrap="truncate"` on it, and
       // this is the belt to the caller's braces.
-      height={1}
+      flexWrap={maxRows > 1 ? "wrap" : "nowrap"}
+      height={Math.max(1, maxRows)}
       overflow="hidden"
     >
       {/*
@@ -373,6 +451,16 @@ function MetaLeft({
       />
     </Box>
   );
+}
+
+/**
+ * The model label as the bar draws it — the ceiling applied, the
+ * fusion pair split and each leg capped, `.gguf` dropped. Exported so a
+ * caller measuring the route (`selectMetaBarFit`) measures the string
+ * that will actually be painted rather than the raw config value.
+ */
+export function composerModelLabel(model: string): string {
+  return formatModel(model);
 }
 
 function formatModel(model: string): string {

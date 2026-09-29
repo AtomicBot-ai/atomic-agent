@@ -6,6 +6,8 @@ import type { TuiSessionInfo } from "../tui-state.js";
 import { COMPOSER_ROWS } from "./debug-pane.js";
 import {
   COMPOSER_CHROME_ROWS,
+  composerChromeRows,
+  composerCollapsedRows,
   maxComposerEditorLines,
 } from "./composer-overlay.js";
 
@@ -247,5 +249,45 @@ describe("composer overlay growth", () => {
     await delay(200);
     expect(app.frame().split("\n").length).toBe(linesTyped);
     app.unmount();
+  });
+});
+
+/**
+ * The composer's chrome used to be a constant that assumed a one-row
+ * meta bar. The bar can now take two or three — the route wraps rather
+ * than truncating — so every consumer of that height has to follow it,
+ * or the slot reserves the wrong number and the composer either hides a
+ * row of transcript or leaves a blank stripe over it.
+ */
+describe("composer chrome follows the meta bar's height", () => {
+  it("is the old constant for the one-row bar", () => {
+    expect(composerChromeRows(1)).toBe(COMPOSER_CHROME_ROWS);
+    expect(composerChromeRows()).toBe(COMPOSER_CHROME_ROWS);
+    expect(composerCollapsedRows(1)).toBe(COMPOSER_CHROME_ROWS + 1);
+  });
+
+  it("grows a row for every row the bar grows", () => {
+    expect(composerChromeRows(2)).toBe(COMPOSER_CHROME_ROWS + 1);
+    expect(composerChromeRows(3)).toBe(COMPOSER_CHROME_ROWS + 2);
+    expect(composerCollapsedRows(3)).toBe(composerChromeRows(3) + 1);
+  });
+
+  it("never reads below one row, however it is called", () => {
+    expect(composerChromeRows(0)).toBe(COMPOSER_CHROME_ROWS);
+    expect(composerChromeRows(-4)).toBe(COMPOSER_CHROME_ROWS);
+  });
+
+  /**
+   * The editor's growth cap comes out of the same stage. A taller bar
+   * means one less line the draft may expand to — which is the trade,
+   * and the reason the bar only stacks on a window that can afford it.
+   */
+  it("takes the bar's extra rows out of the editor's growth cap", () => {
+    expect(maxComposerEditorLines(40, 2)).toBe(maxComposerEditorLines(40) - 1);
+    expect(maxComposerEditorLines(40, 3)).toBe(maxComposerEditorLines(40) - 2);
+  });
+
+  it("keeps the editor's floor however tall the bar gets", () => {
+    expect(maxComposerEditorLines(12, 3)).toBeGreaterThanOrEqual(3);
   });
 });
