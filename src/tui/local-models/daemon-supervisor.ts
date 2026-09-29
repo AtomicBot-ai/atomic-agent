@@ -40,6 +40,13 @@ export interface DaemonSupervisorDeps {
   say: (line: string) => void;
   /** One-line fault summary from the daemon's log, if any. */
   describeFault: () => string | null;
+  /**
+   * Asked on every tick where the pid is alive: why the live daemon is
+   * wedged, or `null` (see `WedgeWatch`). Omitted = never wedged.
+   */
+  checkWedge?: () => Promise<string | null>;
+  /** A new daemon starts a new wedge record. */
+  resetWedge?: () => void;
   now?: () => number;
 }
 
@@ -76,6 +83,7 @@ export class DaemonSupervisor {
    * again.
    */
   noteStarted(): void {
+    this.deps.resetWedge?.();
     this.lastStartAt = this.now();
     this.gaveUp = false;
     this.deadTicks = 0;
@@ -92,6 +100,8 @@ export class DaemonSupervisor {
       }
       if (await this.deps.pidAlive()) {
         this.deadTicks = 0;
+        const wedged = (await this.deps.checkWedge?.()) ?? null;
+        if (wedged) await this.recover(wedged);
         return;
       }
       this.deadTicks += 1;
@@ -117,6 +127,7 @@ export class DaemonSupervisor {
 
   private async runRecovery(reason: string): Promise<boolean> {
     this.deadTicks = 0;
+    this.deps.resetWedge?.();
     // A daemon that stayed up past the window proved itself: its death
     // starts the count over.
     if (this.now() - this.lastStartAt <= QUICK_DEATH_MS) this.quickDeaths += 1;

@@ -94,6 +94,7 @@ import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
 import { DaemonSupervisor } from "./daemon-supervisor.js";
+import { probeEndpoint, WedgeWatch } from "./daemon-wedge-watch.js";
 import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
 import {
   resolveLocalLegRole,
@@ -240,7 +241,9 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
-  /** Restarts a daemon this TUI owns when it dies (`autoRestart`). */
+  /** Tells a wedged live daemon from a busy one (see `WedgeWatch`). */
+  private readonly wedgeWatch = new WedgeWatch();
+  /** Restarts a daemon this TUI owns when it dies or wedges (`autoRestart`). */
   private readonly supervisor = new DaemonSupervisor({
     enabled: () => {
       const cfg = getConfig();
@@ -258,6 +261,15 @@ export class LocalModelsOrchestrator {
         return null;
       }
     },
+    checkWedge: async () => {
+      const base = `http://127.0.0.1:${getConfig().localModels.managed.port}`;
+      const [health, slots] = await Promise.all([
+        probeEndpoint(`${base}/health`, 2_000),
+        probeEndpoint(`${base}/slots`, 5_000),
+      ]);
+      return this.wedgeWatch.observe({ at: Date.now(), health, slots });
+    },
+    resetWedge: () => this.wedgeWatch.reset(),
   });
   /**
    * Devices enumerated via `llama-server --list-devices`, cached for the
