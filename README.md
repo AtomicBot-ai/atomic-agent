@@ -45,7 +45,7 @@ Windows (PowerShell):
 irm https://atomicagent.io/install.ps1 | iex
 ```
 
-The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place — `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git.
+The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place; `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git.
 
 > [!NOTE]
 > Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
@@ -63,7 +63,10 @@ atag
 ```
 
 > [!TIP]
-> Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI — it opens a new terminal window with a fresh atomic-agent in the same directory.
+> Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI: it opens a new terminal window with a fresh atomic-agent in the same directory.
+
+> [!TIP]
+> Want to go through first-time setup again? Run `/onboarding` (or `/setup`) in the TUI, or start it with `atomic-agent tui --onboarding`. Your providers, keys, sessions and memory are kept.
 
 > [!TIP]
 > Coming from another agent? The first run offers to bring your data over, with a dry-run preview before anything is written. What moves depends on the source:
@@ -79,13 +82,13 @@ atag
 
 ### Uninstall
 
-One command removes everything — the state directory (config, memory, sessions, tasks, traces, downloaded models), the binary and its `atag` alias, the asset directories beside them, and the PATH line the installer added to your shell rc file:
+One command removes everything: the state directory (config, memory, sessions, tasks, traces, downloaded models), the binary and its `atag` alias, the asset directories beside them, and the PATH line the installer added to your shell rc file:
 
 ```bash
 atomic-agent uninstall
 ```
 
-It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`).
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept; this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`).
 
 ### Troubleshooting
 
@@ -217,6 +220,9 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
 | **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools (init, add, commit, checkout, merge) behind the same approval ladder as file writes. Remote sync (clone, fetch, pull, push, remote) is off by default; turn on `git.remoteSync` in the Integrations tab and every sync is approval-gated. |
+| **GitHub** | Act on GitHub as you once a token is saved in the Integrations tab: list and open pull requests and issues, and comment on issues. Every write asks first. `/report` files a bug report with your logs at the privacy level you pick and sends nothing until you confirm. |
+| **E-mail** | Give the agent its own `@atomicmail.ai` inbox from the Integrations tab (Atomic Mail) to read mail and send plain-text messages; every send asks first. Background model downloads can mail you when they finish. |
+| **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory, with checks like `exit 0` or `status 200`. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
@@ -224,7 +230,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
 | **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. |
 | **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, plus one-click presets for Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, Atomic Chat and more, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
-| **Telegram & Discord** | Remote control from your phone with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. Run several bots at once from the Swarm tab (`/swarm`), each with its own token and owner. |
+| **Telegram & Discord** | Remote control from your phone: a session per chat, approval buttons, files both ways, and opt-in scheduled-task reports on Telegram. Run several bots at once from the Swarm tab (`/swarm`), each with its own token and owner. |
 | **[Composio](https://composio.dev)** | Connect 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) with OAuth handled for you. Set up from the Integrations tab; tools arrive as `mcp.composio.*` and every write to a real account stays approval-gated. |
 
 ### Memory That Grows Outside the Prompt
@@ -239,64 +245,37 @@ Atomic Agent's memory is not a giant chat log pasted back into the prompt. It's 
 - **Voting** lets useful or harmful memories, lessons, procedures, and profile facts drift up or down.
 - **Dedup and eviction** merge near-duplicate memories and evict by usefulness, not age, on by default.
 - **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the reply.
+- **Obsidian export:** `atomic-agent memory export --vault <dir>` writes notes, lessons and procedures into a vault as linked Markdown files.
 
-New to this? [MEMORY_GUIDE.md](MEMORY_GUIDE.md) walks the whole loop end to end — what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
+New to this? [MEMORY_GUIDE.md](MEMORY_GUIDE.md) walks the whole loop end to end: what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
 
 ## Ways to Use It
 
 <details>
 <summary><b>TUI and CLI</b></summary>
 
-Use the CLI for simple sessions, automation, and debugging. Use the TUI for an interactive control console: approvals, logs, models, skills, tasks, memory, MCP, Telegram, and traces.
+Use the CLI for simple sessions, automation, and debugging. Use the TUI for an interactive control console: approvals, logs, models, skills, tasks, memory, MCP, channels, and traces.
 
 ```bash
 atomic-agent run --cwd /path/to/work
 atomic-agent tui --cwd /path/to/work
-
 atomic-agent skill list
 atomic-agent task list
 atomic-agent trace list --limit 10
 ```
 
-**The context readout.** The chip at the right of the composer shows a bar and `8/20 tasks · 39.9k/48k cap · 262k`: the transcript against the ceiling it is packed to, with the model's context window as the last figure, so you can see whether there is room for what you are about to send. History is limited in **tasks**, not tokens: one task is a thing you asked plus everything the agent did answering it, and `agent.conversationMaxPairs` (1-1000, default 200) says how many the prompt carries. Tokens are the wrong unit to steer with — nobody thinks in them — but they are still the ceiling underneath, because one task can run twenty tool calls and no task count keeps a prompt inside the window on its own. Once history has been dropped it says so in words (`· 3 tasks lost`) and turns violet: that is the point where the agent stops knowing things it knew a minute ago, and answers quietly start getting less consistent. Cloud models take their window from the model catalogue, so the gauge is drawn against a real scale there too; when nothing has set a scale yet it shows only the running total.
+**Context.** The chip at the right of the composer shows the transcript against its ceiling and the model's window. History is limited in tasks, not tokens: one task is a thing you asked plus everything the agent did answering it, and `agent.conversationMaxPairs` (1-1000, default 200) sets how many the prompt carries. Click the chip or run `/context` to change the count and see the cost before you send.
 
-Click the chip (or `/context`) for the breakdown, and for the one control that matters: a selector for how many tasks the next prompt carries, with a button either side of the number (`-` and `+` from the keyboard). Every figure above it — the total, the percentage, the `conversation` row, the free space — recalculates as you move it, so the cost of the choice is on screen while you are making it rather than one turn later. Each step applies immediately; there is nothing to confirm.
-
-`agent.conversationMaxTokens` still exists as the ceiling underneath. Its default, `0`, fills whatever the window leaves (64k when the window is unknown); set a number to pin a tighter ceiling, for example on a metered cloud model. It is no longer something you have to think about: the task count is the limit you steer with, and the token cap only intervenes when a single task is large enough to threaten the window on its own.
-
-Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
-
-**Coding modes.** A chip at the right end of the composer's bar says which rules are in force. Clicking it — or `ctrl+g M`, or `/mode` — opens a menu of the four, each with a line saying what it does; ↑↓ moves, Enter applies, Esc cancels. `/mode <name>` sets one directly without the menu.
-
-| mode | |
+| Mode | What it does |
 |---|---|
-| `default` | approvals follow your configured approval level (`agent.approvalLevel` in `config.json`) |
-| `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. When the plan lands, three buttons appear **under the plan itself**, beside its `[copy]` row: run it in `auto`, run it in `bypass permissions`, or dismiss it. Typing instead keeps you in plan mode and revises the plan — the composer says so while the offer is up. |
-| `auto` | file writes inside this workspace stop asking; everything else still does |
-| `bypass permissions` | nothing asks, for this session. Hardline shell-guard rules still block. |
+| `default` | Approvals follow `agent.approvalLevel`. |
+| `plan` | Read-only; the agent presents a plan, then you can run it in `auto` or `bypass permissions`. |
+| `auto` | File writes inside the workspace stop asking. |
+| `bypass permissions` | Nothing asks this session; hardline shell-guard rules still block. |
 
-All four are session state and none are written to `config.json` — a `bypass` that survived a restart would be a standing grant nobody remembers making. `default` restores the level you actually configured, so a session that passed through `bypass` and back lands where it started. The cycle order keeps `plan` and `bypass` two presses apart in either direction.
+Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
 
-**Answering an approval prompt.** The prompt draws its verbs as buttons — click one, or use its chord: `ctrl+y` approves the call, `ctrl+d` denies, `ctrl+f` grants its category for the session, `esc` aborts the run. Every decision is a chord and never a bare letter, because the input field below stays live: typing "yes, but put it somewhere else" must be a message, not a verdict. Two more ways out:
-
-- **`ctrl+b` — write it somewhere else.** On an `os.fs.write` prompt the target path becomes an editable field, prefilled with the full path. Type any other target (`~` works, missing folders are created) and Enter confirms it. The new path is re-checked against the approval ladder first: a target on the same rung as the one you approved is written, a target on a different rung (workspace → home, say) asks once more, and a target that is the agent's own `config.json` / `.env` is refused.
-- **Just type.** The input field stays live under the prompt, so you can answer the agent in words — "put the site in ~/Documents/apple-site and use an inline SVG". Enter cancels the pending call with your message as its reason (the model reads it as the tool result) and folds the same text into the running turn, so the run keeps going instead of dying. The chords keep working while you type, so you can start a message, change your mind, and approve without clearing it first. `esc` is the one exception: with a draft in the buffer it clears the draft rather than aborting the run.
-
-On a `shell` prompt `ctrl+b` grants the command's *shape* for the session (`git`, `npm`) instead of the whole category — except for `bash -c`-style interpreters, where the binary name hides what actually runs, so no shape grant is offered. The retarget and the shape grant share `ctrl+b` because they can never both be on screen: one is `os.fs.write` only, the other `shell` only.
-
-**Look.** The TUI defaults to the `classic-dark` palette (`classic-light` when it detects a light terminal): an indigo rail, raised `+ new` / `≡ Menu` / `send →` controls, the session title in the top bar, `AGENT` / `YOU` labels on the transcript, and green tool results. Five more ship with it — `classic-light`, `toxic-green`, `khorne-red`, `darky-dark` and `moon-yellow`. `/theme` lists them, `/theme <name>` switches, and the choice persists.
-
-All six are designed here rather than transcribed from upstream terminal themes, and every colour pair the UI paints is held to WCAG AA by `theme-contrast.test.ts`. The registry that preceded them carried twelve palettes and failed that check on 154 of its 396 pairs — including light text on the light status-bar ground at 1.09:1. Configs naming one of the retired themes are rehomed to the nearest surviving palette rather than silently reset.
-
-**Small windows.** The layout degrades as the window shrinks — the right rail drops at 100 columns, the splash art steps down through three sizes, the chrome grows under 60 columns — down to a floor of **40x16**. Below that it stops: Ink overlaps a frame taller than the terminal instead of clipping it, so a 16-row UI in a 10-row window is two UIs painted over each other rather than a cramped one. Under the floor the app draws a single card saying what it needs and what it has, on the main screen and the first-run screen alike, and goes back to the real UI as soon as the window is dragged big enough.
-
-**Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as Esc on an idle prompt), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
-
-While mouse reporting is on the terminal hands clicks to the app, so its own plain drag-to-select is unavailable — a terminal-level constraint, not a choice. **To select text, just drag over it**: a drag that starts on plain text (a chat message, panel prose, empty rail space) pauses the mouse for 10 seconds and says so in chat — drag again to select, then copy the way you normally would. The pause ends on its own and clicks come back. This works in every terminal, no modifier to remember. Some terminals also offer an instant path: a Shift-modified drag bypasses reporting natively on kitty, WezTerm, GNOME Terminal and Windows Terminal, and iTerm2 reserves Option for the same thing — there the selection happens immediately, no pause needed. Where the app sees the shifted or alt-modified press instead (Apple Terminal), it opens the same 10-second pause. To hand selection to the terminal permanently instead: `/mouse off` in the app, `atomic-agent tui --no-mouse` for one run, or `"tui": { "mouse": false }` in `<stateDir>/config.json`. With mouse off, wheel scrolling still works through the terminal's alternate-scroll mode, exactly as before. If a terminal (or an ssh hop) answers the tracking request with reports the app cannot decode, the TUI turns mouse support off by itself for that session — with a chat notice — instead of letting coordinates spill into the composer.
-
-Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
-
-A cloud key is checked before it is saved. The key screen refuses an empty key, and finishing the wizard asks the provider for a one-token completion from its cheapest model: a key that is rejected, or attached to an account with no balance, never reaches `.env` and never becomes the active provider. A provider that cannot be reached at all still saves, with a line saying the key went unverified — an offline or proxied machine stays configurable. Local servers have no account to check and are left alone.
+Full TUI guide: [TUI.md](TUI.md).
 
 </details>
 
@@ -364,11 +343,11 @@ Model downloads resume. An interrupted pull (a dropped connection, Ctrl+C, a clo
 
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
 
-On Windows the backend zip is picked per machine (CUDA when a capable NVIDIA driver is present, Vulkan otherwise). If the GPU build cannot serve a model on your hardware — typical for iGPU-only boxes — the start falls back to the CPU build automatically and records `localModels.managed.backendVariant: "cpu"` in `config.json`; set it to `"auto"`, `"vulkan"`, `"cuda-12.4"` or `"cuda-13.3"` to pick a build yourself (e.g. after a driver update).
+On Windows the backend zip is picked per machine (CUDA when a capable NVIDIA driver is present, Vulkan otherwise). If the GPU build cannot serve a model on your hardware (typical for iGPU-only boxes), the start falls back to the CPU build automatically and records `localModels.managed.backendVariant: "cpu"` in `config.json`; set it to `"auto"`, `"vulkan"`, `"cuda-12.4"` or `"cuda-13.3"` to pick a build yourself (for example after a driver update).
 
-On Linux arm64 there is a single build and it is used on every machine. It bundles the CUDA runtime and cuBLAS for the NVIDIA GB10 superchip in DGX Spark, and it also carries the dispatched CPU backends (armv8.0 through armv9.2) — the GPU backend is loaded at runtime, so a box with no NVIDIA driver runs the same build on its CPU. That bundle makes the download large, ~554 MB against ~30 MB on x64. It needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, DGX OS 7); on an older or musl system managed mode says so before downloading anything and external mode is the way to run.
+On Linux arm64 there is a single build and it is used on every machine. It bundles the CUDA runtime and cuBLAS for the NVIDIA GB10 superchip in DGX Spark, and it also carries the dispatched CPU backends (armv8.0 through armv9.2); the GPU backend is loaded at runtime, so a box with no NVIDIA driver runs the same build on its CPU. That bundle makes the download large, ~554 MB against ~30 MB on x64. It needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, DGX OS 7); on an older or musl system managed mode says so before downloading anything and external mode is the way to run.
 
-Cloud models are searchable from the same command — by id, vendor, or capability, across every configured cloud provider:
+Cloud models are searchable from the same command: by id, vendor, or capability, across every configured cloud provider:
 
 ```bash
 atomic-agent models search claude vision
@@ -377,7 +356,7 @@ atomic-agent models search "1m cache" --provider openrouter --limit 10
 atomic-agent models search kimi --refresh   # pull live /models lists first
 ```
 
-Every term has to match (`claude vision` is not a substring of any id), a size term names a whole-unit bucket whatever the row displays (`1m` finds windows from 1M up to 2M, including the 1,048,576-token ones that render as `1.0M`; a 2M window answers to `2m`; `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane — press `f`.
+Every term has to match (`claude vision` is not a substring of any id), a size term names a whole-unit bucket whatever the row displays (`1m` finds windows from 1M up to 2M, including the 1,048,576-token ones that render as `1.0M`; a 2M window answers to `2m`; `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane (press `f`).
 
 </details>
 
@@ -423,7 +402,7 @@ In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **
 
 Model ids are the tags the server reports, `qwen2.5:0.5b` or `llama3.2:latest` for Ollama, so use the same name you passed to `ollama pull`. The list comes from the server's own `/v1/models`, which means anything you have pulled shows up without a restart.
 
-The preset is a fixed `http://localhost:11434` endpoint — it does not probe for a running server. If `ollama serve` isn't up when you reach the model step, the list fails to load (`could not list models from Ollama (local)`), and the wizard falls back to letting you type a model id by hand; in the LLM panel the list shows `model list unavailable` and only the current model. Start the server (`ollama serve`, then `ollama pull <model>` for anything you want) and re-open the preset.
+The preset is a fixed `http://localhost:11434` endpoint; it does not probe for a running server. If `ollama serve` isn't up when you reach the model step, the list fails to load (`could not list models from Ollama (local)`), and the wizard falls back to letting you type a model id by hand; in the LLM panel the list shows `model list unavailable` and only the current model. Start the server (`ollama serve`, then `ollama pull <model>` for anything you want) and re-open the preset.
 
 | Preset | Endpoint |
 | --- | --- |
@@ -454,7 +433,7 @@ atomic-agent serve \
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
-`serve` boots the same runtime the TUI does, so an enabled Telegram or Discord channel — and every enabled swarm bot that has a token — comes up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. A channel is single-instance: the first process to start it takes a lockfile in the state dir, and a second one leaves that channel down with `already running in another atomic-agent (pid N)` instead of retrying — so keep the bots in one process, this one or the TUI.
+`serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time (see Channels below), so keep the bots in this process or the TUI, not both.
 
 </details>
 
@@ -479,33 +458,42 @@ Events stream back as the turn runs:
 </details>
 
 <details>
-<summary><b>Telegram remote control</b></summary>
+<summary><b>Channels: Telegram · Discord · Swarm</b></summary>
 
-Enable a personal Telegram bot and drive the same agent from your phone:
+Drive the same agent from a Telegram or Discord bot. Tokens live in `<stateDir>/.env`, never in `config.json`:
 
 ```jsonc
 // <stateDir>/config.json
 {
-  "telegram": { "enabled": true, "ownerUserId": null }
+  "telegram": { "enabled": true, "ownerUserId": null },
+  "discord":  { "enabled": true, "ownerUserIds": ["123456789012345678"] }
 }
 ```
 
 ```bash
 # <stateDir>/.env
 TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
+DISCORD_BOT_TOKEN=your-discord-bot-token
 ```
 
-The TUI can store the token, start the channel, open pairing mode, and show status. Approvals arrive as inline buttons in your DM. Telegram is intentionally single-user.
+Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
 
-The channel belongs to the runtime, not to the TUI: `atomic-agent serve` boots it exactly the same way, so the bot keeps answering with no terminal UI open. Only one process may hold a channel — it is guarded by a lockfile in the state dir — and the process that loses the race leaves that channel down with `already running in another atomic-agent (pid N)` (shown as an ordinary state, not an error, in the Integrations pane) and does not retry, so start the bot from `serve` or from the TUI, not from both.
+Channels belong to the runtime, not to the TUI: `atomic-agent serve` boots them the same way, so the bots keep answering with no terminal UI open. Each bot is guarded by its own lockfile in the state dir; a second process that tries to start the same bot leaves it down with `already running in another atomic-agent (pid N)` and does not retry, so start bots from `serve` or from the TUI, not from both.
 
-While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
+**Telegram.** Pair from the TUI: pairing mode makes the first DM the owner. While a turn runs, the bot keeps one silent progress bubble updated with step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`. Files you send are saved under `<stateDir>/inbox/telegram/`, one folder per day, and the agent gets the path with your caption (albums arrive as one message; Telegram lets bots fetch up to 20 MB). Files the agent attaches to a reply follow the text, images inline and the rest as documents, up to Telegram's 50 MB bot limit. Scheduled tasks can report back: `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or `notify: "telegram"` when the agent schedules it) posts each run's result to your paired DM. Reporting is per task, Telegram only; if the channel is down the report is skipped with a logged warning.
 
-Send the bot a photo, document, voice note or any other file and it is saved under `<stateDir>/inbox/telegram/` (by default `~/.atomic-agent/inbox/telegram/`), one folder per day; the agent gets the path together with your caption and reads it with its file and vision tools. Albums arrive as one message. Telegram lets bots fetch files up to 20 MB; anything larger gets a clear "could not receive" reply.
+**Discord.** There is no pairing: put your user id (as a string) in `ownerUserIds`; an empty list refuses every message. The bot needs no privileged intents, because Discord delivers DMs and @mentions without them. Inbound files up to 50 MB go to `<stateDir>/inbox/discord/`; reply attachments are uploaded one message each, within your server's upload limit. There is no progress bubble.
 
-Ask for a file and you get a file: when the agent attaches something to its reply (a report it wrote, a screenshot, a converted document) it arrives as a Telegram message right after the text — images inline, everything else as a document, up to Telegram's 50 MB bot limit.
+**Swarm.** Run extra Telegram or Discord bots beside the two above, each with its own token, owner, lockfile and sessions. Manage them in the Swarm tab (`/swarm`), which writes `swarm.units` and the token for you:
 
-Scheduled tasks can report back to the same chat: create a cron job with `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or ask the agent to schedule with `notify: "telegram"`), and each run posts its final result to your paired DM when it finishes. Reporting is strictly per-task opt-in, and the report's result text is sent to Telegram's servers; when the channel is down or unpaired the report is skipped with a logged warning and the task itself is unaffected.
+```jsonc
+"swarm": { "units": [
+  { "id": "ops", "kind": "telegram", "label": "Ops", "role": "on-call triage",
+    "enabled": true, "tokenEnv": "TELEGRAM_BOT_TOKEN_OPS", "ownerUserId": null }
+] }
+```
+
+The Swarm tab names the token key `<KIND>_BOT_TOKEN_<ID>`. Each unit has one owner; Telegram units pair from the Swarm tab, Discord units take the id directly. `role` is a free-text note shown in the tab and does not change what the bot does.
 
 </details>
 
@@ -571,6 +559,11 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **No-progress guard:** repeated identical tool calls draw a warning at 3 repeats and a hard veto at 5; after 3 consecutive vetoes the agent is forced into a graceful reply.
 - **Per-session FIFO:** every surface enters the same `TurnController`; one session stays ordered while different sessions run concurrently.
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, MCP config, and traces are ordinary local files or SQLite databases.
+- **Replaced files come back:** before a write replaces a file, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per directory, files up to 5 MB), and `os.fs.restore` puts it back.
+- **Deletes go to the Trash:** `os.fs.trash` moves files to the system Trash or Recycle Bin instead of deleting them, behind approval.
+- **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill (1-hour cap, 3 jobs per session).
+- **Reads stay in the workspace:** with `agent.readScope` at its default, `working-dir`, a read outside the working directory asks first; `unrestricted` turns this off.
+- **Verification runs on a copy:** `verify.run` works in a temporary copy of the working directory, so nothing it writes reaches your files (trees over 2 GB run in place).
 
 > [!IMPORTANT]
 > Treat traces and `<stateDir>/.env` as sensitive local artifacts. Secret redaction and per-tool environment filtering are not complete isolation layers.
@@ -579,7 +572,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, your OS platform and app version, and turn-shape numbers (latency, step count, outcome, token counts, estimated cost), never message content, file paths, or tool arguments. It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up — the provider name and whether it is local or cloud, never the key, the URL, or the host. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
+Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, your OS platform and app version, and turn-shape numbers (latency, step count, outcome, token counts, estimated cost), never message content, file paths, or tool arguments. It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up: the provider name and whether it is local or cloud, never the key, the URL, or the host. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
 
 Local-first bounds where control lives, not where packets go. Network egress happens when:
 
@@ -625,7 +618,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 <details>
 <summary><b>How long a reply may run</b> (output ceilings)</summary>
 
-Cloud models are **uncapped by default** — the service applies the model's own maximum, so one turn can write a whole file. To bound it (spend, or a service that requires the field) set `maxOutputTokens` on the provider entry:
+Cloud models are **uncapped by default**: the service applies the model's own maximum, so one turn can write a whole file. To bound it (spend, or a service that requires the field) set `maxOutputTokens` on the provider entry:
 
 ```json
 "llm": { "providers": [{ "id": "openrouter", "kind": "openrouter", "maxOutputTokens": 64000 }] }
@@ -633,26 +626,26 @@ Cloud models are **uncapped by default** — the service applies the model's own
 
 Reasoning models spend that same budget on thinking, so a low ceiling can be used up before any answer appears.
 
-Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `16384`). Set it to `0` in `config.json` for no cap — generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
+Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `16384`). Set it to `0` in `config.json` for no cap; generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
 
 </details>
 
 <details>
 <summary><b>Models that need strict tool schemas</b> (<code>strictTools</code>)</summary>
 
-Some models call tools reliably only when the provider constrains decoding to the tool's schema — OpenAI's **strict mode**. Set `strictTools` on the provider entry to send every function as `strict`:
+Some models call tools reliably only when the provider constrains decoding to the tool's schema: OpenAI's **strict mode**. Set `strictTools` on the provider entry to send every function as `strict`:
 
 ```json
 "llm": { "providers": [{ "id": "mercury", "kind": "openai-compatible", "strictTools": true }] }
 ```
 
-Off by default, and only for OpenAI-compatible kinds (`openai-compatible`, `qwen-openai-compatible`, `openrouter`, `aimlapi`, `gemini`). `strict` is a field on each tool, so `extraBody` cannot reach it — `tools` is a reserved key that is re-applied after that merge.
+Off by default, and only for OpenAI-compatible kinds (`openai-compatible`, `qwen-openai-compatible`, `openrouter`, `aimlapi`, `gemini`). `strict` is a field on each tool, so `extraBody` cannot reach it; `tools` is a reserved key that is re-applied after that merge.
 
-With the flag on, every tool schema is rewritten into the subset strict mode accepts: objects are closed, every property is listed in `required` (an optional one becomes nullable instead of being omitted), and value-range keywords the runtime validators enforce anyway (`minItems`, `minLength`, `pattern`, `format`, `default`, …) are stripped. A handful of tools take a free-form map — `os.http.request`'s headers and body, `mcp.prompt.get`'s arguments — and those cannot be expressed strictly; they are sent unconstrained (`strict: false`) rather than silently losing their arguments.
+With the flag on, every tool schema is rewritten into the subset strict mode accepts: objects are closed, every property is listed in `required` (an optional one becomes nullable instead of being omitted), and value-range keywords the runtime validators enforce anyway (`minItems`, `minLength`, `pattern`, `format`, `default`, …) are stripped. A handful of tools take a free-form map (`os.http.request`'s headers and body, `mcp.prompt.get`'s arguments), and those cannot be expressed strictly; they are sent unconstrained (`strict: false`) rather than silently losing their arguments.
 
 Because optionals become nullable, a strict model sends `"pinned": null` where it used to omit the key; on these providers a top-level `null` argument is dropped again before the call runs, so tools that check for presence behave as they always did.
 
-The flag also sends `parallel_tool_calls: false`. Strict decoding and parallel calls do not compose — OpenAI's guidance is that a parallel call "may not match supplied schemas" — so a provider asked for strict tools is asked for one call per response. `agent.maxParallelToolCalls` still governs how the runtime executes a batch.
+The flag also sends `parallel_tool_calls: false`. Strict decoding and parallel calls do not compose (OpenAI's guidance is that a parallel call "may not match supplied schemas"), so a provider asked for strict tools is asked for one call per response. `agent.maxParallelToolCalls` still governs how the runtime executes a batch.
 
 Turn it on only for a service that implements strict mode: one that does not will reject the whole request, not just the field.
 
@@ -661,13 +654,13 @@ Turn it on only for a service that implements strict mode: one that does not wil
 <details>
 <summary><b>Choosing OpenRouter's upstream host</b> (<code>providerPreferences</code>)</summary>
 
-OpenRouter serves most models from several hosts and picks one per request. To steer that — pin a host, forbid fallbacks, skip hosts that keep your data — set `providerPreferences` on an `openrouter` entry. It is sent unchanged as the request's `provider` routing object:
+OpenRouter serves most models from several hosts and picks one per request. To steer that (pin a host, forbid fallbacks, skip hosts that keep your data), set `providerPreferences` on an `openrouter` entry. It is sent unchanged as the request's `provider` routing object:
 
 ```json
 "llm": { "providers": [{ "id": "openrouter", "kind": "openrouter", "providerPreferences": { "order": ["z-ai"], "allow_fallbacks": false } }] }
 ```
 
-It applies to every chat completion the entry makes — turns, memory sub-calls and `vision.describe` — and other kinds ignore it. The pre-save key check does not send it: that check asks the cheapest paid model for one token, and a host pinned for your model may not serve that one. If you already set `extraBody.provider`, that keeps winning.
+It applies to every chat completion the entry makes (turns, memory sub-calls and `vision.describe`), and other kinds ignore it. The pre-save key check does not send it: that check asks the cheapest paid model for one token, and a host pinned for your model may not serve that one. If you already set `extraBody.provider`, that keeps winning.
 
 </details>
 
@@ -701,7 +694,7 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
 
-The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine — `git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike — so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment — never in a URL, in argv, or in `.git/config` — and scrub it from every line of output.
+The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine (`git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike), so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment (never in a URL, in argv, or in `.git/config`) and scrub it from every line of output.
 
 </details>
 
@@ -710,9 +703,9 @@ The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entr
 
 Drives a vendor CLI you are already signed into, so a flat-rate subscription can power the agent with no API key and no per-token billing. Two are supported: `claude` (Claude Code) and `codex` (OpenAI Codex).
 
-**Prerequisite:** the CLI installed and signed in — `claude` then `/login`, or `npm i -g @openai/codex` then `codex login`. Atomic only spawns the binary; it never reads, copies, or replays its OAuth tokens or keychain entries.
+**Prerequisite:** the CLI installed and signed in: `claude` then `/login`, or `npm i -g @openai/codex` then `codex login`. Atomic only spawns the binary; it never reads, copies, or replays its OAuth tokens or keychain entries.
 
-In the TUI: **Providers → `n` →** pick the subscription row, then type a model. For Claude that is `sonnet`, `opus`, `haiku`, `fable`, or a pinned id like `claude-sonnet-5`; **for Codex leave it blank** — under a ChatGPT login Codex rejects explicit model ids (`not supported when using Codex with a ChatGPT account`) and resolves one itself. There is no API-key screen, because there is no key. Equivalent `config.json`:
+In the TUI: **Providers → `n` →** pick the subscription row, then type a model. For Claude that is `sonnet`, `opus`, `haiku`, `fable`, or a pinned id like `claude-sonnet-5`; **for Codex leave it blank**: under a ChatGPT login Codex rejects explicit model ids (`not supported when using Codex with a ChatGPT account`) and resolves one itself. There is no API-key screen, because there is no key. Equivalent `config.json`:
 
 ```json
 {
@@ -730,25 +723,25 @@ In the TUI: **Providers → `n` →** pick the subscription row, then type a mod
 }
 ```
 
-Optional keys inside `subscriptionCli`: `binPath` (absolute path when the CLI is not on `PATH`), `extraArgs` (appended verbatim — e.g. `["--effort", "high"]`), `streaming` (set `false` to buffer), `maxBudgetUsd`.
+Optional keys inside `subscriptionCli`: `binPath` (absolute path when the CLI is not on `PATH`), `extraArgs` (appended verbatim, for example `["--effort", "high"]`), `streaming` (set `false` to buffer), `maxBudgetUsd`.
 
 Swap `"cli": "claude"` for `"cli": "codex"` to drive Codex instead, and drop `defaultChatModel`.
 
 Each completion spawns the CLI fresh with the prompt on **stdin** (a two-zone prompt exceeds the 128 KiB argv limit). For `claude` it runs `claude --print` with these flags, which are load-bearing rather than cosmetic:
 
-- **`--tools ""`** — disables Claude Code's own Bash/Edit/Write. Without it a second agent would act on your machine outside Atomic's approval ladder.
-- **`--strict-mcp-config`** with no config — keeps your MCP servers out of what should be a stateless completion.
-- **`--system-prompt`** — replaces Claude Code's coding-agent prompt, which would otherwise compete with the prompt Atomic already built.
-- **`--no-session-persistence`** — Atomic owns session state; CLI-side history would double-count context.
+- **`--tools ""`**: disables Claude Code's own Bash/Edit/Write. Without it a second agent would act on your machine outside Atomic's approval ladder.
+- **`--strict-mcp-config`** with no config: keeps your MCP servers out of what should be a stateless completion.
+- **`--system-prompt`**: replaces Claude Code's coding-agent prompt, which would otherwise compete with the prompt Atomic already built.
+- **`--no-session-persistence`**: Atomic owns session state; CLI-side history would double-count context.
 - **`--bare` is never passed.** Its own docs say OAuth and keychain are never read under it, which would defeat the whole feature.
 
 For `codex` it runs `codex exec --json` with `--ephemeral`, `--skip-git-repo-check`, `--ignore-user-config` and `-s read-only`. Three differences are worth knowing, because Codex is a more opinionated agent than Claude's headless mode:
 
-- **There is no `--tools ""` equivalent.** `-s read-only` confines Codex's own tools to reading; it cannot remove them. Left to itself, Codex will try to *perform* the request with its own tools instead of emitting Atomic's tool-call protocol — in testing it answered "I can't find `probe.txt`" after looking in its own working directory. The fix is an explicit completion-engine instruction prepended to the prompt (Codex has no system-prompt flag). It works — verified turns drive `os.fs.read` → `reply` and `os.fs.read` → `os.fs.write` → `reply` with no parse retries — but it is a prompt-level guarantee, not a structural one like `--tools ""`.
+- **There is no `--tools ""` equivalent.** `-s read-only` confines Codex's own tools to reading; it cannot remove them. Left to itself, Codex will try to *perform* the request with its own tools instead of emitting Atomic's tool-call protocol; in testing it answered "I can't find `probe.txt`" after looking in its own working directory. The fix is an explicit completion-engine instruction prepended to the prompt (Codex has no system-prompt flag). It works (verified turns drive `os.fs.read` → `reply` and `os.fs.read` → `os.fs.write` → `reply` with no parse retries), but it is a prompt-level guarantee, not a structural one like `--tools ""`.
 - **Codex exits 0 even when the turn fails.** A bad model id, an expired login and a rate limit all produce a clean exit with a `turn.failed` event, so the adapter treats a missing `turn.completed` as a failure rather than trusting the exit code.
 - **No streaming.** `codex exec --json` emits the answer in one `item.completed`, with no incremental text events, so this provider buffers instead of pretending to stream.
 
-Not supported on either CLI: vision, embeddings (they stay on the local daemon), and the sampling knobs `temperature` / `top_p` / `top_k` / `seed` / `stop` / `maxTokens` — neither CLI exposes a flag for them, so they are dropped rather than silently approximated. Reconfiguring `binPath` or `extraArgs` means editing `config.json`; the model is changeable from the LLM tab.
+Not supported on either CLI: vision, embeddings (they stay on the local daemon), and the sampling knobs `temperature` / `top_p` / `top_k` / `seed` / `stop` / `maxTokens`: neither CLI exposes a flag for them, so they are dropped rather than silently approximated. Reconfiguring `binPath` or `extraArgs` means editing `config.json`; the model is changeable from the LLM tab.
 
 Two things worth knowing before you switch a long-running agent onto either: each completion pays roughly 0.8 s of process startup, and subscription plans have session and weekly caps that an autonomous multi-step agent reaches much faster than interactive use. When a cap is hit, the CLI's own message is surfaced verbatim.
 
@@ -759,9 +752,9 @@ Two things worth knowing before you switch a long-running agent onto either: eac
 <details>
 <summary><b>Qwen / Tinker tagged tool calls</b> (opt-in compatibility provider)</summary>
 
-Some Qwen-serving OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends) emit tool calls as inline `<tool_call><function=…>…</function></tool_call>` text instead of the native `tool_calls` field — they show up as assistant prose and never execute (#105).
+Some Qwen-serving OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends) emit tool calls as inline `<tool_call><function=…>…</function></tool_call>` text instead of the native `tool_calls` field; they show up as assistant prose and never execute (#105).
 
-To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`). Plain `openai-compatible` does **not** enable it — the generic kind is left untouched on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
+To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`). Plain `openai-compatible` does **not** enable it; the generic kind is left untouched on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
 
 ```json
 {
@@ -783,7 +776,7 @@ Behavior:
 - Argument values are coerced against the offered tool's JSON schema; a call that does not match is dropped (fail-closed) rather than executed with guessed args.
 - Streaming stays live: text/reasoning deltas stream as usual and the buffered final message is adapted once the stream closes.
 
-**Limitation — MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP + tagged Qwen is therefore unsupported for now.
+**Limitation for MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP + tagged Qwen is therefore unsupported for now.
 </details>
 
 ## Development
