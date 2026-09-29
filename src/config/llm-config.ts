@@ -744,7 +744,7 @@ export function parseUserLlmFileConfig(
     obj.activeTextProvider ?? defaults.activeTextProvider,
     "llm.activeTextProvider",
   );
-  const activeEmbeddingProvider = parseProviderId(
+  let activeEmbeddingProvider = parseProviderId(
     obj.activeEmbeddingProvider ?? defaults.activeEmbeddingProvider,
     "llm.activeEmbeddingProvider",
   );
@@ -753,6 +753,22 @@ export function parseUserLlmFileConfig(
       "llm.activeTextProvider",
       `unknown provider id ${JSON.stringify(activeTextProvider)}`,
     );
+  }
+  // A hand-written block that never named an embedding provider has no
+  // `local-llama` entry for the default to point at. Memory embeddings
+  // run off `localModels.embeddings` either way, so resolve the implicit
+  // default to an id that exists instead of rejecting the file. It has
+  // to be a real id: the parsed block is written back on migration and
+  // by every TUI provider edit, and a dangling id would fail next load.
+  if (
+    (obj.activeEmbeddingProvider === undefined ||
+      obj.activeEmbeddingProvider === null) &&
+    !providers.some((p) => p.id === activeEmbeddingProvider)
+  ) {
+    activeEmbeddingProvider =
+      providers.find(
+        (p) => p.defaultEmbeddingModel || p.kind === "llama-server",
+      )?.id ?? activeTextProvider;
   }
   if (!providers.some((p) => p.id === activeEmbeddingProvider)) {
     throw new ConfigValidationError(
