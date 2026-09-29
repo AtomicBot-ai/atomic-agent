@@ -113,9 +113,26 @@ export class GrammarError extends LlmFailure {
  *    `reasoning_content` survives that check, fails the parse, goes
  *    through the one-shot repair, and raises the *same*
  *    `reason=empty` + `transport=native_tools` pair at `repair` when the
- *    repair is empty too. Without `stage` those two are one bucket.
+ *    repair is empty too. Without `stage` those two are one bucket — and
+ *    for Sentry *grouping* they still are, because both fields are tags
+ *    only and the fingerprint's fourth element is the shared
+ *    `reason=empty`. `stage` disambiguates them for a reader and for the
+ *    branch below, not for the issue list.
  *
- * Both are diagnostic only — nothing branches on either.
+ * Both started out diagnostic, but the pair is now load-bearing control
+ * flow: `isRecoverableEmptyCompletion` (`src/agent/empty-completion-recovery.ts`)
+ * gates the agent loop's one empty-completion retry on
+ * `transport === "native_tools" && stage === "initial"` exactly, so the
+ * two other `reason=empty` shapes the split above describes never reach
+ * it. That is the only branch on these fields; the rest of their readers
+ * only report or forward them — the scrubber lifts both onto the
+ * `tool_transport` / `failure_stage` Sentry tags,
+ * `repeatedEmptyCompletionError` (same file as the predicate)
+ * presence-checks both and re-attaches whichever are set to the wrapper
+ * it builds, and `detectModelFailure` words its truncated message off the
+ * same `stage` value one step earlier, from its own option. So leaving
+ * either off a `reason=empty` throw silently withdraws the retry: tag
+ * them at the throw site.
  */
 export class ModelError extends LlmFailure {
   readonly category = "model" as const;
