@@ -233,6 +233,11 @@ export {
 } from "./swa-full.js";
 export { readLogTail, type LogTailResult } from "./log-tail.js";
 export { describeServerFault, type ServerFault } from "./server-fault.js";
+export {
+  assertPortFree,
+  fetchServedModelIds,
+  PortTakenError,
+} from "./daemon-launch-guard.js";
 
 export {
   huggingFaceToken,

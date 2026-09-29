@@ -11,6 +11,7 @@ vi.mock("../../local-llm/index.js", async () => {
   return {
     ...actual,
     getDaemonStatus: vi.fn(),
+    fetchServedModelIds: vi.fn(async () => null),
     getEmbeddingDaemonStatus: vi.fn(),
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
