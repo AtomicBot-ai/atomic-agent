@@ -231,6 +231,58 @@ describe("ChatLog", () => {
     expect(text).toMatch(/reasoning/);
   });
 
+  it("draws a steer the turn has not read yet at the end of the chat", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      status: "running",
+      runStartedAt: Date.now(),
+      messages: [{ id: "m1", role: "user", text: "deploy", timestamp: 1 }],
+      streamingAssistantText: "checking the config…",
+      pendingSteers: ["use the staging db"],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const lines = strip(lastFrame() ?? "").split("\n");
+    const rowOf = (needle: string): number =>
+      lines.findIndex((line) => line.includes(needle));
+    expect(rowOf("use the staging db")).toBeGreaterThan(-1);
+    // After everything the turn has said so far — where any new thing
+    // in this chat appears.
+    expect(rowOf("use the staging db")).toBeGreaterThan(rowOf("deploy"));
+    expect(rowOf("use the staging db")).toBeGreaterThan(
+      rowOf("checking the config…"),
+    );
+    // ...and ABOVE the spinner, which stays last: it is the turn still
+    // working, and work carries on after the message, not before it.
+    expect(rowOf("writing reply")).toBeGreaterThan(-1);
+    expect(rowOf("use the staging db")).toBeLessThan(rowOf("writing reply"));
+    expect(strip(lastFrame() ?? "")).toContain(
+      "the agent reads it at the next step",
+    );
+  });
+
+  it("keeps the pending steer on screen when the log overflows", () => {
+    // The column is pinned to the bottom of the viewport and clipped at
+    // the TOP, so the newest rows survive. The bubble that proves the
+    // message was sent is the newest row there is.
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      status: "running",
+      runStartedAt: Date.now(),
+      messages: Array.from({ length: 40 }, (_, idx) => ({
+        id: `m${idx}`,
+        role: "assistant" as const,
+        text: `line ${idx}`,
+        toolSteps: 0,
+        timestamp: idx,
+      })),
+      pendingSteers: ["use the staging db"],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("use the staging db");
+    expect(text).not.toContain("line 0");
+  });
+
   it("hangs a [try again] under the stopped-by-user notice, and only there", () => {
     const state: TuiState = {
       ...createInitialTuiState(BASE_SESSION),

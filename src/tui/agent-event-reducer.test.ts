@@ -1210,6 +1210,94 @@ describe("reduceTuiState", () => {
     expect(next.runStartedAt).toBe(running.runStartedAt);
   });
 
+  it("keeps a sent steer on screen until the loop reads it", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "deploy" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "message_steered", text: "use the staging db" },
+    ]);
+    // Sent and visible, but not transcript: the inbox is drained at the
+    // next step boundary, which a long tool call can hold off for
+    // minutes, and nothing else on screen says the message was taken.
+    expect(running.pendingSteers).toEqual(["use the staging db"]);
+    expect(running.messages.map((m) => m.text)).toEqual(["deploy"]);
+
+    const applied = reduceTuiState(running, {
+      type: "agent_event",
+      event: {
+        type: "steer_applied",
+        text: "use the staging db",
+        stepIndex: 1,
+      },
+    });
+    // Promoted, not duplicated: one message, one bubble.
+    expect(applied.pendingSteers).toEqual([]);
+    const last = applied.messages[applied.messages.length - 1];
+    expect(last?.text).toBe("use the staging db");
+    expect(last?.steered).toBe(true);
+  });
+
+  it("promotes one of two identical steers and leaves the other pending", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "message_steered", text: "stop" },
+      { type: "message_steered", text: "stop" },
+    ]);
+    const applied = reduceTuiState(running, {
+      type: "agent_event",
+      event: { type: "steer_applied", text: "stop", stepIndex: 1 },
+    });
+    // Two messages were sent; one has landed. The other is still owed a
+    // step, so it keeps its place at the foot of the chat.
+    expect(applied.pendingSteers).toEqual(["stop"]);
+    expect(applied.messages.filter((m) => m.text === "stop")).toHaveLength(1);
+  });
+
+  it("takes a steer down when the turn ends without ever reading it", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "deploy" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "message_steered", text: "use the staging db" },
+    ]);
+    const done = reduceTuiState(running, {
+      type: "agent_event",
+      event: {
+        type: "turn_finished",
+        turnIndex: 0,
+        reason: "reply",
+        stepCount: 1,
+        durationMs: 10,
+      },
+    });
+    // No step is coming to read it. `rerouteUndelivered` re-queues
+    // anything the loop handed back, so the parked strip is where it
+    // shows now — a bubble promising delivery into a turn that is over
+    // would be the lie.
+    expect(done.pendingSteers).toEqual([]);
+    expect(done.status).toBe("idle");
+  });
+
+  it("clears the pending copy of a steer that ran as its own turn", () => {
+    // `steerMessage` falls back to `runOneTurn` when the orchestrator
+    // has no turn in flight after all: the message arrives as an
+    // ordinary `user_message`, and the foot of the chat must let go of
+    // it rather than show it twice.
+    const steered = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_steered", text: "use the staging db" },
+    ]);
+    const ran = reduceTuiState(steered, {
+      type: "agent_event",
+      event: { type: "user_message", text: "use the staging db" },
+    });
+    expect(ran.pendingSteers).toEqual([]);
+    expect(ran.messages.map((m) => m.text)).toEqual(["use the staging db"]);
+  });
+
   it("reports a trimmed tool batch instead of swallowing it", () => {
     const next = apply(createInitialTuiState(fakeSession()), [
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
