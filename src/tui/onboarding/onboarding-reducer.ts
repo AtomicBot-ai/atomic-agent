@@ -145,7 +145,6 @@ export function reduceOnboardingAction(
           ...state.onboarding,
           step: "import_pick",
           importAgents: action.agents,
-          importOptions: [],
           importReport: null,
           cursor: 0,
           error: null,
@@ -173,26 +172,20 @@ export function reduceOnboardingAction(
           ...state.onboarding,
           busy: true,
           error: null,
-          // The pick screen's import row sends the defaults it built for
-          // the ticked agents; the preview's confirm sends none and
-          // re-runs what is already here.
-          importOptions: action.options ?? state.onboarding.importOptions,
         },
       };
     }
     case "onboarding_import_report": {
       if (!state.onboarding) return state;
-      // Only the import screens may receive a report: a late answer must
-      // not yank a flow that moved on (or finished) back onto a result
-      // screen nobody is waiting for. The dry-run is asked for from the
-      // pick screen, the write from the preview.
-      const step = state.onboarding.step;
-      if (step !== "import_pick" && step !== "import_preview") return state;
+      // Only the screen that asked may receive the report: a late answer
+      // must not yank a flow that moved on (or finished) back onto a
+      // result screen nobody is waiting for.
+      if (state.onboarding.step !== "import_pick") return state;
       return {
         ...state,
         onboarding: {
           ...state.onboarding,
-          step: action.executed ? "import_done" : "import_preview",
+          step: "import_done",
           importReport: action.report,
           cursor: 0,
           busy: false,

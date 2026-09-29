@@ -585,14 +585,12 @@ export interface TuiAppCallbacks {
    */
   onOnboardingStep?(step: string, outcome?: string): void;
   /**
-   * The first-run import step asked for a run. `execute: false` is the
-   * dry-run behind the preview screen, `true` the confirmed write. The
-   * answer comes back on the bus as `onboarding_import_report` /
-   * `onboarding_import_failed`.
+   * The first-run import step asked for the run — always a write; the
+   * flow has no dry-run screen. The answer comes back on the bus as
+   * `onboarding_import_report` / `onboarding_import_failed`.
    */
   onOnboardingImportRequested?(
     plan: import("./onboarding/import-step.js").OnboardingImportPlan,
-    execute: boolean,
   ): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;

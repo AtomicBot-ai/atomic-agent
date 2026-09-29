@@ -69,7 +69,7 @@ atag
 > Want to go through first-time setup again? Run `/onboarding` (or `/setup`) in the TUI, or start it with `atomic-agent tui --onboarding`. Your providers, keys, sessions and memory are kept.
 
 > [!TIP]
-> Coming from another agent? The first run offers to bring your data over, with a dry-run preview before anything is written. What moves depends on the source:
+> Coming from another agent? The first run offers to bring your data over: tick the sources it found and the import runs, without overwriting anything already here and without touching the source. What moves depends on the source:
 >
 > - **Claude Code:** skills, memory, MCP servers, sessions, and (opt-in) provider keys
 > - **Codex:** skills, memory, sessions, and (opt-in) provider keys

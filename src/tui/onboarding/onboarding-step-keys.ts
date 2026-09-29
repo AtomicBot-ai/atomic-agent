@@ -82,8 +82,6 @@ export function handleOnboardingStepKey(
       return handleProposeKey(input, key, ctx, onboarding);
     case "import_pick":
       return handleImportPickKey(input, key, ctx, onboarding);
-    case "import_preview":
-      return handleImportPreviewKey(input, key, ctx, onboarding);
     case "import_done":
       return handleImportDoneKey(input, key, ctx, onboarding);
     case "cloud":
@@ -378,51 +376,20 @@ function handleImportPickKey(
       return true;
     case "import": {
       if (toggle) return true;
-      // Straight to the dry-run with the defaults — every non-secret
-      // domain of the ticked agents. The preview stays the gate before
-      // anything is written; the per-domain surface is `/import`'s.
-      const options = buildImportOptionRows(onboarding.importAgents);
-      ctx.dispatch({ type: "onboarding_import_run_started", options });
-      ctx.callbacks.onOnboardingImportRequested?.(
-        { agents: onboarding.importAgents, options },
-        false,
-      );
+      // Straight to the import with the defaults — every non-secret
+      // domain of the ticked agents. The ticks ARE the confirmation:
+      // the run never overwrites what is already here and never removes
+      // anything from the source, so there is nothing a preview could
+      // warn about that the report cannot say afterwards. The
+      // per-domain surface is `/import`'s.
+      ctx.dispatch({ type: "onboarding_import_run_started" });
+      ctx.callbacks.onOnboardingImportRequested?.({
+        agents: onboarding.importAgents,
+        options: buildImportOptionRows(onboarding.importAgents),
+      });
       return true;
     }
   }
-}
-
-function handleImportPreviewKey(
-  input: string,
-  key: Key,
-  ctx: OnboardingKeyContext,
-  onboarding: OnboardingUiState,
-): boolean {
-  void input;
-  if (onboarding.busy) return true;
-  if (key.escape) {
-    // Back to the ticks, not out of the flow: a preview that showed
-    // too much (or too little) is an invitation to adjust, and the
-    // skip row is right there on that screen.
-    ctx.dispatch({ type: "onboarding_step_set", step: "import_pick" });
-    return true;
-  }
-  if (key.return) {
-    const report = onboarding.importReport;
-    const actionable =
-      report !== null && report.summary.migrated + report.summary.conflict > 0;
-    if (!actionable) {
-      finishImport(ctx, onboarding);
-      return true;
-    }
-    ctx.dispatch({ type: "onboarding_import_run_started" });
-    ctx.callbacks.onOnboardingImportRequested?.(
-      { agents: onboarding.importAgents, options: onboarding.importOptions },
-      true,
-    );
-    return true;
-  }
-  return false;
 }
 
 function handleImportDoneKey(
