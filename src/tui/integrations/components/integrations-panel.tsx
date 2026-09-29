@@ -6,6 +6,7 @@ import type {
   IntegrationsPanelState,
 } from "../integrations-panel-state.js";
 import type { IntegrationStatusLevel } from "../../../integrations/index.js";
+import { maskSecret } from "../../../integrations/integration-secrets.js";
 
 export interface IntegrationsPanelProps {
   panel: IntegrationsPanelState;
@@ -17,8 +18,8 @@ export interface IntegrationsPanelProps {
  *
  * List mode shows every integration with a status badge; detail mode
  * shows one integration's fields, masked, with edit / clear. Secrets are
- * never rendered in the clear except in the edit buffer the operator is
- * actively typing into.
+ * never rendered in the clear, not even in the edit buffer the operator
+ * is typing into — screens get shared and recorded.
  */
 export function IntegrationsPanel({
   panel,
@@ -176,7 +177,9 @@ function DetailView({
                 <Text color={theme.colors.muted}>{"  "}</Text>
                 {editing ? (
                   <Text color={theme.colors.accent}>
-                    {panel.editBuffer}
+                    {field.secret
+                      ? maskSecret(panel.editBuffer)
+                      : panel.editBuffer}
                     <Text color={theme.colors.muted}>▏</Text>
                   </Text>
                 ) : (

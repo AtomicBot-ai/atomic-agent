@@ -634,8 +634,6 @@ export interface TuiAppCallbacks {
   onTelegramSetEnabledRequested?(enabled: boolean): void | Promise<void>;
   /** Telegram tab: explicit restart (e.g. after backend hiccup). */
   onTelegramRestartRequested?(): void | Promise<void>;
-  /** Telegram tab: open the masked token-entry modal. */
-  onTelegramTokenPromptOpenRequested?(): void;
   /** Telegram tab: submit the token from the modal buffer. */
   onTelegramTokenSubmitted?(buffer: string): void | Promise<void>;
   /** Telegram tab: clear the persisted token (back to `down`). */

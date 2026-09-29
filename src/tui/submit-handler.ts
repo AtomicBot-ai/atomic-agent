@@ -435,9 +435,6 @@ function runTelegramVerb(
     case "pair":
       void callbacks.onTelegramStartPairingRequested?.();
       return;
-    case "token":
-      callbacks.onTelegramTokenPromptOpenRequested?.();
-      return;
     case "clear-token":
       void callbacks.onTelegramClearTokenRequested?.();
       return;
