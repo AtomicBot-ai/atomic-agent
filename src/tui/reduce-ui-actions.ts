@@ -1,3 +1,7 @@
+import {
+  CONVERSATION_MAX_PAIRS_MAX,
+  CONVERSATION_MAX_PAIRS_MIN,
+} from "../config/config-schema.js";
 import { CODING_MODES, cycleCodingMode } from "./coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
@@ -117,7 +121,10 @@ export function reduceUiAction(
       // caller actually persisted makes them impossible to disagree.
       return {
         ...state,
-        contextPanelPairsDraft: Math.max(1, Math.min(100, action.pairs)),
+        contextPanelPairsDraft: Math.max(
+          CONVERSATION_MAX_PAIRS_MIN,
+          Math.min(CONVERSATION_MAX_PAIRS_MAX, action.pairs),
+        ),
       };
     }
     case "context_menu_opened":

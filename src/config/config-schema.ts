@@ -2787,6 +2787,13 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
  */
 export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
 
+/**
+ * Bounds of `agent.conversationMaxPairs`, shared with the TUI's
+ * `/context` selector so it can neither offer nor clamp to less.
+ */
+export const CONVERSATION_MAX_PAIRS_MIN = 1;
+export const CONVERSATION_MAX_PAIRS_MAX = 1000;
+
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
   localModels: {
@@ -4935,8 +4942,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationMaxPairs ??
           USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
         "agent.conversationMaxPairs",
-        1,
-        1000,
+        CONVERSATION_MAX_PAIRS_MIN,
+        CONVERSATION_MAX_PAIRS_MAX,
       ),
       // `(0, 1]`: `1` is a real setting (cut just enough, every step),
       // `0` would drop the whole transcript at the first overflow.
