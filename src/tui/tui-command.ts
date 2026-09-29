@@ -655,6 +655,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMcpAddServerSubmit: (json) =>
           orchestrator.mcp.addServerFromJson(json),
         onMcpRemoveServer: (name) => orchestrator.mcp.removeServer(name),
+        onMcpRestartServer: (name) => orchestrator.mcp.restartServer(name),
+        onMcpToggleServerEnabled: (name) =>
+          orchestrator.mcp.toggleServerEnabled(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onIssueReportRequested: () => orchestrator.issueReport.open(),

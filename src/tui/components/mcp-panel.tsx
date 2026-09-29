@@ -79,8 +79,8 @@ function Header({ panel }: { panel: McpPanelState }): ReactElement {
       : panel.removeConfirm !== null
         ? "y / Enter confirm · n / Esc cancel"
         : panel.mode === "list"
-          ? "j/k move · Enter open · n add · d remove · r refresh · a auto"
-          : "Esc back · 1/2/3 tools/res/prompts · [ ] cycle · d remove · r refresh";
+          ? "j/k · Enter open · n add · d remove · e on/off · R restart · r refresh · a auto"
+          : "Esc back · 1/2/3 tabs · [ ] cycle · d remove · e on/off · R restart · r refresh";
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text color={theme.colors.muted}>{status}</Text>

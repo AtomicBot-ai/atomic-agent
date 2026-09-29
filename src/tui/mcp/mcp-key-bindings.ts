@@ -12,8 +12,9 @@ export interface McpTabKeyContext {
 
 /**
  * Hotkey handler for the MCP tab. Returns `true` when the key was
- * consumed so the editor / global handlers skip it. Read-only
- * surface: navigation + open detail + manual refresh, no mutation.
+ * consumed so the editor / global handlers skip it. Navigation, open
+ * detail, refresh, add / remove, and per-server restart (`R`) and
+ * enable toggle (`e`).
  */
 export function handleMcpTabKey(
   input: string,
@@ -76,6 +77,23 @@ function handleListKey(
     if (row) {
       dispatch({ type: "mcp_remove_confirm_opened", name: row.name });
     }
+    return true;
+  }
+  return handleServerOpKey(input, panel.rows[panel.cursor]?.name, callbacks);
+}
+
+/** `R` restarts, `e` toggles enabled — shared by list and detail. */
+function handleServerOpKey(
+  input: string,
+  name: string | undefined,
+  callbacks: TuiAppCallbacks,
+): boolean {
+  if (input === "R") {
+    if (name) callbacks.onMcpRestartServer?.(name);
+    return true;
+  }
+  if (input === "e") {
+    if (name) callbacks.onMcpToggleServerEnabled?.(name);
     return true;
   }
   return false;
@@ -156,5 +174,5 @@ function handleDetailKey(
     dispatch({ type: "mcp_refresh_requested" });
     return true;
   }
-  return false;
+  return handleServerOpKey(input, panel.detail?.name, ctx.callbacks);
 }
