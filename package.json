@@ -108,6 +108,7 @@
     "react-devtools-core": "^6.1.2",
     "tar-stream": "^3.1.8",
     "turndown": "^7.2.4",
+    "undici": "^8.11.2",
     "word-extractor": "^1.0.4",
     "yaml": "^2.8.3"
   },

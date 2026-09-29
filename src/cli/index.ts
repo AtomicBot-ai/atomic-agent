@@ -3,6 +3,10 @@
 // pulls in react-reconciler, which picks its build at require time.
 // See src/cli/node-env-bootstrap.ts.
 import "./node-env-bootstrap.js";
+// Must stay early: undici's own 300 s ceiling sits under every deadline the
+// agent sets, so it is removed before the first request goes out.
+// See src/cli/fetch-dispatcher-bootstrap.ts.
+import "./fetch-dispatcher-bootstrap.js";
 import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";

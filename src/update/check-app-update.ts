@@ -51,7 +51,12 @@ async function fetchLatestTag(
   const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetchImpl(url, { headers });
+  // Its own bound: the global dispatcher no longer imposes one, and a
+  // release check must not outlive the command that asked for it.
+  const res = await fetchImpl(url, {
+    headers,
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!res.ok) {
     throw new AppUpdateCheckError(
       `Failed to fetch latest release: HTTP ${res.status}`,

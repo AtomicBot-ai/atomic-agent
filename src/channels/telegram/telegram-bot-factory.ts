@@ -210,7 +210,11 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     }
     let res: Response;
     try {
-      res = await fetch(`${TELEGRAM_FILE_BASE}${token}/${filePath}`);
+      // Its own bound: an attachment download hangs the inbound handler
+      // otherwise, and the global dispatcher no longer caps it.
+      res = await fetch(`${TELEGRAM_FILE_BASE}${token}/${filePath}`, {
+        signal: AbortSignal.timeout(60_000),
+      });
     } catch (err) {
       throw new Error(
         `Telegram file download failed: ${scrubErrorMessage(err)}`,

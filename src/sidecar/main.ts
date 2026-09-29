@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Must stay first: removes undici's hidden 300 s ceiling from every request
+// this entry point makes. See src/cli/fetch-dispatcher-bootstrap.ts.
+import "../cli/fetch-dispatcher-bootstrap.js";
 import { resolve } from "node:path";
 
 import { MessageRouter } from "./message-router.js";
