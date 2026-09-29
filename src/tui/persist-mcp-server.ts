@@ -4,11 +4,9 @@
  * runtime / Ink dependencies — so the validation path is trivially
  * unit-testable in isolation.
  *
- * Per variant α (see AGENTS.md §"MCP client" — Out of scope), this
- * helper only mutates `<stateDir>/config.json`. The live `McpManager`
- * is NOT touched; the newly-added server is picked up on the next
- * runtime boot. The orchestrator emits a `runtime_info` line after a
- * successful write reminding the operator to restart.
+ * These helpers only mutate `<stateDir>/config.json`; the live
+ * `McpManager` is reconciled by the caller (the MCP tab orchestrator,
+ * the `/api/mcp` routes) after a successful write.
  */
 
 import {
@@ -151,10 +149,8 @@ interface RemoveResult {
  * name exists (defensive — the TUI only surfaces existing rows, but
  * concurrent edits / stale state are possible).
  *
- * Per variant α: the live `McpManager` is NOT touched. Any session that
- * already loaded the removed server keeps using it until the next
- * runtime restart. The orchestrator emits a `runtime_info` line after a
- * successful write reminding the operator to restart.
+ * The live `McpManager` is not touched here — the orchestrator drops
+ * the connection via `removeServerLive` after the write.
  */
 export function removeMcpServer(name: string): RemoveResult {
   const trimmed = name.trim();
@@ -184,6 +180,55 @@ export function removeMcpServer(name: string): RemoveResult {
       totalServers: validated.mcp.servers.length,
       configPath: path,
       removed: trimmed,
+    };
+  } catch (err) {
+    if (err instanceof ConfigValidationError) {
+      throw new McpRemoveServerError(`${err.field}: ${err.message}`);
+    }
+    throw new McpRemoveServerError(
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+interface SetEnabledResult {
+  /** Absolute path to the config file that was written. */
+  configPath: string;
+  /** The written server entry, carrying the new `enabled` flag. */
+  server: McpServerConfig;
+}
+
+/**
+ * Set `enabled` on one MCP server in `<stateDir>/config.json` and
+ * invalidate the global config cache. Same validate-then-write path as
+ * add/remove. Throws `McpRemoveServerError` when no server with that
+ * name exists (the error type the remove flow already uses for a
+ * missing entry).
+ */
+export function setMcpServerEnabled(
+  name: string,
+  enabled: boolean,
+): SetEnabledResult {
+  const trimmed = name.trim();
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const prevServers = prev.mcp.servers;
+  const idx = prevServers.findIndex((s) => s.name === trimmed);
+  if (trimmed.length === 0 || idx === -1) {
+    throw new McpRemoveServerError(
+      `server ${JSON.stringify(trimmed)} not found in config.mcp.servers`,
+    );
+  }
+  const server = { ...prevServers[idx]!, enabled };
+  const nextServers = prevServers.map((s, i) => (i === idx ? server : s));
+  const draft = { ...prev, mcp: { ...prev.mcp, servers: nextServers } };
+  try {
+    const validated = parseUserConfigFile(draft);
+    writeUserConfigFileSync(path, validated);
+    resetConfigCache();
+    return {
+      configPath: path,
+      server: validated.mcp.servers[idx] ?? server,
     };
   } catch (err) {
     if (err instanceof ConfigValidationError) {

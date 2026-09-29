@@ -15,6 +15,7 @@ import {
   parseAddServerJson,
   persistMcpServer,
   removeMcpServer,
+  setMcpServerEnabled,
 } from "./persist-mcp-server.js";
 import { resetConfigCache } from "../config/index.js";
 
@@ -440,6 +441,31 @@ describe("persistMcpServer — writes config.json and merges", () => {
 
   it("rejects an empty name", () => {
     expect(() => removeMcpServer("   ")).toThrow(/empty/);
+  });
+
+  it("flips enabled on one server and leaves the others alone", () => {
+    for (const name of ["aa", "bb"]) {
+      persistMcpServer(
+        parseAddServerJson(
+          JSON.stringify({ name, transport: { kind: "stdio", command: "x" } }),
+        ),
+      );
+    }
+    const off = setMcpServerEnabled("bb", false);
+    expect(off.server).toMatchObject({ name: "bb", enabled: false });
+    let onDisk = JSON.parse(readFileSync(off.configPath, "utf8"));
+    expect(
+      onDisk.mcp.servers.map((s: { enabled: boolean }) => s.enabled),
+    ).toEqual([true, false]);
+    setMcpServerEnabled("bb", true);
+    onDisk = JSON.parse(readFileSync(off.configPath, "utf8"));
+    expect(onDisk.mcp.servers[1].enabled).toBe(true);
+  });
+
+  it("rejects toggling a server that does not exist", () => {
+    expect(() => setMcpServerEnabled("missing", false)).toThrow(
+      McpRemoveServerError,
+    );
   });
 
   it("trims whitespace from the input name", () => {

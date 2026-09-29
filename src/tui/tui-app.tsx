@@ -549,19 +549,21 @@ export interface TuiAppCallbacks {
   onMcpDetailRequested?(serverName: string): void;
   /**
    * MCP tab: persist a new server from a JSON-paste payload. The
-   * orchestrator validates + writes `<stateDir>/config.json` and
-   * emits one of `mcp_add_validation_failed` / `mcp_add_failed` /
-   * `mcp_add_succeeded`. The runtime must be restarted for the new
-   * server to actually connect — see `persistMcpServer`.
+   * orchestrator validates + writes `<stateDir>/config.json`, emits
+   * one of `mcp_add_validation_failed` / `mcp_add_failed` /
+   * `mcp_add_succeeded`, and connects the new server live.
    */
   onMcpAddServerSubmit?(json: string): void;
   /**
    * MCP tab: remove an existing server by name from
-   * `<stateDir>/config.json`. Variant α: the live `McpManager` is NOT
-   * mutated — the operator restarts atomic-agent to drop the live
-   * connection. Failures fold into `mcp_remove_failed`.
+   * `<stateDir>/config.json` and drop its live connection. Failures
+   * fold into `mcp_remove_failed`.
    */
   onMcpRemoveServer?(name: string): void;
+  /** MCP tab: stop + start one server live (config untouched). */
+  onMcpRestartServer?(name: string): void;
+  /** MCP tab: flip one server's `enabled` flag, persisted to config. */
+  onMcpToggleServerEnabled?(name: string): void;
   /** Providers tab: finish the add/configure wizard. */
   onProvidersWizardSubmit?(
     wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState,
