@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   CompletionResult,
   StreamChunk,
-  StreamFinalResult,
 } from "../completion-types.js";
 import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
 import { OpenAiProvider } from "./openai-provider.js";
@@ -111,14 +110,15 @@ async function drainProvider(
 
 /**
  * Esc+1, `/abort` and Ctrl+C all reach the provider as an aborted signal
- * mid-stream. The consumer leaves its read loop on that signal, so from
- * every layer above it the stream drained normally — and `openAiFetch`
+ * mid-stream. The consumer fails its next step with the abort reason
+ * (a cancelled turn must not hand back the prefix as a completion) — and
+ * `openAiFetch`
  * has already detached the caller's signal from the fetch's own
  * controller, so the only thing left that can close the socket is a
  * cancel of this body.
  */
 describe("openai stream consumer: an aborted turn releases the body", () => {
-  it("cancels the body once, unlocks it, and still ends as a stream end", async () => {
+  it("cancels the body once, unlocks it, and fails with the abort reason", async () => {
     const { body, state } = trackedBody([
       contentFrame("par"),
       contentFrame("tial"),
@@ -136,10 +136,8 @@ describe("openai stream consumer: an aborted turn releases the body", () => {
 
     controller.abort();
 
-    const terminal = await iterator.next();
-    expect(terminal.done).toBe(false);
-    expect((terminal.value as StreamChunk).done).toBe(true);
-    // The break happens before the next read, so the abort does not wait
+    await expect(iterator.next()).rejects.toBe(controller.signal.reason);
+    // The throw happens before the next read, so the abort does not wait
     // on the provider for one more frame.
     expect(state.pulled).toBe(1);
     expect(body.locked).toBe(false);
@@ -148,10 +146,6 @@ describe("openai stream consumer: an aborted turn releases the body", () => {
 
     const last = await iterator.next();
     expect(last.done).toBe(true);
-    const final = last.value as StreamFinalResult;
-    expect(final.content).toBe("par");
-    // A stream nobody finished has no provider terminal event.
-    expect(final.terminalObserved).toBe(false);
     // Still 1 on the way out. This cannot fail — a second cancel of the
     // same stream never reaches the source — so it pins the count, not
     // the absence of a second call.
@@ -169,11 +163,9 @@ describe("openai stream consumer: an aborted turn releases the body", () => {
     expect((await iterator.next()).done).toBe(false);
     controller.abort();
 
-    const terminal = await iterator.next();
-    expect((terminal.value as StreamChunk).done).toBe(true);
-    const last = await iterator.next();
-    expect(last.done).toBe(true);
-    expect((last.value as StreamFinalResult).content).toBe("par");
+    // The cancel's own rejection is swallowed: the turn fails with the
+    // abort reason, never with the transport's error.
+    await expect(iterator.next()).rejects.toBe(controller.signal.reason);
     expect(state.cancels).toBe(1);
   });
 
@@ -196,7 +188,9 @@ describe("openai stream consumer: an aborted turn releases the body", () => {
     // `stream.return()` teardown cannot resume — so a body that never
     // acknowledges the cancel would wedge the turn's teardown, not just
     // this consumer.
-    expect(await settlesWithin(iterator.next(), 250)).toBe(true);
+    expect(
+      await settlesWithin(iterator.next().catch(() => undefined), 250),
+    ).toBe(true);
     expect(state.cancels).toBe(1);
     expect(body.locked).toBe(false);
   });
@@ -255,15 +249,14 @@ describe("openai stream consumer over a real socket", () => {
     expect(responseClosed).toBe(false);
 
     controller.abort();
-    expect(((await iterator.next()).value as StreamChunk).done).toBe(true);
-    expect((await iterator.next()).done).toBe(true);
+    await expect(iterator.next()).rejects.toBe(controller.signal.reason);
 
     await vi.waitFor(() => expect(responseClosed).toBe(true));
   });
 });
 
 describe("OpenAiProvider: a stream the user aborted", () => {
-  it("releases the transport and still returns the partial completion", async () => {
+  it("releases the transport and fails as a cancellation", async () => {
     const tracked = trackedBody([contentFrame("par"), contentFrame("tial")]);
     const fetchImpl = vi.fn().mockResolvedValueOnce(sseResponse(tracked.body));
     const controller = new AbortController();
@@ -276,13 +269,13 @@ describe("OpenAiProvider: a stream the user aborted", () => {
     expect(first.done).toBe(false);
 
     controller.abort();
-    // Must not throw: a cancel that surfaced as a transport failure would
+    // Fails with the abort reason itself, which classifies as
+    // `cancelled`: a cancel that surfaced as a transport failure would
     // make `shouldAdvance` report a provider-down signal and the fallback
     // chain would start the very completion the user just stopped.
-    const result = await drainProvider(stream);
+    await expect(drainProvider(stream)).rejects.toBe(controller.signal.reason);
 
     expect(tracked.state.cancels).toBe(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(result.content).toBe("par");
   });
 });

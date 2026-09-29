@@ -40,6 +40,56 @@ async function drain(body: string): Promise<StreamFinalResult> {
   }
 }
 
+/**
+ * The same bytes as `bodyOf`, handed over one slice at a time so the
+ * reader sees the socket's own chunk boundaries rather than one whole
+ * body — including boundaries that fall inside a UTF-8 sequence, which
+ * only `decoder.decode(value, { stream: true })` survives.
+ */
+function bodyOfSlices(
+  text: string,
+  cuts: readonly number[],
+): ReadableStream<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  const offsets = [0, ...cuts, bytes.length];
+  const slices: Uint8Array[] = [];
+  for (let i = 0; i < offsets.length - 1; i += 1) {
+    slices.push(bytes.subarray(offsets[i] as number, offsets[i + 1] as number));
+  }
+  let sent = 0;
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        const next = slices[sent];
+        if (next === undefined) {
+          controller.close();
+          return;
+        }
+        sent += 1;
+        controller.enqueue(next);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+/** Drain a body served in slices; returns the final result. */
+async function drainSlices(
+  text: string,
+  cuts: readonly number[],
+): Promise<{ result: StreamFinalResult; deltas: string[] }> {
+  const iterator = createOpenAiStreamConsumer("delta_reasoning").consume(
+    bodyOfSlices(text, cuts),
+    undefined,
+  );
+  const deltas: string[] = [];
+  for (;;) {
+    const step = await iterator.next();
+    if (step.done) return { result: step.value as StreamFinalResult, deltas };
+    if (step.value.delta.length > 0) deltas.push(step.value.delta);
+  }
+}
+
 const DONE =
   sseFrame({
     choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
@@ -316,6 +366,85 @@ describe("openai stream consumer: text beside a tool-call delta", () => {
   });
 });
 
+describe("openai stream consumer chunk boundaries", () => {
+  // A socket splits wherever it splits. The loop's incremental parse is
+  // what makes that invisible, and these pin it: a cut that loses a
+  // partial event, a partial JSON body or half a UTF-8 sequence is
+  // silent content corruption, not a crash.
+  const byteOffsetOf = (text: string, charIndex: number): number =>
+    new TextEncoder().encode(text.slice(0, charIndex)).length;
+
+  const TWO_FRAMES =
+    sseFrame({
+      id: "gen-split",
+      model: "test-model",
+      choices: [{ index: 0, delta: { content: "hello " }, finish_reason: null }],
+    }) +
+    sseFrame({
+      model: "test-model",
+      choices: [{ index: 0, delta: { content: "world" }, finish_reason: null }],
+    }) +
+    DONE;
+
+  it("keeps the content of a body cut inside a `data:` line", async () => {
+    const { result, deltas } = await drainSlices(TWO_FRAMES, [
+      3,
+      TWO_FRAMES.indexOf("data:", 10) + 2,
+    ]);
+    expect(result.content).toBe("hello world");
+    expect(deltas).toEqual(["hello ", "world"]);
+    expect(result.finishReason).toBe("tool_calls");
+    expect(result.generationId).toBe("gen-split");
+    expect(result.terminalObserved).toBe(true);
+  });
+
+  it("keeps the content of a body cut inside a frame's JSON", async () => {
+    const { result, deltas } = await drainSlices(TWO_FRAMES, [
+      TWO_FRAMES.indexOf('"content"') + 5,
+      TWO_FRAMES.indexOf("\n\n") + 1,
+    ]);
+    expect(result.content).toBe("hello world");
+    expect(deltas).toEqual(["hello ", "world"]);
+    expect(result.terminalObserved).toBe(true);
+  });
+
+  it("keeps a multi-byte character split across two reads", async () => {
+    const text = "привет ✅";
+    const body =
+      sseFrame({
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+      }) + DONE;
+    // One byte into the checkmark's three: a decoder without `stream:
+    // true` (or a loop that decoded each read on its own) turns the tail
+    // of this frame into replacement characters and breaks its JSON.
+    const insideEmoji = byteOffsetOf(body, body.indexOf("✅")) + 1;
+    const { result } = await drainSlices(body, [insideEmoji]);
+    expect(result.content).toBe(text);
+  });
+
+  it("keeps tool-call arguments split across reads", async () => {
+    const body =
+      toolCallFrame([
+        { index: 0, id: "call_1", type: "function", function: { name: "reply" } },
+      ]) +
+      toolCallFrame([{ index: 0, function: { arguments: '{"text":"ok' } }]) +
+      toolCallFrame([{ index: 0, function: { arguments: '"}' } }]) +
+      DONE;
+    const { result } = await drainSlices(body, [
+      body.indexOf('{\\"text') + 4,
+      body.lastIndexOf("data:") - 1,
+    ]);
+    expect(result.toolCalls).toEqual([
+      {
+        id: "call_1",
+        type: "function",
+        function: { name: "reply", arguments: '{"text":"ok"}' },
+      },
+    ]);
+  });
+});
+
 describe("openai stream consumer generation id (F29)", () => {
   it("carries the chunks' id on the final result", async () => {
     const result = await drain(
@@ -377,5 +506,30 @@ describe("openai stream consumer generation id (F29)", () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe("terminated");
     expect(readGenerationId(err)).toBe("gen-dead");
+  });
+});
+
+describe("openai stream consumer: a provider that just closes", () => {
+  it("ends on a bare EOF, with a final finish_reason and no `[DONE]`", async () => {
+    // The documented case — some OpenAI-compatible providers send a final
+    // `finish_reason` and close without ever writing `[DONE]` — had no pin
+    // in this file: `terminalObserved` was only ever asserted for a body
+    // that does write it, or `false` for the early stop.
+    //
+    // Deliberately unbounded. Break the loop's exit on `done` and this does
+    // not fail, it wedges: a read on a closed stream resolves immediately,
+    // so the loop degenerates into a microtask loop that starves the timer
+    // queue and with it vitest's own `testTimeout`. No in-process assertion
+    // can catch that, which is the argument for having the case at all.
+    const drained = await drain(
+      sseFrame({
+        id: "gen-eof",
+        model: "test-model",
+        choices: [{ index: 0, delta: { content: "bye" }, finish_reason: "stop" }],
+      }) + "\n",
+    );
+    expect(drained.content).toBe("bye");
+    expect(drained.finishReason).toBe("stop");
+    expect(drained.terminalObserved).toBe(true);
   });
 });
