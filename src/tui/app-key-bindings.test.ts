@@ -4,6 +4,7 @@ import type { Key } from "ink";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
+import { RAIL_PAGE_SIZE } from "./session-rail/index.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -240,6 +241,75 @@ describe("handleAppKey", () => {
       mode: "debug",
     });
     expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "feed" });
+  });
+
+  it("↓ at the foot of the loaded rail asks for the next page", () => {
+    // The rail holds one page of the store; reaching its end is the
+    // request for the next one. Anywhere above the tail margin the key
+    // is a plain cursor move and touches no store.
+    const railOf = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        sessionId: `s-${i}`,
+        workingDir: "/tmp/w",
+        turnCount: 1,
+        stepCount: 0,
+        updatedAt: 1_000 + i,
+        preview: `thread ${i}`,
+        pinned: false,
+      }));
+    const press = (cursor: number, rows: number) => {
+      const state = createInitialTuiState(stubSession());
+      state.chatFocus = "sidebar";
+      state.sidebarSection = "sessions";
+      state.recentSessions = railOf(rows);
+      state.sidebarCursor = cursor;
+      const onSessionsEndReached = vi.fn();
+      const dispatch = vi.fn();
+      handleAppKey("", emptyKey({ downArrow: true }), {
+        state,
+        dispatch,
+        callbacks: {
+          onApprovalDecision: vi.fn(),
+          onAbort: vi.fn(),
+          onQuit: vi.fn(),
+          onSessionsEndReached,
+        },
+        ctrlCArmed: false,
+        setCtrlCArmed: vi.fn(),
+        sidebarVisible: true,
+      });
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "sidebar_cursor_moved",
+        delta: 1,
+      });
+      return onSessionsEndReached;
+    };
+    expect(press(0, RAIL_PAGE_SIZE)).not.toHaveBeenCalled();
+    expect(press(RAIL_PAGE_SIZE - 2, RAIL_PAGE_SIZE)).toHaveBeenCalledTimes(1);
+    // Parked on the last row already: the key still asks, since the
+    // reducer clamps the cursor and the operator is pressing for more.
+    expect(press(RAIL_PAGE_SIZE - 1, RAIL_PAGE_SIZE)).toHaveBeenCalledTimes(1);
+  });
+
+  it("↓ in the Tasks pane never asks the rail for another page", () => {
+    const state = createInitialTuiState(stubSession());
+    state.chatFocus = "sidebar";
+    state.sidebarSection = "tasks";
+    const onSessionsEndReached = vi.fn();
+    handleAppKey("", emptyKey({ downArrow: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onSessionsEndReached,
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: true,
+    });
+    expect(onSessionsEndReached).not.toHaveBeenCalled();
   });
 
   it("Tab inside sidebar(sessions) advances to the Tasks pane", () => {

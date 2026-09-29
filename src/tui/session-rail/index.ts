@@ -22,6 +22,11 @@ export {
   readSessionRailLayout,
 } from "./persist-session-rail.js";
 export {
+  RAIL_PAGE_SIZE,
+  RAIL_TAIL_MARGIN,
+  railTailInView,
+} from "./rail-page.js";
+export {
   SessionRailOrchestrator,
   configSessionRailLayoutStore,
   type SessionRailLayoutStore,

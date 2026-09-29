@@ -10,6 +10,10 @@ import {
   type SessionState,
 } from "../session/session-state.js";
 import type { SessionSummary } from "../session/session-summary.js";
+import {
+  sessionSummaryCursorAfter,
+  type SessionSummaryCursor,
+} from "../session/session-summary-page.js";
 import { readSessionTitle } from "../session/session-title.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
@@ -57,6 +61,7 @@ import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrat
 import { SwarmOrchestrator } from "./swarm/swarm-orchestrator.js";
 import { IssueReportOrchestrator } from "./issue-report/index.js";
 import {
+  RAIL_PAGE_SIZE,
   SessionRailOrchestrator,
   configSessionRailLayoutStore,
   type SessionRailLayoutStore,
@@ -322,9 +327,10 @@ export class ChatOrchestrator {
     this.sessionRail = new SessionRailOrchestrator(
       options.sessionRailLayout ?? configSessionRailLayoutStore,
       () => this.refreshRecentSessions(),
-      // A pinned thread must show whatever its age: when it has fallen
-      // out of the recency window `railSessions` reads, the rail fetches
-      // it by id and builds the same row the window would have.
+      // A pinned thread must show whatever its age: when it is off the
+      // end of the pages `railSessions` has loaded — which, now that
+      // the rail reads one page at a time, is most of the table — the
+      // rail fetches it by id and builds the row the page would have.
       (sessionId) => {
         const state = this.runtime.sessionStore.load(sessionId);
         if (!state) return null;
@@ -379,9 +385,10 @@ export class ChatOrchestrator {
   start(): void {
     if (this.started) return;
     this.started = true;
-    // The rail is the one boot step that reads every stored row. A store
-    // that cannot answer must not abort the rest of the boot — the
-    // chat, the poller and the channels work without a session list.
+    // The rail's first page and the unreadable-row count are the boot's
+    // only reads of the session table. A store that cannot answer must
+    // not abort the rest of the boot — the chat, the poller and the
+    // channels work without a session list.
     try {
       this.refreshRecentSessions();
       const unreadable = this.runtime.sessionStore.countUnreadable();
@@ -536,24 +543,44 @@ export class ChatOrchestrator {
   private readonly pendingRows = new Map<string, SessionPickerEntry>();
 
   refreshRecentSessions(): void {
+    // Built before the flag is read, not inline with it: `railTailReached`
+    // is what the walk inside `railSessions` learned, so reading it first
+    // would answer for the walk before this one.
+    const sessions = this.railSessions();
     this.bus.emit({
       type: "recent_sessions_updated",
-      sessions: this.railSessions(),
+      sessions,
+      morePages: !this.railTailReached,
     });
+  }
+
+  /**
+   * Pages of the store the rail has asked for so far. One at boot; one
+   * more each time the cursor reaches the end of what is loaded.
+   */
+  private railPages = 1;
+
+  /**
+   * Did the last walk run out of rows? The store answering short is the
+   * only honest end-of-table signal, and once it has answered short
+   * there is nothing left to fetch.
+   */
+  private railTailReached = false;
+
+  /**
+   * The operator reached the bottom of the loaded list: take one more
+   * page. No-op at the end of the table, so holding ↓ down on the last
+   * row costs nothing.
+   */
+  loadMoreSessions(): void {
+    if (this.railTailReached) return;
+    this.railPages += 1;
+    this.refreshRecentSessions();
   }
 
   /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
-    // Every stored thread, not a window of them: the rail and the picker
-    // page their own rows. The TUI's own sessions wait for their first
-    // turn to be saved, but a scheduled task or a webhook still mints a
-    // persisted, unnamed one; those are hidden here (see
-    // `hasFirstPrompt`), and with no LIMIT in SQL there is no window for
-    // them to squat and push real conversations out of.
-    const stored = this.runtime.sessionStore
-      .listSummaries()
-      .filter((row) => row.firstPrompt !== null)
-      .map((row) => toPickerEntry(row));
+    const stored = this.railPage().map((row) => toPickerEntry(row));
     // The manual order applies whether or not there are stand-ins.
     if (this.pendingRows.size === 0) return this.sessionRail.arrange(stored);
     const storedIds = new Set(stored.map((entry) => entry.sessionId));
@@ -572,6 +599,44 @@ export class ChatOrchestrator {
     // The manual order (if any) goes over the whole list: stand-ins are
     // ids the order has never seen, so they stay on top.
     return this.sessionRail.arrange([...pending, ...stored]);
+  }
+
+  /**
+   * The rows the rail has asked for: `railPages` pages of the store,
+   * walked by keyset cursor.
+   *
+   * A bounded window is only safe because the store no longer hands
+   * back the unnamed rows that `+ new` and every scheduled task mint —
+   * `listSummaryPage` filters them in SQL. That is what answers the
+   * objection this read used to carry no LIMIT for: with blanks in the
+   * result a window would fill up with rows the rail then hides, and
+   * real conversations would be pushed off the end of it. They cannot
+   * squat a window they are never in.
+   *
+   * Re-walked from the top on every refresh rather than appended to,
+   * because the table moves under it: the turn that just finished put
+   * its own thread back on top, and appending would list the rows it
+   * displaced a second time. At `railPages === 1` — boot, every turn,
+   * every switch, which is every refresh the operator did not ask for
+   * by scrolling — that is exactly one page read.
+   */
+  private railPage(): SessionSummary[] {
+    const rows: SessionSummary[] = [];
+    let after: SessionSummaryCursor | undefined;
+    for (let page = 0; page < this.railPages; page += 1) {
+      const batch = this.runtime.sessionStore.listSummaryPage({
+        limit: RAIL_PAGE_SIZE,
+        ...(after ? { after } : {}),
+      });
+      rows.push(...batch);
+      if (batch.length < RAIL_PAGE_SIZE) {
+        this.railTailReached = true;
+        return rows;
+      }
+      after = sessionSummaryCursorAfter(batch) ?? undefined;
+    }
+    this.railTailReached = false;
+    return rows;
   }
 
   /**
@@ -1465,10 +1530,9 @@ function hasFirstPrompt(state: SessionState): boolean {
   return state.turns.some((turn) => turn.kind === "user");
 }
 
-/** A stored row with a first prompt (`firstPrompt !== null`) as a rail row. */
 /**
- * The `SessionSummary` shape `listSummaries()` projects, built from a
- * loaded session — for the rows the recency window did not carry.
+ * The `SessionSummary` shape `listSummaryPage()` projects, built from a
+ * loaded session — for the rows the loaded pages did not carry.
  */
 function summariseSessionState(state: SessionState): SessionSummary {
   const firstUser = state.turns.find((t) => t.kind === "user");

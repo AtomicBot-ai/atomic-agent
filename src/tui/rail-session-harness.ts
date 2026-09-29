@@ -7,6 +7,7 @@ import {
   summarizeSessionState,
   type SessionSummary,
 } from "../session/session-summary.js";
+import type { SessionSummaryPageOptions } from "../session/session-summary-page.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
@@ -45,11 +46,28 @@ export function spokenTo(id: string, text: string) {
 
 export type StoredSession = ReturnType<typeof blank>;
 
-/** What the store's `listSummaries` does in SQL: every row, newest first. */
-export function summariesOf(stored: StoredSession[]): SessionSummary[] {
+/**
+ * What the store's `listSummaryPage` does in SQL: rows someone has
+ * spoken to, newest first with the id as the tiebreak, from the cursor
+ * on, at most `limit` of them. Keeping the stand-in honest about the
+ * filter and the bound is the point — a stub that handed back the whole
+ * list would hide exactly the paging the rail now depends on.
+ */
+export function summaryPageOf(
+  stored: StoredSession[],
+  { limit, after }: SessionSummaryPageOptions,
+): SessionSummary[] {
   return [...stored]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map(summarizeSessionState);
+    .filter((state) => state.turns.some((turn) => turn.kind === "user"))
+    .map(summarizeSessionState)
+    .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? 1 : -1))
+    .filter(
+      (row) =>
+        !after ||
+        row.updatedAt < after.updatedAt ||
+        (row.updatedAt === after.updatedAt && row.id < after.id),
+    )
+    .slice(0, Math.max(0, limit));
 }
 
 export interface StubOptions {
@@ -60,7 +78,7 @@ export interface StubOptions {
    * refused while a turn holds it.
    */
   settleTurns?: boolean;
-  listSummaries?: () => SessionSummary[];
+  listSummaryPage?: (options: SessionSummaryPageOptions) => SessionSummary[];
   countUnreadable?: () => number;
   /** Seed for `tui.sessionRail.order` — the operator's manual order. */
   order?: string[];
@@ -70,7 +88,7 @@ export interface StubOptions {
 
 export function stubRuntime(
   stored: StoredSession[],
-  { settleTurns = false, listSummaries, countUnreadable }: StubOptions = {},
+  { settleTurns = false, listSummaryPage, countUnreadable }: StubOptions = {},
 ): AgentRuntime {
   let created = 0;
   return {
@@ -89,7 +107,10 @@ export function stubRuntime(
         ? Promise.resolve({ session, reason: "reply", stepCount: 1 })
         : new Promise(() => {}),
     sessionStore: {
-      listSummaries: listSummaries ?? (() => summariesOf(stored)),
+      listSummaryPage:
+        listSummaryPage ??
+        ((options: SessionSummaryPageOptions) =>
+          summaryPageOf(stored, options)),
       countUnreadable: countUnreadable ?? (() => 0),
       listRecent: (limit: number) => stored.slice(0, limit),
       load: (id: string) => stored.find((s) => s.id === id) ?? null,
@@ -167,8 +188,16 @@ export function harness(stored: StoredSession[], options: StubOptions = {}) {
     lastOf("recent_sessions_updated");
   const picker = (): readonly SessionPickerEntry[] =>
     lastOf("session_picker_opened");
+  /** `morePages` on the last rail refresh: does the store hold more? */
+  const morePages = (): boolean | null => {
+    for (let i = actions.length - 1; i >= 0; i -= 1) {
+      const action = actions[i];
+      if (action?.type === "recent_sessions_updated") return action.morePages;
+    }
+    return null;
+  };
   // `bus` is returned for the cases that have to arrive the way the app
   // sends them: a model pick reaches the orchestrator as an action, not
   // as a method call.
-  return { orchestrator, bus, rail, picker, actions, written, pins };
+  return { orchestrator, bus, rail, picker, morePages, actions, written, pins };
 }

@@ -5,6 +5,11 @@ export type {
 } from "./session-store.js";
 export { summarizeSessionState } from "./session-summary.js";
 export type { SessionSummary } from "./session-summary.js";
+export { sessionSummaryCursorAfter } from "./session-summary-page.js";
+export type {
+  SessionSummaryCursor,
+  SessionSummaryPageOptions,
+} from "./session-summary-page.js";
 export { normalizeSessionState } from "./normalize-session-state.js";
 export {
   createEmptySessionState,
