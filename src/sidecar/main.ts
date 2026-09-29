@@ -267,7 +267,7 @@ export async function bootstrapSidecar(): Promise<{
           const hint =
             config.localModels.mode === "managed"
               ? "run atomic-agent models start"
-              : "check localModels.url or ATOMIC_AGENT_LLAMA_URL";
+              : "check localModels.url";
           protocol.emitEvent("llm_unavailable", {
             url: config.localModels.url,
             error: health.error,
