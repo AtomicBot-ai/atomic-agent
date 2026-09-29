@@ -690,6 +690,21 @@ export interface TuiState {
    */
   queuedMessages: readonly string[];
   /**
+   * Messages folded into the turn already running (steer mode), from
+   * the moment they are sent until the loop picks one up. They are not
+   * transcript yet — the inbox is drained at the next step boundary,
+   * which a long `os.shell.run` can hold off for minutes — so they
+   * render at the END of the chat, after everything the turn has said
+   * and ahead of the spinner, exactly where a message you send lands
+   * in any chat. The operator who just typed one needs to see it
+   * arrive, not an editor that blanked and nothing else until the step
+   * comes. Emptied by whatever resolves the message: `steer_applied`
+   * (it is transcript now), `queue_changed` (parked instead), the end
+   * of the run (nothing will read it any more). A bubble here always
+   * means "accepted, still on its way in".
+   */
+  pendingSteers: readonly string[];
+  /**
    * What Enter does while a turn is running: `steer` folds the message
    * into the turn in flight, `queue` parks it for the next one. Seeded
    * from `config.tui.whileBusySubmit` at mount and flipped in-app with
@@ -899,6 +914,7 @@ export function createInitialTuiState(
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],
+    pendingSteers: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
     abortArmed: false,
     codingMode: "default",
