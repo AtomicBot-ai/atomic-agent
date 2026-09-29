@@ -3237,6 +3237,7 @@ export async function createAgentRuntime(
     },
     enabled: config.tasks.enabled,
     runOnCreate: config.tasks.runOnCreate,
+    minIntervalMs: config.tasks.minIntervalMs,
     // Telegram is the only `TaskNotifyTarget` today, so the runner's
     // single sink IS the Telegram route (a second target would turn
     // this into a per-target dispatch). The channel is constructed

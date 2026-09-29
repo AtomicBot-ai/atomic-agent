@@ -48,6 +48,14 @@ describe("GET /api/capabilities", () => {
       (await fetchCapabilities(harness.baseUrl)).agent.approvalRequired,
     ).toBe(true);
   });
+
+  it("does not advertise agent.toolTimeoutMs, which no tool reads (#548)", async () => {
+    harness = await startTestHarness();
+
+    const body = await fetchCapabilities(harness.baseUrl);
+    expect(body.agent).not.toHaveProperty("toolTimeoutMs");
+    expect(body.agent).toHaveProperty("maxSteps");
+  });
 });
 
 /**

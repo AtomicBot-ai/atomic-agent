@@ -633,5 +633,8 @@ function mapUserLlmToRuntime(
     }),
     ...(llm.fallback ? { fallback: llm.fallback } : {}),
     ...(llm.runMode ? { runMode: llm.runMode } : {}),
+    // Without this `llm.openrouter.preferCacheRoutes: false` never
+    // reached the provider factory, which fell back to `true`.
+    ...(llm.openrouter ? { openrouter: { ...llm.openrouter } } : {}),
   };
 }

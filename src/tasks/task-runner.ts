@@ -13,11 +13,12 @@ import {
   type TaskReportSink,
 } from "./task-report.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
-import type {
-  TaskRecord,
-  TaskSchedule,
-  TaskStatus,
-  TriggerSource,
+import {
+  TaskValidationError,
+  type TaskRecord,
+  type TaskSchedule,
+  type TaskStatus,
+  type TriggerSource,
 } from "./task-types.js";
 import type { TaskCreateInput, TaskStore } from "./task-store.js";
 
@@ -96,6 +97,13 @@ export interface TaskRunnerOptions {
    * regardless of this flag — they are left for the scheduler.
    */
   runOnCreate: boolean;
+  /**
+   * `tasks.minIntervalMs`: the operator's floor on a new `interval`
+   * schedule's `everyMs`, on top of the fixed 1 000 ms in
+   * `task-schedule.ts`. Checked at `create` only, so raising it never
+   * strands a task that already runs at a shorter interval.
+   */
+  minIntervalMs?: number;
   /**
    * Terminal-outcome delivery for tasks that opted in via
    * `TaskRecord.notify`. Optional: without a sink the `notify` flag
@@ -178,6 +186,18 @@ export class TaskRunner {
    */
   create(input: TaskCreateInput, now: number = Date.now()): TaskRecord {
     const schedule = input.schedule ?? null;
+    const minIntervalMs = this.options.minIntervalMs;
+    if (
+      schedule?.kind === "interval" &&
+      minIntervalMs !== undefined &&
+      typeof schedule.everyMs === "number" &&
+      schedule.everyMs < minIntervalMs
+    ) {
+      throw new TaskValidationError(
+        "schedule",
+        `schedule.everyMs must be >= ${minIntervalMs} (tasks.minIntervalMs)`,
+      );
+    }
     const scheduledFor =
       schedule && input.scheduledFor === undefined
         ? resolveScheduledFor(schedule, now)
