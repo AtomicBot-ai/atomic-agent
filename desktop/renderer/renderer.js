@@ -9,6 +9,8 @@ const BR = typeof window !== "undefined" ? window.atomic : null;
 const PLATFORM = (BR && BR.platform) || 'darwin';
 const IS_MAC = PLATFORM === 'darwin';
 const IS_WIN = PLATFORM === 'win32';
+/** What the copy calls the machine: "this Mac" on macOS, as it always has. */
+const THIS_MACHINE = IS_MAC ? 'this Mac' : 'this computer';
 
 /** A chord as this platform spells it. The app writes chords the Mac way
     ('⌥ ⌘ E'); off macOS ⌘ reads Ctrl, and the Option-chords read Ctrl
@@ -361,9 +363,9 @@ const OB_ATOMIC_CHAT = { running: null, asking: false };
    on this Mac (Atomic Chat, Ollama, LM Studio), which live in its list. */
 const OB_CHOICES = [
   {id:'local', label:'Local models', detail:[
-    'Private and free on this Mac, after one download.', '']},
+    'Private and free on ' + THIS_MACHINE + ', after one download.', '']},
   {id:'cloud', label:'Cloud models', detail:[
-    'An API key, or a model app already on this Mac.', '']},
+    'An API key, or a model app already on ' + THIS_MACHINE + '.', '']},
   {id:'custom', label:'Custom endpoint', detail:[
     'A llama.cpp server you already run. Nothing to download.', '']},
 ];
@@ -387,7 +389,7 @@ const OB_TITLES = {
   cloud: 'Choose a provider',
   custom_chat_url: 'Point Atomic Agent at your endpoint',
   custom_embedding_url: 'Embeddings endpoint',
-  local_pick: 'Choose a model to run on this Mac',
+  local_pick: 'Choose a model to run on ' + THIS_MACHINE,
   local_hf_ref: 'Find a model on Hugging Face',
   local_hf_pick: 'Choose a file to download',
   local_download: 'Downloading your model',
@@ -1878,7 +1880,7 @@ function emptyChat() {
      suggestions stay: they are the cheapest way into a first turn. */
   return '<div class="emptychat">' + emptyPlateHTML()
     + '<div class="ghost">'
-      + ['What can you do?','Summarise the files in this folder','Check the disk space on this Mac']
+      + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
     + '</div></div>';
 }
@@ -3198,7 +3200,7 @@ function renderConsole() {
 
 /* ---------------- palette ---------------- */
 const SCOPES = {
-  theme: {label:'Theme', ph:'Choose a theme…', rows:[['laptop','System','follow macOS','','theme:system'],['sun','Light','','','theme:light'],['moon','Dark','','','theme:dark']]},
+  theme: {label:'Theme', ph:'Choose a theme…', rows:[['laptop','System',IS_MAC ? 'follow macOS' : 'follow the system','','theme:system'],['sun','Light','','','theme:light'],['moon','Dark','','','theme:dark']]},
   // Item 7: the prototype's Task scope is gone — nothing targeted scope:task, and the Tasks tab is the one surface.
 };
 
@@ -4049,7 +4051,7 @@ function generalPane() {
       + tpNotifyRowHTML()
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments never leave this Mac. '
+          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments never leave ' + THIS_MACHINE + '. '
             + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
@@ -4145,7 +4147,7 @@ function privacyPane() {
     + '</div>'
     + '<div class="set-privgrid">'
       + sentList('What analytics send', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
-      + sentList('What never leaves this Mac', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
+      + sentList('What never leaves ' + THIS_MACHINE, ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
     + '</div>'
     + '</div>';
 }
@@ -8183,7 +8185,7 @@ function obLocalPickHTML() {
   const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
     esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
-      + esc(OB.ram ? 'Runs offline after one download. Ordered for this Mac’s ' + OB.ram + ' GB of memory.'
+      + esc(OB.ram ? 'Runs offline after one download. Ordered for ' + THIS_MACHINE + '’s ' + OB.ram + ' GB of memory.'
                    : 'Runs offline after one download.') + '</div>'
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
        Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
