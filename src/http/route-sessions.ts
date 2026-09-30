@@ -1,4 +1,5 @@
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
+import { readSessionTitle } from "../session/session-title.js";
 import { openaiError } from "./openai-errors.js";
 import {
   readJsonBody,
@@ -12,7 +13,8 @@ import {
  * directory. `limit` (query string) caps the number of rows, default
  * 25, max 200. Payload mirrors `SessionState` minus the heavy
  * transcript by default — callers fetch the full state via
- * `/api/sessions/{id}` when they need it.
+ * `/api/sessions/{id}` when they need it. `title` is the generated
+ * session name (`agent.nameSessions`), `null` until one is stored.
  */
 export function createListSessionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -42,6 +44,7 @@ export function createListSessionsHandler(): HttpHandler {
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         lastError: s.lastError,
+        title: readSessionTitle(s.metadata),
       })),
     });
   };

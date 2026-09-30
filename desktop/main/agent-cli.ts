@@ -129,7 +129,7 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
 */
 let configWriteChain: Promise<void> = Promise.resolve();
 /** Run `write` with the config file to itself; every writer here queues on this. */
-function withConfigLock<T>(write: () => Promise<T>): Promise<T> {
+export function withConfigLock<T>(write: () => Promise<T>): Promise<T> {
   const next = configWriteChain.then(write, write);
   configWriteChain = next.then(() => undefined, () => undefined);
   return next;

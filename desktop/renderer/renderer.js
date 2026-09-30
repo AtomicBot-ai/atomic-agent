@@ -941,8 +941,9 @@ const MEM_CHANNEL_WORDS = {profile:'About you', notes:'Notes', lessons:'Lessons'
 const MEM_NOTES_FILTERS = ['active','archived','all'];
 const MEM_MAX_ROWS = 14, MEM_DETAIL_LINES = 28, MEM_NOTES_LIMIT = 200, MEM_INDEX_LIMIT = 100, MEM_LINKS_LIMIT = 500, MEM_VOTES_LIMIT = 100; // memory-panel.tsx / memory-detail.tsx / memory-orchestrator.ts (lesson/procedure index max 100 in their stores)
 /* MCP panel — the TUI's McpPanelState. Rows come from config (mcp.servers)
-   and the `mcp.<name>.*` tools in /api/capabilities; there is no MCP status
-   route on this agent, so no state / resources / prompts. */
+   and the `mcp.<name>.*` tools in /api/capabilities. There is no route that
+   lists every server's status, so a row's state comes from the last
+   Restart / enable answer (mcp-live.js); no resources / prompts. */
 const MCP = {
   mode:'list', cursor:0, detailTab:'tools', detailCursor:0, detailName:null,
   lastRefreshedAt:null, loading:false, auto:true, lastError:null, msg:null,
@@ -3909,7 +3910,10 @@ async function refreshHealth() {
   SET.healthBusy = false;
   if (!(res && res.ok && res.data)) return;
   const next = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
-                llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null};
+                llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null,
+                // 0.6.6, loopback only: the serve process and how many turns it is running (any client's).
+                pid: typeof res.data.pid === 'number' ? res.data.pid : null,
+                busyTurns: typeof res.data.busyTurns === 'number' ? res.data.busyTurns : null};
   const changed = JSON.stringify(next) !== JSON.stringify(SET.health);
   SET.health = next;
   if (S.settings && changed && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
@@ -4004,13 +4008,15 @@ function generalPane() {
         + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
           + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
+      + nameChatsRowHTML()
     + '</div>'
     + '</div>';
 }
 /* The restart notice and the error line an analytics or read-scope write
    leaves behind, on whichever of General / Privacy is showing. */
 function privacyNoticesHTML() {
-  return (PRIV.message ? restartLine(PRIV.message) : '')
+  // A PATCH-applied change (readScope on 0.6.6) is already live: no restart offer.
+  return (PRIV.message ? (PRIV.messageLive ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(PRIV.message) + '</span></div>' : restartLine(PRIV.message)) : '')
     + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '');
 }
 
@@ -4029,6 +4035,10 @@ function diagnosticsPane() {
   const rows = [
     ['App', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
     ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
+    ...(SET.health && SET.health.pid !== null && SET.health.busyTurns !== null
+      ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
+          'Turns running in the agent right now, from any chat, task or bot']]
+      : []),
     ['State folder', short(sd), sd],
     ['Working folder', short(wd), wd],
     ['Local model server', llama],
@@ -4099,9 +4109,11 @@ async function readScopeSet(value) {
   if (!BR || !LIVE_CONFIG || PRIV.busy || value === readScopeValue()) return;
   const run = async () => {
     PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
-    const res = await BR.configSet('agent.readScope', value);
-    if (!res || res.ok === false) PRIV.lastError = 'could not change where the agent reads: ' + ((res && res.error) || 'unknown error');
-    else PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder';
+    // confine-reads.ts reads agent.readScope on every call, but only from the
+    // agent's cached config: PATCH (0.6.6) refreshes that cache, a CLI write does not.
+    const res = await configPatchOr({agent:{readScope:value}}, () => BR.configSet('agent.readScope', value));
+    if (!res.ok) PRIV.lastError = 'could not change where the agent reads: ' + (res.error || 'unknown error');
+    else { PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder'; PRIV.messageLive = !!res.live; }
     await refreshLiveConfig();
     PRIV.busy = false; render();
   };
@@ -4151,7 +4163,7 @@ async function privacySet(enabled) {
   // Writes queue behind each other (`/analytics on` then `/analytics off`
   // lands both, in order, as the TUI does) instead of dropping the second.
   const run = async () => {
-    PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
+    PRIV.busy = true; PRIV.message = null; PRIV.messageLive = false; PRIV.lastError = null; render();
     const res = await BR.configSet('analytics.enabled', String(!!enabled));
     if (!res || res.ok === false) {
       PRIV.lastError = 'analytics toggle failed: ' + ((res && res.error) || 'unknown error');
@@ -4425,6 +4437,7 @@ function act(a) {
   if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
+  if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
@@ -5899,10 +5912,13 @@ function applySessions(res) {
   res.data.sessions.forEach((x) => {
     if (!x || !x.id || !((x.turnCount || 0) > 0)) return;
     const was = before.get(x.id);
+    // 0.6.6: the agent's own name for the chat wins over its first prompt (session-titles.js).
+    const title = sessionTitleOf(x) || (was && was.titled ? was.t : null);
     SESSIONS.push({
       id:x.id,
-      t:was && was.named ? was.t : x.id,
-      named:!!(was && was.named),
+      t:title || (was && was.named ? was.t : x.id),
+      named:!!title || !!(was && was.named),
+      titled:!!title,
       updatedAt:x.updatedAt || 0,
       status:x.status || '',
       turnCount:x.turnCount || 0,
@@ -5939,8 +5955,10 @@ function nameVisibleSessions() {
       if (!cur) return;
       const turns = res && res.ok && res.data && res.data.turns;
       if (!Array.isArray(turns)) { cur.named = false; return; }
+      const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
-      cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      if (title) { cur.t = title; cur.titled = true; }
+      else if (!cur.titled) cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
       cur.named = true;
       render();
     });
@@ -6134,6 +6152,7 @@ function onChatEvent(ev) {
           if (row) { PREFS.seen[sid] = Math.max(PREFS.seen[sid] || 0, row.updatedAt); savePrefs(); }
         }
         render();
+        sessionTitleFollowUp(sid); // the agent names the chat just after this turn returns
       });
     }
   }
@@ -15993,8 +16012,8 @@ function mcpStatusLine() {
 function mcpHint() {
   if (MCP.addModal) return 'Enter submit · Esc cancel · paste JSON of one MCP server';
   if (MCP.removeConfirm) return 'y / Enter confirm · n / Esc cancel';
-  if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
-  return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['r refresh', 'mcp:refresh']]);
+  if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
+  return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh']]);
 }
 function mcpTab() {
   ensureMcpPoll();
@@ -16034,15 +16053,16 @@ function mcpListHTML(rows) {
   // ST-16: mark · name + honest state chip · description · transport · trust class · tool count.
   return '<div class="tk-list">' + slice.map((r, idx) => {
     const i = idx + start, sel = i === cur;
-    const stateTitle = r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
+    // 0.6.6: the state chip carries the last status a Restart / enable reported (mcp-live.js).
     return '<button class="tk-li sd-srv' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
       + mcpMark(cfgs.find((s) => s && s.name === r.name))
       + '<span class="body"><span class="sd-srvname"><span class="t">' + esc(r.name) + '</span>'
-      + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (r.state === 'disabled' ? 'disabled' : 'state —') + '</span></span>'
+      + mcpStateChipHTML(r.name, r.state) + '</span>'
       + (r.description ? '<span class="d">' + esc(r.description) + '</span>' : '') + '</span>'
       + '<span class="tk-chip tk-chip--sm sd-mono">' + esc(r.transportKind) + '</span>'
       + '<span class="tk-chip tk-chip--sm sd-mono ' + (r.trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(r.trust) + '</span>'
-      + '<span class="m sd-tools">' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') + '</span></button>';
+      + '<span class="m sd-tools">' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') + '</span>'
+      + mcpRowControlsHTML(r.name, r.enabled) + '</button>';
   }).join('') + '</div>'
     ;  // Calm (S5): the "state —" chip's tooltip says why the state is unknown; no notice line under the list.
 }
@@ -16063,7 +16083,6 @@ function mcpDetailHTML() {
   const tools = mcpToolsFor(cfg.name);
   const counts = {tools:String(tools.length), resources:'—', prompts:'—'};
   const state = row ? row.state : '—', trust = row ? row.trust : 'approval_gated';
-  const stateTitle = state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
   const seg = '<div class="tk-seg" role="group" aria-label="Server detail">' + MCP_TAB_ORDER.map((tab) => '<button class="' + (tab === MCP.detailTab ? 'on' : '') + '" aria-pressed="' + (tab === MCP.detailTab) + '" data-act="mcp:dtab:' + tab + '">'
     + esc(tab) + '<span class="sd-count">' + esc(counts[tab]) + '</span></button>').join('') + '</div>';
   let body;
@@ -16080,10 +16099,11 @@ function mcpDetailHTML() {
   }
   return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="mcp:back">' + ic('chevL') + 'Servers</button><span class="grow"></span>'
     + '<button class="iconbtn sm" data-act="mcp:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
+    + mcpDetailControlsHTML(cfg.name, cfg.enabled !== false)
     + '<button class="btn btn-danger sm" data-act="mcp:remove">Remove</button></div>'
     + '<div class="sd-srvhead">' + mcpMark(cfg) + '<h3 class="sd-title sd-mono">' + esc(cfg.name) + '</h3>'
     + '<span class="tk-chip tk-chip--sm sd-mono ' + (trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(trust) + '</span>'
-    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (state === 'disabled' ? 'disabled' : 'state —') + '</span></div>'
+    + mcpStateChipHTML(cfg.name, state) + '</div>'
     + (cfg.description ? '<p class="sd-desc">' + esc(cfg.description) + '</p>' : '')
     + '<pre class="tk-out">' + esc(mcpDescribeTransport(cfg)) + '</pre>'
 
@@ -16097,7 +16117,7 @@ function mcpAddModalHTML() {
     + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
-    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · restart Atomic Agent for the new server to connect</span>'
+    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · then press Restart on its row to connect it</span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="mcp:addSubmit"' + (m.submitting ? ' disabled' : '') + '>Add</button></div>'
     // Secondary: under the actions, so the error and Add stay in view on a short window.
@@ -16108,7 +16128,7 @@ function mcpRemoveModalHTML() {
   return '<div class="tk-modal tk-modal--danger sd-modal" role="alertdialog" aria-label="Remove MCP server">'
     + '<div class="sd-mhead"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>Remove MCP server?</h4></div>'
     + '<dl class="tk-plate"><dt>name</dt><dd>' + esc(c.name) + '</dd></dl>'
-    + '<p>Rewrites config.json; restart Atomic Agent to drop the live connection.</p>'
+    + '<p>Turns it off and removes it from config.json.</p>'
     + (c.error ? '<p class="tk-help tk-help--err">' + esc(c.error) + '</p>' : '')
     + '<div class="acts">' + (c.submitting ? '<span class="sd-cap sd-grow">working…</span>' : '')
     + '<button class="btn btn-g sm" data-act="mcp:removeCancel"' + (c.submitting ? ' disabled' : '') + '>Keep</button>'
@@ -16161,11 +16181,13 @@ function mcpParseAddJson(raw) {
   if (typeof candidate.name !== 'string' || !candidate.name.trim()) return {ok:false, error:'mcp.servers: name: expected a non-empty string'};
   return {ok:true, server:candidate};
 }
-/* The write: read the user file right before, append, whole-file
-   `atag config set '<json>'` through cli:configSetPath (mcp.servers has no
-   leaf spelling). The CLI validates the file and answers with its own
-   error text on a bad entry. The running agent is not touched — the modal's
-   footer and the success line say to restart. */
+/* The write: read the user file right before, append, and write the list.
+   On 0.6.6 that is PATCH /api/config (config-patch.js): the running agent
+   re-reads its config, so the new row's Restart connects it at once. An
+   older agent gets the whole-file `atag config set '<json>'` through
+   cli:configSetPath as before (mcp.servers has no leaf spelling) and the
+   line says to restart the app. Either path validates the file and answers
+   with the agent's own error text on a bad entry. */
 async function mcpAddSubmit(json) {
   const m = MCP.addModal;
   if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
@@ -16178,11 +16200,14 @@ async function mcpAddSubmit(json) {
   if (servers.some((s) => s && s.name === parsed.server.name)) {
     m.submitting = false; m.error = 'server ' + JSON.stringify(parsed.server.name) + ' already exists in config.mcp.servers'; render(); return {ok:false, error:m.error};
   }
-  const res = await BR.configSetPath('mcp.servers', servers.concat([parsed.server]));
+  const list = servers.concat([parsed.server]);
+  const res = await configPatchOr({mcp:{servers:list}}, () => BR.configSetPath('mcp.servers', list));
   m.submitting = false;
-  if (!res || res.ok === false) { m.error = (res && res.error) || 'config write failed'; render(); return {ok:false, error:m.error}; }
+  if (!res.ok) { m.error = res.error; render(); return {ok:false, error:m.error}; }
   MCP.addModal = null;
-  MCP.msg = {text:'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total) — restart Atomic Agent for the new server to connect', restart:true};
+  const added = 'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total)';
+  MCP.msg = res.live ? {text:added + '. Press Restart on its row to connect it.'}
+    : {text:added + ' — restart Atomic Agent for the new server to connect', restart:true};
   await mcpRefresh();
   return {ok:true, name:parsed.server.name};
 }
@@ -16195,12 +16220,17 @@ async function mcpRemoveConfirm() {
   const idx = servers.findIndex((s) => s && s.name === c.name);
   if (idx === -1) { c.submitting = false; c.error = 'server ' + JSON.stringify(c.name) + ' not found in config.mcp.servers'; render(); return; }
   const next = servers.slice(0, idx).concat(servers.slice(idx + 1));
-  const res = await BR.configSetPath('mcp.servers', next);
+  // 0.6.6: turn it off first, which drops the live connection; then the list write.
+  const off = servers[idx].enabled !== false && BR.mcpServer ? await BR.mcpServer(c.name, 'disable') : null;
+  const res = await configPatchOr({mcp:{servers:next}}, () => BR.configSetPath('mcp.servers', next));
   c.submitting = false;
-  if (!res || res.ok === false) { c.error = (res && res.error) || 'config write failed'; render(); return; }
+  if (!res.ok) { c.error = res.error; render(); return; }
   MCP.removeConfirm = null;
+  delete MCP_LIVE.status[c.name];
   if (MCP.mode === 'detail' && MCP.detailName === c.name) { MCP.mode = 'list'; MCP.detailName = null; }
-  MCP.msg = {text:'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining) — restart Atomic Agent to drop the live connection', restart:true};
+  const removed = 'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining)';
+  MCP.msg = (off && off.ok) || servers[idx].enabled === false ? {text:removed + '.'}
+    : {text:removed + ' — restart Atomic Agent to drop the live connection', restart:true};
   await mcpRefresh();
 }
 function mcpAct(what) {
@@ -16223,6 +16253,8 @@ function mcpAct(what) {
   if (verb === 'removeCancel') { MCP.removeConfirm = null; render(); return; }
   if (verb === 'refresh') { mcpRefresh(); return; }
   if (verb === 'auto') { MCP.auto = !MCP.auto; render(); return; }
+  // 0.6.6 live routes (mcp-live.js): R restart, e toggle on / off.
+  if (verb === 'restart' || verb === 'enable' || verb === 'disable' || verb === 'toggle') { mcpLiveAct(verb, sel()); return; }
 }
 /* mcp-key-bindings.ts. The add modal's textarea keeps Enter for submit and
    Shift/Alt+Enter for a newline, as the TUI's MultiLineEditor does. */
@@ -16247,6 +16279,8 @@ function mcpKey(e, k, inText) {
     if (k === ']') { e.preventDefault(); mcpAct('dtab:cycle'); return true; }
     if (k === 'd') { e.preventDefault(); mcpAct('remove'); return true; }
     if (k === 'r') { e.preventDefault(); mcpRefresh(); return true; }
+    if (k === 'R') { e.preventDefault(); mcpAct('restart'); return true; }
+    if (k === 'e') { e.preventDefault(); mcpAct('toggle'); return true; }
     const n = MCP.detailTab === 'tools' ? mcpToolsFor(MCP.detailName || '').length : 0;
     if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MCP.detailCursor = Math.min(MCP.detailCursor + 1, Math.max(0, n - 1)); render(); return true; }
     if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MCP.detailCursor = Math.max(MCP.detailCursor - 1, 0); render(); return true; }
@@ -16256,7 +16290,7 @@ function mcpKey(e, k, inText) {
   if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MCP.cursor = Math.min(MCP.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
   if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MCP.cursor = Math.max(MCP.cursor - 1, 0); render(); return true; }
   if (k === 'Enter') { e.preventDefault(); mcpAct('detail'); return true; }
-  const map = {n:'add', d:'remove', r:'refresh', a:'auto'};
+  const map = {n:'add', d:'remove', r:'refresh', a:'auto', R:'restart', e:'toggle'};
   if (map[k]) { e.preventDefault(); mcpAct(map[k]); return true; }
   return false;
 }

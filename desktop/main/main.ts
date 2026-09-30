@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { AgentClient } from "./agent-client.js";
+import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
 import {
   configGet,
@@ -1225,6 +1226,8 @@ function wireIpc(client: AgentClient): void {
     return clean ? wrap(() => client.runTask(clean)) : { ok: false, error: "task id required" };
   });
   ipcMain.handle("agent:health", () => wrap(() => client.health()));
+  // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
+  wireAgentLiveIpc(client);
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
