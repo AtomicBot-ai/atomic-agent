@@ -1693,6 +1693,28 @@ async function smokeTest(): Promise<void> {
     return;
   }
 
+  /* An empty state directory (or one with no model set up) opens the
+     first-run wizard by itself, a moment after boot. While it is open the
+     app's own verbs and keys are held back on purpose (the `if (OB.open)`
+     guard in the renderer's act wrapper), so every check below that opens
+     Settings, a popover or the palette would be measuring the wizard, not
+     the window. The wizard has its own lanes further down, which open it
+     themselves, so the main lane closes the one boot opened. Closing it
+     writes nothing to config. */
+  {
+    const obDeadline = Date.now() + (DESKTOP_STATE_WAS_FRESH ? 15_000 : 3_000);
+    let obOpen = false;
+    while (Date.now() < obDeadline) {
+      obOpen = (await js<boolean>("!!(window.__ob && window.__ob().open)")) === true;
+      if (obOpen) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (obOpen) {
+      process.stdout.write(`DIAG the first-run wizard opened at boot (fresh=${DESKTOP_STATE_WAS_FRESH}); closed it for the main lane\n`);
+      await js<unknown>("window.__obClose()");
+    }
+  }
+
   if (state === "connected") {
     // Item 6: boot state. Nothing has been opened, so no row may be drawn as
     // the current one — the old code pointed at the newest session without
