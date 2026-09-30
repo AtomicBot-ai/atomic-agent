@@ -6,6 +6,7 @@ export {
 } from "./provider-fallback-chain.js";
 export {
   resolveFallbackChain,
+  withoutUnbuiltLinks,
   DEFAULT_FALLBACK_TIMING,
   type FallbackTiming,
   type ResolvedFallbackChain,

@@ -108,6 +108,7 @@ import { LearnedContextWindows } from "./learned-context-windows.js";
 import {
   ProviderFallbackChain,
   resolveFallbackChain,
+  withoutUnbuiltLinks,
 } from "../llm/fallback/index.js";
 import {
   createFallbackCompleter,
@@ -1102,8 +1103,26 @@ export async function createAgentRuntime(
   // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
   // one-shot switch into a `provider_switched` AgentLoopEvent; the logger
   // records every advance, with the failed link's status and message.
+  // Set once the provider registry exists (below). Until then the chain
+  // is taken from config as before; nothing picks a provider that early.
+  let builtProviderIds: (() => readonly string[]) | null = null;
+  const droppedFallbackLinks = new Set<string>();
   const fallbackChain = new ProviderFallbackChain({
-    resolve: () => resolveFallbackChain(resolveLlmConfig(getConfig())),
+    resolve: () => {
+      const resolved = resolveFallbackChain(resolveLlmConfig(getConfig()));
+      const listIds = builtProviderIds;
+      if (!listIds) return resolved;
+      const built = new Set(listIds());
+      return withoutUnbuiltLinks(
+        resolved,
+        (id) => built.has(id),
+        (id) => {
+          if (droppedFallbackLinks.has(id)) return;
+          droppedFallbackLinks.add(id);
+          logger.warn("llm: fallback link skipped (provider not built)", { id });
+        },
+      );
+    },
     noticeSink: (notice) =>
       emitAgentLoopEvent({ type: "provider_switched", ...notice }),
     logger,
@@ -1758,6 +1777,7 @@ export async function createAgentRuntime(
     getModelId: getLiveModelId,
     logger,
   });
+  builtProviderIds = () => providerRegistry.listIds();
 
   /**
    * Re-read on every inference so TUI `setActive` hot-swap takes effect.
