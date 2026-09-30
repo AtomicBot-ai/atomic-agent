@@ -18606,6 +18606,12 @@ if (typeof window !== 'undefined') {
     return chatDot(SESSIONS.find((s) => s.id === id))[0];
   };
   window.__deleteSession = (id) => { act('del:' + id); return SESSIONS.length; };
+  /* The list as the agent holds it now. A session the agent gains or loses
+     outside this window (a task's run, a DELETE from main) reaches SESSIONS
+     only on the next re-read, and after a turn that re-read is on a timer
+     (sessionTitleFollowUp), so a check that counts or picks rows reads it
+     first instead of racing the timer. */
+  window.__sessionsRefresh = async () => { await refreshSessions(); return SESSIONS.length; };
   /* Review fix: renderSidebar rebuilds .sb-lists whole, so a scrolled list used
      to snap back to the top on every render — which sent the "Load more" button
      the user had just clicked off screen. */

@@ -3787,6 +3787,10 @@ async function sidebarTest(
     // Deleting is a real DELETE now. The route is idempotent, so an id that
     // was never there answers 200 and the list is left alone.
     check("the renderer can delete a session", await js<boolean>("typeof window.atomic.deleteSession === 'function'"));
+    // Counted from a fresh read: the task fixture above ran a session the
+    // window has not re-read yet, and the title follow-up after the left-behind
+    // turn re-reads the list on a timer that can land inside the wait below.
+    await js<number>("window.__sessionsRefresh()");
     const lenBefore = (await js<Sb>("window.__sidebar()")).total;
     await js<number>("window.__deleteSession('smoke-no-such-session')");
     await wait(1000);
@@ -3803,6 +3807,9 @@ async function sidebarTest(
     // is this run's litter, and DELETE /api/sessions/{id} takes it back out.
     if (fixture && fixture.created && fixture.sessionId && agent) {
       await agent.deleteSession(fixture.sessionId).catch(() => undefined);
+      // The renderer still lists it until its next re-read, and the item 3
+      // checks pick the newest row: without this they drove a deleted chat.
+      await js<number>("window.__sessionsRefresh()").catch(() => undefined);
     }
     writePrefs(prefsBefore);
     await js<void>("window.__reloadPrefs && window.__reloadPrefs()");
