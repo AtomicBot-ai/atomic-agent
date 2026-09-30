@@ -249,3 +249,40 @@ function tpFzEnsureTick() {
     if (el) el.outerHTML = fzLiveHTML();
   }, 1000);
 }
+
+/* ---- Skills left out of the prompt (/api/capabilities skillsOmitted) -------
+   Config v70 caps the skill list the agent sees at skills.catalogTokenBudget;
+   what does not fit is left out of the prompt, and /api/capabilities reports
+   how many (always present, 0 when all fit). The Skills tab says so in one
+   line, so "12 enabled" is not read as 12 skills the agent knows about. */
+const TP_SK = { omitted: null, busy: false };
+
+function tpSkillsOmitted() {
+  if (typeof TP_SK.omitted === 'number') return TP_SK.omitted;
+  const n = LIVE_CAPS && typeof LIVE_CAPS.skillsOmitted === 'number' ? LIVE_CAPS.skillsOmitted : 0;
+  return n;
+}
+
+/** Re-read the count: it changes when skills are installed, removed or toggled. */
+async function tpSkillsOmittedRefresh() {
+  if (!BR || !BR.capabilities || TP_SK.busy) return;
+  TP_SK.busy = true;
+  try {
+    const before = tpSkillsOmitted();
+    const caps = await BR.capabilities();
+    const n = caps && caps.ok && caps.data ? caps.data.skillsOmitted : undefined;
+    if (typeof n === 'number') TP_SK.omitted = n;
+    if (tpSkillsOmitted() !== before && skillsVisible()) skpRender();
+  } catch (err) {
+    // An older agent, or none: nothing to say.
+  } finally {
+    TP_SK.busy = false;
+  }
+}
+
+function tpSkillsOmittedHTML() {
+  const n = tpSkillsOmitted();
+  if (!n) return '';
+  return '<div class="tk-help set-skomit">' + ic('info') + '<span>' + n + ' skill' + (n === 1 ? '' : 's')
+    + ' left out of the agent’s prompt: the skill list is over its size budget (<span class="mono">skills.catalogTokenBudget</span>).</span></div>';
+}

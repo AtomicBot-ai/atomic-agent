@@ -284,3 +284,6 @@ button.set-search:hover{border-color:var(--bd)}
   .set-formgrid{gap:16px}
   .set-skcols,.set-skrow{grid-template-columns:40px minmax(100px,150px) 84px 62px minmax(0,1fr);column-gap:10px}
 }
+/* Skills left out of the prompt (tui-parity.js). */
+.set-skills .set-skomit{display:flex;align-items:center;gap:6px;margin:0 0 8px}
+.set-skills .set-skomit svg{width:13px;height:13px;flex:none}

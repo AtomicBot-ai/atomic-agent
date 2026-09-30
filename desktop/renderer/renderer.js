@@ -14851,6 +14851,7 @@ function ensureSkillsPoll() {
 function skillsTabEntered() {
   if (SKP.timer) { clearInterval(SKP.timer); SKP.timer = null; }
   ensureSkillsPoll();
+  tpSkillsOmittedRefresh();
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
 /* `atag skill list` again after a mutation — behind any poll already in flight, never dropped by its SK.busy guard. */
@@ -14858,6 +14859,7 @@ async function skpReloadRows() {
   const deadline = Date.now() + 60000;
   while (SK.busy && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
   await refreshSkillList();
+  tpSkillsOmittedRefresh();
 }
 
 function skillsTab() {
@@ -14892,7 +14894,7 @@ function skillsTab() {
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
-      + (SKP.mode === 'detail' ? skpDetailHTML() : skpListHTML(visible));
+      + (SKP.mode === 'detail' ? skpDetailHTML() : tpSkillsOmittedHTML() + skpListHTML(visible));
   }
   return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
