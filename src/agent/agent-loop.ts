@@ -42,6 +42,10 @@ import {
 } from "../llm/index.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
+  classifyProviderWaitCause,
+  type ProviderWaitCause,
+} from "../llm/reliability/provider-wait-cause.js";
+import {
   composeSizeRejectionNotice,
   planSizeRejectionRepack,
 } from "./size-rejection-recovery.js";
@@ -818,6 +822,12 @@ export type AgentLoopEvent =
       maxWaitMs: number;
       nextRetryMs: number;
       reason: string;
+      /**
+       * What the failure was, from the error itself rather than its
+       * message — the part a UI may word. `reason` stays the raw line
+       * for logs and traces.
+       */
+      cause?: ProviderWaitCause;
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -2475,6 +2485,7 @@ export class AgentLoop {
             maxWaitMs: providerWaitCfg.maxWaitMs,
             nextRetryMs,
             reason: runError.message,
+            cause: classifyProviderWaitCause(err),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,

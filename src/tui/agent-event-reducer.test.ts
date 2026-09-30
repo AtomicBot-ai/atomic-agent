@@ -2051,6 +2051,30 @@ describe("a parked turn in the chat", () => {
     );
   });
 
+  it("a reply the provider ended with an error is not told as a 502 tried 3 times", () => {
+    // e2e: the stream answered 200, streamed, then `finish_reason: "error"`.
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "provider_waiting",
+        attempt: 1,
+        waitedMs: 0,
+        maxWaitMs: 300_000,
+        nextRetryMs: 2_000,
+        reason:
+          '"fake" ended its reply with an error — this is on the provider, not your setup.',
+        cause: { kind: "error_finish" },
+      },
+    });
+    const [notice] = systemTexts(next);
+    expect(notice).toContain(
+      "The model is not answering (the provider ended its reply with an error).",
+    );
+    expect(notice).not.toMatch(/\b502\b/);
+    expect(notice).not.toContain("Tried");
+    expect(next.providerOutage?.cause).toEqual({ kind: "error_finish" });
+  });
+
   it("on the local route the waiting notice names /llm restart; on a cloud route it does not", () => {
     const base = createInitialTuiState(fakeSession());
     const local = reduceTuiState(

@@ -1,3 +1,4 @@
+import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import type { TuiState } from "./tui-state.js";
 
 /**
@@ -21,6 +22,7 @@ export function parkProviderOutage(
   state: TuiState,
   event: {
     reason: string;
+    cause?: ProviderWaitCause;
     waitedMs: number;
     maxWaitMs: number;
     attempt: number;
@@ -29,6 +31,7 @@ export function parkProviderOutage(
 ): TuiState {
   const outage: ProviderOutage = {
     reason: event.reason,
+    ...(event.cause !== undefined ? { cause: event.cause } : {}),
     waitedMs: event.waitedMs,
     maxWaitMs: event.maxWaitMs,
     attempt: event.attempt,

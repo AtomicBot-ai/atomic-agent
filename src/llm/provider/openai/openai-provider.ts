@@ -543,6 +543,7 @@ export class OpenAiProvider implements LlmProvider {
       undefined,
       {
         cause: err,
+        streamError: err.message,
         ...(err.generationId !== null
           ? { generationId: err.generationId }
           : {}),
