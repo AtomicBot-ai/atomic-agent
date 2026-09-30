@@ -252,6 +252,7 @@ export class ChatOrchestrator {
   public readonly swarm: SwarmOrchestrator;
   public readonly issueReport: IssueReportOrchestrator;
   private readonly sessionRail: SessionRailOrchestrator;
+  private readonly stopWatchingRoute: (() => void) | null;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -300,6 +301,14 @@ export class ChatOrchestrator {
         bus.emit({ type: "integrations_action_settled", message });
       },
     });
+    // A route moved onto the managed daemon mid-session adopts it the
+    // way launch does (`adoptDaemonForRoute`) — every hot swap of the
+    // active provider goes through the registry, whichever pane,
+    // command or channel asked for it.
+    this.stopWatchingRoute =
+      runtime.providerRegistry?.onActiveTextChanged?.((id) => {
+        this.localModels.adoptDaemonForRoute(id);
+      }) ?? null;
     this.runMode = new RunModeOrchestrator({
       runtime,
       bus,
@@ -1429,6 +1438,7 @@ export class ChatOrchestrator {
     this.mcp.shutdown();
     this.import.shutdown();
     this.swarm.dispose();
+    this.stopWatchingRoute?.();
     await this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();

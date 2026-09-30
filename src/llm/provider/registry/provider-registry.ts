@@ -23,6 +23,7 @@ export {
 export class ProviderRegistry {
   private readonly providers: Map<string, LlmProvider>;
   private activeTextId: string;
+  private readonly activeTextListeners = new Set<(id: string) => void>();
 
   private constructor(
     activeTextId: string,
@@ -87,10 +88,32 @@ export class ProviderRegistry {
     }
     const prev = this.providers.get(this.activeTextId);
     this.activeTextId = id;
+    for (const listener of this.activeTextListeners) {
+      try {
+        listener(id);
+      } catch {
+        // A listener's failure must not fail the switch it observes.
+      }
+    }
     if (prev && prev.id !== id) {
       await prev.close().catch(() => undefined);
     }
     return next;
+  }
+
+  /**
+   * Observe every hot swap of the active text provider, whichever path
+   * made it (Cloud pane, `/llm provider`, `/model` from a channel, a
+   * session's restored provider, a run-mode change). Called with the new
+   * id right after the swap — before most callers persist it, so a
+   * listener must take the id from here, not from the config. Returns
+   * the unsubscribe.
+   */
+  onActiveTextChanged(listener: (id: string) => void): () => void {
+    this.activeTextListeners.add(listener);
+    return () => {
+      this.activeTextListeners.delete(listener);
+    };
   }
 
   /** Alias for hot-swap callers (TUI Providers orchestrator). */

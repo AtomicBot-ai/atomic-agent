@@ -70,7 +70,10 @@ describe("RunModeOrchestrator.setMode", () => {
         refresh: vi.fn(),
         ensureInlineModels: vi.fn(async () => {}),
       },
-      localModels: { startDaemon: vi.fn(async () => true) },
+      localModels: {
+        startDaemon: vi.fn(async () => true),
+        adoptDaemonForRoute: vi.fn(() => false),
+      },
     };
     return {
       actions,
@@ -79,6 +82,15 @@ describe("RunModeOrchestrator.setMode", () => {
       orchestrator: new RunModeOrchestrator(deps),
     };
   }
+
+  it("fusion over a daemon that is already up adopts it instead of starting a second one", async () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    app.deps.localModels.adoptDaemonForRoute.mockReturnValue(true);
+    await app.orchestrator.setMode("fusion");
+    expect(app.deps.localModels.adoptDaemonForRoute).toHaveBeenCalled();
+    expect(app.deps.localModels.startDaemon).not.toHaveBeenCalled();
+  });
 
   it("fusion: persists the mode with the orchestrator pinned, hot-applies it, starts the workers", async () => {
     seed(BOTH_LEGS);
