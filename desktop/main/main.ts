@@ -138,7 +138,7 @@ import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
-import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, windowChrome } from "./platform.js";
+import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -198,6 +198,14 @@ let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
    handlers read `voice.armed`, and both quit paths have to be able to kill
    it — a helper outliving the window holds the microphone indicator on. */
 const voice = new VoiceSession();
+
+/* Voice input exists only where the speech helper can run (macOS; see
+   platform.ts voiceSupported). Answered synchronously so the preload can
+   hand the renderer a plain boolean before the first paint, and registered
+   here, at load, so it is in place before any window's preload asks. */
+ipcMain.on("app:voiceSupported", (event) => {
+  event.returnValue = voiceSupported(process.platform);
+});
 
 /* Item 2 (voice input): the chosen dictation languages. This is a viewer
    preference, not agent state — the agent has no voice surface at all — so

@@ -22,6 +22,15 @@ window.addEventListener("DOMContentLoaded", () => {
   document.body.classList.add(`platform-${process.platform}`);
 });
 
+/** Main's answer (platform.ts voiceSupported); macOS-only if it cannot say. */
+function voiceSupportedNow(): boolean {
+  try {
+    return ipcRenderer.sendSync("app:voiceSupported") === true;
+  } catch {
+    return process.platform === "darwin";
+  }
+}
+
 contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
@@ -165,6 +174,9 @@ contextBridge.exposeInMainWorld("atomic", {
    *  binary payload — it fires ten times a second while recording and there
    *  is nothing to answer. The chunk crosses as a Uint8Array (main checks
    *  for exactly that; it is NOT a Buffer on the other side). */
+  /** False where there is no speech helper (Windows, Linux): the composer
+   *  then draws no microphone at all rather than a disabled one. */
+  voiceSupported: voiceSupportedNow(),
   voiceProbe: () => ipcRenderer.invoke("voice:probe"),
   voiceStart: (locales: string[]) => ipcRenderer.invoke("voice:start", locales),
   voiceAudio: (chunk: Uint8Array) => ipcRenderer.send("voice:audio", chunk),

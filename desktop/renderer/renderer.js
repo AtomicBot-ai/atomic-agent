@@ -2754,6 +2754,9 @@ function sendButton() {
 const VOICE_HOLD_MS = 400;
 
 function micButton() {
+  // No speech helper on this platform (Windows, Linux): no button, rather
+  // than a permanently disabled one explaining it is a Mac feature.
+  if (BR && BR.voiceSupported === false) return '';
   const rec = VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing';
   const off = VOICE.available === false;
   const title = off ? VOICE.reason
@@ -5127,6 +5130,10 @@ function refreshMic() {
 /** Ask main what is actually possible. Never guessed, never cached over a
     language install. */
 function voiceProbe() {
+  if (BR && BR.voiceSupported === false) {
+    VOICE.available = false; VOICE.code = 'voice-not-macos'; VOICE.reason = VOICE_REASONS['voice-not-macos'];
+    return Promise.resolve();
+  }
   if (!BR || !BR.voiceProbe) {
     VOICE.available = false; VOICE.code = 'voice-no-bridge'; VOICE.reason = VOICE_REASONS['voice-no-bridge'];
     refreshVoice(); return Promise.resolve();
