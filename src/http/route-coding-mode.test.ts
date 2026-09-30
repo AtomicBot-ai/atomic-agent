@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { USER_CONFIG_DEFAULTS, resetConfigCache } from "../config/index.js";
+import type { ApprovalLevel } from "../approval/approval-level.js";
 import { resolveCodingMode, type CodingMode } from "../tui/coding-mode.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
@@ -133,7 +134,7 @@ describe("GET/POST /api/coding-mode", () => {
     // `bypass`, and resolveCodingMode("bypass", 1) really is level 5 with
     // plan off. Reply and base agree again.
     expect(after.json.mode).toBe("bypass");
-    const consistent = resolveCodingMode(after.json.mode, after.json.baseLevel);
+    const consistent = resolveCodingMode(after.json.mode, after.json.baseLevel as ApprovalLevel);
     expect(after.json.approvalLevel).toBe(consistent.approvalLevel);
     expect(after.json.planMode).toBe(consistent.planMode);
   });
