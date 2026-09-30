@@ -897,6 +897,39 @@ describe("buildPrompt", () => {
     expect(prompt.tokens.taskPolicy).toBe(0);
   });
 
+  it("renders routeNote as ### route right after ### conversation, outside the stable prefix", () => {
+    const note =
+      "[route changed] You are now running as b on p (previously a on p).";
+    const withNote = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      routeNote: note,
+    });
+    const withoutNote = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(withNote.stablePrefix).toBe(withoutNote.stablePrefix);
+    expect(withNote.stablePrefix).not.toContain("[route changed]");
+    expect(withoutNote.tail).not.toContain("### route");
+    const conversationIdx = withNote.tail.indexOf("### conversation");
+    const userIdx = withNote.tail.indexOf("Check inbox");
+    const routeIdx = withNote.tail.indexOf(`### route\n${note}`);
+    expect(routeIdx).toBeGreaterThan(conversationIdx);
+    expect(routeIdx).toBeGreaterThan(userIdx);
+    // Everything up to and including the transcript is byte-identical,
+    // so dropping the note on the next turn costs no cached tokens.
+    const upToRoute = withNote.text.slice(0, withNote.text.indexOf("### route"));
+    expect(withoutNote.text.startsWith(upToRoute)).toBe(true);
+    // The chat-message form carries it in the final user message.
+    expect(withNote.messages.tail).toContain(note);
+    expect(withNote.messages.system).toBe(withoutNote.messages.system);
+  });
+
   it("does not include transientNotice in the stable prefix", () => {
     const withNotice = buildPrompt({
       session: mkSession(),

@@ -185,6 +185,7 @@ import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
+import { renderRouteChangeNote } from "../prompt/route-change-note.js";
 import { minUsableContextWindow } from "../prompt/token-budget.js";
 import type {
   CapabilitiesSummary,
@@ -204,6 +205,9 @@ import {
   type ContextUsageState,
   type FusionWorkerMeta,
   SESSION_LLM_METADATA_KEY,
+  SESSION_ROUTE_METADATA_KEY,
+  readSessionRoute,
+  resolveTurnRoute,
   SESSION_TITLE_METADATA_KEY,
   SESSION_TITLE_TIMEOUT_MS,
   generateSessionTitle,
@@ -1813,6 +1817,17 @@ export async function createAgentRuntime(
     );
   };
 
+  /**
+   * Whether the model on `providerId` can read images, for the route
+   * note. `null` when the provider is unknown. Per provider today; a
+   * per-model answer slots in here without touching the note.
+   */
+  const resolveRouteVision = (providerId: string): boolean | null => {
+    if (!getConfig().vision.enabled) return false;
+    const provider = providerRegistry.getProvider(providerId);
+    return provider === undefined ? null : provider.capabilities.vision;
+  };
+
   const bootstrapLlmSlice = resolveActiveLlmSlice();
   const textProvider = bootstrapLlmSlice.provider;
   const costAccumulator =
@@ -3189,6 +3204,34 @@ export async function createAgentRuntime(
       providerId: llmResolved.activeTextProvider,
       chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
     };
+    // What this turn is served by, against what the session's previous
+    // turn was: a switch of provider, model, run mode or fusion worker —
+    // or a fallover still in force — is told to the model once, as
+    // `### route`, because the transcript it reads names the old model
+    // and repeats the old model's refusals (session-route.ts).
+    const turnRoute = resolveTurnRoute({
+      resolved: llmResolved,
+      runMode: resolveCurrentRunMode(),
+      managedModelId: getConfig().localModels.managed.modelId ?? null,
+      ...(runOptions.providerId !== undefined
+        ? { pinnedProviderId: runOptions.providerId }
+        : {}),
+      fallbackOverrideId: fallbackChain.activeOverrideFor(session.id),
+    });
+    const previousRoute = readSessionRoute(session.metadata);
+    const routeNote =
+      previousRoute === null
+        ? null
+        : renderRouteChangeNote(previousRoute, turnRoute, {
+            vision: resolveRouteVision(turnRoute.main.providerId),
+          });
+    if (routeNote !== null) {
+      logger.info("serving route changed since the previous turn", {
+        sessionId: session.id,
+        from: previousRoute,
+        to: turnRoute,
+      });
+    }
     return turnContext.run({ sessionId: session.id }, async () => {
       try {
         // Recorded for `fusion.delegate`, which quotes it to the workers.
@@ -3212,6 +3255,7 @@ export async function createAgentRuntime(
           ...(turnRequest !== undefined
             ? { originalRequest: turnRequest }
             : {}),
+          ...(routeNote !== null ? { routeNote } : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
@@ -3227,6 +3271,7 @@ export async function createAgentRuntime(
           metadata: {
             ...result.session.metadata,
             [SESSION_LLM_METADATA_KEY]: llmStamp,
+            [SESSION_ROUTE_METADATA_KEY]: turnRoute,
           },
         };
         sessionStore.save(finished);

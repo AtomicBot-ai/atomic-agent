@@ -402,6 +402,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   }
   const conversationParts = [`### conversation`, conversation, ``];
   const tailAfter: string[] = [];
+  if (input.routeNote && input.routeNote.length > 0) {
+    tailAfter.push(`### route`, input.routeNote, ``);
+  }
   if (profile !== null) {
     tailAfter.push("### profile", profile, ``);
   }

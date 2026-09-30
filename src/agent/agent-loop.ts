@@ -737,6 +737,13 @@ export interface RunTurnOptions {
    */
   originalRequest?: string;
   /**
+   * The serving route changed since this session's previous turn: the
+   * runtime's note saying so (`prompt/route-change-note.ts`). Reaches
+   * every step of this turn as `### route`; the runtime computes it
+   * once per change, so the next turn carries none.
+   */
+  routeNote?: string;
+  /**
    * Reasoning effort for every completion of this turn, mapped per
    * provider family by the body builder. A fusion worker's
    * `workerReasoning`; absent, the provider's default.
@@ -1673,6 +1680,9 @@ export class AgentLoop {
               : {}),
             ...(options.originalRequest !== undefined
               ? { originalRequest: options.originalRequest }
+              : {}),
+            ...(options.routeNote !== undefined
+              ? { routeNote: options.routeNote }
               : {}),
             ...(options.reasoningEffort !== undefined
               ? { reasoningEffort: options.reasoningEffort }
