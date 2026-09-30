@@ -1,0 +1,136 @@
+# Desktop app packages: build the Electron app in desktop/ for every platform
+# the agent ships on, with the matching agent bundle inside, and upload the
+# installers as workflow artifacts. Nothing is published: no release, no tag.
+#
+# Each job builds on its OWN platform. The agent is a Node SEA plus native
+# modules (better-sqlite3), and electron-builder's afterPack
+# (desktop/scripts/after-pack.mjs) runs the bundled agent once to prove it can
+# open its database, so none of this can be cross-built from one machine.
+#
+# The agent bundle steps mirror .github/workflows/release.yml. Signing is left
+# out: the macOS app is ad-hoc signed by afterPack (same as a local
+# `npm run dist`), and Windows signing is a TODO below.
+
+name: Desktop packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to build (empty = the ref this run was started from)"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches:
+      - desktop/cross-platform
+
+concurrency:
+  group: desktop-${{ github.ref }}-${{ inputs.ref || 'push' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package (${{ matrix.slug }})
+    strategy:
+      # One platform failing must not cancel the others.
+      fail-fast: false
+      matrix:
+        include:
+          - { slug: darwin-arm64, os: macos-14, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg" }
+          - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe" }
+          - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
+          - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Present only when the repo has DigiCert KeyLocker secrets (see the
+      # Windows TODO step). Secrets cannot be read in `if:` directly.
+      HAS_WIN_SIGNING: ${{ secrets.SM_API_KEY != '' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH != '' }}
+      # Never let electron-builder go looking for a signing identity in the
+      # runner keychain: the DMG is ad-hoc signed by afterPack on purpose.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as release.yml: the SEA needs Node >= 25.7 for
+          # `"mainFormat": "module"`.
+          node-version: "25.7"
+          check-latest: true
+
+      # ---- agent bundle (mirrors release.yml) --------------------------------
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      # SENTRY_AUTH_TOKEN deliberately not passed: these are test packages, not
+      # releases, so no sourcemaps are uploaded (bundle-sea skips the upload).
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      # TODO(windows-signing): sign the agent and the desktop app with DigiCert
+      # KeyLocker. release.yml already has the working steps ("Setup DigiCert
+      # KeyLocker", "Verify", "Sync certificates", "Setup Windows SDK
+      # signtool", "Sign Windows binaries") that sign bundle\win32-x64\
+      # atomic-agent.exe, rg.exe and better_sqlite3.node BEFORE "Package
+      # bundle". To finish:
+      #   1. copy those steps here, gated on `env.HAS_WIN_SIGNING == 'true'`;
+      #   2. sign the desktop exe + NSIS installer through electron-builder
+      #      (`win.signtoolOptions.sign` pointing at a small script that runs
+      #      `signtool sign /sha1 $SM_CODE_SIGNING_CERT_SHA1_HASH ...`).
+      # Until then the installer is unsigned and SmartScreen will warn.
+      - name: Windows code signing (TODO, not wired)
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        run: echo "::notice::DigiCert secrets are present but desktop signing is not wired yet; the installer is unsigned."
+
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts "${{ matrix.slug }}"
+
+      # ---- desktop app ------------------------------------------------------
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: npm run build
+
+      # afterPack copies ../bundle/<slug> into resources/agent and runs it
+      # once; the job fails here if the bundle is missing or cannot open its
+      # database. npmRebuild rebuilds any native desktop dependency for this
+      # runner's platform (there are none today).
+      - name: Package desktop app
+        working-directory: desktop
+        run: npx electron-builder ${{ matrix.builder }} --publish never
+
+      - name: List packages
+        run: ls -la desktop/release
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.slug }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
