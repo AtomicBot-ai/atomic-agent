@@ -16771,7 +16771,7 @@ function llmRunModeHTML() {
           + ic(icon) + '<span class="llm-rm-t">' + esc(label) + '</span></button>';
       }).join('')
     + '</span></div>'
-    + llmNowHTML()
+    + llmNowHTML() + tpLlmFaultHTML()
     + (fusionShown ? '<p class="llm-rm-status">' + esc(rmDescribe(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
     + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
@@ -16786,7 +16786,7 @@ function llmNowHTML() {
   const route = llmRouteMode();
   const where = route === 'external' ? 'a custom server' : local ? 'this Mac' : active ? providerWord(active.id) : 'no provider';
   const d = llmFormatDaemon();
-  const word = !local || route === 'external' ? '' : /^running/.test(d) ? 'Ready' : /^(loading|starting)/.test(d) ? 'Starting' : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? 'Not answering' : '';
+  const word = !local || route === 'external' ? '' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting' : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? 'Not answering' : '';
   const dot = word === 'Ready' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
   return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
     + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '') + '</p>';

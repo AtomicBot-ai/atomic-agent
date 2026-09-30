@@ -157,3 +157,21 @@ function tpTriedHTML(m) {
     + '<span class="sys-tried-i">then the last fallback, which failed too</span>'
     + '</span></span>';
 }
+
+/* ---- Local server fault (atag models status `fault:`, agent 0.6.6) --------
+   `health: ok` only means the socket answers. A server that ran out of GPU
+   memory keeps its socket and fails every request; `models status` now reads
+   the server's own log (current run only) and prints one `fault:` line. The
+   Models section shows it under the "now answering" line, with the log. */
+function tpLlmFault() {
+  const st = typeof LLMP !== 'undefined' ? LLMP.status : null;
+  return st && st.fault ? String(st.fault) : '';
+}
+
+function tpLlmFaultHTML() {
+  const fault = tpLlmFault();
+  if (!fault) return '';
+  return '<div class="tk-notice tk-notice--amber llm-fault">' + ic('alert')
+    + '<span class="grow"><b>Local model server problem.</b> ' + esc(fault) + '</span>'
+    + '<button class="btn btn-s sm" data-act="llm:logs">LLM logs</button></div>';
+}

@@ -241,3 +241,6 @@
 .llm-pane .llm-log-err{color:var(--critical)}
 .llm-pane .llm-log-warn{color:var(--amber-text)}
 .llm-pane .llm-log-ok{color:var(--blue)}
+/* `fault:` from atag models status (tui-parity.js). */
+.llm-pane .llm-fault{margin-top:8px;align-items:flex-start}
+.llm-pane .llm-fault .grow{font-size:12.5px;line-height:1.45}

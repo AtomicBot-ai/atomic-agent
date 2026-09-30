@@ -1888,11 +1888,17 @@ export interface ModelsStatus {
   url: string | null;
   /** `~N tok/s` from the `models start` that brought up THIS daemon pid; null when unmeasured. */
   tokensPerSecond: number | null;
+  /**
+   * `fault:` (agent 0.6.6, describeServerFault): what the running server's
+   * own log says is wrong while `health:` still reads ok, e.g. the GPU
+   * running out of memory on every request. Null when the line is absent.
+   */
+  fault: string | null;
 }
 
 /**
  * `atag models status` — `mode:`, `data dir:`, `backend:`, `compute:`,
- * `active model:`, `daemon:`, `health:` in managed mode; `mode: external`
+ * `active model:`, `daemon:`, `health:` (and `fault:` when the log shows one) in managed mode; `mode: external`
  * + `url:` otherwise (src/cli/models-handlers.ts). Parsed by label, never
  * by column.
  */
@@ -1927,6 +1933,7 @@ export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStat
       health: fields["health"] || null,
       url: fields["url"] || null,
       tokensPerSecond: pid && lastChatSpeed && lastChatSpeed.pid === Number(pid[1]) ? lastChatSpeed.tokensPerSecond : null,
+      fault: fields["fault"] || null,
     },
   };
 }
