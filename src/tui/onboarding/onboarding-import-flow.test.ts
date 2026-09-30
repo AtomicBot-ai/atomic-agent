@@ -148,12 +148,55 @@ describe("import flow keys", () => {
     ]);
   });
 
-  it("enter on an agent row toggles it too", () => {
+  it("enter on a ticked agent row imports the ticked set instead of unticking it", () => {
     const driven = drive(stateAt("import_pick", { cursor: 0 }));
     driven.handle("", returnKey());
+    expect(driven.actions).toEqual([{ type: "onboarding_import_run_started" }]);
+    expect(driven.runs).toHaveLength(1);
+    expect(driven.runs[0]?.agents).toEqual(AGENTS);
+  });
+
+  it("enter on an unticked agent row imports the ticked set, leaving that row alone", () => {
+    const agents = [AGENTS[0]!, { ...AGENTS[1]!, enabled: false }];
+    const driven = drive(
+      stateAt("import_pick", { importAgents: agents, cursor: 1 }),
+    );
+    driven.handle("", returnKey());
+    expect(driven.actions).toEqual([{ type: "onboarding_import_run_started" }]);
+    expect(driven.runs).toHaveLength(1);
+    expect(driven.runs[0]?.agents).toEqual(agents);
+    const options = driven.runs[0]!.options;
+    expect(options.some((o) => o.agent === "hermes")).toBe(true);
+    expect(options.some((o) => o.agent === "claude-code")).toBe(false);
+  });
+
+  it("with nothing ticked, enter on an agent row ticks it and imports just that agent", () => {
+    const unticked = AGENTS.map((a) => ({ ...a, enabled: false }));
+    const driven = drive(
+      stateAt("import_pick", { importAgents: unticked, cursor: 1 }),
+    );
+    driven.handle("", returnKey());
+    expect(driven.actions).toEqual([
+      { type: "onboarding_import_agent_toggled", index: 1 },
+      { type: "onboarding_import_run_started" },
+    ]);
+    expect(driven.runs).toHaveLength(1);
+    expect(driven.runs[0]?.agents.map((a) => a.enabled)).toEqual([
+      false,
+      true,
+    ]);
+    const options = driven.runs[0]!.options;
+    expect(options.some((o) => o.agent === "claude-code")).toBe(true);
+    expect(options.some((o) => o.agent === "hermes")).toBe(false);
+  });
+
+  it("space on a ticked row still only unticks it", () => {
+    const driven = drive(stateAt("import_pick", { cursor: 0 }));
+    driven.handle(" ", plainKey());
     expect(driven.actions).toEqual([
       { type: "onboarding_import_agent_toggled", index: 0 },
     ]);
+    expect(driven.runs).toEqual([]);
   });
 
   it("enter on the import row imports the ticked agents with the defaults", () => {
@@ -183,13 +226,30 @@ describe("import flow keys", () => {
   it("with everything unticked the import row does not exist and the list wraps past it", () => {
     const unticked = AGENTS.map((a) => ({ ...a, enabled: false }));
     // Rows are the two agents plus skip; the old skip index wraps to
-    // the first agent instead of importing nothing.
+    // the first agent, so Enter imports that agent rather than nothing.
     const driven = drive(
       stateAt("import_pick", { importAgents: unticked, cursor: SKIP_ROW }),
     );
     driven.handle("", returnKey());
     expect(driven.actions).toEqual([
       { type: "onboarding_import_agent_toggled", index: 0 },
+      { type: "onboarding_import_run_started" },
+    ]);
+    expect(driven.runs[0]?.agents.map((a) => a.enabled)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it("with everything unticked, enter on the skip row still skips", () => {
+    const unticked = AGENTS.map((a) => ({ ...a, enabled: false }));
+    // Two agents + skip: index 2 is the skip row here.
+    const driven = drive(
+      stateAt("import_pick", { importAgents: unticked, cursor: 2 }),
+    );
+    driven.handle("", returnKey());
+    expect(driven.actions).toEqual([
+      { type: "onboarding_finished", outcome: "local" },
     ]);
     expect(driven.runs).toEqual([]);
   });

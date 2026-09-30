@@ -362,34 +362,59 @@ function handleImportPickKey(
   const row = rows[onboarding.cursor % rows.length];
   if (!row) return true;
   switch (row.kind) {
-    case "agent":
-      // Space and Enter both flip the tick — on a checkbox row there is
-      // nothing else Enter could honestly mean.
-      ctx.dispatch({
-        type: "onboarding_import_agent_toggled",
-        index: row.index,
-      });
+    case "agent": {
+      if (toggle) {
+        ctx.dispatch({
+          type: "onboarding_import_agent_toggled",
+          index: row.index,
+        });
+        return true;
+      }
+      // Enter imports from anywhere in the list, as the footer says —
+      // space is the only toggle. With something ticked the ticks are
+      // the set; with nothing ticked, the row under the cursor is the
+      // obvious one, so Enter ticks it and imports it in one keystroke.
+      const agents = onboarding.importAgents.some((agent) => agent.enabled)
+        ? onboarding.importAgents
+        : onboarding.importAgents.map((agent, index) =>
+            index === row.index ? { ...agent, enabled: true } : agent,
+          );
+      if (agents !== onboarding.importAgents) {
+        ctx.dispatch({
+          type: "onboarding_import_agent_toggled",
+          index: row.index,
+        });
+      }
+      startImport(ctx, agents);
       return true;
+    }
     case "skip":
       if (toggle) return true;
       finishImport(ctx, onboarding);
       return true;
-    case "import": {
+    case "import":
       if (toggle) return true;
-      // Straight to the import with the defaults — every non-secret
-      // domain of the ticked agents. The ticks ARE the confirmation:
-      // the run never overwrites what is already here and never removes
-      // anything from the source, so there is nothing a preview could
-      // warn about that the report cannot say afterwards. The
-      // per-domain surface is `/import`'s.
-      ctx.dispatch({ type: "onboarding_import_run_started" });
-      ctx.callbacks.onOnboardingImportRequested?.({
-        agents: onboarding.importAgents,
-        options: buildImportOptionRows(onboarding.importAgents),
-      });
+      startImport(ctx, onboarding.importAgents);
       return true;
-    }
   }
+}
+
+/**
+ * Straight to the import with the defaults — every non-secret domain of
+ * the ticked agents. The ticks ARE the confirmation: the run never
+ * overwrites what is already here and never removes anything from the
+ * source, so there is nothing a preview could warn about that the
+ * report cannot say afterwards. The per-domain surface is `/import`'s.
+ */
+function startImport(
+  ctx: OnboardingKeyContext,
+  agents: OnboardingUiState["importAgents"],
+): void {
+  ctx.dispatch({ type: "onboarding_import_run_started" });
+  ctx.callbacks.onOnboardingImportRequested?.({
+    agents,
+    options: buildImportOptionRows(agents),
+  });
 }
 
 function handleImportDoneKey(
