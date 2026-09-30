@@ -131,7 +131,11 @@ import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import type { SkillSourceKind } from "../skills/index.js";
 import type { HubSkillRow } from "./skills/skills-panel-state.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
-import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
+import type {
+  MemoryChannel,
+  MemoryNotesArchiveFilter,
+  MemorySummaryRow,
+} from "./memory/memory-panel-state.js";
 import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
 import { handleImportTabKey } from "./import/import-key-bindings.js";
 import type { ImportFormState } from "./import/import-panel-state.js";
@@ -466,6 +470,16 @@ export interface TuiAppCallbacks {
   onSkillInstallCancelled?(identifier: string): void;
   /** Memory tab: start the 5s refresh loop on first entry. */
   onMemoryAutoRefreshStart?(): void;
+  /**
+   * `/memory`: reload the list now with these options. A callback, not
+   * a dispatched `memory_refresh_requested`, because the orchestrator
+   * listens on the event bus and dispatch never reaches it.
+   */
+  onMemoryRefreshRequested?(opts: {
+    channel: MemoryChannel;
+    notesArchiveFilter: MemoryNotesArchiveFilter;
+    searchQuery: string;
+  }): void;
   /** Memory tab: open detail for a list row. */
   onMemoryDetailRequested?(row: MemorySummaryRow): void;
   /** Memory tab: open a note by id (link navigation). */
@@ -474,6 +488,8 @@ export interface TuiAppCallbacks {
   onMemoryExpandNeighborsRequested?(noteId: number): void;
   /** MCP tab: start the 5s refresh loop on first entry. */
   onMcpAutoRefreshStart?(): void;
+  /** `/mcp`: re-read the server list now (same bus rule as above). */
+  onMcpRefreshRequested?(): void;
   /** Providers tab: refresh provider list on first entry. */
   onProvidersTabRefresh?(): void;
   /** Providers tab / LLM panel: switch the active text provider. */

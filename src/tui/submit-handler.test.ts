@@ -580,3 +580,111 @@ describe("steer vs queue while a turn is running", () => {
     expect(dispatched.some((a) => a.type === "message_submitted")).toBe(true);
   });
 });
+
+describe("slash commands that only an orchestrator can carry out", () => {
+  function run(
+    input: string,
+    callbacks: Partial<TuiAppCallbacks>,
+  ): { dispatched: Array<{ type: string; text?: string }> } {
+    const dispatched: Array<{ type: string; text?: string }> = [];
+    handleEditorSubmit(
+      input,
+      createInitialTuiState(fakeSession()),
+      ((a: { type: string; text?: string }) => dispatched.push(a)) as never,
+      stubCallbacks(callbacks),
+    );
+    return { dispatched };
+  }
+
+  it.each(["local-llama", "aimlapi"])(
+    "/llm provider %s switches the active text provider",
+    (id) => {
+      // Dispatched, `providers_set_active_text` was a reducer no-op the
+      // orchestrator never saw: the tab opened and nothing switched.
+      const onSetActiveText = vi.fn();
+      const { dispatched } = run(`/llm provider ${id}`, {
+        onProvidersSetActiveText: onSetActiveText,
+      });
+      expect(onSetActiveText).toHaveBeenCalledTimes(1);
+      expect(onSetActiveText).toHaveBeenCalledWith(id);
+      expect(
+        dispatched.some((a) => a.type === "providers_set_active_text"),
+      ).toBe(false);
+      // The jump to the Cloud pane still travels through the reducer.
+      expect(dispatched.some((a) => a.type === "tab_changed")).toBe(true);
+      expect(dispatched.some((a) => a.type === "llm_focus_set")).toBe(true);
+    },
+  );
+
+  it.each(["/llm", "/llm fallback"])(
+    "%s refreshes the providers through the callback",
+    (input) => {
+      const onRefresh = vi.fn();
+      const { dispatched } = run(input, { onProvidersTabRefresh: onRefresh });
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(
+        dispatched.some((a) => a.type === "providers_refresh_requested"),
+      ).toBe(false);
+    },
+  );
+
+  it("/memory reloads the list through the callback", () => {
+    const onMemoryRefresh = vi.fn();
+    const { dispatched } = run("/memory", {
+      onMemoryRefreshRequested: onMemoryRefresh,
+    });
+    expect(onMemoryRefresh).toHaveBeenCalledWith({
+      channel: "profile",
+      notesArchiveFilter: "active",
+      searchQuery: "",
+    });
+    expect(dispatched.some((a) => a.type === "memory_refresh_requested")).toBe(
+      false,
+    );
+  });
+
+  it("/mcp reloads the server list through the callback", () => {
+    const onMcpRefresh = vi.fn();
+    const { dispatched } = run("/mcp", { onMcpRefreshRequested: onMcpRefresh });
+    expect(onMcpRefresh).toHaveBeenCalledTimes(1);
+    expect(dispatched.some((a) => a.type === "mcp_refresh_requested")).toBe(
+      false,
+    );
+  });
+
+  it("/telegram token opens the masked token prompt", () => {
+    // The verb was listed in the usage line and handled downstream, but
+    // the dispatcher never emitted it: the command printed its own usage.
+    const onTokenPrompt = vi.fn();
+    const { dispatched } = run("/telegram token", {
+      onTelegramTokenPromptOpenRequested: onTokenPrompt,
+    });
+    expect(onTokenPrompt).toHaveBeenCalledTimes(1);
+    expect(
+      dispatched.some(
+        (a) => a.type === "system_message" && a.text?.startsWith("usage:"),
+      ),
+    ).toBe(false);
+  });
+
+  it.each(["pull", "use"])(
+    "/model %s with an unknown id says so instead of doing nothing",
+    (verb) => {
+      const onPull = vi.fn();
+      const onUse = vi.fn();
+      const { dispatched } = run(`/model ${verb} no-such-model`, {
+        onLocalModelsPullRequested: onPull,
+        onLocalModelsSetActiveRequested: onUse,
+      });
+      expect(onPull).not.toHaveBeenCalled();
+      expect(onUse).not.toHaveBeenCalled();
+      expect(
+        dispatched.some(
+          (a) =>
+            a.type === "system_message" &&
+            a.text?.includes('unknown local model "no-such-model"'),
+        ),
+      ).toBe(true);
+    },
+  );
+});
