@@ -37,6 +37,7 @@ import {
   providerModels,
   verifyProviderKey,
   removeProvider,
+  pruneIncompleteProvidersInFile,
   modelsStart,
   traceUsage,
   traceTools,
@@ -1682,7 +1683,7 @@ async function smokeTest(): Promise<void> {
   if (FUSION_ONLY) {
     if (state === "connected") await fusionSmokeTest(js, check);
     process.stdout.write(`SMOKE fusion-only failures=${fail.length}\n`);
-    app.exit(fail.length === 0 ? 0 : 1);
+    exitAfterAgentStop(fail.length === 0 ? 0 : 1);
     return;
   }
 
@@ -2714,7 +2715,20 @@ async function smokeTest(): Promise<void> {
   const out = join(app.getPath("temp"), "atomic-desktop-smoke.png");
   writeFileSync(out, image.toPNG());
   process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
-  app.exit(fail.length === 0 ? 0 : 1);
+  exitAfterAgentStop(fail.length === 0 ? 0 : 1);
+}
+
+/**
+ * U32: `app.exit` skips `before-quit`, which is the only place the agent is
+ * stopped, so every `--smoke` run used to leave its `atag serve` behind. An
+ * agent from v0.6.6 on notices its parent is gone and exits by itself, but an
+ * older one (ATOMIC_AGENT_BIN) never does. Stop it first, bounded, then exit.
+ */
+function exitAfterAgentStop(code: number): void {
+  const client = agent;
+  agent = null;
+  void Promise.race([client ? client.stop() : Promise.resolve(), new Promise((r) => setTimeout(r, 6000))])
+    .finally(() => app.exit(code));
 }
 
 
@@ -7880,6 +7894,21 @@ async function startLocalDaemonAtBoot(): Promise<void> {
   }
 }
 
+/**
+ * U29: before `atag serve` first reads the file, drop provider entries an
+ * unfinished add-provider wizard left without a model (provider-hygiene.ts).
+ * Never fatal: a failure here only means the agent sees the entry and skips
+ * it with a warning.
+ */
+async function pruneIncompleteProvidersAtBoot(): Promise<void> {
+  try {
+    const r = await pruneIncompleteProvidersInFile();
+    if (r.removed.length) console.log(`[config] removed unfinished provider entries: ${r.removed.join(", ")}`);
+  } catch {
+    // see above
+  }
+}
+
 async function claimDesktopPorts(): Promise<void> {
   if (!DESKTOP_STATE_WAS_FRESH) return;
   try {
@@ -7979,7 +8008,7 @@ void app.whenReady().then(async () => {
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
        launch this is skipped entirely, so it costs nothing. */
-    void claimDesktopPorts().then(() => {
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
       void agent?.start();
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();

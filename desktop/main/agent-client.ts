@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
+import { chatSessionIdFor } from "./chat-session.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -697,12 +698,15 @@ export class AgentClient extends EventEmitter {
         // tool_progress). Without this header the stream is plain OpenAI
         // chunks and the UI has no tool cards to draw.
         headers: { ...this.headers(), "x-atomic-extensions": "1" },
-        // `session_id` continues the session the agent already holds.
+        // `session_id` continues the session the agent already holds, and is
+        // ALWAYS sent: without one the agent derives the id from the first
+        // message, and a new chat opened with an old chat's question would
+        // reopen the old chat (U27, see chat-session.ts).
         body: JSON.stringify({
           model: "atomic-agent",
           stream: true,
           messages,
-          ...(sessionId ? { session_id: sessionId } : {}),
+          session_id: chatSessionIdFor(sessionId),
         }),
         signal: controller.signal,
       });

@@ -16,6 +16,7 @@ import { resolveBinary } from "./agent-client.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
 import { curatedMeta } from "./model-catalog.js";
+import { pruneIncompleteProviders } from "./provider-hygiene.js";
 
 const run = promisify(execFile);
 
@@ -1188,6 +1189,23 @@ export function syncLocalLlamaProviderUrl(cfg: UserConfigShape): boolean {
     return next;
   });
   return changed;
+}
+
+/**
+ * U29: remove provider entries the agent cannot build (an OpenAI-compatible
+ * entry with no chat model, left by an add-provider wizard that was never
+ * finished) before `atag serve` reads the file. See provider-hygiene.ts for
+ * which entries qualify and why referenced ones are kept.
+ */
+export function pruneIncompleteProvidersInFile(): Promise<WriteResult & { removed: string[] }> {
+  return withConfigLock(async () => {
+    const read = await readWholeConfig();
+    if (!read.ok || !read.config) return { ok: false, changed: false, removed: [], error: read.error };
+    const removed = pruneIncompleteProviders(read.config);
+    if (!removed.length) return { ok: true, changed: false, removed };
+    const w = await writeWholeConfig(read.config);
+    return w.ok ? { ok: true, changed: true, removed } : { ok: false, changed: false, removed: [], error: w.error };
+  });
 }
 
 async function syncLocalLlamaProviderUrlInFileNow(): Promise<WriteResult> {

@@ -4265,7 +4265,7 @@ function act(a) {
   const colon = a.indexOf(':');
   const k = colon < 0 ? a : a.slice(0, colon);
   const v = colon < 0 ? undefined : a.slice(colon + 1);
-  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; };
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; wizDropUnfinished(); };
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
@@ -4336,7 +4336,7 @@ function act(a) {
     if (BR && BR.openExternal) BR.openExternal('https://github.com/AtomicBot-ai/atomic-agent/releases');
     return;
   }
-  if (a === 'wiz:cancel') { WIZ.phase = null; render(); return; }
+  if (a === 'wiz:cancel') { WIZ.phase = null; wizDropUnfinished(); render(); return; }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
   if (a === 'sel:savePreset') { selSavePreset(); return; }
@@ -9149,6 +9149,7 @@ function obCloudKey(input, key) {
       WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return true;
     }
     WIZ.phase = null; WIZ.q = null; WIZ.cur = 0;
+    wizDropUnfinished();
     obDispatch({type:'providers_wizard_closed'});
     return true;
   }
@@ -10200,6 +10201,7 @@ if (BR) {
       if (a === 'wiz:back' && WIZ.phase === 'pick_model') { WIZ.phase = 'configure'; WIZ.error = null; render(); return; }
       if (a === 'wiz:back' && WIZ.phase === 'configure') { WIZ.phase = 'pick_kind'; WIZ.error = null; render(); return; }
       WIZ.phase = null;
+      wizDropUnfinished();
       obDispatch({type:'providers_wizard_closed'});
       return;
     }
@@ -11209,6 +11211,9 @@ async function selSavePreset() {
   res = await swxRun(BSW.line, {providerId: preset.id},
     () => SWXBR.activateProvider(preset.id));
   SEL.busy = false; BSW.line = '';
+  // U29: an OpenAI-compatible preset has no model until one is picked, and
+  // activating it without one would stop the agent from starting.
+  if (res && res.needsChatModel) { SEL.addOpen = false; SEL.kind = 'model'; SEL.cursor = 0; render(); selLoadModels(preset.id); return; }
   if (!res || !res.ok) {
     SEL.err = res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
     render(); refreshLiveConfig(); return;
@@ -13020,6 +13025,22 @@ function customProviderId(url) {
   return /^[a-z]/.test(id) ? id : 'custom-endpoint';
 }
 
+/* U29: kinds the agent cannot build without a chat model
+   (register-built-in-providers.ts). The wizard writes the entry before its
+   model step, because listing the provider's models needs it in the file; a
+   wizard left on that step used to leave an entry with a URL and no model,
+   and agents up to v0.6.6 then refused to start at all. Leaving the wizard
+   any way other than finishing it removes the entry it created. An entry that
+   existed before the wizard opened is never touched. */
+const WIZ_NEEDS_MODEL = new Set(['openai-compatible', 'qwen-openai-compatible']);
+function wizDropUnfinished() {
+  const id = WIZ.unfinishedId;
+  if (!id) return;
+  WIZ.unfinishedId = null;
+  if (!BR || !BR.removeProvider) return;
+  Promise.resolve(BR.removeProvider(id)).then(() => refreshLiveConfig(), () => {});
+}
+
 async function wizNext() {
   const k = WIZ.row; if (!k) return;
   /* Read the fields only when they are ON SCREEN. wizNext runs a second time
@@ -13062,9 +13083,14 @@ async function wizNext() {
   if (k.apiKeyHeader) entry.apiKeyHeader = k.apiKeyHeader;
   if (k.headers) entry.headers = k.headers;
 
-  const existedBefore = !!selProviders().find((p) => p.id === id);
+  // U29: an entry this wizard wrote on an earlier pass (Back from the model
+  // step, then Next again) is still this wizard's, not a pre-existing one.
+  const existedBefore = WIZ.unfinishedId !== id && !!selProviders().find((p) => p.id === id);
   let res = await BR.upsertProvider(entry);
   if (res && res.ok === false) { WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+  // U29: remember an entry this wizard created without a model, so leaving
+  // before the model is committed removes it again (see wizDropUnfinished).
+  if (!existedBefore && WIZ_NEEDS_MODEL.has(k.kind)) WIZ.unfinishedId = id;
 
   // The catalogue, to pick a model with. This is a LOOKUP, not a check:
   // openrouter and aimlapi answer it from a list bundled in the binary,
@@ -13179,6 +13205,7 @@ async function wizNext() {
     render(); refreshLiveConfig(); return;
   }
   bswReport(sel, 'Selected chat model ' + id + '/' + model + '.');
+  WIZ.unfinishedId = null;   // U29: finished, so it stays
   WIZ.phase = null;
   WIZ.forId = null;
   // r5 item 10: swxRun re-read the live config before it resolved.
