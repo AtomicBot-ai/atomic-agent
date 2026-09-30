@@ -6201,8 +6201,10 @@ function onChatEvent(ev) {
       tool: typeof p.tool === 'string' ? p.tool : undefined,
       stepCount: typeof p.step_count === 'number' ? p.step_count : undefined,
       summary: typeof p.summary === 'string' ? p.summary : undefined,
+      etaSeconds: typeof p.eta_seconds === 'number' ? p.eta_seconds : undefined,
     };
     FZ.live = fzReduceLive(FZ.live, e);
+    tpFzEnsureTick();
     if (item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
     render();
     return;
@@ -12517,14 +12519,15 @@ function fzReduceLive(current, e) {
   const next = {taskId: e.taskId, title: e.title, phase: e.phase,
     model: e.model ?? (prev && prev.model) ?? null,
     tool: done ? null : (e.tool ?? (prev && prev.tool) ?? null), done};
+  Object.assign(next, tpFzClock(prev, e, done));   // tui-parity.js: per-leg clock and estimate
   if (at < 0) return current.concat([next]);
   const copy = current.slice();
   copy[at] = next;
   return copy;
 }
-/** formatFusionLiveWorker: `<title> · <model> — <tool|working|done>`. */
+/** formatFusionLiveWorker: `<title> · <model> — <tool|working|done> · <elapsed> (~<expected>)`. */
 function fzLiveLine(w) {
-  return w.title + ' · ' + (w.model ?? 'local') + ' — ' + (w.done ? 'done' : (w.tool ?? 'working'));
+  return w.title + ' · ' + (w.model ?? 'local') + ' — ' + (w.done ? 'done' : (w.tool ?? 'working')) + tpFzTiming(w, FZ.live);
 }
 /** format-fusion-worker-line.ts, without the feed's `» ` glyph. */
 function fzWorkerLine(e) {

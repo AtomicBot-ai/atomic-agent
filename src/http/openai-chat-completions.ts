@@ -503,6 +503,9 @@ export function buildStreamEventHook(
           role: event.role ?? "worker",
           ...(event.model === undefined ? {} : { model: event.model }),
           ...(event.tool === undefined ? {} : { tool: event.tool }),
+          // The orchestrator's own estimate, so a host can print elapsed
+          // beside it the way the TUI's live readout does. Advisory only.
+          ...(event.etaSeconds === undefined ? {} : { eta_seconds: event.etaSeconds }),
           ...(event.stepCount === undefined ? {} : { step_count: event.stepCount }),
           ...(event.durationMs === undefined ? {} : { duration_ms: event.durationMs }),
           ...(event.summary === undefined ? {} : { summary: event.summary }),

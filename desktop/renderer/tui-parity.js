@@ -175,3 +175,77 @@ function tpLlmFaultHTML() {
     + '<span class="grow"><b>Local model server problem.</b> ' + esc(fault) + '</span>'
     + '<button class="btn btn-s sm" data-act="llm:logs">LLM logs</button></div>';
 }
+
+/* ---- Fusion: how long each worker has run (src/tui/fusion-live-workers.ts) --
+   Four rows of "working" look the same at ten seconds and at ten minutes. The
+   TUI keeps a clock per leg and prints it beside the orchestrator's estimate
+   (`eta_seconds` on the fusion_worker frame), corrected by how far off the
+   finished legs of the same wave were; a leg with no estimate is compared to
+   the median of its finished siblings. The estimate is dropped once the leg
+   is done, and turns into "past the ~2m expected" once elapsed passes it. */
+const TP_FZ_MAX_CORRECTION = 20;
+
+/** `1m04s`, `12s` (fusion-live-workers.ts formatElapsed). */
+function tpElapsed(ms) {
+  const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
+}
+
+function tpMedian(xs) {
+  if (!xs.length) return null;
+  const v = xs.slice().sort((a, b) => a - b);
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+/** fanoutExpectation: median actual/estimate, and median finished duration. */
+function tpFzExpectation(workers) {
+  const ratios = [], times = [];
+  for (const w of workers) {
+    if (!w.done || !w.finishedAt || !w.startedAt) continue;
+    const ms = w.finishedAt - w.startedAt;
+    if (ms <= 0) continue;
+    times.push(ms);
+    if (w.etaSeconds) ratios.push(ms / 1000 / w.etaSeconds);
+  }
+  const r = tpMedian(ratios);
+  return {
+    correction: r !== null && Number.isFinite(r) && r > 0 ? Math.min(r, TP_FZ_MAX_CORRECTION) : null,
+    medianMs: tpMedian(times),
+  };
+}
+
+/** ` · 42s (~2m expected)` for one leg; '' before the clock has started. */
+function tpFzTiming(w, workers, now) {
+  if (!w.startedAt) return '';
+  const elapsedMs = (w.finishedAt || now || Date.now()) - w.startedAt;
+  let out = ' · ' + tpElapsed(elapsedMs);
+  if (w.done) return out;
+  const m = tpFzExpectation(workers || []);
+  const expectedMs = w.etaSeconds ? w.etaSeconds * 1000 * (m.correction || 1) : m.medianMs;
+  if (!expectedMs) return out;
+  return out + (elapsedMs >= expectedMs ? ' (past the ~' + tpElapsed(expectedMs) + ' expected)' : ' (~' + tpElapsed(expectedMs) + ' expected)');
+}
+
+/** The per-leg clock, the fields fzReduceLive keeps beside its own. */
+function tpFzClock(prev, e, done, now) {
+  const t = now || Date.now();
+  return {
+    startedAt: (prev && prev.startedAt) || t,
+    finishedAt: done ? ((prev && prev.finishedAt) || t) : null,
+    etaSeconds: (typeof e.etaSeconds === 'number' && e.etaSeconds > 0 ? e.etaSeconds : null) || (prev && prev.etaSeconds) || null,
+  };
+}
+
+/* One tick a second while a leg is running: the clocks repaint in place. */
+let TP_FZ_TICK = 0;
+function tpFzEnsureTick() {
+  if (TP_FZ_TICK) return;
+  TP_FZ_TICK = setInterval(() => {
+    const running = FZ.live.some((w) => !w.done) && (S.busy || S.pending);
+    if (!running) { clearInterval(TP_FZ_TICK); TP_FZ_TICK = 0; return; }
+    const el = document.querySelector('.fzlive');
+    if (el) el.outerHTML = fzLiveHTML();
+  }, 1000);
+}

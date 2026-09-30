@@ -92,6 +92,23 @@ describe("fusion_worker over SSE", () => {
     });
   });
 
+  it("carries the orchestrator's estimate for the leg when it gave one", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({
+      type: "fusion_worker",
+      taskId: "t3",
+      title: "docs",
+      phase: "started",
+      etaSeconds: 120,
+    });
+    hook({ type: "fusion_worker", taskId: "t4", title: "lint", phase: "started" });
+
+    expect((sse.written[0]!.payload as { eta_seconds?: number }).eta_seconds).toBe(120);
+    expect(sse.written[1]!.payload).not.toHaveProperty("eta_seconds");
+  });
+
   it("keeps the orchestrator's own bracket line distinguishable", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));
