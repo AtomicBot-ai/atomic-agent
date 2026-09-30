@@ -3,6 +3,51 @@
 /* The Electron preload exposes window.atomic. Without it (opened as a
    plain page) the app runs the scripted demo instead of a real agent. */
 const BR = typeof window !== "undefined" ? window.atomic : null;
+/* The platform the window runs on. The scripted demo (no bridge) and macOS
+   take every path below exactly as before; the Windows and Linux arms only
+   exist where the bridge says so. */
+const PLATFORM = (BR && BR.platform) || 'darwin';
+const IS_MAC = PLATFORM === 'darwin';
+const IS_WIN = PLATFORM === 'win32';
+
+/** A chord as this platform spells it. The app writes chords the Mac way
+    ('⌥ ⌘ E'); off macOS ⌘ reads Ctrl, and the Option-chords read Ctrl
+    Shift, which is what the menu binds there (menu.ts: Ctrl+Alt is AltGr
+    on Windows). '⌘ ⌫' has no binding off macOS, so it is not shown. */
+function kbd(s) {
+  if (IS_MAC || !s) return s;
+  const str = String(s);
+  if (!/[⌘⌥⌃⇧]/.test(str)) return str === '⌫' ? 'Backspace' : str;
+  if (/^⌘\s*⌫$/.test(str)) return '';
+  const mods = [];
+  if (/[⌘⌃]/.test(str)) mods.push('Ctrl');
+  if (/[⇧⌥]/.test(str)) mods.push('Shift');
+  if (/⌃/.test(str) && /⌘/.test(str)) mods.push('Alt');   // ⌃ ⌘ C is two modifiers, not a bare Ctrl C
+  const key = str.replace(/[⌘⌥⌃⇧\s]/g, '').replace('⌫', 'Backspace');
+  return mods.concat(key ? [key] : []).join(' ');
+}
+/** The same, for a chord written inside a sentence: 'Settings (⌘ ,)'. */
+function kbdText(text) {
+  if (IS_MAC || !text) return text;
+  return String(text).replace(/[⌘⌥⌃⇧][⌘⌥⌃⇧ ]*[^\s)]*/g, (m) => kbd(m.trim()));
+}
+
+/* Paths as this platform writes them. On macOS and Linux these are exactly
+   the `/` string operations the code always did; on Windows a path may use
+   either separator and starts with a drive (`C:\x`) or a share (`\\s\x`). */
+const SEP_RE = IS_WIN ? /[\\/]/ : /\//;
+/** Index of the last separator, or -1. */
+function lastSepIndex(p) {
+  const s = String(p);
+  return IS_WIN ? Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\')) : s.lastIndexOf('/');
+}
+/** The last segment of a path. */
+function pathBase(p) { return String(p).split(SEP_RE).pop(); }
+/** Absolute on this platform. */
+function isAbsPath(p) {
+  const s = String(p || '');
+  return IS_WIN ? /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(s) : s.startsWith('/');
+}
 let WORKSPACE = '';
 let LIVE_CAPS = null, LIVE_CONFIG = null;
 
@@ -865,7 +910,7 @@ function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
 function sidebarToggleHTML() {
   const narrow = NARROW.matches, open = sidebarExpanded();
   const title = narrow ? 'The sidebar is a rail on a narrow window'
-    : open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)';
+    : kbdText(open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)');
   return '<button class="iconbtn sidebtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
     + (narrow ? ' disabled' : '')
     + ' aria-pressed="' + open + '"'
@@ -1337,7 +1382,7 @@ function providerMark(idOrLabel, size) {
 const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = (s) => document.querySelector(s);
-const keycaps = (str) => str ? str.split(' ').map((k) => '<span class="kc">' + esc(k) + '</span>').join('') : '';
+const keycaps = (raw) => { const str = kbd(raw); return str ? str.split(' ').map((k) => '<span class="kc">' + esc(k) + '</span>').join('') : ''; };
 
 /* ---------------- registry data ---------------- */
 
@@ -1598,10 +1643,10 @@ function renderToolbar() {
     + sidebarToggleHTML()
     + '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>'
     + '<div class="tb-right">'
-      + '<button class="searchbtn" data-act="palette" title="Search and commands (⌘ K)">' + ic('search') + '<span class="sec">Search</span></button>'
+      + '<button class="searchbtn" data-act="palette" title="' + kbdText('Search and commands (⌘ K)') + '">' + ic('search') + '<span class="sec">Search</span></button>'
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
         + ' aria-pressed="' + !!S.inspector + '"'
-        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning (⌥ ⌘ 0)">' + ic('inspector') + '</button>'
+        + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
     + '</div>';
 }
 
@@ -1644,7 +1689,7 @@ function renderSidebar() {
   $('#sidebar').innerHTML =
     '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
-    + '<button class="sb-new" data-act="session:new" title="New chat (⌘ N)" aria-label="New chat">'
+    + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
     + '<div class="sb-lists">'
       + '<div class="sb-list" data-list="chats">'
@@ -1668,7 +1713,7 @@ function renderSidebar() {
     // The bottom-left Settings entry: house icon and the word. The ⌘ , chord
     // lives in the tooltip, the palette and the app menu, not on the button.
     + '<div class="sb-footwrap">'
-      + '<button class="btn sb-settings" data-act="settings:open" title="Settings (⌘ ,)" aria-label="Settings (⌘ ,)">'
+      + '<button class="btn sb-settings" data-act="settings:open" title="' + kbdText('Settings (⌘ ,)') + '" aria-label="' + kbdText('Settings (⌘ ,)') + '">'
         + '<span class="sb-settings-ic">' + ic('home') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
       + '</button></div>'
@@ -1682,7 +1727,7 @@ function renderSidebar() {
 /** The workspace chip's label: the folder's own name, not the whole path
     (the full path is the chip's tooltip and lives in the workspace menu). */
 function wsName(p) {
-  const parts = String(p || '').replace(/\/+$/, '').split('/');
+  const parts = String(p || '').replace(IS_WIN ? /[\\/]+$/ : /\/+$/, '').split(SEP_RE);
   return parts[parts.length - 1] || String(p || '');
 }
 
@@ -2416,10 +2461,11 @@ function apprCard(m) {
 /** A path as a person reads it: relative inside the working folder, ~ under home. */
 function apprPath(p) {
   const s = String(p || '');
-  const wd = String(S.live.workingDir || '').replace(/\/+$/, '');
-  if (wd && s.startsWith(wd + '/')) return s.slice(wd.length + 1);
+  const wd = String(S.live.workingDir || '').replace(IS_WIN ? /[\\/]+$/ : /\/+$/, '');
+  const sep = IS_WIN ? '\\' : '/';
+  if (wd && s.startsWith(wd + sep)) return s.slice(wd.length + 1);
   const home = homeDir();
-  if (home && (s === home || s.startsWith(home + '/'))) return '~' + s.slice(home.length);
+  if (home && (s === home || s.startsWith(home + sep))) return '~' + s.slice(home.length);
   return s;
 }
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
@@ -2480,10 +2526,10 @@ function apprWhy(m) {
 /** The file or folder it touches, as a chip — only for a real path. */
 function apprResource(m) {
   const full = String(m.affectsDir || '') + String(m.affectsBase || '');
-  if (!/^[/~]/.test(full)) return '';
+  if (!/^[/~]/.test(full) && !(IS_WIN && isAbsPath(full))) return '';
   const folder = m.cat === 'shell' || m.cat === 'fs_read_outside' || m.tool === 'os.shell.run' || !/\.[^/]+$/.test(m.affectsBase || '');
   const shown = apprPath(full);
-  const cut = shown.lastIndexOf('/');
+  const cut = lastSepIndex(shown);
   const base = cut >= 0 && cut < shown.length - 1 ? shown.slice(cut + 1) : (shown || full);
   const dir = cut > 0 ? shown.slice(0, cut + 1) : '';
   return '<span class="pathchip" title="' + esc(full) + '">' + ic(folder ? 'folder' : 'file') + '<b>' + esc(base) + '</b>'
@@ -6471,7 +6517,7 @@ function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
   const first = affects[0] || S.live.workingDir || '';
-  const cut = String(first).lastIndexOf('/');
+  const cut = lastSepIndex(first);
   const req = {
     id:nid(), k:'approval',
     approvalId: payload.approvalId,
@@ -13628,6 +13674,9 @@ function renderMarkdown(escaped) {
 function renderProse(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
   const FILE_RE = /(?<![\w\/])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g;
+  // Windows: not the tail of `C:/dir/file` either — that whole path is the
+  // drive-letter chip below.
+  const FILE_RE_HERE = IS_WIN ? /(?<![\w\/:])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g : FILE_RE;
   const md = renderMarkdown(esc(text));
   let html = md.html;
   html = html.replace(URL_RE, (u) => {
@@ -13636,14 +13685,27 @@ function renderProse(text) {
     const href = core.startsWith('www.') ? 'https://' + core : core;
     return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
   });
-  html = html.replace(FILE_RE, (p) => {
+  html = html.replace(FILE_RE_HERE, (p) => {
     const name = p.split('/').pop();
     return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
   });
+  if (IS_WIN) {
+    // Windows: `C:\dir\file.ext` (either separator), the same chip.
+    const WIN_FILE_RE = /(?<![\w\\/])([A-Za-z]:[\\/](?:[\w.@+-]+[\\/])*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\\/])/g;
+    html = html.replace(WIN_FILE_RE, (p) => {
+      const name = pathBase(p);
+      return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
+    });
+  }
   return html.replace(/\u0000(\d+)\u0000/g, (m, i) => md.held[+i]);
 }
 function homeDir() {
   const wd = S.live.workingDir || '';
+  if (IS_WIN) { const m = /^[A-Za-z]:[\\/]Users[\\/][^\\/]+/i.exec(wd); return m ? m[0] : ''; }
+  if (PLATFORM === 'linux') {
+    if (wd === '/root' || wd.startsWith('/root/')) return '/root';
+    const m = /^\/home\/[^/]+/.exec(wd); return m ? m[0] : '';
+  }
   return wd.startsWith('/Users/') ? wd.split('/').slice(0, 3).join('/') : '';
 }
 /* r5 item 3 review fix: the one line that hands the row menu to the bridge.
@@ -13708,6 +13770,12 @@ function cardArgs(m) {
 function resolveAgentPath(p, cwd) {
   if (!p || typeof p !== 'string') return null;
   if (p === '~' || p.startsWith('~/')) return p;
+  if (IS_WIN) {
+    if (p.startsWith('~\\') || isAbsPath(p)) return p;
+    const wbase = String(cwd || (S.live && S.live.workingDir) || '').replace(/[\\/]+$/, '');
+    if (!wbase) return null;
+    return wbase + '\\' + p.replace(/^\.[\\/]/, '');
+  }
   if (p.startsWith('/')) return p;
   const base = String(cwd || (S.live && S.live.workingDir) || '').replace(/\/+$/, '');
   if (!base) return null;
@@ -13792,7 +13860,7 @@ async function refreshAttachments(cwd) {
       for (const f of files) {
         if (!f.exists || seen.has(f.path)) continue;
         seen.add(f.path);
-        found.push({path:f.path, name:f.path.split('/').pop() || f.path, kind:f.kind});
+        found.push({path:f.path, name:pathBase(f.path) || f.path, kind:f.kind});
       }
     }
     m.attach = found;
