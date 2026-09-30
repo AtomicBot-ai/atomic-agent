@@ -894,6 +894,7 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
     case "stop":
     case "restart":
     case "pair":
+    case "token":
     case "clear-token":
     case "clear-owner":
       return {

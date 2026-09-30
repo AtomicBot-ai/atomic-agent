@@ -572,12 +572,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSkillInstallCancelled: (identifier) =>
           void orchestrator.skills.cancelInstall(identifier),
         onMemoryAutoRefreshStart: () => orchestrator.memory.startAutoRefresh(),
+        onMemoryRefreshRequested: (opts) => orchestrator.memory.refresh(opts),
         onMemoryDetailRequested: (row) => orchestrator.memory.openDetail(row),
         onMemoryOpenNoteRequested: (noteId) =>
           orchestrator.memory.openNoteById(noteId),
         onMemoryExpandNeighborsRequested: (noteId) =>
           orchestrator.memory.expandNoteNeighbors(noteId),
         onMcpAutoRefreshStart: () => orchestrator.mcp.startAutoRefresh(),
+        onMcpRefreshRequested: () => orchestrator.mcp.refresh(),
         onProvidersTabRefresh: () => {
           orchestrator.providers.refresh();
           // The catalog fetchers cache at module scope, so a fresh TUI

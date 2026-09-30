@@ -287,9 +287,31 @@ export class ProvidersOrchestrator {
         type: "providers_status",
         line: err instanceof Error ? err.message : String(err),
       });
+      this.reportUnknownTextProvider(id);
     } finally {
       this.bus.emit({ type: "providers_busy", busy: false });
     }
+  }
+
+  /**
+   * `/llm provider <id>` takes free text, so a typo reaches
+   * `setActiveText` as an id nothing knows. The registry's refusal only
+   * lands on the LLM pane's status row; say it in the chat as well, with
+   * the ids that would have worked. Ids the pickers offer are always
+   * known, so their failures keep the status row alone.
+   */
+  private reportUnknownTextProvider(id: string): void {
+    const configured = resolveLlmConfig(getConfig()).providers.map((p) => p.id);
+    const known = [
+      ...new Set([...configured, ...this.runtime.providerRegistry.listIds()]),
+    ];
+    if (known.includes(id)) return;
+    const text =
+      known.length > 0
+        ? `unknown provider "${id}" — configured: ${known.join(", ")}`
+        : `unknown provider "${id}" — no providers are configured`;
+    this.bus.emit({ type: "runtime_info", line: text });
+    this.bus.emit({ type: "system_message", text });
   }
 
   async selectChatModel(providerId: string, modelId: string): Promise<void> {
