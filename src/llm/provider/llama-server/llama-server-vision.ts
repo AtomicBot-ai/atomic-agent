@@ -137,29 +137,40 @@ export async function describeImageViaLlamaServer(opts: {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.requestTimeoutMs);
   const start = Date.now();
+  // The deadline covers the body too: a server that sends headers and
+  // then stalls would otherwise hold the tool call past it, with the
+  // timer already cleared.
   let res: Response;
+  let json: ChatCompletionResponse | null;
   try {
-    res = await opts.fetchImpl(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: controller.signal,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`vision request failed: ${message}`);
+    try {
+      res = await opts.fetchImpl(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`vision request failed: ${message}`);
+    }
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(
+        `vision request returned http ${res.status}: ${errBody.slice(0, 200)}`,
+      );
+    }
+    json = (await res
+      .json()
+      .catch(() => null)) as ChatCompletionResponse | null;
+    if (json === null && controller.signal.aborted) {
+      throw new Error(
+        `vision request failed: no complete answer within ${opts.requestTimeoutMs} ms`,
+      );
+    }
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    throw new Error(
-      `vision request returned http ${res.status}: ${errBody.slice(0, 200)}`,
-    );
-  }
-  const json = (await res
-    .json()
-    .catch(() => null)) as ChatCompletionResponse | null;
   const content = json?.choices?.[0]?.message?.content ?? "";
 
   return {
