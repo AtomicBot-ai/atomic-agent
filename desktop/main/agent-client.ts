@@ -265,6 +265,8 @@ export class AgentClient extends EventEmitter {
   private token = "";
   private events: AbortController | null = null;
   private turns = new Map<string, AbortController>();
+  /** turnId → the agent's `X-Atomic-Completion-Id`, once the stream opens. */
+  private completions = new Map<string, string>();
   private stopping = false;
 
   status: AgentStatus = {
@@ -709,6 +711,8 @@ export class AgentClient extends EventEmitter {
         this.emit("chat", { turnId, kind: "error", error: detail });
         return;
       }
+      const completionId = res.headers.get("x-atomic-completion-id");
+      if (completionId) this.completions.set(turnId, completionId);
       for await (const frame of sseFrames(res.body, controller.signal)) {
         if (frame.data === "[DONE]") break;
         let chunk: {
@@ -783,14 +787,39 @@ export class AgentClient extends EventEmitter {
       });
     } finally {
       this.turns.delete(turnId);
+      this.completions.delete(turnId);
     }
   }
 
+  /**
+   * Stop a turn. The agent is told to end it by id first, then the stream
+   * is dropped. Dropping the stream alone did not stop agents up to 0.6.3:
+   * they waited for the disconnect on the request, whose `close` Node had
+   * already emitted once the body was read, so the turn ran on — model
+   * generating, steers accepted — after the window said it had stopped.
+   * The cancel route is older than the desktop, so every agent has it.
+   */
   cancel(turnId: string): boolean {
     const controller = this.turns.get(turnId);
     if (!controller) return false;
+    const completionId = this.completions.get(turnId);
+    if (completionId) void this.cancelCompletion(completionId);
     controller.abort();
     return true;
+  }
+
+  private async cancelCompletion(completionId: string): Promise<void> {
+    try {
+      const res = await fetch(
+        `${this.base()}/v1/chat/completions/${encodeURIComponent(completionId)}/cancel`,
+        { method: "POST", headers: this.headers(), signal: AbortSignal.timeout(5_000) },
+      );
+      // 404 means the turn had already ended — nothing left to stop.
+      await res.body?.cancel();
+    } catch {
+      // Agent gone or not answering: it has no turn to stop, and the
+      // dropped stream is all that is left to do.
+    }
   }
 
   async resolveApproval(
@@ -811,6 +840,7 @@ export class AgentClient extends EventEmitter {
     this.stopping = true;
     for (const controller of this.turns.values()) controller.abort();
     this.turns.clear();
+    this.completions.clear();
     this.events?.abort();
     this.events = null;
     const child = this.child;
