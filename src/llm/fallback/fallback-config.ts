@@ -192,3 +192,28 @@ function dedupe(ids: readonly string[]): string[] {
   }
   return out;
 }
+
+/**
+ * Drop chain links the provider registry could not build.
+ *
+ * The registry skips a non-active config entry whose factory throws (an
+ * OpenAI-compatible entry with no model, say) instead of failing boot.
+ * `resolveFallbackChain` reads the config only, so such an id would still
+ * sit in the chain; falling over to it would then resolve to no provider,
+ * quietly run the turn on the active one, and announce a switch that never
+ * happened. The primary (index 0) is always kept: it is the active
+ * provider, and the registry refuses to boot without it. `onDrop` is called
+ * with each id removed, so the caller can log it.
+ */
+export function withoutUnbuiltLinks(
+  resolved: ResolvedFallbackChain,
+  isBuilt: (id: string) => boolean,
+  onDrop?: (id: string) => void,
+): ResolvedFallbackChain {
+  const chain = resolved.chain.filter((id, i) => {
+    if (i === 0 || isBuilt(id)) return true;
+    onDrop?.(id);
+    return false;
+  });
+  return chain.length === resolved.chain.length ? resolved : { ...resolved, chain };
+}

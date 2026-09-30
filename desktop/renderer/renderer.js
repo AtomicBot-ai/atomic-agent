@@ -10990,6 +10990,8 @@ async function selActivate(row) {
     SEL.busy = false; BSW.line = '';
     if (!res || !res.ok) {
       if (res && res.needsKey) { bswOpenKey(row.id); return; }
+      // U29: no model yet; its model list is the next step, as on success.
+      if (res && res.needsChatModel) { SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render(); selLoadModels(row.id); return; }
       SEL.err = (res && res.error) || 'could not switch provider'; render(); return;
     }
     bswReport(res);
@@ -13053,14 +13055,46 @@ function customProviderId(url) {
    existed before the wizard opened is never touched. */
 const WIZ_NEEDS_MODEL = new Set(['openai-compatible', 'qwen-openai-compatible']);
 function wizDropUnfinished() {
+  if (!WIZ.unfinishedId) return;
+  /* A step still awaiting the network owns the entry: removing it underneath
+     would leave that step writing to, or activating, a provider that is gone.
+     The drop runs when the step returns (wizNext below). */
+  if (WIZ.stepping) { WIZ.dropAfterStep = true; return; }
   const id = WIZ.unfinishedId;
-  if (!id) return;
   WIZ.unfinishedId = null;
-  if (!BR || !BR.removeProvider) return;
-  Promise.resolve(BR.removeProvider(id)).then(() => refreshLiveConfig(), () => {});
+  wizRemoveIfIncomplete(id);
+}
+/* Remove the entry only while it is still incomplete: a model may have been
+   written since (selectCloudModel writes it before activating, and the
+   activation can fail), and a complete entry is the user's. */
+async function wizRemoveIfIncomplete(id) {
+  if (!BR || !BR.removeProvider || !BR.configGet) return;
+  try {
+    const cfg = await BR.configGet();
+    const providers = (cfg && cfg.ok && cfg.config && cfg.config.llm && cfg.config.llm.providers) || null;
+    if (!providers) return;
+    const entry = providers.find((p) => p.id === id);
+    if (!entry || !WIZ_NEEDS_MODEL.has(entry.kind) || (entry.defaultChatModel && entry.baseUrl)) return;
+    await BR.removeProvider(id);
+    refreshLiveConfig();
+  } catch (e) { /* the boot-time prune is the net under this */ }
 }
 
 async function wizNext() {
+  WIZ.stepping = true;
+  try {
+    await wizNextStep();
+  } finally {
+    WIZ.stepping = false;
+    if (WIZ.dropAfterStep) {
+      WIZ.dropAfterStep = false;
+      // The wizard was left while this step ran; finish leaving it.
+      if (WIZ.unfinishedId) { WIZ.phase = null; wizDropUnfinished(); render(); }
+    }
+  }
+}
+
+async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
   /* Read the fields only when they are ON SCREEN. wizNext runs a second time
      for the model step — the choice is made and the save is re-entered — and
@@ -13109,6 +13143,9 @@ async function wizNext() {
   if (res && res.ok === false) { WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
   // U29: remember an entry this wizard created without a model, so leaving
   // before the model is committed removes it again (see wizDropUnfinished).
+  // A different id this pass (Back, then a changed custom URL) leaves the
+  // earlier entry orphaned: drop it now.
+  if (WIZ.unfinishedId && WIZ.unfinishedId !== id) { const prev = WIZ.unfinishedId; WIZ.unfinishedId = null; wizRemoveIfIncomplete(prev); }
   if (!existedBefore && WIZ_NEEDS_MODEL.has(k.kind)) WIZ.unfinishedId = id;
 
   // The catalogue, to pick a model with. This is a LOOKUP, not a check:
@@ -17462,6 +17499,8 @@ async function llmSwitchProvider(id) {
     () => SWXBR.activateProvider(id),
     () => { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); });
   LLMP.busy = false;
+  // U29: no model yet; the provider's setup ends on its model step.
+  if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
   if (!res || !res.ok) {
     llmReport(res && res.needsKey ? 'no API key for ' + id + ' — add one with n (the wizard) or export its variable' : llmFail('switch provider failed', res), 'cloud');
     llmRepaint(); return false;
