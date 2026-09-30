@@ -8400,8 +8400,8 @@ function obProposeHTML() {
 function obImportRows() {
   /* B.5 — the list is the SOURCES. "Import from 4 agents" and "Skip adding
      data from other agents" used to be rows in it, drawn as underlined text,
-     which read as links to nowhere ("надо сделать кнопками что я подчеркнула;
-     выглядит тупо как текст"). They are the step's two verbs and they live on
+     which read as links to nowhere, or as plain text that should have been
+     buttons. They are the step's two verbs and they live on
      the action bar with every other step's verbs.
 
      The keyboard model does not change: the arrow keys walk the sources, and

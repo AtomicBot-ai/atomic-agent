@@ -3059,22 +3059,24 @@ async function voiceTest(
 
     // --- two languages at once -------------------------------------------
     // The helper's `replace`: both models heard the same audio and the
-    // second scored higher, so its whole transcript wins the take.
+    // second scored higher, so its whole transcript wins the take. The ru-RU
+    // text is escaped Russian for "Open the settings panel" (and, below,
+    // "... and switch the backend to the cloud").
     await js<V>("window.__voiceProbeSet({available:true, supported:['en-US','ru-RU'], installed:['en-US','ru-RU'], speech:['en-US'], dictation:['ru-RU'], locales:['en-US','ru-RU']})");
     await js<V>("window.__voiceArm()");
     await js<V>("window.__voiceEvent({type:'final', text:'at croy panel nastroyek'})");
-    const rep = await js<V>("window.__voiceEvent({type:'replace', text:'Открой панель настроек', locale:'ru-RU', confidence:0.88})");
+    const rep = await js<V>("window.__voiceEvent({type:'replace', text:'\u041E\u0442\u043A\u0440\u043E\u0439 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A', locale:'ru-RU', confidence:0.88})");
     const stripRep = await js<Strip>("window.__voiceStrip()");
     check(
       "a second language can win the take",
-      rep.final === "Открой панель настроек" && rep.partial === "" && rep.winner === "ru-RU"
+      rep.final === "\u041E\u0442\u043A\u0440\u043E\u0439 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A" && rep.partial === "" && rep.winner === "ru-RU"
         && !!stripRep && stripRep.chip.includes("matched"),
       `final ${JSON.stringify(rep.final)}, winner ${rep.winner}, chip ${JSON.stringify(stripRep && stripRep.chip)}`,
     );
     const insRep = await js<{ draft: string }>("window.__voiceStop()");
     check(
       "and the winning language is what gets inserted",
-      insRep.draft === "Открой панель настроек",
+      insRep.draft === "\u041E\u0442\u043A\u0440\u043E\u0439 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A",
       JSON.stringify(insRep.draft),
     );
     await js<unknown>("window.__ctxDraft('')");
@@ -3084,21 +3086,21 @@ async function voiceTest(
     // score — so a take can arrive as a bare `replace` with no primary text
     // before it. Measured with the fixed helper on the review's fixture:
     //   $ cat rev-ru.raw | out/native/atomic-speech en-US ru-RU
-    //   {"type":"replace","text":"Открой панель настроек …","locale":"ru-RU",
+    //   {"type":"replace","text":"<the Russian sentence> …","locale":"ru-RU",
     //    "runnerUp":"en-US","runnerUpHeard":false,"confidence":0.826}
     // Before the fix that take reached the composer as an empty string.
     await js<V>("window.__voiceArm()");
     const bare = await js<V>(
-      "window.__voiceEvent({type:'replace', text:'Открой панель настроек и переключи бэкенд на облако',"
+      "window.__voiceEvent({type:'replace', text:'\u041E\u0442\u043A\u0440\u043E\u0439 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A \u0438 \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438 \u0431\u044D\u043A\u0435\u043D\u0434 \u043D\u0430 \u043E\u0431\u043B\u0430\u043A\u043E',"
       + " locale:'ru-RU', confidence:0.826, runnerUp:'en-US', runnerUpHeard:false})",
     );
     const stripBare = await js<Strip>("window.__voiceStrip()");
     const insBare = await js<{ draft: string }>("window.__voiceStop()");
     check(
       "a second language wins even when the first one heard nothing",
-      bare.final === "Открой панель настроек и переключи бэкенд на облако" && bare.winner === "ru-RU"
+      bare.final === "\u041E\u0442\u043A\u0440\u043E\u0439 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A \u0438 \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438 \u0431\u044D\u043A\u0435\u043D\u0434 \u043D\u0430 \u043E\u0431\u043B\u0430\u043A\u043E" && bare.winner === "ru-RU"
         && !!stripBare && stripBare.text === bare.final
-        && insBare.draft === "Открой панель настроек и переключи бэкенд на облако",
+        && insBare.draft === "\u041E\u0442\u043A\u0440\u043E\u0439 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043A \u0438 \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438 \u0431\u044D\u043A\u0435\u043D\u0434 \u043D\u0430 \u043E\u0431\u043B\u0430\u043A\u043E",
       `strip ${JSON.stringify(stripBare && stripBare.text)}, inserted ${JSON.stringify(insBare.draft)}`,
     );
     await js<unknown>("window.__ctxDraft('')");
@@ -7725,8 +7727,8 @@ async function backendSwitchTest(
       `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
     );
     /* These lines used to be pushed into the TRANSCRIPT, so the
-       conversation filled up with a commentary on the user's own clicks
-       ("все действия отображаются у меня в чате"). They are the app
+       conversation filled up with a commentary on the user's own clicks.
+       They are the app
        reporting on itself: they belong on the status strip above the
        composer and in the console drawer, which is the record. What is
        asserted is that the switch is reported AND that it is not reported in

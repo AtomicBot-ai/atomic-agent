@@ -773,9 +773,9 @@ PASS Escape still cancels with the slash popover open — popover open before Es
 PASS Escape still cancels with an approval pending — pending before Esc=true
 PASS an error strip keeps Escape and is dismissed by its own control — after Escape error, × present=true, then idle
 PASS the recording pulse survives the transcript repaints, and the strip still leaves on cancel — dot kept=true mic kept=true, text "refactor the login handler", dot after cancel=false
-PASS a second language can win the take — final "Открой панель настроек", winner ru-RU, chip "Russian (Russia) matched"
-PASS and the winning language is what gets inserted — "Открой панель настроек"
-PASS a second language wins even when the first one heard nothing — strip "Открой панель настроек и переключи бэкенд на облако", inserted "Открой панель настроек и переключи бэкенд на облако"
+PASS a second language can win the take — final "Otkroy panel nastroyek", winner ru-RU, chip "Russian (Russia) matched"
+PASS and the winning language is what gets inserted — "Otkroy panel nastroyek"
+PASS a second language wins even when the first one heard nothing — strip "Otkroy panel nastroyek i pereklyuchi bekend na oblako", inserted "Otkroy panel nastroyek i pereklyuchi bekend na oblako"
 PASS the language menu lists the on-device models and says one is active — 2 rows, foot "Transcribed on this Mac. One language is active at a time un"
 PASS the + control adds a second language and the choice is remembered — 4 rows, after + ["en-US","ru-RU"], voice.json ["en-US","ru-RU"]
 PASS choosing a new first language keeps the second one — after picking de-DE ["de-DE","ru-RU"], voice.json ["de-DE","ru-RU"]

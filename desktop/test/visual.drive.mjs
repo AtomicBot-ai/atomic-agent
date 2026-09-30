@@ -44,12 +44,12 @@ try {
     await document.fonts.ready;
     await Promise.allSettled([
       document.fonts.load('600 34px Figtree', 'Atomic'),
-      document.fonts.load('600 34px Inter', 'Жизнь'),
+      document.fonts.load('600 34px Inter', '\u0416\u0438\u0437\u043D\u044C'),
       document.fonts.load('400 13px "DM Mono"', 'atag'),
     ]);
     return {
       figtree: document.fonts.check('600 34px Figtree', 'Atomic'),
-      inter: document.fonts.check('600 34px Inter', 'Жизнь'),
+      inter: document.fonts.check('600 34px Inter', '\u0416\u0438\u0437\u043D\u044C'),
       mono: document.fonts.check('400 13px "DM Mono"', 'atag'),
       loaded: [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family + ' ' + f.weight),
     };
