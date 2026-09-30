@@ -138,6 +138,7 @@ import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
+import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment } from "./platform.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -586,7 +587,7 @@ function wireIpc(client: AgentClient): void {
       const res = await configGetKey("tui.notify");
       return res.ok ? readNotifyConfig(res.value) : NOTIFY_DEFAULTS;
     },
-    workingDirName: () => client.status.workingDir.split("/").filter(Boolean).pop(),
+    workingDirName: () => lastSegment(process.platform, client.status.workingDir),
     show: (note) => {
       if (!Notification.isSupported()) return;
       const n = new Notification({ title: note.title, body: note.body });
@@ -1093,7 +1094,8 @@ function wireIpc(client: AgentClient): void {
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
-    if (typeof p !== "string" || !p.startsWith("/") || p.includes("\0")) return null;
+    // Absolute by this platform's rules: `/x` here, `C:\x` on Windows.
+    if (typeof p !== "string" || !isAbsoluteOn(process.platform, p) || p.includes("\0")) return null;
     return p;
   };
   ipcMain.handle("app:openPath", async (_event, p: unknown) => {
@@ -1110,7 +1112,7 @@ function wireIpc(client: AgentClient): void {
     if (!Array.isArray(list)) return { ok: false, error: "not a list" };
     const files: Array<{ path: string; exists: boolean; kind: "file" | "dir" | null; size: number; mtimeMs: number }> = [];
     for (const raw of list.slice(0, 64)) {
-      const expanded = typeof raw === "string" && raw.startsWith("~/") ? homedir() + raw.slice(1) : raw;
+      const expanded = typeof raw === "string" ? expandHome(process.platform, raw, homedir()) : raw;
       const path = safePath(expanded);
       if (!path) continue;
       try {
@@ -1129,7 +1131,7 @@ function wireIpc(client: AgentClient): void {
     const { clipboard, Menu } = require("electron") as typeof import("electron");
     const menu = Menu.buildFromTemplate([
       { label: "Open", click: () => void shell.openPath(path) },
-      { label: "Show in Finder", click: () => shell.showItemInFolder(path) },
+      { label: fileManagerLabel(process.platform), click: () => shell.showItemInFolder(path) },
       { type: "separator" },
       { label: "Copy Path", click: () => clipboard.writeText(path) },
       {
@@ -1518,7 +1520,7 @@ function wireIpc(client: AgentClient): void {
     });
   });
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
-    typeof dataDir === "string" && dataDir.startsWith("/") ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
+    typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
   );
   ipcMain.handle("app:llamaProbe", (_event, url: unknown) =>
     typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },
