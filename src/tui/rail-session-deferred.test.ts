@@ -4,6 +4,7 @@ import { SESSION_LLM_METADATA_KEY } from "../session/session-llm.js";
 import {
   harness,
   spokenTo,
+  type StartedTurn,
   type StoredSession,
 } from "./rail-session-harness.js";
 
@@ -69,6 +70,72 @@ describe("rail session list — deferred allocation", () => {
     expect(fresh?.metadata[SESSION_LLM_METADATA_KEY]).toEqual({
       providerId: "local-llama",
       chatModel: "qwen3-30b",
+    });
+  });
+
+  it("switches back into a deferred thread whose first turn is still running", () => {
+    // The first turn writes the row only when it finishes, so mid-turn
+    // the store has nothing for this id. Switching back — rail row,
+    // picker, or the detach notice's button — must still land in the
+    // thread with the turn re-attached, not report it "not found".
+    const stored = [spokenTo("s-old", "older")];
+    const turns: StartedTurn[] = [];
+    const { orchestrator, bus, actions } = harness(stored, { turns });
+    orchestrator.newSession();
+    orchestrator.sendMessage("build me a website");
+    const sid = turns[0]?.sessionId ?? "";
+    expect(sid).toBe("s-new-1");
+    bus.emitAgentEvent(
+      { type: "user_message", text: "build me a website" },
+      sid,
+    );
+    expect(stored.some((s) => s.id === sid)).toBe(false);
+
+    orchestrator.newSession();
+    const before = actions.length;
+    orchestrator.switchSession(sid);
+    const after = actions.slice(before);
+
+    expect(
+      after.some(
+        (a) => a.type === "runtime_info" && a.line.includes("not found"),
+      ),
+    ).toBe(false);
+    const switchedAt = after.findIndex((a) => a.type === "session_switched");
+    expect(after[switchedAt]).toMatchObject({
+      type: "session_switched",
+      sessionId: sid,
+      running: true,
+    });
+    // The empty snapshot is repainted from the running turn's events,
+    // the operator's own prompt first.
+    const replayed = after
+      .slice(switchedAt + 1)
+      .filter((a) => a.type === "agent_event" && a.sessionId === sid);
+    expect(replayed.map((a) => a.type === "agent_event" && a.event)).toEqual([
+      { type: "user_message", text: "build me a website" },
+    ]);
+    // Esc reaches the re-attached turn again.
+    expect(turns[0]?.signal.aborted).toBe(false);
+    orchestrator.abortCurrentTurn();
+    expect(turns[0]?.signal.aborted).toBe(true);
+    // Still no row: the stand-in is the live object, never a save.
+    expect(stored.some((s) => s.id === sid)).toBe(false);
+  });
+
+  it("writes no row for a deferred thread nobody spoke to when switching away", () => {
+    // The live-session fallback serves backgrounded turns only; an
+    // untouched `+ new` left behind stays unwritten and unreachable.
+    const stored = [spokenTo("s-old", "older")];
+    const { orchestrator, actions } = harness(stored);
+    orchestrator.newSession();
+    orchestrator.switchSession("s-old");
+    expect(stored.map((s) => s.id)).toEqual(["s-old"]);
+    orchestrator.switchSession("s-new-1");
+    expect(stored.map((s) => s.id)).toEqual(["s-old"]);
+    expect(actions.at(-1)).toMatchObject({
+      type: "runtime_info",
+      line: "session s-new-1 not found",
     });
   });
 });

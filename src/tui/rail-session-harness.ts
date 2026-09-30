@@ -86,6 +86,17 @@ export interface StubOptions {
   order?: string[];
   /** Seed for `tui.sessionRail.pinned`. */
   pinned?: string[];
+  /**
+   * Every turn the runtime was asked to run, with its abort signal —
+   * for the cases that check which turn Esc reaches after a switch.
+   */
+  turns?: StartedTurn[];
+}
+
+export interface StartedTurn {
+  sessionId: string;
+  text: string;
+  signal: AbortSignal;
 }
 
 export function stubRuntime(
@@ -95,6 +106,7 @@ export function stubRuntime(
     listSummaryPage,
     countUnreadable,
     debugLines,
+    turns,
   }: StubOptions = {},
 ): AgentRuntime {
   let created = 0;
@@ -109,10 +121,16 @@ export function stubRuntime(
       return fresh;
     },
     steer: () => false,
-    runTurn: (session: unknown) =>
-      settleTurns
+    runTurn: (
+      session: StoredSession,
+      text: string,
+      opts: { signal: AbortSignal },
+    ) => {
+      turns?.push({ sessionId: session.id, text, signal: opts.signal });
+      return settleTurns
         ? Promise.resolve({ session, reason: "reply", stepCount: 1 })
-        : new Promise(() => {}),
+        : new Promise(() => {});
+    },
     sessionStore: {
       listSummaryPage:
         listSummaryPage ??
