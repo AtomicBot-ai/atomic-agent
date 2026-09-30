@@ -4,9 +4,17 @@ import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
 } from "./context-usage-from-prompt.js";
-import { formatBackgroundApprovalNotice } from "./detached-turns.js";
+import {
+  formatBackgroundApprovalNotice,
+  formatBackgroundProviderWaitNotice,
+} from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
+import {
+  formatProviderGaveUpLine,
+  formatProviderResumedNotice,
+  formatProviderWaitNotice,
+} from "./format-provider-outage.js";
 import { reduceMemoryHealthWarning } from "./reduce-memory-health-warning.js";
 import { formatFeedLine } from "./format-event.js";
 import {
@@ -163,6 +171,20 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         action.sessionId !== undefined &&
         action.sessionId !== state.session.sessionId
       ) {
+        // …except for a pointer when that turn parks on its provider:
+        // the notice itself lands in its own thread (the switch-back
+        // replays the turn's events), but a thread the operator is not
+        // looking at could otherwise sit paused for minutes unnoticed.
+        if (
+          action.event.type === "provider_waiting" &&
+          action.event.attempt === 1
+        ) {
+          return appendChatMessage(state, {
+            role: "system",
+            variant: "warn",
+            text: formatBackgroundProviderWaitNotice(action.sessionId),
+          });
+        }
         return state;
       }
       return reduceAgentEvent(state, action.event);
@@ -633,6 +655,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         },
         describeFailedAttempts(event.error),
       );
+      // The turn died parked: the chat said it was waiting, so the
+      // failure says the wait is over before it says why.
+      const diedWaiting =
+        event.category === "transport" &&
+        state.providerOutage !== null &&
+        !state.providerOutage.givenUp;
+      const failureText = diedWaiting
+        ? `${formatProviderGaveUpLine(state.providerOutage!.maxWaitMs)}\n${chatError}`
+        : chatError;
       // The wait ran out and the turn died with it. Keep the outage on
       // screen: the next message the operator sends will fail the same
       // way, and a state that clears itself between attempts is how
@@ -651,7 +682,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             line: `» ${lastRunStatus}`,
             color: "red",
           }),
-          { role: "system", text: withReportHint(chatError), variant: "warn" },
+          { role: "system", text: withReportHint(failureText), variant: "warn" },
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
@@ -668,17 +699,31 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         maxWaitMs: event.maxWaitMs,
         attempt: event.attempt,
       });
-      // One feed line per outage, not per retry: the backoff fires every
-      // few seconds at the start and the meta-row carries the live
-      // numbers. A wall of identical lines would bury the work above it.
-      return event.attempt === 1
-        ? appendFeed(next, {
-            kind: "runtime_info",
-            stepIndex: null,
-            line,
-            color: "yellow",
-          })
-        : next;
+      // One feed line and one chat notice per outage, not per retry: the
+      // backoff fires every few seconds at the start and the meta-row
+      // carries the live numbers. A wall of identical lines would bury
+      // the work above it. The chat notice is the one the operator sees:
+      // the feed is in another tab and is wiped at every turn start, and
+      // from the chat a parked turn read as an agent gone silent.
+      if (event.attempt !== 1) return next;
+      const backend = selectComposerBackend(state);
+      return appendChatMessage(
+        appendFeed(next, {
+          kind: "runtime_info",
+          stepIndex: null,
+          line,
+          color: "yellow",
+        }),
+        {
+          role: "system",
+          variant: "warn",
+          text: formatProviderWaitNotice(
+            event.reason,
+            event.maxWaitMs,
+            backend === "local" || backend === "fusion",
+          ),
+        },
+      );
     }
     case "prompt_repacked":
       return appendFeed(state, {
@@ -699,9 +744,18 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         line: `» "${event.provider}" is out of credit (${event.code}) — task paused; top up, then say continue`,
         color: "yellow",
       });
-    case "provider_recovered":
+    case "provider_recovered": {
+      // Closes the wait notice `provider_waiting` posted — only when one
+      // was posted, so a recovery the chat never heard about stays in
+      // the feed.
+      const cleared: TuiState = { ...state, providerOutage: null };
       return appendFeed(
-        { ...state, providerOutage: null },
+        state.providerOutage !== null
+          ? appendChatMessage(cleared, {
+              role: "system",
+              text: formatProviderResumedNotice(event.waitedMs),
+            })
+          : cleared,
         {
           kind: "runtime_info",
           stepIndex: null,
@@ -711,6 +765,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: "green",
         },
       );
+    }
     case "completion_truncated": {
       // One line per retry, in the operator's terms: what was cut, and
       // what the retry changes. The turn only fails on the second cut,

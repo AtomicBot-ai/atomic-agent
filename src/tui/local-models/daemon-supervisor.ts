@@ -28,6 +28,26 @@ export const DEAD_TICKS_TO_RESTART = 2;
 export const QUICK_DEATH_MS = 60_000;
 export const MAX_QUICK_DEATHS = 3;
 
+/**
+ * One incident, told once: what the operator reads in the chat while the
+ * feed keeps its line per attempt. An incident opens at the first
+ * restart and closes when a restart brings the daemon back or the
+ * supervisor gives up; the retries in between add nothing to the chat
+ * but a first failed restart.
+ */
+export type SupervisorNotice =
+  | {
+      kind: "restarting";
+      cause: "died" | "wedged";
+      /** The watchdog's reading, or the death line. */
+      reason: string;
+      /** Quick deaths so far: `> 0` means it died again soon after a restart. */
+      quickDeaths: number;
+    }
+  | { kind: "restarted"; afterMs: number }
+  | { kind: "restart_failed"; fault: string | null }
+  | { kind: "gave_up"; deaths: number; fault: string | null };
+
 export interface DaemonSupervisorDeps {
   /** Managed mode, local route active, `autoRestart` on. */
   enabled: () => boolean;
@@ -38,6 +58,11 @@ export interface DaemonSupervisorDeps {
   /** Single-flight restart (stop what is left, start again). */
   restart: () => Promise<boolean>;
   say: (line: string) => void;
+  /**
+   * The operator-facing half: one notice per incident (see
+   * {@link SupervisorNotice}). Omitted = feed lines only.
+   */
+  notify?: (notice: SupervisorNotice) => void;
   /** One-line fault summary from the daemon's log, if any. */
   describeFault: () => string | null;
   /**
@@ -58,6 +83,9 @@ export class DaemonSupervisor {
   private recovering: Promise<boolean> | null = null;
   private gaveUp = false;
   private ticking = false;
+  /** Wall clock of the first restart of the open incident, or `null`. */
+  private incidentSince: number | null = null;
+  private incidentFailureTold = false;
 
   constructor(
     private readonly deps: DaemonSupervisorDeps,
@@ -83,6 +111,9 @@ export class DaemonSupervisor {
    * again.
    */
   noteStarted(): void {
+    // Our own restart goes through the same start path; only a start
+    // from anywhere else (the operator's) ends an incident silently.
+    if (!this.recovering) this.closeIncident();
     this.deps.resetWedge?.();
     this.lastStartAt = this.now();
     this.gaveUp = false;
@@ -106,7 +137,7 @@ export class DaemonSupervisor {
       }
       this.deadTicks += 1;
       if (this.deadTicks < DEAD_TICKS_TO_RESTART) return;
-      await this.recover("the model server died");
+      await this.recover("the model server died", "died");
     } finally {
       this.ticking = false;
     }
@@ -117,15 +148,21 @@ export class DaemonSupervisor {
    * one attempt. Exported for the wedge watchdog, which has already
    * decided the daemon is gone for all practical purposes.
    */
-  recover(reason: string): Promise<boolean> {
+  recover(
+    reason: string,
+    cause: "died" | "wedged" = "wedged",
+  ): Promise<boolean> {
     if (this.recovering) return this.recovering;
-    this.recovering = this.runRecovery(reason).finally(() => {
+    this.recovering = this.runRecovery(reason, cause).finally(() => {
       this.recovering = null;
     });
     return this.recovering;
   }
 
-  private async runRecovery(reason: string): Promise<boolean> {
+  private async runRecovery(
+    reason: string,
+    cause: "died" | "wedged",
+  ): Promise<boolean> {
     this.deadTicks = 0;
     this.deps.resetWedge?.();
     // A daemon that stayed up past the window proved itself: its death
@@ -137,6 +174,15 @@ export class DaemonSupervisor {
       return false;
     }
     this.deps.say(`local-llm: ${reason} — restarting it (auto-restart)`);
+    if (this.incidentSince === null) {
+      this.incidentSince = this.now();
+      this.deps.notify?.({
+        kind: "restarting",
+        cause,
+        reason,
+        quickDeaths: this.quickDeaths,
+      });
+    }
     let ok = false;
     try {
       ok = await this.deps.restart();
@@ -146,17 +192,41 @@ export class DaemonSupervisor {
     // A failed start leaves the pid dead, so the next ticks come back
     // here as a quick death — the guard counts it without a special case.
     this.lastStartAt = this.now();
+    if (ok) {
+      const afterMs = this.now() - (this.incidentSince ?? this.now());
+      this.deps.say(
+        `local-llm: the model server is back up after ${Math.round(afterMs / 1000)} s (auto-restart)`,
+      );
+      this.deps.notify?.({ kind: "restarted", afterMs });
+      this.closeIncident();
+    } else {
+      const fault = this.deps.describeFault();
+      this.deps.say(
+        `local-llm: the automatic restart failed${fault ? `: ${fault}` : ""} — trying again`,
+      );
+      if (!this.incidentFailureTold) {
+        this.incidentFailureTold = true;
+        this.deps.notify?.({ kind: "restart_failed", fault });
+      }
+    }
     return ok;
+  }
+
+  private closeIncident(): void {
+    this.incidentSince = null;
+    this.incidentFailureTold = false;
   }
 
   private giveUp(): void {
     this.gaveUp = true;
+    this.closeIncident();
     const fault = this.deps.describeFault();
     this.deps.say(
       `local-llm: the model server died ${MAX_QUICK_DEATHS} times within a minute of starting — ` +
         `stopped restarting it${fault ? `: ${fault}` : ""}. Start it again with /llm restart once that is fixed, ` +
         "or set localModels.managed.autoRestart to false to manage it by hand",
     );
+    this.deps.notify?.({ kind: "gave_up", deaths: MAX_QUICK_DEATHS, fault });
   }
 
   private now(): number {
