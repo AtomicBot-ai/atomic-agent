@@ -10,6 +10,7 @@
   "scripts": {
     "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs && node scripts/build-speech-helper.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "node --test test/*.test.mjs",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "smoke": "npm run build && electron . --smoke",

@@ -26,6 +26,7 @@ import {
   type RunModeProvider,
   type RunModeVerdict,
 } from "./run-mode.js";
+import { isIncompleteProvider } from "./provider-hygiene.js";
 
 /**
  * Lane B — backend switch.
@@ -75,6 +76,8 @@ export interface SwitchResult {
   needsKey?: boolean;
   /** activateLocal: nothing downloaded — the route moved, the model switch should open. */
   needsModel?: boolean;
+  /** activateProvider: the entry has no chat model yet (U29) — open its model list. */
+  needsChatModel?: boolean;
   /** selectLocalModel on a model that is not on disk — pull it first. */
   needsDownload?: boolean;
   error?: string;
@@ -120,6 +123,12 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   const cloud = entry.kind !== "llama-server";
   if (cloud && !providerIsUsable(entry)) {
     return { ok: false, needsKey: true, providerId: id, error: "no API key" };
+  }
+  // U29: an entry with no chat model cannot be built by the agent, and as the
+  // active provider it would stop `atag serve` from starting. Pick the model
+  // first (selectCloudModel writes it and then activates).
+  if (isIncompleteProvider(entry)) {
+    return { ok: false, needsChatModel: true, providerId: id, error: "choose a model for this provider first" };
   }
   /* Under effective Fusion the orchestrator IS the active provider, and its
      own model chip re-activates it: that keeps the mode (the TUI's

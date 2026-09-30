@@ -36,6 +36,7 @@ import {
   providerModels,
   verifyProviderKey,
   removeProvider,
+  pruneIncompleteProvidersInFile,
   modelsStart,
   traceUsage,
   traceTools,
@@ -7855,6 +7856,21 @@ async function startLocalDaemonAtBoot(): Promise<void> {
   }
 }
 
+/**
+ * U29: before `atag serve` first reads the file, drop provider entries an
+ * unfinished add-provider wizard left without a model (provider-hygiene.ts).
+ * Never fatal: a failure here only means the agent sees the entry and skips
+ * it with a warning.
+ */
+async function pruneIncompleteProvidersAtBoot(): Promise<void> {
+  try {
+    const r = await pruneIncompleteProvidersInFile();
+    if (r.removed.length) console.log(`[config] removed unfinished provider entries: ${r.removed.join(", ")}`);
+  } catch {
+    // see above
+  }
+}
+
 async function claimDesktopPorts(): Promise<void> {
   if (!DESKTOP_STATE_WAS_FRESH) return;
   try {
@@ -7954,7 +7970,7 @@ void app.whenReady().then(async () => {
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
        launch this is skipped entirely, so it costs nothing. */
-    void claimDesktopPorts().then(() => {
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
       void agent?.start();
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();
