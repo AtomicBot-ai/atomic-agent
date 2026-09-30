@@ -1,4 +1,5 @@
 import {
+  ModelCannotSeeError,
   VisionUnsupportedError,
   type LlmProvider,
   type ProviderCapabilities,
@@ -29,6 +30,7 @@ import {
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
 import { isNativeShapeRejection } from "./openai-native-messages.js";
+import { OPENAI_DEFAULT_REQUEST_TIMEOUT_MS } from "../../transport-deadlines.js";
 import {
   buildOpenAiHeaders,
   createOpenAiAttemptBudget,
@@ -53,6 +55,11 @@ import {
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
+import {
+  isImageRejection,
+  markModelCannotSee,
+  modelCannotSee,
+} from "../model-vision-rejections.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -65,7 +72,15 @@ export interface OpenAiProviderOptions {
    * `Authorization: Bearer`. See `openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * Whether the model this link serves can read images, as resolved per
+   * model by the factory (`model-vision.ts`), with `visionSource` saying
+   * where that came from. Absent means nothing describes the model:
+   * vision is offered as `assumed`, and the first image the service
+   * rejects turns it off for this model (`describeImage`).
+   */
   supportsVision?: boolean;
+  visionSource?: ProviderCapabilities["visionSource"];
   supportsParallelTools?: boolean;
   supportsPromptCache?: boolean;
   reasoningFormat?: ReasoningFormat;
@@ -144,6 +159,7 @@ export class OpenAiProvider implements LlmProvider {
   readonly toolCallAdapter: ToolCallAdapter;
   readonly streamConsumer: StreamConsumer;
   readonly capabilities: ProviderCapabilities;
+  readonly chatModelId: string;
 
   private readonly http: OpenAiHttpDeps;
   private readonly defaultChatModel: string;
@@ -184,8 +200,7 @@ export class OpenAiProvider implements LlmProvider {
       options.streamConsumer ??
       createOpenAiStreamConsumer(this.reasoningFormat);
     this.capabilities = {
-      vision: options.supportsVision ?? true,
-      visionSource: options.supportsVision ? "modalities.vision" : "absent",
+      ...openAiVisionCapabilities(options),
       toolTransport: "native_tools",
       contextWindow: 128_000,
       supportsParallelTools: options.supportsParallelTools ?? true,
@@ -194,6 +209,7 @@ export class OpenAiProvider implements LlmProvider {
       reasoningFormat: this.reasoningFormat,
     };
     this.defaultChatModel = options.defaultChatModel;
+    this.chatModelId = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.extraBody = options.extraBody;
@@ -214,7 +230,8 @@ export class OpenAiProvider implements LlmProvider {
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
       ...(options.apiKeyHeader ? { apiKeyHeader: options.apiKeyHeader } : {}),
-      requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
+      requestTimeoutMs:
+        options.requestTimeoutMs ?? OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,
       ...(options.logger ? { logger: options.logger } : {}),
@@ -403,27 +420,73 @@ export class OpenAiProvider implements LlmProvider {
         accumulatedReasoning = "";
         streamFinal = undefined;
         const stream = this.streamConsumer.consume(res.body, request.signal);
-        while (true) {
-          const next = await stream.next();
-          if (next.done) {
-            streamFinal = next.value;
-            streamEnded = true;
-            break attempts;
+        // Whether this pump reached the consumer's own `done`. A pump that
+        // did not has abandoned a live stream; see the release below.
+        let drained = false;
+        try {
+          while (true) {
+            const next = await stream.next();
+            if (next.done) {
+              streamFinal = next.value;
+              streamEnded = true;
+              drained = true;
+              break attempts;
+            }
+            const chunk = next.value;
+            if (chunk.delta) accumulated += chunk.delta;
+            if (chunk.reasoningDelta)
+              accumulatedReasoning += chunk.reasoningDelta;
+            if (!chunk.done) {
+              // Set before the yield, deliberately: a caller that throws
+              // into this generator (`generator.throw()`, which is how a
+              // consumer reports its own failure into a stream it is
+              // draining) resumes us *inside* the catch below, with the
+              // yield never having returned. Set after the yield, that
+              // error would find `committed === false` and replay a
+              // completion the caller has already shown part of.
+              committed = true;
+              yield chunk;
+            }
           }
-          const chunk = next.value;
-          if (chunk.delta) accumulated += chunk.delta;
-          if (chunk.reasoningDelta)
-            accumulatedReasoning += chunk.reasoningDelta;
-          if (!chunk.done) {
-            // Set before the yield, deliberately: a caller that throws
-            // into this generator (`generator.throw()`, which is how a
-            // consumer reports its own failure into a stream it is
-            // draining) resumes us *inside* the catch below, with the
-            // yield never having returned. Set after the yield, that
-            // error would find `committed === false` and replay a
-            // completion the caller has already shown part of.
-            committed = true;
-            yield chunk;
+        } finally {
+          // Release this attempt's transport on every exit that is not the
+          // consumer's own `done`.
+          //
+          // This pump cannot be a `yield*`/`for await` — the loop decides
+          // which chunks reach the caller and when to leave the retry loop
+          // — and a hand-run inner iterator is NOT closed when this
+          // generator is closed: `yield*` forwards a `.return()`, a manual
+          // pump swallows it. So a consumer that walks away at the `yield`
+          // above (a `.return()` down the chain, a `break` out of its
+          // `for await`, an exception thrown back into us) left the
+          // consumer suspended at its own `yield` forever, with the reader
+          // lock still held and a fetch body nobody reads.
+          //
+          // Order matters: closing the consumer runs its own `finally`,
+          // whose `releaseLock()` is what makes the body cancellable at
+          // all, and the cancel is what actually ends the request —
+          // `openAiFetch` detaches the caller's abort listener the moment
+          // the headers land, so after the open nothing but a cancel of
+          // this body can close the socket.
+          //
+          // The cancel is deliberately not awaited, like the reader cancel
+          // in `LlamaServerClient.completeStream`: a cancel travelling
+          // into a socket must never hang a consumer trying to walk away.
+          // Closing the consumer *is* awaited, because the cancel below
+          // needs the lock it gives back — so a consumer whose `finally`
+          // never settles would park this unwind. That is the shape of
+          // `createOpenAiStreamConsumer`'s contract, not an accident: its
+          // `finally` is a bare synchronous `releaseLock()`.
+          // Both rejections are swallowed because we are already unwinding
+          // — a transport that fails to close must not replace the error
+          // the caller is already seeing, nor surface as an unhandled
+          // rejection — and both calls are no-ops where they are not
+          // needed: closing a generator that already finished returns at
+          // once, and a body that has ended or errored takes the cancel
+          // into that same swallow.
+          if (!drained) {
+            await stream.return(undefined).catch(() => undefined);
+            void res.body.cancel().catch(() => undefined);
           }
         }
       } catch (err) {
@@ -454,12 +517,15 @@ export class OpenAiProvider implements LlmProvider {
         // loop classifies, carrying the generation id for the trace.
         if (err instanceof OpenAiSseError) throw this.httpErrorFromSse(err, path);
         if (!canReopenStream(err, committed, budget)) throw err;
-        // No `res.body.cancel()` here, on purpose. The only way to reach
-        // this line with a response in hand is `isNetworkError(err)` on
-        // an error raised by the body reader — i.e. the stream is already
-        // errored, `cancel()` on an errored stream rejects with the
-        // stored error, and undici has already destroyed the socket. A
-        // cancel call would be a swallowed no-op dressed up as hygiene.
+        // Nothing to release here: the dead attempt's transport went
+        // through the block above on the way out, and on this path it is
+        // a no-op either way. The only way to reach this line with a
+        // response in hand is `isNetworkError(err)` on an error raised by
+        // the body reader — i.e. the stream is already errored, `cancel()`
+        // on an errored stream rejects with the stored error, and undici
+        // has already destroyed the socket. The reopen below gets its own
+        // `res`, so the stream this loop is about to use is never the one
+        // that was released.
         await openAiRetryBackoff(
           OPENAI_MAX_ATTEMPTS - budget.remaining,
           request.signal,
@@ -543,6 +609,7 @@ export class OpenAiProvider implements LlmProvider {
       undefined,
       {
         cause: err,
+        streamError: err.message,
         ...(err.generationId !== null
           ? { generationId: err.generationId }
           : {}),
@@ -584,13 +651,34 @@ export class OpenAiProvider implements LlmProvider {
     if (!this.capabilities.vision) {
       throw new VisionUnsupportedError(this.name);
     }
-    return describeImageViaOpenAi(
-      this.http,
-      this.defaultChatModel,
-      request,
-      this.apiPathPrefix,
-      this.providerPreferences,
-    );
+    try {
+      return await describeImageViaOpenAi(
+        this.http,
+        this.defaultChatModel,
+        request,
+        this.apiPathPrefix,
+        this.providerPreferences,
+      );
+    } catch (error) {
+      // Only a model nobody described learns from a rejection: an
+      // operator's `supportsVision` or a catalogue row is not overruled
+      // by one 400, and its error goes back as the service wrote it.
+      if (
+        this.capabilities.visionSource === "assumed" &&
+        error instanceof OpenAiHttpError &&
+        isImageRejection(error.status, error.message)
+      ) {
+        markModelCannotSee(this.id, this.defaultChatModel);
+        this.capabilities.vision = false;
+        this.capabilities.visionSource = "rejected-images";
+        throw new ModelCannotSeeError(
+          this.id,
+          this.defaultChatModel,
+          error.message,
+        );
+      }
+      throw error;
+    }
   }
 
   async listModels(): Promise<readonly string[]> {
@@ -600,6 +688,27 @@ export class OpenAiProvider implements LlmProvider {
       .map((row) => row.id)
       .filter((id): id is string => typeof id === "string");
   }
+}
+
+/**
+ * The vision half of the capabilities. The factory passes the per-model
+ * answer; a bare construction (no `supportsVision`) is `assumed`, and a
+ * model already recorded as rejecting images stays text-only across the
+ * rebuild a config write causes.
+ */
+function openAiVisionCapabilities(
+  options: OpenAiProviderOptions,
+): Pick<ProviderCapabilities, "vision" | "visionSource"> {
+  if (options.supportsVision !== undefined) {
+    return {
+      vision: options.supportsVision,
+      visionSource: options.visionSource ?? "config.provider",
+    };
+  }
+  if (modelCannotSee(options.id, options.defaultChatModel)) {
+    return { vision: false, visionSource: "rejected-images" };
+  }
+  return { vision: true, visionSource: "assumed" };
 }
 
 /**

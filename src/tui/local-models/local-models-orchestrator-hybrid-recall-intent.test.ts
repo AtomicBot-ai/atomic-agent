@@ -11,6 +11,9 @@ vi.mock("../../local-llm/index.js", async () => {
   return {
     ...actual,
     getDaemonStatus: vi.fn(),
+    // Never the real one: it would stop or move whatever holds this machine's port.
+    reclaimManagedPort: vi.fn(async () => ({ kind: "free" })),
+    fetchServedModelIds: vi.fn(async () => null),
     getEmbeddingDaemonStatus: vi.fn(),
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),

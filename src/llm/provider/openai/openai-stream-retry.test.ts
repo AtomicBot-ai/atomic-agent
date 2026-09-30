@@ -226,9 +226,11 @@ describe("OpenAiProvider stream transport retry (pre-first-chunk)", () => {
   it("does not retry when the caller cancelled, even though the error looks like a drop", async () => {
     // The consumer is parked inside `reader.read()` while the gate is
     // closed, which is what makes the ordering deterministic: the abort
-    // lands while a read is in flight, so the failure genuinely reaches
-    // the retry decision as `Error: terminated` with an aborted signal —
-    // the exact collision the cancellation guard exists for.
+    // lands while a read is in flight. The consumer now races the signal
+    // against that read, so the abort is what ends the read and the gate
+    // never gets to raise `Error: terminated` — see the test below for
+    // the other ordering, where the body dies first and the collision
+    // this guard exists for really does reach the retry decision.
     const controller = new AbortController();
     let openGate: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -269,6 +271,46 @@ describe("OpenAiProvider stream transport retry (pre-first-chunk)", () => {
     // The shape matters as much as the absent retry: a turn the user
     // stopped has to classify as `cancelled`, or the fallback chain reads
     // it as a dead provider and restarts the completion on another link.
+    expect(classifyFailure(error)).toBe("cancelled");
+    expect(shouldAdvance(error).advance).toBe(false);
+  });
+
+  it("does not retry a body that died in the same tick as the abort", async () => {
+    // The other ordering: the body errors *first* and the abort lands
+    // while that rejection is in flight, so the read rejects with
+    // `Error: terminated` under an aborted signal. `controller.error()`
+    // settles the pending read synchronously, before `abort()` resolves
+    // the consumer's race, which is what makes this deterministic —
+    // `highWaterMark: 0` so `pull` runs with a read already waiting.
+    const controller = new AbortController();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(streamController) {
+                streamController.error(new Error("terminated"));
+                controller.abort();
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        streamingResponse([contentFrame("hello"), STOP_FRAMES]),
+      );
+
+    const { error } = await drainToError(
+      provider(fetchImpl).completeStream({
+        prompt: "hi",
+        signal: controller.signal,
+      }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(classifyFailure(error)).toBe("cancelled");
     expect(shouldAdvance(error).advance).toBe(false);
   });

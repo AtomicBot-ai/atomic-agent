@@ -41,7 +41,13 @@ import type { ContextUsageState } from "../session/context-usage.js";
 export type TuiAction =
   | { type: "runtime_info"; line: string }
   /** Append a local system message directly into the chat transcript. */
-  | { type: "system_message"; text: string; variant?: "normal" | "warn" }
+  | {
+      type: "system_message";
+      text: string;
+      variant?: "normal" | "warn";
+      /** See {@link ChatMessage.switchToSessionId}. */
+      switchToSessionId?: string;
+    }
   | {
       type: "agent_event";
       event: AgentLoopEvent;
@@ -293,8 +299,17 @@ export type TuiAction =
    * on the health-probe cadence. `null` clears the readout (external
    * mode, daemon down, unsupported platform).
    */
-  /** Refresh the always-on sidebar session list (orchestrator drives the load). */
-  | { type: "recent_sessions_updated"; sessions: readonly SessionPickerEntry[] }
+  /**
+   * Refresh the always-on sidebar session list (orchestrator drives the
+   * load). `morePages` says the store holds rows beyond these — the rail
+   * reads it one page at a time, so a list that stops at the page size
+   * is not the same claim as a list that stops because the store ran out.
+   */
+  | {
+      type: "recent_sessions_updated";
+      sessions: readonly SessionPickerEntry[];
+      morePages: boolean;
+    }
   /** Toggle keyboard focus between editor and sidebar. */
   | { type: "chat_focus_toggled" }
   /** Set keyboard focus explicitly (used when the sidebar collapses below the width threshold). */

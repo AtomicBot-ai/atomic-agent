@@ -60,7 +60,7 @@ export function CodingModeChip({
           : theme.colors.error;
   const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
-      {` ${look.label} `}
+      {codingModeChipLabel(mode)}
     </Text>
   );
   const mouse = useMouseCommands();
@@ -84,4 +84,14 @@ export function CodingModeChip({
       {chip}
     </MouseTarget>
   );
+}
+
+/**
+ * Exactly the text the chip paints. Exported for the composer's row
+ * planner, which needs the right-hand group's width before it can decide
+ * whether the route still fits beside it — measuring the string the
+ * component actually renders is what keeps the two from drifting.
+ */
+export function codingModeChipLabel(mode: CodingMode): string {
+  return ` ${codingModeLook(mode).label} `;
 }

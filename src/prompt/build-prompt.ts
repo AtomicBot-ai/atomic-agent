@@ -37,6 +37,7 @@ import {
   CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
   estimateTokens,
+  SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
 } from "./token-budget.js";
 
@@ -74,10 +75,13 @@ export type {
  * `### loaded-skills`, `### loaded-tools`).
  *
  * Budgeting:
- *  - `tokenBudget` caps `### loaded-skills` + `### session-facts` (shared) via
- *    `truncateToTokens` on a combined string. Session facts are placed first
- *    in the combined string so the tail of that blob is trimmed from loaded
- *    skills first, matching the legacy `known facts` + `loaded skills` order.
+ *  - `sessionSectionsMaxTokens` caps `### loaded-skills` + `### session-facts`
+ *    (shared) via `truncateToTokens` on a combined string. Session facts are
+ *    placed first in the combined string so the tail of that blob is trimmed
+ *    from loaded skills first, matching the legacy `known facts` +
+ *    `loaded skills` order. Left at `0` it is a `tokenBudget * 0.15` share,
+ *    which is what `tokenBudget` meant for this section before the key
+ *    existed.
  *  - `worldSnapshotMaxTokens` caps the ARIA snapshot. It is a safety net,
  *    not a regular truncation path — the snapshot is already compressed
  *    upstream by `aria-compressor`.
@@ -110,6 +114,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : configuredLowWater;
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
+  const sessionSectionsMaxTokens =
+    input.sessionSectionsMaxTokens ?? config.agent.sessionSectionsMaxTokens;
   const completionMaxTokens =
     input.completionMaxTokens ?? config.localModels.completionMaxTokens;
 
@@ -129,6 +135,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? CONVERSATION_CAP_AUTO_FALLBACK
       : conversationMaxTokens,
     worldSnapshot: worldSnapshotMaxTokens,
+    // Left at the sentinel, the share stays in charge, so an operator who
+    // never writes this key keeps the exact prompt they had.
+    ...(sessionSectionsMaxTokens > SESSION_SECTIONS_CAP_AUTO
+      ? { session: sessionSectionsMaxTokens }
+      : {}),
   });
 
   // Chat-transport prompts drop every llama-server template artifact:
@@ -391,6 +402,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   }
   const conversationParts = [`### conversation`, conversation, ``];
   const tailAfter: string[] = [];
+  if (input.routeNote && input.routeNote.length > 0) {
+    tailAfter.push(`### route`, input.routeNote, ``);
+  }
   if (profile !== null) {
     tailAfter.push("### profile", profile, ``);
   }

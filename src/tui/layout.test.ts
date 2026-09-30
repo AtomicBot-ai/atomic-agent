@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   computeChatViewportRows,
   computeChatWidth,
+  computeHintRowBudget,
+  computeMainColumnWidth,
   computeSidebarRowBudget,
   computeSidebarWidth,
   isSidebarVisible,
@@ -10,6 +12,10 @@ import {
   SIDEBAR_MIN_COLUMNS,
   SIDEBAR_MIN_ROWS,
   SIDEBAR_MIN_WIDTH,
+  HINT_ROW_MIN_ROWS,
+  MAX_HINT_EXTRA_ROWS,
+  RAIL_GUTTER_COLUMNS,
+  ROOT_PADDING_LEFT,
 } from "./layout.js";
 
 /** Comfortably taller than anything the rail needs. */
@@ -145,5 +151,112 @@ describe("computeChatViewportRows", () => {
   it("reserves more chrome on a narrow terminal, where it wraps", () => {
     expect(computeChatViewportRows(24, 45)).toBe(8);
     expect(computeChatViewportRows(24, 80)).toBe(12);
+  });
+
+  /**
+   * The rows the composer's adaptive chrome spends over its one-row
+   * baseline come out of the transcript. A viewport that kept them would
+   * scroll lines the composer is standing on.
+   */
+  it("hands over the rows the composer's chrome is spending", () => {
+    expect(computeChatViewportRows(40, 200, 0)).toBe(
+      computeChatViewportRows(40, 200),
+    );
+    expect(computeChatViewportRows(40, 200, 2)).toBe(
+      computeChatViewportRows(40, 200) - 2,
+    );
+  });
+
+  it("holds the floor however many rows the chrome asks for", () => {
+    expect(computeChatViewportRows(20, 200, 40)).toBe(4);
+  });
+
+  it("ignores a negative surplus rather than growing the viewport", () => {
+    expect(computeChatViewportRows(40, 200, -5)).toBe(
+      computeChatViewportRows(40, 200),
+    );
+  });
+});
+
+/**
+ * The hint strip buys its extra rows from the window's height: a window
+ * at the floor gets the single-row strip this app shipped with, and a
+ * tall one can afford to let the strip say everything.
+ */
+describe("computeHintRowBudget", () => {
+  it("gives a short window exactly the one row it always had", () => {
+    expect(computeHintRowBudget(HINT_ROW_MIN_ROWS - 1)).toBe(1);
+    expect(computeHintRowBudget(24)).toBe(1);
+    expect(computeHintRowBudget(0)).toBe(1);
+  });
+
+  /**
+   * 24 rows is the case that has to stay untouched: the overlay growth
+   * suite mounts at ink-testing-library's 100x24 and asserts a ten-line
+   * draft expands the composer by nine rows. A second strip row comes
+   * straight out of `maxComposerEditorLines`, which fell to 9 and broke
+   * it — this is that regression, pinned.
+   */
+  it("spends nothing on hints at the classic 24-row terminal", () => {
+    expect(computeHintRowBudget(24)).toBe(1);
+  });
+
+  it("starts buying rows at the threshold the meta bar already measured", () => {
+    expect(computeHintRowBudget(HINT_ROW_MIN_ROWS)).toBe(2);
+  });
+
+  it("never gives a row away twice, and never goes backwards", () => {
+    let previous = 0;
+    for (let rows = 0; rows <= 120; rows += 1) {
+      const budget = computeHintRowBudget(rows);
+      expect(budget).toBeGreaterThanOrEqual(previous);
+      previous = budget;
+    }
+  });
+
+  it("caps the strip however tall the window gets", () => {
+    const cap = 1 + MAX_HINT_EXTRA_ROWS;
+    expect(computeHintRowBudget(120)).toBe(cap);
+    expect(computeHintRowBudget(400)).toBe(cap);
+  });
+
+  it("spends a row on hints only once the window can seat one", () => {
+    // Every extra row is a row of transcript, so the budget must leave
+    // the viewport its floor at every height it grants.
+    for (let rows = 0; rows <= 200; rows += 1) {
+      const extra = computeHintRowBudget(rows) - 1;
+      expect(computeChatViewportRows(rows, 200, extra)).toBeGreaterThanOrEqual(
+        4,
+      );
+    }
+  });
+});
+
+/**
+ * The width the strip is rendered at, which is the width its row count
+ * has to be measured at. Distinct from `computeChatWidth` by exactly the
+ * rail's gutter — the discrepancy that used to live between `layout.ts`
+ * and `tui-app.tsx`'s own copy of the arithmetic.
+ */
+describe("computeMainColumnWidth", () => {
+  it("takes only the root padding when the rail is away", () => {
+    expect(computeMainColumnWidth(120, false)).toBe(120 - ROOT_PADDING_LEFT);
+  });
+
+  it("takes the rail and its gutter when the rail is up", () => {
+    expect(computeMainColumnWidth(120, true)).toBe(
+      120 - ROOT_PADDING_LEFT - computeSidebarWidth(120) - RAIL_GUTTER_COLUMNS,
+    );
+  });
+
+  it("is the chat width less the gutter", () => {
+    expect(computeMainColumnWidth(120, true)).toBe(
+      computeChatWidth(120, TALL) - RAIL_GUTTER_COLUMNS,
+    );
+  });
+
+  it("never goes negative on a terminal narrower than its own chrome", () => {
+    expect(computeMainColumnWidth(1, true)).toBe(0);
+    expect(computeMainColumnWidth(0, false)).toBe(0);
   });
 });

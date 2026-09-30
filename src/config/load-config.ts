@@ -233,6 +233,7 @@ export function loadConfig(): AtomicAgentConfig {
       conversationMaxPairs: user.agent.conversationMaxPairs,
       nameSessions: user.agent.nameSessions,
       conversationLowWater: user.agent.conversationLowWater,
+      sessionSectionsMaxTokens: user.agent.sessionSectionsMaxTokens,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
@@ -423,6 +424,13 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.UPDATE_CHECK_ON_STARTUP,
       ),
       repo: readEnv("ATOMIC_AGENT_REPO") ?? ENV_DEFAULTS.UPDATE_REPO,
+    },
+    sessions: {
+      retention: {
+        enabled: user.sessions.retention.enabled,
+        maxAgeDays: user.sessions.retention.maxAgeDays,
+        maxRows: user.sessions.retention.maxRows,
+      },
     },
     tracing: {
       trace: {
@@ -633,5 +641,8 @@ function mapUserLlmToRuntime(
     }),
     ...(llm.fallback ? { fallback: llm.fallback } : {}),
     ...(llm.runMode ? { runMode: llm.runMode } : {}),
+    // Without this `llm.openrouter.preferCacheRoutes: false` never
+    // reached the provider factory, which fell back to `true`.
+    ...(llm.openrouter ? { openrouter: { ...llm.openrouter } } : {}),
   };
 }

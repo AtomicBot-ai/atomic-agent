@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import { createEmptySessionState } from "../session/session-state.js";
 import {
   DetachedTurns,
   droppedPreview,
@@ -9,26 +10,40 @@ import {
 } from "./detached-turns.js";
 import { DEFAULT_RING_BUFFER_SIZE } from "./tui-state.js";
 
+const live = (id: string) => createEmptySessionState({ id, workingDir: "/tmp" });
+
 describe("DetachedTurns", () => {
   it("take removes and returns the parked controller", () => {
     const turns = new DetachedTurns();
     const controller = new AbortController();
-    turns.park("s1", controller);
+    turns.park(live("s1"), controller);
     expect(turns.has("s1")).toBe(true);
     expect(turns.take("s1")).toBe(controller);
     expect(turns.has("s1")).toBe(false);
     expect(turns.take("s1")).toBeNull();
   });
 
+  it("keeps the live session for a switch-back the store cannot answer", () => {
+    // A deferred session backgrounded mid-first-turn has no store row
+    // until the turn saves; the parked copy is the only one there is.
+    const turns = new DetachedTurns();
+    const session = live("s1");
+    turns.park(session, new AbortController());
+    expect(turns.sessionFor("s1")).toBe(session);
+    expect(turns.sessionFor("s2")).toBeNull();
+    turns.take("s1");
+    expect(turns.sessionFor("s1")).toBeNull();
+  });
+
   it("release is identity-checked so a finished turn cannot release its successor", () => {
     const turns = new DetachedTurns();
     const first = new AbortController();
     const second = new AbortController();
-    turns.park("s1", first);
+    turns.park(live("s1"), first);
     // The same session gets re-parked with a NEWER turn's controller
     // (switch back, run again, switch away again) before the first
     // turn's finally block runs.
-    turns.park("s1", second);
+    turns.park(live("s1"), second);
     expect(turns.release("s1", first)).toBe(false);
     expect(turns.has("s1")).toBe(true);
     expect(turns.release("s1", second)).toBe(true);
@@ -39,8 +54,8 @@ describe("DetachedTurns", () => {
     const turns = new DetachedTurns();
     const a = new AbortController();
     const b = new AbortController();
-    turns.park("s1", a);
-    turns.park("s2", b);
+    turns.park(live("s1"), a);
+    turns.park(live("s2"), b);
     turns.abortAll();
     expect(a.signal.aborted).toBe(true);
     expect(b.signal.aborted).toBe(true);

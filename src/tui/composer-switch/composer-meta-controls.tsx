@@ -6,7 +6,10 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import { openLocalModelsPane } from "./composer-switch-activate.js";
 import { fusionSurfaceInk, fusionSurfaceMuted } from "../theme/fusion-tint.js";
-import { BackendControl } from "./composer-backend-control.js";
+import {
+  BackendControl,
+  backendControlWidth,
+} from "./composer-backend-control.js";
 import type { ComposerBackendMeta } from "./composer-backend-selectors.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
@@ -146,6 +149,48 @@ export function ComposerMetaControls({
       ) : null}
     </>
   );
+}
+
+/** Columns the ` · ` a control draws before itself costs. */
+const LEAD_WIDTH = 3;
+
+/**
+ * Rendered columns of the whole route statement —
+ * `● cloud · anthropic · claude-opus-5` — built from the same branches
+ * {@link ComposerMetaControls} renders, including the fusion pair's two
+ * legs and the rigid swap glyph between them.
+ *
+ * The row planner in `meta-bar-rows.ts` needs this before Yoga runs:
+ * how many rows the bar takes is decided from the widths, and the bar's
+ * rendered height is then clamped to that number. A width computed here
+ * that disagreed with what the component paints would show up as a blank
+ * stripe over the transcript or as a row of it hidden behind the
+ * composer, so the two are deliberately the same code path.
+ *
+ * `model` is the label as the bar will draw it — already through
+ * `formatModel` — not the raw config value.
+ */
+export function composerRouteWidth(input: {
+  backend: ComposerBackendMeta | null;
+  provider: string | null;
+  model: string | null;
+  needsModelDownload?: boolean;
+}): number {
+  const { backend, provider, model } = input;
+  const needsModelDownload = input.needsModelDownload ?? false;
+  if (!backend && !provider && !model && !needsModelDownload) return 0;
+  let width = backend ? backendControlWidth(backend) : 0;
+  if (provider) width += (backend ? LEAD_WIDTH : 0) + provider.length;
+  const lead = backend || provider ? LEAD_WIDTH : 0;
+  if (needsModelDownload) return width + lead + DOWNLOAD_MODEL_LABEL.length;
+  if (!model) return width;
+  const pair = splitLegs(model);
+  if (pair) {
+    return (
+      width + lead + pair[0].length + LEG_SEPARATOR.length + pair[1].length
+    );
+  }
+  return width + lead + model.length;
 }
 
 /**

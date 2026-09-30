@@ -86,7 +86,7 @@ export function ContextChip({
   fusion?: boolean;
 }): ReactElement {
   const background = groundFor(usage, fusion);
-  const label = ` context ${chipBody(usage)} `;
+  const label = contextChipLabel(usage);
   const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
       {label}
@@ -143,6 +143,20 @@ export function ContextChip({
  * bare total, which is the only scale that still exists. A bar drawn
  * against a scale nobody knows would be a fabrication.
  */
+/**
+ * Exactly the text the chip paints, so a caller that needs its width
+ * measures the same string the component renders rather than a second
+ * guess at it. The composer's row planner (`meta-bar-rows.ts`) is that
+ * caller: it has to know how many columns the right-hand group takes
+ * before it can say how many rows the route needs.
+ *
+ * Every glyph here is single-width, so `String.length` is the rendered
+ * width.
+ */
+export function contextChipLabel(usage: ContextUsageView): string {
+  return ` context ${chipBody(usage)} `;
+}
+
 export function chipBody(usage: ContextUsageView): string {
   // Tasks, not rows. "12 lost" says nothing about how far back the agent
   // can still see; "3 tasks" is the unit the operator set the limit in

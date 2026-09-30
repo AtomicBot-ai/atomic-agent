@@ -26,6 +26,8 @@ const FILE_FILTERS = [
 
 /** Bot API download endpoint; `getFile` returns the trailing `file_path`. */
 const TELEGRAM_FILE_BASE = "https://api.telegram.org/file/bot";
+/** Bot downloads are capped at 20 MB; past this the transfer is stuck. */
+const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /**
  * Default `BotFactory` — wraps `grammy.Bot` to satisfy `BotInstance`.
@@ -210,7 +212,13 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     }
     let res: Response;
     try {
-      res = await fetch(`${TELEGRAM_FILE_BASE}${token}/${filePath}`);
+      res = await fetch(`${TELEGRAM_FILE_BASE}${token}/${filePath}`, {
+        // Telegram caps a bot download at 20 MB, so a transfer that has
+        // not finished in this long is not going to. Without a clock of
+        // its own this inherited the transport's, which is no longer
+        // five minutes — see `installTransportDeadlines`.
+        signal: AbortSignal.timeout(TELEGRAM_DOWNLOAD_TIMEOUT_MS),
+      });
     } catch (err) {
       throw new Error(
         `Telegram file download failed: ${scrubErrorMessage(err)}`,

@@ -155,6 +155,7 @@ export class IntegrationsOrchestrator {
         ),
         present: present.has(field.key),
         ...(field.readonly ? { readonly: true } : {}),
+        ...(field.secret ? { secret: true } : {}),
         ...(field.help === undefined ? {} : { help: field.help }),
       }));
       return {

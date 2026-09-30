@@ -1,7 +1,14 @@
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 import { USER_CONFIG_DEFAULTS } from "./config-schema.js";
+import { ConfigValidationError } from "./config-validation-error.js";
 
 /**
  * Dotted-key addressing for `atomic-agent config get|set|unset|list`.
@@ -304,4 +311,32 @@ export function deleteConfigPath(
     delete chain[i - 1]![segments[i - 1]!];
   }
   return true;
+}
+
+/**
+ * Read the config file as a plain JSON tree, without filling in defaults.
+ *
+ * Deliberately not `ensureUserConfigFileSync`: that returns the fully
+ * defaulted config, so writing it back would freeze today's 139 defaults
+ * into the user's file and silently pin them against future schema
+ * changes. A point edit must leave the rest of the file byte-for-byte
+ * alone, which means starting from what is actually on disk.
+ */
+export function readRawConfigTree(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const text = readFileSync(path, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ConfigValidationError(
+      "<file>",
+      `${path} is not valid JSON: ${message}`,
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ConfigValidationError("<file>", `${path} is not a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
 }

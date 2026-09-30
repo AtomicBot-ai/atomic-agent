@@ -11,6 +11,7 @@ import { computeRowWindow } from "../row-window.js";
 import {
   PinSessionButton,
   PIN_COLUMNS,
+  railTailInView,
   SessionRailRow,
   type SidebarDragState,
 } from "../session-rail/index.js";
@@ -125,11 +126,22 @@ export function Sidebar(props: SidebarProps): ReactElement {
   const wheelRef = useMouseTarget((hit) => {
     if (hit.event.kind !== "wheel" || !mouse) return false;
     const delta = hit.event.wheel === "up" ? -1 : 1;
-    mouse.dispatch(
-      activeSection === "tasks"
-        ? { type: "sidebar_tasks_cursor_moved", delta }
-        : { type: "sidebar_cursor_moved", delta },
-    );
+    if (activeSection === "tasks") {
+      mouse.dispatch({ type: "sidebar_tasks_cursor_moved", delta });
+      return true;
+    }
+    mouse.dispatch({ type: "sidebar_cursor_moved", delta });
+    // Same rule as the rail's ↓: the wheel is the other way to reach the
+    // foot of the loaded page, so it has to be able to ask for the next
+    // one too. The row the wheel is moving TO decides — `getState` reads
+    // the ref React refreshes on render, so the dispatch above has not
+    // landed in it yet.
+    if (delta > 0) {
+      const live = mouse.getState();
+      if (railTailInView(live.sidebarCursor + 1, live.recentSessions.length)) {
+        mouse.callbacks.onSessionsEndReached?.();
+      }
+    }
     return true;
   });
   // `flexShrink={0}`: Yoga shrinks flex children by default, so a wide

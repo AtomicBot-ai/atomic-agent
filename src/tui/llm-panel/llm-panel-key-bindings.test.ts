@@ -576,3 +576,47 @@ describe("handleLlmPanelKey — tell me when it lands", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 });
+
+describe("handleLlmPanelKey — Local pane model keys (#546)", () => {
+  it("keeps them off the Cloud pane", () => {
+    const base = seededState();
+    const state = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const },
+    };
+    const onDevice = vi.fn();
+    const onAutoUpdate = vi.fn();
+    const dispatched: TuiAction[] = [];
+    for (const input of ["G", "U", "d", "i"]) {
+      handleLlmPanelKey(input, emptyKey(), {
+        state,
+        dispatch: (action) => dispatched.push(action),
+        callbacks: callbacks({
+          onLocalModelsDeviceCycleRequested: onDevice,
+          onLocalModelsAutoUpdateToggleRequested: onAutoUpdate,
+        }),
+      });
+    }
+    expect(onDevice).not.toHaveBeenCalled();
+    expect(onAutoUpdate).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
+  });
+
+  it("lets the open model detail swallow the pane hotkeys", () => {
+    const base = seededState();
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, mode: "detail" as const },
+    };
+    const onStop = vi.fn();
+    const dispatched: TuiAction[] = [];
+    const handled = handleLlmPanelKey("s", emptyKey(), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks({ onLocalModelsDaemonStopRequested: onStop }),
+    });
+    expect(handled).toBe(true);
+    expect(onStop).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
+  });
+});

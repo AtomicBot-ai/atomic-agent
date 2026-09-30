@@ -62,7 +62,7 @@ function makeHarness(): Harness {
   const runtime = {
     createSession: () => session,
     sessionStore: {
-      listSummaries: () => [],
+      listSummaryPage: () => [],
       countUnreadable: () => 0,
       listRecent: () => [],
       load: () => session,
@@ -280,7 +280,7 @@ function makeGapHarness(): GapHarness {
   const runtime = {
     createSession: () => session,
     sessionStore: {
-      listSummaries: () => [],
+      listSummaryPage: () => [],
       countUnreadable: () => 0,
       listRecent: () => [],
       load: () => session,

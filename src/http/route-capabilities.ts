@@ -33,7 +33,8 @@ export function createCapabilitiesHandler(): HttpHandler {
       agent: {
         tokenBudget: runtime.config.agent.tokenBudget,
         maxSteps: runtime.config.agent.maxSteps,
-        toolTimeoutMs: runtime.config.agent.toolTimeoutMs,
+        // No `toolTimeoutMs`: the key still parses, but no tool reads
+        // it, so advertising it told dashboards a limit that never ran.
         // Source of truth. Live gate state, not the boot-time config
         // snapshot: reflects `--no-approval` boots and later
         // `setApprovalLevel` calls (the composer coding-mode control), so admin UIs

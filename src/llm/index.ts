@@ -13,6 +13,13 @@ export type {
 } from "./llama-server-client.js";
 export { checkLlamaServer } from "./llama-server-health.js";
 export { llamaEndpointUrl } from "./llama-endpoint-url.js";
+export {
+  installTransportDeadlines,
+  resetTransportDeadlines,
+  transportDeadlinesFor,
+  OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
+  TRANSPORT_DEADLINE_MARGIN_MS,
+} from "./transport-deadlines.js";
 export { describeLlamaHealthFailure } from "./describe-llama-health-failure.js";
 export type {
   HealthCheckOptions,
@@ -80,6 +87,7 @@ export type {
 export {
   LlamaServerProvider,
   VisionUnsupportedError,
+  ModelCannotSeeError,
 } from "./provider/index.js";
 export type {
   LlmProvider,

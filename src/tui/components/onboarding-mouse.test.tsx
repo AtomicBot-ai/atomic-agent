@@ -6,6 +6,8 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { resetConfigCache } from "../../config/index.js";
+import { buildReport } from "../../import/index.js";
+import type { OnboardingImportPlan } from "../onboarding/import-step.js";
 import { MouseProvider } from "../mouse/mouse-context.js";
 import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
@@ -83,6 +85,7 @@ interface Mounted {
   frame(): string;
   actions: TuiAction[];
   pulls: string[];
+  imports: OnboardingImportPlan[];
   registry: MouseTargetRegistry;
   stdin: { write(data: string): void };
   unmount(): void;
@@ -95,6 +98,7 @@ function mount(
 ): Mounted {
   const actions: TuiAction[] = [];
   const pulls: string[] = [];
+  const imports: OnboardingImportPlan[] = [];
   const registry = new MouseTargetRegistry();
   const onboarding = {
     ...createOnboardingState("http://127.0.0.1:8080"),
@@ -108,6 +112,7 @@ function mount(
   };
   const callbacks: TuiAppCallbacks = {
     onLocalModelsPullRequested: (modelId) => pulls.push(modelId),
+    onOnboardingImportRequested: (plan) => imports.push(plan),
   };
   const view = render(
     <MouseProvider
@@ -128,6 +133,7 @@ function mount(
     frame: () => strip(view.lastFrame() ?? ""),
     actions,
     pulls,
+    imports,
     registry,
     stdin: view.stdin,
     unmount: view.unmount,
@@ -285,6 +291,41 @@ describe("onboarding mouse", () => {
     await sendUntilClaimed(view, "Skip — take me to the agent");
     expect(view.actions).toEqual([
       { type: "onboarding_cursor_set", cursor: 1 },
+    ]);
+    view.unmount();
+  });
+
+  it("import_pick: a click on the selected import row starts the import", async () => {
+    const view = mount("import_pick", {
+      importAgents: [
+        { id: "claude-code", label: "Claude Code", dir: "/c", enabled: true },
+      ],
+      // Row 0 is the agent tickbox, row 1 the import action.
+      cursor: 1,
+      outcome: "local",
+    });
+    await sendUntilClaimed(view, "Import from 1 agent");
+    expect(view.actions.map((action) => action.type)).toEqual([
+      "onboarding_import_run_started",
+    ]);
+    // The click asks for the write itself — no dry-run stands between
+    // the ticks and the import any more.
+    expect(view.imports).toHaveLength(1);
+    expect(view.imports[0]?.agents.map((a) => a.id)).toEqual(["claude-code"]);
+    view.unmount();
+  });
+
+  it("import_done: a click on the report hands over, like any key does", async () => {
+    const view = mount("import_done", {
+      importReport: buildReport(
+        [{ kind: "Claude Code memory", status: "migrated" }],
+        true,
+      ),
+      outcome: "local",
+    });
+    await sendUntilClaimed(view, "Claude Code memory");
+    expect(view.actions).toEqual([
+      { type: "onboarding_finished", outcome: "local" },
     ]);
     view.unmount();
   });

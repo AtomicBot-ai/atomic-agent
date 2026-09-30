@@ -42,6 +42,10 @@ import {
 } from "../llm/index.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
+  classifyProviderWaitCause,
+  type ProviderWaitCause,
+} from "../llm/reliability/provider-wait-cause.js";
+import {
   composeSizeRejectionNotice,
   planSizeRejectionRepack,
 } from "./size-rejection-recovery.js";
@@ -541,20 +545,24 @@ function isWaitableOutage(err: unknown): boolean {
  * client had already written, which names the deadline and the knob
  * that raises it (issue #490 reports exactly this pair of runs).
  *
- * The timeout KIND is deliberately not inspected, and the five do not
- * cost the same, so here is what is actually being traded away:
+ * The timeout KIND is deliberately not inspected, and they do not cost
+ * the same, so here is what is actually being traded away:
  *
- *   first-token        30 min   `firstTokenTimeoutMs`
- *   stream-total        6 h     `streamTotalTimeoutMs`
- *   first-token-stall  300 s    `requestTimeoutMs`
- *   idle               300 s    `requestTimeoutMs`
- *   total              300 s    `requestTimeoutMs`
+ *   first-token              30 min   `firstTokenTimeoutMs`
+ *   stream-total              6 h     `streamTotalTimeoutMs`
+ *   first-token-unreachable  10 min   `SLOTS_UNREACHABLE_BUDGET_MS`
+ *   first-token-unresponsive 10 min   `SLOTS_UNREACHABLE_BUDGET_MS`
+ *   first-token-stall        300 s    `requestTimeoutMs`
+ *   idle                     300 s    `requestTimeoutMs`
+ *   total                    300 s    `requestTimeoutMs`
  *
- * Only the first is the 45-minute-worker disaster in #490. Two of the
- * others carry their own positive evidence that the server is alive:
+ * Only the first is the 45-minute-worker disaster in #490. Four of the
+ * others carry their own positive evidence about the server:
  * `first-token-stall` fires only because `/slots` kept answering right
- * up to the verdict, and `stream-total` only because data kept arriving
- * for six hours. `idle` does NOT — it means the socket is still open
+ * up to the verdict, `stream-total` only because data kept arriving for
+ * six hours, and the two ten-minute kinds only after an unbroken run of
+ * polls proved the daemon is gone or wedged — for which replaying the
+ * step is the one thing that cannot help. `idle` does NOT — it means the socket is still open
  * and nothing has come down it for a whole `requestTimeoutMs`, so what
  * it proves is five minutes stale. A server that actually died mid-turn
  * usually closes the socket instead, which arrives as `ECONNRESET` with
@@ -733,6 +741,13 @@ export interface RunTurnOptions {
    */
   originalRequest?: string;
   /**
+   * The serving route changed since this session's previous turn: the
+   * runtime's note saying so (`prompt/route-change-note.ts`). Reaches
+   * every step of this turn as `### route`; the runtime computes it
+   * once per change, so the next turn carries none.
+   */
+  routeNote?: string;
+  /**
    * Reasoning effort for every completion of this turn, mapped per
    * provider family by the body builder. A fusion worker's
    * `workerReasoning`; absent, the provider's default.
@@ -818,6 +833,12 @@ export type AgentLoopEvent =
       maxWaitMs: number;
       nextRetryMs: number;
       reason: string;
+      /**
+       * What the failure was, from the error itself rather than its
+       * message — the part a UI may word. `reason` stays the raw line
+       * for logs and traces.
+       */
+      cause?: ProviderWaitCause;
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -1184,8 +1205,6 @@ export class AgentLoop {
         : this.deps.toolDescriptors;
     };
 
-    state = await refreshMemoryContext(this.deps, state, options);
-
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
     // between turns — without this, step 0 would still build the prompt
@@ -1200,9 +1219,20 @@ export class AgentLoop {
     // arm the profile and grammar would stay pinned to whatever the
     // first fallover probed for the whole outage. Take-and-clear, so a
     // recovered primary quiets the probes again after one turn.
+    //
+    // Run beside the memory recall rather than after it: the two share
+    // nothing (recall reads the store and, for a referential follow-up,
+    // asks the model to rewrite the query; the sync reads `/props`), and
+    // both wait on the same server. In sequence, a server that accepts
+    // and never answers cost the turn the rewriter's budget PLUS the
+    // probe's before `step_started`; side by side it costs the longer
+    // of the two. Neither can throw — the refresh swallows its own
+    // failures, keeps the prior profile and is bounded by the client's
+    // `PROBE_TIMEOUT_MS`.
     const localLinkServedLastTurn =
       this.deps.localBackend?.takeLinkServed?.() ?? false;
-    if (this.deps.profileManager) {
+    const syncProfile = async (): Promise<void> => {
+      if (!this.deps.profileManager) return;
       if (this.localBackendActive()) {
         if (!(await this.deps.localBackend?.ensureProbed())) {
           await this.deps.profileManager.refresh();
@@ -1210,7 +1240,10 @@ export class AgentLoop {
       } else if (localLinkServedLastTurn) {
         await this.deps.profileManager.refresh();
       }
-    }
+    };
+    const profileSynced = syncProfile();
+    state = await refreshMemoryContext(this.deps, state, options);
+    await profileSynced;
 
     // Fusion's division of labour is per TURN, not per session: each
     // turn starts owing a plan and a fan-out before it may write. An
@@ -1657,6 +1690,9 @@ export class AgentLoop {
               : {}),
             ...(options.originalRequest !== undefined
               ? { originalRequest: options.originalRequest }
+              : {}),
+            ...(options.routeNote !== undefined
+              ? { routeNote: options.routeNote }
               : {}),
             ...(options.reasoningEffort !== undefined
               ? { reasoningEffort: options.reasoningEffort }
@@ -2475,6 +2511,7 @@ export class AgentLoop {
             maxWaitMs: providerWaitCfg.maxWaitMs,
             nextRetryMs,
             reason: runError.message,
+            cause: classifyProviderWaitCause(err),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,

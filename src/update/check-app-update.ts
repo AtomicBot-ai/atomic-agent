@@ -25,6 +25,8 @@ export class AppUpdateCheckError extends Error {
  * against rapid relaunches during development.
  */
 const RELEASE_CACHE_TTL_MS = 10 * 60_000;
+/** A release lookup runs on the start path and must never hold it. */
+const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 
 interface CacheEntry {
   repo: string;
@@ -51,7 +53,13 @@ async function fetchLatestTag(
   const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetchImpl(url, { headers });
+  const res = await fetchImpl(url, {
+    headers,
+    // A release lookup runs on the start path; it had no clock of its
+    // own and inherited the transport's, which is no longer five
+    // minutes — see `installTransportDeadlines`.
+    signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+  });
   if (!res.ok) {
     throw new AppUpdateCheckError(
       `Failed to fetch latest release: HTTP ${res.status}`,

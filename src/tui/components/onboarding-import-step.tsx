@@ -1,7 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { ImportReport } from "../../import/index.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 import { plainKey, returnKey } from "../mouse/synthetic-key.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import {
@@ -17,15 +20,17 @@ import { theme } from "../theme/theme.js";
 
 /**
  * The first-run import screens: tick the agents found on this machine
- * (or take the skip row), read the dry-run, read the result. All pure
- * renders of `OnboardingUiState`; the keys live in
+ * (or take the skip row), then read what came over. Two screens, not
+ * three — the ticks are the confirmation, so the run starts on Enter
+ * instead of going through a dry-run nobody could act on differently.
+ * All pure renders of `OnboardingUiState`; the keys live in
  * `onboarding-step-keys.ts` and the runs in the import orchestrator.
  */
 
 const PICK_EXPLAINER: readonly string[] = [
   "Other agents keep skills, memory, sessions and keys on this machine.",
-  "Tick which ones to bring into atomic-agent — nothing is written before",
-  "you see a preview, and nothing is ever removed from the source.",
+  "Tick which ones to bring into atomic-agent — nothing is ever removed",
+  "from the source, and anything already here is kept as it is.",
 ];
 
 const SKIP_DETAIL = "Go straight to your agent — /import works any time later.";
@@ -187,9 +192,7 @@ export function OnboardingImportPickStep(props: {
           />
         ),
       )}
-      {props.busy ? (
-        <Text color={theme.colors.muted}>scanning the sources…</Text>
-      ) : null}
+      {props.busy ? <Text color={theme.colors.muted}>importing…</Text> : null}
       {props.error !== null ? (
         <Text color={theme.colors.error}>{props.error}</Text>
       ) : null}
@@ -199,70 +202,79 @@ export function OnboardingImportPickStep(props: {
 
 export function measureOnboardingImportReportStep(
   report: ImportReport | null,
-  executed: boolean,
 ): number {
   return widestLine([
-    reportHeadline(report, executed),
+    reportHeadline(report),
     ...(report ? summarizeImportReport(report) : []),
   ]);
 }
 
-function reportHeadline(
-  report: ImportReport | null,
-  executed: boolean,
-): string {
+function reportHeadline(report: ImportReport | null): string {
   if (!report) return "";
   const s = report.summary;
-  if (executed) {
-    return s.error > 0
-      ? `${theme.glyphs.warn}  Imported with ${s.error} failure${s.error === 1 ? "" : "s"}`
-      : `${theme.glyphs.check}  Imported`;
+  if (s.error > 0) {
+    return `${theme.glyphs.warn}  Imported with ${s.error} failure${s.error === 1 ? "" : "s"}`;
   }
-  const actionable = s.migrated + s.conflict;
-  return actionable > 0
-    ? "Here is what an import would do:"
-    : "Nothing new to import — everything is already here or empty.";
+  // A run where every row was already here is not a failure and not an
+  // import — say so rather than claim a success that moved nothing.
+  if (s.migrated === 0) return "Nothing new to import — it was already here.";
+  return `${theme.glyphs.check}  Imported`;
 }
 
 /**
- * The preview and the result are the same surface — a headline and one
- * line per domain — differing only in tense and in what Enter means,
- * which the footer says.
+ * What the import did: a headline and one line per domain. The last
+ * screen of the whole first run, so any key — or a click anywhere on
+ * the block — hands over to the agent, which is what the footer says.
  */
 export function OnboardingImportReportStep(props: {
   report: ImportReport | null;
-  executed: boolean;
   busy: boolean;
   error: string | null;
 }): ReactElement {
-  const headline = reportHeadline(props.report, props.executed);
-  const success = props.executed && (props.report?.summary.error ?? 0) === 0;
+  const mouse = useMouseCommands();
+  const headline = reportHeadline(props.report);
+  const success = (props.report?.summary.error ?? 0) === 0;
   return (
-    <Box flexDirection="column" flexShrink={0}>
-      {headline.length > 0 ? (
-        <Text color={success ? theme.colors.success : undefined}>
-          {headline}
-        </Text>
-      ) : null}
-      {props.report ? (
-        <Box flexDirection="column" marginTop={1}>
-          {summarizeImportReport(props.report).map((line) => (
-            <Text key={line} color={theme.colors.muted}>
-              {line}
-            </Text>
-          ))}
-        </Box>
-      ) : null}
-      {props.busy ? (
-        <Box marginTop={1}>
-          <Text color={theme.colors.muted}>importing…</Text>
-        </Box>
-      ) : null}
-      {props.error !== null ? (
-        <Box marginTop={1}>
-          <Text color={theme.colors.error}>{props.error}</Text>
-        </Box>
-      ) : null}
-    </Box>
+    <MouseTarget
+      layer={MOUSE_LAYER_PANEL}
+      onMouse={(hit) => {
+        if (!mouse || !isPrimaryPress(hit.event)) return false;
+        // "Any key" includes the mouse: the click goes through the same
+        // key table, so whatever a keypress does here a click does too.
+        handleOnboardingStepKey("", plainKey(), {
+          state: mouse.getState(),
+          dispatch: mouse.dispatch,
+          callbacks: mouse.callbacks,
+        });
+        return true;
+      }}
+    >
+      <Box flexDirection="column" flexShrink={0}>
+        {headline.length > 0 ? (
+          <Text color={success ? theme.colors.success : undefined}>
+            {headline}
+          </Text>
+        ) : null}
+        {props.report ? (
+          <Box flexDirection="column" marginTop={1}>
+            {summarizeImportReport(props.report).map((line) => (
+              <Text key={line} color={theme.colors.muted}>
+                {line}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
+        {props.busy ? (
+          <Box marginTop={1}>
+            <Text color={theme.colors.muted}>importing…</Text>
+          </Box>
+        ) : null}
+        {props.error !== null ? (
+          <Box marginTop={1}>
+            <Text color={theme.colors.error}>{props.error}</Text>
+          </Box>
+        ) : null}
+      </Box>
+    </MouseTarget>
   );
 }

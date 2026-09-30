@@ -16,6 +16,7 @@ import {
   hashToolOutcome,
   isLoopVetoResult,
   isWanderingProneTool,
+  WANDERING_CEILING_SHARE,
 } from "./loop-detector.js";
 
 function mkResult(
@@ -381,6 +382,17 @@ describe("loop notice formatters", () => {
     expect(reply).not.toMatch(/repeated/i);
   });
 
+  it("formatWanderingRedirect names a move a SEARCH tool can make (issue #458)", () => {
+    const note = formatWanderingRedirect("os.web.search", 7);
+    // The generic wording ("stop probing more URLs/pages") named no
+    // action for a search tool -- it is what the reporter's model was
+    // handed on the run that then hit the cap.
+    expect(note).not.toContain("URLs/pages");
+    expect(note).toContain("`os.web.fetch`");
+    expect(note.toLowerCase()).toContain("already have search results");
+    expect(note.toLowerCase()).toContain("wandering loop");
+  });
+
   it("formatWanderingRedirect is an actionable redirect", () => {
     const note = formatWanderingRedirect("os.web.fetch", 7);
     expect(note).toContain("os.web.fetch");
@@ -488,6 +500,10 @@ describe("veto message names the invariant and an alternative (issue #186)", () 
     });
     expect(veto).toContain("13 different attempts");
     expect(veto).toContain("web.archive.org");
+    // Issue #458: 11 of the reported 12 attempts ran and returned usable
+    // content, so "and still no answer" was a false statement about them.
+    expect(veto).not.toContain("still no answer");
+    expect(veto).toContain("without using what came back");
     expect(veto).not.toContain("identical");
     expect(veto).not.toContain("consecutive calls");
     // Wandering means many DIFFERENT URLs, so the hint says stop guessing
@@ -629,6 +645,238 @@ describe("ToolLoopTracker wandering detector", () => {
     expect(verdict.detector).toBe("wandering");
     expect(verdict.count).toBe(3);
     expect(verdict.warningKey).toBe("wandering:os.web.search");
+  });
+
+  // Issue #458, reported twice: a turn that IS making progress must not be
+  // stopped. The spread the detector acts on is therefore scoped to the
+  // current run -- distinct probes since another tool last succeeded --
+  // and only the absolute ceiling still reads the whole window.
+  it("does not escalate a research fan-out that keeps doing other work (issue #458)", () => {
+    const tracker = new ToolLoopTracker();
+    // The reported session, in order: nine distinct searches across three
+    // batched steps, a failed CLI run, a successful one, then two more
+    // searches. The twelfth search was the one that got blocked.
+    const queries = [
+      "avax news",
+      "granite upgrade",
+      "l1 growth",
+      "tokenomics",
+      "price analysis",
+      "helicon upgrade",
+      "q3 metrics",
+      "firewood",
+      "staking yield",
+    ];
+    for (const query of queries) {
+      cycle(tracker, "os.web.search", { query }, mkResult({ summary: query }));
+    }
+    cycle(
+      tracker,
+      "os.shell.run",
+      { cmd: "avalanche market" },
+      mkResult({ status: "error", summary: "exit 2" }),
+    );
+    // A failed call is not progress -- the run is still open here.
+    expect(tracker.wanderingSpread("os.web.search", { query: "fees" })).toBe(10);
+    cycle(
+      tracker,
+      "os.shell.run",
+      { cmd: "avalanche --compact market" },
+      mkResult({ summary: "tvl 1.2B" }),
+    );
+    // ...and settled here, so the next searches start a fresh run.
+    for (const query of ["fees", "etf inflows"]) {
+      cycle(tracker, "os.web.search", { query }, mkResult({ summary: query }));
+    }
+    const twelfth = { query: "active l1 count" };
+    expect(tracker.wanderingSpread("os.web.search", twelfth)).toBe(3);
+    expect(tracker.isWanderingEscalated("os.web.search", twelfth)).toBe(false);
+    // The window ladder still nudges -- twelve distinct queries are in
+    // recent history -- but a nudge is a `### notice` the model can act
+    // on, not the forced end of a turn. That is the whole complaint.
+    const verdict = tracker.check("os.web.search", twelfth);
+    expect(verdict.level).toBe("warn");
+    expect(verdict.detector).toBe("wandering");
+  });
+
+  it("does not escalate 12 distinct fetches interleaved with successful reads (issue #458)", () => {
+    const tracker = new ToolLoopTracker();
+    for (let i = 0; i < 12; i += 1) {
+      cycle(
+        tracker,
+        "os.web.fetch",
+        { url: `https://example.test/file-${i}.ts` },
+        mkResult({ summary: `contents ${i}` }),
+      );
+      cycle(
+        tracker,
+        "os.fs.grep",
+        { pattern: `sym${i}` },
+        mkResult({ summary: `hit ${i}` }),
+      );
+    }
+    const next = { url: "https://example.test/file-12.ts" };
+    expect(tracker.isWanderingEscalated("os.web.fetch", next)).toBe(false);
+  });
+
+  it("still escalates a probe run that never touches another tool", () => {
+    const tracker = new ToolLoopTracker();
+    for (let i = 0; i < 11; i += 1) {
+      cycle(
+        tracker,
+        "os.web.search",
+        { query: `q${i}` },
+        mkResult({ summary: `serp ${i}` }),
+      );
+    }
+    // Eleven recorded + this one = the default escalation spread of 12.
+    expect(tracker.isWanderingEscalated("os.web.search", { query: "q11" })).toBe(
+      true,
+    );
+  });
+
+  it("escalates on the window ceiling even when the run keeps being settled", () => {
+    // The bound the detector was built for: GAIA traces where a model
+    // re-formulates ~35 queries while barely opening the pages it found.
+    // Settling the run occasionally must not buy unlimited probing. Run
+    // at STOCK thresholds -- the ceiling's production shape is 18 of a
+    // 30-call window, a ratio a roomier test config would not exercise.
+    const tracker = new ToolLoopTracker();
+    const ceiling = Math.ceil(30 * WANDERING_CEILING_SHARE);
+    let stop = tracker.wanderingStop("os.web.search", { query: "q0" });
+    let probes = 0;
+    while (!stop.escalated && probes < 40) {
+      const args = { query: `q${probes}` };
+      cycle(tracker, "os.web.search", args, mkResult({ summary: `serp ${probes}` }));
+      probes += 1;
+      // Four probes per settling call: the run never reaches 12, so only
+      // the ceiling can stop this.
+      if (probes % 4 === 0) {
+        cycle(
+          tracker,
+          "os.fs.write",
+          { path: `notes-${probes}.md` },
+          mkResult({ summary: "written" }),
+        );
+      }
+      stop = tracker.wanderingStop("os.web.search", { query: `q${probes}` });
+    }
+    expect(stop).toMatchObject({ escalated: true, rule: "ceiling" });
+    expect(stop.spread).toBe(ceiling);
+    // The run rule stayed quiet throughout -- this is the ceiling's doing.
+    expect(probes).toBeGreaterThan(12);
+  });
+
+  it("words a ceiling stop as wandering, with its own spread", () => {
+    // `check()` reads both ladders precisely so the gate cannot word a
+    // ceiling stop off a `generic_repeat` verdict: that veto said
+    // "repeated calls are not making progress", count 0, about calls that
+    // were all distinct -- the statement this whole change removes.
+    const tracker = new ToolLoopTracker();
+    let stop = tracker.wanderingStop("os.web.search", { query: "q0" });
+    let probes = 0;
+    while (!stop.escalated && probes < 40) {
+      const args = { query: `q${probes}` };
+      cycle(tracker, "os.web.search", args, mkResult({ summary: `serp ${probes}` }));
+      probes += 1;
+      if (probes % 4 === 0) {
+        cycle(tracker, "os.fs.grep", { pattern: `p${probes}` }, mkResult({ summary: "hit" }));
+      }
+      stop = tracker.wanderingStop("os.web.search", { query: `q${probes}` });
+    }
+    const verdict = tracker.check("os.web.search", { query: `q${probes}` });
+    expect(verdict.detector).toBe("wandering");
+    expect(verdict.count).toBe(stop.spread);
+  });
+
+  it("warns before it stops, at every ratio of probes to real work", () => {
+    // A hard stop the model was never nudged about would make the
+    // redirect notice -- and its `os.web.search` wording -- dead code in
+    // exactly the shapes that need it.
+    for (const perSettle of [2, 3, 4, 5, 6, 12]) {
+      const tracker = new ToolLoopTracker();
+      let warnedAt = -1;
+      let stoppedAt = -1;
+      for (let i = 0; i < 60; i += 1) {
+        const args = { query: `q${i}` };
+        if (tracker.wanderingStop("os.web.search", args).escalated) {
+          stoppedAt = i;
+          break;
+        }
+        const verdict = tracker.check("os.web.search", args);
+        if (warnedAt < 0 && verdict.detector === "wandering") warnedAt = i;
+        cycle(tracker, "os.web.search", args, mkResult({ summary: `serp ${i}` }));
+        if ((i + 1) % perSettle === 0) {
+          cycle(tracker, "os.shell.run", { cmd: `c${i}` }, mkResult({ summary: "done" }));
+        }
+      }
+      expect(stoppedAt).toBeGreaterThan(0);
+      expect(warnedAt).toBeGreaterThanOrEqual(0);
+      expect(warnedAt).toBeLessThan(stoppedAt);
+    }
+  });
+
+  it("keeps the ceiling reachable at every escalation setting", () => {
+    // Derived from the ESCALATION, the ceiling died above esc 15: it then
+    // needed a window of nothing but distinct probes, in which case the
+    // run rule has already fired. Derived from the WINDOW, it is always
+    // reachable, and the wandering knobs stop moving the ring buffer that
+    // the unrelated repeat / no-progress detectors walk.
+    for (const wanderingEscalation of [4, 12, 15, 20, 50]) {
+      const tracker = new ToolLoopTracker({ wanderingEscalation });
+      let fired = false;
+      for (let i = 0; i < 200 && !fired; i += 1) {
+        const args = { query: `q${i}` };
+        const stop = tracker.wanderingStop("os.web.search", args);
+        if (stop.escalated) {
+          fired = stop.rule === "ceiling";
+          break;
+        }
+        cycle(tracker, "os.web.search", args, mkResult({ summary: `serp ${i}` }));
+        // Three probes per settling call: too few for the run rule at any
+        // of these settings, so only the ceiling can fire.
+        if ((i + 1) % 3 === 0) {
+          cycle(tracker, "os.shell.run", { cmd: `c${i}` }, mkResult({ summary: "ok" }));
+        }
+      }
+      expect({ wanderingEscalation, fired }).toEqual({
+        wanderingEscalation,
+        fired: true,
+      });
+    }
+  });
+
+  it("leaves the history ring to loopHistorySize alone", () => {
+    // Deriving the ceiling from the escalation used to widen the ring,
+    // and the ring is what `getNoProgressStreak` / `getRepeatCount` walk:
+    // turning the wandering knob down in aggressiveness turned an
+    // advisory on an unrelated tool into a veto.
+    const verdicts = [4, 12, 20, 50].map((wanderingEscalation) => {
+      const tracker = new ToolLoopTracker({ wanderingEscalation });
+      const args = { path: "." };
+      const result = mkResult({ summary: "same listing" });
+      for (let i = 0; i < 4; i += 1) cycle(tracker, "os.fs.list", args, result);
+      const verdict = tracker.check("os.fs.list", args);
+      return `${verdict.level}/${verdict.detector}/${verdict.count}`;
+    });
+    expect(new Set(verdicts).size).toBe(1);
+  });
+
+  it("still bounds a browser loop that alternates two tools of one family", () => {
+    // read_aria -> click -> read_aria is one probe in two moves. If they
+    // settled each other the pair would be unbounded -- and "clicking
+    // around" is what the browser redirect is written for.
+    const tracker = new ToolLoopTracker();
+    let stoppedAt = -1;
+    for (let i = 0; i < 40; i += 1) {
+      if (tracker.wanderingStop("browser.click", { sel: `#a${i}` }).escalated) {
+        stoppedAt = i;
+        break;
+      }
+      cycle(tracker, "browser.read_aria", { page: i }, mkResult({ summary: `aria ${i}` }));
+      cycle(tracker, "browser.click", { sel: `#a${i}` }, mkResult({ summary: `clicked ${i}` }));
+    }
+    expect(stoppedAt).toBe(11);
   });
 
   it("isWanderingProneTool covers web search / fetch / http / browser only", () => {

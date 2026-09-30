@@ -170,11 +170,15 @@ export class ImportOrchestrator {
    * a destination that diverged stays a conflict — onboarding never
    * overwrites — and the answer lands on the bus as
    * `onboarding_import_report` / `onboarding_import_failed`.
+   *
+   * Always a write. The flow has no dry-run screen: with nothing
+   * overwritten here and nothing removed from the source, a preview
+   * could only ever be read, never acted on differently, so the ticks
+   * are the confirmation and the report is the answer. `/import`'s tab
+   * keeps its own preview, where the per-domain toggles make one worth
+   * reading.
    */
-  async runOnboarding(
-    plan: OnboardingImportPlan,
-    execute: boolean,
-  ): Promise<void> {
+  async runOnboarding(plan: OnboardingImportPlan): Promise<void> {
     // Let the busy frame paint before the synchronous SQLite work begins.
     await Promise.resolve();
     const items: ImportItemResult[] = [];
@@ -192,14 +196,14 @@ export class ImportOrchestrator {
         try {
           report = await runner.run({
             options: enabled,
-            execute,
+            execute: true,
             overwrite: false,
           });
         } finally {
           runner.close();
         }
-        if (execute && enabled.includes("cron")) cronImported = true;
-        if (execute && enabled.includes("sessions")) sessionsImported = true;
+        if (enabled.includes("cron")) cronImported = true;
+        if (enabled.includes("sessions")) sessionsImported = true;
         for (const item of report.items) {
           items.push({
             ...item,
@@ -214,20 +218,14 @@ export class ImportOrchestrator {
       });
       return;
     }
-    const report = buildReport(items, execute);
+    const report = buildReport(items, true);
+    this.bus.emit({ type: "onboarding_import_report", report });
     this.bus.emit({
-      type: "onboarding_import_report",
-      report,
-      executed: execute,
+      type: "runtime_info",
+      line: `import done: ${formatSummary(report)}`,
     });
-    if (execute) {
-      this.bus.emit({
-        type: "runtime_info",
-        line: `import done: ${formatSummary(report)}`,
-      });
-      if (cronImported) this.deps.refreshTasks?.();
-      if (sessionsImported) this.deps.refreshSessions?.();
-    }
+    if (cronImported) this.deps.refreshTasks?.();
+    if (sessionsImported) this.deps.refreshSessions?.();
   }
 
   shutdown(): void {

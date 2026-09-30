@@ -3,15 +3,18 @@ import { describe, expect, it } from "vitest";
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import {
   WORKER_HINT_CONTEXT,
+  WORKER_HINT_QUEUED,
   WORKER_HINT_QUOTA,
   WORKER_HINT_SATURATED,
   WORKER_HINT_UNREACHABLE,
+  WORKER_HINT_UNSERVED,
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
   fanoutSpend,
   formatDelegateOutput,
   resultCarriesApprovalRefusal,
+  unservedWorkerHint,
   workerFailureHint,
   type WorkerTaskResult,
 } from "./worker-result.js";
@@ -745,6 +748,13 @@ describe("workerFailureHint", () => {
       "llama-server stopped answering GET /slots entirely for 600000ms while this request waited for its first token — not one poll reached a listening socket (connection refused / host unreachable, never a timeout), so the server is not merely busy, it is unreachable; check that llama-server is still alive and restart it before retrying (running fewer workers will not help)",
       WORKER_HINT_UNREACHABLE,
     ],
+    [
+      // The other half of the same watchdog: the connection WAS made
+      // and nothing came back on any endpoint. Different evidence, same
+      // remedy — a daemon answering nobody does not get narrower.
+      "llama-server accepted the connection and answered nothing for 600000ms while this request waited for its first token — neither GET /slots nor GET /health produced a reply, and /health is served without touching the inference loop, so a server that is merely busy still answers it; this daemon is listening and not serving. Restart it before retrying (waiting longer and running fewer workers will both not help)",
+      WORKER_HINT_UNREACHABLE,
+    ],
     ["openrouter HTTP 402: Payment Required", WORKER_HINT_QUOTA],
     ["HTTP 429: Too Many Requests", WORKER_HINT_QUOTA],
     ["insufficient credits on this API key", WORKER_HINT_QUOTA],
@@ -761,9 +771,103 @@ describe("workerFailureHint", () => {
     expect(hint).toContain("restart the daemon");
   });
 
+  it("sends a wedged server to a restart too, not to a narrower fan-out", () => {
+    // It names no slots and no refusal, and on the words alone
+    // "answered nothing … waited for its first token" reads as
+    // saturation. The remedy for a daemon that is listening and not
+    // serving is the same restart an absent one gets.
+    const hint = workerFailureHint(
+      "llama-server accepted the connection and answered nothing for 600000ms while this request waited for its first token; this daemon is listening and not serving",
+    );
+    expect(hint).toBe(WORKER_HINT_UNREACHABLE);
+    expect(hint).not.toBe(WORKER_HINT_SATURATED);
+  });
+
   it("stays silent on failures it has no remedy for", () => {
     expect(workerFailureHint("provider exploded")).toBeUndefined();
     expect(workerFailureHint("ENOENT: no such file")).toBeUndefined();
     expect(workerFailureHint("waited 4290ms")).toBeUndefined();
+  });
+});
+
+describe("unservedWorkerHint", () => {
+  /** The field row: zero steps, never served, and `fetch failed` for a cause. */
+  function unserved(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
+    return row({
+      status: "failed",
+      reply: "",
+      stepCount: 0,
+      durationMs: 306_000,
+      queueWaitMs: null,
+      tools: { calls: 0, errors: 0, writes: 0, byTool: {} },
+      error: "fetch failed",
+      ...over,
+    });
+  }
+
+  it("names the daemon when the worker was alone on the leg", () => {
+    expect(unservedWorkerHint(unserved(), true)).toBe(WORKER_HINT_UNSERVED);
+  });
+
+  it("blames the fan-out's width when others were running alongside", () => {
+    expect(unservedWorkerHint(unserved(), false)).toBe(WORKER_HINT_QUEUED);
+  });
+
+  it("recognises the rest of the family fetch collapses into one string", () => {
+    for (const error of [
+      "terminated",
+      "socket hang up",
+      "other side closed",
+      "read ECONNRESET",
+      "UND_ERR_HEADERS_TIMEOUT",
+    ]) {
+      expect(unservedWorkerHint(unserved({ error }), true)).toBe(
+        WORKER_HINT_UNSERVED,
+      );
+    }
+  });
+
+  it("leaves a worker that took a step alone, however its transport died", () => {
+    expect(
+      unservedWorkerHint(unserved({ stepCount: 3 }), true),
+    ).toBeUndefined();
+  });
+
+  it("leaves a worker that was served and only then failed alone", () => {
+    // A measured wait means the server did answer: whatever killed this
+    // request, it was not silence.
+    expect(
+      unservedWorkerHint(unserved({ queueWaitMs: 4_200 }), true),
+    ).toBeUndefined();
+    // And a row nobody measured is a row nothing is claimed about.
+    const { queueWaitMs: _unmeasured, ...unmeasured } = unserved();
+    expect(unservedWorkerHint(unmeasured, true)).toBeUndefined();
+  });
+
+  it("lets every class workerFailureHint already recognises keep its own row", () => {
+    for (const error of [
+      'llama-server HTTP 500: {"error":{"message":"Context size has been exceeded."}}',
+      "llama-server accepted the request but sent no first token within 120000ms",
+      "llama-server stopped answering GET /slots entirely for 600000ms",
+      "openrouter HTTP 402: Payment Required",
+    ]) {
+      expect(workerFailureHint(error)).toBeDefined();
+      expect(unservedWorkerHint(unserved({ error }), true)).toBeUndefined();
+    }
+  });
+
+  it("leaves a failure that names its own fault reading as it always did", () => {
+    // These say what happened without help, and a worker that never
+    // failed at all has nothing to diagnose.
+    for (const error of [
+      "connect ECONNREFUSED 127.0.0.1:19091",
+      "getaddrinfo ENOTFOUND api.example",
+      "provider exploded",
+    ]) {
+      expect(unservedWorkerHint(unserved({ error }), true)).toBeUndefined();
+    }
+    expect(
+      unservedWorkerHint(unserved({ status: "queued" }), true),
+    ).toBeUndefined();
   });
 });

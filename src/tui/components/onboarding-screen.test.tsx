@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OnboardingScreen } from "./onboarding-screen.js";
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import { ROOT_PADDING_LEFT } from "../layout.js";
+import { buildReport, type ImportReport } from "../../import/index.js";
 import { createOnboardingState } from "../onboarding/onboarding-state.js";
 import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
@@ -48,13 +49,30 @@ type Step =
   | "local_pick"
   | "custom_chat_url"
   | "propose_second"
-  | "wait_or_jump";
+  | "wait_or_jump"
+  | "import_pick"
+  | "import_done";
+
+/** Two detected sources, so the pick screen has rows to draw. */
+const IMPORT_AGENTS = [
+  {
+    id: "claude-code" as const,
+    label: "Claude Code",
+    dir: "/c",
+    enabled: true,
+  },
+  { id: "codex" as const, label: "Codex", dir: "/x", enabled: false },
+];
 
 interface FlowOptions {
   ctrlCArmed?: boolean;
   cursor?: number;
+  /** A run is out with the importers; the import screens freeze. */
+  busy?: boolean;
   /** The wait-or-jump screens read the pull off the panel state. */
   panel?: { pull?: typeof PULL | null; errorLine?: string | null };
+  /** What the import screens were handed: the ticks and the report. */
+  importReport?: ImportReport | null;
 }
 
 function flowElement(
@@ -69,6 +87,9 @@ function flowElement(
     offer: "local" as const,
     cursor: options.cursor ?? 0,
     localModelId: step === "wait_or_jump" ? "gemma-4-e4b" : null,
+    importAgents: IMPORT_AGENTS,
+    importReport: options.importReport ?? null,
+    busy: options.busy ?? false,
   };
   const base = createInitialTuiState(fakeSession(), 50);
   const panel = options.panel;
@@ -486,6 +507,60 @@ describe("OnboardingScreen", () => {
     expect(actions).toContainEqual({
       type: "onboarding_cursor_moved",
       delta: 1,
+    });
+  });
+
+  describe("the import screens", () => {
+    it("asks for the ticks and promises no preview — the run starts on enter", () => {
+      const { view } = renderFlow("import_pick");
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("bring your data · one last step");
+      expect(frame).toContain("[x] Claude Code");
+      expect(frame).toContain("[ ] Codex");
+      // The old flow pitched a dry-run here; the ticks are the
+      // confirmation now, so neither the copy nor the footer may
+      // promise a screen that no longer exists.
+      expect(frame).not.toMatch(/preview/i);
+      expect(frame).toContain("Import from 1 agent");
+      expect(frame).toContain("enter import");
+    });
+
+    it("says importing… while the run is out, on the screen that asked", () => {
+      const { view } = renderFlow("import_pick", { busy: true });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("importing…");
+      // Frozen keys, and the footer says so instead of offering Enter.
+      expect(frame).not.toContain("enter import");
+    });
+
+    it("reports what came over, and only that", () => {
+      const { view } = renderFlow("import_done", {
+        importReport: buildReport(
+          [
+            { kind: "Claude Code memory", status: "migrated" },
+            { kind: "Claude Code skills", status: "skipped" },
+          ],
+          true,
+        ),
+      });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("bring your data · done");
+      expect(frame).toContain("Imported");
+      expect(frame).toContain("Claude Code memory: 1 migrated");
+      expect(frame).toContain("Claude Code skills: 1 skipped");
+      expect(frame).toContain("any key to start");
+    });
+
+    it("does not claim an import when every row was already here", () => {
+      const { view } = renderFlow("import_done", {
+        importReport: buildReport(
+          [{ kind: "Codex sessions", status: "skipped" }],
+          true,
+        ),
+      });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("Nothing new to import");
+      expect(frame).toContain("Codex sessions: 1 skipped");
     });
   });
 

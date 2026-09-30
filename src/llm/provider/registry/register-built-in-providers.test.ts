@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../../config/index.js";
+import { resetConfigCache } from "../../../config/index.js";
+import { PLAIN_INSTRUCT_PROFILE } from "../../model-profile.js";
 import { registerBuiltInProviderKinds } from "./register-built-in-providers.js";
 import {
   getProviderFactory,
@@ -214,5 +216,100 @@ describe("llm.openrouter.preferCacheRoutes through the openrouter factory", () =
     expect(off).not.toHaveProperty("provider");
     const own = await openRouterBody({}, { providerPreferences: PREFERENCES });
     expect(own.provider).toEqual(PREFERENCES);
+  });
+});
+
+describe("the vision request budget through the llama-server factory", () => {
+  /**
+   * The budget the factory hands the provider is private, so it is
+   * measured instead of read: this server answers with headers and then
+   * stalls, and only the forwarded deadline can end the call. A budget
+   * that was not forwarded falls back to the provider's own hardcoded
+   * 120 s and the race below reports `hung`.
+   */
+  async function visionOutcome(
+    entry: Partial<LlmProviderConfigEntry>,
+  ): Promise<string> {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory("llama-server");
+    if (!factory) throw new Error("llama-server is not registered");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal?.aborted) throw init.signal.reason;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(new TextEncoder().encode('{"choices":'));
+              init?.signal?.addEventListener("abort", () =>
+                stream.error(init.signal?.reason ?? new Error("aborted")),
+              );
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const provider = await factory({
+      config: {} as AtomicAgentConfig,
+      entry: {
+        id: "local-llama",
+        kind: "llama-server",
+        url: "http://test-llama:9999",
+        ...entry,
+      },
+      llamaClient: {} as never,
+      getProfile: () => ({
+        ...PLAIN_INSTRUCT_PROFILE,
+        vision: { supported: true, source: "has_multimodal" },
+      }),
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as never,
+    });
+    let timer: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      provider
+        .describeImage({
+          prompt: "x",
+          images: [
+            {
+              id: 1,
+              bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+              mimeType: "image/jpeg",
+            },
+          ],
+        })
+        .then(
+          () => "resolved",
+          () => "rejected",
+        ),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve("hung"), 1_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    return outcome;
+  }
+
+  afterEach(() => {
+    delete process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS;
+    resetConfigCache();
+  });
+
+  it("follows the operator's localModels.requestTimeoutMs", async () => {
+    process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS = "20";
+    resetConfigCache();
+    expect(await visionOutcome({})).toBe("rejected");
+  });
+
+  it("lets the entry's own requestTimeoutMs win", async () => {
+    process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS = "600000";
+    resetConfigCache();
+    expect(await visionOutcome({ requestTimeoutMs: 20 })).toBe("rejected");
   });
 });

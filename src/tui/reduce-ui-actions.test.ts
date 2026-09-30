@@ -276,18 +276,73 @@ describe("reduceUiAction while_busy_mode_changed", () => {
     expect(twice?.whileBusyMode).toBe("queue");
   });
 
-  it("message_steered clears the editor without parking the message", () => {
+  it("message_steered clears the editor and shows the message it took", () => {
     const state = { ...createInitialTuiState(SESSION), inputValue: "draft" };
     const next = reduceUiAction(state, {
       type: "message_steered",
       text: "draft",
     });
     expect(next?.inputValue).toBe("");
-    // The bubble arrives with `steer_applied`, so nothing is queued and
-    // nothing is rendered yet — a steer that misses the turn must not
-    // show up twice when it falls back to the queue.
+    // Rendered at the foot of the chat right away — the loop reads its
+    // inbox a step boundary later, and an editor that just blanked is
+    // not an answer to "did that send?".
+    expect(next?.pendingSteers).toEqual(["draft"]);
+    // Still not parked and still not transcript: a steer that misses
+    // the turn must not show up twice when it falls back to the queue.
     expect(next?.queuedMessages).toEqual([]);
     expect(next?.messages).toEqual([]);
+  });
+
+  it("message_steered snaps the log back to the newest line", () => {
+    // Read back up the turn, then steer: the bubble that proves the
+    // message was taken is at the bottom, so that is where to look.
+    const state = { ...createInitialTuiState(SESSION), chatScrollOffset: 24 };
+    const next = reduceUiAction(state, { type: "message_steered", text: "x" });
+    expect(next?.chatScrollOffset).toBe(0);
+  });
+
+  it("keeps two identical steers as two pending messages", () => {
+    const state = createInitialTuiState(SESSION);
+    const first = reduceUiAction(state, { type: "message_steered", text: "x" });
+    const second = reduceUiAction(first!, {
+      type: "message_steered",
+      text: "x",
+    });
+    expect(second?.pendingSteers).toEqual(["x", "x"]);
+  });
+
+  it("hands a steer over to the parked strip when the turn refuses it", () => {
+    // `queueAsSteer`: the window was shut, so the message runs as the
+    // next turn instead. One message, one place on screen.
+    const state = createInitialTuiState(SESSION);
+    const steered = reduceUiAction(state, {
+      type: "message_steered",
+      text: "use staging",
+    });
+    const parked = reduceUiAction(steered!, {
+      type: "queue_changed",
+      queued: ["use staging"],
+    });
+    expect(parked?.pendingSteers).toEqual([]);
+    expect(parked?.queuedMessages).toEqual(["use staging"]);
+  });
+
+  it("drops pending steers on /clear and on a session switch", () => {
+    const state = createInitialTuiState(SESSION);
+    const steered = reduceUiAction(state, {
+      type: "message_steered",
+      text: "use staging",
+    });
+    expect(
+      reduceUiAction(steered!, { type: "chat_cleared" })?.pendingSteers,
+    ).toEqual([]);
+    const switched = reduceUiAction(steered!, {
+      type: "session_switched",
+      sessionId: "s2",
+      workingDir: "/tmp",
+      messages: [],
+    });
+    expect(switched?.pendingSteers).toEqual([]);
   });
 });
 

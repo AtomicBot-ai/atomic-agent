@@ -149,3 +149,33 @@ describe("/api/tasks", () => {
     expect(outcome.completed).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("tasks.minIntervalMs at runtime (#548)", () => {
+  let harness: Harness | null = null;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = null;
+    delete process.env.ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS;
+  });
+
+  it("the booted runner enforces ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS", async () => {
+    process.env.ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS = "30000";
+    harness = await startTestHarness();
+    const session = harness.runtime.createSession();
+    const create = (everyMs: number) =>
+      harness!.runtime.taskRunner.create({
+        sessionId: session.id,
+        userMessage: "poll",
+        origin: "cli",
+        maxAttempts: 1,
+        schedule: { kind: "interval", everyMs },
+      });
+
+    expect(() => create(5_000)).toThrow(/>= 30000/);
+    expect(create(30_000).schedule).toEqual({
+      kind: "interval",
+      everyMs: 30_000,
+    });
+  });
+});

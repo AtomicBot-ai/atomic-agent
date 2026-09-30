@@ -82,8 +82,6 @@ export function handleOnboardingStepKey(
       return handleProposeKey(input, key, ctx, onboarding);
     case "import_pick":
       return handleImportPickKey(input, key, ctx, onboarding);
-    case "import_preview":
-      return handleImportPreviewKey(input, key, ctx, onboarding);
     case "import_done":
       return handleImportDoneKey(input, key, ctx, onboarding);
     case "cloud":
@@ -364,65 +362,59 @@ function handleImportPickKey(
   const row = rows[onboarding.cursor % rows.length];
   if (!row) return true;
   switch (row.kind) {
-    case "agent":
-      // Space and Enter both flip the tick — on a checkbox row there is
-      // nothing else Enter could honestly mean.
-      ctx.dispatch({
-        type: "onboarding_import_agent_toggled",
-        index: row.index,
-      });
+    case "agent": {
+      if (toggle) {
+        ctx.dispatch({
+          type: "onboarding_import_agent_toggled",
+          index: row.index,
+        });
+        return true;
+      }
+      // Enter imports from anywhere in the list, as the footer says —
+      // space is the only toggle. With something ticked the ticks are
+      // the set; with nothing ticked, the row under the cursor is the
+      // obvious one, so Enter ticks it and imports it in one keystroke.
+      const agents = onboarding.importAgents.some((agent) => agent.enabled)
+        ? onboarding.importAgents
+        : onboarding.importAgents.map((agent, index) =>
+            index === row.index ? { ...agent, enabled: true } : agent,
+          );
+      if (agents !== onboarding.importAgents) {
+        ctx.dispatch({
+          type: "onboarding_import_agent_toggled",
+          index: row.index,
+        });
+      }
+      startImport(ctx, agents);
       return true;
+    }
     case "skip":
       if (toggle) return true;
       finishImport(ctx, onboarding);
       return true;
-    case "import": {
+    case "import":
       if (toggle) return true;
-      // Straight to the dry-run with the defaults — every non-secret
-      // domain of the ticked agents. The preview stays the gate before
-      // anything is written; the per-domain surface is `/import`'s.
-      const options = buildImportOptionRows(onboarding.importAgents);
-      ctx.dispatch({ type: "onboarding_import_run_started", options });
-      ctx.callbacks.onOnboardingImportRequested?.(
-        { agents: onboarding.importAgents, options },
-        false,
-      );
+      startImport(ctx, onboarding.importAgents);
       return true;
-    }
   }
 }
 
-function handleImportPreviewKey(
-  input: string,
-  key: Key,
+/**
+ * Straight to the import with the defaults — every non-secret domain of
+ * the ticked agents. The ticks ARE the confirmation: the run never
+ * overwrites what is already here and never removes anything from the
+ * source, so there is nothing a preview could warn about that the
+ * report cannot say afterwards. The per-domain surface is `/import`'s.
+ */
+function startImport(
   ctx: OnboardingKeyContext,
-  onboarding: OnboardingUiState,
-): boolean {
-  void input;
-  if (onboarding.busy) return true;
-  if (key.escape) {
-    // Back to the ticks, not out of the flow: a preview that showed
-    // too much (or too little) is an invitation to adjust, and the
-    // skip row is right there on that screen.
-    ctx.dispatch({ type: "onboarding_step_set", step: "import_pick" });
-    return true;
-  }
-  if (key.return) {
-    const report = onboarding.importReport;
-    const actionable =
-      report !== null && report.summary.migrated + report.summary.conflict > 0;
-    if (!actionable) {
-      finishImport(ctx, onboarding);
-      return true;
-    }
-    ctx.dispatch({ type: "onboarding_import_run_started" });
-    ctx.callbacks.onOnboardingImportRequested?.(
-      { agents: onboarding.importAgents, options: onboarding.importOptions },
-      true,
-    );
-    return true;
-  }
-  return false;
+  agents: OnboardingUiState["importAgents"],
+): void {
+  ctx.dispatch({ type: "onboarding_import_run_started" });
+  ctx.callbacks.onOnboardingImportRequested?.({
+    agents,
+    options: buildImportOptionRows(agents),
+  });
 }
 
 function handleImportDoneKey(

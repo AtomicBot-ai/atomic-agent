@@ -239,30 +239,37 @@ export class McpManager {
     return { removed: true, tools };
   }
 
-  /** Stop + start a single server. Useful for the TUI restart command. */
-  async restartServer(server: string): Promise<void> {
+  /**
+   * Stop + start a single server (TUI `/mcp` restart, HTTP
+   * `POST /api/mcp/servers/{name}/restart`). Returns `false` when the
+   * manager does not know the name.
+   */
+  async restartServer(server: string): Promise<boolean> {
     const s = this.servers.get(server);
-    if (!s) return;
+    if (!s) return false;
     await this.stopOne(s);
     if (s.config.enabled) {
       await this.startOne(s);
     }
+    return true;
   }
 
   /**
    * Flip a server's `enabled` flag at runtime. The config object
    * itself is owned by the runtime; this manager only mutates its
-   * own copy and reconciles the connection state.
+   * own copy and reconciles the connection state. Returns `false`
+   * when the manager does not know the name.
    */
-  async setServerEnabled(server: string, enabled: boolean): Promise<void> {
+  async setServerEnabled(server: string, enabled: boolean): Promise<boolean> {
     const s = this.servers.get(server);
-    if (!s) return;
+    if (!s) return false;
     s.config = { ...s.config, enabled };
     if (enabled) {
       if (s.state !== "up") await this.startOne(s);
     } else {
       await this.stopOne(s);
     }
+    return true;
   }
 
   private addServer(config: McpServerConfig): void {

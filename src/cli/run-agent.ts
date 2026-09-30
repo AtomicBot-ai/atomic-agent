@@ -6,6 +6,7 @@ import type { Interface as ReadlineInterface } from "node:readline";
 import {
   formatApprovalCategory,
   formatApprovalLevel,
+  formatNeverGrantedNote,
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
@@ -112,13 +113,45 @@ interface CliApprovalAnswer {
 }
 
 /**
+ * The text `promptApproval` writes before reading the answer: what is
+ * asked, the grant options this request allows, and — when the category
+ * can never be granted for the session — a note naming that category.
+ */
+export function formatCliApprovalPrompt(request: ApprovalRequest): string {
+  const grantCategory = canGrantCategory(request);
+  const grantShape = canGrantShape(request);
+  const lines = [
+    "",
+    `» approval required for tool: ${request.tool}`,
+    `  kind: ${formatApprovalCategory(request.category)}`,
+    `  reason: ${request.reason}`,
+  ];
+  if (request.preview) lines.push(`  preview: ${request.preview}`);
+  if (request.affectedResources?.length) {
+    lines.push(`  affects: ${request.affectedResources.join(", ")}`);
+  }
+  const options = ["y = approve once"];
+  if (grantCategory) options.push("s = allow this kind this session");
+  if (grantShape) {
+    options.push(`a = allow all ${request.commandShape} this session`);
+  }
+  options.push("N = deny");
+  if (!grantCategory) {
+    lines.push(`  (${formatNeverGrantedNote(request.category)})`);
+  }
+  lines.push(`  approve? [${options.join(", ")}] `);
+  return lines.join("\n");
+}
+
+/**
  * Interactive approval over stdin. We ask the operator to confirm each
  * dangerous action; `y`/`yes` approves this call, `s` also grants the
  * category for the session, `a` grants this shell command shape.
  * Anything else is a refusal. The grant options mirror the TUI prompt;
  * they are offered here too because a CLI operator has the same physical
- * access to the machine. `trust_config` is never grantable, so those
- * requests only ever show `y/N`.
+ * access to the machine. A category that is never grantable
+ * (`isGrantableCategory`: trust config, e-mail, fusion fan-out) only
+ * ever shows `y/N`.
  */
 async function promptApproval(
   request: ApprovalRequest,
@@ -127,27 +160,7 @@ async function promptApproval(
   const grantShape = canGrantShape(request);
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const lines = [
-      "",
-      `» approval required for tool: ${request.tool}`,
-      `  kind: ${formatApprovalCategory(request.category)}`,
-      `  reason: ${request.reason}`,
-    ];
-    if (request.preview) lines.push(`  preview: ${request.preview}`);
-    if (request.affectedResources?.length) {
-      lines.push(`  affects: ${request.affectedResources.join(", ")}`);
-    }
-    const options = ["y = approve once"];
-    if (grantCategory) options.push("s = allow this kind this session");
-    if (grantShape) {
-      options.push(`a = allow all ${request.commandShape} this session`);
-    }
-    options.push("N = deny");
-    if (!grantCategory) {
-      lines.push("  (trust-config writes are never granted for the session)");
-    }
-    lines.push(`  approve? [${options.join(", ")}] `);
-    process.stderr.write(`${lines.join("\n")}`);
+    process.stderr.write(formatCliApprovalPrompt(request));
     const answer = (await new Promise<string>((r) => rl.question("", r)))
       .trim()
       .toLowerCase();

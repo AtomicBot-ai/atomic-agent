@@ -4,11 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
+import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { formatAgentEvent, formatSkillsBannerValue } from "./run-agent.js";
+import {
+  formatAgentEvent,
+  formatCliApprovalPrompt,
+  formatSkillsBannerValue,
+} from "./run-agent.js";
 
 const HINT = formatLlamaUnreachableHint("http://127.0.0.1:8080");
 
@@ -22,6 +27,39 @@ function transportError(message: string) {
     },
   };
 }
+
+describe("formatCliApprovalPrompt", () => {
+  const request = (category: ApprovalRequest["category"]): ApprovalRequest => ({
+    approvalId: "a1",
+    sessionId: "s1",
+    tool: "tool.x",
+    category,
+    reason: "because",
+  });
+
+  it("names the category that can never be granted (issue #552)", () => {
+    const email = formatCliApprovalPrompt(request("email"));
+    expect(email).toContain("(e-mail send is never granted for the session)");
+    expect(email).not.toContain("trust-config");
+    expect(email).not.toContain("s = allow this kind");
+
+    const fanout = formatCliApprovalPrompt(request("fusion_fanout"));
+    expect(fanout).toContain(
+      "(fusion · fan-out is never granted for the session)",
+    );
+
+    const trust = formatCliApprovalPrompt(request("trust_config"));
+    expect(trust).toContain(
+      "(agent trust config is never granted for the session)",
+    );
+  });
+
+  it("offers the session grant and no note for a grantable category", () => {
+    const prompt = formatCliApprovalPrompt(request("fs_write_home"));
+    expect(prompt).toContain("s = allow this kind this session");
+    expect(prompt).not.toContain("never granted");
+  });
+});
 
 describe("formatAgentEvent llama hint", () => {
   it("turns a bare transport failure into something actionable on the local route", () => {

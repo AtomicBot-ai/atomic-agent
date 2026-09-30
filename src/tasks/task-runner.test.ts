@@ -106,6 +106,47 @@ describe("TaskRunner", () => {
     ]);
   });
 
+  it("create() refuses an interval under tasks.minIntervalMs and accepts one at it (#548)", () => {
+    const { runtime } = fakeRuntime();
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      minIntervalMs: 60_000,
+      sleep: async () => undefined,
+    });
+    const input = {
+      sessionId: session.id,
+      userMessage: "poll",
+      origin: "cli" as const,
+      maxAttempts: 1,
+    };
+    expect(() =>
+      runner.create({
+        ...input,
+        schedule: { kind: "interval", everyMs: 5_000 },
+      }),
+    ).toThrow(/tasks\.minIntervalMs/);
+    expect(store.list({})).toHaveLength(0);
+
+    const ok = runner.create({
+      ...input,
+      schedule: { kind: "interval", everyMs: 60_000 },
+    });
+    expect(ok.schedule).toEqual({ kind: "interval", everyMs: 60_000 });
+    // The floor is about intervals; a cron or one-shot task is untouched.
+    expect(
+      runner.create({
+        ...input,
+        schedule: { kind: "cron", expression: "* * * * *" },
+      }).schedule?.kind,
+    ).toBe("cron");
+  });
+
   it("retries transport failures until under maxAttempts and eventually completes", async () => {
     const { runtime, calls } = fakeRuntime({
       scripts: [

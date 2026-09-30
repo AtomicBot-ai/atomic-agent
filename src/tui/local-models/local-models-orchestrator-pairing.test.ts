@@ -11,6 +11,9 @@ vi.mock("../../local-llm/index.js", async () => {
   return {
     ...actual,
     getDaemonStatus: vi.fn(),
+    // Never the real one: it would stop or move whatever holds this machine's port.
+    reclaimManagedPort: vi.fn(async () => ({ kind: "free" })),
+    fetchServedModelIds: vi.fn(async () => null),
     getEmbeddingDaemonStatus: vi.fn(),
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
@@ -190,6 +193,41 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     expect(vi.mocked(localLlm.startEmbeddingDaemon)).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: "bge-m3" }),
     );
+  });
+
+  it("autoStartIfReady restarts, not adopts, a running daemon that serves another model", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubChatModelDownloaded(dataDir);
+    persistUserLocalModelsConfig({
+      mode: "managed",
+      managed: { modelId: "qwen-3.5-4b" },
+    });
+    resetConfigCache();
+    stubChatStatus(true);
+    stubEmbeddingStatus(false);
+    vi.mocked(localLlm.fetchServedModelIds).mockResolvedValueOnce(["gemma-4-12b"]);
+
+    const lines: string[] = [];
+    const orchestrator = new LocalModelsOrchestrator({
+      emit(a: unknown) {
+        const line = (a as Emitted).line;
+        if (line) lines.push(line);
+      },
+      subscribe: () => () => {},
+    });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    const stop = vi.spyOn(orchestrator, "stopChatDaemonOnly").mockResolvedValue(true);
+    const start = vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+
+    await orchestrator.autoStartIfReady();
+
+    expect(lines).toEqual([
+      expect.stringMatching(/^local-llm: the running server is not .+ — restarting it$/),
+    ]);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith({ backendAlreadyChecked: true });
+    expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
   });
 
   it("autoStartIfReady does not report a model activation — it is a launch, not a setup", async () => {

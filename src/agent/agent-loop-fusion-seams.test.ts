@@ -151,6 +151,58 @@ describe("AgentLoop fusion seams", () => {
     expect(params.slotId).toBe(-1);
   });
 
+  it("a pinned turn hands its provider pin to the tools it calls", async () => {
+    // `vision.describe` resolves its provider from this pin: a fusion
+    // worker's image goes to the worker leg, not the active provider.
+    const pins: (string | undefined)[] = [];
+    const run = async (pin: string | undefined) => {
+      const registry = buildDefaultToolRegistry();
+      registry.register({
+        name: "os.fs.read",
+        description: "read",
+        readonly: true,
+        run: async (_args, ctx) => {
+          pins.push(ctx.providerId);
+          return { tool: "os.fs.read", status: "ok", summary: "ok" };
+        },
+      });
+      let call = 0;
+      const loop = new AgentLoop({
+        registry,
+        slotManager: new SlotManager(2),
+        grammar: 'root ::= "ok"',
+        resolveLlmSlice: () => ({
+          toolTransport: "grammar",
+          toolCallAdapter: null,
+          supportsSlotAffinity: true,
+          supportsParallelTools: true,
+        }),
+        llmComplete: async () => {
+          call += 1;
+          return makeCompletion(
+            call === 1
+              ? JSON.stringify({ tool: "os.fs.read", args: { path: "a" } })
+              : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+          );
+        },
+        toolDescriptors: TOOLS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+      });
+      const session = createEmptySessionState({
+        id: `s-pin-${pin ?? "none"}`,
+        workingDir,
+      });
+      await loop.runTurn(
+        session,
+        turnOptions(pin === undefined ? { maxSteps: 3 } : { maxSteps: 3, providerId: pin }),
+      );
+    };
+    await run("local-x");
+    await run(undefined);
+    expect(pins).toEqual(["local-x", undefined]);
+  });
+
   it("an unpinned turn never resolves a slice and carries no providerId", async () => {
     const seen: LlmStreamParams[] = [];
     let resolved = 0;

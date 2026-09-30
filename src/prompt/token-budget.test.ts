@@ -5,6 +5,8 @@ import {
   computeEffectiveConversationCap,
   defaultBudget,
   estimateTokens,
+  SESSION_SECTIONS_BUDGET_SHARE,
+  SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
 } from "./token-budget.js";
 
@@ -29,6 +31,60 @@ describe("defaultBudget", () => {
     const limits = defaultBudget(3000);
     expect(limits.conversation).toBe(1050);
     expect(limits.worldSnapshot).toBe(450);
+  });
+
+  it("prefers an explicit session cap over the share", () => {
+    expect(defaultBudget(3000, { session: 4000 }).session).toBe(4000);
+    expect(defaultBudget(3000, { session: 100 }).session).toBe(100);
+  });
+
+  /**
+   * `buildPrompt` screens the sentinel out before it gets here, but
+   * `defaultBudget` is re-exported from `src/prompt/index.ts`, so a
+   * caller that hands the config value straight through is a supported
+   * use. `0` there must mean the share it is documented to mean — under
+   * `??` it would reach `truncateToTokens(text, 0)` and silently empty
+   * both sections.
+   */
+  it("reads a SESSION_SECTIONS_CAP_AUTO session cap as the share", () => {
+    expect(
+      defaultBudget(3000, { session: SESSION_SECTIONS_CAP_AUTO }).session,
+    ).toBe(450);
+    expect(defaultBudget(6000, { session: 0 }).session).toBe(900);
+  });
+
+  /**
+   * `agent.sessionSectionsMaxTokens` is additive: an operator who never
+   * writes it must get byte-identical prompts, at whatever
+   * `agent.tokenBudget` they already run. A regression here changes the
+   * session cap for every install at once, so the shares are pinned as
+   * literals rather than recomputed from the constants they came from.
+   *
+   * `3001` is in the list because every other budget here is an exact
+   * multiple of both shares, and a table of exact multiples cannot see
+   * `Math.floor` turn into `Math.ceil` — the one rounding change that
+   * moves every prompt on every install.
+   */
+  it("reproduces the pre-key shares across the budgets people run", () => {
+    for (const [total, stablePrefix, session] of [
+      [400, 140, 60],
+      [500, 175, 75],
+      [3000, 1050, 450],
+      [3001, 1050, 450],
+      [6000, 2100, 900],
+      [32_000, 11_200, 4800],
+    ] as const) {
+      const limits = defaultBudget(total);
+      expect(limits.stablePrefix).toBe(stablePrefix);
+      expect(limits.session).toBe(session);
+    }
+  });
+
+  it("keeps SESSION_SECTIONS_BUDGET_SHARE the share the fallback uses", () => {
+    expect(SESSION_SECTIONS_CAP_AUTO).toBe(0);
+    expect(defaultBudget(3000).session).toBe(
+      Math.floor(3000 * SESSION_SECTIONS_BUDGET_SHARE),
+    );
   });
 });
 

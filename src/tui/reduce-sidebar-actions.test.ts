@@ -33,6 +33,7 @@ describe("reduce sidebar + chat scroll actions", () => {
       { ...initial, sidebarCursor: 5 },
       {
         type: "recent_sessions_updated",
+        morePages: false,
         sessions: [entry({ sessionId: "a" }), entry({ sessionId: "b" })],
       },
     );
@@ -61,6 +62,7 @@ describe("reduce sidebar + chat scroll actions", () => {
     const initial = createInitialTuiState(SESSION);
     const populated = reduceTuiState(initial, {
       type: "recent_sessions_updated",
+      morePages: false,
       sessions: [
         entry({ sessionId: "a" }),
         entry({ sessionId: "b" }),
@@ -240,6 +242,7 @@ describe("reduce sidebar drag actions", () => {
       { ...createInitialTuiState(SESSION), chatFocus: "sidebar" as const },
       {
         type: "recent_sessions_updated",
+        morePages: false,
         sessions: [
           entry({ sessionId: "a" }),
           entry({ sessionId: "b" }),
@@ -308,6 +311,7 @@ describe("reduce sidebar drag actions", () => {
     });
     const refreshed = reduceTuiState(started, {
       type: "recent_sessions_updated",
+      morePages: false,
       sessions: [entry({ sessionId: "b" }), entry({ sessionId: "a" })],
     });
     expect(refreshed.sidebarDrag).toBeNull();

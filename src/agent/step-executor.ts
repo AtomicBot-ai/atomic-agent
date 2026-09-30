@@ -32,6 +32,7 @@ import {
 } from "./claim-evidence.js";
 import {
   formatProgressNoteNotice,
+  closingReplyBatch,
   progressNoteText,
   recordProgressNote,
   splitProgressNoteReply,
@@ -422,6 +423,8 @@ export interface StepContext {
    * the turn that carried it. See `request-section.ts`.
    */
   originalRequest?: string;
+  /** `RunTurnOptions.routeNote`, rendered as `### route` (`build-prompt.ts`). */
+  routeNote?: string;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
   reasoningEffort?: ReasoningEffort;
   /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
@@ -689,6 +692,7 @@ async function executeStepInner(
     ...(ctx.originalRequest !== undefined
       ? { originalRequest: ctx.originalRequest }
       : {}),
+    ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
   };
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -983,6 +987,14 @@ async function executeStepInner(
     result: CompletionResult,
   ): { batch: ToolCallBatch; note: ToolCallPayload | null } => {
     if (fabricationOf(result) !== null) return { batch, note: null };
+    // A reply batched only with memory writes is the answer: reordered
+    // reply-last, the writes run and the reply ends the turn.
+    const closing = closingReplyBatch(batch.calls, {
+      terminalOnly: ctx.terminalOnly === true,
+    });
+    if (closing !== null) {
+      return { batch: { ...batch, calls: closing }, note: null };
+    }
     const split = splitProgressNoteReply(batch.calls, {
       terminalOnly: ctx.terminalOnly === true,
     });
@@ -1651,6 +1663,9 @@ async function executeStepInner(
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(readRoots.length > 0 ? { readRoots } : {}),
+    // A pinned step (fusion worker) runs its model-calling tools on the
+    // same provider as its completions — `vision.describe` reads this.
+    ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),

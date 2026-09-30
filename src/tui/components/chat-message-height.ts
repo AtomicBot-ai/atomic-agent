@@ -63,6 +63,17 @@ export function estimateMessageHeight(message: ChatMessage): number {
   return total;
 }
 
+/**
+ * Rows a pending steer takes at the foot of the log. Same envelope as a
+ * finalised user message minus `MESSAGE_FOOTER_ROWS`: the bubble is
+ * rendered bare, without `FinalisedMessage`'s button row, because a
+ * message that is not in the transcript yet has nothing to copy or
+ * re-run.
+ */
+export function estimatePendingSteerHeight(text: string): number {
+  return bodyLines(text) + BUBBLE_OVERHEAD_ROWS;
+}
+
 export function estimateToolCardHeight(card: ToolCardEntry): number {
   const summaryLines = bodyLines(card.summary);
   return TOOL_CARD_BASE_ROWS + Math.max(0, summaryLines - 1);

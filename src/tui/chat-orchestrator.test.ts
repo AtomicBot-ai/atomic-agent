@@ -58,7 +58,7 @@ function stubRuntime(
     runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
       runTurn(text, opts),
     sessionStore: {
-      listSummaries: () => [],
+      listSummaryPage: () => [],
       countUnreadable: () => 0,
       listRecent: () => [],
       load: () => null,

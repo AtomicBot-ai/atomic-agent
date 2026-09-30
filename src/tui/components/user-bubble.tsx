@@ -17,6 +17,13 @@ interface UserBubbleProps {
    * so, because the reply under it answers that turn's opening request.
    */
   steered?: boolean;
+  /**
+   * Sent into the running turn but not folded in yet — the loop reads
+   * its inbox at the next step boundary. Drawn at the foot of the chat,
+   * dimmed and labelled as on its way in, because this one is not in
+   * the transcript and may still end up parked as the next turn.
+   */
+  pending?: boolean;
 }
 
 /**
@@ -36,11 +43,19 @@ export function UserBubble({
   text,
   fusion = false,
   steered = false,
+  pending = false,
 }: UserBubbleProps): ReactElement {
+  // `pending` outranks `steered`: both describe the same message, and
+  // until the loop takes it the honest label is the one that says so.
+  const label = pending
+    ? `  YOU${PENDING_STEER_LABEL_SUFFIX}`
+    : steered
+      ? `  YOU${STEERED_LABEL_SUFFIX}`
+      : "  YOU";
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text color={theme.colors.user} bold>
-        {steered ? `  YOU${STEERED_LABEL_SUFFIX}` : "  YOU"}
+      <Text color={pending ? theme.colors.muted : theme.colors.user} bold>
+        {label}
       </Text>
       <Box
         borderStyle="single"
@@ -48,7 +63,13 @@ export function UserBubble({
         borderRight={false}
         borderBottom={false}
         borderLeft
-        borderColor={fusion ? fusionInk() : theme.colors.user}
+        borderColor={
+          pending
+            ? theme.colors.muted
+            : fusion
+              ? fusionInk()
+              : theme.colors.user
+        }
         paddingBottom={1}
         paddingLeft={2}
         paddingRight={1}
@@ -66,6 +87,15 @@ export function UserBubble({
 
 /** Label tail on a message folded into the running turn. */
 export const STEERED_LABEL_SUFFIX = " · steered into the running turn";
+
+/**
+ * Label tail on a steer that has been accepted but not read yet. Says
+ * when it will be, in the same words the runtime acknowledgement uses,
+ * because "nothing has happened yet" is exactly the moment an operator
+ * assumes the message was swallowed and types it again.
+ */
+export const PENDING_STEER_LABEL_SUFFIX =
+  " · steering — the agent reads it at the next step";
 
 function splitLines(text: string): string[] {
   if (text.length === 0) return [""];

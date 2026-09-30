@@ -156,13 +156,28 @@ function statusFor(state: TuiState, node: MenuNode): string {
     case "go.run":
       return countLabel(state.messages.length, "message");
     case "session.switch":
-      return countLabel(state.recentSessions.length, "recent");
+      // The one count that is not a whole list: the rail reads the
+      // store a page at a time, so this says "40+ recents" until the
+      // store has answered short. The alternative — a real total —
+      // means counting the table behind the same JSON guards the page
+      // query uses, which is the read the paging exists to avoid.
+      return countLabel(
+        state.recentSessions.length,
+        "recent",
+        state.recentSessionsMorePages,
+      );
     default:
       return "";
   }
 }
 
-function countLabel(count: number, noun: string): string {
+/**
+ * `2 tasks`, or `40+ recents` when `more` says the list is a prefix of
+ * what is stored. The `+` also decides the plural: one loaded row with
+ * more behind it is at least two rows.
+ */
+function countLabel(count: number, noun: string, more = false): string {
   if (count === 0) return "";
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  const plural = count === 1 && !more ? "" : "s";
+  return `${count}${more ? "+" : ""} ${noun}${plural}`;
 }

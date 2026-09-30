@@ -29,6 +29,7 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { LogSink } from "../tracing/structured-logger.js";
+import type { McpServerConfig } from "../mcp/mcp-types.js";
 
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
@@ -124,6 +125,8 @@ export interface HarnessOptions {
    * reaching into the config cache directly.
    */
   webhooks?: Record<string, WebhookConfig>;
+  /** MCP servers persisted into `<stateDir>/config.json` before boot. */
+  mcpServers?: McpServerConfig[];
 }
 
 export interface Harness {
@@ -152,13 +155,21 @@ export async function startTestHarness(
   mkdirSync(join(workingDir, ".atomic-agent", "skills"), { recursive: true });
   process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
   process.env.ATOMIC_AGENT_GRAMMARS_DIR = join(process.cwd(), "grammars");
-  if (options.webhooks || options.localModelsUrl) {
+  if (options.webhooks || options.localModelsUrl || options.mcpServers) {
     writeFileSync(
       join(stateDir, "config.json"),
       JSON.stringify(
         {
           ...USER_CONFIG_DEFAULTS,
           ...(options.webhooks ? { webhooks: options.webhooks } : {}),
+          ...(options.mcpServers
+            ? {
+                mcp: {
+                  ...USER_CONFIG_DEFAULTS.mcp,
+                  servers: options.mcpServers,
+                },
+              }
+            : {}),
           ...(options.localModelsUrl
             ? {
                 localModels: {

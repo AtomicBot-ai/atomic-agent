@@ -198,6 +198,32 @@ describe("redactTraceNdjson", () => {
     expect(redactTraceNdjson("", "full", CTX).text).toBe("");
   });
 
+  it("drops the run-level vote row below full — its reason quotes a store error", () => {
+    // The row exists to name why a vote turn produced nothing, and on
+    // the failure route that is a store error verbatim: a path, or
+    // whatever better-sqlite3 put in the message. Content through and
+    // through, so it goes entirely rather than field by field.
+    const row = {
+      seq: 4,
+      type: "vote",
+      sessionId: "s",
+      ts: 4,
+      outcome: "failed",
+      reason:
+        "candidate hydration failed: unable to open database file /Users/valerii/proj/.atomic-agent/memory.sqlite",
+    };
+    const ndjson = `${JSON.stringify(row)}\n`;
+    for (const level of ["errors", "scrubbed"] as const) {
+      const { text, stats } = redactTraceNdjson(ndjson, level, CTX);
+      expect(parse(text)).toEqual([]);
+      expect(stats).toMatchObject({ kept: 0, dropped: 1 });
+      expect(text).not.toContain("memory.sqlite");
+    }
+    const full = parse(redactTraceNdjson(ndjson, "full", CTX).text);
+    expect(full).toHaveLength(1);
+    expect(full[0]?.reason).toContain("memory.sqlite");
+  });
+
   it("keeps a memory health warning's shape at errors and scrubbed, never its reason", () => {
     const row = {
       seq: 9,
