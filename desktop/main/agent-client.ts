@@ -563,6 +563,14 @@ export class AgentClient extends EventEmitter {
   runTask = (id: string) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
   health = () => this.json<unknown>("/health");
+  /**
+   * `PATCH /api/config` — on 0.6.6+ a deep merge into the user file that
+   * the running agent re-reads at once (no restart). Older agents answer
+   * the same route with a shallow merge that drops every block it does not
+   * know, so callers go through `agent-live.ts`, which checks first.
+   */
+  patchConfig = (patch: Record<string, unknown>) =>
+    this.request<{ path: string; config: unknown }>("PATCH", "/api/config", patch);
   /** `POST /api/mcp/servers/{name}/{restart|enable|disable}` (0.6.6+): acts live, answers the server's status. */
   mcpServer = (name: string, op: "restart" | "enable" | "disable") =>
     this.request<{ server: unknown }>(

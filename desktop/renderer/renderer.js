@@ -4004,6 +4004,7 @@ function generalPane() {
         + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
           + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
+      + nameChatsRowHTML()
     + '</div>'
     + '</div>';
 }
@@ -4424,6 +4425,7 @@ function act(a) {
   // close() first like every other verb: `/task` and a palette row reach these with the palette still open.
   if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
+  if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
@@ -5898,10 +5900,13 @@ function applySessions(res) {
   res.data.sessions.forEach((x) => {
     if (!x || !x.id || !((x.turnCount || 0) > 0)) return;
     const was = before.get(x.id);
+    // 0.6.6: the agent's own name for the chat wins over its first prompt (session-titles.js).
+    const title = sessionTitleOf(x) || (was && was.titled ? was.t : null);
     SESSIONS.push({
       id:x.id,
-      t:was && was.named ? was.t : x.id,
-      named:!!(was && was.named),
+      t:title || (was && was.named ? was.t : x.id),
+      named:!!title || !!(was && was.named),
+      titled:!!title,
       updatedAt:x.updatedAt || 0,
       status:x.status || '',
       turnCount:x.turnCount || 0,
@@ -5938,8 +5943,10 @@ function nameVisibleSessions() {
       if (!cur) return;
       const turns = res && res.ok && res.data && res.data.turns;
       if (!Array.isArray(turns)) { cur.named = false; return; }
+      const title = sessionTitleFromState(res.data); // an agent whose list rows carry no `title`
       const first = turns.find((t) => t.kind === 'user' && t.text);
-      cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
+      if (title) { cur.t = title; cur.titled = true; }
+      else if (!cur.titled) cur.t = first ? first.text.trim().replace(/\s+/g, ' ').slice(0, 72) : '(empty)';
       cur.named = true;
       render();
     });
@@ -6133,6 +6140,7 @@ function onChatEvent(ev) {
           if (row) { PREFS.seen[sid] = Math.max(PREFS.seen[sid] || 0, row.updatedAt); savePrefs(); }
         }
         render();
+        sessionTitleFollowUp(sid); // the agent names the chat just after this turn returns
       });
     }
   }
