@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -8,6 +8,15 @@ import { randomBytes } from "node:crypto";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import {
+  agentBinaryCandidates,
+  bundledAgentFileName,
+  commandLineProbe,
+  installHint,
+  looksLikeServeCommand,
+  procCmdline,
+  stopPlan,
+} from "./platform.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -99,23 +108,20 @@ export function bundledAgentPath(): string | null {
      cases are handled by simply testing the path. */
   const root = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   if (!root) return null;
-  return join(root, "agent", "atomic-agent");
+  return join(root, "agent", bundledAgentFileName(process.platform));
 }
 
+/* The list itself is platform.ts's agentBinaryCandidates, so the Windows
+   and Linux arms are under unit test; the override still wins, so a driven
+   run can aim the app at one build. */
 function candidateBinaries(): string[] {
-  const fromEnv = process.env.ATOMIC_AGENT_BIN;
-  const bundled = bundledAgentPath();
-  const home = homedir();
-  return [
-    // The override wins, so a driven run can aim the app at one build.
-    ...(fromEnv ? [fromEnv] : []),
-    ...(bundled ? [bundled] : []),
-    join(home, "atag-agent", "bin", "atag"),
-    join(home, ".local", "bin", "atag"),
-    join(home, ".local", "bin", "atomic-agent"),
-    "/usr/local/bin/atag",
-    "/opt/homebrew/bin/atag",
-  ];
+  const root = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  return agentBinaryCandidates({
+    platform: process.platform,
+    home: homedir(),
+    env: process.env,
+    resourcesPath: root,
+  });
 }
 
 export function resolveBinary(): string | null {
@@ -180,11 +186,15 @@ function serveRecordPath(): string {
 /** The command line of a live pid, or null if it is not running. */
 function commandOf(pid: number): string | null {
   try {
-    // `ps -o command= -p` is the one thing that answers "is this the same
-    // process, or a pid that got reused since we wrote it down".
-    return execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], {
+    // The command line is the one thing that answers "is this the same
+    // process, or a pid that got reused since we wrote it down". macOS asks
+    // `ps -o command= -p`; Linux reads /proc; Windows asks CIM.
+    const probe = commandLineProbe(process.platform, pid, process.env.SystemRoot);
+    if (probe.kind === "procfs") return procCmdline(readFileSync(probe.file, "utf8")).trim() || null;
+    return execFileSync(probe.command, probe.args, {
       encoding: "utf8",
-      timeout: 4000,
+      timeout: process.platform === "win32" ? 10_000 : 4000,
+      windowsHide: true,
     }).trim() || null;
   } catch {
     return null;
@@ -195,9 +205,26 @@ function commandOf(pid: number): string | null {
 function looksLikeOurServe(pid: number, port: number): boolean {
   const cmd = commandOf(pid);
   if (!cmd) return false;
-  return /(^|[/\s])(atag|atomic-agent|index\.js)\b/.test(cmd)
-    && /\bserve\b/.test(cmd)
-    && cmd.includes(`--port ${port}`);
+  return looksLikeServeCommand(cmd, port);
+}
+
+/** A short blocking pause. `/bin/sleep` on macOS, as it always was; there is
+    no such binary on Windows, so everywhere else it is Atomics.wait. */
+function sleepSync(ms: number): void {
+  if (process.platform === "darwin") {
+    execFileSync("/bin/sleep", [String(ms / 1000)]);
+    return;
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Windows: end `pid` and everything it started (see platform.ts stopPlan). */
+function taskkillTree(pid: number): Promise<void> {
+  const plan = stopPlan("win32", pid, process.env.SystemRoot);
+  if (plan.kind !== "taskkill") return Promise.resolve();
+  return new Promise((resolve) => {
+    execFile(plan.command, plan.args, { timeout: 10_000, windowsHide: true }, () => resolve());
+  });
 }
 
 /**
@@ -224,16 +251,26 @@ export function reapOrphanedServe(): { pid: number; killed: boolean } | null {
   }
   let killed = false;
   try {
-    process.kill(rec.pid, "SIGTERM");
-    // Give it a moment to close its sqlite handles, then insist. This is a
-    // blocking wait on purpose: it runs before the replacement is spawned,
-    // and two agents on one state directory is worse than a slow launch.
-    const until = Date.now() + 3000;
-    while (Date.now() < until && looksLikeOurServe(rec.pid, rec.port)) {
-      execFileSync("/bin/sleep", ["0.1"]);
+    if (process.platform === "win32") {
+      // No signals: end the orphan and its tree in one step. Blocking for
+      // the same reason as below — two agents on one state directory.
+      const plan = stopPlan("win32", rec.pid, process.env.SystemRoot);
+      if (plan.kind === "taskkill") {
+        execFileSync(plan.command, plan.args, { timeout: 10_000, windowsHide: true, stdio: "ignore" });
+      }
+      killed = true;
+    } else {
+      process.kill(rec.pid, "SIGTERM");
+      // Give it a moment to close its sqlite handles, then insist. This is a
+      // blocking wait on purpose: it runs before the replacement is spawned,
+      // and two agents on one state directory is worse than a slow launch.
+      const until = Date.now() + 3000;
+      while (Date.now() < until && looksLikeOurServe(rec.pid, rec.port)) {
+        sleepSync(100);
+      }
+      if (looksLikeOurServe(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
+      killed = true;
     }
-    if (looksLikeOurServe(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
-    killed = true;
   } catch {
     /* it exited between the check and the signal — the good outcome */
   }
@@ -274,7 +311,7 @@ export class AgentClient extends EventEmitter {
     state: "stopped",
     binary: null,
     port: null,
-    workingDir: process.env.HOME ?? "/",
+    workingDir: process.env.HOME ?? homedir(),
     llama: null,
     error: null,
   };
@@ -309,8 +346,7 @@ export class AgentClient extends EventEmitter {
       this.setStatus({
         state: "missing-binary",
         binary: null,
-        error:
-          "No atomic-agent binary found. Install it with `curl -fsSL https://atomicagent.io/install | sh`, or set ATOMIC_AGENT_BIN.",
+        error: installHint(process.platform),
       });
       return this.status;
     }
@@ -348,6 +384,8 @@ export class AgentClient extends EventEmitter {
         // r5 item 9: `atag serve` runs on the desktop's own state directory.
         env: agentEnv(),
         stdio: ["ignore", "pipe", "pipe"],
+        // Windows: a console child of a GUI app otherwise opens a console window.
+        windowsHide: true,
       },
     );
 
@@ -865,12 +903,15 @@ export class AgentClient extends EventEmitter {
     this.events = null;
     const child = this.child;
     if (!child) return;
-    child.kill("SIGTERM");
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    if (process.platform === "win32" && child.pid) {
+      // No SIGTERM on Windows: end the agent and the processes it started.
+      void taskkillTree(child.pid);
+    } else {
+      child.kill("SIGTERM");
+    }
     // Do not leave an orphan holding the port if SIGTERM is ignored.
-    await Promise.race([
-      new Promise<void>((resolve) => child.once("exit", () => resolve())),
-      sleep(4000),
-    ]);
+    await Promise.race([exited, sleep(4000)]);
     if (this.child) this.child.kill("SIGKILL");
     this.child = null;
     this.port = null;
