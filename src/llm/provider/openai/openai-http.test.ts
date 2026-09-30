@@ -702,6 +702,35 @@ describe("humanizeOpenAiHttpError", () => {
     expect(humanizeOpenAiHttpError(mk(null))).toContain("Tried 3 times");
   });
 
+  it("words a failure reported inside a 200 stream without a retry count or a borrowed status", () => {
+    const streamed = (status: number | null, streamError: string) =>
+      new OpenAiHttpError(
+        "raw",
+        status,
+        "https://api.x.ai/v1/y",
+        false,
+        null,
+        "fake",
+        undefined,
+        { streamError },
+      );
+    const finish = humanizeOpenAiHttpError(
+      streamed(502, "the provider ended the completion with an error (MALFORMED_FUNCTION_CALL)"),
+    );
+    expect(finish).toBe(
+      '"fake" ended its reply with an error (MALFORMED_FUNCTION_CALL) — this is on the provider, not your setup.',
+    );
+    expect(
+      humanizeOpenAiHttpError(streamed(502, "the provider ended the completion with an error")),
+    ).toBe('"fake" ended its reply with an error — this is on the provider, not your setup.');
+    expect(humanizeOpenAiHttpError(streamed(504, "Upstream idle timeout"))).toBe(
+      '"fake" reported an error in the middle of its reply (504): Upstream idle timeout',
+    );
+    expect(humanizeOpenAiHttpError(streamed(null, "stream error"))).toBe(
+      '"fake" reported an error in the middle of its reply: stream error',
+    );
+  });
+
   it("falls back to the host when no provider label is set", () => {
     const err = new OpenAiHttpError("raw", 500, "https://api.x.ai/v1/y");
     expect(humanizeOpenAiHttpError(err)).toContain('"api.x.ai"');

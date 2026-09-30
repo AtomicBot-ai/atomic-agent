@@ -3,6 +3,7 @@ import {
   type ApprovalLevel,
 } from "../approval/approval-level.js";
 import type { CodingMode } from "./coding-mode.js";
+import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
@@ -426,6 +427,8 @@ export interface TuiState {
   providerOutage: {
     /** Scrubbed reason from the transport failure. */
     reason: string;
+    /** What the failure was, when the runtime said (see `ProviderWaitCause`). */
+    cause?: ProviderWaitCause;
     /** Wall-clock ms already spent waiting in this outage. */
     waitedMs: number;
     /** Ceiling from `agent.providerWait.maxWaitMs`. */

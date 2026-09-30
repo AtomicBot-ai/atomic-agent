@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import {
   formatProviderOutage,
   formatProviderOutageParts,
+  formatProviderWaitNotice,
 } from "./format-provider-outage.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -171,5 +173,93 @@ describe("formatProviderOutage", () => {
         NOW,
       ),
     ).toBe("waiting for provider 0s/60s — ECONNRESET at TLSSocket.onError");
+  });
+});
+
+describe("formatProviderWaitNotice", () => {
+  const TAIL =
+    " The turn is paused and retries by itself for up to 5 min — Esc stops it.";
+  // The e2e regression: a 200 stream the provider ended with
+  // `finish_reason: "error"`, whose reason line is the humanised one.
+  const ERROR_FINISH_REASON =
+    '"fake" ended its reply with an error — this is on the provider, not your setup.';
+
+  it.each<[ProviderWaitCause, string]>([
+    [{ kind: "refused" }, "The model is not answering (connection refused)."],
+    [{ kind: "dropped" }, "The model is not answering (connection dropped mid-reply)."],
+    [{ kind: "unreachable" }, "The model is not answering (no connection)."],
+    [{ kind: "timeout" }, "The model is not answering (the request timed out)."],
+    [
+      { kind: "loading" },
+      "The model is not answering (the server is still loading the model).",
+    ],
+    [{ kind: "http", status: 503 }, "The model is not answering (HTTP 503)."],
+    [
+      { kind: "stream_error", status: 504 },
+      "The model is not answering (the provider reported an error mid-reply (504)).",
+    ],
+    [
+      { kind: "stream_error", status: null },
+      "The model is not answering (the provider reported an error mid-reply).",
+    ],
+    [
+      { kind: "error_finish" },
+      "The model is not answering (the provider ended its reply with an error).",
+    ],
+  ])("words %j from the cause alone", (cause, lead) => {
+    expect(formatProviderWaitNotice("whatever the raw line said", 300_000, false, cause)).toBe(
+      `${lead}${TAIL}`,
+    );
+  });
+
+  it("an error finish never reads as a status code or a retry count", () => {
+    const text = formatProviderWaitNotice(ERROR_FINISH_REASON, 300_000, false, {
+      kind: "error_finish",
+    });
+    expect(text).not.toMatch(/\b502\b/);
+    expect(text).not.toContain("Tried");
+    expect(text).not.toContain("server trouble");
+    expect(text).toContain("the provider ended its reply with an error");
+  });
+
+  it("reads an error finish out of the text when no cause came with it", () => {
+    expect(formatProviderWaitNotice(ERROR_FINISH_REASON, 300_000, false)).toBe(
+      `The model is not answering (the provider ended its reply with an error).${TAIL}`,
+    );
+  });
+
+  it("falls back to a neutral sentence for text it cannot vouch for", () => {
+    // A humanised 5xx line cannot be told apart from one wrongly built
+    // for a stream that was never a 5xx: repeat neither its code nor its count.
+    const text = formatProviderWaitNotice(
+      '"fake" is having server trouble (502). Tried 3 times — this is on the provider, not your setup.',
+      300_000,
+      false,
+    );
+    expect(text).toBe(`The model is not answering.${TAIL}`);
+    expect(
+      formatProviderWaitNotice("something odd", 300_000, false, { kind: "unknown" }),
+    ).toBe(`The model is not answering.${TAIL}`);
+  });
+
+  it("still recognises the bare transport words in the text", () => {
+    expect(formatProviderWaitNotice("fetch failed", 300_000, false)).toContain(
+      "(no connection)",
+    );
+    expect(formatProviderWaitNotice("terminated", 300_000, false)).toContain(
+      "(connection dropped mid-reply)",
+    );
+    expect(
+      formatProviderWaitNotice("llama-server returned http 503: Loading model", 300_000, false),
+    ).toContain("(the server is still loading the model)");
+  });
+
+  it("the meta row words the cause too", () => {
+    expect(
+      formatProviderOutage(
+        outage({ reason: ERROR_FINISH_REASON, cause: { kind: "error_finish" } }),
+        NOW,
+      ),
+    ).toBe("waiting for provider 0s/300s — the provider ended its reply with an error");
   });
 });

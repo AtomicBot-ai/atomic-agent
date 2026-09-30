@@ -1240,6 +1240,60 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
+    expect(waits[0]).toMatchObject({ cause: { kind: "http", status: 503 } });
+  });
+
+  it("says a reply the provider ended with an error was that, not a 502", async () => {
+    // e2e regression: a 200 stream that streamed, then ended with
+    // `finish_reason: "error"`. The stream consumer types it with a
+    // status so the step parks; the wait must not report that status
+    // or the HTTP client's retry count as if the provider had answered it.
+    const registry = buildDefaultToolRegistry();
+    const waits: Array<Extract<AgentLoopEvent, { type: "provider_waiting" }>> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new OpenAiHttpError(
+            "openai provider 502: the provider ended the completion with an error",
+            502,
+            "https://api.fake.test/v1/chat/completions",
+            false,
+            null,
+            "fake",
+            undefined,
+            { streamError: "the provider ended the completion with an error" },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-error-finish", workingDir }),
+      {
+        userMessage: "flaky provider",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.cause).toEqual({ kind: "error_finish" });
+    expect(waits[0]?.reason).not.toMatch(/\b502\b/);
+    expect(waits[0]?.reason).not.toContain("Tried");
   });
 
   it("does not wait out our own request deadline (issue #490)", async () => {

@@ -698,6 +698,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       )}s · Esc stops`;
       const next: TuiState = parkProviderOutage(state, {
         reason: event.reason,
+        ...(event.cause !== undefined ? { cause: event.cause } : {}),
         waitedMs: event.waitedMs,
         maxWaitMs: event.maxWaitMs,
         attempt: event.attempt,
@@ -724,6 +725,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             event.reason,
             event.maxWaitMs,
             backend === "local" || backend === "fusion",
+            event.cause,
           ),
         },
       );
