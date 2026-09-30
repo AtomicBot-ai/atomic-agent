@@ -109,10 +109,11 @@ function tpOnProviderWaiting(wait) {
   placeInLiveTurn({id:nid(), k:'system', sev:'pause', note:true, text: esc(tpWaitNotice(wait))});
   if (!BR || !BR.modelsStatus || !tpActiveIsLocal()) return;
   const turnId = S.turnId;
+  const streamId = S.streamId;
   BR.modelsStatus().then((res) => {
     const line = tpLocalServerLine(res && res.ok ? res.status : null);
-    // Only while the same turn is still the one on screen.
-    if (!line || S.turnId !== turnId) return;
+    // Only while the same turn is still the one on screen (switching chats keeps S.turnId but swaps S.log).
+    if (!line || S.turnId !== turnId || S.streamId !== streamId || !S.log.some((m) => m.id === streamId)) return;
     placeInLiveTurn({id:nid(), k:'system', sev:'warn', note:true, text: esc(line)});
     render();
   }).catch(() => {});
