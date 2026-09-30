@@ -81,7 +81,7 @@ const HEALTH_POLL_MS = 300;
  * Then THE AGENT INSIDE THIS APP. A packaged build ships the matching
  * agent in `Resources/agent`, and it is preferred over anything installed
  * because it is the only one guaranteed to be the same version as the
- * window drawing it. That is what F4 was about: the coding-mode chip was
+ * window drawing it. That is the bug it fixes: the coding-mode chip was
  * greyed out and captioned with an internal route name because the agent
  * the app happened to find — a released 0.5.5 install — has no
  * `/api/coding-mode`. Shipping the pair together is the fix; the message

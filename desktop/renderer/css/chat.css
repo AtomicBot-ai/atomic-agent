@@ -73,7 +73,7 @@
   border-radius:22px 22px 6px 22px;background:var(--brand);color:var(--on-strong);
   font-size:14.5px;line-height:1.5;overflow-wrap:anywhere}
 
-/* ---------------- assistant prose and markdown (F12) ----------------
+/* ---------------- assistant prose and markdown ----------------
    A model writes markdown and renderMarkdown turns it into tags of its own,
    joined by newlines — which `pre-wrap` keeps as line breaks. Block pieces are
    therefore inline-blocks spanning the line: a block box would turn the newline
@@ -276,7 +276,7 @@
 .msgact.danger{color:var(--critical)}
 .msgact.danger:hover{background:var(--critical-wash);color:var(--critical)}
 /* Calm (S3): no permanently shown row — the last message reveals its
-   actions like every other (F11's labelled row is gone; the names are the
+   actions like every other (the old labelled row is gone; the names are the
    buttons' tooltips). */
 
 /* ---------------- Saved to strip (item 5) ---------------- */

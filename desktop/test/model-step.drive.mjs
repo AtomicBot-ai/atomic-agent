@@ -1,7 +1,7 @@
 /**
- * F6 — a model step after the key, always.
+ * A model step after the key, always.
  *
- * "Я выбрала аимлапи и типо ввела ключ — а какая модель у меня выберется?"
+ * "I picked AI/ML API and entered a key, which model will I get?"
  * had no answer anywhere on screen: the wizard took the kind's default model
  * silently and went straight to the completion screen.
  *
@@ -124,5 +124,5 @@ try {
   await app.close();
 }
 const failed = results.filter((r) => !r.pass).length;
-console.log(`F6 DRIVE: ${results.length - failed}/${results.length} passed`);
+console.log(`MODEL-STEP DRIVE: ${results.length - failed}/${results.length} passed`);
 process.exit(failed ? 1 : 0);

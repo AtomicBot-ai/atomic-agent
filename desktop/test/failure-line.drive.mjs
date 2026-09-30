@@ -1,11 +1,11 @@
 /**
- * F2 — a failure a person can act on.
+ * A failure a person can act on.
  *
- * The tester's screen said `turn failed [transport]: fetch failed`. Neither
- * half of that is hers: `transport` is the agent's category enum, `fetch
+ * The screen used to say `turn failed [transport]: fetch failed`. Neither
+ * half of that is for a user: `transport` is the agent's category enum, `fetch
  * failed` is undici's string, and between them they name no provider, no host
- * and no next move. She could not tell which endpoint had died, and neither
- * could we from the trace.
+ * and no next move. There was no telling which endpoint had died, from the
+ * screen or from the trace.
  *
  * The scenario is a provider whose host does not resolve, and a real turn
  * sent to it by typing into the composer and pressing Enter.
@@ -86,5 +86,5 @@ try {
   await app.close();
 }
 const failed = results.filter((r) => !r.pass).length;
-console.log(`F2 DRIVE: ${results.length - failed}/${results.length} passed`);
+console.log(`FAILURE-LINE DRIVE: ${results.length - failed}/${results.length} passed`);
 process.exit(failed ? 1 : 0);

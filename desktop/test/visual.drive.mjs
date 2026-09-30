@@ -1,6 +1,6 @@
 /**
- * The screenshot set the brief asks for: the first-run flow walked with
- * trusted mouse and keyboard events, at the tester's window size, in both
+ * The reference screenshot set: the first-run flow walked with trusted
+ * mouse and keyboard events, at a 1470x923 window, in both
  * themes.
  *
  * The state directory is a throwaway, not `~/.atomic-agent-desktop`. That is
@@ -25,7 +25,7 @@ const app = await launch({ port: PORT, stateDir: DIR, workspace: '/tmp/atag-shot
 const shot = async (name) => { await sleep(350); await app.screenshot(`${OUT}/${name}.png`); };
 
 try {
-  /* The tester's window, exactly. The app opens at 1280x820, so this is set
+  /* A 1470x923 window, exactly. The app opens at 1280x820, so this is set
      rather than assumed — a layout that holds at 1280 and breaks at 1470 is
      the kind of thing a fixed-size run never sees. */
   await app.send('Emulation.setDeviceMetricsOverride',
@@ -99,7 +99,7 @@ try {
     await sleep(600);
     await shot(`${theme}-5-chat`);
 
-    /* F14 — "typing / showed no commands", unconfirmed. Reproduce it before
+    /* "typing / showed no commands", unconfirmed. Reproduce it before
        changing anything: type the character into the composer with a real
        key event and look. */
     await app.clickSel('textarea', { scroll: false });
@@ -116,7 +116,7 @@ try {
         clippedByComposer: !!(c && r.top < 0),
         offTop: r.top < 0};
     })()`);
-    console.log(`F14 ${theme}: ${JSON.stringify(slash)}`);
+    console.log(`slash ${theme}: ${JSON.stringify(slash)}`);
     await shot(`${theme}-6-slash`);
     await app.press('Escape');
     await app.eval(`window.__ctxDraft('')`).catch(() => {});

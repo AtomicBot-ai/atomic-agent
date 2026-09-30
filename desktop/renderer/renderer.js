@@ -93,11 +93,11 @@ let MODE_REASSERT = null;
    hint strip must not advertise a chord the step does not accept. `q` is
    null while the search box is closed; the Settings-side wizard ignores
    both fields and renders exactly as it did. */
-/* `uncheckedFor` / `acceptUnchecked` are F1's two halves: what could not be
+/* `uncheckedFor` / `acceptUnchecked` are the unchecked-key flow's two halves: what could not be
    checked, and whether the user has said to save it anyway. */
 const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false, cur:0, q:null,
   uncheckedFor:null, acceptUnchecked:false,
-  /* F6 — the model step. `modelChosen` is what lets wizNext run twice: once
+  /* The model step. `modelChosen` is what lets wizNext run twice: once
      to verify and offer the catalogue, once to save the choice. */
   models:[], modelPick:null, defaultModel:null, modelChosen:false, savedId:null,
   savedLabel:'', modelFilter:'', unverifiedNote:null,
@@ -310,7 +310,7 @@ const OB_ATOMIC_CHAT = { running: null, asking: false };
    — the order is load-bearing, the 1–3 digits are positional. */
 /* One line of consequence each. These used to be two lines apiece, which on
    the choose screen made three paragraphs the eye had to read before it could
-   choose — the tester's "I have to peer at it". A route is picked on what it
+   choose — too much to peer at. A route is picked on what it
    costs you, so that is the line. */
 /* Calm (S6): short declaratives. The second card also covers the model apps
    on this Mac (Atomic Chat, Ollama, LM Studio), which live in its list. */
@@ -325,7 +325,7 @@ const OB_CHOICES = [
 
 /* The flow has two phases, and the header says which one you are in as a
    numbered row — `01 SETUP  02 DATA` — rather than "step 1 of 2" set in 11px
-   grey, which the tester could not find at all. A checklist card names its
+   grey, which was easy to miss entirely. A checklist card names its
    steps and marks the one you are on; that is all this is. */
 const OB_PHASES = [{n:'01', label:'Setup'}, {n:'02', label:'Data'}];
 const OB_PHASE_OF = {
@@ -625,17 +625,17 @@ let FIRSTRUN = null;
    must NAME it rather than leave the user guessing: the title card, the
    transcript's opening plate, and the diagnostics plate. Declared here, above
    the first render(), because the render path reads it. */
-/* F4 — coding modes need a route the released agent does not have. The
+/* Coding modes need a route the released agent does not have. The
    version, not the route name: `/api/coding-mode` is our word for it and
    means nothing to the person reading it. */
 const MODE_NEEDS_NEWER = 'Coding modes need Atomic Agent 0.5.7 or newer.';
-/* F3 — the turn is parked, not dead.
+/* The turn is parked, not dead.
    The agent waits out a provider outage instead of failing: same step, tried
    again after a backoff, up to a budget. It has always told the TUI; the
    frames only started reaching other hosts when the desktop merge forwarded
    them over SSE. Without them the window showed nothing at all between the
-   last token and a failure minutes later, which is exactly what the tester
-   read as a dead app before she started clicking.
+   last token and a failure minutes later, which looked
+   exactly like a dead app.
 
    `until` is the wall-clock the next retry is due, so the readout counts down
    on its own tick rather than trusting a number that arrived once. */
@@ -643,7 +643,7 @@ let WAIT = null;
 let WAIT_TICK = 0;
 
 let BUILD = null;
-/* F1 — provider ids whose key was saved without ever being checked. Read from
+/* Provider ids whose key was saved without ever being checked. Read from
    main at boot; a provider stays on this list until a turn actually succeeds
    on it, so the badge cannot outlive the doubt it reports. */
 let UNVERIFIED = [];
@@ -806,8 +806,8 @@ const MENU_ACTS = {
   'help.commands':'palette', 'help.tools':'tools', 'help.quit':'quit',
   'help.dump':'dump', 'help.report':'help.report',
 };
-/* Calm (S5): Settings is ordinary app preferences. Nine sections, in the
-   order Danny set; a section shows one pane, except Connections, which holds
+/* Calm (S5): Settings is ordinary app preferences. Nine sections, in a
+   fixed order; a section shows one pane, except Connections, which holds
    two (MCP servers and Telegram) behind a segmented control in its header.
    The pane ids are the ones the rest of the file already keys on (the TUI's
    MANAGE_TABS, plus `general` and `diagnostics`), so every pane's own state,
@@ -1906,7 +1906,7 @@ function item(m, end) {
        turn that just finished. */
     + (PLAN.on && m.id === PLAN.itemId ? planHandoffHTML() : '')
     + '</div></div>';
-  /* F2 — the one action that helps, on the row that reports the problem.
+  /* The one action that helps, on the row that reports the problem.
      A person told their provider is not answering has exactly one useful
      next move, and hunting for the composer chip is not it. The row itself
      (and its `.sysact` Switch provider) is drawn by sysRowHTML, which the
@@ -1972,7 +1972,7 @@ function msgActs(m) {
   if (m.k === 'assistant' && m.id === S.streamId && S.busy) return '<div class="msgacts"></div>';
   if (!text.trim()) return '';
   /* Calm (S3): the actions appear on hover or keyboard focus on EVERY
-     message, the last one included. F11 had pinned the last message's row
+     message, the last one included. An earlier pass had pinned the last message's row
      open with labels ("Copy", "Send again"); the spec's reading of the
      reference apps is that a reply is plain prose until it is pointed at.
      The names live on in each button's tooltip and aria-label. */
@@ -2086,7 +2086,7 @@ function toolGlyph(state) {
 /* ============================================================
    Calm (S3) \u2014 a tool call is one human line.
 
-   Danny's decision 4: "Listed files in workspace \u00b7 1 file", "Read
+   The rule: "Listed files in workspace \u00b7 1 file", "Read
    /etc/hosts", "Ran `npm test`". The raw tool id, the args, the output and
    the duration's provenance go inside the expanded part; a failure keeps its
    red status and its error line visible without expanding.
@@ -2507,7 +2507,7 @@ function composer() {
       + '<span class="ss-ic warn">' + ic('shield') + '</span><span class="ss-text">Waiting for your approval</span>'
       + '<span class="ss-grow"></span>'
       + '<button class="btn btn-g xs ss-jump" data-act="jump:appr">Jump to request' + ic('up') + '</button></div>'
-    /* F3 — a parked turn says so, and says when it tries again. The brief's
+    /* A parked turn says so, and says when it tries again. The
        shape: WAITING · <provider> · ATTEMPT n · NEXT TRY 30s, with a Stop.
        Caution, not critical: nothing has failed yet. */
     : WAIT
@@ -2536,7 +2536,7 @@ function composer() {
           ? '<span class="ss-ic warn">' + ic('clock') + '</span>'
           : '<span class="ss-ic err" title="Switch failed">' + ic('alert') + '</span>')
       + '<span class="ss-text">' + esc(SWX.err) + '</span></div>'
-    /* r2 (DMG feedback): the F10 "Ready · <last thing that changed>" strip is
+    /* r2 (DMG feedback): the "Ready · <last thing that changed>" strip is
        no longer drawn under the transcript — it read as noise. APPSTATUS is
        still kept (and logged) for diagnostics; only the strip is gone. The
        strips above stay: each carries a control (Jump, Stop) or a failure. */
@@ -2550,7 +2550,7 @@ function composer() {
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
     + voiceStripHTML()
-    /* F14 — the command list, OUTSIDE the composer.
+    /* The command list, OUTSIDE the composer.
        It is `position:absolute; bottom:100%`, so it lays itself out entirely
        above whatever it is positioned against. Rendered inside `.composer`,
        which is `position:relative; overflow:hidden`, that put every pixel of
@@ -2571,7 +2571,7 @@ function composer() {
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
       + micButton() + sendButton() + '</div>'
-      /* B.7, Soft Tactile — Valerii's ruling: Backend · Provider · Model, a
+      /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
          Calm (S2): the chips print human words ("This Mac", "OpenRouter",
@@ -3106,11 +3106,11 @@ function renderInspector() {
 }
 
 /* ---------------- console ---------------- */
-/* F10 — what the APP did, as opposed to what the conversation contains.
+/* What the APP did, as opposed to what the conversation contains.
    "Switched active text provider…", "Selected chat model…", "Connected · /Users/…"
-   were pushed into the transcript, so the tester's chat filled up with a
-   running commentary on her own clicks: "все действия отображаются у меня в
-   чате, что я делаю. Ну я такого не ожидаю." They belong on the status strip
+   were pushed into the transcript, so the chat filled up with a running
+   commentary on the user's own clicks, which nobody expects to see there.
+   They belong on the status strip
    above the composer, where the app reports on itself, and in the console
    drawer, which is the record. The transcript holds the conversation and the
    approval cards. Nothing else. */
@@ -4291,7 +4291,7 @@ function act(a) {
   if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
-  /* F1 — the second of the two buttons an unchecked key offers. It is the
+  /* The second of the two buttons an unchecked key offers. It is the
      same path as Next, with the user's decision carried into it, so nothing
      about how the provider is saved and activated differs; only whether we
      were allowed to claim the key works. */
@@ -4328,7 +4328,7 @@ function act(a) {
     if (rest === 'local' || rest === 'cloud' || rest === 'fusion') { fzActivateBackend(rest); return; }
     return;
   }
-  /* F6 — both ways out of the model step run the SAME save path: wizNext
+  /* Both ways out of the model step run the SAME save path: wizNext
      again, with the choice made. Nothing about how the provider is written
      differs between "use default" and picking a row. */
   if (a === 'wiz:model' || a === 'wiz:useDefault') {
@@ -4340,7 +4340,7 @@ function act(a) {
     wizNext();
     return;
   }
-  /* F4 — the one action a person can take about an agent that is too old to
+  /* The one action a person can take about an agent that is too old to
      have coding modes. Shipping the matching agent inside the DMG is the real
      fix and is not this window's to make; until then, take them to where the
      newer one is. */
@@ -4401,7 +4401,7 @@ function act(a) {
     return;
   }
   /* N3 — this used to toast "not available in the desktop", which left a
-     tester with no way to send us anything at all. It writes a file now:
+     user with no way to send us anything at all. It writes a file now:
      the agent log, the config with every secret removed, and the build. */
   if (a === 'dump') {
     close(); render();
@@ -4977,7 +4977,7 @@ document.addEventListener('click', (e) => {
   const selRow = t.closest('[data-sel-row]');
   if (selRow) { selActivate(SEL.rows[+selRow.dataset.selRow]); return; }
   const wizKind = t.closest('[data-wiz-kind]');
-  /* F6 — a model row, in whichever wizard is on screen. This lives on the
+  /* A model row, in whichever wizard is on screen. This lives on the
      app's own click path, not the flow's: the flow's listener returns early
      when the flow is closed, and the composer's popover is the other place
      this step renders. */
@@ -5066,8 +5066,8 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'wiz-key') {
     WIZ.apiKey = e.target.value;
     /* B.4 — the error clears on the first keystroke in the field it belongs
-       to. The tester entered a key and the old error stayed under it, so the
-       screen still read as a failure while she was fixing it. Repaint only
+       to. A key typed after an error left the old error under it, so the
+       screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
     if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.uncheckedFor = null; render(); }
     return;
@@ -5551,7 +5551,7 @@ function refreshWaitStrip() {
 }
 
 function refreshSlash() {
-  /* F14, the second half. Typing `/` never goes through render() — the
+  /* The command list, the second half. Typing `/` never goes through render() — the
      composer repaints in place so the caret does not move — so THIS is the
      path that actually puts the command list on screen, and it was inserting
      it inside `#composer`, which clips. The popover was therefore invisible
@@ -5640,7 +5640,7 @@ document.addEventListener('keydown', (e) => {
   /* Item 1 (plan hand-off): the TUI's PLAN_CHORDS — auto `y`, bypass `b`,
      dismiss `d` (src/tui/app-key-bindings.ts) — with the ctrl the TUI requires
      on all of them (`if (state.planHandoff && key.ctrl && !key.meta)`). The
-     brief asked for the TUI's behaviour, and the chord IS the behaviour: the
+     goal is the TUI's behaviour, and the chord IS the behaviour: the
      approval modal's own footer explains why the TUI moved off bare letters
      ("every one of them is a chord, so typing a message that happens to start
      with 'yes' cannot approve the call the way a bare `y` did"), and the same
@@ -6024,9 +6024,9 @@ function startLiveTurn(text) {
       return;
     }
     S.turnId = res.turnId;
-    /* F2 — when the turn started, so a failure can say how long it waited
-       rather than only that it gave up. The tester's turn spent 95 seconds
-       retrying and the transcript said nothing about any of it. */
+    /* When the turn started, so a failure can say how long it waited
+       rather than only that it gave up. A turn could spend 95 seconds
+       retrying while the transcript said nothing about any of it. */
     S.turnStartedAt = Date.now();
     // item 6: the sidebar's running dot follows the stream, not S.busy.
     RUNNING.set(res.turnId, S.agentSession || null);
@@ -6035,12 +6035,12 @@ function startLiveTurn(text) {
 }
 
 /* ---------------------------------------------------------------
-   F2 — a failure a person can act on.
+   A failure a person can act on.
 
-   What reached the tester was `turn failed [transport]: fetch failed`.
-   Neither half of that is hers: `transport` is the agent's category enum and
+   What used to reach the user was `turn failed [transport]: fetch failed`.
+   Neither half of that is theirs: `transport` is the agent's category enum and
    `fetch failed` is undici's string, and between them they name no provider,
-   no host, and nothing she could do next. The window knows all three — which
+   no host, and nothing the user could do next. The window knows all three — which
    provider is active, which host that kind talks to, and how long the turn
    had been running — so it says them, and offers the one action that helps.
    --------------------------------------------------------------- */
@@ -6367,7 +6367,7 @@ function onChatEvent(ev) {
     // next turn would swallow a bubble there.
     /* The park is over when the turn is, whatever the outcome. */
     if (WAIT) { WAIT = null; if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; } }
-    /* F1 — a turn that COMPLETED on a provider is the proof its key works,
+    /* A turn that COMPLETED on a provider is the proof its key works,
        and the only thing that can retire the UNVERIFIED cell. An error or an
        abort proves nothing either way, so the badge stays. */
     if (ev.kind !== 'error' && ev.kind !== 'aborted') {
@@ -8489,7 +8489,7 @@ function obImportHeadline(report, executed) {
   }
   return (s.migrated + s.conflict) > 0 ? OB_COPY.importPreviewActionable : OB_COPY.importPreviewNothing;
 }
-/* F7 — a failure you can look at.
+/* A failure you can look at.
    The result screen printed counts and stopped: "444 migrated, 1 skipped, 6
    failed" with no way anywhere in the UI to learn what those six were. A
    count you cannot open is not a report. */
@@ -8576,7 +8576,7 @@ function obProbeAtomicChat() {
   }, () => { OB_ATOMIC_CHAT.asking = false; });
 }
 
-/* F6 — the model step, rendered by BOTH wizards.
+/* The model step, rendered by BOTH wizards.
    There are two of them — the first-run flow's and the composer popover's —
    and every time something is added to one and not the other they drift; the
    error slot on the key screen had drifted that way already. One function. */
@@ -8695,7 +8695,7 @@ function obWizardHTML() {
      (with its mark) as the title, and naming the field is the placeholder's
      job. The .env sentence is the copy contract's, verbatim, under the field.
 
-     F1 — when the key could not be CHECKED (as opposed to rejected), the two
+     When the key could not be CHECKED (as opposed to rejected), the two
      buttons below are the whole decision: try again, or save it knowing it is
      unchecked. Unreachable reads amber, rejected reads red. */
   const service = k.label.split(' (')[0];
@@ -9141,11 +9141,11 @@ function obImportPreviewKey(input, key) {
 /** handleImportDoneKey (:402-413): any key hands over to the agent. */
 function obImportDoneKey(input, key) {
   if (key.ctrl) return false;
-  /* F8 — Enter and Space commit; nothing else does.
+  /* Enter and Space commit; nothing else does.
      This step took ANY key and finished the flow, because the TUI's footer
      said "any key to start" and this was a literal port of it. In a window
      with a focus ring and a Tab order that is not a shortcut, it is a trap:
-     the tester pressed a key to see what would happen and was thrown out of
+     a key pressed to see what would happen threw the user out of
      the step. The strip now says "enter start", and this is what makes that
      true. */
   if (key.return || input === ' ') { obFinishImport(); return true; }
@@ -9579,7 +9579,7 @@ async function obRunImport(options, execute) {
       const part = await obRunTuiImport(mine, execute);
       OB.scanDone = Math.min((OB.scanDone || 0) + 1, picked.length);
       if (part.error) { failed = part.error; break; }
-      /* F7 — every item remembers which source produced it, so a failure can
+      /* Every item remembers which source produced it, so a failure can
          be named. The report used to concatenate items from four sources with
          nothing to say which one a failed row came from. */
       for (const item of part.items) items.push(Object.assign({source: agent.id}, item));
@@ -10073,7 +10073,7 @@ function obTabbed(e) {
  * sends the SAME Enter the keyboard sends, through the one key table, so
  * a click can never do something no key can.
  */
-/* Calm (S6) — select, then continue. Valerii's round-2 ruling for the
+/* Calm (S6) — select, then continue. The rule first set for the
    cloud model list (a click picks and ticks, a double click uses) now holds
    on every step: a click moves the cursor onto the row and ticks it, and the
    step's primary button — "Download 5.2 GB", "Continue" — or Enter, or a
@@ -10130,7 +10130,7 @@ function obControlClick(spec) {
     return;
   }
   if (spec === 'import:failures') { OB.importFailuresOpen = !OB.importFailuresOpen; render(); return; }
-  /* F7 — retry only the sources that actually failed, so a retry after a
+  /* Retry only the sources that actually failed, so a retry after a
      444-item import does not re-walk the 444 that worked. */
   if (spec === 'import:retry') {
     const bad = new Set(obImportFailures().map((i) => i.source).filter(Boolean));
@@ -10206,7 +10206,7 @@ if (BR) {
        keeps the mouse and the keyboard from drifting apart again, which is
        the invariant all three lanes were arguing for. */
     if (OB.open && OB.step === 'cloud' && a === 'wiz:next') { obKey('', {return:true}); return; }
-    /* F6/F1 — the wizard's OTHER verbs. The guard at the bottom of this
+    /* The wizard's OTHER verbs. The guard at the bottom of this
        function swallows everything not named here while the flow is open, so
        a verb added to the wizard and not added here is simply inert inside
        first run: the model step's two buttons and the unchecked-key offer did
@@ -10280,7 +10280,7 @@ document.addEventListener('click', (e) => {
   if (row) { obRowClick(+row.dataset.obrow, e.detail); return; }
   const ctl = e.target.closest && e.target.closest('[data-obact]');
   if (ctl) { obControlClick(ctl.dataset.obact); return; }
-  /* F6 — a click on a model row selects it; the verb is on the action bar,
+  /* A click on a model row selects it; the verb is on the action bar,
      the way every other step in this flow works.
      r2 (DMG feedback): a double click is that verb — "Use this model" on the
      row just picked. `detail` counts the clicks of one gesture, so the second
@@ -10332,8 +10332,8 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'wiz-key') {
     WIZ.apiKey = e.target.value;
     /* B.4 — the error clears on the first keystroke in the field it belongs
-       to. The tester entered a key and the old error stayed under it, so the
-       screen still read as a failure while she was fixing it. Repaint only
+       to. A key typed after an error left the old error under it, so the
+       screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
     if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.uncheckedFor = null; render(); }
     return;
@@ -10873,7 +10873,7 @@ function selRows() {
     const rows = selProviders().map((p) => ({
       type:'provider', id:p.id, label:p.id,
       detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
-      /* F1 — a key we were never able to check is not a key we know works,
+      /* A key we were never able to check is not a key we know works,
          and the row has to keep saying so until a turn proves otherwise. */
       unverified: UNVERIFIED.indexOf(p.id) >= 0,
       active: p.id === activeId,
@@ -11168,7 +11168,7 @@ function selectorHTML() {
         const model = r.type === 'cloudModel' || r.type === 'localModel' || r.type === 'workerModel';
         const right = (r.type === 'backend' ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
-          /* F1 — an unlit cell, not a lit one: this is a state we could not
+          /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
         const name = selRowName(r);
@@ -11660,7 +11660,7 @@ function modesHTML() {
       }).join('')
     + '<div class="modenote">'
     + (off
-        /* F4 — this is our packaging problem, and it used to be presented to
+        /* This is our packaging problem, and it used to be presented to
            the user as their broken feature: four greyed stances, an internal
            route name, and the path of the binary we happened to spawn. None
            of that is actionable by a person. Say which version is needed and
@@ -11809,7 +11809,7 @@ async function setCodingMode(id, post) {
   if (!res || !res.ok) {
     MODE.supported = res ? res.supported : true;
     S.log.push({id:nid(), k:'system', text: res && res.supported === false
-      // F4/A.4: the version, never the route name.
+      // The version, never the route name.
       ? MODE_NEEDS_NEWER
       : 'could not change the mode: ' + esc((res && res.error) || '')});
     render();
@@ -13004,7 +13004,7 @@ function wizardHTML() {
   /* This is the SECOND place the app asks for an API key — the wizard's own
      screen is the other — and the two had drifted: this one wrote the error
      into a `<p class="cap">` with an inline colour, so the error slot the
-     rest of the app (and F1's own check) looks for did not exist here at all.
+     rest of the app (and the unchecked-key check) looks for did not exist here at all.
      Same class, same slot, same two buttons when a key could not be checked. */
   return selShell(k.label,
     '<div class="selbody selwiz">' + fields
@@ -13168,13 +13168,13 @@ async function wizNext() {
     render(); refreshLiveConfig();
     return;
   }
-  /* F1 — unchecked is not passed.
+  /* Unchecked is not passed.
      `verifyProviderKey` answers three ways: ok, rejected, and "the request
      could not leave this machine, so nothing was checked". The third used to
      fall through here into save + activate + the completion screen, with the
-     reason dropped into a toast that vanished in four seconds. The tester
-     typed random characters as a key, read "Cloud model ready", and every
-     turn afterwards failed.
+     reason dropped into a toast that vanished in four seconds. Random
+     characters typed as a key read "Cloud model ready", and every turn
+     afterwards failed.
 
      So the flow stops on the key screen and hands the decision over: TRY
      AGAIN, or SAVE UNCHECKED. Nothing is activated until one of those is
@@ -13193,10 +13193,10 @@ async function wizNext() {
   if (!unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, false); } catch (e) { /* idem */ } }
   WIZ.acceptUnchecked = false;
   WIZ.uncheckedFor = null;
-  /* F6 — the model is a CHOICE, not something we take silently.
+  /* The model is a CHOICE, not something we take silently.
      The wizard used to pick the kind's default model and move straight to the
-     completion screen, so the tester's "я выбрала аимлапи и типо ввела ключ —
-     а какая модель у меня выберется?" had no answer anywhere on screen. The
+     completion screen, so "I picked AI/ML API and entered a key, which model
+     will I get?" had no answer anywhere on screen. The
      catalogue is already in hand at this point; the step shows it, with our
      default preselected, and Use default is one button away. */
   if (!WIZ.modelChosen) {
@@ -13510,10 +13510,10 @@ async function applyTraceDurations() {
 
 /** Escaped prose with files as chips and URLs as links. */
 /* ---------------------------------------------------------------
-   F12 — markdown, rendered.
+   Markdown, rendered.
 
    A model writes markdown; this window printed it. `**asterisks**` reached
-   the tester's screen as asterisks, and so did every heading, list and code
+   the screen as asterisks, and so did every heading, list and code
    fence in a long reply. There is one renderer and every place a model's
    prose can land goes through it — the reply body, the tool-card summary and
    the plan hand-off — so they cannot drift apart again.
@@ -14131,7 +14131,7 @@ if (typeof window !== 'undefined') {
   window.__ctxTitle = () => ((document.querySelector('.popover .hd') || {}).textContent || '');
   window.__ctxBasis = () => ((document.querySelector('.popover .ctxbasis') || {}).textContent || '');
   window.__ctxDraft = (t) => { S.draft = t; CTX.draftTokens = estimateTokens(t); if (CTX.source === 'projected') CTX.tokens = CTX.stablePrefix + CTX.draftTokens; render(); return CTX.tokens; };
-  /* F14 — the command list, through the path a KEYSTROKE takes.
+  /* The command list, through the path a KEYSTROKE takes.
      Typing never calls render(); it calls the composer's input handler, which
      calls refreshSlash(). Driving the draft directly would test the wrong
      path — the one that was never broken — so this dispatches a real `input`
@@ -19740,9 +19740,9 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   // item 9 — what the main process latched before anything could write.
   window.__firstRun = () => FIRSTRUN;
-  /* F10 — what the app last said about itself, and the console's record of
+  /* What the app last said about itself, and the console's record of
      it. The transcript is asserted separately, and must NOT carry these. */
-  /* F3 — the parked-turn readout, driven through the same frame the agent
+  /* The parked-turn readout, driven through the same frame the agent
      sends. Reads back what a person would see, not the state behind it. */
   window.__waitFrame = (payload) => {
     onChatEvent({turnId: S.turnId || 'wait-probe', kind: 'provider_waiting', payload});
@@ -19764,7 +19764,7 @@ if (typeof window !== 'undefined') {
     tone: APPSTATUS.tone,
     logged: LOGS.map((r) => r[2]),
   });
-  /* F1 — which providers were saved without the key being checked. Read
+  /* Which providers were saved without the key being checked. Read
      from disk each time, because the wizard writes it through main. */
   window.__unverified = () => (BR && BR.unverified ? BR.unverified() : Promise.resolve(null));
   // item 9 — the fresh-install predicate, drivable without an agent.

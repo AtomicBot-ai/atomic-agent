@@ -290,7 +290,7 @@
 .cfoot .cmodechip.blank > svg{color:var(--ink-3)}
 
 /* ---- Slash commands ------------------------------------------------------
-   F14: anchored on the WRAPPER, never inside #composer — it opens upward
+   Anchored on the WRAPPER, never inside #composer — it opens upward
    above the whole dock and keeps its own scroller. */
 .composerwrap > .slash{position:absolute;left:28px;right:28px;bottom:calc(100% - 4px);z-index:40;
   max-width:560px;display:flex;flex-direction:column;padding:6px;border-radius:var(--r-pop);

@@ -291,7 +291,7 @@
 #onboarding .ob-foot .btn-p{min-width:112px}
 #onboarding .ob-foot .btn .tk-spin{width:14px;height:14px}
 /* The quiet action keeps a hairline edge at rest: a Back that reads as a
-   label until the pointer is on it was a tester finding, and
+   label until the pointer is on it was found in testing, and
    onboarding-mouse.mjs still measures it. */
 #onboarding .ob-foot .btn-g{padding:0 18px 0 14px;border:1px solid var(--bd-2)}
 #onboarding .ob-foot .btn-g:hover{background:var(--hover);color:var(--ink)}

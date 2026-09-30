@@ -458,10 +458,10 @@ async function writeWholeConfig(config: unknown): Promise<CliResult> {
  * `config set failed: version 51 is newer than this build understands (49)`
  * is the agent refusing to write a settings file that a NEWER agent created:
  * writing it would silently drop whatever that newer schema added. Correct,
- * and unreadable — a tester hit it switching model and saw two version
- * numbers and no idea what to do.
+ * and unreadable — switching model showed two version numbers and no hint
+ * of what to do.
  *
- * It reached her because this app now ships its own agent and prefers it over
+ * It surfaces because this app now ships its own agent and prefers it over
  * anything installed. Before that it used whatever `atag` was on the machine,
  * which was the same one that had written the file. A bundled agent older
  * than the state directory it inherits is a real state, and this says what it
@@ -754,7 +754,7 @@ export async function verifyProviderKey(
     });
   } catch (err) {
     // Unreachable is not "your key is wrong": do not pretend to a verdict.
-    /* F2 — "fetch failed" is undici's words, not a sentence for a person.
+    /* "fetch failed" is undici's words, not a sentence for a person.
        What the user needs is which host did not answer and what that means
        for their key; the underlying message adds nothing they can act on. */
     return { ok: false, checked: false, error: `Could not reach ${new URL(url).host} — the key was not checked.` };

@@ -174,7 +174,7 @@ export async function configureCloud(app, seedEnv, { timeout = 180000 } = {}) {
   const typed = await app.eval('((document.querySelector("#wiz-key")||{}).value || "").length');
   if (!typed) throw new Error('the key field is empty after typing — a repaint took the caret');
   await app.clickText('Next');
-  /* F6 — a verified key lands on the MODEL STEP, which is still the `cloud`
+  /* A verified key lands on the MODEL STEP, which is still the `cloud`
      step with the flow open. Take the default and carry on: what these
      callers want from this helper is a configured cloud provider, and which
      model that is has never been their subject. */

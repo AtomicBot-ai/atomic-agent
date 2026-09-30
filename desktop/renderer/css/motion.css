@@ -1,6 +1,6 @@
 /* ============================================================
-   Motion — Calm (S7). Loaded last. One place for press feedback, per the
-   Emil rules in SPEC.md "References":
+   Motion — Calm (S7). Loaded last. One place for press feedback, per these
+   rules:
    - a pressable answers a press: :active scales it to 0.97 (compact
      controls) or 0.985 (full-width rows, where 3% of 600px would lurch),
      160 ms, a strong ease-out (--ease-out);

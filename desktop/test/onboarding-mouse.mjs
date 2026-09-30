@@ -134,8 +134,8 @@ try {
     /* ...and it has to LOOK like one while nobody is pointing at it.
        Both wizard secondaries rested on a `transparent` border and drew
        an edge only on :hover, which is a control that reads as a label
-       until the pointer is already on it — the one thing the brief names
-       outright. Read with the mouse parked in the corner, so what is
+       until the pointer is already on it — the one thing this check exists
+       for. Read with the mouse parked in the corner, so what is
        measured is the resting state and not a hover. */
     say(await app.moveAway());
     {
@@ -305,7 +305,7 @@ try {
     /* B.4 — the screen says "API key" once, in the 11px kicker, and names
        the provider as the subhead. It used to be one heading reading
        "API key — Groq" with the words "API key" again on the field's label
-       below it, which the tester read as the same thing twice. */
+       below it, which read as the same thing twice. */
     check('Continue on the selected provider opens its key screen',
       /^Groq/.test(head), `cursor was on row ${before}; head=${JSON.stringify(head)}`);
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
@@ -445,7 +445,7 @@ try {
       await sleep(500);
       const now = await step();
       const open = await app.js('window.__ob().open');
-      /* F6 — a verified key lands on the MODEL STEP, which is still the
+      /* A verified key lands on the MODEL STEP, which is still the
          `cloud` step with the wizard open; the flow has moved on even though
          `step` has not. Watch for either. */
       const phase = await app.js('window.__wizList ? window.__wizList().phase : null');

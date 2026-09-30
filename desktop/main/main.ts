@@ -218,11 +218,11 @@ function readVoicePrefs(): VoicePrefs {
   }
 }
 
-/* F1 — which providers were saved WITHOUT the key ever being checked.
+/* Which providers were saved WITHOUT the key ever being checked.
    `verifyProviderKey` has three answers, not two: ok, rejected, and
    "could not reach the host, so nothing was checked". The wizard used to
    treat the third as a pass, activate the provider and show a completion
-   screen; the tester typed random characters as an AI/ML API key, was told
+   screen; random characters typed as an AI/ML API key were answered with
    "Cloud model ready", and every turn after that died.
 
    Unchecked is now a decision the user makes, and the consequence has to
@@ -551,8 +551,8 @@ function sessionMenuTemplate(
 
 /* N3 — the agent's output, on disk.
    Everything `atag serve` said lived in the console drawer's 300-line ring,
-   in memory, and went with the window: a tester who quit had destroyed the
-   evidence, which is exactly what happened. It is appended to a rolling
+   in memory, and went with the window: quitting the app destroyed the
+   evidence. It is appended to a rolling
    `agent.log` in the state directory as well, so there is something to ask
    for after the fact. Two files, ~2 MB each, so it cannot grow without
    bound on a long-running window. */
@@ -1391,8 +1391,8 @@ function wireIpc(client: AgentClient): void {
 
   /* N3 — "Write Debug Bundle" toasted "not available in the desktop", and the
      console drawer's LLM tab had no writer at all. A control that cannot do
-     its job is worse than no control: the tester had no way to send us
-     anything, so we asked her for screenshots of a scrolling pane. This
+     its job is worse than no control: a user had no way to send us
+     anything but screenshots of a scrolling pane. This
      writes what the app actually holds — the agent log on disk, the config
      with every secret removed, and what this build is — next to the state
      directory, and answers with the path so the window can reveal it. */
@@ -3868,7 +3868,7 @@ async function settingsTest(
   const GROUPS = ["Manage", "Session", "Model", "Run", "Setup", "Help", "Danger zone"];
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
-  // Calm (S5): the window's own panes and nav sections, in Danny's order.
+  // Calm (S5): the window's own panes and nav sections, in nav order.
   const PANES = ["general", "llm", "mcp", "telegram", "memory", "tasks", "skills", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Privacy", "Import", "Diagnostics"];
   const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", memory: "memory",
@@ -5367,12 +5367,12 @@ async function hfAndDeltaTest(
   );
 
   /* The version wall, in words.
-     A tester switching model got `config set failed: version 51 is newer than
-     this build understands (49)` on the status strip: two numbers and no idea
-     what to do. It reached her because this app started shipping its own
-     agent and prefers it over anything installed — before that it used
-     whatever `atag` was on the machine, which was the same agent that had
-     written her settings file. A bundled agent older than the state directory
+     Switching model could print `config set failed: version 51 is newer than
+     this build understands (49)` on the status strip: two numbers and no hint
+     of what to do. It surfaces because this app ships its own agent and
+     prefers it over anything installed — before that it used whatever `atag`
+     was on the machine, which was the same agent that had written the
+     settings file. A bundled agent older than the state directory
      it inherits is a real state, so it explains itself. */
   const versionWall = explainConfigWriteFailure(
     "config set failed: version 51 is newer than this build understands (49)",
@@ -5391,12 +5391,12 @@ async function hfAndDeltaTest(
     JSON.stringify(explainConfigWriteFailure("no such provider")),
   );
 
-  /* F3 — a parked turn says so.
+  /* A parked turn says so.
      The agent waits out a provider outage rather than failing the turn, and
      until this branch merged it told only the TUI. The window showed nothing
      between the last token and a failure minutes later — "(no reply) · turn
-     failed" with no explanation of the ninety seconds in between, which is
-     what the tester read as a dead app. */
+     failed" with no explanation of the ninety seconds in between, which
+     looked like a dead app. */
   type WaitStrip = { shown: boolean; ann: string | null; readout: string | null; reason: string | null; stop: boolean };
   const waitStrip = await js<WaitStrip>(
     "window.__waitFrame({attempt:5, waited_ms:65000, max_wait_ms:300000, next_retry_ms:30000, reason:'fetch failed'})",
@@ -5423,7 +5423,7 @@ async function hfAndDeltaTest(
     JSON.stringify(backAgain),
   );
 
-  /* F14 — "typing / showed no commands".
+  /* "typing / showed no commands".
      I closed this once as not-a-bug on the strength of a DOM query that found
      the popover with 33 rows and a sensible bounding rect. It was clipped:
      `.slash` is `position:absolute; bottom:100%`, it was rendered inside
@@ -5461,7 +5461,7 @@ async function hfAndDeltaTest(
   const empty = await js<{ lines: string[] }>(
     `window.__chatEvent({turnId:${JSON.stringify(turnB)}, kind:'error', error:''})`,
   );
-  /* F2 changed what this line SAYS, so this check changed with it. The old
+  /* The failure-line rewrite changed what this line SAYS, so this check changed with it. The old
      contract was "print the agent's message and its bracketed category" —
      which is how `turn failed [transport]: fetch failed` reached a user. The
      category is an enum name and never goes out now; a transport failure
@@ -7724,7 +7724,7 @@ async function backendSwitchTest(
       toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
       `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
     );
-    /* F10 — these lines used to be pushed into the TRANSCRIPT, so the
+    /* These lines used to be pushed into the TRANSCRIPT, so the
        conversation filled up with a commentary on the user's own clicks
        ("все действия отображаются у меня в чате"). They are the app
        reporting on itself: they belong on the status strip above the
@@ -8396,7 +8396,7 @@ async function onboardingTest(
       `${JSON.stringify(labels)} footer=${JSON.stringify(copy.footer)}`,
     );
     /* The subtitle was "setup · step 1 of 2" in 11px grey — the smallest
-       thing on a 1470px screen, and the tester never found it. The step
+       thing on a 1470px screen, and easy to miss entirely. The step
        indicator is a numbered phase row now and the screen carries a real
        title, so that is what is asserted. */
     const chooseTitle = await js<string>("((document.querySelector('#onboarding .ob-title')||{}).textContent||'').trim()");
@@ -8539,7 +8539,7 @@ async function onboardingTest(
       JSON.stringify(variants) === JSON.stringify(wantVariants),
       JSON.stringify(variants),
     );
-    /* F8's invariant, and the one that actually protects the user: a footer
+    /* The keyboard rule's invariant, and the one that actually protects the user: a footer
        may not advertise a chord this window does not answer. `ctrl+c quit`
        was printed on all twenty of these while the desktop had no such
        binding, and the comment above the function that produced it said so. */
@@ -8550,9 +8550,9 @@ async function onboardingTest(
       `ctrl+c=${/ctrl\+c/.test(advertised)} anyKey=${/any key/.test(advertised)}`,
     );
 
-    /* ---- F8: arrows move, Enter and Space commit, nothing else ----
-       The tester was thrown out of a step by a key she pressed to see what
-       it did: `import_done` ran the flow's finish on ANY key, a literal port
+    /* ---- arrows move, Enter and Space commit, nothing else ----
+       A key pressed just to see what it did could throw the user out of a
+       step: `import_done` ran the flow's finish on ANY key, a literal port
        of the TUI's "any key to start" footer. In a terminal that is a
        shortcut; in a window with a focus ring it is a trap.
 
@@ -8568,7 +8568,7 @@ async function onboardingTest(
       const stillHere = moved.step === before.step;
       const cursorMoved = moved.cursor !== before.cursor || (before.rows ?? 0) <= 1;
       check(
-        `F8 on ${step}: an arrow moves the selection and commits nothing`,
+        `keys on ${step}: an arrow moves the selection and commits nothing`,
         stillHere && cursorMoved,
         `step ${before.step} → ${moved.step}, cursor ${before.cursor} → ${moved.cursor}`,
       );
@@ -8579,7 +8579,7 @@ async function onboardingTest(
     await new Promise((r) => setTimeout(r, 150));
     const arrowOnDone = await js<ObState>("window.__obKey('down')");
     check(
-      "F8 on import_done: an arrow does not finish the flow",
+      "keys on import_done: an arrow does not finish the flow",
       arrowOnDone.step === "import_done" && arrowOnDone.open === true,
       `step=${arrowOnDone.step} open=${arrowOnDone.open}`,
     );
@@ -8671,7 +8671,7 @@ async function onboardingTest(
       `window.__dlFeed(Object.assign({id:'qwen3.5-4b'}, ${JSON.stringify(parsed)}))`,
     );
 
-    // Calm (S1, U5, Danny's ruling): during setup the chat chrome does not
+    // Calm (S1, U5): during setup the chat chrome does not
     // show above the wizard. The strip is not drawn, the wizard layer starts
     // at the top of the window (over the toolbar), and the wizard's own
     // download screen reports the same numbers and carries the Cancel.
@@ -9268,8 +9268,7 @@ async function onboardingTest(
     check(
       /* B.4 — one label, not three. The screen said "API key — Gemini" as a
          heading, "API key" again as the field's label, and put the .env
-         sentence between them; the tester read the same words twice and she
-         was right. The screen is titled in the 11px style, the provider is
+         sentence between them, so the same words were read twice. The screen is titled in the 11px style, the provider is
          the subhead, and naming the field is the placeholder's job. The list
          behind it lost its heading too: the step's own title already says
          "Connect a cloud provider". */
@@ -9581,11 +9580,10 @@ async function onboardingTest(
         done = await js<ObState>("window.__ob()");
       }
       const writtenNow = existsSync(importedSkill);
-      /* F8 — Enter (or Space) closes the flow from here. It used to be ANY
+      /* Enter (or Space) closes the flow from here. It used to be ANY
          key, a literal port of the TUI's "any key to start" footer, which in
-         a window with a focus ring is a trap rather than a shortcut: the
-         tester pressed a key to see what it did and was thrown out of the
-         step. An arrow must now do nothing, and Enter must finish. */
+         a window with a focus ring is a trap rather than a shortcut: a key
+         pressed just to see what it did threw the user out of the step. An arrow must now do nothing, and Enter must finish. */
       const arrowDid = await js<ObState>("window.__obKey('down')");
       if (arrowDid.step !== "import_done") {
         process.stdout.write("FAIL wizard: an arrow key finishes the import step — it must not\n");

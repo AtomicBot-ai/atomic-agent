@@ -1,11 +1,11 @@
 /**
- * F1 — an unchecked key never becomes "Cloud model ready".
+ * An unchecked key never becomes "Cloud model ready".
  *
  * `verifyProviderKey` answers three ways, not two: ok, rejected, and "the
  * request could not leave this machine, so nothing was checked". The wizard
  * used to treat the third as a pass — it saved the provider, activated it,
  * dropped the reason into a four-second toast and showed the completion
- * screen. The tester typed random characters as an AI/ML API key, read
+ * screen. Random characters typed as an AI/ML API key read
  * "Cloud model ready", and every turn afterwards died.
  *
  * The scenario is a provider whose host does not resolve. That is a real
@@ -159,5 +159,5 @@ try {
   await app.close();
 }
 const failed = results.filter((r) => !r.pass).length;
-console.log(`F1 DRIVE: ${results.length - failed}/${results.length} passed`);
+console.log(`UNVERIFIED DRIVE: ${results.length - failed}/${results.length} passed`);
 process.exit(failed ? 1 : 0);
