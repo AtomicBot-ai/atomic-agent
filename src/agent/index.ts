@@ -68,6 +68,7 @@ export {
   progressNoteText,
   recordProgressNote,
   splitProgressNoteReply,
+  closingReplyBatch,
 } from "./progress-note-reply.js";
 export type {
   ProgressNoteNoticeState,
