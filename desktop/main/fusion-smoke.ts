@@ -240,8 +240,14 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
     { object: "atomic.fusion_worker", task_id: "t2", title: "tests", phase: "failed", role: "worker", model: "qwen-3.5-4b", summary: "timed out" },
   ];
   type EvProbe = { live: string[]; strip: string[]; stripControls: number; lines: string[]; beforeReply: boolean };
-  const mid = await js<EvProbe>(`window.__fzEventProbe(${JSON.stringify(frames.slice(0, 4))})`);
-  const end = await js<EvProbe>(`window.__fzEventProbe(${JSON.stringify(frames)})`);
+  // Live rows end with the worker's clock (" · 12s", " · 1m05s (~2m00s expected)"); compare the row without it.
+  const noClock = (rows: string[]): string[] => rows.map((r) => r.replace(/ · \d+(?:m\d\d)?s(?: \([^)]*\))?$/, ""));
+  const midRaw = await js<EvProbe>(`window.__fzEventProbe(${JSON.stringify(frames.slice(0, 4))})`);
+  const endRaw = await js<EvProbe>(`window.__fzEventProbe(${JSON.stringify(frames)})`);
+  const clocked = midRaw.live.every((r) => / · \d+(?:m\d\d)?s/.test(r));
+  const mid = { ...midRaw, live: noClock(midRaw.live), strip: noClock(midRaw.strip) };
+  const end = { ...endRaw, live: noClock(endRaw.live), strip: noClock(endRaw.strip) };
+  check("fusion: every live worker row carries its elapsed clock", clocked, JSON.stringify(midRaw.live));
   check("fusion: the live list shows each worker as `title · model — tool|working|done`, drawn under the composer with no control",
     same(mid.live, ["write the parser · qwen-3.5-4b — os.fs.write", "tests · qwen-3.5-4b — working"])
       && same(mid.strip, mid.live) && mid.stripControls === 0
