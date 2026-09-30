@@ -1,7 +1,7 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type { FsDangerousToolOptions } from "../fs-require-approval.js";
-import { buildGitErrorResult } from "./git-error-result.js";
+import { buildGitErrorResult, describeGitFailure } from "./git-error-result.js";
 import { requireGitMutationApproval } from "./git-mutation-approval.js";
 import { resolveGitToplevel } from "./git-repo-probe.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
@@ -78,7 +78,26 @@ export function buildOsGitCheckoutTool(
         args,
         signal: ctx.signal,
       });
-      requireGitSuccess("os.git.checkout", result);
+      // A failed checkout is the case `git-error-result.ts` exists for:
+      // "a write verb fails for reasons the model must reason about and
+      // recover from … so those come back as a `status: "error"` result
+      // whose output carries git's own words, not as an exception that
+      // ends the step". This verb was still throwing, so its failure
+      // went through the generic tool-error path on the compressor's
+      // bare 400-char default — measured in the field at 399 characters,
+      // cut mid-path, with `Please commit your changes or stash them
+      // before you switch branches.` gone. That sentence is the whole
+      // content of the failure.
+      //
+      // A timeout still throws: nothing came back to reason about.
+      if (result.timedOut) requireGitSuccess("os.git.checkout", result);
+      if (result.exitCode !== 0) {
+        return buildGitErrorResult(
+          "os.git.checkout",
+          describeGitFailure(result),
+          { branch, created: create, repoRoot: result.repoRoot },
+        );
+      }
       const output =
         result.stderr.trim() || result.stdout.trim() || `switched to ${branch}`;
       return compressToolResult({

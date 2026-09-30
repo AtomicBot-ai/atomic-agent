@@ -227,8 +227,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
     handlers: {
       onAgentEvent: (event, sessionId) => bus.emitAgentEvent(event, sessionId),
       onApprovalRequest: (request) => bus.emitApproval(request),
-      onSkillRegistryChange: (entries) =>
-        bus.emit({ type: "skill_count_changed", count: entries.length }),
+      onSkillRegistryChange: (entries, dropped) =>
+        bus.emit({
+          type: "skill_count_changed",
+          count: entries.length,
+          dropped,
+        }),
       onChannelStatus: (status) => {
         // Telegram status flows through the panel orchestrator, which
         // both updates the panel slice and emits a runtime_info line
@@ -262,6 +266,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
     maxSteps: maxSteps ?? config.agent.maxSteps,
     completionMaxTokens: config.localModels.completionMaxTokens,
     skillCount: runtime.skillCatalog.length,
+    // The catalog is what the prompt got, not what is installed: a big
+    // enough install is cut at `skills.catalogTokenBudget` and the
+    // count alone then reads as the whole library (issue #466). Seeded
+    // here and kept live by `skill_count_changed`.
+    skillCountDropped: runtime.skillCatalogDropped,
     // Read after the startup gate, so a local model picked in the wizard
     // moments ago already counts as configured for this launch.
     localBackendConfigured: isLocalBackendConfigured(),
@@ -488,6 +497,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>
           orchestrator.moveSession(id, toIndex),
+        onSessionsEndReached: () => orchestrator.loadMoreSessions(),
         onSessionNewRequested: () => orchestrator.newSession(),
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
@@ -562,12 +572,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSkillInstallCancelled: (identifier) =>
           void orchestrator.skills.cancelInstall(identifier),
         onMemoryAutoRefreshStart: () => orchestrator.memory.startAutoRefresh(),
+        onMemoryRefreshRequested: (opts) => orchestrator.memory.refresh(opts),
         onMemoryDetailRequested: (row) => orchestrator.memory.openDetail(row),
         onMemoryOpenNoteRequested: (noteId) =>
           orchestrator.memory.openNoteById(noteId),
         onMemoryExpandNeighborsRequested: (noteId) =>
           orchestrator.memory.expandNoteNeighbors(noteId),
         onMcpAutoRefreshStart: () => orchestrator.mcp.startAutoRefresh(),
+        onMcpRefreshRequested: () => orchestrator.mcp.refresh(),
         onProvidersTabRefresh: () => {
           orchestrator.providers.refresh();
           // The catalog fetchers cache at module scope, so a fresh TUI
@@ -638,13 +650,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),
         onImportExecute: (form) => orchestrator.import.execute(form),
-        onOnboardingImportRequested: (plan, execute) =>
-          void orchestrator.import.runOnboarding(plan, execute),
+        onOnboardingImportRequested: (plan) =>
+          void orchestrator.import.runOnboarding(plan),
         onMcpDetailRequested: (serverName) =>
           orchestrator.mcp.openDetail(serverName),
         onMcpAddServerSubmit: (json) =>
           orchestrator.mcp.addServerFromJson(json),
         onMcpRemoveServer: (name) => orchestrator.mcp.removeServer(name),
+        onMcpRestartServer: (name) => orchestrator.mcp.restartServer(name),
+        onMcpToggleServerEnabled: (name) =>
+          orchestrator.mcp.toggleServerEnabled(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onIssueReportRequested: () => orchestrator.issueReport.open(),
@@ -722,8 +737,6 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTelegramSetEnabledRequested: (enabled) =>
           orchestrator.telegram.setEnabled(enabled),
         onTelegramRestartRequested: () => orchestrator.telegram.restart(),
-        onTelegramTokenPromptOpenRequested: () =>
-          bus.emit({ type: "telegram_token_prompt_opened" }),
         onTelegramTokenSubmitted: (buffer) =>
           orchestrator.telegram.submitToken(buffer),
         onTelegramClearTokenRequested: () => orchestrator.telegram.clearToken(),

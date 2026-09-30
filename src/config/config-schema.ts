@@ -286,6 +286,13 @@ export interface AtomicAgentConfig {
     localModelsDataDir: string;
   };
   agent: {
+    /**
+     * Compact target for the upper prompt. Its only remaining effect on
+     * a built prompt is the `### session-facts` + `### loaded-skills`
+     * share, and `sessionSectionsMaxTokens` now overrides that directly;
+     * the stable prefix is sized by what it contains, not by this
+     * number.
+     */
     tokenBudget: number;
     /**
      * Steps in one *leg* of a task — a checkpoint interval, not the end
@@ -356,13 +363,16 @@ export interface AtomicAgentConfig {
      * and same reasoning as `localModels.managed.contextSize` — the
      * useful value is a function of hardware this file cannot see.
      *
-     * The default stays at 32k rather than becoming auto, and
-     * deliberately: on a local server the tokens are free, but on a
-     * metered cloud model with a 200k window "auto" would multiply the
-     * per-step bill without anyone asking for it. Operators who size
-     * their own `llama-server` are exactly the people who should set
-     * this to `0`, and the context panel now tells them so when their
-     * ceiling is what is holding the transcript below their window.
+     * **The shipped default IS `0`** — this paragraph used to claim it
+     * stayed at 32k, which stopped being true when auto landed, and the
+     * number was the one thing an operator would act on.
+     *
+     * Auto is not unbounded spend: it is what the window leaves, and a
+     * model whose window nobody has published falls back to
+     * `CONVERSATION_CAP_AUTO_FALLBACK` (64k). An operator on a metered
+     * cloud model who wants a tighter ceiling than the window sets a
+     * number here, and the context panel says so when that ceiling —
+     * rather than the window — is what holds the transcript down.
      */
     conversationMaxTokens: number;
     /**
@@ -373,6 +383,16 @@ export interface AtomicAgentConfig {
      */
     conversationMaxPairs: number;
     /**
+     * Ask the model to name each session from its first prompt.
+     *
+     * One extra short completion per session, once, after the first
+     * answered turn. It is a real call on a metered provider, which is
+     * the whole reason this is a switch rather than a fact: the lists
+     * are perfectly usable showing the prompt itself, which is what
+     * they showed before.
+     */
+    nameSessions: boolean;
+    /**
      * Share of a limit the transcript drops to when that limit
      * overflows, `(0, 1]`. The cut then holds until the next overflow,
      * so between cuts the prompt only grows at its end and a local
@@ -380,6 +400,13 @@ export interface AtomicAgentConfig {
      * enough every step (the old behaviour).
      */
     conversationLowWater: number;
+    /**
+     * Ceiling for `### session-facts` + `### loaded-skills` combined —
+     * the one prompt limit `tokenBudget` still moves. `0` keeps the
+     * historical `tokenBudget * 0.15` share
+     * (`SESSION_SECTIONS_CAP_AUTO`).
+     */
+    sessionSectionsMaxTokens: number;
     /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
@@ -419,6 +446,19 @@ export interface AtomicAgentConfig {
      */
     batchToolResultCharCap: number;
     /**
+     * What survives **ingestion** of a non-`gog` `os.shell.run` result.
+     * The compressor runs inside the tool and its summary is what gets
+     * stored as the `tool_result` turn, so whatever these drop is gone —
+     * not paged, not deferred. Before they existed the shell tool took
+     * the compressor's bare defaults (400 chars / 12 lines) while every
+     * read-oriented tool passed 8–64 KB. `gog` keeps its own far larger
+     * options and ignores both. Env-only:
+     * `ATOMIC_AGENT_SHELL_TOOL_RESULT_CHAR_CAP`,
+     * `ATOMIC_AGENT_SHELL_TOOL_RESULT_TAIL_LINES`.
+     */
+    shellToolResultCharCap: number;
+    shellToolResultTailLines: number;
+    /**
      * No-progress loop detection (OpenClaw-style `ToolLoopTracker`).
      * `loopWarningThreshold` — args-only repeat count that injects a
      * `### notice` (env `ATOMIC_AGENT_LOOP_WARNING_THRESHOLD`).
@@ -429,10 +469,14 @@ export interface AtomicAgentConfig {
      * `loopHistorySize` — sliding window size for the tracker's history
      * ring (env `ATOMIC_AGENT_LOOP_HISTORY_SIZE`).
      * `loopWanderingThreshold` — distinct-args spread on a wandering-prone
-     * tool (web/http/browser) that injects an actionable redirect notice
-     * (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
-     * `loopWanderingEscalation` — distinct-args spread that escalates to a
-     * forced graceful reply (env `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`).
+     * tool (search/web/http/browser), counted since the turn last made
+     * progress outside that tool's family, that injects an actionable
+     * redirect notice (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
+     * `loopWanderingEscalation` — the same run spread at which the loop
+     * escalates to a forced graceful reply (env
+     * `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`). The window spread has its
+     * own rungs, derived from `loopHistorySize` — see
+     * `WANDERING_CEILING_SHARE`.
      * All env-only.
      */
     loopWarningThreshold: number;
@@ -540,6 +584,30 @@ export interface AtomicAgentConfig {
   };
   log: {
     level: LogLevel;
+  };
+  /**
+   * Retention for `<stateDir>/sessions.sqlite` and the per-session trace
+   * files beside it. Mirrors `UserConfigFile.sessions`. Nothing in the
+   * runtime ever shrank either before this block: `delete(id)` is
+   * one-at-a-time and operator-driven, and the only bulk wipe is
+   * `atag uninstall`. See §"Session retention" in AGENTS.md.
+   */
+  sessions: {
+    retention: {
+      /**
+       * Master switch, default `false`. A session is the transcript of
+       * the operator's own work, so nothing deletes one until they ask:
+       * with this off the prune does not even open the table.
+       */
+      enabled: boolean;
+      /**
+       * Prune sessions whose `updated_at` is older than this; `null` is
+       * no age rule.
+       */
+      maxAgeDays: number | null;
+      /** Keep at most this many sessions, oldest first; `null` is no cap. */
+      maxRows: number | null;
+    };
   };
   tracing: {
     trace: {
@@ -782,8 +850,9 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 2: reactive link graph. See UserConfigFile.memory.links.
-     * Default disabled — the link-generator LLM sub-call is opt-in,
-     * and recall-side expansion only fires when enabled is true.
+     * Enabled by default. With the master switch off the
+     * link-generator LLM sub-call never fires and recall-side
+     * expansion is skipped.
      */
     links: {
       enabled: boolean;
@@ -795,9 +864,10 @@ export interface AtomicAgentConfig {
       generatorTimeoutMs: number;
     };
     /**
-     * Phase 3: memory evolution (neighbor-evolver). Default disabled
-     * — without it the parser still recognises `EVOLVE` lines but
-     * silently drops them. See UserConfigFile.memory.evolution.
+     * Phase 3: memory evolution (neighbor-evolver). Enabled by
+     * default. With the master switch off the parser still
+     * recognises `EVOLVE` lines but silently drops them. See
+     * UserConfigFile.memory.evolution.
      */
     evolution: {
       enabled: boolean;
@@ -806,8 +876,8 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 5: distilled lessons + cold-path consolidator. See
-     * UserConfigFile.memory.lessons for full doc. Default disabled —
-     * with the master switch off, `### lessons` is not rendered,
+     * UserConfigFile.memory.lessons for full doc. Enabled by
+     * default; with the master switch off, `### lessons` is not rendered,
      * `memory.lessons.recall` returns `LessonsDisabledError`, and
      * the consolidator never registers its periodic timer.
      */
@@ -821,7 +891,7 @@ export interface AtomicAgentConfig {
     };
     /**
      * Phase 7b: MemP-style advisory procedures distilled alongside
-     * lessons. Default disabled — when off, the `### procedures`
+     * lessons. Enabled by default; when off, the `### procedures`
      * section is not rendered, `memory.procedures.recall` returns a
      * `ProceduresDisabledError`, and the consolidator emits only the
      * `LESSON` half of the combined grammar.
@@ -848,9 +918,9 @@ export interface AtomicAgentConfig {
      * one extra sub-call per turn (after link-generator and
      * neighbor-evolver) that asks the model to UPVOTE/DOWNVOTE the
      * items surfaced in this turn's variable tail. See
-     * `UserConfigFile.memory.voting` for full doc. Default disabled
-     * — flipping it on adds the extra LLM call on the shared
-     * reflection slot.
+     * `UserConfigFile.memory.voting` for full doc. Enabled by
+     * default; the extra LLM call rides the shared reflection slot,
+     * so turning it off removes one sub-call per turn.
      */
     voting: {
       enabled: boolean;
@@ -918,6 +988,7 @@ export interface AtomicAgentConfig {
     mouse: boolean;
     onboarding: OnboardingState;
     sessionRail: SessionRailConfig;
+    notify: TuiNotifyConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1265,6 +1336,29 @@ export interface TelegramConfig {
   progressIndicator: boolean;
 }
 
+/**
+ * Local end-of-turn pings, written to the terminal itself (config v71).
+ *
+ * Deliberately not part of `notifications`, which routes a message off
+ * the machine — to Telegram, Discord or e-mail — and needs a channel
+ * configured before it can say anything. This one has no channel and no
+ * setup: it writes `OSC 9` plus a `BEL` to the session's own terminal,
+ * which is exactly as far as it should carry.
+ */
+export interface TuiNotifyConfig {
+  /** Off means the terminal is never written to out of band. */
+  enabled: boolean;
+  /**
+   * How long a turn must have run before its *successful* ending is
+   * worth a ping. A failure always pings regardless: it is the ending
+   * that needs a person, and it can happen in two seconds.
+   *
+   * The floor exists because a bell on every turn is a bell an operator
+   * learns to ignore, which costs the failures too.
+   */
+  minDurationMs: number;
+}
+
 /** Where a finished (or failed) background model download is reported. */
 export type DownloadNotifyChannelSetting =
   "telegram" | "discord" | "email" | "off";
@@ -1349,7 +1443,10 @@ export function parseLocalTemplateSetting(
  */
 export type ReadScope = "working-dir" | "unrestricted";
 
-export const READ_SCOPES: readonly ReadScope[] = ["working-dir", "unrestricted"];
+export const READ_SCOPES: readonly ReadScope[] = [
+  "working-dir",
+  "unrestricted",
+];
 
 export function parseReadScope(raw: unknown, field: string): ReadScope {
   if (
@@ -1389,7 +1486,9 @@ export interface UserManagedLocalLlmConfig {
   device: string;
   /**
    * Which llama.cpp build (release zip) the managed backend installs.
-   * Windows-only — every other platform publishes a single asset.
+   * Windows-only — every other platform, Linux arm64 included,
+   * publishes a single asset, so there is nothing for the preference to
+   * choose between and it is ignored there.
    *   - `"auto"` (default) — probe `nvidia-smi` and pick the newest CUDA
    *     build the driver can run, else Vulkan.
    *   - `"cpu"` — the CPU-only build. For machines whose Vulkan stack
@@ -1438,8 +1537,14 @@ export interface UserManagedLocalLlmConfig {
    * prompt cannot serve one (see `worker-slots.ts`). That makes the
    * number a property of the machine, which is the party that knows it.
    *
-   * A pinned number is honoured as written: an external server, an
-   * unusual model, a benchmark. Applied on the next daemon start.
+   * `"auto"` also reads which way fusion is pointing. With the legs
+   * swapped — a local orchestrator and cloud workers — the daemon serves
+   * exactly one stream, so it launches with one slot: a second one
+   * cannot be used and is not free (see `local-leg-role.ts`).
+   *
+   * A pinned number is honoured as written, in either direction: an
+   * external server, an unusual model, a benchmark. Applied on the next
+   * daemon start.
    */
   parallel: number | "auto";
   /**
@@ -1464,6 +1569,16 @@ export interface UserManagedLocalLlmConfig {
    * Added in config v34; older files transparently get `true`.
    */
   stopOnExit: boolean;
+  /**
+   * Bring the managed chat daemon back by itself when it dies (or, from
+   * the wedge watchdog, stops answering) while this TUI owns it. `true`
+   * (default): a crashed or killed llama-server is restarted within a
+   * few seconds and a parked turn resumes on it; three deaths within a
+   * minute of their start stop the retries and name the fault. `false`:
+   * a dead daemon stays dead until `/llm restart` or `R`. Files that
+   * predate the key get `true`.
+   */
+  autoRestart: boolean;
 }
 
 /**
@@ -1634,6 +1749,8 @@ export interface UserConfigFile {
      * limit bites first wins.
      */
     conversationMaxPairs: number;
+    /** Ask the model to name each session (config v72). */
+    nameSessions: boolean;
     /**
      * Share of a limit the transcript keeps after a cut, `(0, 1]`.
      * History is dropped in chunks — down to this share of the token
@@ -1644,6 +1761,33 @@ export interface UserConfigFile {
      * held to at most `0.5`. `1` restores cutting just enough per step.
      */
     conversationLowWater: number;
+    /**
+     * Ceiling on `### session-facts` + `### loaded-skills` combined
+     * (config v74). One cap over two sections because one
+     * `truncateToTokens` call trims the two as a single blob, facts
+     * first, so the skill bodies at its tail are what a cut takes.
+     *
+     * `0` is `SESSION_SECTIONS_CAP_AUTO`: keep the historical
+     * `tokenBudget * 0.15`. Raising it costs no KV cache — both sections
+     * sit in the variable tail — but it does eat into the room
+     * `computeEffectiveConversationCap` leaves the transcript, since
+     * `sessionTokens` is subtracted from the window there.
+     *
+     * Any other value is enforced verbatim: no floor at the bottom (a
+     * value too small for one token empties both sections) and no clamp
+     * against the model's context window at the top (past
+     * `CONVERSATION_CAP_FLOOR` the transcript has nothing left to give
+     * and the prompt overruns the window). Both are spelled out on
+     * `SESSION_SECTIONS_CAP_AUTO` with the reasons.
+     *
+     * There is deliberately no sibling key for the stable prefix. Its
+     * `tokenBudget * 0.35` figure is computed and then read by nothing:
+     * the prefix cannot be trimmed without cutting `### tools` or
+     * `### instructions` out from under the grammar. Size the prefix
+     * with `skills.catalogTokenBudget` (its one elastic section) and the
+     * `tool.view` tier split instead.
+     */
+    sessionSectionsMaxTokens: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -1695,6 +1839,33 @@ export interface UserConfigFile {
        * positive integer.
        */
       maxJobs: number;
+    };
+  };
+  /**
+   * Session retention (config v73). One bounded prune of
+   * `sessions.sqlite` at startup, plus the trace file of every row it
+   * removed. Off by default — see the runtime type above for why — and
+   * a no-op end to end while it is off.
+   */
+  sessions: {
+    retention: {
+      /** Default `false`: the operator opts in. */
+      enabled: boolean;
+      /**
+       * Age cutoff in days against `updated_at`. Default 90. A positive
+       * integer, or `null` for no age rule (leaving `maxRows` as the
+       * only thing that prunes). Note that `undefined` takes the
+       * default and an explicit `null` does not — clearing the rule is
+       * a choice, not an omission.
+       */
+      maxAgeDays: number | null;
+      /**
+       * Hard cap on stored sessions; anything past it goes oldest
+       * first. Default `null` (no cap) — a row count means nothing
+       * without knowing how the operator works, so age is the rule that
+       * ships on.
+       */
+      maxRows: number | null;
     };
   };
   tracing: {
@@ -1863,7 +2034,7 @@ export interface UserConfigFile {
      * `EVOLVE` lines but the runner drops them silently. Flip on to
      * let reflection refine `tags` on existing memories.
      *
-     *  - `enabled`     master switch. Default `false`.
+     *  - `enabled`     master switch. Default `true`.
      *  - `maxPerWrite` Hard cap on number of EVOLVE directives
      *                  actually applied per reflection. Default `2`.
      *  - `leaseMs`     B↔C lease window in ms. EVOLVE skips any
@@ -1877,15 +2048,16 @@ export interface UserConfigFile {
     };
     /**
      * Memory-v2 phase 5. Distilled lessons + cold-path consolidator.
-     * Default disabled because rolling phase 5 on flips the stable
-     * prefix bytes once (see AGENTS.md "Memory fabric phase 5"), so
-     * deployments choose an explicit upgrade window.
+     * Enabled by default. Rolling phase 5 on flipped the stable
+     * prefix bytes once (see AGENTS.md "Memory fabric phase 5");
+     * that upgrade has shipped, so the switch is now on out of the
+     * box and turning it off is the deliberate act.
      *
      * `lessons` keys:
      *   - `enabled`            master switch for `### lessons`
      *                          rendering + `memory.lessons.recall` +
      *                          `ConsolidatorJob.start`. Default
-     *                          `false`.
+     *                          `true`.
      *   - `recallK`            top-K lessons surfaced per turn (BM25).
      *                          Default `2`.
      *   - `maxTokens`          hard cap on the rendered `### lessons`
@@ -1902,7 +2074,7 @@ export interface UserConfigFile {
      *
      * `consolidation` keys:
      *   - `enabled`              master switch on the consolidator
-     *                            timer. Default `false`. Independent
+     *                            timer. Default `true`. Independent
      *                            from `lessons.enabled` so the schema
      *                            can be inspected without ticking.
      *   - `intervalMs`           consolidator tick period. Default
@@ -1933,7 +2105,7 @@ export interface UserConfigFile {
     /**
      * Memory-v2 phase 7b. Procedures (MemP-style how-to templates)
      * mirroring `lessons.*`:
-     *   - `enabled`           master switch. Default `false`.
+     *   - `enabled`           master switch. Default `true`.
      *   - `recallK`           top-K procedures surfaced per turn
      *                         via BM25 against the current user
      *                         message. Default `2`.
@@ -1978,7 +2150,7 @@ export interface UserConfigFile {
      *                              does not run, and the lesson
      *                              recall reranker treats every
      *                              row as if `vote_score = 0`.
-     *                              Default `false`.
+     *                              Default `true`.
      *   - `maxVotePerItem`        clamp on `|vote_score|`. Each
      *                              UPVOTE/DOWNVOTE is `+1`/`-1` and
      *                              the row is pinned in
@@ -2025,12 +2197,14 @@ export interface UserConfigFile {
      * referential (short, pronouns, conjunction-starter), one LLM
      * call rewrites it into a self-contained query using the last
      * few turns of conversation; otherwise the raw message is used
-     * as today. The rewriter uses `slotId = -1` so the **main agent
-     * slot** and the **reflection slot** are both untouched.
+     * as today. The rewriter runs on the side-call slot
+     * (`slotManager.sideCallSlotId()`: the reserved reflection slot,
+     * or `-1` when only one slot exists), so the **main agent slot**
+     * is untouched.
      *
      * `retrieve.rewriter` keys:
-     *  - `enabled`       master switch. Default `false`.
-     *  - `timeoutMs`     hard per-call timeout. Default `3000`.
+     *  - `enabled`       master switch. Default `true`.
+     *  - `timeoutMs`     hard per-call timeout. Default `10_000`.
      *  - `historyTurns`  trailing turns fed into the rewriter
      *                    prompt. Default `3`.
      *  - `gateMode`      `heuristic` | `embedding` | `always`.
@@ -2086,8 +2260,18 @@ export interface UserConfigFile {
    * (https://clawhub.ai) — the primary skill marketplace, browsed and
    * searched server-side. Older files are upgraded with it enabled,
    * pointed at the public registry, hiding suspicious skills by default.
+   *
+   * `catalogTokenBudget` (added in config v70) is the soft budget for
+   * the `### skills` block of the stable prefix, in tokens. It shipped
+   * as `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` only, which made it the one
+   * `skills.*` knob a config file could not set — writing it there was
+   * parsed away in silence (issue #466). Older files are upgraded with
+   * the env default, so the prompt is unchanged. The env var still wins
+   * when both are set (operator override), exactly as it does for
+   * `localModels.completionMaxTokens`.
    */
   skills: {
+    catalogTokenBudget: number;
     disabled: string[];
     taps: string[];
     clawhub: {
@@ -2124,6 +2308,7 @@ export interface UserConfigFile {
     mouse: boolean;
     onboarding: OnboardingState;
     sessionRail: SessionRailConfig;
+    notify: TuiNotifyConfig;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -2417,7 +2602,30 @@ export interface UserConfigFile {
 // `finish` (F41, `src/agent/review-stall.ts`). Additive: an older file
 // has no field, the fusion block stays as it was, and the default applies
 // at read time like the other optional fusion fields.
-export const USER_CONFIG_VERSION = 69;
+// v70: `skills.catalogTokenBudget` (default 512) — the `### skills`
+// catalog budget, until now settable only through
+// `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET`; the key in config.json was
+// parsed away without a word (issue #466). Additive: an older file has
+// no field, takes the env default, and renders the same prompt. The env
+// var still overrides the file value.
+// v74: `agent.sessionSectionsMaxTokens` (default 0) — the
+// `### session-facts` + `### loaded-skills` cap, until now reachable only
+// by scaling all of `agent.tokenBudget`. `0` is the sentinel for "keep
+// the `tokenBudget * 0.15` share", so an older file renders a
+// byte-identical prompt.
+// v73: `sessions.retention` (`enabled` false, `maxAgeDays` 90, `maxRows`
+// null) — one bounded prune of `sessions.sqlite` and the matching trace
+// files at startup. Additive: an older file has no block and takes the
+// defaults, which prune nothing until the operator sets `enabled`.
+// v72: `agent.nameSessions` (default true) — one short completion per
+// session names it from its first prompt, so the rail and the header
+// show what the thread is about instead of the raw prompt. Additive: an
+// older file inherits `true`, and turning it off restores the prompt.
+// v71: `tui.notify` (`enabled` true, `minDurationMs` 30_000) — the TUI
+// writes an OSC 9 notification plus a BEL to its own terminal when a
+// turn ends, so an operator who walked away finds out. Additive: an
+// older file has no block and takes the defaults.
+export const USER_CONFIG_VERSION = 74;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2575,8 +2783,28 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   66,
   67,
   68,
+  69,
+  70,
+  71,
+  72,
+  73,
   USER_CONFIG_VERSION,
 ];
+
+/**
+ * Default `skills.catalogTokenBudget`, shared by the file defaults and
+ * `ENV_DEFAULTS.SKILLS_CATALOG_BUDGET` so the two cannot drift apart.
+ * 512 tokens × 8 chars/token is the historical 4096-char catalog cap —
+ * see `SKILL_CATALOG_CHARS_PER_TOKEN`.
+ */
+export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
+
+/**
+ * Bounds of `agent.conversationMaxPairs`, shared with the TUI's
+ * `/context` selector so it can neither offer nor clamp to less.
+ */
+export const CONVERSATION_MAX_PAIRS_MIN = 1;
+export const CONVERSATION_MAX_PAIRS_MAX = 1000;
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -2593,6 +2821,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       dataDirOverride: null,
       autoUpdate: true,
       stopOnExit: true,
+      autoRestart: true,
       device: "auto",
       backendVariant: "auto",
       contextSize: 0,
@@ -2640,7 +2869,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     // the fixed 32K fallback applies only when no window is known.
     conversationMaxTokens: 0,
     conversationMaxPairs: 200,
+    nameSessions: true,
     conversationLowWater: 0.65,
+    // `0` = keep the `tokenBudget * 0.15` share (SESSION_SECTIONS_CAP_AUTO).
+    sessionSectionsMaxTokens: 0,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -2694,6 +2926,20 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       // Three concurrent jobs is a server, a watcher and a build; more
       // is a model that has stopped waiting for anything.
       maxJobs: 3,
+    },
+  },
+  sessions: {
+    retention: {
+      // Off. Deleting an operator's transcripts is not a default.
+      enabled: false,
+      // A quarter: long enough that "what did I do on that project?"
+      // still has an answer, short enough that an install left running
+      // for a year is not carrying every session it ever had.
+      maxAgeDays: 90,
+      // No cap. Age is a statement about what is still interesting; a
+      // row count is a statement about disk, and only the operator
+      // knows whether theirs is the problem.
+      maxRows: null,
     },
   },
   tracing: {
@@ -2843,8 +3089,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     retrieve: {
       rewriter: {
         // v2.5 (v18) — heuristic-gated query rewriter before recall.
-        // Uses `slotId=-1` so the main agent and reflection slots stay
-        // untouched.
+        // Runs on the side-call slot (`sideCallSlotId()`; `-1` only when
+        // there is a single slot) so the main agent slot stays untouched.
         enabled: true,
         timeoutMs: 10_000,
         historyTurns: 3,
@@ -2864,6 +3110,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     maxImagesPerCall: 4,
   },
   skills: {
+    catalogTokenBudget: DEFAULT_SKILLS_CATALOG_BUDGET,
     disabled: [],
     taps: ["anthropics/skills", "openai/skills", "vercel-labs/agent-skills"],
     clawhub: {
@@ -2877,6 +3124,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
       completedAt: null,
@@ -2988,7 +3236,7 @@ export const ENV_DEFAULTS = {
   BROWSER_HEADLESS: false,
   BROWSER_NO_SANDBOX: false,
   BROWSER_LAUNCH_TIMEOUT_MS: 30_000,
-  SKILLS_CATALOG_BUDGET: 512,
+  SKILLS_CATALOG_BUDGET: DEFAULT_SKILLS_CATALOG_BUDGET,
   PROJECT_SKILLS_DIR: ".atomic-agent/skills",
   USER_CONFIG_FILE_NAME: "config.json",
   TASKS_ENABLED: true,
@@ -3016,6 +3264,13 @@ export const ENV_DEFAULTS = {
   MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
   BATCH_TOOL_RESULT_CHAR_CAP: 32_000,
+  /**
+   * Ingestion cap (chars) on a non-`gog` `os.shell.run` result summary.
+   * This is the one line to change to pick a different default.
+   */
+  SHELL_TOOL_RESULT_CHAR_CAP: 16_000,
+  /** Ingestion cap (tail lines) on a non-`gog` `os.shell.run` result summary. */
+  SHELL_TOOL_RESULT_TAIL_LINES: 500,
   /** Args-only repeat count that injects a no-progress `### notice`. */
   LOOP_WARNING_THRESHOLD: 3,
   /** Identical args+result streak that vetoes a call before dispatch. */
@@ -3024,9 +3279,9 @@ export const ENV_DEFAULTS = {
   LOOP_BREAKER_VETO_STREAK: 3,
   /** Sliding window size for the loop tracker's history ring. */
   LOOP_HISTORY_SIZE: 30,
-  /** Distinct-args spread on a wandering-prone tool that redirects. */
+  /** Distinct-args run spread on a wandering-prone tool that redirects. */
   LOOP_WANDERING_THRESHOLD: 6,
-  /** Distinct-args spread that escalates a wandering loop to graceful reply. */
+  /** Run spread that escalates a wandering loop to a graceful reply. */
   LOOP_WANDERING_ESCALATION: 12,
 };
 
@@ -3299,7 +3554,10 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
  * expands server-side (`{0,N}` becomes N nested optional rules, four
  * per token) at a size it parses in milliseconds.
  */
-export function parseReasoningBudgetTokens(raw: unknown, field: string): number {
+export function parseReasoningBudgetTokens(
+  raw: unknown,
+  field: string,
+): number {
   const value = coerceIntLike(raw);
   if (value === 0) return 0;
   return parseBoundedPositiveInt(raw, field, 64, 32_768);
@@ -3485,6 +3743,25 @@ function resolveEmbeddingModelId(
 export function parseBoolOrNull(raw: unknown, field: string): boolean | null {
   if (raw === null || raw === undefined) return null;
   return parseBool(raw, field);
+}
+
+/**
+ * Parse an optional cap: a positive integer, or `null` for "no limit".
+ *
+ * Takes its own fallback rather than reading `raw ?? default` at the call
+ * site, because the two absences are not the same thing when the default
+ * is a number: a missing key means "you decide" and must land on
+ * `fallback`, while an explicit `null` is the operator switching the rule
+ * off and `??` would quietly put the default back.
+ */
+function parseCapOrNull(
+  raw: unknown,
+  field: string,
+  fallback: number | null,
+): number | null {
+  if (raw === undefined) return fallback;
+  if (raw === null) return null;
+  return parsePositiveInt(raw, field);
 }
 
 export function parseNonEmptyString(raw: unknown, field: string): string {
@@ -4398,6 +4675,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (webSearch.exa as Record<string, unknown> | undefined) ?? {};
   const webSearchBrave =
     (webSearch.brave as Record<string, unknown> | undefined) ?? {};
+  const sessions = (obj.sessions as Record<string, unknown> | undefined) ?? {};
+  const sessionsRetention =
+    (sessions.retention as Record<string, unknown> | undefined) ?? {};
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
@@ -4501,6 +4781,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.stopOnExit ??
         USER_CONFIG_DEFAULTS.localModels.managed.stopOnExit,
       "localModels.managed.stopOnExit",
+    ),
+    autoRestart: parseBool(
+      rawManaged.autoRestart ??
+        USER_CONFIG_DEFAULTS.localModels.managed.autoRestart,
+      "localModels.managed.autoRestart",
     ),
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
@@ -4641,6 +4926,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "agent.maxSteps",
       ),
       providerWait: parseProviderWait(agent.providerWait),
+      nameSessions: parseBool(
+        agent.nameSessions ?? USER_CONFIG_DEFAULTS.agent.nameSessions,
+        "agent.nameSessions",
+      ),
       task: parseAgentTask(agent.task),
       toolTimeoutMs: parsePositiveInt(
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
@@ -4671,8 +4960,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationMaxPairs ??
           USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
         "agent.conversationMaxPairs",
-        1,
-        1000,
+        CONVERSATION_MAX_PAIRS_MIN,
+        CONVERSATION_MAX_PAIRS_MAX,
       ),
       // `(0, 1]`: `1` is a real setting (cut just enough, every step),
       // `0` would drop the whole transcript at the first overflow.
@@ -4680,6 +4969,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationLowWater ??
           USER_CONFIG_DEFAULTS.agent.conversationLowWater,
         "agent.conversationLowWater",
+      ),
+      // Non-negative like `conversationMaxTokens`, and for the same
+      // reason: `0` is the "derive it from the share" sentinel
+      // (`SESSION_SECTIONS_CAP_AUTO`), not a request for no session
+      // sections at all.
+      sessionSectionsMaxTokens: parseNonNegativeInt(
+        agent.sessionSectionsMaxTokens ??
+          USER_CONFIG_DEFAULTS.agent.sessionSectionsMaxTokens,
+        "agent.sessionSectionsMaxTokens",
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??
@@ -4830,6 +5128,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         maxJobs: parsePositiveInt(
           toolsShell.maxJobs ?? USER_CONFIG_DEFAULTS.tools.shell.maxJobs,
           "tools.shell.maxJobs",
+        ),
+      },
+    },
+    sessions: {
+      retention: {
+        enabled: parseBool(
+          sessionsRetention.enabled ??
+            USER_CONFIG_DEFAULTS.sessions.retention.enabled,
+          "sessions.retention.enabled",
+        ),
+        maxAgeDays: parseCapOrNull(
+          sessionsRetention.maxAgeDays,
+          "sessions.retention.maxAgeDays",
+          USER_CONFIG_DEFAULTS.sessions.retention.maxAgeDays,
+        ),
+        maxRows: parseCapOrNull(
+          sessionsRetention.maxRows,
+          "sessions.retention.maxRows",
+          USER_CONFIG_DEFAULTS.sessions.retention.maxRows,
         ),
       },
     },
@@ -5299,6 +5616,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
     },
     skills: {
+      catalogTokenBudget: parseBoundedPositiveInt(
+        skills.catalogTokenBudget ??
+          USER_CONFIG_DEFAULTS.skills.catalogTokenBudget,
+        "skills.catalogTokenBudget",
+        1,
+        100_000,
+      ),
       disabled: parseSkillNameArray(
         skills.disabled ?? USER_CONFIG_DEFAULTS.skills.disabled,
         "skills.disabled",
@@ -5324,6 +5648,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       onboarding: parseOnboardingState(tui.onboarding),
       sessionRail: parseSessionRailConfig(tui.sessionRail),
+      notify: parseTuiNotify(tui.notify),
     },
     analytics: {
       enabled: parseBool(
@@ -5513,6 +5838,30 @@ export interface OnboardingState {
  * whole config file — and duplicates keep their first position so the
  * on-disk form stays canonical.
  */
+/**
+ * `tui.notify`, defaulted whole. Absent is the overwhelmingly common
+ * case — every config written before v71 — so it is not an error, and a
+ * present block still has each field checked rather than trusted.
+ */
+export function parseTuiNotify(raw: unknown): TuiNotifyConfig {
+  const d = USER_CONFIG_DEFAULTS.tui.notify;
+  if (raw === undefined || raw === null) return { ...d };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.notify",
+      "expected an object with `enabled` and `minDurationMs`",
+    );
+  }
+  const block = raw as Partial<TuiNotifyConfig>;
+  return {
+    enabled: parseBool(block.enabled ?? d.enabled, "tui.notify.enabled"),
+    minDurationMs: parseNonNegativeInt(
+      block.minDurationMs ?? d.minDurationMs,
+      "tui.notify.minDurationMs",
+    ),
+  };
+}
+
 export function parseSessionRailConfig(raw: unknown): SessionRailConfig {
   if (raw === undefined || raw === null) return { order: [], pinned: [] };
   if (typeof raw !== "object" || Array.isArray(raw)) {

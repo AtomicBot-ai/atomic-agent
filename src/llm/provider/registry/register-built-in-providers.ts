@@ -1,18 +1,15 @@
 import { getConfig } from "../../../config/index.js";
 import { LlamaServerClient } from "../../llama-server-client.js";
 import { AimlapiProvider } from "../aimlapi/aimlapi-provider.js";
-import {
-  AIMLAPI_DEFAULT_CHAT_MODEL,
-  AIMLAPI_MODELS_CATALOG,
-} from "../aimlapi/aimlapi-models-catalog.js";
-import type { ModelCatalogEntry } from "../model-resolver.js";
-import { OPENROUTER_MODELS_CATALOG } from "../openrouter/openrouter-models-catalog.js";
+import { AIMLAPI_DEFAULT_CHAT_MODEL } from "../aimlapi/aimlapi-models-catalog.js";
 import {
   GeminiProvider,
   GEMINI_DEFAULT_CHAT_MODEL,
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
+import type { ProviderCapabilities } from "../llm-provider.js";
+import { resolveCloudModelVision } from "../model-vision.js";
 import {
   OpenRouterProvider,
   OPENROUTER_APP_CATEGORIES,
@@ -31,30 +28,6 @@ import {
 } from "./provider-types.js";
 
 let registered = false;
-
-/**
- * Whether the provider may send images, for a service with a bundled
- * catalogue: the entry's explicit `supportsVision` first, then what the
- * catalogue says about the model `describeImage` will actually call
- * (`defaultChatModel`), then the old optimistic `true` for an id the
- * catalogue does not know.
- *
- * The catalogue step is the fix. The factory used to read only the entry,
- * and no entry the desktop or the wizard writes carries the flag, so a
- * text-only model was declared vision-capable: `vision.describe` sent a
- * screenshot to `deepseek/deepseek-v4-flash` on AI/ML API three times in
- * one turn and got `400 Validation failed` each time, a whole step spent
- * on every attempt. With the catalogue consulted the tool answers at once,
- * without a request, that this model does not take images.
- */
-export function catalogVisionDefault(
-  explicit: boolean | undefined,
-  catalog: ReadonlyMap<string, ModelCatalogEntry>,
-  model: string,
-): boolean {
-  if (explicit !== undefined) return explicit;
-  return catalog.get(model)?.supportsVision ?? true;
-}
 
 /**
  * What the entry's `userModels[]` row for the model it serves says about
@@ -78,6 +51,23 @@ function modelWireOptions(
   };
 }
 
+/**
+ * Whether the model this link serves can read images, per MODEL
+ * (`model-vision.ts`): the entry's `userModels[]` row, the entry's own
+ * `supportsVision`, the catalogue, else `assumed`. Read at construction
+ * for the same reason as `modelWireOptions` — a model switch rebuilds
+ * the provider. `assumed` is left implicit so the provider can learn
+ * from the first image the service rejects.
+ */
+function modelVisionOptions(
+  entry: LlmProviderConfigEntry,
+  modelId: string,
+): { supportsVision?: boolean; visionSource?: ProviderCapabilities["visionSource"] } {
+  const verdict = resolveCloudModelVision(entry, modelId);
+  if (verdict.visionSource === "assumed") return {};
+  return { supportsVision: verdict.vision, visionSource: verdict.visionSource };
+}
+
 export function registerBuiltInProviderKinds(): void {
   if (registered) return;
   registered = true;
@@ -98,6 +88,13 @@ export function registerBuiltInProviderKinds(): void {
       maxImageBytes: config.vision.maxImageBytes,
       maxImagesPerCall: config.vision.maxImagesPerCall,
       baseUrlOverride: ctx.entry.url,
+      // The vision call's whole-request budget. Unforwarded it fell back
+      // to the provider's own hardcoded 120 s, which no knob reached,
+      // while text completions against the same server followed
+      // `localModels.requestTimeoutMs` — the entry's override first, as
+      // the openai-compatible kind does.
+      requestTimeoutMs:
+        ctx.entry.requestTimeoutMs ?? config.localModels.requestTimeoutMs,
       ...(ctx.getModelId ? { getModelId: ctx.getModelId } : {}),
       logger: ctx.logger,
     });
@@ -118,7 +115,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
-      supportsVision: entry.supportsVision ?? true,
+      ...modelVisionOptions(entry, entry.defaultChatModel),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -146,7 +143,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
-      supportsVision: entry.supportsVision ?? true,
+      ...modelVisionOptions(entry, entry.defaultChatModel),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
@@ -170,11 +167,7 @@ export function registerBuiltInProviderKinds(): void {
       apiKey: entry.apiKey ?? "",
       defaultChatModel: model,
       headers: entry.headers,
-      supportsVision: catalogVisionDefault(
-        entry.supportsVision,
-        OPENROUTER_MODELS_CATALOG,
-        entry.defaultChatModel ?? "openrouter/auto",
-      ),
+      ...modelVisionOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -214,11 +207,7 @@ export function registerBuiltInProviderKinds(): void {
       messageShape: entry.messageShape,
       ...modelWireOptions(entry, model),
       headers: entry.headers,
-      supportsVision: catalogVisionDefault(
-        entry.supportsVision,
-        AIMLAPI_MODELS_CATALOG,
-        entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
-      ),
+      ...modelVisionOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,
@@ -241,7 +230,7 @@ export function registerBuiltInProviderKinds(): void {
       messageShape: entry.messageShape,
       ...modelWireOptions(entry, model),
       headers: entry.headers,
-      supportsVision: entry.supportsVision ?? true,
+      ...modelVisionOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,

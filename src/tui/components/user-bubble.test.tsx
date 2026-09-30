@@ -2,7 +2,11 @@ import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../tui-state.js";
 import { FinalisedMessage } from "./chat-finalised-message.js";
-import { STEERED_LABEL_SUFFIX, UserBubble } from "./user-bubble.js";
+import {
+  PENDING_STEER_LABEL_SUFFIX,
+  STEERED_LABEL_SUFFIX,
+  UserBubble,
+} from "./user-bubble.js";
 
 function frame(element: Parameters<typeof render>[0]): string {
   const { lastFrame, unmount } = render(element);
@@ -25,6 +29,15 @@ describe("UserBubble", () => {
   it("says a steered message joined the turn already running", () => {
     const out = frame(<UserBubble text="Test" steered />);
     expect(out).toContain(`YOU${STEERED_LABEL_SUFFIX}`);
+  });
+
+  it("says when a steer that is still on its way in will be read", () => {
+    // Drawn from the moment Enter is pressed, before any step boundary:
+    // the label has to answer "did that send?" on its own.
+    const out = frame(<UserBubble text="Test" pending />);
+    expect(out).toContain(`YOU${PENDING_STEER_LABEL_SUFFIX}`);
+    // Not past tense — the turn has not read it yet.
+    expect(out).not.toContain(STEERED_LABEL_SUFFIX.trim());
   });
 
   it("gets the mark from the transcript message", () => {

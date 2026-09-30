@@ -65,3 +65,58 @@ describe("the inputs line of the persona (F51)", () => {
     expect(estimateTokens(NATIVE_TOOLS_SYSTEM_PERSONA)).toBeLessThan(1400);
   });
 });
+
+/**
+ * Issue #466. `### skills` used to end on an ordinary catalog row no
+ * matter how many installed skills the budget had cut, so a clipped
+ * catalog read as the complete one.
+ */
+describe("the ### skills truncation marker", () => {
+  const CATALOG = [
+    { name: "alpha", description: "a", source: "global" as const },
+    { name: "beta", description: "b", source: "project" as const },
+  ];
+
+  function skillsBlock(prefix: string): string[] {
+    const lines = prefix.split("\n");
+    const start = lines.indexOf("### skills");
+    expect(start).toBeGreaterThan(-1);
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((l) => l.startsWith("### "));
+    return rest.slice(0, end === -1 ? undefined : end).filter((l) => l !== "");
+  }
+
+  it("names the count and the knob after the last catalog row", () => {
+    const prefix = buildStablePrefix({
+      toolDescriptors: [],
+      capabilities: CAPS,
+      skillCatalog: CATALOG,
+      skillCatalogDropped: 16,
+    });
+    const block = skillsBlock(prefix);
+    expect(block).toHaveLength(3);
+    expect(block[0]).toBe("- [global] alpha: a");
+    expect(block[2]).toContain("16 more installed skills not shown");
+    expect(block[2]).toContain("skills.catalogTokenBudget");
+  });
+
+  it("is absent — byte for byte — when nothing was dropped", () => {
+    const base = buildStablePrefix({
+      toolDescriptors: [],
+      capabilities: CAPS,
+      skillCatalog: CATALOG,
+    });
+    for (const skillCatalogDropped of [undefined, 0]) {
+      expect(
+        buildStablePrefix({
+          toolDescriptors: [],
+          capabilities: CAPS,
+          skillCatalog: CATALOG,
+          ...(skillCatalogDropped !== undefined ? { skillCatalogDropped } : {}),
+        }),
+      ).toBe(base);
+    }
+    expect(skillsBlock(base)).toHaveLength(2);
+    expect(base).not.toContain("skills.catalogTokenBudget");
+  });
+});

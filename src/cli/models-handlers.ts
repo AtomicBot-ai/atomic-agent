@@ -8,6 +8,7 @@ import { removeCustomModel } from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
 import {
   checkForBackendUpdate,
+  describeServerFault,
   downloadBackend,
   downloadEmbeddingModel,
   downloadJobId,
@@ -18,6 +19,8 @@ import {
   EMBEDDING_MODELS_CATALOG,
   fallBackToCpuBackend,
   formatGgufSize,
+  readLogTail,
+  resolveLogFilePath,
   getConfiguredBackendVariant,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
@@ -73,6 +76,8 @@ export {
 } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
 import { roundTokensPerSecond } from "../prompt/fusion-machine-facts.js";
+import { resolveLocalLegRole, resolveRunMode } from "../llm/run-mode/index.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import {
   describeProjectorSkipped,
   followDownloadJob,
@@ -411,6 +416,15 @@ export async function runLocalModelsStatus(): Promise<number> {
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
+  // `health: ok` is a socket answering, not a model working. A server
+  // that cannot allocate keeps its socket and fails every decode, so
+  // the one place that knows is its own log.
+  const fault = describeServerFault(
+    readLogTail(resolveLogFilePath(dataDir), 256 * 1024).text,
+  );
+  if (fault) {
+    process.stdout.write(`fault:          ${fault.summary}\n`);
+  }
   return 0;
 }
 
@@ -526,6 +540,19 @@ export async function runLocalModelsStart(): Promise<number> {
     `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}\n`,
   );
 
+  // Which direction fusion is pointing decides what `parallel: "auto"`
+  // means for this launch (see `resolveLocalLegRole`). Resolved here
+  // because the run mode is a layer `src/local-llm/**` may not import,
+  // and from the config this command already read, so it is the state
+  // the daemon is actually being started in.
+  const resolvedLlm = resolveLlmConfig(cfg);
+  const localLegRole = resolveLocalLegRole(
+    resolvedLlm,
+    resolveRunMode(resolvedLlm, {
+      managedModelId: cfg.localModels.managed.modelId,
+    }),
+  );
+
   const startWithDevice = (dev: string | undefined) =>
     startChatAndEmbeddingDaemons({
       chat: {
@@ -534,6 +561,7 @@ export async function runLocalModelsStart(): Promise<number> {
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
         parallel: cfg.localModels.managed.parallel,
+        localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),

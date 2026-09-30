@@ -33,7 +33,8 @@ export function createCapabilitiesHandler(): HttpHandler {
       agent: {
         tokenBudget: runtime.config.agent.tokenBudget,
         maxSteps: runtime.config.agent.maxSteps,
-        toolTimeoutMs: runtime.config.agent.toolTimeoutMs,
+        // No `toolTimeoutMs`: the key still parses, but no tool reads
+        // it, so advertising it told dashboards a limit that never ran.
         // Source of truth. Live gate state, not the boot-time config
         // snapshot: reflects `--no-approval` boots and later
         // `setApprovalLevel` calls (the composer coding-mode control), so admin UIs
@@ -65,6 +66,20 @@ export function createCapabilitiesHandler(): HttpHandler {
         description: s.description,
         source: s.source,
       })),
+      // How many installed skills `skills.catalogTokenBudget` left out
+      // of `skills` above. Without it the array is indistinguishable
+      // from a complete one and a dashboard renders "12 skills" for an
+      // install of 40 (issue #466 — the prompt learned to say this, the
+      // API had no way to). Machine-facing, so it is a number and not
+      // the `… [truncated]` prose the prompt and the CLI use; the
+      // client decides how to say it.
+      //
+      // Always present, including as `0`. A field that appeared only on
+      // truncation would make absence ambiguous between "nothing was
+      // dropped" and "server too old to know", which is exactly the
+      // guess this field exists to remove. The `skills` array itself is
+      // untouched at zero.
+      skillsOmitted: runtime.skillCatalogDropped,
     });
   };
 }

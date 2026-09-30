@@ -112,6 +112,68 @@ describe("resolveWorkerSlots", () => {
   });
 });
 
+describe("resolveWorkerSlots — which leg the local daemon is on", () => {
+  const roomy = workerSlotFootprint() * 4;
+
+  it("serves one stream with one slot when the daemon orchestrates", () => {
+    // Workers in the cloud: the local side runs exactly one stream, so
+    // the extra slots cannot be used by anyone — and they are not free.
+    // They split the KV budget, and llama.cpp's longest-common-prefix
+    // slot selection can move the one stream to an empty slot between
+    // turns and re-ingest a prefix the other slot still holds.
+    expect(
+      resolveWorkerSlots({
+        contextSize: roomy,
+        cpuOnly: false,
+        localLegRole: "orchestrator",
+      }),
+    ).toBe(1);
+    // No context is large enough to make an unusable slot worth having.
+    expect(
+      resolveWorkerSlots({
+        contextSize: workerSlotFootprint() * 40,
+        cpuOnly: false,
+        localLegRole: "orchestrator",
+      }),
+    ).toBe(1);
+    // Not even an unknown context, where the historical fallback is two.
+    expect(
+      resolveWorkerSlots({
+        contextSize: null,
+        cpuOnly: false,
+        localLegRole: "orchestrator",
+      }),
+    ).toBe(1);
+  });
+
+  it("counts the memory fit as before when the daemon serves workers", () => {
+    // Aggregate throughput is what a fan-out needs, and concurrency buys
+    // it: gemma-4-26b-a4b measured ~4.8 tok/s on a single active stream
+    // against ~9.5 tok/s aggregate across two.
+    const fit = resolveWorkerSlots({ contextSize: roomy, cpuOnly: false });
+    expect(fit).toBe(4);
+    expect(
+      resolveWorkerSlots({
+        contextSize: roomy,
+        cpuOnly: false,
+        localLegRole: "workers",
+      }),
+    ).toBe(fit);
+  });
+
+  it("leaves every no-fusion launch exactly where it was", () => {
+    // Regression pin: an omitted role is `"workers"`, which is what
+    // `local` and `cloud` modes can only ever mean.
+    for (const contextSize of [null, 0, 16_384, 65_536, roomy]) {
+      for (const cpuOnly of [false, true]) {
+        expect(
+          resolveWorkerSlots({ contextSize, cpuOnly, localLegRole: "workers" }),
+        ).toBe(resolveWorkerSlots({ contextSize, cpuOnly }));
+      }
+    }
+  });
+});
+
 describe("resolveConfiguredSlots", () => {
   it("asks the machine for auto", () => {
     expect(
@@ -126,5 +188,25 @@ describe("resolveConfiguredSlots", () => {
       resolveConfiguredSlots(6, { contextSize: 16_384, cpuOnly: false }),
     ).toBe(6);
     expect(resolveConfiguredSlots(1, { contextSize: null, cpuOnly: true })).toBe(1);
+  });
+
+  it("keeps a pinned number authoritative while the daemon orchestrates", () => {
+    // The role steers `"auto"` only. An operator who wrote a number
+    // still gets that number — otherwise the escape hatch would close
+    // the moment the legs were swapped.
+    expect(
+      resolveConfiguredSlots(2, {
+        contextSize: workerSlotFootprint() * 4,
+        cpuOnly: false,
+        localLegRole: "orchestrator",
+      }),
+    ).toBe(2);
+    expect(
+      resolveConfiguredSlots("auto", {
+        contextSize: workerSlotFootprint() * 4,
+        cpuOnly: false,
+        localLegRole: "orchestrator",
+      }),
+    ).toBe(1);
   });
 });

@@ -1,7 +1,9 @@
 import {
   compressToolResult,
   type CompressedToolResult,
+  type CompressorOptions,
 } from "../../compressor/result-compressor.js";
+import { getConfig } from "../../config/index.js";
 import type {
   CommandJobExit,
   CommandJobOutput,
@@ -26,37 +28,31 @@ const GOG_COMPRESS_OPTIONS = {
 } as const;
 
 /**
- * What an ordinary command's output reaches the model (and the host's
- * tool card) as. The compressor's 400-character default, cut from the
- * front, left a multi-line script's result as its command, `exit: 0`, a
- * few bytes and `… [truncated]` — the model re-ran near-identical checks
- * it could not read the output of. The output's END is what a command
- * reports (a `RESULT` line, an exception, a test total), so the overflow
- * keeps the end, with the header pinned above it.
+ * What an ordinary (non-`gog`) command's output is compressed to on the
+ * way in. The compressor runs inside the tool and its summary is what
+ * is stored as the `tool_result` turn, so this is not a render budget —
+ * whatever it drops is gone for good. Passing nothing here left every
+ * shell command on the compressor's bare defaults (400 chars / 12
+ * lines) while `os.fs.read`, `os.git.diff` and the archive tools all
+ * passed 8–64 KB.
+ *
+ * `overflow` is `"tail"` for a command's own output: the end of it is
+ * what answers the call — the `exit:` line, the test verdict, the last
+ * error. The compressor's default cut takes the tail and then keeps its
+ * *first* characters, which drops exactly that.
+ *
+ * Read per result rather than at module load so the env knobs apply to
+ * a running agent; the defaults live in `ENV_DEFAULTS`
+ * (`src/config/config-schema.ts`) and the bounds in `load-config.ts`.
  */
-const SHELL_COMPRESS_OPTIONS = {
-  maxSummaryLength: 2_000,
-  maxTailLines: 40,
-  overflow: "tail",
-} as const;
-
-/** The command as the summary header names it: its first line, clipped. */
-const HEADER_COMMAND_MAX_CHARS = 200;
-
-/**
- * The full command is already in the transcript — it is the tool call's
- * arguments right above this result — so the header only has to identify
- * it. A heredoc script echoed whole was most of the old summary.
- */
-export function headerCommandLine(commandLine: string): string {
-  const lines = commandLine.split(/\r?\n/);
-  let first = lines[0] ?? "";
-  let clipped = lines.length > 1;
-  if (first.length > HEADER_COMMAND_MAX_CHARS) {
-    first = first.slice(0, HEADER_COMMAND_MAX_CHARS);
-    clipped = true;
-  }
-  return clipped ? `${first} …` : first;
+function shellCompressOptions(overflow: "head" | "tail"): CompressorOptions {
+  const { shellToolResultCharCap, shellToolResultTailLines } =
+    getConfig().agent;
+  return {
+    maxSummaryLength: shellToolResultCharCap,
+    maxTailLines: shellToolResultTailLines,
+    overflow,
+  };
 }
 
 /** What a result says about the command, fixed when it was started. */
@@ -86,27 +82,28 @@ export interface ShellResultInput {
   body: string;
   /** Result-specific fields, placed between the command's and the guard's. */
   details: Record<string, unknown>;
+  /**
+   * Which end of the summary survives if it is over the char cap.
+   * Default `"tail"`: the end of a command's output is what the call was
+   * made for. A status report — a detached or killed job — passes
+   * `"head"` instead, because its body is already a short pre-tailed
+   * excerpt and the notice above the command line is the part that
+   * matters.
+   */
+  overflow?: "head" | "tail";
 }
 
 export function renderShellResult(input: ShellResultInput): CompressedToolResult {
   const { facts } = input;
-  // `gog` keeps its whole command line: its 64k budget is about
-  // returning a document verbatim, not about a header.
-  const commandLine = facts.gog
-    ? facts.commandLine
-    : headerCommandLine(facts.commandLine);
-  const header = `$ ${commandLine}${facts.noArguments ? " (ran with no arguments)" : ""}\n${input.statusLine}`;
-  // Notices and the header are pinned: an overflow cut keeps them and
-  // the end of the body.
-  const head = [...input.notices, header]
+  const header = `$ ${facts.commandLine}${facts.noArguments ? " (ran with no arguments)" : ""}\n${input.statusLine}`;
+  const output = [...input.notices, header, input.body]
     .filter((part) => part.length > 0)
     .join("\n");
   return compressToolResult(
     {
       tool: "os.shell.run",
       status: input.status,
-      head,
-      output: input.body,
+      output,
       details: {
         cmd: facts.cmd,
         args: facts.args,
@@ -119,7 +116,9 @@ export function renderShellResult(input: ShellResultInput): CompressedToolResult
         guardReason: facts.guard.reason,
       },
     },
-    facts.gog ? GOG_COMPRESS_OPTIONS : SHELL_COMPRESS_OPTIONS,
+    facts.gog
+      ? GOG_COMPRESS_OPTIONS
+      : shellCompressOptions(input.overflow ?? "tail"),
   );
 }
 

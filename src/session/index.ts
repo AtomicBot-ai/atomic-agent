@@ -3,8 +3,23 @@ export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
 } from "./session-store.js";
+export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
+export type {
+  PruneSessionsOptions,
+  PruneSessionsResult,
+} from "./session-retention.js";
+export {
+  readSessionPins,
+  readTaskPinnedSessionIds,
+  readWebhookPinnedSessionIds,
+} from "./session-pins.js";
 export { summarizeSessionState } from "./session-summary.js";
 export type { SessionSummary } from "./session-summary.js";
+export { sessionSummaryCursorAfter } from "./session-summary-page.js";
+export type {
+  SessionSummaryCursor,
+  SessionSummaryPageOptions,
+} from "./session-summary-page.js";
 export { normalizeSessionState } from "./normalize-session-state.js";
 export {
   createEmptySessionState,
@@ -64,6 +79,13 @@ export {
 } from "./session-llm.js";
 export type { SessionLlmStamp } from "./session-llm.js";
 export {
+  SESSION_ROUTE_METADATA_KEY,
+  readSessionRoute,
+  resolveTurnRoute,
+  sameSessionRoute,
+} from "./session-route.js";
+export type { RouteLeg, SessionRoute } from "./session-route.js";
+export {
   FUSION_WORKER_METADATA_KEY,
   FUSION_WORKER_ID_PREFIX,
   createFusionWorkerSession,
@@ -71,3 +93,16 @@ export {
   isFusionWorkerSessionId,
 } from "./fusion-worker-session.js";
 export type { FusionWorkerMeta } from "./fusion-worker-session.js";
+export {
+  SESSION_TITLE_MAX_CHARS,
+  SESSION_TITLE_METADATA_KEY,
+  SESSION_TITLE_SESSION_PREFIX,
+  SESSION_TITLE_TIMEOUT_MS,
+  buildSessionTitlePrompt,
+  firstPromptOf,
+  generateSessionTitle,
+  readSessionTitle,
+  sanitizeSessionTitle,
+  shouldNameSession,
+  type SessionTitleDeps,
+} from "./session-title.js";

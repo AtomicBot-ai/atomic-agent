@@ -3,6 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { getConfig } from "../config/index.js";
 import {
   formatBytes,
+  pathEntryToRemove,
   resolveUninstallPlan,
   runUninstall,
   type ResolvedUninstallPlan,
@@ -35,7 +36,8 @@ const HELP =
     "Deletes the state directory (config, memory, sessions, tasks, traces and any",
     "downloaded GGUF models), the installed binary and its `atag` alias, the asset",
     "directories the installer put beside them, and the PATH line install.sh added",
-    "to your shell rc file.",
+    "to your shell rc file (on Windows, the install dir install.ps1 added to your",
+    "user PATH).",
     "",
     "This cannot be undone. There is no backup. Nothing is uploaded anywhere, and",
     "nothing is kept — after this the only trace of atomic-agent on the machine is",
@@ -48,7 +50,7 @@ const HELP =
     "  --dry-run            Print exactly what would be removed, remove nothing",
     "  --keep-data          Keep the state directory; remove only the program",
     "  --keep-binary        Keep the binary; remove only the data",
-    "  --keep-path          Leave the installer's PATH line in your rc file",
+    "  --keep-path          Leave the installer's PATH entry (rc file / user PATH)",
     "  -y, --yes            Skip the typed confirmation (for scripts)",
     "  -h, --help           Show this help",
     "",
@@ -204,11 +206,17 @@ export async function uninstallCommand(
   const result = await run({
     targets: plan.targets,
     keepPathEntry: flags.keepPath,
+    installDir: pathEntryToRemove(plan),
     onProgress: (line) => write(`  ${line}\n`),
   });
 
   for (const rc of result.rcFilesEdited) {
     write(`edited ${rc} — open a new shell for PATH to catch up\n`);
+  }
+  if (result.userPathEntryRemoved) {
+    write(
+      `removed ${result.userPathEntryRemoved} from your user PATH — open a new terminal for it to catch up\n`,
+    );
   }
   const failures = result.removed.filter((entry) => !entry.ok);
   if (failures.length > 0) {
@@ -250,7 +258,9 @@ function renderPlan(
   if (!flags.keepPath) {
     lines.push(
       "",
-      "the PATH line install.sh added to your shell rc file will also be removed.",
+      process.platform === "win32"
+        ? "the install dir install.ps1 added to your user PATH will also be removed."
+        : "the PATH line install.sh added to your shell rc file will also be removed.",
     );
   }
   if (!flags.keepData) {

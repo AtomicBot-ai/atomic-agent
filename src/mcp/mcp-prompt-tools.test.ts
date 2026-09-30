@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { getToolDescriptorByName } from "../prompt/tool-descriptors.js";
 import type { ToolContext } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
@@ -64,6 +65,314 @@ describe("mcp.prompt.list", () => {
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("summarize(uri, length?)");
     expect(result.summary).toContain("Summarise a doc.");
+  });
+
+  // This listing is the catalog the model picks a `mcp.prompt.get`
+  // name from, and it carries no header line — its first rows are
+  // what a server leads with. The compressor defaults kept the LAST
+  // 12 of up to 100 rows and sliced them to 385 chars, so a template
+  // the model never saw was a template it could not call.
+  it("keeps the first rows of a 100-prompt catalog", async () => {
+    const prompts = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      name: `prompt_${i}`,
+      description: `catalog order ${i}`,
+      arguments: [
+        { name: "uri", required: true },
+        { name: "length", required: false },
+      ],
+    }));
+    const mgr = makeManager({
+      docs: { catalog: { server: "docs", tools: [], resources: [], prompts } },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("prompt_0(uri, length?)");
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("prompt_1(uri, length?)");
+    expect(result.summary).toContain("prompt_50(uri, length?)");
+    expect(result.summary).toContain("prompt_99(uri, length?)");
+    expect(result.summary).not.toContain("[omitted");
+    expect(result.summary.split("\n")).toHaveLength(100);
+    expect(result.summary.length).toBeGreaterThan(400);
+    expect(result.details?.count).toBe(100);
+  });
+
+  // Same untrusted-input clamp as the resource listing: one greedy
+  // template must not be able to hide the other 99 from the model.
+  it("clamps a verbose row so it cannot crowd out the catalog", async () => {
+    const prompts = Array.from({ length: 100 }, (_, i) => ({
+      server: "docs",
+      name: `prompt_${i}`,
+      description: i === 0 ? "D".repeat(7_900) : `catalog order ${i}`,
+      arguments: [{ name: "uri", required: true }],
+    }));
+    const mgr = makeManager({
+      docs: { catalog: { server: "docs", tools: [], resources: [], prompts } },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs", limit: 100 }, ctx);
+    expect(result.status).toBe("ok");
+    const rows = result.summary.split("\n");
+    expect(rows[0]).toContain("prompt_0(uri)");
+    // name + args + the 125-char display budget.
+    expect(rows[0]!.length).toBeLessThanOrEqual("prompt_0".length + 3 + 125);
+    expect(rows).toHaveLength(100);
+    expect(result.summary).toContain("prompt_99(uri)");
+  });
+
+  // MCP does not restrict the prompt-name charset, and the row format
+  // is `<name>(<args>) — <desc>`: a name carrying a paren, a space or
+  // the em-dash leaves the model no way to see where the name ends.
+  // Quoted, the key stays intact and reversible — the one thing it
+  // must be, since it IS the `name` argument of `mcp.prompt.get`.
+  it("quotes a name the row format would otherwise split", async () => {
+    const odd = "summarize (long) — v2";
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: odd,
+              description: "Summarise a doc.",
+              arguments: [{ name: "uri", required: true }],
+            },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.status).toBe("ok");
+    const row = result.summary.split("\n")[0]!;
+    expect(row).toBe(`${JSON.stringify(odd)}(uri) — Summarise a doc.`);
+    // Reversible: what the model decodes is what the server named.
+    expect(JSON.parse(row.slice(0, row.indexOf("(uri)")))).toBe(odd);
+  });
+
+  // An argument name has the same three readers to confuse — the
+  // comma between arguments, the `?` that marks one optional, and the
+  // closing paren — and is likewise a key the model must echo back.
+  it("quotes an argument name the row format would otherwise split", async () => {
+    const oddArg = "which, exactly?";
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: "summarize",
+              arguments: [
+                { name: oddArg, required: false },
+                { name: "uri", required: true },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary.split("\n")[0]).toBe(
+      `summarize(${JSON.stringify(oddArg)}?, uri)`,
+    );
+  });
+
+  // The whole design: an ordinary catalog row must be byte-identical
+  // to what it was before quoting existed. The model has learnt to
+  // read this format.
+  it("leaves an ordinary row byte-identical", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: "review-pr_2",
+              description: "Review a pull request.",
+              arguments: [
+                { name: "uri", required: true },
+                { name: "length", required: false },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.summary).toBe(
+      "review-pr_2(uri, length?) — Review a pull request.",
+    );
+  });
+
+  // Quoting only works if the model is told to undo it, and a native
+  // tool's `ToolDefinition.description` does NOT tell it anything:
+  // `http/route-capabilities.ts` is that string's only reader. What
+  // reaches the model is the descriptor `summary` — `formatToolRare`
+  // puts it in the stable prefix, `openai-tool-call-adapter` puts it
+  // in the native function spec. So the convention has to live there,
+  // and this pins the two together: a row that prints quotes while
+  // the prefix says nothing about them is a model that sends
+  // `"my (odd) name"` verbatim and gets "unknown prompt" — the exact
+  // failure the quoting was added to remove.
+  it("tells the model about the quoting in the summary it actually reads", () => {
+    const descriptor = getToolDescriptorByName("mcp.prompt.list");
+    expect(descriptor).toBeDefined();
+    expect(descriptor!.summary).toContain("JSON-quoted");
+    expect(descriptor!.summary).toContain("without the quotes");
+    expect(descriptor!.summary).toContain("<name>(arg1, arg2?) — description");
+    // And the definition keeps its own copy, for the capabilities route.
+    expect(buildMcpPromptListTool(makeManager({})).description).toContain(
+      "JSON-quoted",
+    );
+  });
+
+  // The prompt `name` is the `name` argument of `mcp.prompt.get` and
+  // the listed argument names are the keys of its `arguments` object.
+  // Clamping either produced a call that could not succeed.
+  it("lists a long name and args unshortened so they can be used", async () => {
+    const longName = `report_${"n".repeat(140)}`;
+    const longArg = `parameter_${"p".repeat(120)}`;
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: longName,
+              description: "d".repeat(400),
+              arguments: [{ name: longArg, required: true }],
+            },
+          ],
+        },
+        client: {
+          isConnected: true,
+          getPrompt: async (name: string, args?: Record<string, string>) => {
+            if (name !== longName) throw new Error("unknown prompt");
+            if (args?.[longArg] === undefined) {
+              throw new Error("missing required argument");
+            }
+            return {
+              messages: [
+                {
+                  role: "user",
+                  content: { type: "text", text: "rendered ok" },
+                },
+              ],
+            };
+          },
+        },
+      },
+    });
+    const listed = await buildMcpPromptListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    expect(listed.status).toBe("ok");
+    expect(listed.summary).toContain(longName);
+    expect(listed.summary).toContain(longArg);
+    expect(listed.summary).not.toContain("d".repeat(200));
+
+    // Round trip: use exactly the name and argument key that were
+    // listed.
+    const row = listed.summary.split("\n")[0]!;
+    const nameFromListing = row.slice(0, row.indexOf("("));
+    const argFromListing = row.slice(row.indexOf("(") + 1, row.indexOf(")"));
+    expect(nameFromListing).toBe(longName);
+    expect(argFromListing).toBe(longArg);
+    const got = await buildMcpPromptGetTool(mgr).run(
+      {
+        server: "docs",
+        name: nameFromListing,
+        arguments: { [argFromListing]: "value" },
+      },
+      ctx,
+    );
+    expect(got.status).toBe("ok");
+    expect(got.summary).toContain("rendered ok");
+  });
+
+  it("flattens control characters in a catalog field", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [
+            {
+              server: "docs",
+              name: "greet",
+              description: "first line\nsecond line",
+              arguments: [{ name: "who", required: true }],
+            },
+            { server: "docs", name: "other" },
+          ],
+        },
+      },
+    });
+    const tool = buildMcpPromptListTool(mgr);
+    const result = await tool.run({ server: "docs" }, ctx);
+    expect(result.summary.split("\n")).toHaveLength(2);
+    expect(result.summary).toContain("first line second line");
+  });
+
+  // `String.prototype.trim` strips the ECMAScript WhiteSpace set,
+  // which includes U+FEFF — so trimming a key would eat a BOM a
+  // server leaked into an identifier and hand back a name it does
+  // not have. `flattenKey` therefore does not trim.
+  it("keeps a BOM in a prompt name so it still resolves", async () => {
+    const bomName = "\ufeffsummarize_doc";
+    const mgr = makeManager({
+      docs: {
+        catalog: {
+          server: "docs",
+          tools: [],
+          resources: [],
+          prompts: [{ server: "docs", name: bomName }],
+        },
+        client: {
+          isConnected: true,
+          getPrompt: async (name: string) => {
+            if (name !== bomName) throw new Error("unknown prompt");
+            return {
+              messages: [
+                { role: "user", content: { type: "text", text: "ok" } },
+              ],
+            };
+          },
+        },
+      },
+    });
+    const listed = await buildMcpPromptListTool(mgr).run(
+      { server: "docs" },
+      ctx,
+    );
+    const row = listed.summary.split("\n")[0]!;
+    const nameFromListing = row.slice(0, row.indexOf("("));
+    expect(nameFromListing).toBe(bomName);
+    const got = await buildMcpPromptGetTool(mgr).run(
+      { server: "docs", name: nameFromListing },
+      ctx,
+    );
+    expect(got.status).toBe("ok");
+    expect(got.summary).toContain("ok");
   });
 
   it("emits a placeholder when the prompt list is empty", async () => {
@@ -173,6 +482,80 @@ describe("mcp.prompt.get", () => {
       flag: "true",
       items: '["a","b"]',
     });
+  });
+
+  // `projectPromptMessages` budgets the rendered template at 8_000
+  // chars; the compressor defaults used to throw that budget away,
+  // keeping the last 12 non-blank lines and slicing them to 385
+  // chars. The `system:` opening carries the instructions, so it is
+  // exactly the part that must not be dropped.
+  it("keeps the whole rendered template, opening first", async () => {
+    const systemText = [
+      "You are a release auditor.",
+      ...Array.from({ length: 60 }, (_, i) => `rule ${i}: ${"y".repeat(40)}`),
+    ].join("\n");
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], resources: [], prompts: [] },
+        client: {
+          isConnected: true,
+          getPrompt: async () => ({
+            messages: [
+              { role: "system", content: { type: "text", text: systemText } },
+              { role: "user", content: { type: "text", text: "Go." } },
+            ],
+          }),
+        },
+      },
+    });
+    const tool = buildMcpPromptGetTool(mgr);
+    const result = await tool.run({ server: "docs", name: "audit" }, ctx);
+    expect(result.status).toBe("ok");
+    const summary = result.summary;
+    expect(summary.startsWith("system: You are a release auditor.")).toBe(true);
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toContain("rule 0:");
+    expect(result.summary).toContain("rule 59:");
+    expect(result.summary).toContain("user: Go.");
+    expect(result.summary).not.toContain("[truncated]");
+    expect(result.summary.length).toBeGreaterThan(400);
+    // `projectPromptMessages` joins messages with a BLANK line, which
+    // `extractTail` then drops (result-compressor.ts). Every line of
+    // text survives in order; the separator between the messages does
+    // not, so this is not the projected string byte-for-byte.
+    expect(result.summary).not.toContain("\n\n");
+  });
+
+  it("clips at the deliverable budget, not at the 400-char default", async () => {
+    const mgr = makeManager({
+      docs: {
+        catalog: { server: "docs", tools: [], resources: [], prompts: [] },
+        client: {
+          isConnected: true,
+          getPrompt: async () => ({
+            messages: [
+              {
+                role: "user",
+                content: { type: "text", text: "B".repeat(12_000) },
+              },
+            ],
+          }),
+        },
+      },
+    });
+    const tool = buildMcpPromptGetTool(mgr);
+    const result = await tool.run({ server: "docs", name: "big" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary.startsWith("user: BBB")).toBe(true);
+    // The projector clipped, so the flag must say so. It cannot come
+    // from `compressToolResult`: the projector clips to
+    // MAX_PROMPT_CHARS and the compressor is allowed exactly that
+    // many, so `overLength` never fires on this path. `main` got
+    // `true` only because its 400-char default always fired.
+    expect(result.truncated).toBe(true);
+    expect(result.summary.length).toBeGreaterThan(7_000);
+    expect(result.summary.length).toBeLessThanOrEqual(8_000);
+    expect(result.summary.endsWith("…[truncated]")).toBe(true);
   });
 
   it("folds transport errors into a status=error result", async () => {

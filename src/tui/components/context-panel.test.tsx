@@ -212,6 +212,15 @@ describe("the task selector", () => {
     expect(body).toContain("20");
   });
 
+  it("offers the whole range the schema accepts", () => {
+    // `agent.conversationMaxPairs` defaults to 200 and takes up to 1000.
+    const at200 = lines(usage(), 100, 24, 4096, 200).join("\n");
+    expect(at200).toContain(" 200 ");
+    expect(at200).toContain("(1-1000)");
+    const at1000 = lines(usage(), 100, 24, 4096, 1000).join("\n");
+    expect(at1000).toContain(" 1000 ");
+  });
+
   it("offers a button either side of the number", () => {
     const body = lines(usage()).join("\n");
     expect(body).toContain("−");

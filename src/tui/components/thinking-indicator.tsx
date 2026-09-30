@@ -1,7 +1,11 @@
 import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
 import { useSpinner } from "../hooks/use-spinner.js";
-import { formatFusionLiveWorker } from "../fusion-live-workers.js";
+import {
+  fanoutExpectation,
+  formatElapsed,
+  formatFusionLiveWorker,
+} from "../fusion-live-workers.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -49,18 +53,21 @@ export function ThinkingIndicator({
         learn that N local workers are busy and which model each runs —
         which is the one thing this mode exists to make visible.
       */}
-      {state.fusionLiveWorkers.map((worker) => (
-        <Box key={worker.taskId} marginLeft={2}>
-          <Text
-            color={worker.done ? theme.colors.muted : theme.colors.warnStrong}
-          >
-            {worker.done ? "·" : "▸"}{" "}
-          </Text>
-          <Text color={theme.colors.muted} wrap="truncate">
-            {formatFusionLiveWorker(worker)}
-          </Text>
-        </Box>
-      ))}
+      {/* One measurement for the whole readout, from the legs of this
+          fan-out that have already finished. */}
+      {((measured) =>
+        state.fusionLiveWorkers.map((worker) => (
+          <Box key={worker.taskId} marginLeft={2}>
+            <Text
+              color={worker.done ? theme.colors.muted : theme.colors.warnStrong}
+            >
+              {worker.done ? "·" : "▸"}{" "}
+            </Text>
+            <Text color={theme.colors.muted} wrap="truncate">
+              {formatFusionLiveWorker(worker, Date.now(), measured)}
+            </Text>
+          </Box>
+        )))(fanoutExpectation(state.fusionLiveWorkers))}
     </Box>
   );
 }
@@ -160,14 +167,6 @@ function useElapsedSinceStart(
   }, [active, startedAt]);
   if (startedAt === null) return 0;
   return Math.max(0, now - startedAt);
-}
-
-function formatElapsed(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const restSec = seconds % 60;
-  return `${minutes}m${restSec.toString().padStart(2, "0")}s`;
 }
 
 function truncate(text: string, max: number): string {

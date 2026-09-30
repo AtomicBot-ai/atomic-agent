@@ -96,8 +96,22 @@ export function StatusBar({
     ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase)
     : null;
   return (
-    <Box {...(width ? { width } : {})}>
-      {railRestore ? <RailRestoreButton /> : null}
+    // One row, always. The bar is empty on a fresh session now that the
+    // `RUN` badge is gone — and an empty Box has no height, so the whole
+    // app moved up a line and every mouse target with it (the
+    // right-click menu opened a row off its click). The row is reserved
+    // whether or not anything is drawn in it.
+    <Box minHeight={1} {...(width ? { width } : {})}>
+      {railRestore ? (
+        <>
+          <RailRestoreButton />
+          {/* With the rail folded away its `+ new` folds away too, and
+              starting a thread then needed a slash command or unfolding
+              first. The header carries the controls that survive the
+              fold: menu, new, and the name of what you are in. */}
+          <NewSessionButton />
+        </>
+      ) : null}
       {brand ? (
         <>
           <Text color={theme.colors.accentSoft} bold>
@@ -107,8 +121,15 @@ export function StatusBar({
           <Sep />
         </>
       ) : null}
-      <Breadcrumb state={state} section={section} />
-      <SessionTag sessionId={state.session.sessionId} />
+      {/* Nothing on the chat surface: `RUN` named a place nobody is
+          confused about being in, and it sat where the session's own
+          name goes. The menu is still Esc, and the rail — restored by
+          the button to the left — carries its own `☰ Menu`. Off the
+          chat surface the breadcrumb stays, because `Manage › Tasks`
+          is the one thing the menu cannot tell you without opening it. */}
+      {section === "run" && state.uiMode !== "debug" ? null : (
+        <Breadcrumb state={state} section={section} />
+      )}
       {state.localModelsPanel.pull ? (
         <DownloadChip
           pull={state.localModelsPanel.pull}
@@ -275,6 +296,33 @@ function Breadcrumb({
  * click brings the rail back; without mouse support the glyph stays as
  * a signpost to `/sidebar`, inert like every other chip.
  */
+/**
+ * The rail's `+ new`, kept reachable while the rail is folded. A copy
+ * rather than a shared component: the two sit on different grounds with
+ * different neighbours, and the only thing they genuinely share is the
+ * callback, which is the part that matters.
+ */
+function NewSessionButton(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Chip label="+ new" />{" "}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.callbacks.onSessionNewRequested?.();
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
 function RailRestoreButton(): ReactElement {
   const mouse = useMouseCommands();
   const label = (
@@ -296,23 +344,6 @@ function RailRestoreButton(): ReactElement {
   );
 }
 
-interface SessionTagProps {
-  sessionId: string | null;
-}
-
-function SessionTag({ sessionId }: SessionTagProps): ReactElement | null {
-  if (!sessionId) return null;
-  // The design sets this as `session <id>` in plain dim type, with a dot
-  // before the title that follows — no pipe. One separator glyph in the
-  // bar, used once, reads as punctuation; two read as a table.
-  return (
-    <Text>
-      <Text color={theme.colors.muted}>{"   session "}</Text>
-      <Text>{shortenId(sessionId)}</Text>
-    </Text>
-  );
-}
-
 function Sep(): ReactElement {
   return (
     <Text color={theme.colors.muted}>
@@ -321,9 +352,4 @@ function Sep(): ReactElement {
       {"  "}
     </Text>
   );
-}
-
-function shortenId(value: string): string {
-  if (value.length <= 8) return value;
-  return `${value.slice(0, 8)}…`;
 }

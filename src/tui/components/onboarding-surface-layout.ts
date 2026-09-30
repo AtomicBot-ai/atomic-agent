@@ -66,7 +66,6 @@ export interface OnboardingBlockInput {
   hfError?: string | null;
   /** The import screens' rows and report, while the flow is on them. */
   importAgents?: OnboardingUiState["importAgents"];
-  importOptions?: OnboardingUiState["importOptions"];
   importReport?: OnboardingUiState["importReport"];
 }
 
@@ -151,15 +150,10 @@ function measureStepBody(input: MeasureInput): number {
         input.available,
         measureOnboardingImportPickStep(input.importAgents ?? []),
       );
-    case "import_preview":
-      return Math.min(
-        input.available,
-        measureOnboardingImportReportStep(input.importReport ?? null, false),
-      );
     case "import_done":
       return Math.min(
         input.available,
-        measureOnboardingImportReportStep(input.importReport ?? null, true),
+        measureOnboardingImportReportStep(input.importReport ?? null),
       );
     case "wait_or_jump":
       return measureOnboardingWaitOrJumpStep({

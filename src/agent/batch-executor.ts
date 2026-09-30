@@ -59,6 +59,13 @@ export interface BatchLoopSignal {
   detector: LoopCheckVerdict["detector"];
   warningKey: string;
   /**
+   * Veto path only: how many consecutive times THIS call has been
+   * refused, counting the refusal that raised this signal. `count` is a
+   * detector streak whose calls mostly ran, so it cannot stand in for
+   * this number in any user-facing wording.
+   */
+  blockedCount?: number;
+  /**
    * `test_repeat` only: human-readable command label (`pytest -k auth`)
    * for the notice text.
    */
@@ -122,6 +129,8 @@ export interface BatchExecutionContext {
    * transcript and handed to every call of the batch unchanged.
    */
   readRoots?: readonly string[];
+  /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
+  providerId?: string;
   /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
@@ -445,6 +454,7 @@ export async function executeBatch(
         signal: ctx.signal,
         ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
         ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
+        ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {
@@ -811,6 +821,30 @@ function runFusionOrchestratorGate(
   return { proceed: false, vetoResult: verdict.refusal! };
 }
 
+/**
+ * The veto body is an instruction this file writes to the model, not
+ * tool output, and the compressor's bare defaults destroy it: measured
+ * across every shape this file produces, a veto is 479-689 chars
+ * (header, class hint, the reply bullet, and the bullet that actually
+ * names the rule), so `capSummary` cuts at 385 and the last line — "Do
+ * NOT repeat this exact call. Either try a different approach or close
+ * the turn with `reply`…" — never reaches the model. The message whose
+ * whole purpose is to end a loop lost the sentence that says how.
+ *
+ * Every line is load-bearing and the header is line 1, so line-based
+ * tail truncation is disabled (it keeps the LAST lines — inert at five
+ * lines, kept as a guard rail) and the char budget sits well above the
+ * longest veto: the text is generated here, and the only interpolation
+ * that could run long is the target, clamped to 60 chars by
+ * `sanitizeLoopTarget`. `tool` is not clamped, so an MCP server
+ * registering a multi-thousand-character qualified name could still
+ * overflow 4 000 — it would simply be cut as it is today.
+ */
+const VETO_COMPRESS_OPTIONS = {
+  maxSummaryLength: 4_000,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 function runSyncLoopGate(
   input: BatchCallInput,
   ctx: BatchExecutionContext,
@@ -821,11 +855,14 @@ function runSyncLoopGate(
   }
   const { tool, args } = input.call;
   const breakerTripped = ctx.tracker.isBreakerTripped(tool, args);
-  // A wandering loop that crossed the escalation spread also ends the
-  // turn gracefully (the redirect notice did not land). It rides the same
-  // breaker path as the consecutive-veto streak.
-  const wanderingEscalated = ctx.tracker.isWanderingEscalated(tool, args);
-  const spreadAtGate = ctx.tracker.wanderingSpread(tool, args);
+  // A wandering loop that crossed a spread cap also ends the turn
+  // gracefully (the redirect notice did not land). It rides the same
+  // breaker path as the consecutive-veto streak. One call, two numbers:
+  // whether to stop, and the spread the rule that fired measured — the
+  // messages must quote the set of calls they are about (issue #458).
+  const wandering = ctx.tracker.wanderingStop(tool, args);
+  const wanderingEscalated = wandering.escalated;
+  const spreadAtGate = wandering.spread;
   const verdict = ctx.tracker.check(tool, args);
   ctx.tracker.recordCall(tool, args);
 
@@ -842,33 +879,37 @@ function runSyncLoopGate(
     // a spread of DISTINCT arguments; pass the detector so the wording
     // does not claim they were identical.
     //
-    // The verdict decides, not the escalation flag. `isWanderingEscalated`
-    // answers for the whole history window, so it stays true after the model
-    // stops wandering and settles on repeating one argument -- and borrowing
-    // it there would announce "N different attempts" about a verbatim
-    // repeat, quoting a count the verdict never established.
+    // The verdict decides, not the escalation flag. `wanderingStop` stays
+    // true after the model stops wandering and settles on repeating one
+    // argument -- and borrowing it there would announce "N different
+    // attempts" about a verbatim repeat, quoting a count the verdict never
+    // established. `check` reads BOTH ladders, so a stop on either one
+    // carries a `wandering` verdict here and is worded from its own spread.
     const detector =
       wanderingEscalated && verdict.detector === "wandering"
         ? "wandering"
         : verdict.detector;
-    const vetoResult = compressToolResult({
-      tool,
-      status: "error",
-      output: formatVetoInstruction({ tool, count, target, detector }),
-      details: {
-        deniedReason: LOOP_VETO_DENIED_REASON,
-        loopCount: count,
-        detector,
+    const vetoResult = compressToolResult(
+      {
+        tool,
+        status: "error",
+        output: formatVetoInstruction({ tool, count, target, detector }),
+        details: {
+          deniedReason: LOOP_VETO_DENIED_REASON,
+          loopCount: count,
+          detector,
+        },
       },
-    });
+      VETO_COMPRESS_OPTIONS,
+    );
     ctx.tracker.recordOutcome(tool, args, vetoResult);
     // The signal names what ended the turn. When the escalation alone
     // forced the breaker, that is the wandering cap even if THIS call is a
     // verbatim repeat (a parallel batch can carry the spread past the cap
     // before anything is refused, and the window keeps it there). Taking
-    // the repeat verdict here would end the turn on "a no-progress loop
-    // after 0 blocked attempts". The veto body above keeps the repeat
-    // wording: it describes the call, this describes the stop.
+    // the repeat verdict here would end the turn on a repeat's count
+    // when the spread is what stopped it. The veto body above keeps the
+    // repeat wording: it describes the call, this describes the stop.
     const stoppedByWandering =
       wanderingEscalated && !breakerTripped && verdict.level !== "critical";
     loopSignals.push({
@@ -877,6 +918,10 @@ function runSyncLoopGate(
       count: stoppedByWandering ? spreadAtGate : count,
       detector: stoppedByWandering ? "wandering" : detector,
       warningKey: verdict.warningKey,
+      // Read AFTER `recordOutcome` noted the refusal above, so it counts
+      // this one and is therefore always >= 1 on this path — the reply
+      // never has to fall back to a number it cannot stand behind.
+      blockedCount: ctx.tracker.vetoStreak(tool, args),
     });
     return { proceed: false, vetoResult };
   }

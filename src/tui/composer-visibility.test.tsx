@@ -108,7 +108,7 @@ describe("composer visibility", () => {
     app.stdin.write(ESC);
     await settle();
     expect(composerMarks(app.frame())).toBe(true);
-    expect(app.frame()).toContain("R U N");
+    expect(app.frame()).toContain("☰ Menu");
     app.unmount();
   });
 });

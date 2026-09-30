@@ -41,7 +41,6 @@ function frameWith(value: string): string {
         model={null}
         provider={null}
         leftSlot={null}
-        rightSlot={null}
         contextSlot={null}
         modeSlot={null}
       />

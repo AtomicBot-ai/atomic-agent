@@ -8,6 +8,7 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-registry.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type {
@@ -22,6 +23,7 @@ import type {
 } from "./sidecar-events.js";
 import type { SessionState } from "../session/index.js";
 import { installSkill, uninstallSkill } from "../skills/index.js";
+import { getAppVersion } from "../version.js";
 
 interface ActiveSession {
   session: SessionState;
@@ -245,7 +247,7 @@ export async function bootstrapSidecar(): Promise<{
     ok: true,
     llamaUrl: config.localModels.url,
     stateDir: config.paths.stateDir,
-    version: "0.1.0",
+    version: getAppVersion(),
   }));
 
   router.register<StartSessionPayload, { sessionId: string }>(
@@ -267,7 +269,7 @@ export async function bootstrapSidecar(): Promise<{
           const hint =
             config.localModels.mode === "managed"
               ? "run atomic-agent models start"
-              : "check localModels.url or ATOMIC_AGENT_LLAMA_URL";
+              : "check localModels.url";
           protocol.emitEvent("llm_unavailable", {
             url: config.localModels.url,
             error: health.error,
@@ -322,8 +324,14 @@ export async function bootstrapSidecar(): Promise<{
             `active session changed during queued send_message for ${sessionId}`,
           );
         }
+        const { maxSteps } = request.payload;
         return runtime.executeTurn(active.session, request.payload.text, {
-          maxSteps: request.payload.maxSteps ?? runtime.config.agent.maxSteps,
+          // Only a client-supplied `maxSteps` becomes a ceiling. Filling
+          // in `agent.maxSteps` (the leg length) made every task stop at
+          // the first leg instead of running to `agent.task.maxSteps`.
+          // `typeof` rather than `=== undefined`: a JSON client may send
+          // `null`, which the old `??` also treated as "not given".
+          ...(typeof maxSteps === "number" ? { maxSteps } : {}),
           signal: active.controller.signal,
         });
       },
@@ -460,5 +468,9 @@ export async function bootstrapSidecar(): Promise<{
 
 const invokedDirectly = import.meta.url === `file://${process.argv[1]}`;
 if (invokedDirectly) {
+  // The sidecar does not go through `src/cli/index.ts`, so it installs
+  // the floor itself — see `installTransportDeadlines`. Idempotent and
+  // monotone, so `createAgentRuntime` widening it later is free.
+  installTransportDeadlines();
   void bootstrapSidecar();
 }

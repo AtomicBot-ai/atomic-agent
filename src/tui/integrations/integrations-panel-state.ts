@@ -26,6 +26,8 @@ export interface IntegrationFieldRow {
   present: boolean;
   /** Shown, never edited or cleared. */
   readonly?: boolean;
+  /** Masked in the edit buffer too, not only once saved. */
+  secret?: boolean;
   help?: string;
 }
 
@@ -54,10 +56,9 @@ export interface IntegrationsPanelState {
   /** Index into the selected row's `fields`, used in detail/edit. */
   selectedField: number;
   /**
-   * In-progress value for the field being edited. Held in plain text
-   * because the operator has to be able to see what they typed before
-   * committing; it is masked the moment it is saved and is never
-   * logged or persisted anywhere but `<stateDir>/.env`.
+   * In-progress value for the field being edited. Held in plain text,
+   * but a secret field renders it as bullets while typing, and it is
+   * never logged or persisted anywhere but `<stateDir>/.env`.
    */
   editBuffer: string;
   /** True while a save / clear is in flight. */

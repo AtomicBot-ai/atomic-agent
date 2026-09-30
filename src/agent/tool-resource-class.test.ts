@@ -4,6 +4,7 @@ import {
   approvalCategoriesFor,
   gatedCallRunsUnattended,
   isBatchable,
+  isBookkeepingTool,
   isParallelWithinGroup,
   isSoloRegardlessOfApproval,
   listApprovalCategoriesByTool,
@@ -179,5 +180,48 @@ describe("tool-resource-class", () => {
     expect(isParallelWithinGroup("browser")).toBe(false);
     expect(isParallelWithinGroup("memory_write")).toBe(false);
     expect(isParallelWithinGroup("vision")).toBe(false);
+  });
+});
+
+describe("bookkeeping tools (a reply batched only with these ends the turn)", () => {
+  it("every memory.* tool is decided: a read is work, a write is bookkeeping", () => {
+    const memory = DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name).filter((n) =>
+      n.startsWith("memory."),
+    );
+    expect(memory.length).toBeGreaterThan(0);
+    for (const name of memory) {
+      const cls = resourceClassFor(name);
+      expect(["pure_read", "memory_write"], name).toContain(cls);
+      expect(isBookkeepingTool(name), name).toBe(cls === "memory_write");
+    }
+  });
+
+  it("names the bookkeeping set exactly — a new memory write tool fails here until it is reviewed", () => {
+    const bookkeeping = Object.keys(listKnownToolResourceClasses())
+      .filter(isBookkeepingTool)
+      .sort();
+    expect(bookkeeping).toEqual([
+      "memory.notes.forget",
+      "memory.notes.store",
+      "memory.profile.remove",
+      "memory.profile.set",
+    ]);
+  });
+
+  it("keeps recalls and the desktop side effects that share memory_write as work", () => {
+    for (const name of [
+      "memory.notes.recall",
+      "memory.lessons.recall",
+      "memory.procedures.recall",
+      "memory.profile.list",
+      "os.clipboard.write",
+      "os.window.focus",
+      "os.notify",
+      "os.fs.write",
+      "os.shell.run",
+      "reply",
+    ]) {
+      expect(isBookkeepingTool(name), name).toBe(false);
+    }
   });
 });

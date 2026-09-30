@@ -13,6 +13,15 @@ import { dirname } from "node:path";
  * entries by editing the file. A corrupt/missing file resets to an
  * empty map rather than failing the whole webhook pipeline.
  */
+
+/**
+ * The file's name under the state dir. Exported because session
+ * retention reads the same file to learn which sessions a binding pins
+ * (`readWebhookPinnedSessionIds`), and two spellings of one filename is
+ * how that check quietly stops finding anything.
+ */
+export const WEBHOOK_SESSIONS_FILENAME = "webhook-sessions.json";
+
 export class WebhookSessionStore {
   private readonly path: string;
 

@@ -108,11 +108,9 @@ export function OnboardingStepBody(props: {
             error={onboarding.error}
           />
         ) : null}
-        {onboarding.step === "import_preview" ||
-        onboarding.step === "import_done" ? (
+        {onboarding.step === "import_done" ? (
           <OnboardingImportReportStep
             report={onboarding.importReport}
-            executed={onboarding.step === "import_done"}
             busy={onboarding.busy}
             error={onboarding.error}
           />

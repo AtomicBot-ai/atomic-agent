@@ -61,4 +61,34 @@ describe("os.git.log", () => {
       "touched a",
     );
   });
+
+  // `formatHumanLog` spends two lines on each commit, so the
+  // compressor's default 12-line tail keeps only the six OLDEST
+  // commits, and the 385-char head-slice then leaves two or three.
+  // `listingResultCaps` budgets `limit` commits instead.
+  it("keeps the newest commits in the summary, not the oldest", async () => {
+    // Ten commits is twenty rendered lines — past the compressor's
+    // twelve-line tail, which is the cut this test is about.
+    for (let i = 0; i < 10; i++) {
+      await runGitRaw(repo, [
+        "commit",
+        "--allow-empty",
+        "-m",
+        `commit number ${String(i).padStart(2, "0")} — a subject of average length`,
+      ]);
+    }
+
+    const result = await osGitLogTool.run({}, makeCtx(repo));
+    expect(result.status).toBe("ok");
+    expect(result.details.count).toBe(10);
+
+    // Newest first, and the newest is the one the old tail dropped.
+    expect(result.summary).toContain("commit number 09");
+    expect(result.summary).toContain("commit number 00");
+    // Two lines per commit, all ten of them, no omission marker.
+    expect(result.summary.split("\n")).toHaveLength(20);
+    expect(result.summary.length).toBeGreaterThan(900);
+    expect(result.summary).not.toContain("[omitted");
+    expect(result.summary).not.toContain("[truncated]");
+  }, 120_000);
 });

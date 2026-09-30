@@ -35,7 +35,7 @@ describe("createSubcallHealthTracker", () => {
     expect(MEMORY_SUBCALL_STREAK_THRESHOLD).toBe(3);
   });
 
-  it.each(["ok", "none", "skipped"] as const)(
+  it.each(["ok", "none"] as const)(
     "a healthy %s resets the streak",
     (healthy) => {
       const tracker = createSubcallHealthTracker();
@@ -50,14 +50,36 @@ describe("createSubcallHealthTracker", () => {
     },
   );
 
-  it("a rewriter gate that declined to call the model resets the streak", () => {
+  // A gate that declined to call the model is evidence about neither
+  // side. The link-generator's `skipped` fires on every turn that
+  // surfaced too few notes to link — including turns with no recall at
+  // all — so counting it as healthy let one quiet turn between two
+  // timeouts suppress the warning forever.
+  it("an interleaved link_generator skip does not rescue a timeout streak", () => {
     const tracker = createSubcallHealthTracker();
     const results = feed(
       tracker,
-      ["timeout", "timeout", "skipped_not_referential", "timeout", "timeout"],
+      ["timeout", "skipped", "timeout", "skipped", "timeout"],
+      "link_generator",
+    );
+    expect(results.slice(0, 4).every((r) => r === null)).toBe(true);
+    expect(results[4]).toMatchObject({
+      kind: "link_generator",
+      outcome: "timeout",
+      consecutive: 3,
+    });
+  });
+
+  it("a rewriter gate that declined to call the model is neutral too", () => {
+    const tracker = createSubcallHealthTracker();
+    const results = feed(
+      tracker,
+      ["timeout", "timeout", "skipped_not_referential", "timeout"],
       "rewriter",
     );
-    expect(results.every((r) => r === null)).toBe(true);
+    expect(results.slice(0, 2).every((r) => r === null)).toBe(true);
+    expect(results[2]).toBeNull();
+    expect(results[3]).toMatchObject({ outcome: "timeout", consecutive: 3 });
   });
 
   it("aborted is neutral: it neither counts nor resets", () => {
@@ -152,14 +174,17 @@ describe("classifySubcallOutcome", () => {
   it("sorts every runner outcome", () => {
     expect(classifySubcallOutcome("timeout")).toBe("unhealthy");
     expect(classifySubcallOutcome("failed")).toBe("unhealthy");
-    expect(classifySubcallOutcome("aborted")).toBe("neutral");
-    for (const healthy of [
-      "ok",
-      "none",
+    for (const neutral of [
+      "aborted",
+      // Gates that declined to call the model: they never exercised
+      // the sub-call, so they are evidence about neither side.
       "skipped",
       "skipped_no_history",
       "skipped_not_referential",
     ] as const) {
+      expect(classifySubcallOutcome(neutral)).toBe("neutral");
+    }
+    for (const healthy of ["ok", "none"] as const) {
       expect(classifySubcallOutcome(healthy)).toBe("healthy");
     }
   });

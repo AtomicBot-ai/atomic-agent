@@ -28,7 +28,26 @@ export type WorkerTaskStatus =
   | "failed"
   | "cancelled"
   | "needs_orchestrator"
-  | "max_steps";
+  | "max_steps"
+  /**
+   * The worker ran out of WALL TIME rather than steps. Set by
+   * `runOneTask`, which is the only caller that knows whose clock
+   * fired: `classifyWorkerStatus` deliberately keeps `cancelled` ahead
+   * of a `time_ceiling` stop cause, because an operator who cancelled a
+   * worker that also passed a ceiling cancelled it. Kept apart from
+   * `max_steps` because the orchestrator's remedy differs: a task that
+   * ran out of steps needs a bigger step budget (or splitting), one that
+   * ran out of time needs a longer deadline. Relabelling a timeout as
+   * `max_steps` told it to raise the wrong one.
+   */
+  | "timeout"
+  /**
+   * The worker never got a server slot: it sat in llama-server's queue
+   * behind busy slots and produced no token at all. Not the worker's
+   * fault and not a ceiling it hit — a scheduling outcome, so the remedy
+   * is a narrower fan-out, not a bigger budget.
+   */
+  | "queued";
 
 /**
  * The order the head line counts statuses in: what was delivered first,
@@ -40,6 +59,8 @@ export const WORKER_STATUS_ORDER: readonly WorkerTaskStatus[] = [
   "no_changes",
   "needs_orchestrator",
   "max_steps",
+  "timeout",
+  "queued",
   "failed",
   "cancelled",
 ];
@@ -92,6 +113,23 @@ export interface WorkerTaskResult {
   reply: string;
   stepCount: number;
   durationMs: number;
+  /**
+   * How long the worker waited between being started and the server's
+   * first token, in ms. `null` when no token ever arrived.
+   *
+   * Recorded because the transcript could not tell two very different
+   * failures apart: a worker queued behind busy slots, and a worker whose
+   * request never reached the server at all. Both arrived as a task with
+   * zero steps and a duration equal to its whole budget, and separating
+   * them in the field took four delegations plus reading the
+   * llama-server log alongside the trace to see the server had recorded
+   * nothing.
+   *
+   * With this on the row, `durationMs` minus `queueWaitMs` is the time
+   * the worker actually had, and a `null` on a fan-out of one points at
+   * the daemon rather than at the fan-out's width.
+   */
+  queueWaitMs?: number | null;
   tools: WorkerToolStats;
   usage?: CompletionUsage;
   /**
@@ -250,8 +288,12 @@ export class WorkerRunCollector {
       .map(([tool, n]) => `${tool}×${n}`)
       .join(", ");
     const parts = [
-      this.calls === 0 ? "no tool calls" : `${this.calls} tool calls (${tally})`,
-      ...(this.recent.length > 0 ? [`last results: ${this.recent.join(" | ")}`] : []),
+      this.calls === 0
+        ? "no tool calls"
+        : `${this.calls} tool calls (${tally})`,
+      ...(this.recent.length > 0
+        ? [`last results: ${this.recent.join(" | ")}`]
+        : []),
       ...(this.replyText.length > 0
         ? [`partial reply: ${oneLine(this.replyText, FINDING_CHARS)}`]
         : []),
@@ -376,17 +418,59 @@ export function classifyWorkerStatus(
   return "ok";
 }
 
+/**
+ * What a `queued` worker reports. It produced nothing, so there is no
+ * reply to summarise; the remedy belongs to the fan-out's width, not to
+ * the task, and saying so is the whole content of the row.
+ */
+export const WORKER_QUEUED_NOTE =
+  "produced no token at all: the request was sent and nothing came back";
+
+/**
+ * Two hints, because the same silence means opposite things.
+ *
+ * With other workers running alongside, a worker that never got a token
+ * was queued behind them and the fan-out is too wide. ALONE on the leg
+ * it is the opposite: there was nothing to queue behind, so a silent
+ * worker means the request never reached the server or the server never
+ * answered it — a client or daemon fault, and telling the orchestrator
+ * to "use fewer workers" there sends it to narrow a fan-out of one.
+ *
+ * Measured: four solo delegations died at 45 minutes with zero tool
+ * calls while the llama-server log recorded nothing at all for the whole
+ * window, the server having gone silent to this client after an earlier
+ * generation was cancelled. A restart cleared it.
+ */
+export const WORKER_HINT_QUEUED =
+  "the local server had no free slot: run fewer workers at once, or split the fan-out into smaller waves";
+export const WORKER_HINT_UNSERVED =
+  "this worker ran alone and still got no token, so the local server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
+
 export const WORKER_HINT_CONTEXT =
   "the local server ran out of context: use fewer workers at once or shorter briefs";
 export const WORKER_HINT_SATURATED =
   "the local server was saturated: fewer parallel workers";
 export const WORKER_HINT_QUOTA =
   "provider credit/quota exhausted — retrying will not help";
+/**
+ * The client's watchdog proved the server answers nothing at all —
+ * either no connection was made (`first-token-unreachable`) or one was
+ * made and nothing came back on any endpoint
+ * (`first-token-unresponsive`). Either way it is evidence
+ * `WORKER_HINT_QUEUED` and `WORKER_HINT_SATURATED` do not have: the
+ * server is not full, and narrowing the fan-out on a daemon that is
+ * answering nobody wastes another wave. The remedy is the same for
+ * both, which is why they share a hint.
+ */
+export const WORKER_HINT_UNREACHABLE =
+  "the local server stopped answering entirely: restart the daemon before re-delegating — fewer workers will not help";
 
 const CONTEXT_EXCEEDED =
   /context size has been exceeded|ran out of context|exceeds? the (?:available )?context|context (?:size|length|window) (?:exceeded|was exceeded)/i;
 const SERVER_SATURATED =
   /no first token|first[- ]token timeout|sent no data for \d+\s*ms|idle timeout/i;
+const SERVER_UNREACHABLE =
+  /stopped answering GET \/slots|it is unreachable|accepted the connection and answered nothing/i;
 const CREDIT_OR_QUOTA =
   /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of credits?|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
 
@@ -401,10 +485,65 @@ const CREDIT_OR_QUOTA =
  * gateway's 402 / 429.
  */
 export function workerFailureHint(message: string): string | undefined {
+  // Before the saturation arm: an unreachable server is the strictly
+  // better-evidenced diagnosis, and "use fewer workers" is the wrong
+  // advice for a daemon that is not answering anybody.
+  if (SERVER_UNREACHABLE.test(message)) return WORKER_HINT_UNREACHABLE;
   if (SERVER_SATURATED.test(message)) return WORKER_HINT_SATURATED;
   if (CONTEXT_EXCEEDED.test(message)) return WORKER_HINT_CONTEXT;
   if (CREDIT_OR_QUOTA.test(message)) return WORKER_HINT_QUOTA;
   return undefined;
+}
+
+/**
+ * The transport failures that name nothing.
+ *
+ * Node's fetch collapses a whole family of socket outcomes into the bare
+ * string `fetch failed` — the 300-second `UND_ERR_HEADERS_TIMEOUT` among
+ * them — and undici's own words for the rest (`terminated`, `socket hang
+ * up`, `other side closed`) tell a reader no more. Not one of them says
+ * what the server did, which is why a worker that dies on one before its
+ * first token has to be diagnosed from its shape instead of its message.
+ *
+ * `ECONNREFUSED` and the DNS errors are deliberately absent: those name
+ * the fault themselves, and a message that already tells the operator
+ * what happened must keep reading the way it reads today.
+ */
+const OPAQUE_TRANSPORT =
+  /fetch failed|socket hang up|other side closed|premature close|\bterminated\b|\bECONNRESET\b|\bEPIPE\b|\bUND_ERR_\w+/i;
+
+/**
+ * The `queued` outcome's diagnosis, reached through the other door.
+ *
+ * A worker whose very first request dies on the transport never gets as
+ * far as the queue watchdog, so it comes back `failed` carrying whatever
+ * the socket said — in the field, twice in a row, a row whose whole
+ * content was `error: fetch failed` over zero steps and 306 seconds. But
+ * zero steps and a `null` `queueWaitMs` are the same two facts the
+ * `queued` outcome reports: the request went out and the server answered
+ * nothing. So the remedy is the same one, and it splits the same way —
+ * alone on the leg there was nothing to queue behind and the daemon is
+ * the suspect, alongside others the fan-out is simply too wide.
+ *
+ * `undefined` for everything else, and deliberately. A worker that took
+ * a step, one that was served and only then failed, and any message
+ * `workerFailureHint` already recognises all keep the row they have; an
+ * absent `queueWaitMs` is not a `null` one, so a row nobody measured is
+ * a row nothing is claimed about. The hint is added beside the error,
+ * never in place of it: the socket's own word is the only evidence an
+ * operator has that the request was even sent.
+ */
+export function unservedWorkerHint(
+  result: WorkerTaskResult,
+  ranAlone: boolean,
+): string | undefined {
+  if (result.status !== "failed") return undefined;
+  if (result.stepCount > 0) return undefined;
+  if (result.queueWaitMs !== null) return undefined;
+  if (result.error === undefined) return undefined;
+  if (workerFailureHint(result.error) !== undefined) return undefined;
+  if (!OPAQUE_TRANSPORT.test(result.error)) return undefined;
+  return ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED;
 }
 
 const NO_REPLY = "(the worker produced no reply)";
@@ -446,6 +585,42 @@ export function formatDelegateOutput(
   const joined = [table, ...blocks].join("\n\n");
   if (joined.length <= charCap) return joined;
   return `${joined.slice(0, Math.max(0, charCap - 15))}\n… [truncated]`;
+}
+
+/**
+ * The wave's clock, for the orchestrator that has to decide how to
+ * split the next one.
+ *
+ * Every task already states its own seconds on its block, but a model
+ * reading eight of those has to do the arithmetic to find the one
+ * answer that changes a plan: was this fan-out as slow as its slowest
+ * task, or did most of it spend the time waiting for a slot? The first
+ * says split the straggler, the second says send fewer, larger tasks.
+ * Stating both is the whole point — a number the model has to derive is
+ * a number it derives wrongly under a cap.
+ */
+export function fanoutTimings(results: readonly WorkerTaskResult[]): {
+  slowest: WorkerTaskResult | null;
+  wallMs: number;
+  queuedMs: number;
+} | null {
+  if (results.length === 0) return null;
+  let slowest: WorkerTaskResult | null = null;
+  let wallMs = 0;
+  let queuedMs = 0;
+  for (const r of results) {
+    if (!slowest || r.durationMs > slowest.durationMs) slowest = r;
+    wallMs = Math.max(wallMs, r.durationMs);
+    queuedMs += r.queueWaitMs ?? 0;
+  }
+  return { slowest, wallMs, queuedMs };
+}
+
+/** `1m35s` / `12s`, matching the TUI's own per-worker clock. */
+function formatSeconds(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
 /** How much of an error or a note one status-table line carries. */
@@ -507,9 +682,7 @@ export interface DelegateOutputExtras {
 }
 
 /** `analyze → organize, index` — waves in order, each wave's tasks together. */
-export function describeWaves(
-  waves: readonly (readonly string[])[],
-): string {
+export function describeWaves(waves: readonly (readonly string[])[]): string {
   return waves.map((wave) => wave.join(", ")).join(" → ");
 }
 
@@ -550,6 +723,26 @@ function renderStatusTable(
     extra.waves === undefined
       ? ""
       : ` in ${extra.waves.length} wave${extra.waves.length === 1 ? "" : "s"} (${describeWaves(extra.waves)})`;
+  // The clock, beside the tally: slowest task and, when the workers
+  // spent real time queued, how much. Both are levers the orchestrator
+  // can actually pull on the next fan-out.
+  const timings = fanoutTimings(results);
+  const queued =
+    timings && timings.queuedMs >= 1000
+      ? `, ${formatSeconds(timings.queuedMs)} of it queued`
+      : "";
+  // Its own line, and the table's last rather than a fourth clause on
+  // the head line: that line already carries the tally, the
+  // replaced-input count and the bill, and it is the line a capped read
+  // is guaranteed to get — crowding it costs the clauses that were put
+  // there first. Everything between the head and the rows is spoken
+  // for too (the contract line sits directly under the head by
+  // contract), so the clock closes the table instead, which is still
+  // inside any cap that showed the rows at all.
+  const clock =
+    timings && timings.slowest
+      ? `timing: ${formatSeconds(timings.wallMs)} wall, slowest [${timings.slowest.id}] ${formatSeconds(timings.slowest.durationMs)}${queued}`
+      : null;
   const lines = results.map((r) =>
     [
       `- [${r.id}] ${r.status} — ${r.title}`,
@@ -557,7 +750,9 @@ function renderStatusTable(
         oneLine(describeReplacedInput(input), TABLE_DETAIL_CHARS),
       ),
       ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
-      ...(r.checks ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)] : []),
+      ...(r.checks
+        ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)]
+        : []),
       ...(r.notes ?? []).map((note) => oneLine(note, TABLE_DETAIL_CHARS)),
     ].join(" — "),
   );
@@ -565,6 +760,7 @@ function renderStatusTable(
     `${results.length} task${results.length === 1 ? "" : "s"}${waves}: ${tally}${replaced}${cost}`,
     ...(contractLine === undefined ? [] : [contractLine]),
     ...lines,
+    ...(clock === null ? [] : [clock]),
   ].join("\n");
 }
 
@@ -584,7 +780,9 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
     `[${result.id}] ${result.status} — ${result.title} ` +
     `(${result.stepCount} steps, ${Math.round(result.durationMs / 1000)}s, ` +
     `${result.tools.calls} tool calls, ${result.tools.errors} errors)` +
-    (result.error ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}` : "");
+    (result.error
+      ? ` — error: ${oneLine(result.error, ERROR_HEAD_CHARS)}`
+      : "");
   const diagnosis = [
     ...(result.replacedInputs ?? []).map(describeReplacedInput),
     ...(result.hint ? [`hint: ${result.hint}`] : []),

@@ -25,6 +25,7 @@ function config(over: {
   modelId?: string | null;
   workerModel?: string;
   workerProvider?: string;
+  orchestratorProvider?: string;
   providers?: Providers;
 }): AtomicAgentConfig {
   return {
@@ -51,6 +52,9 @@ function config(over: {
           ...(over.workerProvider === undefined
             ? {}
             : { workerProvider: over.workerProvider }),
+          ...(over.orchestratorProvider === undefined
+            ? {}
+            : { orchestratorProvider: over.orchestratorProvider }),
         },
       },
     },
@@ -137,6 +141,86 @@ describe("resolveFusionMachineFacts", () => {
       resolveFusionMachineFacts(config({ parallel: "auto", contextSize: 0 }))
         .workerSlots,
     ).toBeNull();
+  });
+
+  it("states no local slot count when the local daemon is the orchestrator", () => {
+    // The legs swapped: the llama-server entry is PINNED as the
+    // orchestrator, so the local daemon runs the one orchestrating
+    // stream and `resolveLocalLegRole` launches it with `--parallel 1`.
+    // An unpinned worker leg then resolves to a cloud provider, and
+    // stating `managed.parallel` here would state a number about a
+    // fan-out that does not exist on this machine.
+    const providers = [
+      { id: "local-llama", kind: "llama-server", model: "entry-3b" },
+      { id: "openrouter", kind: "openai-compatible", defaultChatModel: "gpt-x" },
+    ] as unknown as Providers;
+    const swapped = resolveFusionMachineFacts(
+      config({
+        parallel: "auto",
+        contextSize: 131_072,
+        orchestratorProvider: "local-llama",
+        providers,
+      }),
+    );
+    expect(swapped.workerLeg).toBe("cloud");
+    expect(swapped.workerSlots).toBeNull();
+    expect(swapped.workerTokenBudget).toBeNull();
+    // The worker leg was never pinned, but it still resolves to a real
+    // entry — the one `resolveRunMode` hands the workers to — so the
+    // block names that entry's chat model. Not the managed daemon's
+    // GGUF, which is the model doing the orchestrating, and not nothing:
+    // the runtime has the name and the composer strip already shows it.
+    expect(swapped.workerModel).toBe("gpt-x");
+    // Not even the server's own observation: it would be the
+    // orchestrator's pool, not the workers'.
+    expect(
+      resolveFusionMachineFacts(
+        config({
+          parallel: "auto",
+          contextSize: 131_072,
+          orchestratorProvider: "local-llama",
+          providers,
+        }),
+        { workerSlots: 5 },
+      ).workerSlots,
+    ).toBeNull();
+    // A cloud orchestrator is the usual direction and is untouched: the
+    // same config with the legs the right way round still states four.
+    expect(
+      resolveFusionMachineFacts(
+        config({
+          parallel: "auto",
+          contextSize: 131_072,
+          orchestratorProvider: "openrouter",
+          providers,
+        }),
+      ).workerSlots,
+    ).toBe(4);
+  });
+
+  it("states nothing local when no configured provider is a llama-server", () => {
+    // Fusion between two cloud providers: `resolveRunMode` allows it
+    // ("which kinds they are is the operator's business"), and the
+    // unpinned worker leg resolves to the second cloud entry. The
+    // managed daemon is serving nobody, so the ~24K footprint, the slot
+    // count and the GGUF's name are all facts about the wrong machine —
+    // and a slot count is the one thing this module must never guess.
+    const providers = [
+      { id: "openrouter", kind: "openai-compatible", defaultChatModel: "gpt-x" },
+      { id: "groq", kind: "openai-compatible", defaultChatModel: "llama-3.3" },
+    ] as unknown as Providers;
+    expect(
+      resolveFusionMachineFacts(
+        config({ parallel: "auto", contextSize: 131_072, providers }),
+        { workerSlots: 5, tokensPerSecond: 4.8 },
+      ),
+    ).toEqual({
+      workerLeg: "cloud",
+      workerSlots: null,
+      workerTokenBudget: null,
+      workerModel: "llama-3.3",
+      tokensPerSecond: null,
+    });
   });
 
   it("sizes each local worker's share of the context from the reply cap", () => {

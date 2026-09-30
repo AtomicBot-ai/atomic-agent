@@ -11,6 +11,17 @@ import {
   resolveArchive,
   type ArchiveBackendFactories,
 } from "./archive-resolver.js";
+import { ARCHIVE_SUMMARY_MAX_CHARS } from "./list-tool.js";
+
+/**
+ * `formatReport` is already bounded by its own logic: one headline, then
+ * at most 20 skipped entries under a heading plus a "… N more skipped"
+ * marker, then at most 20 warnings under a heading — 44 lines, every one
+ * of them deliberate. The compressor's 12-line default would keep the
+ * last dozen warnings and drop the headline that says how many entries
+ * were actually written, which is the one line the caller needs.
+ */
+const REPORT_MAX_LINES = 44;
 
 /**
  * Extraction ignores `trustConfigPaths` (it targets a directory, so the
@@ -118,7 +129,10 @@ export function buildOsFsArchiveExtractTool(
             limits,
           },
         },
-        { maxSummaryLength: 64 * 1024, maxTailLines: 2000 },
+        {
+          maxSummaryLength: ARCHIVE_SUMMARY_MAX_CHARS,
+          maxTailLines: REPORT_MAX_LINES,
+        },
       );
     },
   };

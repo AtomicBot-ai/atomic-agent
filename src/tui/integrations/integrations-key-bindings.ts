@@ -16,7 +16,7 @@ export interface IntegrationsTabKeyContext {
  * the key was consumed so the editor echo is suppressed.
  *
  * List mode:   ↑/↓ or j/k move · Enter opens · r refreshes
- * Detail mode: ↑/↓ move between fields · e edits · d clears · Esc back
+ * Detail mode: ↑/↓ move between fields · Enter or e edits · d clears · Esc back
  * Edit mode:   every printable key appends · Enter saves · Esc cancels
  *
  * Edit mode swallows the whole keyboard on purpose: an API key contains
@@ -95,7 +95,7 @@ export function handleIntegrationsTabKey(
         return true;
       }
     }
-    if (input === "e") {
+    if (input === "e" || key.return) {
       if (field?.kind === "boolean" || field?.readonly) return true;
       dispatch({ type: "integrations_edit_started" });
       return true;

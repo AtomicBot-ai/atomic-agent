@@ -231,7 +231,9 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
       conversationMaxTokens: user.agent.conversationMaxTokens,
       conversationMaxPairs: user.agent.conversationMaxPairs,
+      nameSessions: user.agent.nameSessions,
       conversationLowWater: user.agent.conversationLowWater,
+      sessionSectionsMaxTokens: user.agent.sessionSectionsMaxTokens,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
@@ -260,6 +262,20 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.BATCH_TOOL_RESULT_CHAR_CAP,
         1_000,
         1_000_000,
+      ),
+      // Lower bounds are the compressor's own defaults, so an operator
+      // dialling down can land exactly on the pre-knob behaviour.
+      shellToolResultCharCap: readBoundedPositiveInt(
+        "ATOMIC_AGENT_SHELL_TOOL_RESULT_CHAR_CAP",
+        ENV_DEFAULTS.SHELL_TOOL_RESULT_CHAR_CAP,
+        400,
+        1_000_000,
+      ),
+      shellToolResultTailLines: readBoundedPositiveInt(
+        "ATOMIC_AGENT_SHELL_TOOL_RESULT_TAIL_LINES",
+        ENV_DEFAULTS.SHELL_TOOL_RESULT_TAIL_LINES,
+        12,
+        100_000,
       ),
       loopWarningThreshold: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOOP_WARNING_THRESHOLD",
@@ -320,9 +336,13 @@ export function loadConfig(): AtomicAgentConfig {
       ),
     },
     skills: {
+      // File value is the default, env var overrides it — the same
+      // layering `localModels.completionMaxTokens` uses. Before v70 the
+      // fallback was the schema constant, so `skills.catalogTokenBudget`
+      // in config.json was read, validated and then ignored (issue #466).
       catalogTokenBudget: readBoundedPositiveInt(
         "ATOMIC_AGENT_SKILLS_CATALOG_BUDGET",
-        ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
+        user.skills.catalogTokenBudget,
         1,
         100_000,
       ),
@@ -404,6 +424,13 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.UPDATE_CHECK_ON_STARTUP,
       ),
       repo: readEnv("ATOMIC_AGENT_REPO") ?? ENV_DEFAULTS.UPDATE_REPO,
+    },
+    sessions: {
+      retention: {
+        enabled: user.sessions.retention.enabled,
+        maxAgeDays: user.sessions.retention.maxAgeDays,
+        maxRows: user.sessions.retention.maxRows,
+      },
     },
     tracing: {
       trace: {
@@ -539,6 +566,7 @@ export function loadConfig(): AtomicAgentConfig {
       theme: user.tui.theme,
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
+      notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {
         order: [...user.tui.sessionRail.order],
@@ -613,5 +641,8 @@ function mapUserLlmToRuntime(
     }),
     ...(llm.fallback ? { fallback: llm.fallback } : {}),
     ...(llm.runMode ? { runMode: llm.runMode } : {}),
+    // Without this `llm.openrouter.preferCacheRoutes: false` never
+    // reached the provider factory, which fell back to `true`.
+    ...(llm.openrouter ? { openrouter: { ...llm.openrouter } } : {}),
   };
 }

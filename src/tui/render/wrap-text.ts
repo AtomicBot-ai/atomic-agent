@@ -10,10 +10,44 @@
  * to convert each message body into the per-row slice fed into the
  * line-window virtual scroller.
  */
+/**
+ * Terminal tab stop. Eight columns is what every terminal this runs in
+ * uses, and there is no way to ask the host for it.
+ */
+const TAB_WIDTH = 8;
+
+/**
+ * Replace tabs with the spaces the terminal will draw in their place,
+ * so a measured length equals a drawn width.
+ *
+ * Without this the wrapper counts a `\t` as one column and the terminal
+ * draws up to eight, so the row overflows its budget and the terminal
+ * clips whatever hangs past the edge. Seen in the field on git's own
+ * output, which indents with tabs: every path in a "would be
+ * overwritten by checkout" list lost exactly its last character —
+ * `.ts` rendered as `.t` — while the untabbed lines around it wrapped
+ * correctly. The tool result was intact; only the drawing was wrong,
+ * which is the worst shape for this class of bug because nothing
+ * upstream looks broken.
+ */
+export function expandTabs(line: string, tabWidth = TAB_WIDTH): string {
+  if (!line.includes("\t")) return line;
+  let out = "";
+  for (const ch of line) {
+    if (ch !== "\t") {
+      out += ch;
+      continue;
+    }
+    out += " ".repeat(tabWidth - (out.length % tabWidth));
+  }
+  return out;
+}
+
 export function wrapText(text: string, width: number): string[] {
-  if (width <= 0) return text.split("\n");
+  if (width <= 0) return text.split("\n").map((line) => expandTabs(line));
   const out: string[] = [];
-  for (const paragraph of text.replace(/\r\n/g, "\n").split("\n")) {
+  for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+    const paragraph = expandTabs(raw);
     if (paragraph.length === 0) {
       out.push("");
       continue;

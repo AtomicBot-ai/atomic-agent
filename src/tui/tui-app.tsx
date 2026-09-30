@@ -10,7 +10,17 @@ import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
+import {
+  CONVERSATION_MAX_PAIRS_MAX,
+  CONVERSATION_MAX_PAIRS_MIN,
+} from "../config/config-schema.js";
 import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
+import {
+  emitTerminalNotification,
+  formatTurnNotification,
+  raiseDesktopNotification,
+  shouldNotify,
+} from "./terminal-notify.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { IssueReportPopup } from "./components/issue-report-popup.js";
@@ -27,6 +37,7 @@ import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -35,7 +46,8 @@ import {
 import { reduceTuiState } from "./agent-event-reducer.js";
 import { deriveHerdrReport, type HerdrReporter } from "./herdr-reporter.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
-import type { WhileBusySubmitMode } from "../config/index.js";
+import type { TuiNotifyConfig, WhileBusySubmitMode } from "../config/index.js";
+import { getConfig } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import {
   approvalHotkey,
@@ -46,7 +58,7 @@ import {
 } from "./app-key-bindings.js";
 import { appChromeRows } from "./components/debug-pane.js";
 import {
-  COMPOSER_COLLAPSED_ROWS,
+  composerCollapsedRows,
   ComposerOverlay,
   ComposerSlot,
   maxComposerEditorLines,
@@ -81,6 +93,7 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import { Sidebar } from "./components/sidebar.js";
+import { railTailInView } from "./session-rail/index.js";
 import {
   countRunningTasks,
   selectSidebarTasks,
@@ -96,11 +109,20 @@ import { ProviderOutageReadout } from "./components/provider-outage-readout.js";
 import { useElapsed } from "./hooks/use-elapsed.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import {
+  computeHintRowBudget,
+  computeMainColumnWidth,
   computeSidebarRowBudget,
   computeSidebarWidth,
   isSidebarVisible,
   isTerminalTooSmall,
+  RAIL_GUTTER_COLUMNS,
 } from "./layout.js";
+import {
+  selectExtraChromeRows,
+  selectMetaBarFit,
+  selectMetaBarRows,
+  selectRailVisible,
+} from "./select-chrome-rows.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
@@ -123,7 +145,11 @@ import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import type { SkillSourceKind } from "../skills/index.js";
 import type { HubSkillRow } from "./skills/skills-panel-state.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
-import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
+import type {
+  MemoryChannel,
+  MemoryNotesArchiveFilter,
+  MemorySummaryRow,
+} from "./memory/memory-panel-state.js";
 import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
 import { handleImportTabKey } from "./import/import-key-bindings.js";
 import type { ImportFormState } from "./import/import-panel-state.js";
@@ -151,15 +177,6 @@ export { makeTuiEventBus } from "./make-event-bus.js";
 export interface TuiEventBus {
   subscribe(listener: (action: TuiAction) => void): () => void;
 }
-
-/**
- * Columns of air between the rail's right edge and the chat column. The
- * rail paints its own ground, so without a gutter the transcript starts
- * one cell after a block of colour and reads as if it were inside the
- * panel. Subtracted from `mainColumnWidth` as well, or the hairline and
- * the hint strip overflow the row they are measured for.
- */
-const RAIL_GUTTER_COLUMNS = 3;
 
 /**
  * How long after a modal opens its backdrop refuses to dismiss it. One
@@ -255,6 +272,13 @@ export interface TuiAppCallbacks {
    * resulting order and re-emits `recent_sessions_updated`.
    */
   onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /**
+   * The cursor reached the end of the sessions the rail has loaded (the
+   * rail's ↓ or wheel, the picker's ↓). The host reads the store one
+   * page at a time, so this is what fetches the next page and re-emits
+   * `recent_sessions_updated`.
+   */
+  onSessionsEndReached?(): void;
   /**
    * `p` on the focused rail row, or a click on a row's `↑`: pin that
    * session to the top block of the rail, or release it.
@@ -458,6 +482,16 @@ export interface TuiAppCallbacks {
   onSkillInstallCancelled?(identifier: string): void;
   /** Memory tab: start the 5s refresh loop on first entry. */
   onMemoryAutoRefreshStart?(): void;
+  /**
+   * `/memory`: reload the list now with these options. A callback, not
+   * a dispatched `memory_refresh_requested`, because the orchestrator
+   * listens on the event bus and dispatch never reaches it.
+   */
+  onMemoryRefreshRequested?(opts: {
+    channel: MemoryChannel;
+    notesArchiveFilter: MemoryNotesArchiveFilter;
+    searchQuery: string;
+  }): void;
   /** Memory tab: open detail for a list row. */
   onMemoryDetailRequested?(row: MemorySummaryRow): void;
   /** Memory tab: open a note by id (link navigation). */
@@ -466,6 +500,8 @@ export interface TuiAppCallbacks {
   onMemoryExpandNeighborsRequested?(noteId: number): void;
   /** MCP tab: start the 5s refresh loop on first entry. */
   onMcpAutoRefreshStart?(): void;
+  /** `/mcp`: re-read the server list now (same bus rule as above). */
+  onMcpRefreshRequested?(): void;
   /** Providers tab: refresh provider list on first entry. */
   onProvidersTabRefresh?(): void;
   /** Providers tab / LLM panel: switch the active text provider. */
@@ -541,19 +577,21 @@ export interface TuiAppCallbacks {
   onMcpDetailRequested?(serverName: string): void;
   /**
    * MCP tab: persist a new server from a JSON-paste payload. The
-   * orchestrator validates + writes `<stateDir>/config.json` and
-   * emits one of `mcp_add_validation_failed` / `mcp_add_failed` /
-   * `mcp_add_succeeded`. The runtime must be restarted for the new
-   * server to actually connect — see `persistMcpServer`.
+   * orchestrator validates + writes `<stateDir>/config.json`, emits
+   * one of `mcp_add_validation_failed` / `mcp_add_failed` /
+   * `mcp_add_succeeded`, and connects the new server live.
    */
   onMcpAddServerSubmit?(json: string): void;
   /**
    * MCP tab: remove an existing server by name from
-   * `<stateDir>/config.json`. Variant α: the live `McpManager` is NOT
-   * mutated — the operator restarts atomic-agent to drop the live
-   * connection. Failures fold into `mcp_remove_failed`.
+   * `<stateDir>/config.json` and drop its live connection. Failures
+   * fold into `mcp_remove_failed`.
    */
   onMcpRemoveServer?(name: string): void;
+  /** MCP tab: stop + start one server live (config untouched). */
+  onMcpRestartServer?(name: string): void;
+  /** MCP tab: flip one server's `enabled` flag, persisted to config. */
+  onMcpToggleServerEnabled?(name: string): void;
   /** Providers tab: finish the add/configure wizard. */
   onProvidersWizardSubmit?(
     wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState,
@@ -577,14 +615,12 @@ export interface TuiAppCallbacks {
    */
   onOnboardingStep?(step: string, outcome?: string): void;
   /**
-   * The first-run import step asked for a run. `execute: false` is the
-   * dry-run behind the preview screen, `true` the confirmed write. The
-   * answer comes back on the bus as `onboarding_import_report` /
-   * `onboarding_import_failed`.
+   * The first-run import step asked for the run — always a write; the
+   * flow has no dry-run screen. The answer comes back on the bus as
+   * `onboarding_import_report` / `onboarding_import_failed`.
    */
   onOnboardingImportRequested?(
     plan: import("./onboarding/import-step.js").OnboardingImportPlan,
-    execute: boolean,
   ): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
@@ -620,8 +656,6 @@ export interface TuiAppCallbacks {
   onTelegramSetEnabledRequested?(enabled: boolean): void | Promise<void>;
   /** Telegram tab: explicit restart (e.g. after backend hiccup). */
   onTelegramRestartRequested?(): void | Promise<void>;
-  /** Telegram tab: open the masked token-entry modal. */
-  onTelegramTokenPromptOpenRequested?(): void;
   /** Telegram tab: submit the token from the modal buffer. */
   onTelegramTokenSubmitted?(buffer: string): void | Promise<void>;
   /** Telegram tab: clear the persisted token (back to `down`). */
@@ -874,6 +908,64 @@ export function TuiApp({
     }
   }, [state.status, callbacks, app]);
 
+  // One terminal ping per finished turn, for the operator who went to
+  // do something else. Keyed on the run-history length rather than on
+  // `status`: the entry is the record of the ending, it carries the
+  // outcome and the duration the decision needs, and a length that only
+  // grows cannot fire twice for one turn the way a status that flips
+  // back and forth can.
+  // Read once per mount. The knob is not something an operator flips
+  // mid-turn, and re-reading it on every render would put a config load
+  // in the render path of the hottest component in the app.
+  const notify = useMemo<TuiNotifyConfig>(() => {
+    try {
+      return getConfig().tui.notify;
+    } catch {
+      // A TUI that cannot read its config still has to draw. Silence is
+      // the safe answer for a notifier.
+      return { enabled: false, minDurationMs: 0 };
+    }
+  }, []);
+  const notifiedRunsRef = useRef(0);
+  useEffect(() => {
+    const entry = state.runHistory[state.runHistory.length - 1];
+    if (!entry || state.runHistory.length <= notifiedRunsRef.current) {
+      notifiedRunsRef.current = state.runHistory.length;
+      return;
+    }
+    notifiedRunsRef.current = state.runHistory.length;
+    if (!notify.enabled) return;
+    // Escapes belong in a terminal. Piped or redirected stderr gets the
+    // bytes as content, which is how a log file ends up with a bell in
+    // it — and how a test run ends up ringing the developer's terminal.
+    // The same gate covers the desktop notifier: a headless run has no
+    // operator to interrupt.
+    if (!process.stderr.isTTY) return;
+    if (
+      !shouldNotify({
+        outcome: entry.outcome,
+        durationMs: entry.durationMs,
+        minDurationMs: notify.minDurationMs,
+      })
+    ) {
+      return;
+    }
+    const note = formatTurnNotification({
+      outcome: entry.outcome,
+      reason: entry.reason,
+      stepCount: entry.stepCount,
+      durationMs: entry.durationMs,
+      workingDirName: session.workingDir.split("/").filter(Boolean).pop(),
+    });
+    // stderr, not Ink's stdout: an out-of-band escape inside a frame
+    // survives the next repaint as garbage. See `terminal-notify.ts`.
+    emitTerminalNotification((chunk) => process.stderr.write(chunk), note);
+    // And the OS, because the terminal sequence reaches nobody on the
+    // default macOS terminal — the first field report of this feature
+    // was "I have seen no notifications".
+    raiseDesktopNotification(note);
+  }, [state.runHistory, notify, session.workingDir]);
+
   useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "tasks") {
       callbacks.onTasksAutoRefreshStart?.();
@@ -1017,10 +1109,7 @@ export function TuiApp({
   const swarmTabActive =
     state.uiMode === "debug" && state.activeTab === "swarm";
   const terminalSize = useTerminalSize();
-  const sidebarVisible =
-    state.uiMode === "chat" &&
-    !state.sidebarCollapsed &&
-    isSidebarVisible(terminalSize.columns, terminalSize.rows);
+  const sidebarVisible = selectRailVisible(state, terminalSize);
   // The `»` restore control is offered only while the fold is the
   // operator's own choice AND the terminal could seat the rail: when
   // the size gate is what hid it, a click could restore nothing.
@@ -1038,12 +1127,24 @@ export function TuiApp({
   // Columns left for the main column once the frame gutter and the
   // right rail have taken their cut — what the one-row hint strip has
   // to fit inside.
-  const mainColumnWidth = Math.max(
-    0,
-    terminalSize.columns -
-      ROOT_PADDING_COLUMNS -
-      (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0),
+  const mainColumnWidth = computeMainColumnWidth(
+    terminalSize.columns,
+    sidebarVisible,
   );
+  // Rows the strip may spend before it goes back to deleting hints, and
+  // the rows it actually takes. `selectHintRows` re-runs the same pure
+  // packing the strip itself will run, off the same state and the same
+  // width, so the height budgeted here and the height painted below
+  // cannot drift — see `select-chrome-rows.ts`.
+  const hintRowBudget = computeHintRowBudget(terminalSize.rows);
+  const extraChromeRows = selectExtraChromeRows(state, terminalSize);
+  // The bar's shape and height, decided once. `PromptMetaBar` clamps its
+  // render to the same plan, `ComposerSlot` reserves it, and the chat
+  // viewport has already given up the surplus through
+  // `selectExtraChromeRows` — all three off this one computation, so
+  // none of them can disagree about how tall the composer is.
+  const metaBarFit = selectMetaBarFit(state, terminalSize);
+  const metaBarRows = selectMetaBarRows(state, terminalSize);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   /**
    * The composer belongs to the Run screen. Observe and Manage are for
@@ -1683,6 +1784,18 @@ export function TuiApp({
     }
     if (state.sessionPickerOpen) {
       dispatch({ type: "session_picker_cursor_moved", delta: 1 });
+      // The picker lists the page the rail has loaded; walking to the
+      // foot of it fetches the next one. The re-emitted list reaches the
+      // open picker too (`recent_sessions_updated` keeps it in step), so
+      // the cursor carries on into rows that were not there a key ago.
+      if (
+        railTailInView(
+          state.sessionPickerCursor + 1,
+          state.sessionPickerList.length,
+        )
+      ) {
+        callbacks.onSessionsEndReached?.();
+      }
       return;
     }
     if (state.slashPaletteOpen) {
@@ -1693,8 +1806,11 @@ export function TuiApp({
   }, [
     state.slashPaletteOpen,
     state.sessionPickerOpen,
+    state.sessionPickerCursor,
+    state.sessionPickerList,
     state.themePickerOpen,
     state.themePickerCursor,
+    callbacks,
   ]);
 
   // Pin the layout to the live terminal height **only** under a real
@@ -1715,7 +1831,7 @@ export function TuiApp({
   // edge and cap its own height. Same budget the debug pane already uses.
   const menuPaneRows = Math.max(
     6,
-    terminalSize.rows - appChromeRows(composerVisible),
+    terminalSize.rows - appChromeRows(composerVisible, extraChromeRows),
   );
   // The switch popup gets the pane's *real* row count, floor of none:
   // it sheds its own chrome down to a three-row frame, and handing it
@@ -1723,7 +1839,7 @@ export function TuiApp({
   // composer instead of shrinking.
   const switchPaneRows = Math.max(
     0,
-    terminalSize.rows - appChromeRows(composerVisible),
+    terminalSize.rows - appChromeRows(composerVisible, extraChromeRows),
   );
 
   // Rows of the stage the composer overlay floats in: the content pane
@@ -1742,7 +1858,10 @@ export function TuiApp({
   // re-expands the moment the modal closes.
   const composerMaxEditorLines = modalOwnsInput
     ? 1
-    : maxComposerEditorLines(menuPaneRows + COMPOSER_COLLAPSED_ROWS);
+    : maxComposerEditorLines(
+        menuPaneRows + composerCollapsedRows(metaBarRows),
+        metaBarRows,
+      );
   const promptLlm = selectPromptLlmMeta(state);
   // The backend control carries the health dot the standalone pill used
   // to: `selectComposerBackendMeta` keeps the `localConfigured` guard
@@ -1810,44 +1929,18 @@ export function TuiApp({
         </Text>
       </Box>
     ) : null;
-  // While a turn is running the meta-row gains a second job: the operator
-  // needs to know what Enter will do to the message they are typing.
-  // Running only: during a pending approval every key routes to the
-  // approval modal first, so both Enter-routing and the ctrl+t flip are
-  // dead there — advertising them would promise bindings that do nothing.
+  // The meta row used to carry `⏎ steer (ctrl+t)` while a turn ran. It
+  // is gone: the hint strip two rows below says the same thing in the same
+  // words, and its whole job is keys. Two statements of one binding is one
+  // too many, and this was the copy the row kept having to drop — a live
+  // provider wait took it out, which is how the duplication came to light.
+  // Its ~19 columns now belong to the route and to the outage readout's
+  // reason at every width, in every state.
   //
-  // What used to live here when idle was `ctx <window>` — the *size* of
-  // the context window, which never changes and never told anyone
-  // anything. The chip below reports how much of it is in use instead.
-  //
-  // Dropped outright while a wait is live, not shrunk. It is the one
-  // thing on the row that is duplicated two lines below it, in the hint
-  // strip under the composer, so nothing is lost — and it is the ~19
-  // columns that decide whether the outage readout and the route can
-  // both be read at the widths people actually run. What makes "nothing
-  // is lost" true rather than hopeful is that the strip's `⏎` chip is
-  // essential (`hotkey-chips.ts`): it used to carry `shed: 3` and was
-  // dropped at every width up to 112 columns as soon as the composer
-  // held a draft — which is precisely the state this hint exists for.
-  // This does NOT reopen the pinned "at 60 the right-hand readout must
-  // survive intact" decision: that argument is about a half-drawn
-  // context or mode chip, and both of those keep their `flexShrink={0}`
-  // and their place on the row.
-  //
-  // A `givenUp` badge does not take the hint with it. It is past tense
-  // and 20 columns wide, it has no counter to protect, and the turn
-  // running underneath it is an ordinary turn whose Enter the operator
-  // still has to aim.
-  const outageIsLive = Boolean(outage && !outage.givenUp);
-  const promptRightSlot =
-    state.status === "running" && !outageIsLive ? (
-      <Text>
-        <Text color={theme.colors.railAccent} bold>
-          {"\u23ce"} {state.whileBusyMode}
-        </Text>
-        <Text color={theme.colors.railMuted}> (ctrl+t)</Text>
-      </Text>
-    ) : null;
+  // What the strip gives in exchange: its `⏎` chip is essential
+  // (`hotkey-chips.ts`), so the statement survives at every width. `ctrl+t`
+  // is rankable and still goes below ~82 columns — there the flip is
+  // unadvertised until the strip is allowed to wrap.
   const contextUsage = selectContextUsage(state);
   // The chip renders inside the composer overlay, so its click target
   // registers on the overlay's raised layer — see `composer-overlay.tsx`.
@@ -1906,7 +1999,10 @@ export function TuiApp({
       selectedPairsRef.current ??
       stateRef.current.contextPanelPairsDraft ??
       cap;
-    const next = Math.max(1, Math.min(100, current + delta));
+    const next = Math.max(
+      CONVERSATION_MAX_PAIRS_MIN,
+      Math.min(CONVERSATION_MAX_PAIRS_MAX, current + delta),
+    );
     if (next === current) return;
     // Write first, then move the number. The other order leaves the
     // panel showing a value the config never took: the write is
@@ -2252,6 +2348,7 @@ export function TuiApp({
                       sessions={state.sessionPickerList}
                       cursor={state.sessionPickerCursor}
                       currentSessionId={state.session.sessionId}
+                      morePages={state.recentSessionsMorePages}
                     />
                   </Box>
                 ) : null}
@@ -2308,7 +2405,7 @@ export function TuiApp({
                 every newline compressed the chat log and reflowed the
                 whole screen.
               */}
-                    <ComposerSlot />
+                    <ComposerSlot metaRows={metaBarRows} />
                     <ComposerOverlay>
                       <PromptShell
                         fusion={promptBackend.kind === "fusion"}
@@ -2337,9 +2434,9 @@ export function TuiApp({
                         provider={promptLlm.provider}
                         needsModelDownload={promptNeedsModelDownload}
                         leftSlot={promptLeftSlot}
-                        rightSlot={promptRightSlot}
                         contextSlot={promptContextSlot}
                         modeSlot={promptModeSlot}
+                        fit={metaBarFit}
                         running={state.status === "running"}
                         onStop={onStopRun}
                         focus={editorFocus}
@@ -2390,7 +2487,7 @@ export function TuiApp({
                   paneTop={2}
                   availableRows={
                     menuPaneRows +
-                    (composerVisible ? COMPOSER_COLLAPSED_ROWS : 0)
+                    (composerVisible ? composerCollapsedRows(metaBarRows) : 0)
                   }
                   availableColumns={
                     terminalSize.columns -
@@ -2404,6 +2501,7 @@ export function TuiApp({
                 ctrlCArmed={ctrlCArmed}
                 menuLeaderArmed={menuLeaderArmed}
                 width={mainColumnWidth}
+                maxRows={hintRowBudget}
               />
             </Box>
           </Box>

@@ -1,5 +1,6 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type { SessionState } from "../session/session-state.js";
 import { DEFAULT_RING_BUFFER_SIZE } from "./tui-state.js";
 
 /**
@@ -16,13 +17,32 @@ import { DEFAULT_RING_BUFFER_SIZE } from "./tui-state.js";
  * Keyed by session id: the per-session FIFO guarantees at most one
  * orchestrator-started turn per session, so one controller per key is a
  * structural fact rather than a hope.
+ *
+ * The live `SessionState` is parked next to the controller because the
+ * store may not know the session yet: the TUI mints its sessions
+ * deferred (`persist: false`), and the first turn writes the row only
+ * when it finishes. A thread backgrounded mid-first-turn has no row to
+ * load, so the switch-back falls back to this copy — the only one there
+ * is until the turn saves.
  */
 export class DetachedTurns {
-  private readonly bySession = new Map<string, AbortController>();
+  private readonly bySession = new Map<
+    string,
+    { controller: AbortController; session: SessionState }
+  >();
 
   /** Park the running turn's controller when its thread leaves the screen. */
-  park(sessionId: string, controller: AbortController): void {
-    this.bySession.set(sessionId, controller);
+  park(session: SessionState, controller: AbortController): void {
+    this.bySession.set(session.id, { controller, session });
+  }
+
+  /**
+   * The session object a backgrounded turn left the screen with, for a
+   * switch-back the store cannot answer yet (no row before the first
+   * turn saves). `null` when no turn of ours is parked on `sessionId`.
+   */
+  sessionFor(sessionId: string): SessionState | null {
+    return this.bySession.get(sessionId)?.session ?? null;
   }
 
   /**
@@ -31,10 +51,10 @@ export class DetachedTurns {
    * ours runs there (idle, or a turn from another origin).
    */
   take(sessionId: string): AbortController | null {
-    const controller = this.bySession.get(sessionId);
-    if (!controller) return null;
+    const entry = this.bySession.get(sessionId);
+    if (!entry) return null;
     this.bySession.delete(sessionId);
-    return controller;
+    return entry.controller;
   }
 
   /** Is one of our backgrounded turns still running on `sessionId`? */
@@ -50,7 +70,7 @@ export class DetachedTurns {
    * end-of-background-turn cleanup exactly once.
    */
   release(sessionId: string, controller: AbortController): boolean {
-    if (this.bySession.get(sessionId) !== controller) return false;
+    if (this.bySession.get(sessionId)?.controller !== controller) return false;
     this.bySession.delete(sessionId);
     return true;
   }
@@ -61,7 +81,7 @@ export class DetachedTurns {
 
   /** Abort every parked turn — quit / shutdown teardown. */
   abortAll(): void {
-    for (const controller of this.bySession.values()) controller.abort();
+    for (const { controller } of this.bySession.values()) controller.abort();
     this.bySession.clear();
   }
 }
@@ -139,6 +159,15 @@ export function formatBackgroundApprovalNotice(
   request: ApprovalRequest,
 ): string {
   return `session ${request.sessionId} is waiting for an approval (${request.tool}) — switch to it to answer; its turn is paused until you do`;
+}
+
+/**
+ * A session that is not on screen has parked its turn on a provider that
+ * stopped answering. The full notice waits in that thread (the
+ * switch-back replays it); the visible one gets the pointer.
+ */
+export function formatBackgroundProviderWaitNotice(sessionId: string): string {
+  return `session ${sessionId} is paused: its model is not answering, and the turn retries by itself — switch to it to watch or stop it`;
 }
 
 /**

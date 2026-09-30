@@ -73,6 +73,7 @@ export class OpenAiHttpError extends Error {
       cause?: unknown;
       body?: ProviderErrorBody;
       generationId?: string;
+      streamError?: string;
     },
   ) {
     super(message);
@@ -83,6 +84,9 @@ export class OpenAiHttpError extends Error {
     if (options?.body !== undefined) this.body = options.body;
     if (options?.generationId !== undefined) {
       this.generationId = options.generationId;
+    }
+    if (options?.streamError !== undefined) {
+      this.streamError = options.streamError;
     }
   }
 
@@ -99,6 +103,37 @@ export class OpenAiHttpError extends Error {
    * billed, and the id is what recovers the cost from the provider.
    */
   readonly generationId?: string;
+
+  /**
+   * The provider's own words when it reported the failure INSIDE a
+   * stream that had opened with a 200 (an SSE `error` event, or a reply
+   * it ended with an error finish reason). Present only then. Nothing
+   * was retried at the HTTP layer for such a failure, and `status` is
+   * whatever the event carried, not a response status — the wording has
+   * to say so rather than borrow the "server trouble, tried N times"
+   * sentence of a 5xx on the open.
+   */
+  readonly streamError?: string;
+}
+
+/**
+ * The message a stream carries when the provider ended its reply with
+ * `finish_reason: "error"` rather than sending an error object. The
+ * status such a failure is typed with is the stream consumer's choice
+ * (it has to pick one for the loop to park on), never something the
+ * provider answered, so it must not be shown to anyone.
+ */
+const ERROR_FINISH_MESSAGE =
+  /\bended (?:the|its) (?:completion|reply) with an error\b/i;
+
+export function isErrorFinishMessage(message: string): boolean {
+  return ERROR_FINISH_MESSAGE.test(message);
+}
+
+/** `MALFORMED_FUNCTION_CALL` out of `… with an error (MALFORMED_FUNCTION_CALL)`. */
+function errorFinishDetail(message: string): string | null {
+  const match = /\(([A-Za-z0-9_.:-]{1,64})\)\s*$/.exec(message.trim());
+  return match ? match[1]! : null;
 }
 
 /**
@@ -112,6 +147,15 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   const who = `"${err.providerLabel || hostOf(err.url)}"`;
   if (err.timedOut) {
     return `${who} took too long to answer and the request was stopped.`;
+  }
+  if (err.streamError !== undefined) {
+    // Reported inside a 200 stream: one attempt, no response status.
+    if (isErrorFinishMessage(err.streamError)) {
+      const detail = errorFinishDetail(err.streamError);
+      return `${who} ended its reply with an error${detail === null ? "" : ` (${detail})`} — this is on the provider, not your setup.`;
+    }
+    const code = err.status === null ? "" : ` (${err.status})`;
+    return `${who} reported an error in the middle of its reply${code}: ${err.streamError}`;
   }
   if (err.status === null) {
     return (

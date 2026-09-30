@@ -7,6 +7,7 @@ import {
   isFinalReplyTurn,
   macroTurnBoundaries,
   packConversation,
+  renderToolResultBody,
   renderTurnForPrompt,
   toolResultTurn,
   trimTurnsToTokens,
@@ -211,6 +212,65 @@ describe("conversation-turn helpers", () => {
     expect(rendered).not.toContain("[rendering-truncated");
   });
 
+  // A listing summary is budgeted by `listingResultCaps` and can reach
+  // the full 8 000-char ceiling. Without the fresh-body entry that
+  // width would sit in `### conversation` for the rest of the session;
+  // with it the model gets the rows on the turn that has to choose
+  // from them, and history pays the same ~400 chars it always did.
+  it("gives the listing tools their rows fresh and 400 chars once aged", () => {
+    const listing = `PID      PPID     USER               CPU%   MEM%   COMMAND\n${Array.from(
+      { length: 80 },
+      (_, i) => `${1000 + i}    1        someone              0.0   0.0 /usr/bin/thing-${i}`,
+    ).join("\n")}`;
+    for (const tool of [
+      "os.git.log",
+      "os.git.status",
+      "os.git.branch",
+      "os.proc.list",
+      "os.window.list",
+      "browser.tabs",
+      "github.pr.list",
+      "github.issue.list",
+    ]) {
+      const turn = toolResultTurn({
+        tool,
+        status: "ok",
+        summary: listing,
+        at: 7,
+      });
+      expect(renderToolResultBody(turn, { inCurrentMacroTurn: true })).toBe(
+        listing,
+      );
+      const aged = renderToolResultBody(turn, { inCurrentMacroTurn: false });
+      expect(aged.length).toBeLessThan(450);
+      expect(aged).toContain("[rendering-truncated");
+      // The head survives the history cut, so the column header and
+      // the newest rows are what the session keeps.
+      expect(aged.startsWith("PID      PPID")).toBe(true);
+    }
+    // `os.shell.run` is deliberately not in the set. Membership is
+    // only observable on the AGED path — the fresh path returns the
+    // body whole either way — so this has to check the aged render.
+    // It is either untouched (this tree: the generic 8 000-char cap
+    // leaves a 5 KB summary alone) or cut from its END by #470's
+    // `capSummaryToTail`, which leads with the marker. What it is
+    // never is a head-first 400-char clip, which is what a listing
+    // tool takes and what adding "os.shell.run" to the set would
+    // produce.
+    const shell = toolResultTurn({
+      tool: "os.shell.run",
+      status: "ok",
+      summary: listing,
+      at: 7,
+    });
+    const agedShell = renderToolResultBody(shell, {
+      inCurrentMacroTurn: false,
+    });
+    expect(
+      agedShell === listing || agedShell.startsWith("… [rendering-truncated"),
+    ).toBe(true);
+  });
+
   it("renders a fresh fusion.delegate result whole and gives it the generic cap once aged", () => {
     const summary = `3 tasks: 3 ok\n${"r".repeat(18_000)}`;
     const turn = toolResultTurn({
@@ -248,6 +308,48 @@ describe("conversation-turn helpers", () => {
     );
     expect(rendered).toContain(body);
     expect(rendered).not.toContain("[rendering-truncated");
+  });
+
+  it("renders a fresh os.shell.run result from its end and drops to the old 400 chars in history", () => {
+    // What the tool stored at ingestion: a long log whose last line is
+    // the answer. 16 000 chars in, 8 000 renderable — the band where a
+    // head-first cut would show the start of a tail and hide the verdict.
+    const verdict = "Tests  948 passed (951)";
+    const summary = `$ npm test\nexit: 0\n${"x".repeat(12_000)}\n${verdict}`;
+    const turn = toolResultTurn({
+      tool: "os.shell.run",
+      status: "ok",
+      summary,
+      at: 7,
+    });
+
+    const fresh = renderTurnForPrompt(turn, { inCurrentMacroTurn: true });
+    expect(fresh).toContain("[rendering-truncated");
+    expect(fresh.endsWith(verdict)).toBe(true);
+    expect(fresh.length).toBeLessThanOrEqual(
+      "tool_result[os.shell.run ok]: ".length + 8_000,
+    );
+
+    // Aged out of the macro-turn it costs what it used to: ~400 chars,
+    // so the wider ingestion cap is not re-pasted on every later step.
+    const aged = renderTurnForPrompt(turn, { inCurrentMacroTurn: false });
+    expect(aged.endsWith(verdict)).toBe(true);
+    expect(aged.length).toBeLessThan(800);
+    // And the default (option omitted) is the history zone, not the fresh one.
+    expect(renderTurnForPrompt(turn)).toBe(aged);
+  });
+
+  it("leaves aged gog shell results on the generic render cap", () => {
+    const summary = `$ gog --json --no-input gmail search is:unread\n${"x".repeat(12_000)}`;
+    const aged = renderTurnForPrompt(
+      toolResultTurn({ tool: "os.shell.run", status: "ok", summary, at: 7 }),
+      { inCurrentMacroTurn: false },
+    );
+    expect(aged.startsWith("tool_result[os.shell.run ok]: $ gog ")).toBe(true);
+    expect(aged.length).toBeGreaterThan(6_000);
+    expect(aged.length).toBeLessThanOrEqual(
+      "tool_result[os.shell.run ok]: ".length + 8_000,
+    );
   });
 
   it("caps historical os.http.request results to ~400 chars", () => {

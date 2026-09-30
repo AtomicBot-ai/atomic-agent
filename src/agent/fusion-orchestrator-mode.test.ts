@@ -3,6 +3,7 @@ import type { ApprovalGate } from "../approval/approval-gate.js";
 import { buildVerifyRunTool, verifySyntaxTool } from "../tools/verify/index.js";
 import {
   checkFusionOrchestrator,
+  delegationProducedWork,
   emptyFusionOrchestratorState,
   recordDelegation,
   refusalFor,
@@ -28,9 +29,10 @@ const verifyRunReadonly = buildVerifyRunTool({
 }).readonly;
 
 /** The two facts the gate reads off a tool: does it exist, does it mutate. */
-function registryWith(
-  tools: Record<string, { readonly: boolean }>,
-): { get: (n: string) => { readonly: boolean }; has: (n: string) => boolean } {
+function registryWith(tools: Record<string, { readonly: boolean }>): {
+  get: (n: string) => { readonly: boolean };
+  has: (n: string) => boolean;
+} {
   return {
     has: (name) => name in tools,
     get: (name) => {
@@ -59,9 +61,9 @@ describe("the fusion orchestrator gate", () => {
   it("lets the orchestrator read while it is still planning", () => {
     // Planning *is* reading: a gate that blocked it would leave the
     // model choosing a split it has no basis for.
-    expect(checkFusionOrchestrator("os.fs.read", REGISTRY, BEFORE).allowed).toBe(
-      true,
-    );
+    expect(
+      checkFusionOrchestrator("os.fs.read", REGISTRY, BEFORE).allowed,
+    ).toBe(true);
   });
 
   it("holds back the first mutation until the turn has delegated", () => {
@@ -94,7 +96,9 @@ describe("the fusion orchestrator gate", () => {
       "verify.run": { readonly: verifyRunReadonly },
     });
     for (const tool of ["verify.syntax", "verify.run"]) {
-      expect(checkFusionOrchestrator(tool, registry, BEFORE).allowed).toBe(true);
+      expect(checkFusionOrchestrator(tool, registry, BEFORE).allowed).toBe(
+        true,
+      );
       expect(checkFusionOrchestrator(tool, registry, AFTER).allowed).toBe(true);
     }
   });
@@ -103,7 +107,9 @@ describe("the fusion orchestrator gate", () => {
     // Vetoing `reply` would veto the turn's own exit — the mistake
     // plan mode documents and avoids for the same reason.
     for (const tool of ["reply", "finish"]) {
-      expect(checkFusionOrchestrator(tool, REGISTRY, BEFORE).allowed).toBe(true);
+      expect(checkFusionOrchestrator(tool, REGISTRY, BEFORE).allowed).toBe(
+        true,
+      );
     }
   });
 
@@ -159,15 +165,82 @@ describe("the fusion orchestrator gate", () => {
 
 describe("recordDelegation", () => {
   it("counts fan-outs and unlocks nothing", () => {
-    // The result used to be inspected for `needs_orchestrator` tasks.
-    // Nothing in it can open the gate now, so nothing is read out of it.
+    // The result is read for one thing only — whether anything ran —
+    // and that still opens no gate.
     let state = recordDelegation(emptyFusionOrchestratorState());
-    expect(state).toEqual({ delegations: 1 });
+    expect(state).toEqual({ delegations: 1, barrenDelegations: 0 });
     state = recordDelegation(state);
-    expect(state).toEqual({ delegations: 2 });
+    expect(state).toEqual({ delegations: 2, barrenDelegations: 0 });
     expect(
       checkFusionOrchestrator("os.fs.write", REGISTRY, state).allowed,
     ).toBe(false);
+  });
+
+  it("counts a fan-out where nothing ran, and forgets it once one does", () => {
+    let state = recordDelegation(emptyFusionOrchestratorState(), false);
+    expect(state.barrenDelegations).toBe(1);
+    state = recordDelegation(state, false);
+    expect(state.barrenDelegations).toBe(2);
+    // Any wave that executes something clears the run: the leg is alive
+    // and the next failure is about the work, not the plumbing.
+    state = recordDelegation(state, true);
+    expect(state.barrenDelegations).toBe(0);
+  });
+});
+
+describe("delegationProducedWork — did the fan-out run anything", () => {
+  const task = (stepCount: number) => ({ id: "t", stepCount });
+
+  it("is false only when every task executed zero steps", () => {
+    expect(delegationProducedWork({ details: { tasks: [task(0)] } })).toBe(
+      false,
+    );
+    expect(
+      delegationProducedWork({ details: { tasks: [task(0), task(0)] } }),
+    ).toBe(false);
+    expect(
+      delegationProducedWork({ details: { tasks: [task(0), task(3)] } }),
+    ).toBe(true);
+  });
+
+  it("calls anything it cannot read work, so the old refusal stands", () => {
+    expect(delegationProducedWork({})).toBe(true);
+    expect(delegationProducedWork({ details: {} })).toBe(true);
+    expect(delegationProducedWork({ details: { tasks: [] } })).toBe(true);
+    expect(delegationProducedWork({ details: { tasks: "nope" } })).toBe(true);
+    expect(delegationProducedWork({ details: { tasks: [{}] } })).toBe(true);
+  });
+});
+
+describe("the refusal after a run of fan-outs that ran nothing", () => {
+  it("stops asking for another one and names the leg", () => {
+    let state = emptyFusionOrchestratorState();
+    state = recordDelegation(state, false);
+    // One barren fan-out is what pressing Esc looks like — still rework.
+    expect(refusalFor("os.fs.write", state).summary).toContain(
+      "fusion.delegate",
+    );
+    expect(refusalFor("os.fs.write", state).summary).not.toContain(
+      "zero steps",
+    );
+
+    state = recordDelegation(state, false);
+    const summary = refusalFor("os.fs.write", state).summary;
+    expect(summary).toContain("zero steps");
+    expect(summary).toContain("worker leg is not serving");
+    expect(summary).toContain("Stop here and tell the operator");
+    // It must not also tell the model to re-delegate — that is the loop.
+    expect(summary).not.toContain("Send it out again");
+  });
+
+  it("goes back to asking for a rework once a wave runs", () => {
+    let state = emptyFusionOrchestratorState();
+    state = recordDelegation(state, false);
+    state = recordDelegation(state, false);
+    state = recordDelegation(state, true);
+    expect(refusalFor("os.fs.write", state).summary).toContain(
+      "Send it out again",
+    );
   });
 });
 

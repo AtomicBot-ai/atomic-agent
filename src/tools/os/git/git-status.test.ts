@@ -77,4 +77,24 @@ describe("os.git.status", () => {
     const result = await osGitStatusTool.run({ repo }, makeCtx("/tmp"));
     expect(result.details.clean).toBe(false);
   });
+
+  // A clean tree has ZERO rows, so a row-derived budget is one row
+  // wide (280 chars) while the header alone is twice the branch name.
+  // Without the floor in `listingResultCaps` the `(working tree
+  // clean)` line is cut off and the model cannot tell the tree is
+  // clean — a regression on a path that never had the listing bug.
+  it("keeps the clean-tree line on a very long branch name", async () => {
+    await writeRepoFile(repo, "a.txt", "x\n");
+    await runGitRaw(repo, ["add", "."]);
+    await runGitRaw(repo, ["commit", "-m", "init"]);
+    const branch = `feature/${"long-branch-name-segment/".repeat(5)}tail`;
+    expect(branch.length).toBeGreaterThan(124);
+    await runGitRaw(repo, ["checkout", "-q", "-b", branch]);
+
+    const result = await osGitStatusTool.run({}, makeCtx(repo));
+    expect(result.details.clean).toBe(true);
+    expect(result.summary).toContain(`# branch: ${branch}`);
+    expect(result.summary.endsWith("(working tree clean)")).toBe(true);
+    expect(result.summary).not.toContain("[truncated]");
+  });
 });

@@ -50,24 +50,35 @@ function label(view: ContextUsageView): string {
 
 describe("ContextChip", () => {
   /**
-   * The bar and the numbers are the same quantity: how full the model's
-   * real context window is.
+   * The bar and the leading numbers are the transcript against the
+   * ceiling it is packed to. The window is printed beside them as a
+   * fact, not as the scale.
    *
-   * It used to gauge the transcript against the packer's own ceiling,
-   * which is a real number and the wrong one to lead with. That ceiling
-   * is internal, it moves for reasons the operator did not cause, and it
-   * answers neither of the questions actually being asked at the
-   * composer — is there room for what I am about to send, and has
-   * anything already been forgotten?
+   * This reverses an earlier call to gauge the window instead. Both
+   * questions are real — is there room for what I am about to send, and
+   * has anything been forgotten — but only one of them can own the bar,
+   * and the window cannot answer the second. Measured on a live
+   * session: a 128k model sat at 16% and did not move, so the bar said
+   * nothing all session and the first news of lost history was the
+   * "N tasks lost" suffix, after the fact. The cap is the number that
+   * moves, and reaching it IS the loss.
    */
-  it("gauges the prompt against the model's window, and prints both", () => {
-    expect(label(usage())).toBe(" context [        ]      14.1k/1M");
+  it("gauges the transcript against its cap, and names the window", () => {
+    expect(label(usage())).toBe(" context [==      ]      6.4k/32k cap · 1M");
   });
 
-  it("fills as the window fills", () => {
-    expect(label(usage({ percent: 0 }))).toContain("[        ]");
-    expect(label(usage({ percent: 50 }))).toContain("[====    ]");
-    expect(label(usage({ percent: 100 }))).toContain("[========]");
+  it("fills as the transcript fills, on a window big enough to hide it", () => {
+    // The regression this pins: at 1M the window gauge reads 1% for the
+    // whole session whatever the transcript does.
+    expect(label(usage({ conversationPercent: 0 }))).toContain("[        ]");
+    expect(label(usage({ conversationPercent: 50 }))).toContain("[====    ]");
+    expect(label(usage({ conversationPercent: 100 }))).toContain("[========]");
+  });
+
+  it("still gauges when no window is known", () => {
+    const noWindow = label(usage({ contextWindow: null, percent: null }));
+    expect(noWindow).toContain("6.4k/32k cap");
+    expect(noWindow).not.toContain(" · ");
   });
 
   /**

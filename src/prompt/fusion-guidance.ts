@@ -91,8 +91,13 @@ export const FUSION_GUIDANCE = [
 export function formatFusionMachineLine(
   facts: FusionMachineFacts,
 ): string | null {
-  const { workerLeg, workerSlots, workerTokenBudget, workerModel, tokensPerSecond } =
-    facts;
+  const {
+    workerLeg,
+    workerSlots,
+    workerTokenBudget,
+    workerModel,
+    tokensPerSecond,
+  } = facts;
   const on = workerModel === null ? "" : ` \`${workerModel}\``;
   if (workerLeg === "cloud") {
     return `This machine: workers run${on} on a cloud provider — no slot limit, but every worker step is billed, so send only as many workers as the work needs.`;
@@ -121,10 +126,24 @@ export function formatFusionMachineLine(
   // Measured at daemon start; the number that turns "N times slower"
   // into minutes per file for the model choosing a width.
   const speed =
-    tokensPerSecond === null ? "" : ` This server generates ~${tokensPerSecond} tok/s single stream.`;
+    tokensPerSecond === null
+      ? ""
+      : ` This server generates ~${tokensPerSecond} tok/s single stream.`;
   lines.push(
     `Local workers share one GPU: N at once run about N times slower each and can hit timeouts, so keep briefs short and ${width}.${speed}`,
   );
+  // The estimate has a basis on this machine or it has none. Asking
+  // for `etaSeconds` without saying what to compute it from produced
+  // two failures in the field: the field left out entirely on every
+  // task of a four-worker run, and where it was filled, two minutes
+  // stated for work that took nineteen. This block lives in every
+  // turn's cache-hot prefix, so the arithmetic is stated once and
+  // tersely rather than explained.
+  if (tokensPerSecond !== null) {
+    lines.push(
+      `Set \`etaSeconds\`: tokens out / ${tokensPerSecond} tok/s × parallel workers + queue.`,
+    );
+  }
   return lines.join("\n");
 }
 

@@ -191,6 +191,44 @@ describe("atomic-agent uninstall", () => {
     expect(stdout()).toContain("new shell");
   });
 
+  it("hands the install dir to run so windows can take it off the user PATH", async () => {
+    await uninstallCommand(["--yes"], deps);
+    expect(run.mock.calls[0]?.[0]?.installDir).toBe("/Users/op/.local/bin");
+  });
+
+  it("does not offer node's directory for PATH removal in a dev checkout", async () => {
+    resolvePlan.mockResolvedValue(makePlan({ devCheckout: true }));
+    await uninstallCommand(["--yes"], deps);
+    expect(run.mock.calls[0]?.[0]?.installDir).toBeUndefined();
+  });
+
+  it("keeps the PATH entry when --keep-binary keeps the program", async () => {
+    resolvePlan.mockResolvedValue(
+      makePlan({
+        targets: [
+          {
+            path: "/Users/op/.atomic-agent",
+            label: "state",
+            group: "data",
+          },
+        ],
+      }),
+    );
+    await uninstallCommand(["--yes", "--keep-binary"], deps);
+    expect(run.mock.calls[0]?.[0]?.installDir).toBeUndefined();
+  });
+
+  it("tells the operator their user PATH changed", async () => {
+    run.mockResolvedValue({
+      removed: [],
+      rcFilesEdited: [],
+      userPathEntryRemoved: "C:\\aa",
+      complete: true,
+    });
+    await uninstallCommand(["--yes"], deps);
+    expect(stdout()).toContain("removed C:\\aa from your user PATH");
+  });
+
   it("documents itself under --help without touching anything", async () => {
     const code = await uninstallCommand(["--help"], deps);
     expect(code).toBe(0);

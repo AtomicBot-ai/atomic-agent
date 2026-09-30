@@ -643,3 +643,61 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     expect(finalTypes).not.toContain("providers_wizard_failed");
   });
 });
+
+describe("ProvidersOrchestrator.setActiveText with an unknown id", () => {
+  function runtimeRefusing(registered: string[]) {
+    return {
+      providerRegistry: {
+        setActive: vi.fn(async (id: string) => {
+          throw new Error(`llm provider "${id}" is not configured`);
+        }),
+        listIds: () => registered,
+      },
+    } as unknown as AgentRuntime;
+  }
+
+  it("says so in the chat, naming the ids that would work", async () => {
+    // `/llm provider <id>` takes free text; the registry's refusal
+    // alone only reached the LLM pane's status row.
+    currentConfig = configWithGemini();
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const orchestrator = new ProvidersOrchestrator(
+      runtimeRefusing(["local-llama", "gemini"]),
+      bus as never,
+    );
+
+    await orchestrator.setActiveText("aimlpai");
+
+    expect(bus.emit).toHaveBeenCalledWith({
+      type: "system_message",
+      text: 'unknown provider "aimlpai" — configured: gemini, local-llama',
+    });
+    expect(bus.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "runtime_info",
+        line: expect.stringContaining("Switched"),
+      }),
+    );
+  });
+
+  it("keeps a known provider's failure on the status row only", async () => {
+    currentConfig = configWithGemini();
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const orchestrator = new ProvidersOrchestrator(
+      runtimeRefusing(["gemini"]),
+      bus as never,
+    );
+
+    await orchestrator.setActiveText("gemini");
+
+    expect(bus.emit).toHaveBeenCalledWith({
+      type: "providers_status",
+      line: 'llm provider "gemini" is not configured',
+    });
+    expect(bus.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "system_message" }),
+    );
+  });
+});

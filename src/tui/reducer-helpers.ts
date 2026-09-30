@@ -126,7 +126,12 @@ export function appendUserMessage(
   text: string,
   options: { steered?: boolean } = {},
 ): TuiState {
-  const withMessage = appendChatMessage(state, {
+  // A steer stops being pending the moment it becomes transcript —
+  // whichever way it got there: folded into the running turn
+  // (`steer_applied`), or run as a turn of its own after the inbox
+  // refused it. One seam for both, so the foot of the chat can never
+  // keep showing a message that is already in the log above it.
+  const withMessage = appendChatMessage(dropPendingSteer(state, text), {
     role: "user",
     text,
     ...(options.steered ? { steered: true } : {}),
@@ -143,6 +148,23 @@ export function appendUserMessage(
   return {
     ...withMessage,
     inputHistory: history,
+  };
+}
+
+/**
+ * Take one message off the pending-steer strip. First match only: two
+ * identical steers are two messages, and the one that has not been
+ * folded in yet is still owed a bubble.
+ */
+export function dropPendingSteer(state: TuiState, text: string): TuiState {
+  const idx = state.pendingSteers.indexOf(text);
+  if (idx === -1) return state;
+  return {
+    ...state,
+    pendingSteers: [
+      ...state.pendingSteers.slice(0, idx),
+      ...state.pendingSteers.slice(idx + 1),
+    ],
   };
 }
 
@@ -294,6 +316,12 @@ export function finishRunWithoutHistory(
     aborting: false,
     lastRunStatus,
     currentTurnToolSteps: 0,
+    // No step will read these now. Whatever the turn did with them it
+    // has done — the ones it took are transcript, the ones it refused
+    // were parked by `queue_changed`, and `rerouteUndelivered` parks
+    // anything the loop handed back. Leaving a bubble above the prompt
+    // would promise a delivery into a turn that is over.
+    pendingSteers: [],
   };
 }
 

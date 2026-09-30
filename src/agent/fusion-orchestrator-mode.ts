@@ -76,11 +76,31 @@ export interface FusionOrchestratorState {
    * one ("send the rework back out").
    */
   delegations: number;
+  /**
+   * Consecutive fan-outs in which **no worker executed a single step**.
+   * Reset by any fan-out that ran something, however badly it went.
+   *
+   * This is the difference between "the workers did the job wrong" and
+   * "the workers never ran", and only the second one is unfixable by
+   * re-briefing. It happens for reasons outside the model's reach: the
+   * managed daemon failed to bind its port and every request was
+   * refused, the leg was pointed at a server that is not there, the
+   * turn was cancelled before the first wave got a slot.
+   */
+  barrenDelegations: number;
 }
+
+/**
+ * Barren fan-outs tolerated before the refusal stops asking for another
+ * one. Two, not one: a single all-cancelled fan-out is what an operator
+ * pressing Esc looks like, and telling the model to give up on that
+ * would be wrong. Two in a row is a broken leg.
+ */
+export const BARREN_DELEGATION_LIMIT = 2;
 
 /** A turn that has not delegated yet. */
 export function emptyFusionOrchestratorState(): FusionOrchestratorState {
-  return { delegations: 0 };
+  return { delegations: 0, barrenDelegations: 0 };
 }
 
 /**
@@ -174,21 +194,31 @@ export function refusalFor(
   state: FusionOrchestratorState,
 ): CompressedToolResult {
   const summary =
-    state.delegations === 0
-      ? `fusion is on, so \`${tool}\` was not run: you plan, the workers ` +
-        `build. Finish reading — every read-only tool still works — ` +
-        `decide the approach, then call \`fusion.delegate\` with one task ` +
-        `per independent part, each naming the exact paths it produces in ` +
-        `\`files\`, what counts as done, and the answer format you want.`
-      : `\`${tool}\` was not run. You have delegated ${state.delegations} ` +
-        `time(s) this turn; building the result yourself is the one thing ` +
-        `this mode exists to prevent, however the last fan-out went. Send ` +
-        `it out again with \`fusion.delegate\`: say what was wrong with ` +
-        `the previous attempt, what to change, and what "good" looks ` +
-        `like. Split a part that timed out into smaller ones. A task that ` +
-        `came back \`needs_orchestrator\` was blocked by an approval — ` +
-        `re-send it with the paths in \`files\` so the operator can ` +
-        `authorise that directory when the fan-out asks.`;
+    state.barrenDelegations >= BARREN_DELEGATION_LIMIT
+      ? `\`${tool}\` was not run, and neither did the workers: the last ` +
+        `${state.barrenDelegations} fan-outs came back with every task ` +
+        `having executed zero steps. That is not a briefing problem and ` +
+        `another \`fusion.delegate\` will not fix it — the worker leg is ` +
+        `not serving. Stop here and tell the operator exactly that, ` +
+        `naming what you were trying to build and what you still need ` +
+        `from them: the local llama-server may have failed to start (a ` +
+        `port already in use is the common one, check its log), or the ` +
+        `worker leg may point at a server that is not running.`
+      : state.delegations === 0
+        ? `fusion is on, so \`${tool}\` was not run: you plan, the workers ` +
+          `build. Finish reading — every read-only tool still works — ` +
+          `decide the approach, then call \`fusion.delegate\` with one task ` +
+          `per independent part, each naming the exact paths it produces in ` +
+          `\`files\`, what counts as done, and the answer format you want.`
+        : `\`${tool}\` was not run. You have delegated ${state.delegations} ` +
+          `time(s) this turn; building the result yourself is the one thing ` +
+          `this mode exists to prevent, however the last fan-out went. Send ` +
+          `it out again with \`fusion.delegate\`: say what was wrong with ` +
+          `the previous attempt, what to change, and what "good" looks ` +
+          `like. Split a part that timed out into smaller ones. A task that ` +
+          `came back \`needs_orchestrator\` was blocked by an approval — ` +
+          `re-send it with the paths in \`files\` so the operator can ` +
+          `authorise that directory when the fan-out asks.`;
   return {
     tool,
     status: "error",
@@ -203,14 +233,41 @@ export function refusalFor(
 }
 
 /**
+ * Did this fan-out run anything at all?
+ *
+ * Read off the per-task rows rather than the outcome: `all_failed`
+ * covers both a wave that ran and failed and a wave that never started,
+ * and only the step counts tell them apart. Unreadable details (a shape
+ * this function does not recognise) count as work, which fails toward
+ * the old behaviour — the refusal keeps asking for a rework rather than
+ * telling the model to stop on a signal it could not actually read.
+ */
+export function delegationProducedWork(result: {
+  details?: Record<string, unknown> | undefined;
+}): boolean {
+  const tasks = result.details?.tasks;
+  if (!Array.isArray(tasks) || tasks.length === 0) return true;
+  return tasks.some((task) => {
+    if (typeof task !== "object" || task === null) return true;
+    const steps = (task as { stepCount?: unknown }).stepCount;
+    return typeof steps !== "number" || steps > 0;
+  });
+}
+
+/**
  * Count a completed `fusion.delegate` call.
  *
- * The result is no longer inspected: nothing in it can unlock a
- * mutation, so there is nothing to read out of it. The count survives
- * only to shape the refusal text.
+ * Nothing in the result can unlock a mutation — that was and stays the
+ * gate's rule. What it does now read is whether the fan-out executed
+ * anything, because a refusal that tells the model to re-delegate into
+ * a leg that is not running is an instruction to loop forever.
  */
 export function recordDelegation(
   state: FusionOrchestratorState,
+  producedWork = true,
 ): FusionOrchestratorState {
-  return { delegations: state.delegations + 1 };
+  return {
+    delegations: state.delegations + 1,
+    barrenDelegations: producedWork ? 0 : state.barrenDelegations + 1,
+  };
 }

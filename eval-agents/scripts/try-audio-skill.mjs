@@ -60,7 +60,6 @@ const child = spawn(
     env: {
       ...process.env,
       ATOMIC_AGENT_STATE_DIR: state,
-      ATOMIC_AGENT_LLAMA_URL: "http://127.0.0.1:19091",
       ATOMIC_AGENT_STARTER_SKILLS_DIR: join(REPO, "starter-skills"),
       FORCE_COLOR: "0",
       NO_COLOR: "1",

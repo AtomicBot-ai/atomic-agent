@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resetConfigCache } from "../config/index.js";
+import {
+  getUserConfigPath,
+  writeUserConfigFileSync,
+} from "../config/config-file.js";
+import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 
 import { traceCommand } from "./trace-command.js";
 
@@ -237,6 +242,66 @@ describe("traceCommand", () => {
     resetConfigCache();
     const narrowHash = await currentHashFromReplay();
     expect(narrowHash).not.toBe(wideHash);
+  });
+
+  // The replay registry was built from the skill directories alone, so
+  // `skills.disabled` never reached it: every session recorded with a
+  // skill turned off replayed against a catalog that still advertised
+  // it, and reported DRIFT on every step forever.
+  it("replay honours skills.disabled when rebuilding the catalog", async () => {
+    const globalSkillsDir = join(stateDir, "skills");
+    for (const name of ["replay-kept", "replay-off"]) {
+      mkdirSync(join(globalSkillsDir, name), { recursive: true });
+      writeFileSync(
+        join(globalSkillsDir, name, "SKILL.md"),
+        [
+          "---",
+          `name: ${name}`,
+          `description: "what ${name} does"`,
+          "version: 0.1.0",
+          "---",
+          "",
+          `# ${name}`,
+        ].join("\n"),
+        "utf8",
+      );
+    }
+
+    const currentHashFromReplay = async (): Promise<string> => {
+      (process.stdout.write as ReturnType<typeof vi.fn>).mockClear();
+      // The fixture's recorded hash can never match a live prefix, so
+      // replay always reports drift (exit code 2).
+      expect(await traceCommand(["replay", "s-fixture"])).toBe(2);
+      const output = (
+        process.stdout.write as ReturnType<typeof vi.fn>
+      ).mock.calls
+        .map((c) => c[0])
+        .join("");
+      const row = output.split("\n").find((line) => line.includes("DRIFT"));
+      expect(row).toBeDefined();
+      const columns = (row as string).trim().split(/\s+/);
+      return columns[columns.length - 1] as string;
+    };
+
+    const bothHash = await currentHashFromReplay();
+
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      skills: { ...USER_CONFIG_DEFAULTS.skills, disabled: ["replay-off"] },
+    });
+    resetConfigCache();
+    const disabledHash = await currentHashFromReplay();
+    expect(disabledHash).not.toBe(bothHash);
+
+    // And it is the same prefix the runtime would build: a disabled
+    // skill is invisible, exactly as if it were not installed.
+    rmSync(join(globalSkillsDir, "replay-off"), {
+      recursive: true,
+      force: true,
+    });
+    writeUserConfigFileSync(getUserConfigPath(stateDir), USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+    expect(await currentHashFromReplay()).toBe(disabledHash);
   });
 
   it("fails gracefully for missing session", async () => {

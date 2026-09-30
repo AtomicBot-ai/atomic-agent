@@ -81,6 +81,24 @@ function fakeApi(): GithubApi & { calls: string[] } {
   } as unknown as GithubApi & { calls: string[] };
 }
 
+/** An API whose `pr.list` returns `count` PRs, newest number first. */
+function fakeApiWithManyPrs(count: number): GithubApi {
+  const prs = Array.from({ length: count }, (_, i) => ({
+    number: count - i,
+    title: `pull request number ${count - i}`,
+    state: "open",
+    draft: false,
+    head: `feat/branch-${count - i}`,
+    base: "main",
+    htmlUrl: `https://github.com/acme/widgets/pull/${count - i}`,
+    author: "octo",
+    createdAt: "",
+  }));
+  return {
+    listPullRequests: vi.fn(async () => prs),
+  } as unknown as GithubApi;
+}
+
 function toolsWith(
   api: GithubApi,
   opts: { gate?: ApprovalGate; token?: string | null } = {},
@@ -271,5 +289,25 @@ describe("github.* tools", () => {
       tools.get("github.pr.list")!.run({ state: "weird" }, makeCtx(repo)),
     ).rejects.toThrow(/`state`/);
     expect(api.calls).toEqual([]);
+  });
+
+  // The compressor's defaults (last 12 non-blank lines, then a
+  // 385-char head-slice) would keep the OLDEST few PRs and drop the
+  // repo-slug header — for a newest-first listing that is the wrong
+  // end. `listingResultCaps` budgets `limit` rows instead.
+  it("keeps the repo header and the newest PRs in the summary", async () => {
+    const tools = toolsWith(fakeApiWithManyPrs(25));
+    const result = await tools
+      .get("github.pr.list")!
+      .run({ limit: 25 }, makeCtx(repo));
+
+    expect(result.status).toBe("ok");
+    const lines = result.summary.split("\n");
+    expect(lines[0]).toBe("acme/widgets");
+    expect(lines).toHaveLength(26);
+    expect(result.summary).toContain("#25 [open] pull request number 25");
+    expect(result.summary).toContain("#1 [open] pull request number 1");
+    expect(result.summary.length).toBeGreaterThan(1000);
+    expect(result.summary).not.toContain("[truncated]");
   });
 });

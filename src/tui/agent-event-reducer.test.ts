@@ -1210,6 +1210,94 @@ describe("reduceTuiState", () => {
     expect(next.runStartedAt).toBe(running.runStartedAt);
   });
 
+  it("keeps a sent steer on screen until the loop reads it", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "deploy" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "message_steered", text: "use the staging db" },
+    ]);
+    // Sent and visible, but not transcript: the inbox is drained at the
+    // next step boundary, which a long tool call can hold off for
+    // minutes, and nothing else on screen says the message was taken.
+    expect(running.pendingSteers).toEqual(["use the staging db"]);
+    expect(running.messages.map((m) => m.text)).toEqual(["deploy"]);
+
+    const applied = reduceTuiState(running, {
+      type: "agent_event",
+      event: {
+        type: "steer_applied",
+        text: "use the staging db",
+        stepIndex: 1,
+      },
+    });
+    // Promoted, not duplicated: one message, one bubble.
+    expect(applied.pendingSteers).toEqual([]);
+    const last = applied.messages[applied.messages.length - 1];
+    expect(last?.text).toBe("use the staging db");
+    expect(last?.steered).toBe(true);
+  });
+
+  it("promotes one of two identical steers and leaves the other pending", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "message_steered", text: "stop" },
+      { type: "message_steered", text: "stop" },
+    ]);
+    const applied = reduceTuiState(running, {
+      type: "agent_event",
+      event: { type: "steer_applied", text: "stop", stepIndex: 1 },
+    });
+    // Two messages were sent; one has landed. The other is still owed a
+    // step, so it keeps its place at the foot of the chat.
+    expect(applied.pendingSteers).toEqual(["stop"]);
+    expect(applied.messages.filter((m) => m.text === "stop")).toHaveLength(1);
+  });
+
+  it("takes a steer down when the turn ends without ever reading it", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "deploy" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "message_steered", text: "use the staging db" },
+    ]);
+    const done = reduceTuiState(running, {
+      type: "agent_event",
+      event: {
+        type: "turn_finished",
+        turnIndex: 0,
+        reason: "reply",
+        stepCount: 1,
+        durationMs: 10,
+      },
+    });
+    // No step is coming to read it. `rerouteUndelivered` re-queues
+    // anything the loop handed back, so the parked strip is where it
+    // shows now — a bubble promising delivery into a turn that is over
+    // would be the lie.
+    expect(done.pendingSteers).toEqual([]);
+    expect(done.status).toBe("idle");
+  });
+
+  it("clears the pending copy of a steer that ran as its own turn", () => {
+    // `steerMessage` falls back to `runOneTurn` when the orchestrator
+    // has no turn in flight after all: the message arrives as an
+    // ordinary `user_message`, and the foot of the chat must let go of
+    // it rather than show it twice.
+    const steered = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_steered", text: "use the staging db" },
+    ]);
+    const ran = reduceTuiState(steered, {
+      type: "agent_event",
+      event: { type: "user_message", text: "use the staging db" },
+    });
+    expect(ran.pendingSteers).toEqual([]);
+    expect(ran.messages.map((m) => m.text)).toEqual(["use the staging db"]);
+  });
+
   it("reports a trimmed tool batch instead of swallowing it", () => {
     const next = apply(createInitialTuiState(fakeSession()), [
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
@@ -1925,6 +2013,28 @@ describe("update banner state", () => {
   });
 });
 
+describe("a notice that names another thread keeps the id, not just the sentence", () => {
+  it("carries system_message.switchToSessionId onto the chat message", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "system_message",
+        text: "the running turn continues in the background on session s-old — switch back to watch or stop it",
+        variant: "warn",
+        switchToSessionId: "s-old",
+      },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system[0]?.switchToSessionId).toBe("s-old");
+  });
+
+  it("leaves it unset on a notice that names no thread", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "system_message", text: "queue cleared" },
+    ]);
+    expect(next.messages[0]?.switchToSessionId).toBeUndefined();
+  });
+});
+
 describe("a fallover away from the primary is said in the chat, not only the feed", () => {
   const away = {
     type: "provider_switched" as const,
@@ -2010,5 +2120,136 @@ describe("reduceTuiState step line under a stalled Fusion review (F41)", () => {
     expect(lines).toContain(
       "[step 12] os.fs.read[error] (5ms) — review stalled: delegate or reply",
     );
+  });
+});
+
+describe("a parked turn in the chat", () => {
+  const waiting = (attempt: number, waitedMs = 0): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "provider_waiting",
+      attempt,
+      waitedMs,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+    },
+  });
+  const recovered = (waitedMs: number): TuiAction => ({
+    type: "agent_event",
+    event: { type: "provider_recovered", waitedMs },
+  });
+  const systemTexts = (state: TuiState): string[] =>
+    state.messages.filter((m) => m.role === "system").map((m) => m.text);
+
+  it("one waiting notice and one resume notice, however many retries in between", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(1),
+      waiting(2, 2_000),
+      waiting(3, 6_000),
+      waiting(4, 14_000),
+      recovered(23_000),
+    ]);
+    const texts = systemTexts(next);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain("The model is not answering (no connection)");
+    expect(texts[0]).toContain("retries by itself for up to 5 min");
+    expect(texts[0]).toContain("Esc stops it");
+    expect(next.messages.find((m) => m.text === texts[0])?.variant).toBe("warn");
+    expect(texts[1]).toBe(
+      "The model is answering again after 23 s — the turn continues.",
+    );
+  });
+
+  it("a reply the provider ended with an error is not told as a 502 tried 3 times", () => {
+    // e2e: the stream answered 200, streamed, then `finish_reason: "error"`.
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "provider_waiting",
+        attempt: 1,
+        waitedMs: 0,
+        maxWaitMs: 300_000,
+        nextRetryMs: 2_000,
+        reason:
+          '"fake" ended its reply with an error — this is on the provider, not your setup.',
+        cause: { kind: "error_finish" },
+      },
+    });
+    const [notice] = systemTexts(next);
+    expect(notice).toContain(
+      "The model is not answering (the provider ended its reply with an error).",
+    );
+    expect(notice).not.toMatch(/\b502\b/);
+    expect(notice).not.toContain("Tried");
+    expect(next.providerOutage?.cause).toEqual({ kind: "error_finish" });
+  });
+
+  it("on the local route the waiting notice names /llm restart; on a cloud route it does not", () => {
+    const base = createInitialTuiState(fakeSession());
+    const local = reduceTuiState(
+      {
+        ...base,
+        localModelsPanel: { ...base.localModelsPanel, configMode: "managed" },
+      },
+      waiting(1),
+    );
+    expect(systemTexts(local)[0]).toContain("/llm restart");
+    const cloud = reduceTuiState(
+      {
+        ...base,
+        providersPanel: {
+          ...base.providersPanel,
+          rows: [providerRow({ isActiveText: true })],
+        },
+      },
+      waiting(1),
+    );
+    expect(systemTexts(cloud)[0]).not.toContain("/llm restart");
+  });
+
+  it("a recovery the chat never announced stays in the feed", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered(4_000),
+    );
+    expect(systemTexts(next)).toEqual([]);
+    expect(next.feed.at(-1)?.line).toContain("provider answered again");
+  });
+
+  it("a turn that dies parked says the wait is over before the failure", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(1),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const failure = systemTexts(next).at(-1) ?? "";
+    expect(failure.startsWith("Stopped waiting for the model (wait budget 5 min")).toBe(true);
+    expect(failure).toContain("Turn failed [transport]: fetch failed");
+  });
+
+  it("a background thread's park lands in its own thread; the visible one gets a pointer", () => {
+    const visible = createInitialTuiState(fakeSession({ sessionId: "visible" }));
+    const tagged = (action: TuiAction): TuiAction => ({
+      ...(action as Extract<TuiAction, { type: "agent_event" }>),
+      sessionId: "background",
+    });
+    const next = apply(visible, [tagged(waiting(1)), tagged(waiting(2, 2_000))]);
+    expect(systemTexts(next)).toEqual([
+      "session background is paused: its model is not answering, and the turn retries by itself — switch to it to watch or stop it",
+    ]);
+    // The switch-back replays the turn's events under its own id.
+    const owner = apply(
+      createInitialTuiState(fakeSession({ sessionId: "background" })),
+      [tagged(waiting(1)), tagged(waiting(2, 2_000))],
+    );
+    expect(systemTexts(owner)).toHaveLength(1);
+    expect(systemTexts(owner)[0]).toContain("The model is not answering");
   });
 });

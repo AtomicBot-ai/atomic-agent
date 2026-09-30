@@ -4,11 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
+import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { formatAgentEvent } from "./run-agent.js";
+import {
+  formatAgentEvent,
+  formatCliApprovalPrompt,
+  formatSkillsBannerValue,
+} from "./run-agent.js";
 
 const HINT = formatLlamaUnreachableHint("http://127.0.0.1:8080");
 
@@ -22,6 +27,39 @@ function transportError(message: string) {
     },
   };
 }
+
+describe("formatCliApprovalPrompt", () => {
+  const request = (category: ApprovalRequest["category"]): ApprovalRequest => ({
+    approvalId: "a1",
+    sessionId: "s1",
+    tool: "tool.x",
+    category,
+    reason: "because",
+  });
+
+  it("names the category that can never be granted (issue #552)", () => {
+    const email = formatCliApprovalPrompt(request("email"));
+    expect(email).toContain("(e-mail send is never granted for the session)");
+    expect(email).not.toContain("trust-config");
+    expect(email).not.toContain("s = allow this kind");
+
+    const fanout = formatCliApprovalPrompt(request("fusion_fanout"));
+    expect(fanout).toContain(
+      "(fusion · fan-out is never granted for the session)",
+    );
+
+    const trust = formatCliApprovalPrompt(request("trust_config"));
+    expect(trust).toContain(
+      "(agent trust config is never granted for the session)",
+    );
+  });
+
+  it("offers the session grant and no note for a grantable category", () => {
+    const prompt = formatCliApprovalPrompt(request("fs_write_home"));
+    expect(prompt).toContain("s = allow this kind this session");
+    expect(prompt).not.toContain("never granted");
+  });
+});
 
 describe("formatAgentEvent llama hint", () => {
   it("turns a bare transport failure into something actionable on the local route", () => {
@@ -296,4 +334,26 @@ describe("runAgentCommand exit codes", () => {
     expect(turnOptions).toHaveLength(1);
     expect(turnOptions[0]!.maxSteps).toBe(7);
   }, 60_000);
+});
+
+/**
+ * The `skills:` row of the startup banner. It has always printed the
+ * catalog the prompt got, which is not the install once
+ * `skills.catalogTokenBudget` starts cutting (issue #466 — fixed for
+ * the prompt in PR #471, not for anything reading the runtime).
+ */
+describe("the run banner skills row", () => {
+  it("names the omitted count and the knob when the budget cut the catalog", () => {
+    expect(formatSkillsBannerValue(17, 16)).toBe(
+      "17 installed, 16 more not shown (skills.catalogTokenBudget)",
+    );
+  });
+
+  it("is byte-identical to the pre-fix row when nothing was dropped", () => {
+    expect(formatSkillsBannerValue(33, 0)).toBe("33 installed");
+    expect(formatSkillsBannerValue(0, 0)).toBe("0 installed");
+    expect(formatSkillsBannerValue(33, 0)).not.toContain(
+      "skills.catalogTokenBudget",
+    );
+  });
 });

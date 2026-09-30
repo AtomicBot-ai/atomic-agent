@@ -220,7 +220,7 @@ describe("composer overlay mouse", () => {
     // a frame after they first paint.
     await waitUntil(() => {
       if (!app.frame().includes("enter go")) {
-        const crumb = locateLast(app.frame(), "R U N");
+        const crumb = locateLast(app.frame(), "☰ Menu");
         app.mouse.emit(click(crumb.x + 1, crumb.y));
       }
       return app.frame().includes("enter go");

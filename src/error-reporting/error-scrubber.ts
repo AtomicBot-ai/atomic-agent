@@ -70,6 +70,19 @@ export interface ScrubbedErrorEvent {
    * Only the host travels — the full URL could carry query params.
    */
   transportHost?: string;
+  /**
+   * `error.type` out of an OpenAI-shaped upstream error body
+   * (`{"error":{"type":"exceed_context_size_error",…}}`) — the one field
+   * that says *why* a provider rejected a turn, where the status only
+   * says that it did.
+   *
+   * Unlike every other field here, this one is written by a server we do
+   * not control, so it is validated against a bounded enum shape and
+   * DROPPED when it does not match. A local llama-server / LM Studio /
+   * Ollama is free to put a sentence, a filesystem path, or a fragment
+   * of the user's own prompt in that field, and none of that may travel.
+   */
+  upstreamErrorType?: string;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -125,6 +138,27 @@ const MAX_FRAMES = 30;
  * than sent.
  */
 const SAFE_CODE_RE = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * Enum shape for an upstream provider's `error.type`. Deliberately
+ * tighter than {@link SAFE_IDENTIFIER_RE}: that one guards a value our
+ * own registry produced, this one guards a value a third-party server
+ * wrote. Lowercase snake_case, 48 characters at most — which admits
+ * every type llama.cpp and OpenAI actually define
+ * (`exceed_context_size_error`, `invalid_request_error`, `server_error`,
+ * `unavailable_error`, `insufficient_quota`, `not_found_error`,
+ * `authentication_error`) and excludes anything carrying a space, a `/`
+ * or `\`, punctuation, a capital or a non-ASCII byte.
+ *
+ * What it does NOT exclude: a single lowercase word. `resignation`,
+ * `config_json` and 48 unbroken characters of a prompt all pass, because
+ * nothing here can tell one token of prose from one token of enum. The
+ * pattern buys the *multi-word* case — which is every shape a sentence,
+ * a path or a real prompt fragment actually takes — not the single-token
+ * one. {@link SAFE_CODE_RE} has had the identical property since it was
+ * written; the bound is the backstop for both.
+ */
+const SAFE_UPSTREAM_ERROR_TYPE_RE = /^[a-z][a-z0-9_]{0,47}$/;
 
 /** Depth cap on every `cause` walk in this module — longer is a cycle. */
 const MAX_CAUSE_DEPTH = 5;
@@ -284,6 +318,47 @@ export function extractSafeTransportHost(err: unknown): string | undefined {
 }
 
 /**
+ * Read the upstream `error.type` off a provider error body
+ * (`OpenAiHttpError.body`, parsed by `parseProviderErrorBody`),
+ * restricted to a bounded enum shape so freeform server text is never
+ * sent. Only `.type` is read — the same object also holds `.message` and
+ * up to 2 kB of raw body, which are exactly what must not travel.
+ *
+ * The walk into `cause` is what makes the value reachable at all: the
+ * error that gets scrubbed is the `TransportError` wrapper `toLlmFailure`
+ * builds, and that wrapper copies only `status` and `url` off the
+ * `OpenAiHttpError` underneath — the parsed body stays on the cause. A
+ * link whose `.type` fails validation does not stop the walk; a valid
+ * one further down is still worth having, and `MAX_CAUSE_DEPTH` is what
+ * ends the walk.
+ *
+ * The walk takes the outermost link that has a `.body` at all rather than
+ * looking for an `OpenAiHttpError` specifically — `extractSafeTransportHost`
+ * reads `.url` the same duck-typed way. `OpenAiHttpError` is the only
+ * class in this project that carries a `.body`, so there is nothing else
+ * to shadow it today; a second one would have to be checked here.
+ */
+export function extractSafeUpstreamErrorType(
+  err: unknown,
+): string | undefined {
+  let current: unknown = err;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) break;
+    const body = (current as { body?: unknown }).body;
+    if (body !== null && typeof body === "object") {
+      const type = (body as { type?: unknown }).type;
+      if (typeof type === "string" && SAFE_UPSTREAM_ERROR_TYPE_RE.test(type)) {
+        return type;
+      }
+    }
+    const next = (current as { cause?: unknown }).cause;
+    if (next === current) break;
+    current = next;
+  }
+  return undefined;
+}
+
+/**
  * Choose the frames to report: the cause's, when it has any, else the
  * wrapper's own.
  *
@@ -345,6 +420,7 @@ export function scrubError(
   const failureStage = extractSafeFailureStage(err);
   const tool = extractSafeTool(err);
   const transportHost = extractSafeTransportHost(err);
+  const upstreamErrorType = extractSafeUpstreamErrorType(err);
   const causeError = readCauseError(err);
   const causeType = causeError
     ? causeError.name || causeError.constructor?.name || "Error"
@@ -366,5 +442,8 @@ export function scrubError(
   if (failureStage !== undefined) event.failureStage = failureStage;
   if (tool !== undefined) event.tool = tool;
   if (transportHost !== undefined) event.transportHost = transportHost;
+  if (upstreamErrorType !== undefined) {
+    event.upstreamErrorType = upstreamErrorType;
+  }
   return event;
 }

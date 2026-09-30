@@ -127,8 +127,11 @@ export function planUninstallTargets(
     label: "the binary",
     group: "program",
   });
+  // install.ps1 writes the alias as a `.cmd` shim, not a second copy of
+  // the binary, so the Windows name differs from the binary's suffix.
+  const aliasSuffix = input.platform === "win32" ? ".cmd" : "";
   targets.push({
-    path: path.resolve(installDir, `atag${exeSuffix}`),
+    path: path.resolve(installDir, `atag${aliasSuffix}`),
     label: "the short alias",
     group: "program",
   });

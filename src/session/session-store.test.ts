@@ -223,3 +223,47 @@ describe("SessionStore", () => {
     expect(state.status).toBe("pending");
   });
 });
+
+describe("SessionStore.save and a generated title", () => {
+  it("keeps a title a stale writer does not carry", () => {
+    // The naming call lands after `executeTurn` returns, so every
+    // caller holding the finished session is holding one without a
+    // title. Overwriting with it used to erase the name: the title was
+    // read back in-process and gone once the process exited.
+    const store = new SessionStore({ dbFile: ":memory:" });
+    const base = createEmptySessionState({ id: "s-1", workingDir: "/w" });
+    store.save(base);
+    store.save({
+      ...base,
+      metadata: { ...base.metadata, title: "Подсчёт строк" },
+    });
+    // A writer from before the name existed.
+    store.save({ ...base, stepCount: 7 });
+    const loaded = store.load("s-1");
+    expect(loaded?.metadata?.title).toBe("Подсчёт строк");
+    // …and it did not cost that writer its own changes.
+    expect(loaded?.stepCount).toBe(7);
+  });
+
+  it("does not invent a title for a session that has none", () => {
+    const store = new SessionStore({ dbFile: ":memory:" });
+    const base = createEmptySessionState({ id: "s-2", workingDir: "/w" });
+    store.save(base);
+    store.save({ ...base, stepCount: 2 });
+    expect(store.load("s-2")?.metadata?.title).toBeUndefined();
+  });
+
+  it("lets a writer that carries a title set one", () => {
+    const store = new SessionStore({ dbFile: ":memory:" });
+    const base = createEmptySessionState({ id: "s-3", workingDir: "/w" });
+    store.save({
+      ...base,
+      metadata: { ...base.metadata, title: "First" },
+    });
+    store.save({
+      ...base,
+      metadata: { ...base.metadata, title: "Second" },
+    });
+    expect(store.load("s-3")?.metadata?.title).toBe("Second");
+  });
+});

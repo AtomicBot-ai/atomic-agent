@@ -83,6 +83,11 @@ export class SubscriptionCliProvider implements LlmProvider {
   private readonly binary: string;
   private readonly cwd: string;
   private readonly model: string;
+
+  /** The CLI's model, when one is set (Codex may leave it empty). */
+  get chatModelId(): string | undefined {
+    return this.model.length > 0 ? this.model : undefined;
+  }
   private readonly extraArgs: readonly string[];
   private readonly streamingEnabled: boolean;
   private readonly maxBudgetUsd: number | undefined;

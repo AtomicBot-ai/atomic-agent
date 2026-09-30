@@ -110,6 +110,53 @@ describe("menu rows", () => {
     );
     expect(tasks?.status).toBe("2 tasks");
   });
+
+  it("marks the recents count with a + while the store holds more pages", () => {
+    // The rail reads the store one page at a time, so this count is
+    // "what is loaded". Advertising it as the total would read as a
+    // missing-sessions bug the moment anyone had more than one page.
+    const rail = Array.from({ length: 40 }, (_, i) => ({
+      sessionId: `s-${i}`,
+      workingDir: "/tmp/w",
+      turnCount: 1,
+      stepCount: 0,
+      updatedAt: 1_000 + i,
+      preview: `thread ${i}`,
+      pinned: false,
+    }));
+    const badge = (morePages: boolean) =>
+      selectMenuItems(
+        open({
+          recentSessions: rail,
+          recentSessionsMorePages: morePages,
+        }),
+      ).find((r) => r.node.id === "session.switch")?.status;
+    expect(badge(true)).toBe("40+ recents");
+    expect(badge(false)).toBe("40 recents");
+  });
+
+  it("pluralises a single loaded session by whether more are stored", () => {
+    const one = [
+      {
+        sessionId: "s-1",
+        workingDir: "/tmp/w",
+        turnCount: 1,
+        stepCount: 0,
+        updatedAt: 1_000,
+        preview: "only thread",
+        pinned: false,
+      },
+    ];
+    const badge = (morePages: boolean) =>
+      selectMenuItems(
+        open({
+          recentSessions: one,
+          recentSessionsMorePages: morePages,
+        }),
+      ).find((r) => r.node.id === "session.switch")?.status;
+    expect(badge(false)).toBe("1 recent");
+    expect(badge(true)).toBe("1+ recents");
+  });
 });
 
 describe("menu keys", () => {

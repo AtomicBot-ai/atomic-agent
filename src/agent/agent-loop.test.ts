@@ -173,17 +173,28 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
       llmComplete: async () =>
-        makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } })),
+        makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        ),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        if (event.type === "llm_event" && event.event.type === "prompt_captured") {
+        if (
+          event.type === "llm_event" &&
+          event.event.type === "prompt_captured"
+        ) {
           tails.push(event.event.tail);
         }
       },
     });
-    const spec = `Build it: ${"detail ".repeat(30_000)}`;
+    // Sized to overflow ANY transcript cap the runtime ships, not just
+    // the one in force when this test was written: at ~3.6 chars per
+    // token this is ~116k tokens, comfortably past
+    // `CONVERSATION_CAP_AUTO_FALLBACK`. The old 30_000 sat just under
+    // the 64k fallback and the packer stopped dropping anything, which
+    // made the test pin a number rather than the behaviour it is about.
+    const spec = `Build it: ${"detail ".repeat(60_000)}`;
     const session = createEmptySessionState({ id: "s-request", workingDir });
     session.turns.push({ kind: "user", text: spec, at: 1 });
     session.turns.push({ kind: "assistant_reply", text: "built", at: 2 });
@@ -195,7 +206,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     expect(tails).toHaveLength(1);
     expect(tails[0]).toContain("### request");
-    expect(tails[0]!.indexOf("### request")).toBeLessThan(tails[0]!.indexOf("### conversation"));
+    expect(tails[0]!.indexOf("### request")).toBeLessThan(
+      tails[0]!.indexOf("### conversation"),
+    );
   });
 
   it("passes RunTurnOptions.reasoningEffort / maxOutputTokens to every completion (F20)", async () => {
@@ -207,10 +220,16 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async (params) => {
         seen.push({
-          ...(params.reasoningEffort === undefined ? {} : { effort: params.reasoningEffort }),
-          ...(params.maxOutputTokens === undefined ? {} : { cap: params.maxOutputTokens }),
+          ...(params.reasoningEffort === undefined
+            ? {}
+            : { effort: params.reasoningEffort }),
+          ...(params.maxOutputTokens === undefined
+            ? {}
+            : { cap: params.maxOutputTokens }),
         });
-        return makeCompletion(JSON.stringify({ tool: "reply", args: { text: "done" } }));
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -1025,7 +1044,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(calls).toBe(2);
     expect(observed).toEqual([8_192]);
     expect(repacks).toEqual([
-      expect.objectContaining({ contextWindow: 8_192, source: "provider", stepIndex: 0 }),
+      expect.objectContaining({
+        contextWindow: 8_192,
+        source: "provider",
+        stepIndex: 0,
+      }),
     ]);
     expect(prompts[1]).toContain("trimmed to fit this model's window");
     // The same step, not a new one.
@@ -1217,6 +1240,222 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
+    expect(waits[0]).toMatchObject({ cause: { kind: "http", status: 503 } });
+  });
+
+  it("says a reply the provider ended with an error was that, not a 502", async () => {
+    // e2e regression: a 200 stream that streamed, then ended with
+    // `finish_reason: "error"`. The stream consumer types it with a
+    // status so the step parks; the wait must not report that status
+    // or the HTTP client's retry count as if the provider had answered it.
+    const registry = buildDefaultToolRegistry();
+    const waits: Array<Extract<AgentLoopEvent, { type: "provider_waiting" }>> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new OpenAiHttpError(
+            "openai provider 502: the provider ended the completion with an error",
+            502,
+            "https://api.fake.test/v1/chat/completions",
+            false,
+            null,
+            "fake",
+            undefined,
+            { streamError: "the provider ended the completion with an error" },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-error-finish", workingDir }),
+      {
+        userMessage: "flaky provider",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.cause).toEqual({ kind: "error_finish" });
+    expect(waits[0]?.reason).not.toMatch(/\b502\b/);
+    expect(waits[0]?.reason).not.toContain("Tried");
+  });
+
+  it("does not wait out our own request deadline (issue #490)", async () => {
+    // A first-token timeout is `status === null` — there is no HTTP
+    // response to carry a status — so it used to classify as an outage
+    // and get parked and replayed. With the shipped 30-minute
+    // `firstTokenTimeoutMs`, a server that queues the request forever
+    // then burns a 45-minute fusion worker on two silent attempts and
+    // reports `max_steps` with `stepCount: 0`. Our clock running out is
+    // not evidence about the provider: surface it on the first attempt.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    let failure = "";
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        throw new LlamaServerError(
+          "llama-server sent no first token within 1800000ms — it may still be " +
+            "evaluating the prompt or queued behind other requests; raise " +
+            "ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS (localModels.firstTokenTimeoutMs)",
+          null,
+          "http://127.0.0.1:8080/completion",
+          true,
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+        if (event.type === "loop_failed") failure = event.error.message;
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-first-token-deadline", workingDir }),
+      {
+        userMessage: "build the thing",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        // Clips the park budget to a single 1 ms sleep so that a
+        // regression here fails on `waits` below rather than by hanging
+        // this test for its whole 15 s ceiling. With the default 300 s
+        // budget the un-narrowed loop parks and replays until vitest
+        // gives up, and a timed-out test is indistinguishable from any
+        // other deadlock — it would go red for a deleted park block or
+        // a hung tool just as readily. The assertion is the evidence.
+        providerWaitMaxMs: 1,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
+    expect(calls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // And the operator reads which deadline expired and which knob
+    // raises it, not a generic transport failure.
+    expect(failure).toContain("no first token within 1800000ms");
+    expect(failure).toContain("localModels.firstTokenTimeoutMs");
+  });
+
+  it("still waits out a transport failure that never had a status (issue #490)", async () => {
+    // The narrowing above is on `timedOut`, not on `status === null`.
+    // A refused connection while llama-server restarts wears the same
+    // statusless shape and is exactly what the park exists for.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new LlamaServerError(
+            "fetch failed",
+            null,
+            "http://127.0.0.1:8080/completion",
+            false,
+            "ECONNREFUSED",
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-econnrefused", workingDir }),
+      {
+        userMessage: "server restarting",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
+  it("still waits out a socket-level ETIMEDOUT, which is the kernel's deadline (issue #490)", async () => {
+    // The second half of the same pin, and the one that catches the
+    // tempting shortcut: this error says "timed out" in its message and
+    // carries `ETIMEDOUT` in its errno, but `timedOut` is false because
+    // none of `createRequestController`'s timers fired — the kernel gave
+    // up on the connect before any of ours did. Reading the word or the
+    // errno instead of the flag would stop parking a genuine outage
+    // (a llama-server host that dropped off the network), and the
+    // ECONNREFUSED case above would stay green while it happened.
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new LlamaServerError(
+            "connect ETIMEDOUT 10.0.0.7:8080",
+            null,
+            "http://10.0.0.7:8080/completion",
+            false,
+            "ETIMEDOUT",
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-etimedout", workingDir }),
+      {
+        userMessage: "host dropped off the network",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(calls).toBe(2);
   });
 
   it("stops the turn resumable when the provider's body says the credit is exhausted (F29)", async () => {
@@ -2328,7 +2567,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         if (event.type === "loop_detected") detected.push(event);
       },
     });
-    const session = createEmptySessionState({ id: "s-outcome-loop", workingDir });
+    const session = createEmptySessionState({
+      id: "s-outcome-loop",
+      workingDir,
+    });
     const result = await loop.runTurn(session, {
       userMessage: "check it",
       maxSteps: 6,
@@ -2348,7 +2590,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // The notice lands on the prompt AFTER the third identical result.
     expect(prompts[3]).toContain("Same result three times from `probe`");
     expect(prompts[3]).toContain("change approach or write");
-    expect(prompts.slice(0, 3).join("\n")).not.toContain("change approach or write");
+    expect(prompts.slice(0, 3).join("\n")).not.toContain(
+      "change approach or write",
+    );
   });
 
   it("ends the turn with a graceful reply (not loop_failed) when the breaker trips", async () => {
@@ -2413,8 +2657,19 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // The last turn is the forced synthetic reply.
     expect(result.session.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: expect.stringMatching(/no-progress loop/),
+      text: expect.stringMatching(/no-progress outcome/),
     });
+    // The refusal count is the tracker's, not the detector streak: with
+    // these defaults exactly 4 calls were refused (three vetoes trip the
+    // breaker, and the call that reads it is refused too) while the
+    // no-progress streak plateaued at 5. The reply used to announce
+    // "after 5 blocked attempts" — a refusal that never happened.
+    const forcedReply = (result.session.turns.at(-1) as { text: string }).text;
+    expect(forcedReply).toContain(
+      "refused 4 times in a row, counting this one",
+    );
+    expect(forcedReply).not.toMatch(/blocked attempts/i);
+    expect(forcedReply).not.toContain("5");
     // A breaker-level loop_detected event was surfaced.
     expect(detectedEvents.some((e) => e.level === "breaker")).toBe(true);
     // Critical vetoes prevented the tool from running every step — the
@@ -2444,8 +2699,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         };
       },
     });
-    const detected: Array<{ level?: string; detector?: string; count: number }> =
-      [];
+    const detected: Array<{
+      level?: string;
+      detector?: string;
+      count: number;
+    }> = [];
     let step = 0;
     const loop = new AgentLoop({
       registry,
@@ -2497,6 +2755,104 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(text).toContain("hit the limit on different arguments");
     expect(text).toContain("12, counting the last call");
     expect(text).not.toMatch(/no-progress|blocked attempts|repeated/i);
+  });
+
+  // The other half of issue #458: the same fetch fan-out, but the turn is
+  // doing real work between the probes. Nothing may be vetoed, and the
+  // model gets to end the turn itself.
+  it("lets a probe fan-out run when the turn keeps making progress", async () => {
+    const registry = buildDefaultToolRegistry();
+    let fetchCount = 0;
+    registry.register({
+      name: "os.web.fetch",
+      description: "fetch",
+      readonly: true,
+      async run(args) {
+        fetchCount += 1;
+        const url = (args as { url?: string }).url ?? "";
+        return {
+          tool: "os.web.fetch",
+          status: "ok",
+          summary: `content of ${url}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let noteCount = 0;
+    registry.register({
+      name: "note",
+      description: "record a finding",
+      readonly: true,
+      async run(args) {
+        noteCount += 1;
+        const text = (args as { text?: string }).text ?? "";
+        return {
+          tool: "note",
+          status: "ok",
+          summary: `noted ${text}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const detected: Array<{ level?: string; detector?: string }> = [];
+    let step = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        step += 1;
+        // Twice the default escalation spread of 12 distinct URLs, each
+        // followed by a note that lands — the shape of the reported
+        // research turns.
+        if (step > 48) {
+          return makeCompletion(
+            JSON.stringify({ tool: "reply", args: { text: "done" } }),
+          );
+        }
+        return makeCompletion(
+          step % 2 === 1
+            ? JSON.stringify({
+                tool: "os.web.fetch",
+                args: { url: `https://example.com/file-${step}.ts` },
+              })
+            : JSON.stringify({
+                tool: "note",
+                args: { text: `finding ${step}` },
+              }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") {
+          detected.push({ level: event.level, detector: event.detector });
+        }
+      },
+    });
+    const session = createEmptySessionState({
+      id: "s-wandering-progress",
+      workingDir,
+    });
+    const result = await loop.runTurn(session, {
+      userMessage: "research these files",
+      maxSteps: 60,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(fetchCount).toBe(24);
+    expect(noteCount).toBe(24);
+    // Nothing was vetoed and nothing ended the turn: every signal raised
+    // along the way was an advisory the model could act on, and it ran to
+    // its own `reply`.
+    expect(detected.every((e) => e.level === "warn")).toBe(true);
+    expect(detected.some((e) => e.level === "breaker")).toBe(false);
+    expect(detected.some((e) => e.level === "critical")).toBe(false);
+    const last = result.session.turns.at(-1);
+    expect(last).toMatchObject({ kind: "assistant_reply", text: "done" });
   });
 
   it("refreshes memory context between non-terminal tool steps", async () => {

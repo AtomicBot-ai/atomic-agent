@@ -10,6 +10,13 @@ export interface SessionPickerProps {
   sessions: readonly SessionPickerEntry[];
   cursor: number;
   currentSessionId: string | null;
+  /**
+   * The store holds threads past the ones in `sessions`. The rail reads
+   * one page at a time, so the count in the header is what is loaded,
+   * not what is stored — the `+` says so rather than letting the number
+   * claim to be a total.
+   */
+  morePages?: boolean;
 }
 
 const MAX_ROWS = 10;
@@ -20,7 +27,7 @@ const MAX_ROWS = 10;
  * Enter to switch, Esc to close) is driven from the app shell.
  */
 export function SessionPicker(props: SessionPickerProps): ReactElement {
-  const { sessions, cursor, currentSessionId } = props;
+  const { sessions, cursor, currentSessionId, morePages = false } = props;
   if (sessions.length === 0) {
     return (
       <Box borderStyle="round" borderColor={theme.colors.warn} paddingX={1}>
@@ -45,7 +52,8 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
       flexDirection="column"
     >
       <Text color={theme.colors.muted}>
-        sessions ({sessions.length}) — Enter to load, Esc to dismiss
+        sessions ({sessions.length}
+        {morePages ? "+" : ""}) — Enter to load, Esc to dismiss
       </Text>
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>

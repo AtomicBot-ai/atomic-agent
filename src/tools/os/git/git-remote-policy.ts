@@ -9,6 +9,10 @@ import {
   redactSecret,
   sshBatchEnv,
 } from "./git-credentials.js";
+import {
+  GIT_FAILURE_SUMMARY_CHARS,
+  GIT_FAILURE_TAIL_LINES,
+} from "./git-error-result.js";
 import { runGit, type GitRunOptions, type GitRunResult } from "./git-runner.js";
 
 /**
@@ -26,6 +30,18 @@ export const REMOTE_SYNC_OFF_MESSAGE =
   "remote sync is off — this repository stays on this machine. Nothing was sent or fetched. The operator can turn it on under Integrations → GitHub → Remote sync; do not look for another way to reach the remote.";
 
 /**
+ * What the remote-sync refusal is compressed with. The message is fixed
+ * text: 208 characters plus the tool name, so at 221 for `os.git.push`
+ * it still fits under the compressor's default 400 — this is the one
+ * refusal of the set that is not clipped today. It is pinned anyway
+ * because the clause that survives last is the one that matters, "the
+ * operator can turn it on under Integrations → GitHub → Remote sync; do
+ * not look for another way to reach the remote", and two more sentences
+ * of wording would silently take it away.
+ */
+export const REMOTE_SYNC_OFF_SUMMARY_CHARS = 500;
+
+/**
  * The closed-repository check. Runs before any approval prompt and
  * before git is spawned: a structured error the model can read, never
  * a thrown exception, so the turn continues with the operator's answer.
@@ -36,12 +52,15 @@ export function refuseWhenRemoteSyncOff(
   details: Record<string, unknown> = {},
 ): CompressedToolResult | null {
   if (options.isRemoteSyncEnabled()) return null;
-  return compressToolResult({
-    tool,
-    status: "error",
-    output: `${tool}: ${REMOTE_SYNC_OFF_MESSAGE}`,
-    details: { ...details, remoteSync: false, refused: true },
-  });
+  return compressToolResult(
+    {
+      tool,
+      status: "error",
+      output: `${tool}: ${REMOTE_SYNC_OFF_MESSAGE}`,
+      details: { ...details, remoteSync: false, refused: true },
+    },
+    { maxSummaryLength: REMOTE_SYNC_OFF_SUMMARY_CHARS },
+  );
 }
 
 export interface GitRemoteApprovalRequest {
@@ -98,7 +117,13 @@ export async function runGitRemote(
   };
 }
 
-/** Git's non-zero exit as a structured error result, output scrubbed already. */
+/**
+ * Git's non-zero exit as a structured error result, output scrubbed
+ * already. Compressed on the same terms as the local write verbs: a
+ * rejected push is a list too ("hint: Updates were rejected because the
+ * remote contains work that you do not have locally") and the hint that
+ * says to integrate the remote changes first comes last.
+ */
 export function gitFailureResult(
   tool: string,
   result: GitRunResult,
@@ -108,12 +133,18 @@ export function gitFailureResult(
   const why = result.timedOut
     ? `git timed out after ${result.durationMs}ms`
     : `git exited with ${result.exitCode}`;
-  return compressToolResult({
-    tool,
-    status: "error",
-    output: `${tool}: ${why}\n${stderr}`,
-    details: { ...details, exitCode: result.exitCode, timedOut: result.timedOut },
-  });
+  return compressToolResult(
+    {
+      tool,
+      status: "error",
+      output: `${tool}: ${why}\n${stderr}`,
+      details: { ...details, exitCode: result.exitCode, timedOut: result.timedOut },
+    },
+    {
+      maxSummaryLength: GIT_FAILURE_SUMMARY_CHARS,
+      maxTailLines: GIT_FAILURE_TAIL_LINES,
+    },
+  );
 }
 
 export function optionalString(value: unknown): string | undefined {

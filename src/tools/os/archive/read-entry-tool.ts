@@ -8,6 +8,20 @@ import {
 
 const DEFAULT_MAX_BYTES = 256 * 1024;
 
+/**
+ * Ceiling on the stored body, on top of the caller's `maxBytes`.
+ *
+ * Everything above it is dead weight rather than extra context:
+ * `TOOL_RESULT_RENDER_CAP_CHARS` in `session/conversation-turn.ts` re-cuts
+ * every tool result to 8000 chars at render time and this tool is not one
+ * of the exempt ones, so the default 256 KiB only ever reached the model
+ * as its first 8000 chars anyway. Capping here costs the model not one
+ * character it used to see, and buys a `truncated: true` and a "…
+ * [truncated]" marker the render-time cut cannot produce, because by then
+ * nobody is listening for it.
+ */
+const ENTRY_SUMMARY_MAX_CHARS = 8_000;
+
 export interface ReadEntryToolOptions {
   backends?: ArchiveBackendFactories;
 }
@@ -75,7 +89,10 @@ export function buildOsFsArchiveReadEntryTool(
           output: text,
           details,
         },
-        { maxSummaryLength: maxBytes, maxTailLines: 5000 },
+        {
+          maxSummaryLength: Math.min(maxBytes, ENTRY_SUMMARY_MAX_CHARS),
+          maxTailLines: 5000,
+        },
       );
     },
   };

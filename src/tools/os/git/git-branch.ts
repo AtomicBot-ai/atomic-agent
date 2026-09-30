@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
@@ -14,6 +15,12 @@ export interface GitBranch {
   hash: string;
   subject: string;
 }
+
+/**
+ * Estimated width of one rendered ref line: mark, name, 12 chars of
+ * hash, and the commit subject, which is not clamped. An estimate.
+ */
+const BRANCH_CHARS = 240;
 
 export const osGitBranchTool: ToolDefinition = {
   name: "os.git.branch",
@@ -69,20 +76,29 @@ export const osGitBranchTool: ToolDefinition = {
       branches = branches.filter((b) => re.test(b.name));
     }
 
-    return compressToolResult({
-      tool: "os.git.branch",
-      status: "ok",
-      output: formatBranches(branches, currentBranch),
-      details: {
-        currentBranch,
-        includeRemote,
-        contains: contains ?? null,
-        pattern: pattern ?? null,
-        count: branches.length,
-        branches,
-        repoRoot: refsResult.repoRoot,
+    return compressToolResult(
+      {
+        tool: "os.git.branch",
+        status: "ok",
+        output: formatBranches(branches, currentBranch),
+        details: {
+          currentBranch,
+          includeRemote,
+          contains: contains ?? null,
+          pattern: pattern ?? null,
+          count: branches.length,
+          branches,
+          repoRoot: refsResult.repoRoot,
+        },
       },
-    });
+      // `# current: …` is line 1 and is the first thing the default
+      // 12-line tail drops. No `limit` here either — `for-each-ref`
+      // returns every matching ref — so budget the refs we are about
+      // to print at BRANCH_CHARS each. ~16 refs fit the shared
+      // ceiling; a repo with more should be narrowed with `pattern` or
+      // `contains`, which the description already offers.
+      listingResultCaps(branches.length, BRANCH_CHARS),
+    );
   },
 };
 

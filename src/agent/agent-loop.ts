@@ -1,4 +1,5 @@
 import {
+  delegationProducedWork,
   emptyFusionOrchestratorState,
   recordDelegation,
   wouldRefuse as fusionGateWouldRefuse,
@@ -33,12 +34,17 @@ import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
+  LlamaServerError,
   LlmFailure,
   TransportError,
   classifyFailure,
   isRequestSizeRejection,
 } from "../llm/index.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
+import {
+  classifyProviderWaitCause,
+  type ProviderWaitCause,
+} from "../llm/reliability/provider-wait-cause.js";
 import {
   composeSizeRejectionNotice,
   planSizeRejectionRepack,
@@ -254,6 +260,12 @@ export interface AgentLoopDependencies {
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
   /**
+   * Installed skills `skills.catalogTokenBudget` left out of
+   * `skillCatalog`, rebuilt alongside it. Renders the `### skills`
+   * truncation marker (issue #466).
+   */
+  skillCatalogDropped?: number;
+  /**
    * Invoked once per step to produce the current user-profile snapshot.
    * The resulting array is rendered into the `### profile` section of
    * the prompt tail. `undefined` suppresses the section entirely — wire
@@ -366,6 +378,16 @@ export interface ResolvedTurnLlmSlice {
   supportsSlotAffinity: boolean;
   supportsParallelTools: boolean;
   strictTools: boolean;
+  /**
+   * Whether the pinned link is the local `llama-server` — i.e. whether
+   * the `/props` profile in hand describes the model that will serve
+   * this turn. Only the pin can answer it: `localBackend.isActive()`
+   * describes the ACTIVE provider, which on a pinned Fusion worker turn
+   * is the orchestrator's cloud leg. Optional so legacy / test wiring
+   * that predates it still type-checks; absent falls back to the active
+   * provider's answer, which is what every single-leg run already did.
+   */
+  isLlamaServer?: boolean;
 }
 
 export interface MemoryContextProviderInput {
@@ -476,8 +498,16 @@ export interface SteeringChannel {
  * So the wait is for the failures that plausibly recover on their own —
  * no HTTP response at all (DNS, refused connection, TLS, socket reset),
  * a server error, or the server saying "busy, later" (408 / 429).
+ *
+ * The one thing `status === null` must NOT sweep up is our own deadline
+ * expiring — see {@link isOwnLlamaDeadlineExpiry}.
  */
 function isWaitableOutage(err: unknown): boolean {
+  // Our own clock ran out. Never evidence about the provider, so it is
+  // decided before the status split rather than inside it: the shape
+  // arrives as `status === null`, which is otherwise the strongest
+  // "no answer at all, wait for it" signal there is.
+  if (isOwnLlamaDeadlineExpiry(err)) return false;
   if (!(err instanceof TransportError)) {
     // An untyped socket failure that reached the classifier through
     // `isNetworkError` — no status to inspect, and by construction it is
@@ -488,6 +518,97 @@ function isWaitableOutage(err: unknown): boolean {
   return err.status >= 500 || err.status === 408 || err.status === 429;
 }
 
+/**
+ * Did one of OUR OWN request deadlines fire, rather than the link
+ * failing?
+ *
+ * `LlamaServerClient` already treats this as terminal —
+ * `isRetryableLlamaError` refuses to replay a `timedOut` error because
+ * "the model is slower than the budget" does not improve on a second
+ * attempt. The agent loop was undoing that decision one layer up: every
+ * expiry is built with `status === null` (there is no HTTP response to
+ * carry a status), so it classified `transport`, satisfied
+ * `isWaitableOutage`, and the loop parked and replayed the same step.
+ *
+ * What that costs, with the shipped defaults — `firstTokenTimeoutMs` is
+ * 30 minutes (`ENV_DEFAULTS.FIRST_TOKEN_TIMEOUT_MS`) — on a server that
+ * accepts a request and then queues it forever:
+ *
+ *   t=0      request 1 sent, queues inside llama.cpp, no log line
+ *   t=30min  first-token deadline fires → transport → "waitable" → 2 s park
+ *   t=30min  request 2 sent, queues, no log line
+ *   t=45min  the fusion worker's wall clock aborts the turn
+ *            → `max_steps`, `stepCount: 0`, 45.0 minutes, zero tool calls
+ *
+ * The whole 45-minute budget is spent on two silent attempts, and the
+ * operator is handed "ran out of steps" instead of the message the
+ * client had already written, which names the deadline and the knob
+ * that raises it (issue #490 reports exactly this pair of runs).
+ *
+ * The timeout KIND is deliberately not inspected, and they do not cost
+ * the same, so here is what is actually being traded away:
+ *
+ *   first-token              30 min   `firstTokenTimeoutMs`
+ *   stream-total              6 h     `streamTotalTimeoutMs`
+ *   first-token-unreachable  10 min   `SLOTS_UNREACHABLE_BUDGET_MS`
+ *   first-token-unresponsive 10 min   `SLOTS_UNREACHABLE_BUDGET_MS`
+ *   first-token-stall        300 s    `requestTimeoutMs`
+ *   idle                     300 s    `requestTimeoutMs`
+ *   total                    300 s    `requestTimeoutMs`
+ *
+ * Only the first is the 45-minute-worker disaster in #490. Four of the
+ * others carry their own positive evidence about the server:
+ * `first-token-stall` fires only because `/slots` kept answering right
+ * up to the verdict, `stream-total` only because data kept arriving for
+ * six hours, and the two ten-minute kinds only after an unbroken run of
+ * polls proved the daemon is gone or wedged — for which replaying the
+ * step is the one thing that cannot help. `idle` does NOT — it means the socket is still open
+ * and nothing has come down it for a whole `requestTimeoutMs`, so what
+ * it proves is five minutes stale. A server that actually died mid-turn
+ * usually closes the socket instead, which arrives as `ECONNRESET` with
+ * `timedOut: false` and is still parked.
+ *
+ * The three 300 s kinds are narrowed with the other two anyway, because
+ * the alternative is worse than the wait it saves: the park does not
+ * resume the stream, it replays the whole step from the top, so every
+ * token already generated is thrown away and a second full budget is
+ * spent reproducing it. `isRetryableLlamaError` made exactly this call
+ * one layer down for exactly this reason, and a predicate that reads
+ * `timedOut` while that one reads `timedOut` cannot drift apart.
+ *
+ * Deliberately still waitable, because none of these is our clock:
+ *  - `LlamaServerError(timedOut: false)` with an errno — `ECONNREFUSED`
+ *    while llama-server restarts, `ECONNRESET`, and the socket-level
+ *    `ETIMEDOUT`, which is the kernel's deadline, not ours. `timedOut`
+ *    is set only by `createRequestController`'s own three timers, so a
+ *    kernel `ETIMEDOUT` never reaches this predicate flagged;
+ *  - a bare `TypeError: fetch failed` wrapped as `TransportError(null)`
+ *    by `toLlmFailure`, i.e. DNS or TLS failing while a cloud provider
+ *    is down;
+ *  - `OpenAiHttpError.timedOut`. Its budget is also 300 s, so the cost
+ *    argument above would carry over — but a cloud request is not the
+ *    thing #490 reports, nothing pins the cloud park's behaviour today,
+ *    and one narrowing at a time. Out of scope, not settled.
+ *
+ * The expiry travels wrapped: `toLlmFailure` rebuilds it as a
+ * `TransportError` carrying the original on `cause`, so the outermost
+ * error is never the `LlamaServerError` itself. That is one link, not
+ * many — `runWithFallback` rethrows the last link's error untouched and
+ * keeps the earlier links in a WeakMap beside it (`failed-attempts.ts`)
+ * precisely so that predicates like this one cannot be fooled by a
+ * previous attempt. The depth cap is therefore slack, not a budget, and
+ * exists only so a self-referential or mutually-referential `cause`
+ * cannot spin here.
+ */
+function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError && current.timedOut) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /** First backoff after the provider stops answering. */
 const PROVIDER_WAIT_BASE_MS = 2_000;
 /**
@@ -496,6 +617,33 @@ const PROVIDER_WAIT_BASE_MS = 2_000;
  * moment it comes back.
  */
 const PROVIDER_WAIT_MAX_BACKOFF_MS = 30_000;
+
+/**
+ * Memory-v2 phase 2. Ceiling on the per-turn note allowlist handed to
+ * `reflect()` as `recalledMemoryIds`.
+ *
+ * The allowlist is the union of every note surfaced across the turn,
+ * so it grows once per step. It is rendered verbatim into the
+ * link-generator prompt (one `[id] body` row per candidate, and that
+ * prompt has no cap of its own) and hydrated again for the vote
+ * runner and the EVOLVE directives. Bounded only by
+ * `memory.notes.maxEntries`, a long task-mode turn (`task.maxSteps`
+ * defaults to 1000) could hand a multi-KB candidate block to a
+ * sub-call whose reported failure mode is already `timeout`.
+ *
+ * 32 is several recalls' worth — `memory.recallInjection.k` is 3 plus
+ * up to `maxExpanded: 12` graph-expanded ids per refresh — and still
+ * renders in ~4 KB at the prompt's 120-char preview. The most
+ * RECENTLY surfaced ids win: they describe where the turn actually
+ * went, and any turn short enough to fit keeps its turn-start recall
+ * (the shape issue #464 is about).
+ *
+ * Capping here rather than in the prompt builder keeps the prompt and
+ * the parser's anti-feedback-loop allowlist derived from the same
+ * list — the runner builds that allowlist from `input.candidates`, so
+ * the two can never drift.
+ */
+export const MAX_SURFACED_NOTE_ALLOWLIST = 32;
 
 /** Sleep that returns early when the operator aborts the turn. */
 async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -518,10 +666,7 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  * resumes after a top-up, the same way as after a ceiling.
  */
 export type TaskStopCause =
-  | "step_ceiling"
-  | "time_ceiling"
-  | "no_progress"
-  | "credit_exhausted";
+  "step_ceiling" | "time_ceiling" | "no_progress" | "credit_exhausted";
 
 export function formatTaskStoppedReply(input: {
   cause: TaskStopCause;
@@ -595,6 +740,13 @@ export interface RunTurnOptions {
    * test / legacy wiring, where nothing is pinned.
    */
   originalRequest?: string;
+  /**
+   * The serving route changed since this session's previous turn: the
+   * runtime's note saying so (`prompt/route-change-note.ts`). Reaches
+   * every step of this turn as `### route`; the runtime computes it
+   * once per change, so the next turn carries none.
+   */
+  routeNote?: string;
   /**
    * Reasoning effort for every completion of this turn, mapped per
    * provider family by the body builder. A fusion worker's
@@ -681,6 +833,12 @@ export type AgentLoopEvent =
       maxWaitMs: number;
       nextRetryMs: number;
       reason: string;
+      /**
+       * What the failure was, from the error itself rather than its
+       * message — the part a UI may word. `reason` stays the raw line
+       * for logs and traces.
+       */
+      cause?: ProviderWaitCause;
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -804,6 +962,13 @@ export type AgentLoopEvent =
       model?: string;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
+      /**
+       * The orchestrator's estimate for this task, in seconds, when it
+       * gave one (`tasks[].etaSeconds`). Advisory: the live readout
+       * puts it beside the elapsed time so "42s" can be read as fast or
+       * slow. Nothing is scheduled or timed out against it.
+       */
+      etaSeconds?: number;
       stepCount?: number;
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */
@@ -1040,8 +1205,6 @@ export class AgentLoop {
         : this.deps.toolDescriptors;
     };
 
-    state = await refreshMemoryContext(this.deps, state, options);
-
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
     // between turns — without this, step 0 would still build the prompt
@@ -1056,9 +1219,20 @@ export class AgentLoop {
     // arm the profile and grammar would stay pinned to whatever the
     // first fallover probed for the whole outage. Take-and-clear, so a
     // recovered primary quiets the probes again after one turn.
+    //
+    // Run beside the memory recall rather than after it: the two share
+    // nothing (recall reads the store and, for a referential follow-up,
+    // asks the model to rewrite the query; the sync reads `/props`), and
+    // both wait on the same server. In sequence, a server that accepts
+    // and never answers cost the turn the rewriter's budget PLUS the
+    // probe's before `step_started`; side by side it costs the longer
+    // of the two. Neither can throw — the refresh swallows its own
+    // failures, keeps the prior profile and is bounded by the client's
+    // `PROBE_TIMEOUT_MS`.
     const localLinkServedLastTurn =
       this.deps.localBackend?.takeLinkServed?.() ?? false;
-    if (this.deps.profileManager) {
+    const syncProfile = async (): Promise<void> => {
+      if (!this.deps.profileManager) return;
       if (this.localBackendActive()) {
         if (!(await this.deps.localBackend?.ensureProbed())) {
           await this.deps.profileManager.refresh();
@@ -1066,7 +1240,10 @@ export class AgentLoop {
       } else if (localLinkServedLastTurn) {
         await this.deps.profileManager.refresh();
       }
-    }
+    };
+    const profileSynced = syncProfile();
+    state = await refreshMemoryContext(this.deps, state, options);
+    await profileSynced;
 
     // Fusion's division of labour is per TURN, not per session: each
     // turn starts owing a plan and a fan-out before it may write. An
@@ -1290,6 +1467,19 @@ export class AgentLoop {
       }
     };
     recordSurfacedProcedures(state);
+    // Memory-v2 phase 2 — same accumulator again, this time for the
+    // freeform note ids that feed `recalledMemoryIds` below. Reading
+    // `state.recalledNotes` at reflection time instead was a silent
+    // no-op on every multi-step turn: by the last step the recall
+    // query has drifted into tool-output noise and returns nothing, so
+    // the link-generator was handed an empty allowlist and skipped.
+    const surfacedNoteIds = new Set<number>();
+    const recordSurfacedNotes = (s: SessionState): void => {
+      for (const n of s.recalledNotes ?? []) {
+        surfacedNoteIds.add(n.id);
+      }
+    };
+    recordSurfacedNotes(state);
     // One-shot notice injected into the NEXT step's prompt only. Cleared
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
@@ -1468,6 +1658,9 @@ export class AgentLoop {
             toolDescriptors: visibleToolDescriptors(),
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
+            ...(this.deps.skillCatalogDropped !== undefined
+              ? { skillCatalogDropped: this.deps.skillCatalogDropped }
+              : {}),
             stepIndex: i,
             signal: options.signal,
             requestSignal: requestDeadline.signal,
@@ -1498,6 +1691,9 @@ export class AgentLoop {
             ...(options.originalRequest !== undefined
               ? { originalRequest: options.originalRequest }
               : {}),
+            ...(options.routeNote !== undefined
+              ? { routeNote: options.routeNote }
+              : {}),
             ...(options.reasoningEffort !== undefined
               ? { reasoningEffort: options.reasoningEffort }
               : {}),
@@ -1517,8 +1713,11 @@ export class AgentLoop {
               ? {
                   isFusionOrchestrator: () => true,
                   fusionState: () => fusionState,
-                  onDelegated: () => {
-                    fusionState = recordDelegation(fusionState);
+                  onDelegated: (result) => {
+                    fusionState = recordDelegation(
+                      fusionState,
+                      delegationProducedWork(result),
+                    );
                   },
                 }
               : {}),
@@ -1530,6 +1729,14 @@ export class AgentLoop {
             ...(this.deps.contextWindow
               ? { contextWindow: this.deps.contextWindow() }
               : {}),
+            // The `/props` profile describes the local llama-server. It
+            // is the right window only when this step is routed there:
+            // a pinned turn answers from its own link, an unpinned one
+            // from the active provider. In Fusion those differ, and
+            // budgeting a cloud orchestrator against the workers'
+            // per-slot `n_ctx` packed a 128k model to 16k.
+            profileWindowApplies:
+              pinnedSlice?.isLlamaServer ?? this.localBackendActive(),
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
@@ -1571,10 +1778,7 @@ export class AgentLoop {
               // Issue #407. Skipped on a fusion worker's throwaway
               // session: it renders the same store as the orchestrator,
               // which already warned, and would repeat it per worker.
-              if (
-                event.type === "prompt_built" &&
-                options.ephemeral !== true
-              ) {
+              if (event.type === "prompt_built" && options.ephemeral !== true) {
                 reportProfileClip({
                   warnings: this.profileClipWarnings,
                   sessionId: state.id,
@@ -1767,6 +1971,7 @@ export class AgentLoop {
             breaker.tool,
             breaker.count,
             breaker.detector,
+            breaker.blockedCount,
           );
           state = recordTurn(state, assistantReplyTurn(replyText));
           this.deps.onEvent?.({
@@ -1902,6 +2107,7 @@ export class AgentLoop {
         state = await refreshMemoryContext(this.deps, state, options);
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
+        recordSurfacedNotes(state);
       } catch (err) {
         requestDeadline.dispose();
         runError = err instanceof Error ? err : new Error(String(err));
@@ -1910,8 +2116,7 @@ export class AgentLoop {
         // surfaces as an abort — the same shape as Ctrl+C — but it is
         // the task's clock, not the user, so it is read first and never
         // as a cancellation.
-        const ceilingFired =
-          requestDeadline.fired() && !options.signal.aborted;
+        const ceilingFired = requestDeadline.fired() && !options.signal.aborted;
         // `cancelled` is user-initiated and should close the turn
         // cleanly without marking the session as failed. Classified
         // BEFORE the finalization guard below: a user abort during the
@@ -2272,8 +2477,13 @@ export class AgentLoop {
         // 120 s", OpenRouter's `in_flight_budget_exhausted` — a 402 the
         // outage predicate would otherwise refuse) is waited for as
         // long as it asked, within the same budget.
-        const retryHint =
-          verdict?.kind === "retry_after" ? verdict : null;
+        //
+        // The precondition is "the provider is not answering", not
+        // "this step failed": one of our own deadlines expiring is not
+        // an observation about the provider at all, and replaying it
+        // buys a second helping of the same silence — see
+        // `isOwnLlamaDeadlineExpiry`.
+        const retryHint = verdict?.kind === "retry_after" ? verdict : null;
         if (
           category === "transport" &&
           !cancelled &&
@@ -2301,6 +2511,7 @@ export class AgentLoop {
             maxWaitMs: providerWaitCfg.maxWaitMs,
             nextRetryMs,
             reason: runError.message,
+            cause: classifyProviderWaitCause(err),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,
@@ -2594,11 +2805,20 @@ export class AgentLoop {
               userMessage,
               assistantReply,
               // Memory-v2 phase 2. Surfaced ids for this turn — the
-              // allowlist for the link-generator sub-call. Empty /
-              // undefined when memory.notes is disabled OR no recall
-              // was performed.
-              ...(state.recalledNotes && state.recalledNotes.length > 0
-                ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
+              // allowlist for the link-generator sub-call, and for the
+              // EVOLVE directives inside reflection. Every note
+              // surfaced through any step, not just the last refresh's
+              // recall. Empty / undefined when memory.notes is
+              // disabled OR no recall was performed; capped at the
+              // most recently surfaced `MAX_SURFACED_NOTE_ALLOWLIST`
+              // so a long turn cannot grow the link-generator prompt
+              // without bound.
+              ...(surfacedNoteIds.size > 0
+                ? {
+                    recalledMemoryIds: Array.from(surfacedNoteIds).slice(
+                      -MAX_SURFACED_NOTE_ALLOWLIST,
+                    ),
+                  }
                 : {}),
               // Memory-v2 phase 7a. Allowlist for the vote-runner —
               // every lesson surfaced through any step of this turn,

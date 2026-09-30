@@ -50,6 +50,24 @@ export function composerBackendLook(
 }
 
 /**
+ * Rendered columns of this control: the health dot and its trailing
+ * space when there is one, then the backend word — as a chip on the
+ * fusion route, which costs it a space on each side.
+ *
+ * Exported because the composer's row planner (`meta-bar-rows.ts`) has
+ * to know the route's width before Yoga lays it out, and deriving that
+ * from the same branches the component renders is what keeps the
+ * planned height and the painted height the same number.
+ */
+export function backendControlWidth(backend: ComposerBackendMeta): number {
+  const look = composerBackendLook(backend);
+  const dot = look ? look.glyph.length + 1 : 0;
+  const word =
+    backend.kind === "fusion" ? backend.kind.length + 2 : backend.kind.length;
+  return dot + word;
+}
+
+/**
  * The first of the composer's route controls: the health dot and the
  * backend word. `cloud` / `local` / `custom` are rail text like the
  * provider and the model beside them; `fusion` is an orange chip, the

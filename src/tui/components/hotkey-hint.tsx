@@ -4,7 +4,8 @@ import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
-import { fitChips, resolveChips, type HotkeyChip } from "./hotkey-chips.js";
+import { layoutChipRows } from "./hotkey-chip-rows.js";
+import { resolveChips, type HotkeyChip } from "./hotkey-chips.js";
 
 interface HotkeyHintProps {
   state: TuiState;
@@ -19,45 +20,77 @@ interface HotkeyHintProps {
    * call site cannot forget it and silently reintroduce the wrap.
    */
   width: number;
+  /**
+   * Rows the strip may spend before it goes back to shedding chips.
+   * The window's call, not the strip's — `computeHintRowBudget` in
+   * `layout.ts` derives it from the terminal height, and the caller
+   * subtracts the same number from the chat viewport. Defaults to 1,
+   * which is the old single-row strip exactly.
+   */
+  maxRows?: number;
 }
 
 /**
  * Bottom hint strip: surfaces the keybindings that are meaningful in
  * the current state so the user never has to guess.
  *
- * The strip is budgeted to **one row**. Ink does not clip an over-wide
- * row, it wraps it — and a wrapped strip both costs a row the debug
- * pane already budgeted away (`APP_CHROME_ROWS`) and splits chips from
- * their separators into an unreadable two-line smear. So chips are shed
- * in a declared order until the row fits, and `truncate-end` clips the
- * essential remainder on a terminal too narrow even for those.
+ * **It wraps.** The strip used to be budgeted to exactly one row, and it
+ * bought that row by *deleting* hints: at 83 columns — what a 120-column
+ * terminal leaves the chat column once the rail has taken its share, and
+ * therefore the width most operators run — the idle strip had already
+ * shed `scroll`, the sidebar key, `ctrl+r route`, `ctrl+n new window`
+ * and the text-selection hint. The order of preference is now wrap, then
+ * shed, then clip: `layoutChipRows` packs the chips over as many rows as
+ * `maxRows` allows, drops them in the declared `shed` order only when
+ * the window cannot spare another row, and lets `truncate-end` take the
+ * remainder when nothing rankable is left.
+ *
+ * Each row is its own Box so a chip can never be split from the
+ * separator that follows it — Ink would happily wrap mid-chip if the
+ * whole strip were one row of items, which is the "unreadable two-line
+ * smear" the single-row budget was protecting against.
  */
 export function HotkeyHint({
   state,
   ctrlCArmed,
   menuLeaderArmed,
   width,
+  maxRows = 1,
 }: HotkeyHintProps): ReactElement {
-  const chips = fitChips(
+  const rows = layoutChipRows(
     resolveChips(state, ctrlCArmed ?? false, menuLeaderArmed ?? false),
     width,
+    maxRows,
   );
   return (
-    <Box flexShrink={0} overflow="hidden">
-      {chips.map((chip, idx) => (
-        <Box key={chip.key} flexShrink={0}>
-          <Chip chip={chip} />
-          {idx < chips.length - 1 ? (
-            <Text color={theme.colors.muted}>
-              {"  "}
-              {theme.glyphs.dotSeparator}
-              {"  "}
-            </Text>
-          ) : null}
+    <Box flexShrink={0} flexDirection="column" overflow="hidden">
+      {rows.map((row, rowIdx) => (
+        <Box key={rowKey(row, rowIdx)} flexShrink={0}>
+          {row.map((chip, idx) => (
+            <Box key={chip.key} flexShrink={0}>
+              <Chip chip={chip} />
+              {idx < row.length - 1 ? (
+                <Text color={theme.colors.muted}>
+                  {"  "}
+                  {theme.glyphs.dotSeparator}
+                  {"  "}
+                </Text>
+              ) : null}
+            </Box>
+          ))}
         </Box>
       ))}
     </Box>
   );
+}
+
+/**
+ * A row's identity is the keys on it: rows are re-packed on every width
+ * change, so keying by index alone would let React reuse a row whose
+ * contents moved wholesale to the line above.
+ */
+function rowKey(row: readonly HotkeyChip[], idx: number): string {
+  return `${idx}:${row.map((chip) => chip.key).join("|")}`;
 }
 
 function Chip({ chip }: { chip: HotkeyChip }): ReactElement {

@@ -53,4 +53,20 @@ describe("stepped panel budget", () => {
     expect(appChromeRows(false)).toBe(APP_CHROME_ROWS_BASE);
     expect(appChromeRows(true)).toBeGreaterThan(appChromeRows(false));
   });
+
+  /**
+   * The strip's row in `APP_CHROME_ROWS_BASE` is its baseline, not its
+   * maximum — it wraps now. A pane budgeted against the baseline while
+   * the strip painted three rows would overflow, and Ink 7 overlaps
+   * rather than clips.
+   */
+  it("counts the rows the wrapped hint strip is spending", () => {
+    expect(appChromeRows(false, 0)).toBe(appChromeRows(false));
+    expect(appChromeRows(false, 2)).toBe(appChromeRows(false) + 2);
+    expect(appChromeRows(true, 2)).toBe(appChromeRows(true) + 2);
+  });
+
+  it("ignores a negative surplus rather than handing rows back", () => {
+    expect(appChromeRows(true, -4)).toBe(appChromeRows(true));
+  });
 });

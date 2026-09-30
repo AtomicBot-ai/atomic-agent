@@ -26,6 +26,22 @@ export interface ResolvedUninstallPlan {
   readonly installDir: string;
 }
 
+/**
+ * The install dir to take off the Windows user `Path`, or `undefined`
+ * when the plan removes no program: under a dev runtime `installDir` is
+ * node's own directory, and under `--keep-binary` the binary stays and
+ * still needs to be found.
+ */
+export function pathEntryToRemove(
+  plan: ResolvedUninstallPlan,
+): string | undefined {
+  if (plan.devCheckout) return undefined;
+  if (!plan.targets.some((target) => target.group === "program")) {
+    return undefined;
+  }
+  return plan.installDir;
+}
+
 export interface ResolveUninstallPlanOptions {
   /** `getConfig().paths.stateDir`. Required — never guessed here. */
   readonly stateDir: string;

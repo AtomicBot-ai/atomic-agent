@@ -474,6 +474,81 @@ describe("createTraceRecorder", () => {
     expect(err).not.toHaveProperty("fallbackFailures");
   });
 
+  it("records one error for a step failure the loop rethrows unchanged", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-dup", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 3 });
+    // `executeStep` emits `step_error` and rethrows the very same
+    // object, which the loop then reports as `loop_failed` — one
+    // failure, and so one `error` row.
+    const failure = new Error("batch cancelled mid-execution");
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: { type: "step_error", error: failure, category: "cancelled" },
+    });
+    rec.onAgentEvent({
+      type: "loop_failed",
+      error: failure,
+      category: "cancelled",
+    });
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      type: "error",
+      message: "batch cancelled mid-execution",
+      category: "cancelled",
+      stepIndex: 3,
+    });
+  });
+
+  it("records both errors when the loop fails with a different one", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-dup-2", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 2 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "step_error",
+        error: new Error("provider refused the raised reply cap"),
+        category: "transport",
+      },
+    });
+    // The truncation-retry path swaps in `truncationRetry.original`
+    // before emitting `loop_failed`: a genuinely different failure,
+    // which must still reach the trace.
+    rec.onAgentEvent({
+      type: "loop_failed",
+      error: new Error("completion truncated at the reply cap"),
+      category: "model",
+    });
+    expect(
+      events.filter((e) => e.type === "error").map((e) => e.message),
+    ).toEqual([
+      "provider refused the raised reply cap",
+      "completion truncated at the reply cap",
+    ]);
+  });
+
+  it("records a loop_failed that no step_error preceded", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-dup-3", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "loop_failed",
+      error: new Error("failed outside executeStep"),
+      category: "transport",
+    });
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      message: "failed outside executeStep",
+      stepIndex: 0,
+    });
+  });
+
   it("records a size-rejection repack (F30)", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-repack", emit, now });
@@ -758,12 +833,18 @@ describe("createTraceRecorder", () => {
       direction: null,
       reason: "malformed",
     });
-    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
+    rec.recordVote({
+      outcome: "skipped",
+      candidates: 0,
+      reason: "candidates=0 of 0 surfaced ids",
+    });
+    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]);
     expect(events.map((e) => e.type)).toEqual([
       "session_started",
       "turn_started",
       "vote_applied",
       "vote_rejected",
+      "vote",
     ]);
   });
 
@@ -804,6 +885,41 @@ describe("createTraceRecorder", () => {
       outcome: "ok",
       linksWritten: 3,
     });
+  });
+
+  // The run-level `vote` row: the decorator's two pre-runner
+  // bail-outs are the only place a vote turn's outcome can be said.
+  it("emits vote with the outcome, the reason and candidates", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-run", emit, now });
+    // An agent event first: the row's `seq` has to come from the
+    // recorder's counter, which a constant would also satisfy on a
+    // fresh recorder.
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.recordVote({
+      outcome: "skipped",
+      candidates: 0,
+      reason: "candidates=0 of 0 surfaced ids",
+    });
+    expect(events[1]).toMatchObject({
+      type: "vote",
+      sessionId: "s-vote-run",
+      seq: 1,
+      outcome: "skipped",
+      candidates: 0,
+      reason: "candidates=0 of 0 surfaced ids",
+    });
+  });
+
+  it("omits vote candidates when the count is unknown", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-fail", emit, now });
+    rec.recordVote({
+      outcome: "failed",
+      reason: "candidate hydration failed: boom",
+    });
+    expect(events[0]).toMatchObject({ type: "vote", outcome: "failed" });
+    expect(events[0]).not.toHaveProperty("candidates");
   });
 
   it("emits query_rewriter with outcome only", () => {

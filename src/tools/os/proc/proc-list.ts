@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { runCommand } from "../../../sandbox/command-runner.js";
 
@@ -22,6 +23,21 @@ interface ListArgs {
 }
 
 const DEFAULT_LIMIT = 500;
+/**
+ * Width of one rendered `formatTable` row: 49 chars of padded columns
+ * (8 + 1 + 8 + 1 + 18 + 1 + 5 + 1 + 5 + 1) and then the command, which
+ * on POSIX is whatever `ps -eo comm` prints — a full executable path
+ * on macOS. Measured over 1 067 processes: 89 chars on average, 289 at
+ * the widest, so 49 + 289 rounded up covers even the widest row. A
+ * filtered call selects exactly the long-path rows, which is why this
+ * is sized for the worst case and not the mean; the shared ceiling is
+ * what keeps a 500-row table from spending it.
+ *
+ * Still an estimate, not a ceiling: `padEnd` pads a short field but
+ * does not truncate a long one, so an unusually long user name widens
+ * the row past 49 + command.
+ */
+const ROW_CHARS = 340;
 
 export const osProcListTool: ToolDefinition = {
   name: "os.proc.list",
@@ -37,18 +53,32 @@ export const osProcListTool: ToolDefinition = {
       filtered = rows.filter((r) => r.command.toLowerCase().includes(needle));
     }
     const limited = filtered.slice(0, args.limit);
-    return compressToolResult({
-      tool: "os.proc.list",
-      status: "ok",
-      output: formatTable(limited),
-      details: {
-        total: rows.length,
-        matched: filtered.length,
-        returned: limited.length,
-        truncated: filtered.length > limited.length,
-        processes: limited,
+    return compressToolResult(
+      {
+        tool: "os.proc.list",
+        status: "ok",
+        output: formatTable(limited),
+        details: {
+          total: rows.length,
+          matched: filtered.length,
+          returned: limited.length,
+          truncated: filtered.length > limited.length,
+          processes: limited,
+        },
       },
-    });
+      // `formatTable` puts the `PID PPID USER CPU% MEM% COMMAND`
+      // header on line 1, so the default 12-line tail drops the column
+      // header and leaves the last 12 of up to 500 rows — of which the
+      // 385-char head-slice then keeps ~5. Budget the rows this call
+      // actually returns — at most `limit`, which is DEFAULT_LIMIT
+      // (500) unless the caller raised it — at ROW_CHARS each. This is
+      // the one listing here that a default call can outgrow: 500 rows
+      // ask for 170 KB and land on the shared ceiling, which measured
+      // out at the header plus 40 real rows against the 2 rows the
+      // compressor defaults left. A `filter` narrow enough to be
+      // useful stays well under the ceiling and is not cut at all.
+      listingResultCaps(limited.length, ROW_CHARS),
+    );
   },
 };
 

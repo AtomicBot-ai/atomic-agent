@@ -12,6 +12,33 @@ export interface ListArchiveToolOptions {
 }
 
 /**
+ * Character budget for an archive tool's summary, shared with
+ * `extract-tool.ts` so the two read the same size in a transcript.
+ *
+ * It is ours to pick because the compressor's is unusable here. Anything
+ * above 8000 is dead on arrival: `TOOL_RESULT_RENDER_CAP_CHARS` in
+ * `session/conversation-turn.ts` re-cuts every tool result at render time
+ * and the archive tools are not among the exempt ones, so the 64 KiB this
+ * used to store only ever reached the model as its first 8000 chars —
+ * while still charging the packed transcript the full 8000 (~2.2K tokens,
+ * a fourteenth of the 32K fallback window) on every turn that carries it,
+ * and `heldPackStart` keeps the cut that pays for it.
+ *
+ * Measured on this repo: a 400-entry listing renders at ~20.8 KB, its
+ * first 120 entries at ~5.8 KB. 6000 chars is ~1.7K tokens — enough for a
+ * listing a model can actually navigate, small enough that a session can
+ * take several without evicting its own history.
+ */
+export const ARCHIVE_SUMMARY_MAX_CHARS = 6_000;
+
+/**
+ * Entries the listing summary carries before it starts hiding them. The
+ * character budget above usually bites first; this bound is what keeps a
+ * listing of very short paths from becoming a thousand-line wall.
+ */
+const LISTING_MAX_ENTRIES = 120;
+
+/**
  * `os.fs.archive.list` — enumerate archive contents without touching the
  * filesystem outside the source file. Returns a compact, LLM-friendly
  * listing (one entry per line) plus a structured `entries` array in the
@@ -60,7 +87,13 @@ export function buildOsFsArchiveListTool(
             })),
           },
         },
-        { maxSummaryLength: 64 * 1024, maxTailLines: 2000 },
+        // `formatListing` has already clipped to these bounds and said so
+        // in the text; passing them on keeps the compressor from cutting
+        // a second time and losing the line that names what was hidden.
+        {
+          maxSummaryLength: ARCHIVE_SUMMARY_MAX_CHARS,
+          maxTailLines: LISTING_MAX_ENTRIES + 1,
+        },
       );
     },
   };
@@ -77,7 +110,45 @@ function formatListing(entries: readonly ArchiveEntry[]): string {
     const target = e.linkTarget ? ` -> ${e.linkTarget}` : "";
     return `${kind} ${size.padStart(10, " ")}  ${e.path}${target}`;
   });
-  return lines.join("\n");
+  return clipListing(lines);
+}
+
+/**
+ * Keep the head of the listing and end with a line naming exactly how
+ * many entries were left out.
+ *
+ * Both halves matter. A listing has no header, so the compressor's
+ * tail-slice would drop the *top* of the archive — the manifest, the
+ * root directory, the entries a model opens a listing to find — and its
+ * head-slice would end the text mid-path with a bare "… [truncated]".
+ * Either way the model is handed a partial listing that looks complete,
+ * which is how it ends up concluding a file is not in the archive.
+ */
+function clipListing(lines: readonly string[]): string {
+  // Budget against the longest trailer we could end up writing, so the
+  // clipped text fits the cap whatever the hidden count turns out to be.
+  const budget =
+    ARCHIVE_SUMMARY_MAX_CHARS - hiddenEntriesNote(lines.length).length - 1;
+  let kept = 0;
+  let chars = 0;
+  while (kept < lines.length && kept < LISTING_MAX_ENTRIES) {
+    const next = chars + (kept > 0 ? 1 : 0) + lines[kept]!.length;
+    if (next > budget) break;
+    chars = next;
+    kept += 1;
+  }
+  if (kept >= lines.length) return lines.join("\n");
+  // One pathologically long path should still be shown rather than
+  // replaced by a note saying every entry was hidden.
+  const shown = Math.max(1, kept);
+  return [
+    ...lines.slice(0, shown),
+    hiddenEntriesNote(lines.length - shown),
+  ].join("\n");
+}
+
+function hiddenEntriesNote(hidden: number): string {
+  return `… ${hidden} more ${hidden === 1 ? "entry" : "entries"} not shown (listing clipped; entries are in archive order)`;
 }
 
 function kindLetter(kind: ArchiveEntry["kind"]): string {

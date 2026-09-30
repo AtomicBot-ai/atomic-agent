@@ -3,6 +3,7 @@ import {
   type ApprovalLevel,
 } from "../approval/approval-level.js";
 import type { CodingMode } from "./coding-mode.js";
+import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
@@ -171,6 +172,17 @@ export interface ChatMessage {
    * pane that changes it back is one most operators have never opened.
    */
   action?: "configure-fallback";
+  /**
+   * A session this notice offers to open, rendered as a `[switch back]`
+   * button beside `[copy]`. Set on the notices that name a thread the
+   * operator left mid-turn — the detach notice and the one announcing
+   * that the backgrounded turn finished. Both end in an instruction to
+   * go there ("switch back to watch or stop it", "open it from the
+   * sidebar to read the reply"), and until now the only ways were the
+   * rail and the picker: the notice names the session it is about, so
+   * it is also the shortest way into it.
+   */
+  switchToSessionId?: string;
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */
@@ -296,6 +308,15 @@ export interface TuiSessionInfo {
   completionMaxTokens: number;
   skillCount: number;
   /**
+   * Installed skills `skills.catalogTokenBudget` left out of the
+   * catalog `skillCount` counts. Absent is read as zero — the field is
+   * optional only so the many state fixtures that predate it stay
+   * valid, not because "unknown" is a meaningful third state. Without
+   * it the diagnostics line reports a clipped catalog as the whole
+   * install, the operator-facing half of issue #466.
+   */
+  skillCountDropped?: number;
+  /**
    * Whether the user actually opted into a local backend (see
    * `isLocalBackendConfigured`). Decides whether the llama-server health
    * indicator is shown at all, so a fresh install is not told that a server
@@ -406,6 +427,8 @@ export interface TuiState {
   providerOutage: {
     /** Scrubbed reason from the transport failure. */
     reason: string;
+    /** What the failure was, when the runtime said (see `ProviderWaitCause`). */
+    cause?: ProviderWaitCause;
     /** Wall-clock ms already spent waiting in this outage. */
     waitedMs: number;
     /** Ceiling from `agent.providerWait.maxWaitMs`. */
@@ -615,6 +638,14 @@ export interface TuiState {
    */
   recentSessions: readonly SessionPickerEntry[];
   /**
+   * Does the store hold sessions beyond the ones in `recentSessions`?
+   * The rail reads the store one page at a time, so the length of that
+   * list is "what is loaded", never "what exists" — anything that counts
+   * it for the operator has to say which of the two it means. `false`
+   * before the first refresh: an empty list with nothing behind it.
+   */
+  recentSessionsMorePages: boolean;
+  /**
    * Which surface owns keyboard focus inside the chat layout: the
    * editor (default) or the sidebar's panes (Sessions / Tasks). Tab
    * cycles `editor → sidebar(sessions) → sidebar(tasks) → editor` when
@@ -681,6 +712,21 @@ export interface TuiState {
    */
   queuedMessages: readonly string[];
   /**
+   * Messages folded into the turn already running (steer mode), from
+   * the moment they are sent until the loop picks one up. They are not
+   * transcript yet — the inbox is drained at the next step boundary,
+   * which a long `os.shell.run` can hold off for minutes — so they
+   * render at the END of the chat, after everything the turn has said
+   * and ahead of the spinner, exactly where a message you send lands
+   * in any chat. The operator who just typed one needs to see it
+   * arrive, not an editor that blanked and nothing else until the step
+   * comes. Emptied by whatever resolves the message: `steer_applied`
+   * (it is transcript now), `queue_changed` (parked instead), the end
+   * of the run (nothing will read it any more). A bubble here always
+   * means "accepted, still on its way in".
+   */
+  pendingSteers: readonly string[];
+  /**
    * What Enter does while a turn is running: `steer` folds the message
    * into the turn in flight, `queue` parks it for the next one. Seeded
    * from `config.tui.whileBusySubmit` at mount and flipped in-app with
@@ -688,6 +734,18 @@ export interface TuiState {
    * turn then.
    */
   whileBusyMode: WhileBusySubmitMode;
+  /**
+   * Esc has been pressed on a running turn and is waiting for the `1`
+   * that confirms the abort.
+   *
+   * Aborting used to be a bare Esc, which is the same key the composer
+   * uses to clear a draft, the chat uses to snap back from a scroll and
+   * every overlay uses to close itself — so the one keystroke that
+   * throws away minutes of work was also the most reflexive key on the
+   * strip. It is now a two-key chord. Anything that is not `1`
+   * disarms it, so a stray Esc costs one keystroke and nothing else.
+   */
+  abortArmed: boolean;
   /**
    * The stance the session is working in — see `coding-mode.ts`. Session
    * state, never persisted: `bypass` surviving a restart would be a
@@ -870,6 +928,7 @@ export function createInitialTuiState(
     llmHealth: createInitialLlmHealthState(session?.localBackendConfigured),
     telegramPanel: createInitialTelegramPanelState(),
     recentSessions: [],
+    recentSessionsMorePages: false,
     chatFocus: "editor",
     sidebarSection: "sessions",
     sidebarCollapsed: false,
@@ -878,7 +937,9 @@ export function createInitialTuiState(
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],
+    pendingSteers: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
+    abortArmed: false,
     codingMode: "default",
     codingModeMenu: null,
     planHandoff: false,

@@ -5,7 +5,7 @@ import { getConfig } from "../config/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
-import { buildSkillCatalog } from "../skills/skill-catalog.js";
+import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/index.js";
 import { replaySession } from "../replay/index.js";
 import { traceFilePath } from "../tracing/index.js";
@@ -135,12 +135,19 @@ async function handleReplay(args: string[]): Promise<number> {
       ? sessionStarted.workingDir
       : process.cwd();
 
-  const skillRegistry = new SkillRegistry({
-    globalDir: config.paths.globalSkillsDir,
-    projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
-  });
+  // `skills.disabled` as well as the dirs: the registry's filtered
+  // `list()` is what the runtime fed the prompt, and a replay that
+  // rebuilds the catalog from every installed skill reports DRIFT on
+  // every step of any session recorded with a skill turned off.
+  const skillRegistry = new SkillRegistry(
+    {
+      globalDir: config.paths.globalSkillsDir,
+      projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
+    },
+    config.skills.disabled,
+  );
   await skillRegistry.refresh();
-  const skillCatalog = buildSkillCatalog(skillRegistry.list(), {
+  const skillSection = buildSkillCatalogSection(skillRegistry.list(), {
     tokenBudget: config.skills.catalogTokenBudget,
   });
   const capabilities = await buildCapabilities({
@@ -153,7 +160,8 @@ async function handleReplay(args: string[]): Promise<number> {
     context: {
       toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
       capabilities,
-      skillCatalog,
+      skillCatalog: skillSection.entries,
+      skillCatalogDropped: skillSection.dropped,
       profile: PLAIN_INSTRUCT_PROFILE,
     },
   });

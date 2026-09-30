@@ -54,6 +54,9 @@ export function buildEnvelope(
   if (ev.failureStage) tags.failure_stage = ev.failureStage;
   if (ev.tool) tags.tool = ev.tool;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
+  if (ev.upstreamErrorType) {
+    tags.upstream_error_type = ev.upstreamErrorType;
+  }
 
   // `frames[0]` is the innermost frame (V8 lists the throw site first),
   // i.e. where the failure actually originated. `.at(-1)` would instead
@@ -75,14 +78,38 @@ export function buildEnvelope(
     // one issue per underlying cause class / failing tool / model-failure
     // reason / transport target, instead of every occurrence landing in a
     // single undiagnosable issue. `causeType` is checked first because it
-    // is only ever populated on the generic-wrapper path (see
-    // `toLlmFailure`'s catch-all) where `tool` is always the useless
-    // literal `"unknown"`.
+    // is the more specific of the two wherever BOTH are set, and the only
+    // wrapper that sets both is `toLlmFailure`'s catch-all, whose `tool`
+    // is the useless literal `"unknown"`. The order never costs a real
+    // tool name: `step-executor.ts`'s unregistered-tool throw is the one
+    // `ToolExecutionError` carrying a genuine one, and it passes no cause.
+    //
+    // Do NOT read that order as "`causeType` is rare". `toLlmFailure`
+    // attaches `{ cause }` on every arm it wraps — `CancelledError`,
+    // `TransportError` and `GrammarError` alike — as do the llama-server
+    // and OpenAI clients, so most reported failures discriminate on
+    // `causeType`, with `tool` *undefined* rather than `"unknown"`.
+    //
+    // `upstreamErrorType` is a separate element rather than one more `??`
+    // fallback because on the provider path the discriminator above has
+    // nothing left to separate: every provider failure shares the single
+    // value `OpenAiHttpError`, so a context window that is too small and
+    // a wrong model id land under one shortId with nothing in the event
+    // to tell them apart.
+    //
+    // Spread, not `?? ""`: an event without the field must keep the
+    // fingerprint it has today, element for element, so nothing that is
+    // already live re-groups. Only events that actually carry an upstream
+    // type get the extra element, and no such event exists yet. The same
+    // argument does NOT hold for `httpStatus`, which is already live on
+    // every transport issue — putting it here re-groups all of them, so
+    // it is deliberately left out. See the follow-up note in the PR.
     fingerprint: [
       "{{ default }}",
       ev.errorType,
       ev.category ?? "",
       ev.causeType ?? ev.tool ?? ev.reason ?? ev.transportHost ?? "",
+      ...(ev.upstreamErrorType !== undefined ? [ev.upstreamErrorType] : []),
       topFrame,
     ],
     exception: {

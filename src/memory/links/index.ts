@@ -27,4 +27,5 @@ export type {
   LinkGeneratorRunner,
   LinkGeneratorRunnerDeps,
   LinkGeneratorLlmComplete,
+  LinkGeneratorTraceEvent,
 } from "./link-generator-runner.js";

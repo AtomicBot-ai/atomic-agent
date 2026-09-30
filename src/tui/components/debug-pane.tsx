@@ -175,6 +175,11 @@ function buildManageTabs(state: TuiState): SubTab[] {
  * Height consumed by the always-on app frame OUTSIDE the debug pane
  * when the composer is NOT on screen: the top `StatusBar` (1 row), the
  * hairline under it (1) and the `HotkeyHint` (1).
+ *
+ * The strip's one row is its *baseline*, not its maximum — it wraps now
+ * (`hotkey-chip-rows.ts`). Callers add the surplus through
+ * `appChromeRows`'s `extraChromeRows`; `selectExtraChromeRows` is where
+ * that number comes from.
  */
 export const APP_CHROME_ROWS_BASE = 3;
 /**
@@ -194,8 +199,15 @@ export const COMPOSER_ROWS = 10;
  * conditional: a Manage tab really does have six more rows to spend, and
  * budgeting as if the composer were still there leaves them dead.
  */
-export function appChromeRows(composerVisible: boolean): number {
-  return APP_CHROME_ROWS_BASE + (composerVisible ? COMPOSER_ROWS : 0);
+export function appChromeRows(
+  composerVisible: boolean,
+  extraChromeRows = 0,
+): number {
+  return (
+    APP_CHROME_ROWS_BASE +
+    (composerVisible ? COMPOSER_ROWS : 0) +
+    Math.max(0, extraChromeRows)
+  );
 }
 /** Back-compat alias: the chat-screen total. */
 export const APP_CHROME_ROWS = APP_CHROME_ROWS_BASE + COMPOSER_ROWS;

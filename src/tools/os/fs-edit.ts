@@ -4,7 +4,12 @@ import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
-import { clampDiffPreview, renderUnifiedDiff } from "./fs-edit-diff.js";
+import {
+  clampDiffPreview,
+  DIFF_SUMMARY_MAX_CHARS,
+  DIFF_SUMMARY_MAX_LINES,
+  renderUnifiedDiff,
+} from "./fs-edit-diff.js";
 import { withParseWarning } from "./fs-parse-check.js";
 import {
   guardReplacedFile,
@@ -106,19 +111,30 @@ export function buildOsFsEditTool(
 
       return withReplaceNotes(
         withParseWarning(
-          compressToolResult({
-            tool: "os.fs.edit",
-            status: "ok",
-            output:
-              diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
-            details: {
-              path: absolute,
-              replacedOccurrences,
-              replaceAll: args.replaceAll,
-              sizeBefore: Buffer.byteLength(original, "utf8"),
-              sizeAfter: Buffer.byteLength(updated, "utf8"),
+          // The diff is already clipped, by `renderUnifiedDiff`, to a
+          // length chosen for diffs. Left to its defaults the compressor
+          // would undo that considered cap with one that knows nothing
+          // about them — 12 tail lines and 385 chars — so we pass the
+          // renderer's own bounds instead (see `fs-edit-diff.ts`).
+          compressToolResult(
+            {
+              tool: "os.fs.edit",
+              status: "ok",
+              output:
+                diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
+              details: {
+                path: absolute,
+                replacedOccurrences,
+                replaceAll: args.replaceAll,
+                sizeBefore: Buffer.byteLength(original, "utf8"),
+                sizeAfter: Buffer.byteLength(updated, "utf8"),
+              },
             },
-          }),
+            {
+              maxSummaryLength: DIFF_SUMMARY_MAX_CHARS,
+              maxTailLines: DIFF_SUMMARY_MAX_LINES,
+            },
+          ),
           parseWarning,
         ),
         [guard],

@@ -68,13 +68,32 @@ const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
  *    evaluating; a server that is provably doing nothing is not going
  *    to answer, and waiting the full first-token budget on it is what
  *    parked a turn for half an hour. See `SLOTS_POLL_INTERVAL_MS`.
+ *  - `first-token-unreachable` — while waiting for the first byte,
+ *    every `/slots` poll for `SLOTS_UNREACHABLE_BUDGET_MS` failed to
+ *    reach a listening socket at all (connection refused, host or name
+ *    not there — never a timeout, see `SLOTS_UNREACHABLE_ERRNOS`). The
+ *    distinction from `first-token-stall` is the whole point: a stall
+ *    is a server that talks and does nothing, this is a server that is
+ *    not there, and the advice for the two is different — one is
+ *    "check why the request is not being picked up", the other is "the
+ *    daemon is gone, restart it". See `SLOTS_UNREACHABLE_BUDGET_MS`.
+ *  - `first-token-unresponsive` — the third state, and the one the
+ *    first two could not name: the socket accepts and **nothing ever
+ *    answers**, not `/slots` and not `/health`, for
+ *    `SLOTS_UNREACHABLE_BUDGET_MS`. Not a stall (a stall is a server
+ *    that answers), not unreachable (the connection is made), and not
+ *    busy either — see `probeHealth` for why `/health` is the thing
+ *    that tells busy apart from wedged. The daemon is listening and its
+ *    HTTP loop is not serving; the only remedy is a restart.
  */
 export type LlamaTimeoutKind =
   | "total"
   | "first-token"
   | "idle"
   | "stream-total"
-  | "first-token-stall";
+  | "first-token-stall"
+  | "first-token-unreachable"
+  | "first-token-unresponsive";
 
 /**
  * Progress watch while waiting for the first token: `GET /slots` every
@@ -89,12 +108,144 @@ export type LlamaTimeoutKind =
 export const SLOTS_POLL_INTERVAL_MS = 15_000;
 export const SLOTS_POLL_TIMEOUT_MS = 3_000;
 
-/** What one answered `/slots` poll said about progress. */
+/**
+ * Deadline for the unary requests this client makes *outside* a
+ * completion: `GET /props` (the model-profile probe at boot and at every
+ * local turn start) and `POST /apply-template` (the chat-template render
+ * a step does before it sends its prompt).
+ *
+ * Both used to inherit `requestTimeoutMs` — five minutes, the budget of
+ * a generation — and both sit on a turn's critical path before anything
+ * the operator can see: a server that accepted the connection and never
+ * answered (frozen with SIGSTOP, wedged, or any socket that just
+ * listens) held `run` at boot and a TUI turn between `turn_started` and
+ * `step_started` with no event and no log line. Neither endpoint queues
+ * behind a decode in llama.cpp — both are answered off the inference
+ * loop, in milliseconds — so a few seconds of silence already says the
+ * server is not there. Each caller has a fallback that costs nothing on
+ * a timeout: the profile manager keeps the last known profile, boot
+ * starts on the plain profile and re-probes on the first turn, and the
+ * template renderer sends the raw prompt for that step. The completion
+ * that follows is what reports the server, through its own deadlines
+ * and the provider wait.
+ */
+export const PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * How long a run of polls that prove *nothing is listening* may last
+ * before a first-token wait is ended as `first-token-unreachable`.
+ * Floored at the idle budget by `unreachableBudgetMs()`.
+ *
+ * **What counts is decided by `slotsPollFailure`, not by this number.**
+ * Only a connection that could not be made at all — `ECONNREFUSED`, a
+ * name that does not resolve, a route that does not exist — extends the
+ * run. A poll that merely *times out* never does, however many times in
+ * a row, because that is indistinguishable from the healthiest thing
+ * this client ever waits for: `/slots` is known to hang while a slot
+ * evaluates a large prompt (measured on the fusion benchmark), and one
+ * `llama_decode` of an `n_batch` chunk on CPU runs far past the 3 s poll
+ * deadline. A 16k-token prompt at CPU prompt-eval speeds on a 32 GB box
+ * is a quarter of an hour in which essentially every poll times out and
+ * the request is *working* — which is why `firstTokenTimeoutMs` is 30
+ * minutes in the first place. A deadline that counted timeouts would
+ * abort that request at ten, with its first token minutes away, and it
+ * would do the same to a worker legitimately queued behind another
+ * slot's prompt eval (`worker-runner.ts` documents that wait as
+ * by-design). Verified against this file: with timeouts counted, a
+ * server whose `/slots` hangs and whose first token arrives at t=14min
+ * dies at t=10min with `first-token-unreachable`.
+ *
+ * So the budget is hysteresis on an already-conclusive signal, not a
+ * guess at how long a slow machine is allowed to be quiet. Ten minutes:
+ * a third of the first-token budget, long enough that a daemon being
+ * restarted under a running turn is not an abort, and short enough that
+ * it returns two thirds of a 30-min wait to the caller when the daemon
+ * really is gone — issue #490's cost was the full 30.
+ * `SLOTS_UNREACHABLE_MIN_POLLS` is the second half of the guard.
+ */
+export const SLOTS_UNREACHABLE_BUDGET_MS = 10 * 60_000;
+
+/**
+ * How many *consecutive* refused polls the unreachable run must also
+ * cover. At the default 15 s interval the budget above is ~33 polls, so
+ * this floor never binds; it exists because `slotsPollIntervalMs` is
+ * tunable, and a deployment that widened the interval must not be able
+ * to turn one or two refused polls into an abort — a daemon being
+ * bounced refuses connections for a few seconds by construction.
+ */
+export const SLOTS_UNREACHABLE_MIN_POLLS = 8;
+
+/**
+ * Errnos that mean the request never reached a listening socket, so the
+ * server is provably not there — as opposed to not answering yet.
+ *
+ * This set is the whole safety property of `first-token-unreachable`. A
+ * busy llama-server accepts the TCP connection and then fails to serve
+ * `/slots` while its main loop is inside a decode; that surfaces as our
+ * own 3 s abort, never as one of these. Nothing that a working server
+ * can produce is in here.
+ *
+ * Deliberately excluded:
+ *  - `ETIMEDOUT` — the kernel's connect deadline. A host that has gone
+ *    silent produces it, but so does a loaded box, and it is the one
+ *    errno a black-holed network shares with a machine that is merely
+ *    thrashing. Left to `firstTokenTimeoutMs`, as before this watch.
+ *  - `ECONNRESET` / `UND_ERR_*` — a reset can come from a server that
+ *    is up and shedding connections under load (cpp-httplib closes when
+ *    its thread pool is exhausted), which is saturation, not absence.
+ *  - a bare `TypeError: fetch failed` with no errno on the chain: it is
+ *    undici's catch-all and covers both a connection that never opened
+ *    and one that died, so it proves nothing on its own.
+ */
+const SLOTS_UNREACHABLE_ERRNOS = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+]);
+
+/**
+ * Read a failed `/slots` poll: did it prove the server is absent, or
+ * only that it did not answer this time?
+ *
+ * Exported for the test that pins the set above — the distinction is
+ * the difference between a watchdog that catches a dead daemon and one
+ * that kills a long prompt eval.
+ */
+export function slotsPollFailure(err: unknown): "refused" | "unanswered" {
+  const code = readErrnoCode(err);
+  return code !== undefined && SLOTS_UNREACHABLE_ERRNOS.has(code)
+    ? "refused"
+    : "unanswered";
+}
+
+/** What one `/slots` poll said about progress. */
 export type SlotProgressVerdict =
   | { kind: "progress"; snapshot: string }
   | { kind: "idle"; snapshot: string }
-  /** The poll failed or timed out: no verdict, the server is busy or off. */
-  | { kind: "unknown" };
+  /**
+   * The server answered, but the answer carries no verdict — an error
+   * status, or a body that is not a slot table. It is alive; only the
+   * watch is blind. Never counted as progress, never as unreachable.
+   */
+  | { kind: "unknown" }
+  /**
+   * No answer, and no proof of why: the poll hit its own 3 s deadline,
+   * or the socket failed in a way a loaded server can also produce.
+   * Ambiguous by construction — a hung `/slots` is the ordinary look of
+   * a slot evaluating a large prompt — so it moves neither clock and
+   * `firstTokenTimeoutMs` stays the only backstop, exactly as before
+   * this watch existed.
+   */
+  | { kind: "unanswered" }
+  /**
+   * The connection could not be made at all (`SLOTS_UNREACHABLE_ERRNOS`).
+   * Nothing is listening on that address: the daemon is not there, and
+   * no amount of waiting for a prompt eval explains it.
+   */
+  | { kind: "refused" };
 
 /**
  * Compare a `/slots` answer with the previous one. Pure. `slotId` is the
@@ -277,6 +428,8 @@ export interface LlamaServerClientOptions {
   slotsPollIntervalMs?: number;
   /** Overrides `SLOTS_POLL_TIMEOUT_MS`. */
   slotsPollTimeoutMs?: number;
+  /** Overrides `PROBE_TIMEOUT_MS` (`/props`, `/apply-template`). */
+  probeTimeoutMs?: number;
   /**
    * Overrides the retry budget for `complete()` and the initial fetch
    * of `completeStream()`. When omitted, the client reads
@@ -314,11 +467,31 @@ export class LlamaServerClient {
   private readonly progressWatch: boolean;
   private readonly slotsPollIntervalMs: number;
   private readonly slotsPollTimeoutMs: number;
+  private readonly probeTimeoutMs: number;
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
+  /**
+   * The base URL whose `/slots` answered 404/405/501 — the endpoint is
+   * not built into this llama.cpp, so the progress watch can never do
+   * its job there. Latched (rather than re-discovered every 15 s) so
+   * the client stops polling an endpoint that will never exist, and so
+   * a first-token timeout can *say* the watch was blind instead of
+   * pretending it was watching. Keyed by URL because the base is read
+   * from config per request unless `baseUrl` pins it.
+   *
+   * **Cleared when the connection to that URL is refused** — see
+   * `forgetSlotsUnavailable`. The latch is self-sealing (once it is set
+   * nothing polls, so nothing can ever disprove it) and this client
+   * lives as long as the process does — `runtime/bootstrap.ts`
+   * constructs exactly one. Without a way out, a single 404 from a
+   * proxy or load balancer covering a daemon bounce, or a 501 from a
+   * build that `/llm restart` then replaces with one that has the
+   * endpoint, would blind the watch for the rest of the session.
+   */
+  private slotsUnavailableFor: string | null = null;
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
@@ -346,6 +519,7 @@ export class LlamaServerClient {
     this.slotsPollIntervalMs =
       options.slotsPollIntervalMs ?? SLOTS_POLL_INTERVAL_MS;
     this.slotsPollTimeoutMs = options.slotsPollTimeoutMs ?? SLOTS_POLL_TIMEOUT_MS;
+    this.probeTimeoutMs = options.probeTimeoutMs ?? PROBE_TIMEOUT_MS;
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
     this.sleep = options.sleep ?? defaultSleep;
@@ -359,6 +533,49 @@ export class LlamaServerClient {
    * from a measured speed, not a guess, and one that follows the load
    * on the machine rather than a constant.
    */
+  /**
+   * True once this server has answered a `/slots` poll with 404/405/501:
+   * the endpoint is absent, so the progress watch is off for good and
+   * `firstTokenTimeoutMs` is the only thing bounding a first-token wait.
+   * Read by the first-token error message; exposed so an operator-facing
+   * surface can say the same thing without repeating the probe.
+   */
+  slotsWatchUnavailable(): boolean {
+    if (this.slotsUnavailableFor === null) return false;
+    return (
+      this.slotsUnavailableFor ===
+      (this.baseUrlOverride ?? getConfig().localModels.url)
+    );
+  }
+
+  /**
+   * Drop a `/slots`-is-absent latch for `base` once the connection to
+   * it has been refused: whatever is listening there next need not be
+   * the process that answered 404/405/501, so the one fact the latch
+   * asserts has expired.
+   *
+   * This is the only way out of the latch, and it has to exist. `/llm
+   * restart` bounces the daemon under a client that outlives it, and a
+   * proxy in front of llama-server answers 404 for the seconds its
+   * upstream is down — either one otherwise turns the progress watch
+   * off for the rest of the session, silently, with the first-token
+   * message claiming the server "has no /slots endpoint" when it does.
+   */
+  private forgetSlotsUnavailable(base: string): void {
+    if (this.slotsUnavailableFor === base) this.slotsUnavailableFor = null;
+  }
+
+  /**
+   * The refused-`/slots` budget in force, never shorter than the idle
+   * budget. An operator who raised `requestTimeoutMs` is saying this
+   * machine goes quiet for long stretches while it is working; the same
+   * tolerance has to apply here, or the new deadline would undercut the
+   * setting they chose.
+   */
+  private unreachableBudgetMs(): number {
+    return Math.max(SLOTS_UNREACHABLE_BUDGET_MS, this.requestTimeoutMs);
+  }
+
   measuredTokensPerSecond(): number | null {
     if (this.throughputSamples.length === 0) return null;
     const sum = this.throughputSamples.reduce((a, b) => a + b, 0);
@@ -400,8 +617,9 @@ export class LlamaServerClient {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, "/apply-template");
+    const timeoutMs = this.probeTimeoutMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(url, {
         method: "POST",
@@ -428,21 +646,24 @@ export class LlamaServerClient {
       return json.prompt;
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
-        cause: err,
-      });
+      throw probeFailure(err, url, controller.signal.aborted, timeoutMs);
     } finally {
       clearTimeout(timer);
     }
   }
 
-  async fetchProps(): Promise<LlamaServerProps> {
+  /**
+   * `GET /props`. Bounded by `timeoutMs` (default `PROBE_TIMEOUT_MS`),
+   * body included: a server that accepts and never answers must not hold
+   * boot or a turn start for a generation's budget. Throws on any
+   * failure; a timeout says so by name and carries `timedOut`.
+   */
+  async fetchProps(timeoutMs = this.probeTimeoutMs): Promise<LlamaServerProps> {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, "/props");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(url, {
         method: "GET",
@@ -455,17 +676,7 @@ export class LlamaServerClient {
       return (await response.json()) as LlamaServerProps;
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(
-        message,
-        null,
-        url,
-        false,
-        readErrnoCode(err),
-        {
-          cause: err,
-        },
-      );
+      throw probeFailure(err, url, controller.signal.aborted, timeoutMs);
     } finally {
       clearTimeout(timer);
     }
@@ -493,6 +704,54 @@ export class LlamaServerClient {
         throw await buildHttpError(response, url);
       }
       return (await response.json()) as unknown;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * `GET /health` — the one question a busy llama-server can still
+   * answer, and the discriminator the progress watch was missing.
+   *
+   * In llama.cpp the two endpoints are served from different places.
+   * `get_slots` posts a `SERVER_TASK_TYPE_METRICS` task and blocks on
+   * its result, so it cannot answer while the main loop is inside a
+   * `llama_decode` — which is why a timed-out `/slots` poll is read as
+   * "busy" and never as evidence of anything (`slotsPollFailure`).
+   * `get_health` posts no task and is barred from touching the server
+   * context at all — the route body declares a dummy `bool ctx_server`
+   * for the express purpose of making a reference to the real one fail
+   * to compile — so it is answered by the HTTP thread alone, in
+   * microseconds, however deep in a decode the model is.
+   *
+   * So a server that will not answer `/health` is not merely busy: its
+   * HTTP layer itself has stopped dispatching. Measured in the field —
+   * a llama-server whose running task was cancelled mid prompt-eval
+   * logged not one line for the 18 minutes until it was killed, and
+   * answered nothing in that window.
+   *
+   * Any status counts as an answer, 404 included: a local server that
+   * is not llama.cpp has no `/health`, and the question was only ever
+   * whether something replied. Resolves `"answered"` or
+   * `"unanswered"`; never throws.
+   */
+  async probeHealth(
+    timeoutMs = this.slotsPollTimeoutMs,
+  ): Promise<"answered" | "unanswered"> {
+    const config = getConfig();
+    const base = this.baseUrlOverride ?? config.localModels.url;
+    const url = llamaEndpointUrl(base, config.localModels.healthPath);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      await this.fetchImpl(url, {
+        method: "GET",
+        headers: this.buildHeaders(false),
+        signal: controller.signal,
+      });
+      return "answered";
+    } catch {
+      return "unanswered";
     } finally {
       clearTimeout(timer);
     }
@@ -596,8 +855,18 @@ export class LlamaServerClient {
         },
       );
     }
-    const { response, cleanup, timedOut, keepAlive, startStreamDeadline } =
-      opened;
+    const {
+      response,
+      controller,
+      cleanup,
+      timedOut,
+      keepAlive,
+      startStreamDeadline,
+    } = opened;
+    // Declared out here so the `finally` below can reach it on every exit,
+    // including the one where the body turned out to be missing and the
+    // `LlamaServerError` is thrown before any reader exists.
+    let reader: ReadableStreamDefaultReader<string> | null = null;
     let finalResult: CompletionResult = {
       content: "",
       reasoningContent: "",
@@ -621,9 +890,7 @@ export class LlamaServerClient {
           url,
         );
       }
-      const reader = response.body
-        .pipeThrough(new TextDecoderStream())
-        .getReader();
+      reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       // Headers are in, and the first token may still be minutes away: the
       // request can be queued behind busy slots with its prompt not yet
       // evaluated. The deadline has been the `first-token` one since the
@@ -686,6 +953,38 @@ export class LlamaServerClient {
     } catch (err) {
       throw this.wrapTransportError(err, url, timedOut());
     } finally {
+      // Release the transport, whatever ended this generator.
+      //
+      // A llama.cpp slot is freed when the *connection closes*, not when
+      // its client stops reading: a `/completion` stream left open but
+      // undrained keeps holding its slot, logs nothing server-side, and
+      // makes every later request queue behind it in silence — on an
+      // otherwise idle server, until this process exits. So a generator
+      // that is *abandoned* rather than driven to `done` has to tear the
+      // socket down itself. `cleanup()` cannot do it: it only clears the
+      // deadlines and detaches the external abort listener, which leaves
+      // the fetch alive with nobody reading it. An abandon reaches here
+      // when a consumer calls `.return()` — that resumes this function at
+      // its `yield` and runs exactly this block, no `catch` — or when an
+      // exception is thrown out of the loop that is consuming us.
+      //
+      // The abort path does not need this (the signal already killed the
+      // socket, which is why a cancelled generation shows a clean
+      // `slot release` server-side) and neither does normal completion,
+      // but both tolerate it: cancelling an already-closed body resolves
+      // as a no-op, aborting a fetch whose body has ended does nothing,
+      // and `finally` cannot rewrite the `finalResult` returned above.
+      // Nor can it wake the external signal — that listener only ever
+      // runs one way, the caller's signal into `controller`, and it is
+      // still attached here because `cleanup()` runs last.
+      //
+      // Deliberately not awaited: `.return()` awaits whatever this block
+      // awaits, and a cancel propagating into a socket that is about to
+      // be aborted must never hang the consumer trying to walk away.
+      // Nothing here helps a generator dropped without `.return()` — GC
+      // never runs `finally` — but every reachable exit is covered.
+      void reader?.cancel().catch(() => undefined);
+      if (!controller.signal.aborted) controller.abort();
       cleanup();
     }
   }
@@ -717,7 +1016,10 @@ export class LlamaServerClient {
    * A first-token wait also runs the `/slots` progress watch (`watch`):
    * a third timer that polls every `slotsPollIntervalMs` and fires
    * `first-token-stall` when the server keeps answering and shows no
-   * work anywhere for a whole idle budget. It stops at the first byte.
+   * work anywhere for a whole idle budget, or
+   * `first-token-unreachable` when it stops answering the poll
+   * altogether for `unreachableBudgetMs()`. It stops at the first byte,
+   * and never starts on a server whose `/slots` is known absent.
    */
   private createRequestController(
     externalSignal?: AbortSignal,
@@ -759,14 +1061,47 @@ export class LlamaServerClient {
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
 
-    // The progress watch. `lastProgressAt` is the last moment the
-    // server was seen doing anything (or could not be asked — a poll
-    // that times out is a busy server); a run of answered polls with
-    // nothing moving that lasts an idle budget is the stall.
+    // The progress watch. Two clocks, because "the server says nothing
+    // is happening" and "there is no server" are different failures
+    // with opposite remedies:
+    //
+    //  - `lastProgressAt` — the last moment the server was seen doing
+    //    anything, or could not be asked. Anything that is not a clean
+    //    `idle` verdict refreshes it, so `first-token-stall` still
+    //    needs an *unbroken* run of idle answers spanning an idle
+    //    budget, exactly as before.
+    //  - `refusedSince` / `refusedPolls` — the current run of polls
+    //    that could not reach a listening socket at all (`refused`,
+    //    per `slotsPollFailure`). `first-token-unreachable` fires only
+    //    when that run outlasts `unreachableBudgetMs()` *and* covers at
+    //    least `SLOTS_UNREACHABLE_MIN_POLLS` polls. Any answer of any
+    //    kind resets it.
+    //
+    // A poll that merely went unanswered — its own 3 s deadline, or a
+    // socket error a loaded server can also produce — moves neither
+    // clock. It is refreshed evidence of nothing: `/slots` hanging is
+    // what a slot evaluating a large prompt looks like, so counting it
+    // would abort the healthiest request this client ever waits for,
+    // and treating it as an *answer* is what made the watchdog
+    // unfirable on a dead server in the first place (issue #490). It
+    // does refresh `lastProgressAt`, as before, so `first-token-stall`
+    // keeps needing an unbroken run of idle *answers*.
     let watchTimer: ReturnType<typeof setTimeout> | null = null;
     let watchStopped = false;
     let previousSnapshot: string | null = null;
     let lastProgressAt = Date.now();
+    let refusedSince: number | null = null;
+    let refusedPolls = 0;
+    //  - `unansweredSince` / `unansweredPolls` — the current run of
+    //    ticks in which NOTHING answered: not `/slots`, and not
+    //    `/health` either. `/health` is the discriminator (see
+    //    `probeHealth`): a busy server answers it in microseconds while
+    //    `/slots` hangs inside a decode, so a run where even `/health`
+    //    is silent is a server that is listening and not serving.
+    //    Bounded by the same budget and poll floor as the refused run,
+    //    and any answer of any kind resets it.
+    let unansweredSince: number | null = null;
+    let unansweredPolls = 0;
     const stopWatch = (): void => {
       watchStopped = true;
       if (watchTimer !== null) {
@@ -777,18 +1112,113 @@ export class LlamaServerClient {
     const pollOnce = async (): Promise<void> => {
       watchTimer = null;
       if (watchStopped || expired !== null || controller.signal.aborted) return;
-      let verdict: SlotProgressVerdict;
+      // Both halves of the tick go out together: `/slots` is allowed to
+      // hang for its whole deadline, and making `/health` wait its turn
+      // behind that would cost the tick twice over.
+      const health = this.probeHealth();
+      let verdict: SlotProgressVerdict = { kind: "unknown" };
+      // This build has no `/slots`: the watch used to stop for good and
+      // say so on a later timeout, and now keeps running on `/health`
+      // alone — the half that can still tell a wedged daemon from a
+      // slow one. An endpoint we did not ask is not an endpoint that
+      // answered, so this tick's liveness rides on `/health` only.
+      const slotsAsked = !this.slotsWatchUnavailable();
       try {
-        verdict = judgeSlotProgress(
-          await this.fetchSlots(),
-          watch?.slotId ?? -1,
-          previousSnapshot,
-        );
-      } catch {
-        verdict = { kind: "unknown" };
+        if (slotsAsked) {
+          verdict = judgeSlotProgress(
+            await this.fetchSlots(),
+            watch?.slotId ?? -1,
+            previousSnapshot,
+          );
+        }
+      } catch (err) {
+        // An HTTP status means the server answered — it is alive, and
+        // only the watch is blind. 404/405/501 is the endpoint missing
+        // from this build, which will not change while the process
+        // runs: latch it and stop polling rather than spending a
+        // request every 15 s to be told the same thing, and rather
+        // than claiming a watch this server cannot support. Every
+        // other status (401/403 behind a proxy, a 5xx) may clear, so
+        // the watch keeps polling and simply learns nothing.
+        const status = err instanceof LlamaServerError ? err.status : null;
+        if (status === 404 || status === 405 || status === 501) {
+          const config = getConfig();
+          this.slotsUnavailableFor =
+            this.baseUrlOverride ?? config.localModels.url;
+          // Latched, so nothing polls `/slots` on this URL again — but
+          // the server ANSWERED, which is the one thing this arm knows
+          // for certain, so the tick carries on with `/health` and that
+          // answer is recorded below like any other.
+          verdict = { kind: "unknown" };
+        } else {
+          verdict =
+            status === null
+              ? { kind: slotsPollFailure(err) }
+              : { kind: "unknown" };
+        }
       }
+      const healthVerdict = await health;
       if (watchStopped || expired !== null || controller.signal.aborted) return;
       const now = Date.now();
+      // `unknown` is an answer with a status on it, and `idle` /
+      // `progress` are answers too; only `refused` and `unanswered`
+      // mean `/slots` produced nothing at all — and an endpoint that
+      // was never asked answered nothing either.
+      const slotsAnswered =
+        slotsAsked &&
+        verdict.kind !== "refused" &&
+        verdict.kind !== "unanswered";
+      if (slotsAnswered || healthVerdict === "answered") {
+        unansweredSince = null;
+        unansweredPolls = 0;
+      } else {
+        unansweredPolls += 1;
+        unansweredSince ??= now;
+      }
+      if (verdict.kind === "refused") {
+        refusedPolls += 1;
+        refusedSince ??= now;
+        if (
+          refusedPolls >= SLOTS_UNREACHABLE_MIN_POLLS &&
+          now - refusedSince >= this.unreachableBudgetMs()
+        ) {
+          expired = "first-token-unreachable";
+          stopWatch();
+          controller.abort();
+          return;
+        }
+        lastProgressAt = now;
+        scheduleWatch();
+        return;
+      }
+      // Refused wins above: a connection that was never made is the
+      // stronger reading, and its advice ("the daemon is gone") is the
+      // one an operator can act on with no further checking. What is
+      // left here is a socket that accepts and a server behind it that
+      // answers nothing on either endpoint.
+      if (
+        unansweredPolls >= SLOTS_UNREACHABLE_MIN_POLLS &&
+        unansweredSince !== null &&
+        now - unansweredSince >= this.unreachableBudgetMs()
+      ) {
+        expired = "first-token-unresponsive";
+        stopWatch();
+        controller.abort();
+        return;
+      }
+      if (verdict.kind === "unanswered") {
+        // Ambiguous, and deliberately inert: a hung `/slots` is the
+        // ordinary look of a slot evaluating a large prompt, so the run
+        // of refusals is neither extended (that would abort healthy
+        // work) nor reset (a timeout is not evidence anything is
+        // listening). The stall clock is refreshed and the first-token
+        // budget stays the backstop.
+        lastProgressAt = now;
+        scheduleWatch();
+        return;
+      }
+      refusedSince = null;
+      refusedPolls = 0;
       if (verdict.kind !== "unknown") previousSnapshot = verdict.snapshot;
       if (verdict.kind === "idle") {
         if (now - lastProgressAt >= this.requestTimeoutMs) {
@@ -808,6 +1238,9 @@ export class LlamaServerClient {
         void pollOnce();
       }, this.slotsPollIntervalMs);
     };
+    // No `!slotsWatchUnavailable()` guard any more: a build without
+    // `/slots` still has `/health`, and leaving the watch off there is
+    // what made it blind on exactly the servers it was written for.
     if (initialKind === "first-token" && this.progressWatch && watch) {
       scheduleWatch();
     }
@@ -890,11 +1323,46 @@ export class LlamaServerClient {
     // responding" is wrong when it never started, which for llama.cpp
     // is the ordinary look of a long prompt eval.
     if (timedOut === "first-token") {
+      // Say it when the progress watch was blind: on a build without
+      // `/slots` this budget is the *only* thing that bounded the wait,
+      // and letting the reader assume a watch was running would send
+      // them looking for a stall report that could never be produced.
+      const blind = this.slotsWatchUnavailable()
+        ? ` (this server has no /slots endpoint, so the watch ran on its /health liveness half alone — it can tell a wedged daemon from a slow one, but not a queued request from a stalled one)`
+        : ``;
       return new LlamaServerError(
-        `llama-server sent no first token within ${this.firstTokenTimeoutMs}ms — ` +
+        `llama-server sent no first token within ${this.firstTokenTimeoutMs}ms${blind} — ` +
           `it may still be evaluating the prompt or queued behind other requests; ` +
           `raise ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS (localModels.firstTokenTimeoutMs), ` +
           `run fewer local workers at once, or shorten the prompt/context if it is too large for this machine to evaluate in time`,
+        null,
+        url,
+        true,
+        undefined,
+        { cause: err },
+      );
+    }
+    if (timedOut === "first-token-unreachable") {
+      return new LlamaServerError(
+        `llama-server stopped answering GET /slots entirely for ${this.unreachableBudgetMs()}ms ` +
+          `while this request waited for its first token — not one poll reached a listening socket ` +
+          `(connection refused / host unreachable, never a timeout), so the server is not merely busy, ` +
+          `it is unreachable; check that llama-server is still alive and restart it ` +
+          `before retrying (running fewer workers will not help)`,
+        null,
+        url,
+        true,
+        undefined,
+        { cause: err },
+      );
+    }
+    if (timedOut === "first-token-unresponsive") {
+      return new LlamaServerError(
+        `llama-server accepted the connection and answered nothing for ${this.unreachableBudgetMs()}ms ` +
+          `while this request waited for its first token — neither GET /slots nor GET ${getConfig().localModels.healthPath} ` +
+          `produced a reply, and /health is served without touching the inference loop, so a server that is merely ` +
+          `busy still answers it; this daemon is listening and not serving. Restart it before retrying ` +
+          `(waiting longer and running fewer workers will both not help)`,
         null,
         url,
         true,
@@ -952,11 +1420,22 @@ export class LlamaServerClient {
       );
     }
     const message = err instanceof Error ? err.message : String(err);
+    const errno = readErrnoCode(err);
+    // A refused connection means the process that owned this address is
+    // gone, so anything we latched about ITS build no longer holds. The
+    // completion path is the only surface that can notice: once
+    // `slotsUnavailableFor` is set the watch does not poll, so nothing
+    // else on this client ever touches that URL again.
+    if (errno !== undefined && SLOTS_UNREACHABLE_ERRNOS.has(errno)) {
+      this.forgetSlotsUnavailable(
+        this.baseUrlOverride ?? getConfig().localModels.url,
+      );
+    }
     // Keep the errno and the original error. Rebuilding the failure
     // without them is what left the biggest bucket in error reporting
     // undiagnosable: ~1,900 events that say "the network failed" and
     // nothing about how.
-    return new LlamaServerError(message, null, url, false, readErrnoCode(err), {
+    return new LlamaServerError(message, null, url, false, errno, {
       cause: err,
     });
   }
@@ -1200,6 +1679,33 @@ function computeBackoffMs(baseMs: number, attemptNumber: number): number {
   const exp = baseMs * Math.pow(2, attemptNumber - 1);
   const jitter = exp * (Math.random() * 0.4 - 0.2);
   return Math.max(0, Math.round(exp + jitter));
+}
+
+/**
+ * The error a failed probe (`/props`, `/apply-template`) throws. When our
+ * own deadline fired, the message names the endpoint and the budget
+ * instead of undici's bare "This operation was aborted", and `timedOut`
+ * is set so nothing downstream reads it as the server's verdict.
+ */
+function probeFailure(
+  err: unknown,
+  url: string,
+  timedOut: boolean,
+  timeoutMs: number,
+): LlamaServerError {
+  const message = timedOut
+    ? `llama-server did not answer ${url} within ${timeoutMs} ms`
+    : err instanceof Error
+      ? err.message
+      : String(err);
+  return new LlamaServerError(
+    message,
+    null,
+    url,
+    timedOut,
+    readErrnoCode(err),
+    { cause: err },
+  );
 }
 
 async function defaultSleep(ms: number): Promise<void> {

@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
@@ -14,6 +15,13 @@ export interface GitStatusEntry {
   workingStatus: string;
   renamedFrom?: string;
 }
+
+/**
+ * Estimated width of one rendered path line: two status codes, a
+ * space, the path, and an optional `  (from <orig>)`. Paths are not
+ * clamped, so this is an estimate, not a ceiling.
+ */
+const PATH_CHARS = 280;
 
 export const osGitStatusTool: ToolDefinition = {
   name: "os.git.status",
@@ -62,18 +70,28 @@ export const osGitStatusTool: ToolDefinition = {
     }
 
     const human = formatHuman(branch, branchInfo, entries);
-    return compressToolResult({
-      tool: "os.git.status",
-      status: "ok",
-      output: human,
-      details: {
-        branch,
-        branchInfo,
-        entries,
-        clean: entries.length === 0,
-        repoRoot: statusResult.repoRoot,
+    return compressToolResult(
+      {
+        tool: "os.git.status",
+        status: "ok",
+        output: human,
+        details: {
+          branch,
+          branchInfo,
+          entries,
+          clean: entries.length === 0,
+          repoRoot: statusResult.repoRoot,
+        },
       },
-    });
+      // `# branch: …` is line 1, so the default 12-line tail drops the
+      // branch header first and then the earliest paths. The tool has
+      // no `limit` of its own — the row count is whatever git reported
+      // — so budget the rows we are about to print at PATH_CHARS each.
+      // ~14 dirty paths fit the shared ceiling; past that the header
+      // and the first paths survive, which is the right end of a
+      // status.
+      listingResultCaps(entries.length, PATH_CHARS),
+    );
   },
 };
 

@@ -4,6 +4,7 @@ import type { Key } from "ink";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
+import { RAIL_PAGE_SIZE } from "./session-rail/index.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -240,6 +241,75 @@ describe("handleAppKey", () => {
       mode: "debug",
     });
     expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "feed" });
+  });
+
+  it("↓ at the foot of the loaded rail asks for the next page", () => {
+    // The rail holds one page of the store; reaching its end is the
+    // request for the next one. Anywhere above the tail margin the key
+    // is a plain cursor move and touches no store.
+    const railOf = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        sessionId: `s-${i}`,
+        workingDir: "/tmp/w",
+        turnCount: 1,
+        stepCount: 0,
+        updatedAt: 1_000 + i,
+        preview: `thread ${i}`,
+        pinned: false,
+      }));
+    const press = (cursor: number, rows: number) => {
+      const state = createInitialTuiState(stubSession());
+      state.chatFocus = "sidebar";
+      state.sidebarSection = "sessions";
+      state.recentSessions = railOf(rows);
+      state.sidebarCursor = cursor;
+      const onSessionsEndReached = vi.fn();
+      const dispatch = vi.fn();
+      handleAppKey("", emptyKey({ downArrow: true }), {
+        state,
+        dispatch,
+        callbacks: {
+          onApprovalDecision: vi.fn(),
+          onAbort: vi.fn(),
+          onQuit: vi.fn(),
+          onSessionsEndReached,
+        },
+        ctrlCArmed: false,
+        setCtrlCArmed: vi.fn(),
+        sidebarVisible: true,
+      });
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "sidebar_cursor_moved",
+        delta: 1,
+      });
+      return onSessionsEndReached;
+    };
+    expect(press(0, RAIL_PAGE_SIZE)).not.toHaveBeenCalled();
+    expect(press(RAIL_PAGE_SIZE - 2, RAIL_PAGE_SIZE)).toHaveBeenCalledTimes(1);
+    // Parked on the last row already: the key still asks, since the
+    // reducer clamps the cursor and the operator is pressing for more.
+    expect(press(RAIL_PAGE_SIZE - 1, RAIL_PAGE_SIZE)).toHaveBeenCalledTimes(1);
+  });
+
+  it("↓ in the Tasks pane never asks the rail for another page", () => {
+    const state = createInitialTuiState(stubSession());
+    state.chatFocus = "sidebar";
+    state.sidebarSection = "tasks";
+    const onSessionsEndReached = vi.fn();
+    handleAppKey("", emptyKey({ downArrow: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onSessionsEndReached,
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: true,
+    });
+    expect(onSessionsEndReached).not.toHaveBeenCalled();
   });
 
   it("Tab inside sidebar(sessions) advances to the Tasks pane", () => {
@@ -596,7 +666,7 @@ describe("handleAppKey", () => {
     expect(onSidebarTaskActivated).toHaveBeenCalledWith("task-id-42");
   });
 
-  it("Esc while running aborts the turn when the chat is pinned to the bottom", () => {
+  it("Esc while running arms the abort but does not take it", () => {
     const state = createInitialTuiState(stubSession());
     state.status = "running";
     const dispatch = vi.fn();
@@ -610,8 +680,61 @@ describe("handleAppKey", () => {
       sidebarVisible: false,
     });
     expect(handled).toBe(true);
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_armed" });
+  });
+
+  it("`1` after that Esc is what actually aborts", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.abortArmed = true;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("1", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
     expect(onAbort).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("`1` on its own never aborts", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    handleAppKey("1", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it("any other key stands the armed abort down", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.abortArmed = true;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    handleAppKey("x", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_disarmed" });
   });
 
   it("Esc while running snaps the scrolled-back chat home instead of aborting", () => {
@@ -638,7 +761,7 @@ describe("handleAppKey", () => {
     expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_requested" });
   });
 
-  it("Esc while running on a debug tab aborts even with a stale scroll offset", () => {
+  it("Esc while running on a debug tab arms even with a stale scroll offset", () => {
     // Nothing resets `chatScrollOffset` on a mode switch, and the chat
     // is off-screen in debug mode — snapping an invisible log back would
     // just make Esc look dead there.
@@ -658,8 +781,8 @@ describe("handleAppKey", () => {
       sidebarVisible: false,
     });
     expect(handled).toBe(true);
-    expect(onAbort).toHaveBeenCalledTimes(1);
-    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_armed" });
   });
 });
 

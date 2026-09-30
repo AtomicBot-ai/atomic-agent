@@ -171,22 +171,58 @@ describe("the model label", () => {
   };
 
   /**
-   * Fusion names both legs. Spending the whole budget left-to-right ate
-   * the local half outright — "vendor/some-very-long-name ⇄ q…" — which
-   * hides the model that actually executes most of the steps.
+   * The label used to be cut to 32 characters *before* the row was laid
+   * out, so these two names were trimmed at every width — including the
+   * ones with eighty columns to spare. The cut belongs to the layout,
+   * which knows the width; `MODEL_LABEL_CEILING` is only a guard against
+   * a pathological name setting the flex row's min-content width.
    */
-  it("keeps both fusion legs identifiable", () => {
+  it("names a long model in full when the row has the columns", () => {
+    const frame = renderModel("vendor/an-extremely-long-single-model-name");
+    expect(frame).toContain("vendor/an-extremely-long-single-model-name");
+    expect(frame).not.toContain("vendor/an-extremely-long-single…");
+  });
+
+  it("names both fusion legs in full when the row has the columns", () => {
     const frame = renderModel(
       "vendor/some-very-long-cloud-model ⇄ qwen3-4b-instruct-q4.gguf",
     );
-    expect(frame).toContain("vendor/some-v…");
-    expect(frame).toContain("qwen3-4b-inst…");
+    expect(frame).toContain("vendor/some-very-long-cloud-model");
+    expect(frame).toContain("qwen3-4b-instruct-q4");
   });
 
-  it("still trims a single long name the way it always did", () => {
-    expect(renderModel("vendor/an-extremely-long-single-model-name")).toContain(
-      "vendor/an-extremely-long-single…",
-    );
+  /**
+   * …and when it does not, Yoga cuts. The legs are separate controls
+   * with the swap glyph rigid between them, so each is trimmed on its
+   * own rather than the pair being eaten left to right — which is what
+   * the fixed 32-character budget was buying, at the cost of spending it
+   * even when there was nothing to buy.
+   */
+  it("trims each fusion leg separately once the row runs out", () => {
+    const frame = renderMetaBarAt(
+      64,
+      null,
+      40,
+      "vendor/some-very-long-cloud-model ⇄ qwen3-4b-instruct-q4.gguf",
+    ).join("\n");
+    // Both cut, both still readable as themselves, and the swap glyph
+    // between them intact — asserted as properties rather than exact
+    // columns, which are Yoga's to choose.
+    expect(frame).toContain("…");
+    expect(frame).toMatch(/vendor\/some[\w-]*…/);
+    expect(frame).toMatch(/qwen3-4b[\w-]*…/);
+    expect(frame).toContain("⇄");
+  });
+
+  /**
+   * The ceiling's one job: a name nobody would ever configure on purpose
+   * must not set the flex row's min-content width and push the readouts
+   * off it.
+   */
+  it("keeps the gauge and the mode chip against a pathological name", () => {
+    const frame = renderMetaBarAt(119, null, 40, "x".repeat(300)).join("\n");
+    expect(frame).toContain("6.2k/32.8k");
+    expect(frame).toContain("default");
   });
 });
 
@@ -198,7 +234,16 @@ describe("the model label", () => {
  */
 class SizedStdout extends EventEmitter {
   _lastFrame: string | undefined;
-  constructor(readonly columns: number) {
+  /**
+   * Tall by default. The bar only stacks on a window that can spare the
+   * row (`STACK_MIN_ROWS`), so a fake stdout reporting the 24-row
+   * fallback would test the one-row composition at every width and the
+   * stacked one at none.
+   */
+  constructor(
+    readonly columns: number,
+    readonly rows: number = 40,
+  ) {
     super();
   }
   write = (frame: string): void => {
@@ -232,15 +277,16 @@ const RIGHT_GROUP = (
 function renderMetaBarAt(
   columns: number,
   leftSlot: ReactElement | null,
+  rows = 40,
+  model: string = ROUTE.model,
 ): string[] {
-  const stdout = new SizedStdout(columns);
+  const stdout = new SizedStdout(columns, rows);
   const instance = inkRender(
     <PromptMetaBar
       leftSlot={leftSlot}
       backend={ROUTE.backend}
       provider={ROUTE.provider}
-      model={ROUTE.model}
-      rightSlot={null}
+      model={model}
       contextSlot={RIGHT_GROUP}
       modeSlot={null}
     />,
@@ -329,24 +375,23 @@ describe("the meta bar while the provider is down", () => {
     },
   );
 
-  it("degrades to the head alone before it gives up the head", () => {
-    // 75 columns is past what the row can carry: the head is clipped by
-    // the bar's own `overflow="hidden"` rather than by any shrink, and
-    // what survives is still the front of the state word. Recorded
-    // rather than wished away — "never shrinks" is a shrink-order claim,
-    // not a promise about a row narrower than one statement.
+  it("keeps the head whole at 75 columns now that the bar stacks", () => {
+    // This used to record a loss: at 75 the one-row bar clipped the head
+    // itself, and the comment said so rather than wishing it away. Below
+    // `STACK_BELOW_COLUMNS` the readout no longer shares its line with
+    // the gauge and the mode chip, so the columns it needed are there.
     const frame = renderMetaBarAt(75, readout).join("\n");
-    expect(frame).toContain("waiting for provide");
-    expect(frame).not.toContain("custom");
+    expect(frame).toContain(OUTAGE_HEAD);
   });
 
   it("gives the reason the columns nothing else wants", () => {
     // The tail grows from nothing into the leftovers, so it appears
     // exactly when the row can afford it and never at the route's
-    // expense: not at 119, where the route is still losing characters,
-    // and whole once the route is whole with room to spare.
+    // expense. The width at which it cannot is now below the stack
+    // threshold rather than at 119: stacking hands the left column the
+    // whole bar, so a 130-column one-row bar is the tight case.
     expect(renderMetaBarAt(200, readout).join("\n")).toContain(OUTAGE_LINE);
-    expect(renderMetaBarAt(119, readout).join("\n")).not.toContain(
+    expect(renderMetaBarAt(130, readout).join("\n")).not.toContain(
       "connection dropped",
     );
   });
@@ -365,20 +410,37 @@ describe("the meta bar while the provider is down", () => {
     );
   });
 
-  it.each([75, 90, 110, 119, 130, 160, 200])(
-    "stays one row tall at %i columns",
+  it.each([130, 160, 200])("stays one row tall at %i columns", (columns) => {
+    // Ink wraps rather than clips, and an unplanned second line would
+    // push the composer's bottom border down.
+    const lines = renderMetaBarAt(columns, readout);
+    // `paddingY={1}` — one blank, the row, one blank.
+    expect(lines).toHaveLength(3);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
+  });
+
+  it("stays one row tall on a window too short to spare one", () => {
+    // 75 columns is well under the stack threshold, but 24 rows is not
+    // a window that can give the chat's row away — measured: at 80x24
+    // the taller composer pushes its own Send control out of reach.
+    const lines = renderMetaBarAt(75, readout, 24);
+    expect(lines).toHaveLength(3);
+  });
+
+  it.each([75, 90, 110, 119])(
+    "is exactly two rows tall at %i columns, never three",
     (columns) => {
-      // Ink wraps rather than clips, and a second line here would push
-      // the composer's bottom border down.
+      // The stacked composition costs the composer one row, which is
+      // deliberate. What it must not do is wrap on top of that — the
+      // height has to be a property of the width, not of the content.
       const lines = renderMetaBarAt(columns, readout);
-      // `paddingY={1}` — one blank, the row, one blank.
-      expect(lines).toHaveLength(3);
+      expect(lines).toHaveLength(4);
       for (const line of lines)
         expect(line.length).toBeLessThanOrEqual(columns);
     },
   );
 
-  it.each([75, 90, 110, 119, 130, 160, 200])(
+  it.each([130, 160, 200])(
     "stays one row tall through the other two phases at %i columns",
     (columns) => {
       // A retry carries no reason at all, and a given-up badge is a
@@ -425,7 +487,11 @@ describe("the meta bar while the provider is down", () => {
         </Text>
       </Box>
     );
-    const frame = renderMetaBarAt(110, notice).join("\n");
+    // 130, not 110: below `STACK_BELOW_COLUMNS` the notice and the
+    // route no longer share a line with the gauge and the mode chip, so
+    // there is nothing for the notice to yield. The shrink order is
+    // still the claim — it is only testable where the row is tight.
+    const frame = renderMetaBarAt(130, notice).join("\n");
     expect(frame).toContain("qwen3-30b");
     expect(frame).not.toContain("config.json");
   });
@@ -454,7 +520,6 @@ describe("the meta bar while the provider is down", () => {
             backend={ROUTE.backend}
             provider={ROUTE.provider}
             model={ROUTE.model}
-            rightSlot={null}
             contextSlot={null}
             modeSlot={null}
           />

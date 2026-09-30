@@ -164,6 +164,10 @@ export interface SessionState {
    *     turn and by the TUI when the operator picks a model mid-session;
    *     read back on session switch to restore the session's own model.
    *     See `session-llm.ts`.
+   *   - `llmRoute: { mode, main, worker }` — the route the session's
+   *     last turn was served on. Written only by `executeTurn` after the
+   *     turn; compared at the next turn's start to tell the model when
+   *     the route changed. See `session-route.ts`.
    */
   metadata: Record<string, unknown>;
   /**

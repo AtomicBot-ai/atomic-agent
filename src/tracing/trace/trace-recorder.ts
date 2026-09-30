@@ -1,6 +1,7 @@
 import type { AgentLoopEvent } from "../../agent/agent-loop.js";
 import type { StepEvent } from "../../agent/step-executor.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
+import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 
 // The module, not the fallback barrel: it has no imports of its own, so
 // tracing does not pull the provider clients in behind it.
@@ -79,6 +80,19 @@ export interface TraceRecorder {
     reason: string;
   }): void;
   /**
+   * Emit the run-level `vote` trace event for a vote turn that ended
+   * before `VoteRunner.run` was reached — the `vote-aware-reflection`
+   * decorator's bail-outs. The runner's own outcomes travel in
+   * `run()`'s result, so this is the only row that separates "nothing
+   * surfaced" and "the stores could not be read" from voting being
+   * switched off.
+   */
+  recordVote(payload: {
+    outcome: "skipped" | "failed";
+    candidates?: number;
+    reason: string;
+  }): void;
+  /**
    * Memory-v2. Emit a `reflection` trace event for the end-of-turn
    * SET/NOTE/EVOLVE extraction sub-call. Fired fire-and-forget after
    * `turn_finished`; the recorder owns the monotonic `seq`.
@@ -152,6 +166,25 @@ export function createTraceRecorder(
   // their `batchIndex` so the executed callback can pair them
   // deterministically. Solo steps land in `pendingCalls.get(0)`.
   let pendingCalls = new Map<number, ToolCallPayload>();
+  // One thrown failure reaches the recorder twice: `executeStep` emits
+  // `step_error` and then rethrows the very same object, which the loop
+  // catches and reports as `loop_failed`. Both map onto an `error` row,
+  // so the trace carried the same failure under two `seq` numbers and
+  // everything reading it — `/trace`, the formatter, issue reports,
+  // benchmark analysis — counted one failure as two. We remember the
+  // `error` row last recorded from a `step_error` and drop the
+  // `loop_failed` one when it would repeat it verbatim. A `loop_failed`
+  // that differs is a genuinely different failure and still lands: the
+  // loop can fail outside `executeStep`, and the truncation-retry path
+  // swaps in `truncationRetry.original` before emitting. The memo is
+  // cleared when a new turn or step begins, so only the failure that
+  // just happened can suppress anything.
+  let lastStepError: {
+    message: string;
+    stack: string | undefined;
+    category: LlmFailureCategory;
+    stepIndex: number | null;
+  } | null = null;
 
   const nextSeq = (): number => seq++;
   const push = (event: TraceEvent): void => options.emit(event);
@@ -269,6 +302,12 @@ export function createTraceRecorder(
         });
         return;
       case "step_error":
+        lastStepError = {
+          message: inner.error.message,
+          stack: inner.error.stack,
+          category: inner.category,
+          stepIndex: currentStepIndex,
+        };
         push({
           type: "error",
           seq: nextSeq(),
@@ -311,6 +350,19 @@ export function createTraceRecorder(
         kind: payload.kind,
         targetId: payload.targetId,
         direction: payload.direction,
+        reason: payload.reason,
+      });
+    },
+    recordVote(payload) {
+      push({
+        type: "vote",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        outcome: payload.outcome,
+        ...(typeof payload.candidates === "number"
+          ? { candidates: payload.candidates }
+          : {}),
         reason: payload.reason,
       });
     },
@@ -386,6 +438,7 @@ export function createTraceRecorder(
           return;
         case "turn_started":
           currentTurnIndex = event.turnIndex;
+          lastStepError = null;
           push({
             type: "turn_started",
             seq: nextSeq(),
@@ -413,6 +466,7 @@ export function createTraceRecorder(
         case "step_started":
           currentStepIndex = event.stepIndex;
           pendingCalls = new Map();
+          lastStepError = null;
           push({
             type: "step_started",
             seq: nextSeq(),
@@ -569,7 +623,15 @@ export function createTraceRecorder(
             maxTokens: event.maxTokens,
           });
           return;
-        case "loop_failed":
+        case "loop_failed": {
+          const duplicate =
+            lastStepError !== null &&
+            lastStepError.message === event.error.message &&
+            lastStepError.stack === event.error.stack &&
+            lastStepError.category === event.category &&
+            lastStepError.stepIndex === currentStepIndex;
+          lastStepError = null;
+          if (duplicate) return;
           push({
             type: "error",
             seq: nextSeq(),
@@ -586,6 +648,7 @@ export function createTraceRecorder(
             ...fallbackFailuresOf(event.error),
           });
           return;
+        }
         case "memory_health_warning":
           push({
             type: "memory_health_warning",

@@ -3,12 +3,18 @@ import { join } from "node:path";
 
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
+import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
 import type { SessionSummary } from "../session/session-summary.js";
+import {
+  sessionSummaryCursorAfter,
+  type SessionSummaryCursor,
+} from "../session/session-summary-page.js";
+import { readSessionTitle } from "../session/session-title.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -55,6 +61,7 @@ import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrat
 import { SwarmOrchestrator } from "./swarm/swarm-orchestrator.js";
 import { IssueReportOrchestrator } from "./issue-report/index.js";
 import {
+  RAIL_PAGE_SIZE,
   SessionRailOrchestrator,
   configSessionRailLayoutStore,
   type SessionRailLayoutStore,
@@ -73,6 +80,23 @@ import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
+
+/**
+ * A line `notify` puts in the transcript, plus — for the ones that are
+ * about another thread — the id of that thread.
+ *
+ * Only notices whose own words send the operator somewhere carry it:
+ * "switch back to watch or stop it", "open it from the sidebar to read
+ * the reply". The transcript turns that id into a `[switch back]`
+ * button (`ChatMessage.switchToSessionId`), so the sentence and the way
+ * to act on it arrive together. A notice about lost work — dropped
+ * steers, a denied approval — names its session too, but going there
+ * undoes none of it, so it stays a plain line.
+ */
+interface TranscriptNotice {
+  text: string;
+  switchToSessionId?: string;
+}
 
 /**
  * Hard cap on messages parked behind the running turn.
@@ -126,9 +150,22 @@ function formatProfileSystemMessage(facts: readonly ProfileFact[]): string {
   return [header, ...lines].join("\n");
 }
 
-/** Multiline text for the chat transcript (`/skills`); feed still gets `runtime_info` lines. */
+/**
+ * Multiline text for the chat transcript (`/skills dump`); feed still
+ * gets `runtime_info` lines. Bare `/skills` opens the Skills tab, which
+ * renders `skillRegistry.listAll()` and is honest already — the flat
+ * dump is the one that reads the prompt's catalog.
+ *
+ * `dropped` is what `skills.catalogTokenBudget` cut out of `catalog`.
+ * The entry list is the prompt's list, so without the trailing note
+ * `/skills dump` answers "which skills do I have?" with the clipped
+ * half and no sign of the rest — the operator-facing form of issue #466, where
+ * the model did the same to the user. At zero the note is absent and
+ * the message is byte-identical to the pre-fix output.
+ */
 function formatSkillCatalogSystemMessage(
   catalog: readonly SkillCatalogEntry[],
+  dropped: number,
 ): string {
   if (catalog.length === 0) {
     return "skill catalog: (none installed)";
@@ -137,7 +174,18 @@ function formatSkillCatalogSystemMessage(
   const lines = catalog.map(
     (e) => `  - ${e.name} (${e.source}): ${e.description}`,
   );
-  return [header, ...lines].join("\n");
+  const omitted = dropped > 0 ? [skillCatalogOmittedFeedLine(dropped)] : [];
+  return [header, ...lines, ...omitted].join("\n");
+}
+
+/**
+ * The omission note as a catalog row: indented like the entries it
+ * follows, ellipsis instead of the `-` bullet so it cannot be mistaken
+ * for a skill named "4 more not shown". Shared by the transcript
+ * message and the Feed lines so the two cannot disagree.
+ */
+function skillCatalogOmittedFeedLine(dropped: number): string {
+  return `  … ${formatSkillCatalogOmittedNote(dropped)}`;
 }
 
 /**
@@ -226,6 +274,7 @@ export class ChatOrchestrator {
   public readonly swarm: SwarmOrchestrator;
   public readonly issueReport: IssueReportOrchestrator;
   private readonly sessionRail: SessionRailOrchestrator;
+  private readonly stopWatchingRoute: (() => void) | null;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -250,8 +299,21 @@ export class ChatOrchestrator {
       onManagedModelSelected: (modelId) => {
         this.llmHealth.notifyCatalogModel(modelId);
       },
+      // Every start path lands here — `/llm restart`, the supervisor's
+      // death and wedge restarts, the launch start, a port move — so the
+      // refresh a new server needs is done once, for all of them: the
+      // tray label, and the runtime's `/props` profile the local
+      // provider's capabilities (vision, context window) are read from.
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
+        void runtime.refreshLocalModelProfile?.();
+      },
+      onManagedPortMoved: async (url) => {
+        // Same three steps as saving a URL by hand: the provider's base
+        // URL was frozen at boot, the header and the poller read it too.
+        await runtime.reloadLlmProvider("local-llama");
+        bus.emit({ type: "llama_url_changed", url });
+        this.llmHealth.updateUrl(url);
       },
       onManagedModelActivated: () => {
         // The operator put a model live and it actually serves — the
@@ -274,6 +336,14 @@ export class ChatOrchestrator {
         bus.emit({ type: "integrations_action_settled", message });
       },
     });
+    // A route moved onto the managed daemon mid-session adopts it the
+    // way launch does (`adoptDaemonForRoute`) — every hot swap of the
+    // active provider goes through the registry, whichever pane,
+    // command or channel asked for it.
+    this.stopWatchingRoute =
+      runtime.providerRegistry?.onActiveTextChanged?.((id) => {
+        this.localModels.adoptDaemonForRoute(id);
+      }) ?? null;
     this.runMode = new RunModeOrchestrator({
       runtime,
       bus,
@@ -296,9 +366,10 @@ export class ChatOrchestrator {
     this.sessionRail = new SessionRailOrchestrator(
       options.sessionRailLayout ?? configSessionRailLayoutStore,
       () => this.refreshRecentSessions(),
-      // A pinned thread must show whatever its age: when it has fallen
-      // out of the recency window `railSessions` reads, the rail fetches
-      // it by id and builds the same row the window would have.
+      // A pinned thread must show whatever its age: when it is off the
+      // end of the pages `railSessions` has loaded — which, now that
+      // the rail reads one page at a time, is most of the table — the
+      // rail fetches it by id and builds the row the page would have.
       (sessionId) => {
         const state = this.runtime.sessionStore.load(sessionId);
         if (!state) return null;
@@ -353,11 +424,20 @@ export class ChatOrchestrator {
   start(): void {
     if (this.started) return;
     this.started = true;
-    // The rail is the one boot step that reads every stored row. A store
-    // that cannot answer must not abort the rest of the boot — the
-    // chat, the poller and the channels work without a session list.
+    // The rail's first page and the unreadable-row count are the boot's
+    // only reads of the session table. A store that cannot answer must not abort the
+    // rest of the boot — the chat, the poller and the channels work
+    // without a session list.
+    //
+    // `refreshRecentSessions` reports its own failure now, so it needs no
+    // guard; what is left to cover is `countUnreadable()`. Both speak on
+    // the same `session list unavailable:` line, so a store that fails
+    // BOTH reads — `database disk image is malformed` is the one that
+    // does — must still say it once, the way it did before the rail grew
+    // a guard of its own.
+    const noticesBeforeRail = this.sessionListNotices;
+    this.refreshRecentSessions();
     try {
-      this.refreshRecentSessions();
       const unreadable = this.runtime.sessionStore.countUnreadable();
       if (unreadable > 0) {
         this.bus.emit({
@@ -366,11 +446,10 @@ export class ChatOrchestrator {
         });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.bus.emit({
-        type: "runtime_info",
-        line: `session list unavailable: ${message}`,
-      });
+      if (this.sessionListNotices === noticesBeforeRail) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.noteSessionListUnavailable(message);
+      }
     }
     this.llmHealth.start();
     this.telegram.start();
@@ -387,10 +466,18 @@ export class ChatOrchestrator {
    * listeners. Idempotent — callers can invoke before any operation
    * that needs a live session id (`sendMessage`, opening the working
    * dir for skill scripts, …).
+   *
+   * Deferred (`persist: false`): the row is written by the first turn,
+   * not by the allocation. A session nobody typed into used to leave a
+   * row the rail hides — it lists threads that have a first prompt — so
+   * there was no row to press `x` on and it could never be deleted.
+   * Nothing on this side needs the row earlier: `runTurn` falls back to
+   * the caller's copy when the store cannot answer for the id, and
+   * `executeTurn` opens the trace recorder itself.
    */
   private ensureSession(): SessionState {
     if (this.session) return this.session;
-    this.session = this.runtime.createSession();
+    this.session = this.runtime.createSession({ persist: false });
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
     this.refreshRecentSessions();
     return this.session;
@@ -478,10 +565,11 @@ export class ChatOrchestrator {
 
   /**
    * The rail lists threads, not allocations. A session exists the moment
-   * `+ new` mints it — `runtime.createSession` persists it immediately,
-   * and scheduled tasks, webhooks and Telegram all depend on that — but
-   * an unnamed row is noise: it says "(empty)" until someone types, and
-   * two of them are indistinguishable.
+   * `+ new` mints it — and a scheduled task, a webhook or a Telegram
+   * chat persists its own immediately, because something else holds the
+   * id before the first turn — but an unnamed row is noise: it says
+   * "(empty)" until someone types, and two of them are
+   * indistinguishable.
    *
    * So the list shows sessions that have been *spoken to*. The catch is
    * timing: the first user turn only reaches SQLite when the whole turn
@@ -500,24 +588,104 @@ export class ChatOrchestrator {
    */
   private readonly pendingRows = new Map<string, SessionPickerEntry>();
 
+  /**
+   * A rail repaint is never a turn's outcome, so it must not be able to
+   * end one. `runOneTurn` calls this from its `finally`, where a throw
+   * replaces the turn's result and skips the whole tail after the block
+   * — the background-turn notice, the mid-turn re-attach re-emit, and
+   * `this.queue.shift()` — and since every one of the three `runOneTurn`
+   * call sites is a bare `void this.runOneTurn(...)`, including the
+   * queue-drain recursion inside `runOneTurn` itself, the rejection is
+   * unhandled and lands in the crash reporter.
+   *
+   * The throw that actually happens is the shutdown race: `shutdown()`
+   * aborts the running turn and then closes the session store without
+   * waiting for the turn's tail, so a tail landing after teardown reads
+   * a dead SQLite handle — better-sqlite3 answers any statement after
+   * `db.close()` with `TypeError: The database connection is not open`
+   * (the memory decorators hit the same wall, see PR #496). That one is
+   * expected: skip the emit, leave a line at `log.level=debug` — the
+   * shipping default is `info`, so it costs an operator nothing — and let
+   * the process finish exiting.
+   *
+   * Anything else is a real rail fault and stays visible, under the same
+   * `session list unavailable:` line `start()` has always used for a
+   * store that cannot list — a repaint that silently stops is how a rail
+   * goes stale and lies about which threads exist.
+   *
+   * The guard sits here rather than in `railSessions()` or the SQL because
+   * this method is the funnel: nine call sites in this file (seven direct,
+   * plus the two callbacks handed to `ImportOrchestrator` and
+   * `SessionRailOrchestrator`, which call it from four places of their
+   * own) and every one of them only wants a repaint.
+   */
   refreshRecentSessions(): void {
+    let sessions: SessionPickerEntry[];
+    try {
+      sessions = this.railSessions();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isStoreGoneError(err)) {
+        this.runtime.logger.debug("tui: rail refresh skipped, store is gone", {
+          error: message,
+        });
+        return;
+      }
+      this.noteSessionListUnavailable(message);
+      return;
+    }
+    // Built before the flag is read, not inline with it: `railTailReached`
+    // is what the walk inside `railSessions` learned, so reading it first
+    // would answer for the walk before this one.
     this.bus.emit({
       type: "recent_sessions_updated",
-      sessions: this.railSessions(),
+      sessions,
+      morePages: !this.railTailReached,
     });
+  }
+
+  /**
+   * How many `session list unavailable:` lines this orchestrator has
+   * emitted. Only `start()` reads it, to tell whether the rail already
+   * spoke for a store that is about to fail its second boot read too.
+   */
+  private sessionListNotices = 0;
+
+  private noteSessionListUnavailable(message: string): void {
+    this.sessionListNotices += 1;
+    this.bus.emit({
+      type: "runtime_info",
+      line: `session list unavailable: ${message}`,
+    });
+  }
+
+  /**
+   * Pages of the store the rail has asked for so far. One at boot; one
+   * more each time the cursor reaches the end of what is loaded.
+   */
+  private railPages = 1;
+
+  /**
+   * Did the last walk run out of rows? The store answering short is the
+   * only honest end-of-table signal, and once it has answered short
+   * there is nothing left to fetch.
+   */
+  private railTailReached = false;
+
+  /**
+   * The operator reached the bottom of the loaded list: take one more
+   * page. No-op at the end of the table, so holding ↓ down on the last
+   * row costs nothing.
+   */
+  loadMoreSessions(): void {
+    if (this.railTailReached) return;
+    this.railPages += 1;
+    this.refreshRecentSessions();
   }
 
   /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
-    // Every stored thread, not a window of them: the rail and the picker
-    // page their own rows. Every `+ new` and every scheduled task mints
-    // a persisted, unnamed session; those are hidden here (see
-    // `hasFirstPrompt`), and with no LIMIT in SQL there is no window for
-    // them to squat and push real conversations out of.
-    const stored = this.runtime.sessionStore
-      .listSummaries()
-      .filter((row) => row.firstPrompt !== null)
-      .map((row) => toPickerEntry(row));
+    const stored = this.railPage().map((row) => toPickerEntry(row));
     // The manual order applies whether or not there are stand-ins.
     if (this.pendingRows.size === 0) return this.sessionRail.arrange(stored);
     const storedIds = new Set(stored.map((entry) => entry.sessionId));
@@ -536,6 +704,44 @@ export class ChatOrchestrator {
     // The manual order (if any) goes over the whole list: stand-ins are
     // ids the order has never seen, so they stay on top.
     return this.sessionRail.arrange([...pending, ...stored]);
+  }
+
+  /**
+   * The rows the rail has asked for: `railPages` pages of the store,
+   * walked by keyset cursor.
+   *
+   * A bounded window is only safe because the store no longer hands
+   * back the unnamed rows that `+ new` and every scheduled task mint —
+   * `listSummaryPage` filters them in SQL. That is what answers the
+   * objection this read used to carry no LIMIT for: with blanks in the
+   * result a window would fill up with rows the rail then hides, and
+   * real conversations would be pushed off the end of it. They cannot
+   * squat a window they are never in.
+   *
+   * Re-walked from the top on every refresh rather than appended to,
+   * because the table moves under it: the turn that just finished put
+   * its own thread back on top, and appending would list the rows it
+   * displaced a second time. At `railPages === 1` — boot, every turn,
+   * every switch, which is every refresh the operator did not ask for
+   * by scrolling — that is exactly one page read.
+   */
+  private railPage(): SessionSummary[] {
+    const rows: SessionSummary[] = [];
+    let after: SessionSummaryCursor | undefined;
+    for (let page = 0; page < this.railPages; page += 1) {
+      const batch = this.runtime.sessionStore.listSummaryPage({
+        limit: RAIL_PAGE_SIZE,
+        ...(after ? { after } : {}),
+      });
+      rows.push(...batch);
+      if (batch.length < RAIL_PAGE_SIZE) {
+        this.railTailReached = true;
+        return rows;
+      }
+      after = sessionSummaryCursorAfter(batch) ?? undefined;
+    }
+    this.railTailReached = false;
+    return rows;
   }
 
   /**
@@ -657,7 +863,13 @@ export class ChatOrchestrator {
       });
       return;
     }
-    const loaded = this.runtime.sessionStore.load(sessionId);
+    // A thread backgrounded mid-FIRST-turn has no row yet — the TUI's
+    // sessions are deferred and the first turn saves only when it
+    // finishes — so the store cannot answer for it. The detached turn
+    // parked the live session object; it stands in until the row lands.
+    const loaded =
+      this.runtime.sessionStore.load(sessionId) ??
+      this.detachedTurns.sessionFor(sessionId);
     if (!loaded) {
       this.bus.emit({
         type: "runtime_info",
@@ -823,8 +1035,8 @@ export class ChatOrchestrator {
    * pending approval is just as unanswerable once its transcript is
    * gone, and skipping it would park that turn forever.
    */
-  private leaveCurrentSession(): string[] {
-    const notices: string[] = [];
+  private leaveCurrentSession(): TranscriptNotice[] {
+    const notices: TranscriptNotice[] = [];
     const previous = this.session;
     if (!previous) return notices;
     // Denied for ANY pending approval on the thread being left, not
@@ -839,9 +1051,9 @@ export class ChatOrchestrator {
       SWITCHED_AWAY_APPROVAL_REASON,
     );
     if (denied > 0) {
-      notices.push(
-        "the pending approval was denied — you switched away while it waited for an answer",
-      );
+      notices.push({
+        text: "the pending approval was denied — you switched away while it waited for an answer",
+      });
     }
     if (!this.currentController) {
       this.runtime.approvals.clearSessionGrants(previous.id);
@@ -852,13 +1064,19 @@ export class ChatOrchestrator {
       this.queue.length = 0;
       this.droppedWhileFull = 0;
       this.emitQueue();
-      notices.push(formatDroppedQueueOnSwitchNotice(dropped));
+      notices.push({ text: formatDroppedQueueOnSwitchNotice(dropped) });
     }
     this.steeredAhead = 0;
-    this.detachedTurns.park(previous.id, this.currentController);
+    this.detachedTurns.park(previous, this.currentController);
     this.currentController = null;
     this.reattachedMidTurn = false;
-    notices.push(formatDetachedTurnNotice(previous.id));
+    // The one notice that names a thread still working for the
+    // operator: it carries the id so the transcript can offer the way
+    // back, not just the sentence.
+    notices.push({
+      text: formatDetachedTurnNotice(previous.id),
+      switchToSessionId: previous.id,
+    });
     return notices;
   }
 
@@ -895,13 +1113,14 @@ export class ChatOrchestrator {
     }
   }
 
-  /** Emit the installed skill catalog into chat + event feed (`/skills`). */
+  /** Emit the installed skill catalog into chat + event feed (`/skills dump`). */
   dumpSkillCatalog(): void {
     try {
       const catalog = this.runtime.skillCatalog;
+      const dropped = this.runtime.skillCatalogDropped;
       this.bus.emit({
         type: "system_message",
-        text: formatSkillCatalogSystemMessage(catalog),
+        text: formatSkillCatalogSystemMessage(catalog, dropped),
       });
       if (catalog.length === 0) {
         this.bus.emit({
@@ -920,6 +1139,12 @@ export class ChatOrchestrator {
           line: `  - ${e.name} (${e.source}): ${e.description}`,
         });
       }
+      if (dropped > 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: skillCatalogOmittedFeedLine(dropped),
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const line = `skill catalog read failed: ${msg}`;
@@ -935,7 +1160,10 @@ export class ChatOrchestrator {
     // exceptions of its own; the previous thread's grants are cleared
     // on leave (or, if its turn is still running, when that turn ends).
     const notices = this.leaveCurrentSession();
-    this.session = this.runtime.createSession();
+    // Deferred like `ensureSession`'s, and for the same reason: a `+ new`
+    // the operator never types into leaves no row behind. The one left
+    // here is dropped as soon as the next `+ new` or switch replaces it.
+    this.session = this.runtime.createSession({ persist: false });
     this.clearQueue();
     clearTtyScreen(process.stdout);
     this.bus.emit({
@@ -1104,9 +1332,16 @@ export class ChatOrchestrator {
    * parked work, a refused submission) are things the operator typed and
    * must not lose silently.
    */
-  private notify(line: string): void {
-    this.bus.emit({ type: "runtime_info", line });
-    this.bus.emit({ type: "system_message", text: line, variant: "warn" });
+  private notify(notice: string | TranscriptNotice): void {
+    const { text, switchToSessionId }: TranscriptNotice =
+      typeof notice === "string" ? { text: notice } : notice;
+    this.bus.emit({ type: "runtime_info", line: text });
+    this.bus.emit({
+      type: "system_message",
+      text,
+      variant: "warn",
+      ...(switchToSessionId ? { switchToSessionId } : {}),
+    });
   }
 
   /**
@@ -1232,7 +1467,10 @@ export class ChatOrchestrator {
       } else {
         // The failure belongs to a thread that is off screen; a bare
         // "turn error" would read as the visible thread's. Name it.
-        this.notify(formatBackgroundTurnFailed(turnSessionId, msg));
+        this.notify({
+          text: formatBackgroundTurnFailed(turnSessionId, msg),
+          switchToSessionId: turnSessionId,
+        });
       }
       this.exitCode = 1;
     } finally {
@@ -1254,7 +1492,10 @@ export class ChatOrchestrator {
       // Finished in the background: the reply is saved in its own
       // session (the rail just refreshed). The visible thread's queue
       // is not this turn's to drain.
-      this.notify(formatBackgroundTurnFinished(turnSessionId));
+      this.notify({
+        text: formatBackgroundTurnFinished(turnSessionId),
+        switchToSessionId: turnSessionId,
+      });
       return;
     }
     if (this.reattachedMidTurn) {
@@ -1396,11 +1637,31 @@ export class ChatOrchestrator {
     this.mcp.shutdown();
     this.import.shutdown();
     this.swarm.dispose();
+    this.stopWatchingRoute?.();
     await this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();
     await this.runtime.shutdown();
   }
+}
+
+/**
+ * Is this the store answering "I am gone", rather than failing at its
+ * job? better-sqlite3 has no error code for it: a statement run after
+ * `db.close()` raises a plain `TypeError` whose message is the only
+ * evidence (`better-sqlite3/src/util/macros.cpp:59`). Matching the
+ * message is therefore the whole test, and it has to be this exact
+ * message: two lines below the closed-handle throw the same file raises
+ * `TypeError: This database connection is busy executing a query`
+ * (`macros.cpp:62`), which is a live store refusing a re-entrant read —
+ * a real fault the operator must see. Anything broader than an exact
+ * wording match would bin that one too.
+ */
+function isStoreGoneError(err: unknown): boolean {
+  return (
+    err instanceof TypeError &&
+    err.message.includes("database connection is not open")
+  );
 }
 
 function formatBytes(bytes: number): string {
@@ -1419,14 +1680,14 @@ function hasFirstPrompt(state: SessionState): boolean {
   return state.turns.some((turn) => turn.kind === "user");
 }
 
-/** A stored row with a first prompt (`firstPrompt !== null`) as a rail row. */
 /**
- * The `SessionSummary` shape `listSummaries()` projects, built from a
- * loaded session — for the rows the recency window did not carry.
+ * The `SessionSummary` shape `listSummaryPage()` projects, built from a
+ * loaded session — for the rows the loaded pages did not carry.
  */
 function summariseSessionState(state: SessionState): SessionSummary {
   const firstUser = state.turns.find((t) => t.kind === "user");
   return {
+    title: readSessionTitle(state.metadata),
     id: state.id,
     workingDir: state.workingDir,
     status: state.status,
@@ -1443,7 +1704,11 @@ function summariseSessionState(state: SessionState): SessionSummary {
 }
 
 function toPickerEntry(row: SessionSummary): SessionPickerEntry {
-  const preview = row.firstPrompt ?? "";
+  // The generated name when there is one, the raw prompt otherwise.
+  // Both lists read this field, so naming a session renames it
+  // everywhere at once — and a session named before this feature, or
+  // one whose naming call failed, is unchanged.
+  const preview = row.title ?? row.firstPrompt ?? "";
   return {
     sessionId: row.id,
     workingDir: row.workingDir,

@@ -18,6 +18,7 @@ export type {
   WebFetchConfig,
   WebSearchConfig,
   WebSearchProviderName,
+  TuiNotifyConfig,
   WebhookConfig,
   WhileBusySubmitMode,
 } from "./config-schema.js";

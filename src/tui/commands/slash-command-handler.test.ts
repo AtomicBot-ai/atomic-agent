@@ -27,6 +27,13 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("/telegram has no token verb: the token is entered in Integrations", () => {
+    const result = dispatchSlashCommand("/telegram token");
+    expect(result.telegramVerb).toBeUndefined();
+    expect(result.systemMessage).toContain("usage: /telegram");
+    expect(result.systemMessage).not.toMatch(/\| token \|/);
+  });
+
   it("leaves no palette command without a dispatch case", () => {
     // The generic guard for the bug above: every command the palette
     // advertises must actually do something when typed.

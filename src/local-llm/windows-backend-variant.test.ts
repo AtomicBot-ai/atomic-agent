@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const execSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
+import { LINUX_ARM64_BACKEND_ASSET } from "./linux-arm64-backend-variant.js";
+import { UnsupportedGlibcError } from "./platform-assets.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   isWindowsGpuBackendAsset,
@@ -197,6 +199,39 @@ describe("resolveDownloadAsset", () => {
     expect(resolveDownloadAsset("win32", "x64").assetName).toBe(
       WINDOWS_BACKEND_ASSETS.cuda124,
     );
+  });
+
+  it("resolves linux arm64 to the one published arm64 build", () => {
+    const asset = resolveDownloadAsset("linux", "arm64", "2.39");
+    expect(asset.assetName).toBe(LINUX_ARM64_BACKEND_ASSET);
+    expect(asset.binaryName).toBe("llama-server");
+  });
+
+  it("probes no hardware on linux arm64 — there is nothing to choose", () => {
+    resolveDownloadAsset("linux", "arm64", "2.39");
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses linux arm64 on a glibc older than the arm64 build needs", () => {
+    expect(() => resolveDownloadAsset("linux", "arm64", "2.35")).toThrow(
+      UnsupportedGlibcError,
+    );
+    expect(() => resolveDownloadAsset("linux", "arm64", null)).toThrow(
+      /needs glibc 2\.38 or newer.*found no glibc/,
+    );
+  });
+
+  it("ignores the variant preference on linux arm64 (single asset)", () => {
+    // Every value has to land on the same asset: arm64 publishes one
+    // build, so a pin that named another would ask for a file that does
+    // not exist in any release.
+    for (const pin of ["vulkan", "cpu", "cuda-12.4", "cuda-13.3"] as const) {
+      setConfiguredBackendVariant(pin);
+      expect(resolveDownloadAsset("linux", "arm64", "2.39").assetName).toBe(
+        LINUX_ARM64_BACKEND_ASSET,
+      );
+    }
+    expect(execSyncMock).not.toHaveBeenCalled();
   });
 
   it("ignores the variant preference off Windows (single-asset platforms)", () => {

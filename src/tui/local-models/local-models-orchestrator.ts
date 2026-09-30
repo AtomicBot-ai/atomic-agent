@@ -74,6 +74,9 @@ import {
   type HuggingFaceRepoChoices,
   type LocalModelDef,
   type LocalModelId,
+  fetchServedModelIds,
+  describeServerFault,
+  readRunningPid,
 } from "../../local-llm/index.js";
 import {
   classifyVramFit,
@@ -91,7 +94,20 @@ import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
 import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
+import { DaemonSupervisor } from "./daemon-supervisor.js";
+import {
+  clearChatPort,
+  clearEmbeddingPort,
+  type PortClearanceDeps,
+} from "./local-models-port-clearance.js";
+import { formatDaemonNotice } from "./format-daemon-notice.js";
+import { probeEndpoint, WedgeWatch } from "./daemon-wedge-watch.js";
 import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
+import {
+  resolveLocalLegRole,
+  resolveRunMode,
+} from "../../llm/run-mode/index.js";
+import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -146,6 +162,12 @@ export interface LocalModelsOrchestratorHooks {
   /** Fired after a successful chat daemon (re)start for the active model. */
   onManagedDaemonRestarted?: () => void;
   /**
+   * The managed chat port moved because another process holds the
+   * configured one (already persisted): rebuild the route's provider and
+   * point the health poller at `url`.
+   */
+  onManagedPortMoved?: (url: string) => void | Promise<void>;
+  /**
    * Fired when the operator deliberately puts a local model live and it
    * actually serves — an explicit setup act, never the launch-time
    * `autoStartIfReady` adoption of a model configured long ago.
@@ -181,8 +203,21 @@ export class LocalModelsOrchestrator {
   private timer: ReturnType<typeof setInterval> | null = null;
   private logsTimer: ReturnType<typeof setInterval> | null = null;
   private activeTimer: ReturnType<typeof setInterval> | null = null;
-  /** True while a daemon the TUI owns is running; used by `shutdown()`. */
-  private daemonSupervised = false;
+  private supervised = false;
+  /**
+   * True while a daemon the TUI owns is running; used by `shutdown()`.
+   * Taking ownership — a start, or adopting a running daemon, by any
+   * path — is also what arms the supervisor: its timer must run from
+   * the moment there is something to watch, not from whenever the LLM
+   * pane happens to be opened.
+   */
+  private get daemonSupervised(): boolean {
+    return this.supervised;
+  }
+  private set daemonSupervised(owned: boolean) {
+    this.supervised = owned;
+    if (owned) this.supervisor.start();
+  }
   /**
    * Chat and embedding pulls are independent channels, one watched
    * worker each. A new pull of a kind detaches the watch on the previous
@@ -219,6 +254,40 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
+  /** Tells a wedged live daemon from a busy one (see `WedgeWatch`). */
+  private readonly wedgeWatch = new WedgeWatch();
+  /** Restarts a daemon this TUI owns when it dies or wedges (`autoRestart`). */
+  private readonly supervisor = new DaemonSupervisor({
+    enabled: () => {
+      const cfg = getConfig();
+      return cfg.localModels.mode === "managed" && cfg.localModels.managed.autoRestart;
+    },
+    owns: () => this.daemonSupervised,
+    pidAlive: async () => readRunningPid(getConfig().paths.localModelsDataDir) !== null,
+    restart: () => this.restartOwnedDaemon(),
+    say: (line) => this.bus.emit({ type: "runtime_info", line }),
+    // The chat is where the operator is looking when a turn goes quiet;
+    // the feed line above stays for the per-attempt detail.
+    notify: (notice) =>
+      this.bus.emit({ type: "system_message", ...formatDaemonNotice(notice) }),
+    describeFault: () => {
+      try {
+        const log = readLogTail(resolveLogFilePath(getConfig().paths.localModelsDataDir));
+        return describeServerFault(log.text)?.summary ?? null;
+      } catch {
+        return null;
+      }
+    },
+    checkWedge: async () => {
+      const base = `http://127.0.0.1:${getConfig().localModels.managed.port}`;
+      const [health, slots] = await Promise.all([
+        probeEndpoint(`${base}/health`, 2_000),
+        probeEndpoint(`${base}/slots`, 5_000),
+      ]);
+      return this.wedgeWatch.observe({ at: Date.now(), health, slots });
+    },
+    resetWedge: () => this.wedgeWatch.reset(),
+  });
   /**
    * Devices enumerated via `llama-server --list-devices`, cached for the
    * process lifetime. `null` until a successful enumeration with the
@@ -282,6 +351,7 @@ export class LocalModelsOrchestrator {
   }
 
   async shutdown(): Promise<void> {
+    this.supervisor.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     // The workers are on their own: quitting must not stop a download.
@@ -1627,27 +1697,60 @@ export class LocalModelsOrchestrator {
           line: `local-llm: ${def.name} needs ~${needGb.toFixed(1)} GB but GPU budget ~${gpuBudgetGb!.toFixed(1)} GB — may fail to load / OOM`,
         });
       }
+      // What `parallel: "auto"` means depends on which way fusion is
+      // pointing (see `resolveLocalLegRole`): serving a fan-out wants
+      // every slot the context fits, orchestrating wants exactly one.
+      // Resolved from the `cfg` this call read, so a restart after the
+      // operator swaps the legs in Manage → LLM picks the new role up —
+      // `restartDaemon` comes back through here, and nothing about the
+      // role is captured at boot.
+      const resolvedLlm = resolveLlmConfig(cfg);
+      const localLegRole = resolveLocalLegRole(
+        resolvedLlm,
+        resolveRunMode(resolvedLlm, { managedModelId: mid }),
+      );
+      const clearance = this.portClearanceDeps();
+      const chatClear = await clearChatPort(cfg, mid, clearance);
+      if (chatClear.adoptedPid !== null) {
+        this.daemonSupervised = true;
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ready — pid ${chatClear.adoptedPid} on http://127.0.0.1:${chatClear.port}`,
+        });
+        await this.ensureEmbeddingPaired();
+        this.hooks?.onManagedModelSelected?.(mid);
+        this.hooks?.onManagedDaemonRestarted?.();
+        return true;
+      }
+      const embClear = await clearEmbeddingPort(
+        cfg,
+        embedding,
+        chatClear.port,
+        clearance,
+      );
       const result = await startChatAndEmbeddingDaemons({
         chat: {
           dataDir,
           modelId: mid,
-          port: cfg.localModels.managed.port,
+          port: chatClear.port,
           chatTemplateFile: tpl,
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
           parallel: cfg.localModels.managed.parallel,
+          localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),
         },
-        embedding: embedding
-          ? { ...embedding, ...(device ? { device } : {}) }
-          : embedding,
+        embedding: embClear.options
+          ? { ...embClear.options, ...(device ? { device } : {}) }
+          : undefined,
       });
       this.daemonSupervised = true;
+      this.supervisor.noteStarted();
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${cfg.localModels.managed.port}${
+        line: `local-llm: ready — pid ${result.chat.pid} on http://127.0.0.1:${chatClear.port}${
           result.chat.tokensPerSecond === null
             ? ""
             : ` · ~${roundTokensPerSecond(result.chat.tokensPerSecond)} tok/s`
@@ -1661,7 +1764,12 @@ export class LocalModelsOrchestrator {
             : `local-llm: vision disabled — mmproj not downloaded for ${def.id}`,
         });
       }
-      this.reportEmbeddingStartOutcome(result.embedding, embedding);
+      this.reportEmbeddingStartOutcome(
+        embClear.adoptedPid !== null
+          ? { pid: embClear.adoptedPid }
+          : result.embedding,
+        embClear.adoptedPid !== null ? embedding : embClear.options,
+      );
       // Refresh the tray / prompt model label for EVERY start path
       // (pull auto-start, `s`, autoStart, setActive). The health poller
       // caches the model name per URL (`modelFetchedForUrl`) and would
@@ -1871,6 +1979,26 @@ export class LocalModelsOrchestrator {
    * points at it, so nothing in the TUI can ever stop it, and it keeps
    * the port and the VRAM. Concurrent callers share the one restart.
    */
+  /**
+   * The supervisor's restart: the same single-flight slot and stop-first
+   * order as `restartDaemon`, without its route check — a daemon this
+   * TUI owns keeps serving Fusion workers and the fallback chain's local
+   * link while a cloud route is active, and a dead one helps neither.
+   */
+  private restartOwnedDaemon(): Promise<boolean> {
+    if (this.restartInFlight) return this.restartInFlight;
+    const inFlight = (async () => {
+      const stopped = await this.stopChatDaemonOnly({
+        stoppedLine: "local-llm: chat daemon stopped — bringing it back up…",
+      });
+      return stopped ? await this.startDaemon() : false;
+    })().finally(() => {
+      this.restartInFlight = null;
+    });
+    this.restartInFlight = inFlight;
+    return inFlight;
+  }
+
   async restartDaemon(): Promise<boolean> {
     if (this.restartInFlight) {
       this.bus.emit({
@@ -1989,6 +2117,13 @@ export class LocalModelsOrchestrator {
    * promoting it to a `daemon_error_set` — the chat daemon already
    * succeeded, so the panel-level error slot stays clear. Memory-v2
    * phase 1B: embedding failure ⇒ FTS5-only fallback, not a fatal stop.
+   *
+   * A *failed* start is reported but never persisted: this runs from
+   * `startDaemon`, which `autoStartIfReady` calls at TUI launch with no
+   * user action, so a one-off start failure must not erase the
+   * operator's durable hybrid-recall opt-in (issue #465). Fallback is
+   * already handled at runtime — `bootstrap` probes the daemon and
+   * degrades to FTS5 when it is unreachable, flag or no flag.
    */
   private reportEmbeddingStartOutcome(
     embedding: { pid: number } | { error: string } | { skipped: true },
@@ -2002,10 +2137,9 @@ export class LocalModelsOrchestrator {
         line: `local-llm: embedding daemon up (${id}, pid ${embedding.pid}) — hybrid recall on`,
       });
     } else if ("error" in embedding) {
-      persistMemoryEmbeddingsEnabled(false);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: embedding daemon failed — hybrid recall disabled (${embedding.error})`,
+        line: `local-llm: embedding daemon failed — hybrid recall unavailable until it starts, FTS5 recall still works (${embedding.error})`,
       });
     } else if (!requested) {
       // skipped is also returned when no embedding was requested;
@@ -2075,6 +2209,11 @@ export class LocalModelsOrchestrator {
           });
         }
       }
+      // Unlike the start-failure paths above, `!desired` is not a
+      // transient sample of a daemon: it means the master switch is
+      // off, no model is selected, or the GGUF is not on disk. Those
+      // are durable config/disk facts, so persisting `false` here is
+      // reconciliation, not the intent-clobber of issue #465.
       if (cfg.memory.embeddings.enabled) {
         persistMemoryEmbeddingsEnabled(false);
       }
@@ -2114,23 +2253,37 @@ export class LocalModelsOrchestrator {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      persistMemoryEmbeddingsEnabled(false);
+      // Not persisted: `autoStartIfReady` reaches this at TUI launch
+      // with no user action, and a transient start failure must not
+      // erase the operator's opt-in (issue #465). `bootstrap` probes
+      // the daemon on every boot and falls back to FTS5 by itself.
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: embedding daemon failed — hybrid recall disabled (${msg})`,
+        line: `local-llm: embedding daemon failed — hybrid recall unavailable until it starts, FTS5 recall still works (${msg})`,
       });
     }
   }
 
   /**
-   * Keep `memory.embeddings.enabled` aligned with the live embedding
-   * daemon: on when the operator enabled embeddings, a model is on
-   * disk, and the daemon is running; off otherwise. Does not flip
-   * `localModels.embeddings.enabled` — that is the operator master
+   * Latch `memory.embeddings.enabled` **on** once the operator enabled
+   * embeddings, a model is on disk and the daemon is running. Does not
+   * flip `localModels.embeddings.enabled` — that is the operator master
    * switch (`E` hotkey).
+   *
+   * One-way by design. This runs off the snapshot timer (5s, 1s while a
+   * daemon is starting), so `emb.running` is a transient observation: a
+   * single sample taken while the daemon starts, restarts or auto-updates
+   * would otherwise write `false` to disk permanently and silently drop
+   * the runtime to FTS5-only recall at every later boot — in `serve` mode
+   * nothing ever writes the flag back. Writing `false` buys nothing
+   * anyway: `bootstrap` already probes the daemon and degrades gracefully
+   * when the flag is on but the daemon is unreachable. Turning hybrid
+   * recall off stays with the user-initiated paths (stop daemon, master
+   * switch, model teardown).
    */
   private reconcileHybridRecallFromDaemon(emb: EmbeddingDaemonInfo): void {
     const cfg = getConfig();
+    if (cfg.memory.embeddings.enabled) return;
     const dataDir = cfg.paths.localModelsDataDir;
     const modelId = cfg.localModels.embeddings.modelId;
     const hasModel =
@@ -2139,8 +2292,8 @@ export class LocalModelsOrchestrator {
       isEmbeddingModelDownloaded(dataDir, getEmbeddingModelDef(modelId));
     const shouldEnable =
       cfg.localModels.embeddings.enabled && hasModel && emb.running;
-    if (cfg.memory.embeddings.enabled === shouldEnable) return;
-    persistMemoryEmbeddingsEnabled(shouldEnable);
+    if (!shouldEnable) return;
+    persistMemoryEmbeddingsEnabled(true);
   }
 
   /**
@@ -2327,7 +2480,12 @@ export class LocalModelsOrchestrator {
    * Memory-v2 phase 1B. Delete an embedding model's GGUF from disk.
    * If the deleted model is the one currently configured as active,
    * the embedding daemon is stopped first so we never race against
-   * a partially-deleted file the server still has mmap'd.
+   * a partially-deleted file the server still has mmap'd, and hybrid
+   * recall is turned off explicitly: removing the active model is a
+   * user action that ends the opt-in. This used to be left to the
+   * snapshot reconciler's `hasModel` branch, which no longer writes
+   * `false` at all (issue #465) — the master switch is deliberately
+   * untouched, exactly as the reconciler left it.
    */
   async removeEmbeddingModel(id: EmbeddingModelId): Promise<void> {
     const cfg = getConfig();
@@ -2364,6 +2522,9 @@ export class LocalModelsOrchestrator {
     }
     try {
       await removeEmbeddingModelFiles(dataDir, id);
+      if (cfg.localModels.embeddings.modelId === id) {
+        persistMemoryEmbeddingsEnabled(false);
+      }
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding ${def.name} removed`,
@@ -2539,9 +2700,24 @@ export class LocalModelsOrchestrator {
       dataDir,
       cfg.localModels.managed.port,
     );
+    if (running.running && !(await this.servesConfiguredModel(mid))) {
+      // Ours by pid, but it serves another model (the config moved on
+      // while it ran). Adopting it would answer every turn with the
+      // wrong weights — bounce it onto the configured one.
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: the running server is not ${def.name} — restarting it`,
+      });
+      if (await this.stopChatDaemonOnly()) {
+        await this.startDaemon({ backendAlreadyChecked: true });
+      }
+      this.scheduleBackendAutoUpdate(dataDir);
+      return;
+    }
     if (running.running) {
       // Already started by a previous TUI session; adopt it.
       this.daemonSupervised = true;
+      this.supervisor.noteStarted();
       // The chat daemon may have been started before the embedding
       // model was downloaded / configured. Reconcile the embedding
       // side to the current intent so the pairing invariant holds
@@ -2556,6 +2732,74 @@ export class LocalModelsOrchestrator {
     // not run one, because the deferred pass below owns it.
     await this.startDaemon({ backendAlreadyChecked: true });
     this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /** How a start reports and persists what it did to a held port. */
+  private portClearanceDeps(): PortClearanceDeps {
+    return {
+      say: (line) => this.bus.emit({ type: "runtime_info", line }),
+      onChatPortMoved: (url) => this.hooks?.onManagedPortMoved?.(url),
+    };
+  }
+
+  /**
+   * Whether the managed port serves `modelId` (`/v1/models` lists the
+   * `-a` alias). A server that does not answer the route — still
+   * loading, or a build without it — is given the benefit of the doubt:
+   * only a positive "something else" is a mismatch.
+   */
+  private async servesConfiguredModel(modelId: string): Promise<boolean> {
+    const served = await fetchServedModelIds(getConfig().localModels.managed.port);
+    return served === null || served.includes(modelId);
+  }
+
+  /**
+   * The mid-session half of `autoStartIfReady`'s adoption. Launch with a
+   * cloud provider active skips adoption (the early return above), so a
+   * daemon left running by a previous session, or by `models start`,
+   * belonged to nobody after the operator moved the route onto it with
+   * `/llm provider local-llama`, the Cloud pane, `/model`, a session's
+   * restored provider or a run-mode change: a `kill -9` was never
+   * restarted, and `stopOnExit` never stopped it at quit.
+   *
+   * Called on every change of the active text provider and on every
+   * run-mode change. Ownership only, never a start: when our pid is
+   * alive and the new route uses the managed daemon (`local-llama`
+   * active, or a Fusion leg on it), this takes it exactly as the launch
+   * adoption does — for the supervisor and for teardown alike, since
+   * the launch adoption draws no line between a daemon a previous TUI
+   * left and one `models start` launched. A daemon serving another
+   * model is adopted the same way; the next start or restart (the
+   * supervisor's included) launches the configured one. A route moving
+   * away from the daemon changes nothing: it keeps serving the fallback
+   * chain's local link and stays owned.
+   *
+   * @param activeId the provider being made active, when the caller
+   *   knows it before the config write lands.
+   * @returns whether the daemon is now owned by this TUI.
+   */
+  adoptDaemonForRoute(activeId?: string): boolean {
+    if (this.daemonSupervised) return true;
+    const cfg = getConfig();
+    if (cfg.localModels.mode !== "managed") return false;
+    const mid = cfg.localModels.managed.modelId;
+    if (!mid || !isKnownLocalModelId(mid)) return false;
+    const resolved = resolveLlmConfig(cfg);
+    const active = activeId ?? resolved.activeTextProvider;
+    const rm = resolveRunMode(resolved, { managedModelId: mid });
+    const usesDaemon =
+      active === "local-llama" ||
+      (rm.effective === "fusion" &&
+        (rm.orchestratorProviderId === "local-llama" ||
+          rm.workerProviderId === "local-llama"));
+    if (!usesDaemon) return false;
+    if (readRunningPid(cfg.paths.localModelsDataDir) === null) return false;
+    this.daemonSupervised = true;
+    this.supervisor.noteStarted();
+    void this.refresh().catch(() => {
+      /* the next poll repaints the pane */
+    });
+    return true;
   }
 
   /**

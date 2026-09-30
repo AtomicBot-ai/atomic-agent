@@ -21,6 +21,13 @@ export interface BuildPromptInput {
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Installed skills the catalog budget left out. Forwarded into
+   * `buildStablePrefix`, which ends `### skills` on a truncation marker
+   * when it is above zero (issue #466). Omitted / `0` keeps the prefix
+   * byte-identical to the legacy output.
+   */
+  skillCatalogDropped?: number;
   systemPersona?: string;
   /**
    * Single-stream decode speed of the local worker daemon (tokens per
@@ -75,6 +82,21 @@ export interface BuildPromptInput {
    */
   contextWindow?: number | null;
   /**
+   * Whether `profile.contextWindow` describes the model *this* prompt
+   * is being built for. Default `true` — every single-leg caller.
+   *
+   * The profile comes from the llama-server `/props` probe, so its
+   * window is the local model's. In Fusion the two legs are different
+   * models: a cloud orchestrator's prompt was being budgeted against
+   * the local worker's per-slot `n_ctx` (`--ctx-size / --parallel`, so
+   * 262144/16 = 16384 on a 16-slot daemon), which both clipped the
+   * transcript to a fraction of the cloud window and drew a gauge that
+   * read past 100% — the pinned newest task plus fixed overhead do not
+   * fit a window that small. `false` makes `contextWindow` above the
+   * only source, which for a cloud leg is its catalogue entry.
+   */
+  profileWindowApplies?: boolean;
+  /**
    * The local worker leg's request-slot count as the llama-server
    * reported it, `null` (or absent) until observed. The `### fusion`
    * machine facts state it for an external server, whose `--parallel`
@@ -88,9 +110,23 @@ export interface BuildPromptInput {
    * turn that carried it — see `request-section.ts`.
    */
   originalRequest?: string;
+  /**
+   * Overrides `agent.sessionSectionsMaxTokens` for this build. `0` (or
+   * omitted) keeps the `tokenBudget * 0.15` share.
+   */
+  sessionSectionsMaxTokens?: number;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;
+  /**
+   * The serving route changed since the session's previous turn
+   * (`route-change-note.ts`). Rendered as `### route` right after
+   * `### conversation`, on every step of that one turn and never again:
+   * after the transcript, so the next turn dropping it leaves the
+   * conversation's cached tokens untouched, and in the tail, so the
+   * stable prefix never moves.
+   */
+  routeNote?: string;
   profile?: ModelProfile;
   /**
    * Suppress the llama-server template artifacts around the generation

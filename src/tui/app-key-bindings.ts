@@ -27,6 +27,7 @@ import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import {
   handleSessionMoveKey,
   handleSessionPinKey,
+  railTailInView,
 } from "./session-rail/index.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
@@ -87,6 +88,12 @@ export interface AppKeyCallbacks {
   onSessionSwitchRequested?(sessionId: string): void;
   /** Shift+↑/↓ in the rail: put the selected session on slot `toIndex`. */
   onSessionMoveRequested?(sessionId: string, toIndex: number): void;
+  /**
+   * The cursor is at the end of the sessions the rail has loaded: ask
+   * the host for the next page. The rail reads the store one page at a
+   * time, so this is how the list past the first page is reached.
+   */
+  onSessionsEndReached?(): void;
   /** `p` in the rail, or a row's `↑`: pin the selected session, or release it. */
   onSessionPinToggled?(sessionId: string): void;
   /**
@@ -241,6 +248,9 @@ export function isPanelModalOpen(state: TuiState): boolean {
       state.llmPanel.externalUrlDraft !== null ||
       state.llmPanel.externalCompatSteerUrl !== null ||
       state.llmPanel.stopLocalDaemonsPrompt !== null ||
+      // The Local pane's model detail view owns Esc (back to the list).
+      (state.llmPanel.mode === "local" &&
+        state.localModelsPanel.mode === "detail") ||
       // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
       // must not cycle the nav away mid-typing.
       (state.llmPanel.mode === "cloud" &&
@@ -538,9 +548,38 @@ export function handleAppKey(
       dispatch({ type: "chat_scroll_reset" });
       return true;
     }
+    // Esc arms; `1` below confirms. Aborting a turn throws away every
+    // step it has taken, and Esc is the most reflexive key on the strip
+    // — the same one that clears a draft, closes an overlay and snaps
+    // the chat back. One keystroke was too cheap for the one action
+    // that cannot be undone.
+    dispatch({ type: "abort_armed" });
+    return true;
+  }
+  // The confirm half, accepted two ways because the terminal decides
+  // which one arrives. Esc followed by a character IS the Alt-prefix
+  // encoding: press the two quickly and Ink never reports a lone Esc at
+  // all, it reports `1` with `meta`. Requiring the armed flag would
+  // make the chord work or not depending on how fast it was typed. So
+  // `meta+1` on a running turn completes it on its own, and a `1` after
+  // a reported Esc completes it too. `ctrl` is still excluded: ctrl+1
+  // belongs to tab switching.
+  if (
+    state.status === "running" &&
+    input === "1" &&
+    !key.ctrl &&
+    (state.abortArmed || key.meta)
+  ) {
     callbacks.onAbort();
     dispatch({ type: "abort_requested" });
     return true;
+  }
+  // Anything else stands the chord down. Done before the rest of the
+  // pipeline so the disarming key still does its own job: the cost of a
+  // stray Esc is one keystroke that did nothing, not a mode the
+  // operator has to notice and leave.
+  if (state.abortArmed && !key.escape) {
+    dispatch({ type: "abort_disarmed" });
   }
   if (
     state.uiMode === "chat" &&
@@ -734,6 +773,14 @@ function handleSidebarKey(
       dispatch({ type: "sidebar_tasks_cursor_moved", delta: 1 });
     } else {
       dispatch({ type: "sidebar_cursor_moved", delta: 1 });
+      // The rail holds one page of the store. Reaching the foot of it is
+      // the request for the next one — asked for after the move, so a
+      // cursor already parked on the last row still asks.
+      if (
+        railTailInView(state.sidebarCursor + 1, state.recentSessions.length)
+      ) {
+        callbacks.onSessionsEndReached?.();
+      }
     }
     return true;
   }

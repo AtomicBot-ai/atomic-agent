@@ -38,6 +38,10 @@ import {
 import { createWebhookHandler } from "./route-webhooks.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
+import {
+  createRestartMcpServerHandler,
+  createSetMcpServerEnabledHandler,
+} from "./route-mcp.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -100,6 +104,21 @@ export function buildRouteTable(): RouteDefinition[] {
       method: "POST",
       path: "/api/skills/uninstall",
       handler: createUninstallSkillHandler(),
+    },
+    {
+      method: "POST",
+      path: "/api/mcp/servers/{name}/restart",
+      handler: createRestartMcpServerHandler(),
+    },
+    {
+      method: "POST",
+      path: "/api/mcp/servers/{name}/enable",
+      handler: createSetMcpServerEnabledHandler(true),
+    },
+    {
+      method: "POST",
+      path: "/api/mcp/servers/{name}/disable",
+      handler: createSetMcpServerEnabledHandler(false),
     },
     {
       method: "GET",

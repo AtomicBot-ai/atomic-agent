@@ -101,10 +101,57 @@ export function createOpenAiStreamConsumer(
       // limit. Plain `content` only; the reasoning channel is scratch space.
       const fabrication = createFabricatedTranscriptWatcher();
       let earlyStop: CompletionEarlyStop | undefined;
+      // Whether something in here has already closed the body, so the
+      // `finally` closes it exactly once. A second cancel is a no-op on a
+      // stream that is already closed, but "exactly once" is then a fact
+      // about the spec rather than about this function.
+      let bodyCancelled = false;
+      let onAbort: (() => void) | undefined;
+      // Resolves the *current* read's abort promise, and only while a read
+      // is outstanding. One listener for the whole generator (detached in
+      // the `finally`), but a fresh promise per read: racing one long-lived
+      // promise instead retains every iteration's `Promise.race` reaction
+      // for as long as it stays unsettled, which on a stream nobody aborts
+      // is the whole completion — ~550 B per read, ~18 MB over the 33,678
+      // tokens of the runaway `fabrication` guards against above, in the
+      // process that is also holding the model.
+      let wake: ((woken: { abortReason: unknown }) => void) | undefined;
+      if (signal) {
+        onAbort = (): void => wake?.({ abortReason: signal.reason });
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
       try {
         while (true) {
-          if (signal?.aborted) break;
-          const { done, value } = await reader.read();
+          // A cancelled turn has to *fail*, not return the prefix that
+          // arrived before Esc: `completeStream` turns any throw under an
+          // aborted signal into `signal.reason`, which classifies as
+          // `cancelled` and keeps the fallback chain from reading the stop
+          // as a dead provider, while a normal return would hand the step
+          // a completion the user just told us to drop. Thrown from inside
+          // the `try` so the cancellation still carries the generation id —
+          // whatever streamed was billed.
+          //
+          // This is also what honours an abort that landed while the
+          // generator was suspended at a `yield`, where there is no read to
+          // wake and `wake` is unset: the next step throws here instead.
+          signal?.throwIfAborted();
+          // Raced against every read, not sampled between them. When the
+          // provider goes quiet mid-stream this generator is parked inside
+          // `reader.read()` and nothing wakes it: `openAiFetch` detaches
+          // the caller's signal from the fetch's own controller the moment
+          // the response headers land, so an abort after that cannot error
+          // the body. Without the race, Esc is honoured only when the next
+          // byte arrives — in practice when undici's body timeout kills the
+          // socket, minutes later, with the turn still on screen.
+          const abortOnce = new Promise<{ abortReason: unknown }>(
+            (resolve) => {
+              wake = resolve;
+            },
+          );
+          const next = await Promise.race([reader.read(), abortOnce]);
+          wake = undefined;
+          if ("abortReason" in next) throw next.abortReason;
+          const { done, value } = next;
           if (done) {
             // Flush TextDecoder state and treat a final non-empty SSE event
             // as an implicit last boundary. Some providers/proxies close the
@@ -130,6 +177,32 @@ export function createOpenAiStreamConsumer(
               throw new OpenAiSseError(
                 chunk.error.status,
                 chunk.error.message,
+                generationId,
+              );
+            }
+            // A service can abandon its own generation with a finish reason
+            // instead of an error object: Gemini through OpenRouter ends a
+            // malformed function call with `finish_reason: "error"` and
+            // `native_finish_reason: "MALFORMED_FUNCTION_CALL"`, after the
+            // prose it wrote on the way to the call. Read as an ordinary stop
+            // that prose becomes the turn's answer and the call is never made
+            // — a Fusion turn ended in 36 s with a plan and an empty folder.
+            //
+            // Only once something has streamed: thrown here the error reaches
+            // the loop past the point where a link can be swapped, so the step
+            // parks and retries on the same provider, which is what a
+            // malformed call needs. An error finish on the FIRST event is
+            // left alone deliberately — it ends as an empty completion, and
+            // `isRecoverableEmptyCompletion` already retries that in place
+            // rather than quarantining the link.
+            if (
+              chunk.finishReason?.toLowerCase() === "error" &&
+              (content.length > 0 || reasoningContent.length > 0)
+            ) {
+              const native = chunk.nativeFinishReason;
+              throw new OpenAiSseError(
+                502,
+                `the provider ended the completion with an error${native === null ? "" : ` (${native})`}`,
                 generationId,
               );
             }
@@ -199,6 +272,7 @@ export function createOpenAiStreamConsumer(
             // upstream supports it — when its client goes away. A body
             // that is already closed makes this a no-op.
             await reader.cancel(FABRICATED_TRANSCRIPT_STOP).catch(() => {});
+            bodyCancelled = true;
             break;
           }
           if (done) break;
@@ -209,6 +283,23 @@ export function createOpenAiStreamConsumer(
         // on the error so the trace row can name the generation.
         throw attachGenerationId(err, generationId);
       } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+        // An abort leaves the body open with a read still outstanding, and
+        // an unread body holds its socket: cancelling closes the
+        // connection, and a routing provider (OpenRouter) stops the
+        // generation — and the billing — when its client goes away. (A
+        // body that died on its own is already gone and takes this as a
+        // swallowed no-op.)
+        //
+        // Cancelled before `releaseLock`, which would instead reject the
+        // read this loop walked away from with a `TypeError` nobody is
+        // left to catch; cancelling resolves that read as `done` and
+        // leaves nothing pending for the release to error. Not awaited,
+        // like `LlamaServerClient`'s own release: a cancel travelling into
+        // a socket must never hang a consumer trying to walk away.
+        if (signal?.aborted && !bodyCancelled) {
+          void reader.cancel(signal.reason).catch(() => {});
+        }
         reader.releaseLock();
       }
       yield { delta: "", reasoningDelta: "", done: true };
