@@ -581,7 +581,7 @@ function wireIpc(client: AgentClient): void {
      turn ends while the window is not focused. Never during the smoke run,
      which has no one to interrupt. Clicking it brings the window back. */
   const turnNotifier = new TurnNotifier({
-    isFocused: () => SMOKE || !win || win.isDestroyed() || win.isFocused(),
+    isFocused: () => SMOKE || (!!win && !win.isDestroyed() && win.isFocused()),
     readConfig: async () => {
       const res = await configGetKey("tui.notify");
       return res.ok ? readNotifyConfig(res.value) : NOTIFY_DEFAULTS;
@@ -591,7 +591,10 @@ function wireIpc(client: AgentClient): void {
       if (!Notification.isSupported()) return;
       const n = new Notification({ title: note.title, body: note.body });
       n.on("click", () => {
-        if (!win || win.isDestroyed()) return;
+        if (!win || win.isDestroyed()) {
+          app.emit("activate");
+          return;
+        }
         if (win.isMinimized()) win.restore();
         win.show();
         win.focus();
