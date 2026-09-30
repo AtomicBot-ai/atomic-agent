@@ -4011,7 +4011,8 @@ function generalPane() {
 /* The restart notice and the error line an analytics or read-scope write
    leaves behind, on whichever of General / Privacy is showing. */
 function privacyNoticesHTML() {
-  return (PRIV.message ? restartLine(PRIV.message) : '')
+  // A PATCH-applied change (readScope on 0.6.6) is already live: no restart offer.
+  return (PRIV.message ? (PRIV.messageLive ? '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + esc(PRIV.message) + '</span></div>' : restartLine(PRIV.message)) : '')
     + (PRIV.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(PRIV.lastError) + '</span></div>' : '');
 }
 
@@ -4100,9 +4101,11 @@ async function readScopeSet(value) {
   if (!BR || !LIVE_CONFIG || PRIV.busy || value === readScopeValue()) return;
   const run = async () => {
     PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
-    const res = await BR.configSet('agent.readScope', value);
-    if (!res || res.ok === false) PRIV.lastError = 'could not change where the agent reads: ' + ((res && res.error) || 'unknown error');
-    else PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder';
+    // confine-reads.ts reads agent.readScope on every call, but only from the
+    // agent's cached config: PATCH (0.6.6) refreshes that cache, a CLI write does not.
+    const res = await configPatchOr({agent:{readScope:value}}, () => BR.configSet('agent.readScope', value));
+    if (!res.ok) PRIV.lastError = 'could not change where the agent reads: ' + (res.error || 'unknown error');
+    else { PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder'; PRIV.messageLive = !!res.live; }
     await refreshLiveConfig();
     PRIV.busy = false; render();
   };
@@ -4152,7 +4155,7 @@ async function privacySet(enabled) {
   // Writes queue behind each other (`/analytics on` then `/analytics off`
   // lands both, in order, as the TUI does) instead of dropping the second.
   const run = async () => {
-    PRIV.busy = true; PRIV.message = null; PRIV.lastError = null; render();
+    PRIV.busy = true; PRIV.message = null; PRIV.messageLive = false; PRIV.lastError = null; render();
     const res = await BR.configSet('analytics.enabled', String(!!enabled));
     if (!res || res.ok === false) {
       PRIV.lastError = 'analytics toggle failed: ' + ((res && res.error) || 'unknown error');
@@ -16068,7 +16071,7 @@ function mcpAddModalHTML() {
     + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
-    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · restart Atomic Agent for the new server to connect</span>'
+    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · then press Restart on its row to connect it</span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="mcp:addSubmit"' + (m.submitting ? ' disabled' : '') + '>Add</button></div>'
     // Secondary: under the actions, so the error and Add stay in view on a short window.
@@ -16079,7 +16082,7 @@ function mcpRemoveModalHTML() {
   return '<div class="tk-modal tk-modal--danger sd-modal" role="alertdialog" aria-label="Remove MCP server">'
     + '<div class="sd-mhead"><span class="tk-ico tk-ico--red">' + ic('trash') + '</span><h4>Remove MCP server?</h4></div>'
     + '<dl class="tk-plate"><dt>name</dt><dd>' + esc(c.name) + '</dd></dl>'
-    + '<p>Rewrites config.json; restart Atomic Agent to drop the live connection.</p>'
+    + '<p>Turns it off and removes it from config.json.</p>'
     + (c.error ? '<p class="tk-help tk-help--err">' + esc(c.error) + '</p>' : '')
     + '<div class="acts">' + (c.submitting ? '<span class="sd-cap sd-grow">working…</span>' : '')
     + '<button class="btn btn-g sm" data-act="mcp:removeCancel"' + (c.submitting ? ' disabled' : '') + '>Keep</button>'
@@ -16132,11 +16135,13 @@ function mcpParseAddJson(raw) {
   if (typeof candidate.name !== 'string' || !candidate.name.trim()) return {ok:false, error:'mcp.servers: name: expected a non-empty string'};
   return {ok:true, server:candidate};
 }
-/* The write: read the user file right before, append, whole-file
-   `atag config set '<json>'` through cli:configSetPath (mcp.servers has no
-   leaf spelling). The CLI validates the file and answers with its own
-   error text on a bad entry. The running agent is not touched — the modal's
-   footer and the success line say to restart. */
+/* The write: read the user file right before, append, and write the list.
+   On 0.6.6 that is PATCH /api/config (config-patch.js): the running agent
+   re-reads its config, so the new row's Restart connects it at once. An
+   older agent gets the whole-file `atag config set '<json>'` through
+   cli:configSetPath as before (mcp.servers has no leaf spelling) and the
+   line says to restart the app. Either path validates the file and answers
+   with the agent's own error text on a bad entry. */
 async function mcpAddSubmit(json) {
   const m = MCP.addModal;
   if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
@@ -16149,11 +16154,14 @@ async function mcpAddSubmit(json) {
   if (servers.some((s) => s && s.name === parsed.server.name)) {
     m.submitting = false; m.error = 'server ' + JSON.stringify(parsed.server.name) + ' already exists in config.mcp.servers'; render(); return {ok:false, error:m.error};
   }
-  const res = await BR.configSetPath('mcp.servers', servers.concat([parsed.server]));
+  const list = servers.concat([parsed.server]);
+  const res = await configPatchOr({mcp:{servers:list}}, () => BR.configSetPath('mcp.servers', list));
   m.submitting = false;
-  if (!res || res.ok === false) { m.error = (res && res.error) || 'config write failed'; render(); return {ok:false, error:m.error}; }
+  if (!res.ok) { m.error = res.error; render(); return {ok:false, error:m.error}; }
   MCP.addModal = null;
-  MCP.msg = {text:'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total) — restart Atomic Agent for the new server to connect', restart:true};
+  const added = 'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total)';
+  MCP.msg = res.live ? {text:added + '. Press Restart on its row to connect it.'}
+    : {text:added + ' — restart Atomic Agent for the new server to connect', restart:true};
   await mcpRefresh();
   return {ok:true, name:parsed.server.name};
 }
@@ -16166,12 +16174,17 @@ async function mcpRemoveConfirm() {
   const idx = servers.findIndex((s) => s && s.name === c.name);
   if (idx === -1) { c.submitting = false; c.error = 'server ' + JSON.stringify(c.name) + ' not found in config.mcp.servers'; render(); return; }
   const next = servers.slice(0, idx).concat(servers.slice(idx + 1));
-  const res = await BR.configSetPath('mcp.servers', next);
+  // 0.6.6: turn it off first, which drops the live connection; then the list write.
+  const off = servers[idx].enabled !== false && BR.mcpServer ? await BR.mcpServer(c.name, 'disable') : null;
+  const res = await configPatchOr({mcp:{servers:next}}, () => BR.configSetPath('mcp.servers', next));
   c.submitting = false;
-  if (!res || res.ok === false) { c.error = (res && res.error) || 'config write failed'; render(); return; }
+  if (!res.ok) { c.error = res.error; render(); return; }
   MCP.removeConfirm = null;
+  delete MCP_LIVE.status[c.name];
   if (MCP.mode === 'detail' && MCP.detailName === c.name) { MCP.mode = 'list'; MCP.detailName = null; }
-  MCP.msg = {text:'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining) — restart Atomic Agent to drop the live connection', restart:true};
+  const removed = 'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining)';
+  MCP.msg = (off && off.ok) || servers[idx].enabled === false ? {text:removed + '.'}
+    : {text:removed + ' — restart Atomic Agent to drop the live connection', restart:true};
   await mcpRefresh();
 }
 function mcpAct(what) {
