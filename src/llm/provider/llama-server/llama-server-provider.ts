@@ -32,6 +32,11 @@ export class LlamaServerProvider implements LlmProvider {
   readonly toolCallAdapter = null;
   readonly streamConsumer = null;
 
+  /** The local model loaded right now, when the runtime tracks it. */
+  get chatModelId(): string | undefined {
+    return this.getModelId?.() ?? undefined;
+  }
+
   get capabilities(): ProviderCapabilities {
     const visionCaps = resolveVisionCapabilities({
       profile: this.getProfile(),

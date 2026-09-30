@@ -87,6 +87,7 @@ export type {
 export {
   LlamaServerProvider,
   VisionUnsupportedError,
+  ModelCannotSeeError,
 } from "./provider/index.js";
 export type {
   LlmProvider,

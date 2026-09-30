@@ -223,7 +223,7 @@ describe("vision.describe follows the live route", () => {
       const refused = await describeShot(runtime);
       expect(refused.status).toBe("error");
       expect(refused.summary).toMatch(
-        /vision is not available on the active provider \(claude-cli: config-disabled\)/,
+        /opus on claude-cli cannot read images \(this provider takes no image input\)/,
       );
       expect(traffic.visionCalls).toHaveLength(0);
 

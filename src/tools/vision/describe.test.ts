@@ -77,7 +77,11 @@ describe("buildVisionDescribeTool", () => {
       ctx(process.cwd()),
     );
     expect(result.status).toBe("error");
-    expect(result.summary).toMatch(/vision is not available/i);
+    expect(result.summary).toMatch(/cannot read images/i);
+    expect(result.details).toMatchObject({
+      retryable: false,
+      reason: "model-cannot-see",
+    });
   });
 
   it("names the provider it refused on", async () => {
@@ -98,7 +102,7 @@ describe("buildVisionDescribeTool", () => {
     );
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(
-      /vision is not available on the active provider \(aimlapi: absent\)/,
+      /the model on aimlapi cannot read images \(no vision projector/,
     );
   });
 

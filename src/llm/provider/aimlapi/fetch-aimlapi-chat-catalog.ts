@@ -56,6 +56,8 @@ export type AimlapiChatPick = {
 
 let cached: { fetchedAt: number; picks: readonly AimlapiChatPick[] } | null =
   null;
+/** Stated image support per id from the cached fetch; see `getAdvertisedAimlapiVision`. */
+let advertisedVision: ReadonlyMap<string, boolean> = new Map();
 
 function readContextLength(m: AimlapiApiModel): number {
   return m.info?.contextLength ?? m.info?.context_length ?? 128_000;
@@ -168,6 +170,20 @@ export function getCachedAimlapiChatPicks(): readonly AimlapiChatPick[] | null {
   return cached.picks;
 }
 
+/**
+ * What the last live fetch said about image input for `id`: `true` /
+ * `false` only when the row carried a non-empty `features` array,
+ * `undefined` for silence (the current API shape), an unlisted id, or a
+ * cold or stale cache. `readVisionSupport` folds silence into "no" for
+ * the picker; the provider layer must not, or every live-only id would
+ * lose vision without anyone having said it cannot see
+ * (`model-vision.ts`).
+ */
+export function getAdvertisedAimlapiVision(id: string): boolean | undefined {
+  if (!cached || Date.now() - cached.fetchedAt > CACHE_TTL_MS) return undefined;
+  return advertisedVision.get(id);
+}
+
 export function listAimlapiChatPicks(): readonly AimlapiChatPick[] {
   return getCachedAimlapiChatPicks() ?? picksFromStaticCatalog();
 }
@@ -252,6 +268,13 @@ async function fetchAndCacheCatalog(): Promise<boolean> {
     }
 
     if (picks.length === 0) return false;
+    const stated = new Map<string, boolean>();
+    for (const [id, live] of liveById) {
+      if (live.features !== undefined && live.features.length > 0) {
+        stated.set(id, readVisionSupport(live));
+      }
+    }
+    advertisedVision = stated;
     cached = { fetchedAt: Date.now(), picks };
     return true;
   } catch {

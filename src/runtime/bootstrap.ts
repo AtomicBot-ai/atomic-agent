@@ -84,6 +84,7 @@ import type { ToolRole } from "../tools/tool-roles.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import { resolveVisionProvider, visionRouteAvailable } from "./vision-route.js";
+import { visionCapableAlternatives } from "../llm/provider/model-vision.js";
 import {
   type LlmProvider,
   ProviderRegistry,
@@ -1911,6 +1912,14 @@ export async function createAgentRuntime(
     enabled: config.vision.enabled,
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
+    // A refusal names vision-capable models on the same provider, read
+    // from the live config so it follows the entry being refused.
+    visionAlternatives: (providerId) => {
+      const entry = resolveLlmConfig(getConfig()).providers.find(
+        (candidate) => candidate.id === providerId,
+      );
+      return entry ? visionCapableAlternatives(entry) : [];
+    },
     logger,
   });
   // MCP client subsystem. The manager is always constructed so the
