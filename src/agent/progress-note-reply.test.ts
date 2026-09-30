@@ -13,6 +13,7 @@ import {
   progressNoteText,
   recordProgressNote,
   splitProgressNoteReply,
+  closingReplyBatch,
 } from "./progress-note-reply.js";
 
 const shell: ToolCallPayload = {
@@ -25,6 +26,19 @@ const reply: ToolCallPayload = {
   args: { text: "(collecting file contents…)" },
 };
 const finish: ToolCallPayload = { tool: "finish", args: { summary: "done" } };
+const store: ToolCallPayload = {
+  tool: "memory.notes.store",
+  args: { content: "wrote the story" },
+};
+const forget: ToolCallPayload = { tool: "memory.notes.forget", args: { id: 4 } };
+const recall: ToolCallPayload = {
+  tool: "memory.notes.recall",
+  args: { query: "story" },
+};
+const write: ToolCallPayload = {
+  tool: "os.fs.write",
+  args: { path: "a", content: "x" },
+};
 
 describe("splitProgressNoteReply", () => {
   it("takes the reply out of [shell, reply] and keeps the work", () => {
@@ -64,6 +78,49 @@ describe("splitProgressNoteReply", () => {
 
   it("reads the note's text back", () => {
     expect(progressNoteText(reply)).toBe("(collecting file contents…)");
+  });
+});
+
+describe("a reply batched only with bookkeeping is the answer", () => {
+  it("is not a progress note: [memory.notes.store, reply] is left to end the turn", () => {
+    expect(splitProgressNoteReply([store, reply])).toBeNull();
+    expect(splitProgressNoteReply([reply, store, forget])).toBeNull();
+  });
+
+  it("is reordered reply-last so the memory writes run first", () => {
+    expect(closingReplyBatch([reply, store])).toEqual([store, reply]);
+    expect(closingReplyBatch([store, reply])).toEqual([store, reply]);
+    expect(closingReplyBatch([store, reply, forget])).toEqual([
+      store,
+      forget,
+      reply,
+    ]);
+  });
+
+  it("stays a progress note when any real work is beside the reply", () => {
+    expect(closingReplyBatch([write, reply])).toBeNull();
+    expect(splitProgressNoteReply([write, reply])!.calls).toEqual([write]);
+    expect(closingReplyBatch([store, shell, reply])).toBeNull();
+    expect(splitProgressNoteReply([store, shell, reply])!.calls).toEqual([
+      store,
+      shell,
+    ]);
+  });
+
+  it("treats a recall as work: its result is information the reply has not seen", () => {
+    expect(closingReplyBatch([recall, reply])).toBeNull();
+    expect(splitProgressNoteReply([recall, reply])!.calls).toEqual([recall]);
+  });
+
+  it("leaves sole replies, other terminals and the forced final step alone", () => {
+    expect(closingReplyBatch([reply])).toBeNull();
+    expect(closingReplyBatch([store])).toBeNull();
+    expect(closingReplyBatch([reply, finish])).toBeNull();
+    expect(closingReplyBatch([reply, reply])).toBeNull();
+    expect(closingReplyBatch([reply, store], { terminalOnly: true })).toBeNull();
+    expect(
+      closingReplyBatch([{ tool: "reply", args: { text: "  " } }, store]),
+    ).toBeNull();
   });
 });
 

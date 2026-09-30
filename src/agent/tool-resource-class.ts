@@ -259,6 +259,30 @@ export function isParallelWithinGroup(cls: ResourceClass): boolean {
 }
 
 /**
+ * A bookkeeping call: a write to the agent's own long-term memory
+ * (`memory.*` in the `memory_write` class — a note stored or forgotten,
+ * a profile fact set or removed). Its result carries nothing the answer
+ * depends on: "stored #4" does not change what the reply says. So a
+ * `reply` batched only with bookkeeping is the end of the turn, not a
+ * progress note (`progress-note-reply.ts`).
+ *
+ * Derived from the class, not a name list: a new `memory.*` write tool
+ * classed `memory_write` is bookkeeping the day it is added. Reads
+ * (`memory.*.recall`, `memory.profile.list` / `history`) are
+ * `pure_read` and stay work — their result is information the model
+ * has not seen yet. The other `memory_write` tenants
+ * (`os.clipboard.write`, `os.window.focus`, `os.notify`) sit in that
+ * class only to serialise; they act on the user's desktop and a reply
+ * may claim their outcome, so they are work too.
+ */
+export function isBookkeepingTool(toolName: string): boolean {
+  return (
+    toolName.startsWith("memory.") &&
+    resourceClassFor(toolName) === "memory_write"
+  );
+}
+
+/**
  * Read-only snapshot of the registry — useful for tests and debugging.
  */
 export function listKnownToolResourceClasses(): Readonly<

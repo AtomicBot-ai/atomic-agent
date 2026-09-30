@@ -6,7 +6,7 @@ import {
 import type { SessionState } from "../session/session-state.js";
 import { recordTurn } from "../session/session-state.js";
 import { assistantReplyTurn } from "../session/conversation-turn.js";
-import { resourceClassFor } from "./tool-resource-class.js";
+import { isBookkeepingTool, resourceClassFor } from "./tool-resource-class.js";
 import type { StepEvent } from "./step-events.js";
 
 /**
@@ -25,6 +25,16 @@ import type { StepEvent } from "./step-events.js";
  * UI renders it as an interim message. The turn ends only on a sole
  * `reply` (a length-1 batch), or on the forced final step, where the
  * batch behaves exactly as before.
+ *
+ * Bookkeeping is not work. Live, a local model answered a story request
+ * with `[memory.notes.store "wrote the story", reply <story>]`, and the
+ * note rule turned that into a progress note — so the model recalled
+ * its own note, wrote the story again, and again, six steps for one
+ * answer. A write to the agent's own memory (`isBookkeepingTool`)
+ * produces nothing the reply depends on, so a reply batched ONLY with
+ * bookkeeping ends the turn: the batch is reordered reply-last
+ * (`closingReplyBatch`), the memory writes run, then the reply. A recall
+ * is work: its result is information the model has not seen.
  *
  * `finish` batched with work keeps its behaviour (session end): out of
  * scope here. The model is told once per turn, on the standard
@@ -58,7 +68,32 @@ export function splitProgressNoteReply(
   if (!rest.some((call) => resourceClassFor(call.tool) !== "terminal")) {
     return null;
   }
+  if (rest.every((call) => isBookkeepingTool(call.tool))) return null;
   return { calls: rest, note: calls[noteIdx]! };
+}
+
+/**
+ * A reply batched only with bookkeeping, reordered so the reply is last
+ * — the one position the validator admits a terminal in a multi-call
+ * batch — or `null` when the batch is anything else. The executor runs
+ * the memory writes, then the reply, and the turn ends:
+ * `[reply, memory.notes.store]` behaves as `[memory.notes.store, reply]`
+ * always did. Same guards as the split: not on the forced final step,
+ * one `reply` with text, nothing else terminal beside it.
+ */
+export function closingReplyBatch(
+  calls: readonly ToolCallPayload[],
+  options: { terminalOnly?: boolean } = {},
+): ToolCallPayload[] | null {
+  if (options.terminalOnly === true) return null;
+  if (calls.length < 2) return null;
+  const replyIdx = calls.findIndex(
+    (call) => call.tool === "reply" && replyText(call) !== null,
+  );
+  if (replyIdx === -1) return null;
+  const rest = calls.filter((_, i) => i !== replyIdx);
+  if (!rest.every((call) => isBookkeepingTool(call.tool))) return null;
+  return [...rest, calls[replyIdx]!];
 }
 
 /** The note's text — the `reply` argument, which the split checked. */

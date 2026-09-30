@@ -32,6 +32,7 @@ import {
 } from "./claim-evidence.js";
 import {
   formatProgressNoteNotice,
+  closingReplyBatch,
   progressNoteText,
   recordProgressNote,
   splitProgressNoteReply,
@@ -983,6 +984,14 @@ async function executeStepInner(
     result: CompletionResult,
   ): { batch: ToolCallBatch; note: ToolCallPayload | null } => {
     if (fabricationOf(result) !== null) return { batch, note: null };
+    // A reply batched only with memory writes is the answer: reordered
+    // reply-last, the writes run and the reply ends the turn.
+    const closing = closingReplyBatch(batch.calls, {
+      terminalOnly: ctx.terminalOnly === true,
+    });
+    if (closing !== null) {
+      return { batch: { ...batch, calls: closing }, note: null };
+    }
     const split = splitProgressNoteReply(batch.calls, {
       terminalOnly: ctx.terminalOnly === true,
     });
