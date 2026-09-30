@@ -362,3 +362,10 @@
 /* ---------------- steered message (B4) ----------------
    Caption under a bubble that was folded into the running turn. */
 .turn.usr .usrcap{margin:4px 4px 0 auto;width:fit-content;max-width:74%;font-size:12px;line-height:1.4;color:var(--ink-2);text-align:right}
+/* Providers the fallback chain tried, under a failed turn's row (tui-parity.js). */
+.sysrow .sys-tried{display:block;margin-top:4px}
+.sysrow .sys-tried-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12px;cursor:pointer}
+.sysrow .sys-tried-t:hover{color:var(--ink)}
+.sysrow .sys-tried-t svg{width:12px;height:12px}
+.sysrow .sys-tried-l{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 16px;font-size:12px;color:var(--ink-3)}
+.sysrow .sys-tried-i b{font-weight:600;color:var(--ink)}

@@ -6337,6 +6337,7 @@ function onChatEvent(ev) {
     if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       text: turnFailureLine(ev),
+      tried: tpFallbackFailures(ev.payload), open: false,
       act: providerFailure(ev) ? 'switch-provider' : null});
     // A turn ended: the steer watermark belongs to the turn that is over
     // (chat-orchestrator.ts resets steeredAhead with the queue). The
@@ -13305,7 +13306,7 @@ function sysRowHTML(m, times) {
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
   return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)
-    + '<span class="sys-tx">' + m.text + rep + '</span>'
+    + '<span class="sys-tx">' + m.text + rep + (m.tried ? tpTriedHTML(m) : '') + '</span>'
     + (acts ? '<span class="sys-acts">' + acts + '</span>' : '') + '</div>';
 }
 

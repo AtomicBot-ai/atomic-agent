@@ -128,3 +128,32 @@ function tpWaitGaveUpEntry(wait) {
   return {id:nid(), k:'system', sev:'pause', note:true,
     text: esc('Stopped waiting for the model' + (wait && wait.maxWaitMs ? ' after ' + tpSeconds(wait.maxWaitMs) : '') + '.')};
 }
+
+/* ---- Providers the fallback chain tried (fallback_failures) ---------------
+   When the active provider fails and the fallback chain falls over, the
+   agent's error frame names the FIRST link (the provider the person picked)
+   and lists every link that failed before the last one in
+   `fallback_failures: [{providerId, reason}]`. The last link's own error is
+   not in the frame. The list sits under the error row, collapsed; the row's
+   entry keeps `open`, so the shared [data-toggle] handler folds it. */
+
+/** The frame's list, cleaned; [] when there was no fallover. */
+function tpFallbackFailures(payload) {
+  const raw = payload && Array.isArray(payload.fallback_failures) ? payload.fallback_failures : [];
+  return raw
+    .filter((f) => f && typeof f.providerId === 'string' && f.providerId)
+    .map((f) => ({providerId: f.providerId, reason: typeof f.reason === 'string' ? f.reason : ''}));
+}
+
+function tpTriedHTML(m) {
+  const list = m.tried || [];
+  if (!list.length) return '';
+  const head = '<button class="sys-tried-t" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
+    + ic(m.open ? 'chevD' : 'chevR') + '<span>Providers tried</span> <span class="disc-n">· ' + (list.length + 1) + '</span></button>';
+  if (!m.open) return '<span class="sys-tried">' + head + '</span>';
+  return '<span class="sys-tried">' + head + '<span class="sys-tried-l">'
+    + list.map((f) => '<span class="sys-tried-i"><b>' + esc(providerWord(f.providerId) || f.providerId) + '</b> '
+      + esc(f.reason || 'failed') + '</span>').join('')
+    + '<span class="sys-tried-i">then the last fallback, which failed too</span>'
+    + '</span></span>';
+}
