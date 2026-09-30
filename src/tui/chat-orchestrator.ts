@@ -299,8 +299,14 @@ export class ChatOrchestrator {
       onManagedModelSelected: (modelId) => {
         this.llmHealth.notifyCatalogModel(modelId);
       },
+      // Every start path lands here — `/llm restart`, the supervisor's
+      // death and wedge restarts, the launch start, a port move — so the
+      // refresh a new server needs is done once, for all of them: the
+      // tray label, and the runtime's `/props` profile the local
+      // provider's capabilities (vision, context window) are read from.
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
+        void runtime.refreshLocalModelProfile?.();
       },
       onManagedPortMoved: async (url) => {
         // Same three steps as saving a URL by hand: the provider's base

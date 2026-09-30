@@ -294,10 +294,14 @@ export class ModelProfileManager {
           to: nextProfile.id,
           modelId: nextModelId,
         });
-      } else if (nextProfile.prefixReuse !== this.profile.prefixReuse) {
-        // Same profile id, but the header now says something about
-        // reuse — the grammar is untouched, the packer's input is not.
-        this.profile = { ...this.profile, prefixReuse: nextProfile.prefixReuse };
+      } else if (servedFactsDiffer(this.profile, nextProfile)) {
+        // Same profile id — the grammar is untouched — but the server
+        // now reports different facts: a restart that loaded or dropped
+        // the mmproj projector, a new `--ctx-size`, or a header that
+        // says something about reuse. Keeping the old snapshot would pin
+        // `capabilities.vision` / the context window to the previous
+        // process for the rest of the session.
+        this.profile = nextProfile;
       }
       if (nextModelId !== null) {
         this.modelId = nextModelId;
@@ -351,6 +355,17 @@ export class ModelProfileManager {
       };
     }
   }
+}
+
+/** The `/props`-derived fields a same-id refresh must still carry over. */
+function servedFactsDiffer(prev: ModelProfile, next: ModelProfile): boolean {
+  return (
+    prev.vision.supported !== next.vision.supported ||
+    prev.vision.source !== next.vision.source ||
+    prev.contextWindow !== next.contextWindow ||
+    prev.supportsThinkingSwitch !== next.supportsThinkingSwitch ||
+    prev.prefixReuse !== next.prefixReuse
+  );
 }
 
 function normaliseId(value: string | null | undefined): string | null {

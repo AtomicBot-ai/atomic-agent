@@ -192,6 +192,37 @@ describe("ModelProfileManager", () => {
     expect(manager.getGrammar()).toBe(grammar);
   });
 
+  it("carries vision and the context window over on a refresh that keeps the profile id", async () => {
+    // A restarted daemon serves the same model (same profile id), now
+    // with the mmproj projector and another --ctx-size.
+    const textOnly = { ...QWEN3_PROPS, n_ctx: 8192 };
+    const withProjector = {
+      ...QWEN3_PROPS,
+      n_ctx: 32768,
+      modalities: { vision: true },
+    };
+    const stub = makeLlamaStub([textOnly, withProjector]);
+    const manager = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+    });
+    await manager.refresh();
+    expect(manager.getProfile().id).toBe("qwen-think");
+    expect(manager.getProfile().vision.supported).toBe(false);
+    const grammar = manager.getGrammar();
+
+    const result = await manager.refresh();
+    expect(result.profileChanged).toBe(false);
+    expect(manager.getProfile().vision).toEqual({
+      supported: true,
+      source: "modalities.vision",
+    });
+    expect(manager.getProfile().contextWindow).toBe(32768);
+    expect(manager.getGrammar()).toBe(grammar);
+  });
+
   it("falls back to keeping the prior profile when /props probe throws", async () => {
     const grammar = await buildGrammar(GEMMA4_THINK_PROFILE);
     const warn = vi.fn();
