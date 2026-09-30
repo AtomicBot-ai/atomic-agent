@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveFallbackChain,
+  withoutUnbuiltLinks,
   DEFAULT_FALLBACK_TIMING,
 } from "./fallback-config.js";
 import type { ResolvedLlmConfig } from "../provider/registry/provider-types.js";
@@ -255,5 +256,25 @@ describe("resolveFallbackChain", () => {
     expect(resolved.timing.failureWindowMs).toBe(
       DEFAULT_FALLBACK_TIMING.failureWindowMs,
     );
+  });
+});
+
+describe("withoutUnbuiltLinks", () => {
+  const timing = DEFAULT_FALLBACK_TIMING;
+  it("drops links the registry did not build and reports each one", () => {
+    const dropped: string[] = [];
+    const out = withoutUnbuiltLinks(
+      { chain: ["openrouter", "ollama", "local-llama"], timing },
+      (id) => id !== "ollama",
+      (id) => dropped.push(id),
+    );
+    expect(out.chain).toEqual(["openrouter", "local-llama"]);
+    expect(dropped).toEqual(["ollama"]);
+  });
+
+  it("always keeps the primary and returns the same object when nothing changes", () => {
+    const input = { chain: ["gemini", "local-llama"], timing };
+    expect(withoutUnbuiltLinks(input, () => true)).toBe(input);
+    expect(withoutUnbuiltLinks(input, () => false).chain).toEqual(["gemini"]);
   });
 });
