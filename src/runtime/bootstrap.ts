@@ -641,6 +641,15 @@ export interface AgentRuntime {
   /** Rebuild one provider from the current config (TUI configure flow). */
   reloadLlmProvider(id: string): Promise<void>;
   /**
+   * Re-read the local model's `/props` now (profile, vision, context
+   * window, slot pool) instead of at the next local turn. The TUI calls
+   * it after every managed daemon (re)start — by hand, by the
+   * supervisor, after a port move — so the capabilities a restart
+   * changed land on the live provider before anything asks for them.
+   * Never throws; a failed probe keeps the prior profile.
+   */
+  refreshLocalModelProfile(): Promise<void>;
+  /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
    * `handler` instead of the host's `onApprovalRequest` fallback.
@@ -3585,6 +3594,9 @@ export async function createAgentRuntime(
     refreshMcp,
     reloadLlmProviders,
     reloadLlmProvider,
+    refreshLocalModelProfile: async () => {
+      await profileManager?.refresh();
+    },
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
