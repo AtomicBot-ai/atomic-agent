@@ -6165,6 +6165,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'provider_waiting') {
     const p = ev.payload || {};
+    const firstWait = !WAIT;
     WAIT = {
       attempt: Number(p.attempt) || 1,
       waitedMs: Number(p.waited_ms) || 0,
@@ -6174,6 +6175,7 @@ function onChatEvent(ev) {
       until: Date.now() + (Number(p.next_retry_ms) || 0),
     };
     if (!WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);
+    if (firstWait && item) tpOnProviderWaiting(WAIT);   // tui-parity.js: one line in the transcript per wait
     render();
     return;
   }
@@ -6181,6 +6183,7 @@ function onChatEvent(ev) {
     WAIT = null;
     if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
     appSay('Provider answered again after ' + Math.round((Number((ev.payload || {}).waited_ms) || 0) / 1000) + ' s');
+    if (item) tpOnProviderRecovered(Number((ev.payload || {}).waited_ms) || 0);
     render();
     return;
   }
@@ -6331,6 +6334,7 @@ function onChatEvent(ev) {
     // and the desktop was reading `ev.error` off a payload it never lifted,
     // so a failed turn printed the bare sentence `turn failed: `. The
     // bracketed category mirrors the TUI's `failed [${category}]: …`.
+    if (ev.kind === 'error' && item && WAIT) S.log.push(tpWaitGaveUpEntry(WAIT));
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       text: turnFailureLine(ev),
       act: providerFailure(ev) ? 'switch-provider' : null});

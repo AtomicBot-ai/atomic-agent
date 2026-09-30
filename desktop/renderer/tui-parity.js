@@ -68,3 +68,63 @@ function tpNotifyRowHTML() {
       + (!known || TP_NOTIFY.busy ? ' disabled' : '') + ' title="Turn notifications ' + (on ? 'off' : 'on') + '"></button>'
     + '</div>';
 }
+
+/* ---- Why the agent went quiet (agent v0.6.6) -----------------------------
+   A turn parked on a model that stopped answering already draws the waiting
+   strip above the composer (provider_waiting / provider_recovered frames).
+   The strip goes away with the wait, so the transcript kept no trace of it
+   and, while it lasted, did not say what happens next. The TUI posts one
+   calm line when the wait starts, one when the model is back, and a lead
+   line when the turn gives up (src/tui/format-provider-outage.ts); these
+   are the same three, in the window's words.
+
+   The TUI's other notices (the managed server crashed, restarting, back up)
+   come from its own daemon supervisor, which `atag serve` does not run. On
+   the local route the window asks `atag models status` instead and says
+   what it finds: a server that is not running, or the fault its log shows. */
+
+function tpActiveIsLocal() {
+  const id = selActiveProviderId();
+  const entry = (selProviders() || []).find((p) => p.id === id);
+  return !!entry && entry.kind === 'llama-server';
+}
+
+function tpWaitNotice(wait) {
+  const why = wait && wait.reason ? humanWaitReason(wait.reason) : '';
+  const budget = wait && wait.maxWaitMs ? ' for up to ' + tpSeconds(wait.maxWaitMs) : '';
+  return 'The model isn’t answering' + (why ? ' (' + why + ')' : '') + '. The turn is paused and retries on its own'
+    + budget + '. Stop ends it.';
+}
+
+/** `atag models status` in one sentence, or '' when the server looks fine. */
+function tpLocalServerLine(st) {
+  if (!st) return '';
+  if (st.fault) return 'Local model server: ' + st.fault;
+  if (st.mode === 'managed' && !st.daemonRunning) return 'The local model server isn’t running. Start it in Settings › Models.';
+  return '';
+}
+
+/** First provider_waiting frame of a wait. */
+function tpOnProviderWaiting(wait) {
+  placeInLiveTurn({id:nid(), k:'system', sev:'pause', note:true, text: esc(tpWaitNotice(wait))});
+  if (!BR || !BR.modelsStatus || !tpActiveIsLocal()) return;
+  const turnId = S.turnId;
+  BR.modelsStatus().then((res) => {
+    const line = tpLocalServerLine(res && res.ok ? res.status : null);
+    // Only while the same turn is still the one on screen.
+    if (!line || S.turnId !== turnId) return;
+    placeInLiveTurn({id:nid(), k:'system', sev:'warn', note:true, text: esc(line)});
+    render();
+  }).catch(() => {});
+}
+
+function tpOnProviderRecovered(waitedMs) {
+  placeInLiveTurn({id:nid(), k:'system', note:true,
+    text: esc('The model is answering again after ' + tpSeconds(waitedMs) + '. The turn continues.')});
+}
+
+/** Put before the failure a turn ends with while it was parked. */
+function tpWaitGaveUpEntry(wait) {
+  return {id:nid(), k:'system', sev:'pause', note:true,
+    text: esc('Stopped waiting for the model' + (wait && wait.maxWaitMs ? ' after ' + tpSeconds(wait.maxWaitMs) : '') + '.')};
+}
