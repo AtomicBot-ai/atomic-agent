@@ -149,6 +149,32 @@ describe("executeBatch", () => {
     expect(seen[2]).toBeUndefined();
   });
 
+  it("hands the step's provider pin to every call's tool context", async () => {
+    // A fusion worker's step is pinned to the local leg; a tool that
+    // calls a model itself (`vision.describe`) must see that pin.
+    const seen: (string | undefined)[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "vision.describe",
+      description: "see",
+      readonly: true,
+      run: async (_args, toolCtx) => {
+        seen.push(toolCtx.providerId);
+        return okResult("vision.describe");
+      },
+    });
+    const inputs = toBatchInputs([
+      { tool: "vision.describe", args: { path: "a.png", prompt: "x" } },
+    ]);
+    const ctrl = new AbortController();
+    await executeBatch(inputs, registry, {
+      ...ctx(ctrl.signal),
+      providerId: "local-llama",
+    });
+    await executeBatch(inputs, registry, ctx(ctrl.signal));
+    expect(seen).toEqual(["local-llama", undefined]);
+  });
+
   it("chunks pure_read fan-out into bounded waves when maxWaveSize is set", async () => {
     // 5 reads with a wave size of 2 → waves of [0,1], [2,3], [4]. Track
     // peak concurrency: it must never exceed 2, and all 5 must run.

@@ -83,6 +83,7 @@ import { confineReads } from "../tools/read-scope/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import { resolveRunMode, type ResolvedRunMode } from "../llm/run-mode/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
+import { resolveVisionProvider, visionRouteAvailable } from "./vision-route.js";
 import {
   type LlmProvider,
   ProviderRegistry,
@@ -1884,12 +1885,29 @@ export async function createAgentRuntime(
     return catalogued === null ? observed : Math.min(observed, catalogued);
   };
 
-  // Vision reuses the active text provider when it exposes describeImage.
-  const visionProvider: LlmProvider | undefined = config.vision.enabled
-    ? textProvider
-    : undefined;
+  // Vision follows the live route (`vision-route.ts`): each call asks
+  // the registry for the provider serving that step — the pinned fusion
+  // worker leg, else the active text provider — so a `/llm provider`,
+  // `/model` or route-picker switch takes effect on the next call. The
+  // boot provider used to be captured here, and kept receiving images
+  // after the operator had moved off it.
+  const resolveCurrentVisionProvider = (
+    providerId: string | undefined,
+  ): LlmProvider | undefined =>
+    resolveVisionProvider(providerRegistry, providerId);
+  const visionOnLiveRoute = (): boolean =>
+    config.vision.enabled &&
+    visionRouteAvailable({
+      registry: providerRegistry,
+      isLlamaServer: (providerId) =>
+        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+      fusionWorkerProviderId: () => {
+        const mode = resolveCurrentRunMode();
+        return mode.effective === "fusion" ? mode.workerProviderId : null;
+      },
+    });
   registerVisionTools(toolRegistry, {
-    provider: visionProvider,
+    provider: config.vision.enabled ? resolveCurrentVisionProvider : undefined,
     enabled: config.vision.enabled,
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
@@ -1986,13 +2004,13 @@ export async function createAgentRuntime(
     });
   }
 
-  // The descriptor stays in the prompt whenever the operator wired a
-  // vision provider — even before the profile probe lands. The
-  // descriptor blurb already says "Only available when the active
-  // model + provider support multimodal input"; if the user asks for
-  // image work before mmproj is loaded, the tool surfaces a clear
-  // `VisionUnsupportedError` instead of silently disappearing from
-  // the toolset.
+  // The descriptor stays in the prompt while the live route can see
+  // (`visionRouteAvailable`) — for a local link even before the profile
+  // probe lands. The descriptor blurb already says "Only available when
+  // the active model + provider support multimodal input"; if the user
+  // asks for image work before mmproj is loaded, the tool surfaces a
+  // clear refusal naming the provider instead of silently disappearing
+  // from the toolset.
   // Drop descriptors whose backing tool will not be registered at
   // runtime under the current config gates. Without this filter the
   // stable prefix advertises tools that the registry rejects on
@@ -2009,9 +2027,11 @@ export async function createAgentRuntime(
     const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       browser: { enabled: config.browser.enabled },
       web: { search: { enabled: config.web.search.enabled } },
+      // Live, like the fusion gate: offered while some leg of the
+      // current route can see (see `visionRouteAvailable`).
       vision: {
         enabled: config.vision.enabled,
-        providerAvailable: visionProvider !== undefined,
+        providerAvailable: visionOnLiveRoute(),
       },
       memory: {
         profile: { enabled: config.memory.profile.enabled },
@@ -2064,22 +2084,30 @@ export async function createAgentRuntime(
    * (`refreshMcp`) already costs, and for the same reason: the tool
    * catalog changed, so the prefix must.
    */
+  //
+  // The vision gate is memoised the same way and for the same reason:
+  // switching to a provider that cannot see drops `vision.describe`
+  // from the prompt, switching back restores it — one prefix change per
+  // flip, none while the route holds.
+  const liveDescriptorGates = (): string =>
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}`;
   let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
-  let cachedFusionGate = resolveCurrentRunMode().effective === "fusion";
+  let cachedDescriptorGates = liveDescriptorGates();
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
-    cachedFusionGate = resolveCurrentRunMode().effective === "fusion";
+    cachedDescriptorGates = liveDescriptorGates();
     cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
     return cachedToolDescriptors;
   };
   const effectiveToolDescriptors = (): readonly ToolDescriptor[] =>
-    (resolveCurrentRunMode().effective === "fusion") === cachedFusionGate
+    liveDescriptorGates() === cachedDescriptorGates
       ? cachedToolDescriptors
       : rebuildToolDescriptors();
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
-      provider: visionProvider?.name ?? "(none)",
+      provider: textProvider.id,
+      followsLiveRoute: true,
       autoDetect: config.vision.autoDetect,
-      registeredAtBootstrap: visionProvider !== undefined,
+      offeredAtBootstrap: visionOnLiveRoute(),
     });
   }
 
