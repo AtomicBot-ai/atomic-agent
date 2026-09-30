@@ -652,19 +652,15 @@ describe("slash commands that only an orchestrator can carry out", () => {
     );
   });
 
-  it("/telegram token opens the masked token prompt", () => {
-    // The verb was listed in the usage line and handled downstream, but
-    // the dispatcher never emitted it: the command printed its own usage.
-    const onTokenPrompt = vi.fn();
-    const { dispatched } = run("/telegram token", {
-      onTelegramTokenPromptOpenRequested: onTokenPrompt,
-    });
-    expect(onTokenPrompt).toHaveBeenCalledTimes(1);
+  it("/telegram token answers with the usage line (the verb was removed)", () => {
+    // The bot token is entered in /integrations → Telegram, masked while
+    // typed; the bare `token` verb is gone from the command and its usage.
+    const { dispatched } = run("/telegram token", {});
     expect(
       dispatched.some(
         (a) => a.type === "system_message" && a.text?.startsWith("usage:"),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it.each(["pull", "use"])(
