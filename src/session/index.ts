@@ -64,6 +64,13 @@ export {
 } from "./session-llm.js";
 export type { SessionLlmStamp } from "./session-llm.js";
 export {
+  SESSION_ROUTE_METADATA_KEY,
+  readSessionRoute,
+  resolveTurnRoute,
+  sameSessionRoute,
+} from "./session-route.js";
+export type { RouteLeg, SessionRoute } from "./session-route.js";
+export {
   FUSION_WORKER_METADATA_KEY,
   FUSION_WORKER_ID_PREFIX,
   createFusionWorkerSession,

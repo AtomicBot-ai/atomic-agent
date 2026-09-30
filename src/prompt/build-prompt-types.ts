@@ -113,6 +113,15 @@ export interface BuildPromptInput {
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;
+  /**
+   * The serving route changed since the session's previous turn
+   * (`route-change-note.ts`). Rendered as `### route` right after
+   * `### conversation`, on every step of that one turn and never again:
+   * after the transcript, so the next turn dropping it leaves the
+   * conversation's cached tokens untouched, and in the tail, so the
+   * stable prefix never moves.
+   */
+  routeNote?: string;
   profile?: ModelProfile;
   /**
    * Suppress the llama-server template artifacts around the generation

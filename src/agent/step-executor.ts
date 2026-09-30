@@ -422,6 +422,8 @@ export interface StepContext {
    * the turn that carried it. See `request-section.ts`.
    */
   originalRequest?: string;
+  /** `RunTurnOptions.routeNote`, rendered as `### route` (`build-prompt.ts`). */
+  routeNote?: string;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
   reasoningEffort?: ReasoningEffort;
   /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
@@ -689,6 +691,7 @@ async function executeStepInner(
     ...(ctx.originalRequest !== undefined
       ? { originalRequest: ctx.originalRequest }
       : {}),
+    ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
   };
   const prompt = buildPrompt(promptInput);
   // A grammar (llama-server) fallback link behind a native-tools primary
