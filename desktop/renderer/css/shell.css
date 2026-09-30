@@ -337,3 +337,19 @@ body.electron #toolbar input,
 body.electron #toolbar .searchbtn{-webkit-app-region:no-drag}
 /* The sidebar sits under the toolbar and must not swallow drags. */
 body.electron .sb-head{-webkit-app-region:no-drag}
+
+/* ---------------- window chrome off macOS ----------------
+   The preload puts the platform on <body> (platform-darwin / -win32 /
+   -linux). The 96px above is room for the macOS traffic lights and stays
+   theirs alone.
+   Windows: no lights on the left; the system's minimise / maximise / close
+   are overlaid on the RIGHT end of this 52px band (titleBarOverlay), so the
+   toolbar keeps its controls clear of them. `titlebar-area-width` is the
+   band minus those buttons; the fallback is three 46px caption buttons.
+   Linux: a normal frame draws the controls above the page, so the toolbar
+   only drops the lights' room. */
+body.electron.platform-win32 #toolbar{
+  padding-left:20px;
+  padding-right:calc(100vw - env(titlebar-area-width, calc(100vw - 138px)) + 12px);
+}
+body.electron.platform-linux #toolbar{padding-left:20px}

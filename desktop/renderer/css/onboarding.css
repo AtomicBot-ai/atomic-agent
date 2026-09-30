@@ -428,3 +428,8 @@
   #onboarding .ob-routes .ob-row{padding:11px 16px}
   .ob-introc .ob-word{font-size:52px}
 }
+
+/* Off macOS there are no traffic lights over the rail's top, so it does not
+   keep their 60px (platform class: preload.ts). */
+body.electron.platform-win32 #onboarding .ob-rail,
+body.electron.platform-linux #onboarding .ob-rail{padding-top:28px}

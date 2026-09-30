@@ -138,6 +138,7 @@ import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
+import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -197,6 +198,14 @@ let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
    handlers read `voice.armed`, and both quit paths have to be able to kill
    it — a helper outliving the window holds the microphone indicator on. */
 const voice = new VoiceSession();
+
+/* Voice input exists only where the speech helper can run (macOS; see
+   platform.ts voiceSupported). Answered synchronously so the preload can
+   hand the renderer a plain boolean before the first paint, and registered
+   here, at load, so it is in place before any window's preload asks. */
+ipcMain.on("app:voiceSupported", (event) => {
+  event.returnValue = voiceSupported(process.platform);
+});
 
 /* Item 2 (voice input): the chosen dictation languages. This is a viewer
    preference, not agent state — the agent has no voice surface at all — so
@@ -380,11 +389,11 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     backgroundColor: "#191C21",
-    // The design draws its own 52px toolbar, so the frame keeps only the
-    // traffic lights and insets them into that band.
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 20, y: 20 },
-    vibrancy: "sidebar",
+    // The design draws its own 52px toolbar. On macOS the frame keeps only
+    // the traffic lights, inset into that band; on Windows the system's
+    // window controls are overlaid on its right end; Linux keeps a normal
+    // frame (platform.ts windowChrome).
+    ...windowChrome(process.platform),
     webPreferences: {
       preload: join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
@@ -586,7 +595,7 @@ function wireIpc(client: AgentClient): void {
       const res = await configGetKey("tui.notify");
       return res.ok ? readNotifyConfig(res.value) : NOTIFY_DEFAULTS;
     },
-    workingDirName: () => client.status.workingDir.split("/").filter(Boolean).pop(),
+    workingDirName: () => lastSegment(process.platform, client.status.workingDir),
     show: (note) => {
       if (!Notification.isSupported()) return;
       const n = new Notification({ title: note.title, body: note.body });
@@ -1093,7 +1102,8 @@ function wireIpc(client: AgentClient): void {
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
-    if (typeof p !== "string" || !p.startsWith("/") || p.includes("\0")) return null;
+    // Absolute by this platform's rules: `/x` here, `C:\x` on Windows.
+    if (typeof p !== "string" || !isAbsoluteOn(process.platform, p) || p.includes("\0")) return null;
     return p;
   };
   ipcMain.handle("app:openPath", async (_event, p: unknown) => {
@@ -1110,7 +1120,7 @@ function wireIpc(client: AgentClient): void {
     if (!Array.isArray(list)) return { ok: false, error: "not a list" };
     const files: Array<{ path: string; exists: boolean; kind: "file" | "dir" | null; size: number; mtimeMs: number }> = [];
     for (const raw of list.slice(0, 64)) {
-      const expanded = typeof raw === "string" && raw.startsWith("~/") ? homedir() + raw.slice(1) : raw;
+      const expanded = typeof raw === "string" ? expandHome(process.platform, raw, homedir()) : raw;
       const path = safePath(expanded);
       if (!path) continue;
       try {
@@ -1129,7 +1139,7 @@ function wireIpc(client: AgentClient): void {
     const { clipboard, Menu } = require("electron") as typeof import("electron");
     const menu = Menu.buildFromTemplate([
       { label: "Open", click: () => void shell.openPath(path) },
-      { label: "Show in Finder", click: () => shell.showItemInFolder(path) },
+      { label: fileManagerLabel(process.platform), click: () => shell.showItemInFolder(path) },
       { type: "separator" },
       { label: "Copy Path", click: () => clipboard.writeText(path) },
       {
@@ -1458,6 +1468,20 @@ function wireIpc(client: AgentClient): void {
     return applySwitch(await selectFusionWorkerModel(id));
   });
 
+  /* Windows: the overlaid window controls are painted by the system, so they
+     follow the page's light/dark theme only when the renderer says which. */
+  ipcMain.handle("app:chromeTheme", (event, dark: unknown) => {
+    if (process.platform !== "win32") return { ok: true };
+    const w = BrowserWindow.fromWebContents(event.sender);
+    if (!w || w.isDestroyed()) return { ok: false };
+    try {
+      w.setTitleBarOverlay({ ...titleBarOverlayColors(dark === true), height: TOOLBAR_HEIGHT });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("app:build", () => ({
     version: app.getVersion(),
     platform: process.platform,
@@ -1518,7 +1542,7 @@ function wireIpc(client: AgentClient): void {
     });
   });
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
-    typeof dataDir === "string" && dataDir.startsWith("/") ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
+    typeof dataDir === "string" && isAbsoluteOn(process.platform, dataDir) ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
   );
   ipcMain.handle("app:llamaProbe", (_event, url: unknown) =>
     typeof url === "string" ? llamaProbe(url) : { ok: false, error: "url required" },
@@ -8028,6 +8052,9 @@ void app.whenReady().then(async () => {
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
   if (SMOKE) TUI_BASELINE = snapshotTuiState();
+  // Windows attributes notifications to the AppUserModelID; without one set a
+  // dev or unpackaged run shows none. Same id as the bundle id on macOS.
+  if (process.platform === "win32") app.setAppUserModelId("ai.atomicbot.desktop");
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
   win = createWindow();

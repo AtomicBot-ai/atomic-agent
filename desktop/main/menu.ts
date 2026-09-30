@@ -9,6 +9,22 @@ import { Menu, shell, type MenuItemConstructorOptions } from "electron";
  * through IPC and one in-process.
  */
 export function buildMenu(send: (command: string) => void): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(send, process.platform)));
+}
+
+/**
+ * The template, per platform. macOS keeps its app menu (About, Settings,
+ * Services, Hide, Quit) and its Window menu. Windows and Linux have no app
+ * menu, so what lived there moves to where those platforms keep it: Settings
+ * and Privacy under Edit, Run Setup Again under File, About under Help, and
+ * Exit at the bottom of File. Their Window menu drops the macOS-only roles.
+ */
+export function menuTemplate(send: (command: string) => void, platform: NodeJS.Platform): MenuItemConstructorOptions[] {
+  const mac = platform === "darwin";
+  /* Option-chords become Shift-chords off macOS: on Windows AltGr IS
+     Ctrl+Alt, so Ctrl+Alt+E would swallow the euro sign (and Ctrl+Alt+0 the
+     closing brace) on a German or Polish keyboard. */
+  const alt = (key: string) => (mac ? `Alt+CommandOrControl+${key}` : `Shift+CommandOrControl+${key}`);
   const item = (
     label: string,
     command: string,
@@ -47,7 +63,9 @@ export function buildMenu(send: (command: string) => void): void {
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,
         sep,
+        ...(mac ? [] : [item("Run Setup Again…", "onboarding"), sep]),
         { role: "close" },
+        ...(mac ? [] : [{ role: "quit", label: "Exit" } as MenuItemConstructorOptions]),
       ],
     },
     {
@@ -61,6 +79,10 @@ export function buildMenu(send: (command: string) => void): void {
         { role: "paste" },
         { role: "selectAll" },
         sep,
+        ...(mac ? [] : [
+          item("Settings…", "settings:open", "CommandOrControl+,"),
+          item("Privacy…", "settings:privacy", "Shift+CommandOrControl+,"),
+        ]),
       ],
     },
     {
@@ -72,11 +94,11 @@ export function buildMenu(send: (command: string) => void): void {
         item("Memory", "settings:memory", "CommandOrControl+4"),
         sep,
         item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+0"),
-        item("Toggle Inspector", "toggle:inspector", "Alt+Command+0"),
+        item("Toggle Inspector", "toggle:inspector", alt("0")),
         item("Toggle Console", "toggle:console", "Shift+CommandOrControl+Y"),
         sep,
-        item("Expand All Tool Cards", "cards:expand", "Alt+Command+E"),
-        item("Collapse All Tool Cards", "cards:collapse", "Alt+Command+K"),
+        item("Expand All Tool Cards", "cards:expand", alt("E")),
+        item("Collapse All Tool Cards", "cards:collapse", alt("K")),
         sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
@@ -95,7 +117,9 @@ export function buildMenu(send: (command: string) => void): void {
       submenu: [
         item("Send", "send", "CommandOrControl+Return"),
         item("Stop", "stop", "CommandOrControl+."),
-        item("Clear Transcript", "clear", "CommandOrControl+Backspace"),
+        // Not off macOS: Ctrl+Backspace is delete-previous-word in every
+        // Windows and Linux text field, and here it would wipe the transcript.
+        item("Clear Transcript", "clear", mac ? "CommandOrControl+Backspace" : undefined),
         sep,
         item("Choose Model…", "selector:model", "Shift+CommandOrControl+M"),
         // The TUI's "Where it runs…" submenu (menu-registry.ts run.type): the
@@ -115,7 +139,9 @@ export function buildMenu(send: (command: string) => void): void {
         item("Restart Agent Runtime", "agent:restart"),
       ],
     },
-    { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, sep, { role: "front" }] },
+    mac
+      ? { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, sep, { role: "front" }] }
+      : { label: "Window", submenu: [{ role: "minimize" }] },
     {
       label: "Help",
       submenu: [
@@ -130,10 +156,11 @@ export function buildMenu(send: (command: string) => void): void {
           click: () =>
             void shell.openExternal("https://github.com/AtomicBot-ai/atomic-agent/issues"),
         },
+        ...(mac ? [] : [sep, { role: "about" } as MenuItemConstructorOptions]),
       ],
     },
   ];
 
-  if (process.platform !== "darwin") template.shift();
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  if (!mac) template.shift();
+  return template;
 }
