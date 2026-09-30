@@ -224,8 +224,43 @@ function importableSkills(): string[] {
  * operator explicitly asked for must be consistent, and there sqlite's
  * real reader is the correct tool.
  */
+/* Windows ships no sqlite3, and many Linux installs do not either. There,
+   Electron's own node:sqlite does both jobs: a read-only count, and
+   `backup()`, which is the same page-by-page online backup the CLI's
+   `.backup` runs. macOS always has /usr/bin/sqlite3 and keeps using it. */
+type NodeSqlite = {
+  DatabaseSync: new (path: string, opts: { readOnly?: boolean; timeout?: number }) => {
+    prepare(sql: string): { get(): Record<string, unknown> | undefined };
+    close(): void;
+  };
+  backup?: (db: unknown, dest: string) => Promise<number>;
+};
+function nodeSqlite(): NodeSqlite | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("node:sqlite") as NodeSqlite;
+  } catch {
+    return null;
+  }
+}
+
 export async function sqliteRowCount(file: string, table: string): Promise<number> {
-  if (!existsSync(file) || !existsSync(SQLITE)) return 0;
+  if (!existsSync(file)) return 0;
+  if (!existsSync(SQLITE)) {
+    const sq = nodeSqlite();
+    if (!sq || !/^\w+$/.test(table)) return 0;
+    try {
+      const db = new sq.DatabaseSync(file, { readOnly: true });
+      try {
+        const n = Number(db.prepare(`select count(*) as n from ${table}`).get()?.["n"]);
+        return Number.isFinite(n) ? n : 0;
+      } finally {
+        db.close();
+      }
+    } catch {
+      return 0;
+    }
+  }
   try {
     const uri = `file:${encodeURI(file)}?immutable=1`;
     const { stdout } = await run(SQLITE, ["-readonly", uri, `select count(*) from ${table}`], { timeout: 10_000 });
@@ -242,7 +277,8 @@ export async function sqliteRowCount(file: string, table: string): Promise<numbe
  * source's mtime and its -wal/-shm files are left untouched.
  */
 async function sqliteBackup(src: string, dst: string): Promise<boolean> {
-  if (!existsSync(src) || !existsSync(SQLITE)) return false;
+  if (!existsSync(src)) return false;
+  if (!existsSync(SQLITE)) return nodeSqliteBackup(src, dst);
   try {
     /* `.timeout` before the backup, because the operator's own agent is
        very likely holding this database: importing IS the moment they are
@@ -261,6 +297,29 @@ async function sqliteBackup(src: string, dst: string): Promise<boolean> {
     /* Never silently. A failed copy used to be indistinguishable from an
        empty source, so the wizard could say it had imported nothing when
        what really happened was a locked file. */
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[import] sqlite backup failed for ${src}: ${msg}\n`);
+    return false;
+  }
+}
+
+/** sqliteBackup without the CLI (see nodeSqlite): same read-only source,
+    same 5 s busy timeout, same never-silent failure. */
+async function nodeSqliteBackup(src: string, dst: string): Promise<boolean> {
+  const sq = nodeSqlite();
+  if (!sq || typeof sq.backup !== "function") {
+    process.stderr.write(`[import] no sqlite3 and no node:sqlite backup; cannot copy ${src}\n`);
+    return false;
+  }
+  try {
+    const db = new sq.DatabaseSync(src, { readOnly: true, timeout: 5000 });
+    try {
+      await sq.backup(db, dst);
+    } finally {
+      db.close();
+    }
+    return existsSync(dst) && statSync(dst).size > 0;
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[import] sqlite backup failed for ${src}: ${msg}\n`);
     return false;
