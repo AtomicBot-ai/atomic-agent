@@ -3910,7 +3910,10 @@ async function refreshHealth() {
   SET.healthBusy = false;
   if (!(res && res.ok && res.data)) return;
   const next = {workingDir: typeof res.data.workingDir === 'string' ? res.data.workingDir : null,
-                llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null};
+                llamaUrl: res.data.llama && typeof res.data.llama.url === 'string' ? res.data.llama.url : null,
+                // 0.6.6, loopback only: the serve process and how many turns it is running (any client's).
+                pid: typeof res.data.pid === 'number' ? res.data.pid : null,
+                busyTurns: typeof res.data.busyTurns === 'number' ? res.data.busyTurns : null};
   const changed = JSON.stringify(next) !== JSON.stringify(SET.health);
   SET.health = next;
   if (S.settings && changed && !tkTyping()) render(); // a late /health answer must not drop the caret in the Tasks form
@@ -4031,6 +4034,10 @@ function diagnosticsPane() {
   const rows = [
     ['App', BUILD ? BUILD.version + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
     ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
+    ...(SET.health && SET.health.pid !== null && SET.health.busyTurns !== null
+      ? [['Agent process', 'pid ' + SET.health.pid + ' · ' + (SET.health.busyTurns === 0 ? 'idle' : SET.health.busyTurns + (SET.health.busyTurns === 1 ? ' turn running' : ' turns running')),
+          'Turns running in the agent right now, from any chat, task or bot']]
+      : []),
     ['State folder', short(sd), sd],
     ['Working folder', short(wd), wd],
     ['Local model server', llama],
