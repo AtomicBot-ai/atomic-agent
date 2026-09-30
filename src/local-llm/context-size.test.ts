@@ -29,6 +29,12 @@ import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 // prompt plus that budget, so every step on a floored model came back
 // `truncated` and the agent never emitted a tool call. Either constant may
 // move; they must not cross.
+describe("NO_VRAM_DEFAULT_CONTEXT", () => {
+  it("never falls below the auto-size floor", () => {
+    expect(NO_VRAM_DEFAULT_CONTEXT).toBeGreaterThanOrEqual(MIN_AUTO_CONTEXT);
+  });
+});
+
 describe("MIN_AUTO_CONTEXT", () => {
   it("clears the agent's fixed prompt plus a full generation budget", () => {
     const required = minUsableContextWindow(
