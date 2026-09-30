@@ -2754,6 +2754,55 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * The mid-session half of `autoStartIfReady`'s adoption. Launch with a
+   * cloud provider active skips adoption (the early return above), so a
+   * daemon left running by a previous session, or by `models start`,
+   * belonged to nobody after the operator moved the route onto it with
+   * `/llm provider local-llama`, the Cloud pane, `/model`, a session's
+   * restored provider or a run-mode change: a `kill -9` was never
+   * restarted, and `stopOnExit` never stopped it at quit.
+   *
+   * Called on every change of the active text provider and on every
+   * run-mode change. Ownership only, never a start: when our pid is
+   * alive and the new route uses the managed daemon (`local-llama`
+   * active, or a Fusion leg on it), this takes it exactly as the launch
+   * adoption does — for the supervisor and for teardown alike, since
+   * the launch adoption draws no line between a daemon a previous TUI
+   * left and one `models start` launched. A daemon serving another
+   * model is adopted the same way; the next start or restart (the
+   * supervisor's included) launches the configured one. A route moving
+   * away from the daemon changes nothing: it keeps serving the fallback
+   * chain's local link and stays owned.
+   *
+   * @param activeId the provider being made active, when the caller
+   *   knows it before the config write lands.
+   * @returns whether the daemon is now owned by this TUI.
+   */
+  adoptDaemonForRoute(activeId?: string): boolean {
+    if (this.daemonSupervised) return true;
+    const cfg = getConfig();
+    if (cfg.localModels.mode !== "managed") return false;
+    const mid = cfg.localModels.managed.modelId;
+    if (!mid || !isKnownLocalModelId(mid)) return false;
+    const resolved = resolveLlmConfig(cfg);
+    const active = activeId ?? resolved.activeTextProvider;
+    const rm = resolveRunMode(resolved, { managedModelId: mid });
+    const usesDaemon =
+      active === "local-llama" ||
+      (rm.effective === "fusion" &&
+        (rm.orchestratorProviderId === "local-llama" ||
+          rm.workerProviderId === "local-llama"));
+    if (!usesDaemon) return false;
+    if (readRunningPid(cfg.paths.localModelsDataDir) === null) return false;
+    this.daemonSupervised = true;
+    this.supervisor.noteStarted();
+    void this.refresh().catch(() => {
+      /* the next poll repaints the pane */
+    });
+    return true;
+  }
+
+  /**
    * Run the backend auto-update once the daemon is serving, off the
    * start path. Deliberately not awaited: the result only matters for
    * the *next* start, so nothing the user is waiting on depends on it.
