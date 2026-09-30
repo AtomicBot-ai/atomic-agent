@@ -12029,6 +12029,12 @@ function stoppedSentence(m) {
   if ((mt = /^\(stopped: stuck in a no-progress loop on `([^`]+)` after (\d+) blocked attempts\)/.exec(t))) {
     return 'Stopped: the agent kept repeating the same step without getting anywhere (' + mt[2] + ' tries). The task may be incomplete.';
   }
+  // v0.6.6 wording: "(stopped: `tool` kept returning the same no-progress
+  // outcome, and the same call was refused N times in a row …)" or "… and
+  // this call was not run)".
+  if ((mt = /^\(stopped: `([^`]+)` kept returning the same no-progress outcome(?:, and the same call was refused (\d+) times? in a row)?/.exec(t))) {
+    return 'Stopped: the agent kept repeating the same step without getting anywhere' + (mt[2] ? ' (' + mt[2] + ' tries)' : '') + '. The task may be incomplete.';
+  }
   if ((mt = /^\(stopped: `([^`]+)` hit the limit on different arguments/.exec(t))) {
     return 'Stopped: the agent kept trying variations of the same step. The task may be incomplete.';
   }
