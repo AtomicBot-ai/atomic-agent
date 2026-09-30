@@ -2700,9 +2700,13 @@ async function smokeTest(): Promise<void> {
  * older one (ATOMIC_AGENT_BIN) never does. Stop it first, bounded, then exit.
  */
 function exitAfterAgentStop(code: number): void {
+  // The same steps as before-quit, in its order, bounded as a whole.
+  voice.kill();
   const client = agent;
   agent = null;
-  void Promise.race([client ? client.stop() : Promise.resolve(), new Promise((r) => setTimeout(r, 6000))])
+  const shutdown = (client ? client.stop() : Promise.resolve()).then(stopLocalDaemonOnQuit);
+  void Promise.race([shutdown, new Promise((r) => setTimeout(r, 10_000))])
+    .catch(() => undefined)
     .finally(() => app.exit(code));
 }
 
