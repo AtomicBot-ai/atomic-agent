@@ -4,6 +4,12 @@
   "version": "0.6.7",
   "description": "Desktop client for atomic-agent. Supervises a local `atag serve` process and drives it over the loopback HTTP API.",
   "license": "MIT",
+  "homepage": "https://atomicagent.io",
+  "author": {
+    "name": "Atomic Bot",
+    "url": "https://atomicagent.io"
+  },
+  "desktopName": "atomic-agent-desktop.desktop",
   "private": true,
   "type": "commonjs",
   "main": "out/main/main.js",
@@ -25,6 +31,8 @@
     "drive:fusion": "npm run build && node test/fusion.drive.mjs",
     "drive:live": "npm run build && node test/live-routes.drive.mjs",
     "dist": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --mac --arm64 --publish never",
+    "dist:win": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --win --x64 --publish never",
+    "dist:linux": "npm run build && node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && electron-builder --linux --publish never",
     "postinstall": "node scripts/ensure-electron.mjs"
   },
   "devDependencies": {
@@ -45,10 +53,6 @@
     ],
     "extraResources": [
       {
-        "from": "out/native/atomic-speech",
-        "to": "native/atomic-speech"
-      },
-      {
         "from": "LICENSE",
         "to": "LICENSE.txt"
       },
@@ -61,6 +65,7 @@
       "output": "release",
       "buildResources": "build"
     },
+    "npmRebuild": true,
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
@@ -79,7 +84,13 @@
         "LSMinimumSystemVersion": "12.0",
         "NSMicrophoneUsageDescription": "Atomic Agent records your voice only while you hold the microphone button in the composer, and transcribes it on this Mac.",
         "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple."
-      }
+      },
+      "extraResources": [
+        {
+          "from": "out/native/atomic-speech",
+          "to": "native/atomic-speech"
+        }
+      ]
     },
     "dmg": {
       "title": "Atomic Agent",
@@ -103,7 +114,50 @@
         "height": 400
       }
     },
-    "afterPack": "scripts/sign-adhoc.mjs"
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Atomic-Agent-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Atomic Agent",
+      "uninstallDisplayName": "Atomic Agent",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "icon": "build/icons",
+      "category": "Development;Utility",
+      "maintainer": "Atomic Bot",
+      "vendor": "Atomic Bot",
+      "synopsis": "Desktop client for Atomic Agent",
+      "description": "Desktop app for Atomic Agent. Starts the bundled agent locally and gives it a chat window.",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "artifactName": "Atomic-Agent-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "packageCategory": "devel",
+      "priority": "optional"
+    },
+    "afterPack": "scripts/after-pack.mjs"
   },
   "dependencies": {
     "cron-parser": "^5.5.0"
