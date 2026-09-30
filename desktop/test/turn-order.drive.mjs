@@ -34,8 +34,10 @@ const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv
 const PORT = Number(arg('--port', 9781));
 const WANT_RECEIPTS = argv.includes('--receipts');
 const BIN = arg('--bin', process.env.ATOMIC_AGENT_BIN || join(DESKTOP_DIR, '..', 'bundle', 'darwin-arm64', 'atomic-agent'));
+// A minimal config the agent fills with its own defaults; ATAG_SEED_CONFIG
+// points at a fuller one (any real config works: its cloud keys are dropped).
 const SEED_CONFIG = process.env.ATAG_SEED_CONFIG
-  || '/private/tmp/claude-501/-Users-valerii-claudecode1/f54533b6-fc7f-408a-a975-1c3fffb17832/scratchpad/seed-configured/config.json';
+  || join(DESKTOP_DIR, 'test', 'fixtures', 'seed-config.json');
 const REPLY = 'Done — approved.txt is written.';
 
 let passed = 0;

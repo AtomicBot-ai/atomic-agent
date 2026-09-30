@@ -10,7 +10,7 @@
  * language, because that is the whole of what a person gets here. What they
  * used to get was
  *
- *     Command failed: /Users/valerii/atag-agent/bin/atag config get
+ *     Command failed: /Users/<you>/atag-agent/bin/atag config get
  *
  * — a path they never typed, a subcommand they never ran, no reason and no
  * next step. That sentence is what a real, loaded-machine first run died on
