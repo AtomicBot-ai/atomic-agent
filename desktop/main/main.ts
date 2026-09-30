@@ -5,7 +5,8 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, shell, systemPreferences} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
+import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -574,6 +575,28 @@ function appendAgentLog(line: string): void {
 const AGENT_SAID: string[] = [];
 
 function wireIpc(client: AgentClient): void {
+  /* End-of-turn notification (tui.notify): a native notification when a
+     turn ends while the window is not focused. Never during the smoke run,
+     which has no one to interrupt. Clicking it brings the window back. */
+  const turnNotifier = new TurnNotifier({
+    isFocused: () => SMOKE || !win || win.isDestroyed() || win.isFocused(),
+    readConfig: async () => {
+      const res = await configGetKey("tui.notify");
+      return res.ok ? readNotifyConfig(res.value) : NOTIFY_DEFAULTS;
+    },
+    workingDirName: () => client.status.workingDir.split("/").filter(Boolean).pop(),
+    show: (note) => {
+      if (!Notification.isSupported()) return;
+      const n = new Notification({ title: note.title, body: note.body });
+      n.on("click", () => {
+        if (!win || win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      });
+      n.show();
+    },
+  });
   /* r5 item 9 — the state-dir argument guard.
      Six handlers take a `stateDir` (or a data dir under it) from the
      renderer, which reads it from /api/capabilities. That value can only
@@ -668,6 +691,7 @@ function wireIpc(client: AgentClient): void {
       .map((m) => ({ role: m.role, content: m.content }));
     if (!clean.length) return { ok: false, error: "no usable messages" };
     const turnId = randomUUID();
+    turnNotifier.begin(turnId);
     void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
     return { ok: true, turnId };
   });
@@ -1534,6 +1558,7 @@ function wireIpc(client: AgentClient): void {
 
   client.on("status", (status) => send("agent:status", status));
   client.on("chat", (event) => send("agent:chat", event));
+  client.on("chat", (event) => turnNotifier.observe(event));
   client.on("approval", (event) => send("agent:approval", event));
   client.on("log", (event) => send("agent:log", event));
   /* The agent's own last words, kept for the smoke fixture. `atag serve`

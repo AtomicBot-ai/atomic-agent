@@ -3993,6 +3993,7 @@ function generalPane() {
           + '<div class="d">' + (ws ? '<span class="mono set-path" title="' + esc(ws) + '">' + esc(wsShort) + '</span>' : 'Not chosen yet.') + '</div></div>'
         + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
       + '</div>'
+      + tpNotifyRowHTML()
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
           + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments never leave this Mac. '
@@ -4423,6 +4424,7 @@ function act(a) {
   // close() first like every other verb: `/task` and a palette row reach these with the palette still open.
   if (k === 'tasks') { close(); tasksAct(a.slice(6)); return; }
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
+  if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
