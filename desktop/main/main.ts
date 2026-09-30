@@ -1658,7 +1658,7 @@ async function smokeTest(): Promise<void> {
   if (FUSION_ONLY) {
     if (state === "connected") await fusionSmokeTest(js, check);
     process.stdout.write(`SMOKE fusion-only failures=${fail.length}\n`);
-    app.exit(fail.length === 0 ? 0 : 1);
+    exitAfterAgentStop(fail.length === 0 ? 0 : 1);
     return;
   }
 
@@ -2690,7 +2690,20 @@ async function smokeTest(): Promise<void> {
   const out = join(app.getPath("temp"), "atomic-desktop-smoke.png");
   writeFileSync(out, image.toPNG());
   process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
-  app.exit(fail.length === 0 ? 0 : 1);
+  exitAfterAgentStop(fail.length === 0 ? 0 : 1);
+}
+
+/**
+ * U32: `app.exit` skips `before-quit`, which is the only place the agent is
+ * stopped, so every `--smoke` run used to leave its `atag serve` behind. An
+ * agent from v0.6.6 on notices its parent is gone and exits by itself, but an
+ * older one (ATOMIC_AGENT_BIN) never does. Stop it first, bounded, then exit.
+ */
+function exitAfterAgentStop(code: number): void {
+  const client = agent;
+  agent = null;
+  void Promise.race([client ? client.stop() : Promise.resolve(), new Promise((r) => setTimeout(r, 6000))])
+    .finally(() => app.exit(code));
 }
 
 
