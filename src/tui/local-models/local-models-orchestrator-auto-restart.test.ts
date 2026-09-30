@@ -39,10 +39,12 @@ describe("LocalModelsOrchestrator auto-restart", () => {
 
   function build() {
     const lines: string[] = [];
+    const chat: { text: string; variant?: string }[] = [];
     const orchestrator = new LocalModelsOrchestrator({
       emit(a: unknown) {
-        const line = (a as { line?: string }).line;
-        if (line) lines.push(line);
+        const action = a as { type?: string; line?: string; text?: string; variant?: string };
+        if (action.line) lines.push(action.line);
+        if (action.type === "system_message") chat.push({ text: action.text ?? "", variant: action.variant });
       },
       subscribe: () => () => {},
     });
@@ -50,7 +52,7 @@ describe("LocalModelsOrchestrator auto-restart", () => {
     const start = vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
     const inner = orchestrator as unknown as Internals;
     built.push(inner);
-    return { orchestrator, inner, stop, start, lines };
+    return { orchestrator, inner, stop, start, lines, chat };
   }
 
   it("restarts a dead daemon it owns: stop what is left, then start", async () => {
@@ -95,5 +97,17 @@ describe("LocalModelsOrchestrator auto-restart", () => {
     expect(start).toHaveBeenCalledTimes(1);
     // Not `/llm restart`'s path, which refuses on a cloud route.
     expect(restartByHand).not.toHaveBeenCalled();
+  });
+
+  it("tells the chat, not only the feed: crashed → restarting, then back up", async () => {
+    const { inner, chat } = build();
+    inner.daemonSupervised = true;
+    await inner.supervisor.tick();
+    await inner.supervisor.tick();
+    expect(chat).toHaveLength(2);
+    expect(chat[0]).toMatchObject({ variant: "warn" });
+    expect(chat[0]!.text).toContain("The local model server crashed");
+    expect(chat[1]).toMatchObject({ variant: "normal" });
+    expect(chat[1]!.text).toContain("back up");
   });
 });

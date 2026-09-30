@@ -162,6 +162,15 @@ export function formatBackgroundApprovalNotice(
 }
 
 /**
+ * A session that is not on screen has parked its turn on a provider that
+ * stopped answering. The full notice waits in that thread (the
+ * switch-back replays it); the visible one gets the pointer.
+ */
+export function formatBackgroundProviderWaitNotice(sessionId: string): string {
+  return `session ${sessionId} is paused: its model is not answering, and the turn retries by itself — switch to it to watch or stop it`;
+}
+
+/**
  * Decision reason recorded when a switch-away denies a pending
  * approval. The blocked tool call reports it back to the model, so it
  * is written for the model to act on, not only for the operator.

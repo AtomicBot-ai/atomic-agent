@@ -168,6 +168,16 @@ A cloud key is checked before it is saved. The key screen refuses an empty key, 
 
 A provider that cannot be reached at all still saves, with a line saying the key went unverified, so an offline or proxied machine stays configurable. Local servers have no account to check and are left alone.
 
+## When the Agent Goes Quiet
+
+Anything that stops the agent from answering is said in the chat, not only in Observe › Feed (which is wiped at every turn start):
+
+- **The model stops answering.** The turn pauses and retries by itself for up to `agent.providerWait.maxWaitMs`. One notice when it pauses, one when it continues ("answering again after 23 s"), or, if the wait runs out, the failure says so first. On the local route the notice names `/llm restart`. A turn paused in a thread you are not looking at leaves a one-line pointer in the visible thread; its own notice is in its thread when you switch back.
+- **The local model server crashes or hangs.** It is restarted by itself: one notice when that starts and one when it is back up. A restart that fails is said once, with the fault from the server's log. After three crashes within a minute of starting it stops trying and tells you to fix the cause and `/llm restart`.
+- **A fallover** to another provider in the fallback chain, as before.
+
+Each attempt still gets its own line in the feed.
+
 ## When a Turn Ends
 
 A turn that fails, or finishes after running 30 seconds or more, raises a desktop notification (macOS, and Linux with `notify-send`) plus a terminal notification and bell, so you can walk away. Tune it with `tui.notify.enabled` and `tui.notify.minDurationMs`. Each session is also named from its first prompt after the first reply, so the rail and header show what the thread is about; `agent.nameSessions: false` keeps the raw prompt.

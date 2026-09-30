@@ -5,6 +5,7 @@ import {
   MAX_QUICK_DEATHS,
   QUICK_DEATH_MS,
   type DaemonSupervisorDeps,
+  type SupervisorNotice,
 } from "./daemon-supervisor.js";
 
 function world(over: Partial<DaemonSupervisorDeps> = {}) {
@@ -16,6 +17,7 @@ function world(over: Partial<DaemonSupervisorDeps> = {}) {
     restarts: 0,
     restartResult: true,
     lines: [] as string[],
+    notices: [] as SupervisorNotice[],
   };
   const deps: DaemonSupervisorDeps = {
     enabled: () => state.enabled,
@@ -27,6 +29,7 @@ function world(over: Partial<DaemonSupervisorDeps> = {}) {
       return state.restartResult;
     },
     say: (l) => state.lines.push(l),
+    notify: (n) => state.notices.push(n),
     describeFault: () => "the GPU ran out of memory 12 times",
     now: () => state.now,
     ...over,
@@ -43,7 +46,10 @@ describe("DaemonSupervisor", () => {
     expect(state.restarts).toBe(0);
     await sup.tick();
     expect(state.restarts).toBe(1);
-    expect(state.lines).toEqual(["local-llm: the model server died — restarting it (auto-restart)"]);
+    expect(state.lines).toEqual([
+      "local-llm: the model server died — restarting it (auto-restart)",
+      "local-llm: the model server is back up after 0 s (auto-restart)",
+    ]);
   });
 
   it("a live pid resets the count", async () => {
@@ -145,5 +151,82 @@ describe("DaemonSupervisor", () => {
     expect(await a).toBe(true);
     expect(await b).toBe(true);
     expect(state.restarts).toBe(1);
+  });
+
+  describe("chat notices — one per incident", () => {
+    const dieAndTick = async (state: ReturnType<typeof world>["state"], sup: DaemonSupervisor) => {
+      state.alive = false;
+      state.now += 5_000;
+      await sup.tick();
+      state.now += 3_000;
+      await sup.tick();
+    };
+
+    it("died → restarting → back up: two notices, the second closing the first", async () => {
+      const { state, sup } = world({
+        restart: async () => {
+          state.now += 14_000;
+          state.alive = true;
+          return true;
+        },
+      });
+      state.now += 10 * QUICK_DEATH_MS;
+      await dieAndTick(state, sup);
+      expect(state.notices).toEqual([
+        { kind: "restarting", cause: "died", reason: "the model server died", quickDeaths: 0 },
+        { kind: "restarted", afterMs: 14_000 },
+      ]);
+    });
+
+    it("a wedge restart says it hung, with the watchdog's reading", async () => {
+      const { state, sup } = world();
+      state.now += 10 * QUICK_DEATH_MS;
+      await sup.recover("the model server stopped answering (95 s without a reply to /health or /slots)");
+      expect(state.notices[0]).toMatchObject({ kind: "restarting", cause: "wedged" });
+      expect(state.notices[1]).toMatchObject({ kind: "restarted" });
+    });
+
+    it("a crash loop: failed restarts are told once, then one give-up naming the fault", async () => {
+      const { state, sup } = world();
+      state.now += 10 * QUICK_DEATH_MS;
+      state.restartResult = false;
+      state.alive = false;
+      for (let i = 0; i < 20; i += 1) {
+        state.now += 3_000;
+        await sup.tick();
+      }
+      expect(state.notices.map((n) => n.kind)).toEqual(["restarting", "restart_failed", "gave_up"]);
+      expect(state.notices.at(-1)).toEqual({
+        kind: "gave_up",
+        deaths: MAX_QUICK_DEATHS,
+        fault: "the GPU ran out of memory 12 times",
+      });
+      // Every attempt still has its feed line.
+      expect(state.lines.filter((l) => l.includes("automatic restart failed"))).toHaveLength(MAX_QUICK_DEATHS);
+    });
+
+    it("dying again right after a good restart opens a new incident that says so", async () => {
+      const { state, sup } = world();
+      state.now += 10 * QUICK_DEATH_MS;
+      await dieAndTick(state, sup);
+      await dieAndTick(state, sup);
+      expect(state.notices.map((n) => n.kind)).toEqual(["restarting", "restarted", "restarting", "restarted"]);
+      expect(state.notices[2]).toMatchObject({ quickDeaths: 1 });
+    });
+
+    it("the operator's own start ends an open incident without a notice", async () => {
+      const { state, sup } = world();
+      state.now += 10 * QUICK_DEATH_MS;
+      state.restartResult = false;
+      await dieAndTick(state, sup);
+      expect(state.notices.map((n) => n.kind)).toEqual(["restarting", "restart_failed"]);
+      sup.noteStarted();
+      state.alive = true;
+      state.restartResult = true;
+      state.now += 10 * QUICK_DEATH_MS;
+      await dieAndTick(state, sup);
+      // A fresh incident, not the tail of the old one.
+      expect(state.notices.map((n) => n.kind)).toEqual(["restarting", "restart_failed", "restarting", "restarted"]);
+    });
   });
 });

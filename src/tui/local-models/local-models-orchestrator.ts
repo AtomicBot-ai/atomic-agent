@@ -100,6 +100,7 @@ import {
   clearEmbeddingPort,
   type PortClearanceDeps,
 } from "./local-models-port-clearance.js";
+import { formatDaemonNotice } from "./format-daemon-notice.js";
 import { probeEndpoint, WedgeWatch } from "./daemon-wedge-watch.js";
 import { roundTokensPerSecond } from "../../prompt/fusion-machine-facts.js";
 import {
@@ -265,6 +266,10 @@ export class LocalModelsOrchestrator {
     pidAlive: async () => readRunningPid(getConfig().paths.localModelsDataDir) !== null,
     restart: () => this.restartOwnedDaemon(),
     say: (line) => this.bus.emit({ type: "runtime_info", line }),
+    // The chat is where the operator is looking when a turn goes quiet;
+    // the feed line above stays for the per-attempt detail.
+    notify: (notice) =>
+      this.bus.emit({ type: "system_message", ...formatDaemonNotice(notice) }),
     describeFault: () => {
       try {
         const log = readLogTail(resolveLogFilePath(getConfig().paths.localModelsDataDir));

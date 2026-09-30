@@ -2122,3 +2122,110 @@ describe("reduceTuiState step line under a stalled Fusion review (F41)", () => {
     );
   });
 });
+
+describe("a parked turn in the chat", () => {
+  const waiting = (attempt: number, waitedMs = 0): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "provider_waiting",
+      attempt,
+      waitedMs,
+      maxWaitMs: 300_000,
+      nextRetryMs: 2_000,
+      reason: "fetch failed",
+    },
+  });
+  const recovered = (waitedMs: number): TuiAction => ({
+    type: "agent_event",
+    event: { type: "provider_recovered", waitedMs },
+  });
+  const systemTexts = (state: TuiState): string[] =>
+    state.messages.filter((m) => m.role === "system").map((m) => m.text);
+
+  it("one waiting notice and one resume notice, however many retries in between", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(1),
+      waiting(2, 2_000),
+      waiting(3, 6_000),
+      waiting(4, 14_000),
+      recovered(23_000),
+    ]);
+    const texts = systemTexts(next);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain("The model is not answering (no connection)");
+    expect(texts[0]).toContain("retries by itself for up to 5 min");
+    expect(texts[0]).toContain("Esc stops it");
+    expect(next.messages.find((m) => m.text === texts[0])?.variant).toBe("warn");
+    expect(texts[1]).toBe(
+      "The model is answering again after 23 s — the turn continues.",
+    );
+  });
+
+  it("on the local route the waiting notice names /llm restart; on a cloud route it does not", () => {
+    const base = createInitialTuiState(fakeSession());
+    const local = reduceTuiState(
+      {
+        ...base,
+        localModelsPanel: { ...base.localModelsPanel, configMode: "managed" },
+      },
+      waiting(1),
+    );
+    expect(systemTexts(local)[0]).toContain("/llm restart");
+    const cloud = reduceTuiState(
+      {
+        ...base,
+        providersPanel: {
+          ...base.providersPanel,
+          rows: [providerRow({ isActiveText: true })],
+        },
+      },
+      waiting(1),
+    );
+    expect(systemTexts(cloud)[0]).not.toContain("/llm restart");
+  });
+
+  it("a recovery the chat never announced stays in the feed", () => {
+    const next = reduceTuiState(
+      createInitialTuiState(fakeSession()),
+      recovered(4_000),
+    );
+    expect(systemTexts(next)).toEqual([]);
+    expect(next.feed.at(-1)?.line).toContain("provider answered again");
+  });
+
+  it("a turn that dies parked says the wait is over before the failure", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      waiting(1),
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const failure = systemTexts(next).at(-1) ?? "";
+    expect(failure.startsWith("Stopped waiting for the model (wait budget 5 min")).toBe(true);
+    expect(failure).toContain("Turn failed [transport]: fetch failed");
+  });
+
+  it("a background thread's park lands in its own thread; the visible one gets a pointer", () => {
+    const visible = createInitialTuiState(fakeSession({ sessionId: "visible" }));
+    const tagged = (action: TuiAction): TuiAction => ({
+      ...(action as Extract<TuiAction, { type: "agent_event" }>),
+      sessionId: "background",
+    });
+    const next = apply(visible, [tagged(waiting(1)), tagged(waiting(2, 2_000))]);
+    expect(systemTexts(next)).toEqual([
+      "session background is paused: its model is not answering, and the turn retries by itself — switch to it to watch or stop it",
+    ]);
+    // The switch-back replays the turn's events under its own id.
+    const owner = apply(
+      createInitialTuiState(fakeSession({ sessionId: "background" })),
+      [tagged(waiting(1)), tagged(waiting(2, 2_000))],
+    );
+    expect(systemTexts(owner)).toHaveLength(1);
+    expect(systemTexts(owner)[0]).toContain("The model is not answering");
+  });
+});

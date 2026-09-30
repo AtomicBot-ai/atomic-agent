@@ -121,3 +121,51 @@ function shortenReason(flat: string): string {
   if (flat.length <= REASON_MAX_LEN) return flat;
   return `${flat.slice(0, REASON_MAX_LEN - 1)}…`;
 }
+
+/**
+ * The chat notice for a turn that has just parked on its provider.
+ *
+ * The meta-row readout carries the live counter, but it is one row
+ * among several and says nothing about what happens next; from the
+ * chat, a parked turn read as an agent that stopped talking. Posted
+ * once per outage (the loop's attempt 1), never per retry.
+ *
+ * `localRoute` adds the one thing the operator can do that the loop
+ * cannot: a local server that is down and not coming back by itself is
+ * restarted with `/llm restart`.
+ */
+export function formatProviderWaitNotice(
+  reason: string,
+  maxWaitMs: number,
+  localRoute: boolean,
+): string {
+  const lines = [
+    `The model is not answering (${describeReason(reason)}). The turn is paused and retries by itself for up to ${formatBudget(maxWaitMs)} — Esc stops it.`,
+  ];
+  if (localRoute) {
+    lines.push(
+      "If the local model server is down and does not come back by itself, /llm restart restarts it.",
+    );
+  }
+  return lines.join("\n");
+}
+
+/** The parked turn's step came back: one line closing the wait notice. */
+export function formatProviderResumedNotice(waitedMs: number): string {
+  return `The model is answering again after ${formatBudget(waitedMs)} — the turn continues.`;
+}
+
+/**
+ * Put in front of the failure a turn ends with when it died parked:
+ * the chat said it was waiting, so it has to say the wait is over.
+ */
+export function formatProviderGaveUpLine(maxWaitMs: number): string {
+  return `Stopped waiting for the model (wait budget ${formatBudget(maxWaitMs)}, agent.providerWait.maxWaitMs).`;
+}
+
+function formatBudget(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 120) return `${s} s`;
+  const min = Math.round(s / 60);
+  return `${min} min`;
+}

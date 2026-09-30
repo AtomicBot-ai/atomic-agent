@@ -168,6 +168,7 @@ describe("DaemonSupervisor + wedge", () => {
     expect(resets).toBeGreaterThanOrEqual(1);
     expect(lines).toEqual([
       "local-llm: the model server stopped answering (91 s without a reply to /health or /slots) — restarting it (auto-restart)",
+      "local-llm: the model server is back up after 0 s (auto-restart)",
     ]);
   });
 });
