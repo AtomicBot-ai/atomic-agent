@@ -941,8 +941,9 @@ const MEM_CHANNEL_WORDS = {profile:'About you', notes:'Notes', lessons:'Lessons'
 const MEM_NOTES_FILTERS = ['active','archived','all'];
 const MEM_MAX_ROWS = 14, MEM_DETAIL_LINES = 28, MEM_NOTES_LIMIT = 200, MEM_INDEX_LIMIT = 100, MEM_LINKS_LIMIT = 500, MEM_VOTES_LIMIT = 100; // memory-panel.tsx / memory-detail.tsx / memory-orchestrator.ts (lesson/procedure index max 100 in their stores)
 /* MCP panel — the TUI's McpPanelState. Rows come from config (mcp.servers)
-   and the `mcp.<name>.*` tools in /api/capabilities; there is no MCP status
-   route on this agent, so no state / resources / prompts. */
+   and the `mcp.<name>.*` tools in /api/capabilities. There is no route that
+   lists every server's status, so a row's state comes from the last
+   Restart / enable answer (mcp-live.js); no resources / prompts. */
 const MCP = {
   mode:'list', cursor:0, detailTab:'tools', detailCursor:0, detailName:null,
   lastRefreshedAt:null, loading:false, auto:true, lastError:null, msg:null,
@@ -15954,8 +15955,8 @@ function mcpStatusLine() {
 function mcpHint() {
   if (MCP.addModal) return 'Enter submit · Esc cancel · paste JSON of one MCP server';
   if (MCP.removeConfirm) return 'y / Enter confirm · n / Esc cancel';
-  if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
-  return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['r refresh', 'mcp:refresh']]);
+  if (MCP.mode === 'list') return tuiHints(['j/k move', ['Enter open', 'mcp:detail'], ['n add', 'mcp:add'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh'], ['a auto', 'mcp:auto']]);
+  return tuiHints([['Esc back', 'mcp:back'], ['1/2/3 tools/res/prompts', 'mcp:dtab:cycle'], ['[ ] cycle', 'mcp:dtab:cycle'], ['d remove', 'mcp:remove'], ['e on/off', 'mcp:toggle'], ['R restart', 'mcp:restart'], ['r refresh', 'mcp:refresh']]);
 }
 function mcpTab() {
   ensureMcpPoll();
@@ -15995,15 +15996,16 @@ function mcpListHTML(rows) {
   // ST-16: mark · name + honest state chip · description · transport · trust class · tool count.
   return '<div class="tk-list">' + slice.map((r, idx) => {
     const i = idx + start, sel = i === cur;
-    const stateTitle = r.state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
+    // 0.6.6: the state chip carries the last status a Restart / enable reported (mcp-live.js).
     return '<button class="tk-li sd-srv' + (sel ? ' on' : '') + '" data-mcp-row="' + esc(r.name) + '" data-act="mcp:detail:' + esc(r.name) + '">'
       + mcpMark(cfgs.find((s) => s && s.name === r.name))
       + '<span class="body"><span class="sd-srvname"><span class="t">' + esc(r.name) + '</span>'
-      + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (r.state === 'disabled' ? 'disabled' : 'state —') + '</span></span>'
+      + mcpStateChipHTML(r.name, r.state) + '</span>'
       + (r.description ? '<span class="d">' + esc(r.description) + '</span>' : '') + '</span>'
       + '<span class="tk-chip tk-chip--sm sd-mono">' + esc(r.transportKind) + '</span>'
       + '<span class="tk-chip tk-chip--sm sd-mono ' + (r.trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(r.trust) + '</span>'
-      + '<span class="m sd-tools">' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') + '</span></button>';
+      + '<span class="m sd-tools">' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') + '</span>'
+      + mcpRowControlsHTML(r.name, r.enabled) + '</button>';
   }).join('') + '</div>'
     ;  // Calm (S5): the "state —" chip's tooltip says why the state is unknown; no notice line under the list.
 }
@@ -16024,7 +16026,6 @@ function mcpDetailHTML() {
   const tools = mcpToolsFor(cfg.name);
   const counts = {tools:String(tools.length), resources:'—', prompts:'—'};
   const state = row ? row.state : '—', trust = row ? row.trust : 'approval_gated';
-  const stateTitle = state === 'disabled' ? 'disabled in config.json' : 'state not exposed — no MCP status route in this agent';
   const seg = '<div class="tk-seg" role="group" aria-label="Server detail">' + MCP_TAB_ORDER.map((tab) => '<button class="' + (tab === MCP.detailTab ? 'on' : '') + '" aria-pressed="' + (tab === MCP.detailTab) + '" data-act="mcp:dtab:' + tab + '">'
     + esc(tab) + '<span class="sd-count">' + esc(counts[tab]) + '</span></button>').join('') + '</div>';
   let body;
@@ -16041,10 +16042,11 @@ function mcpDetailHTML() {
   }
   return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="mcp:back">' + ic('chevL') + 'Servers</button><span class="grow"></span>'
     + '<button class="iconbtn sm" data-act="mcp:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
+    + mcpDetailControlsHTML(cfg.name, cfg.enabled !== false)
     + '<button class="btn btn-danger sm" data-act="mcp:remove">Remove</button></div>'
     + '<div class="sd-srvhead">' + mcpMark(cfg) + '<h3 class="sd-title sd-mono">' + esc(cfg.name) + '</h3>'
     + '<span class="tk-chip tk-chip--sm sd-mono ' + (trust === 'pure_read' ? 'tk-chip--green' : 'tk-chip--amber') + '" title="trust class">' + esc(trust) + '</span>'
-    + '<span class="tk-chip tk-chip--sm tk-chip--line" title="' + stateTitle + '">' + (state === 'disabled' ? 'disabled' : 'state —') + '</span></div>'
+    + mcpStateChipHTML(cfg.name, state) + '</div>'
     + (cfg.description ? '<p class="sd-desc">' + esc(cfg.description) + '</p>' : '')
     + '<pre class="tk-out">' + esc(mcpDescribeTransport(cfg)) + '</pre>'
 
@@ -16184,6 +16186,8 @@ function mcpAct(what) {
   if (verb === 'removeCancel') { MCP.removeConfirm = null; render(); return; }
   if (verb === 'refresh') { mcpRefresh(); return; }
   if (verb === 'auto') { MCP.auto = !MCP.auto; render(); return; }
+  // 0.6.6 live routes (mcp-live.js): R restart, e toggle on / off.
+  if (verb === 'restart' || verb === 'enable' || verb === 'disable' || verb === 'toggle') { mcpLiveAct(verb, sel()); return; }
 }
 /* mcp-key-bindings.ts. The add modal's textarea keeps Enter for submit and
    Shift/Alt+Enter for a newline, as the TUI's MultiLineEditor does. */
@@ -16208,6 +16212,8 @@ function mcpKey(e, k, inText) {
     if (k === ']') { e.preventDefault(); mcpAct('dtab:cycle'); return true; }
     if (k === 'd') { e.preventDefault(); mcpAct('remove'); return true; }
     if (k === 'r') { e.preventDefault(); mcpRefresh(); return true; }
+    if (k === 'R') { e.preventDefault(); mcpAct('restart'); return true; }
+    if (k === 'e') { e.preventDefault(); mcpAct('toggle'); return true; }
     const n = MCP.detailTab === 'tools' ? mcpToolsFor(MCP.detailName || '').length : 0;
     if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MCP.detailCursor = Math.min(MCP.detailCursor + 1, Math.max(0, n - 1)); render(); return true; }
     if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MCP.detailCursor = Math.max(MCP.detailCursor - 1, 0); render(); return true; }
@@ -16217,7 +16223,7 @@ function mcpKey(e, k, inText) {
   if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MCP.cursor = Math.min(MCP.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
   if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MCP.cursor = Math.max(MCP.cursor - 1, 0); render(); return true; }
   if (k === 'Enter') { e.preventDefault(); mcpAct('detail'); return true; }
-  const map = {n:'add', d:'remove', r:'refresh', a:'auto'};
+  const map = {n:'add', d:'remove', r:'refresh', a:'auto', R:'restart', e:'toggle'};
   if (map[k]) { e.preventDefault(); mcpAct(map[k]); return true; }
   return false;
 }

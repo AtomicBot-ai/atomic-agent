@@ -563,6 +563,14 @@ export class AgentClient extends EventEmitter {
   runTask = (id: string) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
   health = () => this.json<unknown>("/health");
+  /** `POST /api/mcp/servers/{name}/{restart|enable|disable}` (0.6.6+): acts live, answers the server's status. */
+  mcpServer = (name: string, op: "restart" | "enable" | "disable") =>
+    this.request<{ server: unknown }>(
+      "POST",
+      `/api/mcp/servers/${encodeURIComponent(name)}/${op}`,
+      undefined,
+      60_000,
+    );
   // Item 7 part B (Skills tab): GET /api/skills/{name} (manifest + SKILL.md
   // body; 404 for a disabled skill — the registry's filtered view) and
   // POST /api/skills/uninstall, which also runs runtime.refreshSkills().
