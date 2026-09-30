@@ -693,7 +693,13 @@ export class ChatOrchestrator {
       });
       return;
     }
-    const loaded = this.runtime.sessionStore.load(sessionId);
+    // A thread backgrounded mid-FIRST-turn has no row yet — the TUI's
+    // sessions are deferred and the first turn saves only when it
+    // finishes — so the store cannot answer for it. The detached turn
+    // parked the live session object; it stands in until the row lands.
+    const loaded =
+      this.runtime.sessionStore.load(sessionId) ??
+      this.detachedTurns.sessionFor(sessionId);
     if (!loaded) {
       this.bus.emit({
         type: "runtime_info",
@@ -891,7 +897,7 @@ export class ChatOrchestrator {
       notices.push(formatDroppedQueueOnSwitchNotice(dropped));
     }
     this.steeredAhead = 0;
-    this.detachedTurns.park(previous.id, this.currentController);
+    this.detachedTurns.park(previous, this.currentController);
     this.currentController = null;
     this.reattachedMidTurn = false;
     notices.push(formatDetachedTurnNotice(previous.id));
