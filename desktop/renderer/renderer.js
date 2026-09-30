@@ -4495,6 +4495,7 @@ function act(a) {
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
+                           syncChromeTheme();
                            render(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
@@ -6649,9 +6650,25 @@ async function denyByProse(req, text, post) {
   await steerOrQueue(text);
 }
 
+/* Windows: the minimise / maximise / close buttons are overlaid on the
+   toolbar by the system (main.ts windowChrome), which paints them in fixed
+   colours. Tell main which theme the page is in, at boot, on a theme pick,
+   and when "System" follows the OS into the other one. A no-op elsewhere. */
+function syncChromeTheme() {
+  if (!BR || BR.platform !== 'win32' || !BR.setChromeTheme) return;
+  const set = document.documentElement.getAttribute('data-theme');
+  const dark = set ? set === 'dark'
+    : !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  BR.setChromeTheme(dark).catch(() => {});
+}
+
 if (BR) {
-  // Drop the prototype's fake window chrome — macOS draws all of it.
+  // Drop the prototype's fake window chrome — the OS draws all of it.
   document.body.classList.add('electron');
+  syncChromeTheme();
+  if (BR.platform === 'win32' && window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncChromeTheme);
+  }
   // The mock transcript is demo furniture; a real agent starts clean.
   S.log = [];
   S.history = [];

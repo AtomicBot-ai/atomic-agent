@@ -13,6 +13,15 @@ function on(channel: string, cb: (payload: unknown) => void): Unsubscribe {
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+/* The platform as a class on <body> (`platform-darwin`, `platform-win32`,
+   `platform-linux`), so the stylesheet can give the window chrome of each
+   its room: macOS insets traffic lights at the left of the toolbar, Windows
+   overlays its controls at the right, Linux draws a normal frame. Set before
+   the first paint the renderer makes. */
+window.addEventListener("DOMContentLoaded", () => {
+  document.body.classList.add(`platform-${process.platform}`);
+});
+
 contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
@@ -144,6 +153,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:dotenvSet", { stateDir, key, value }),
 
   platform: process.platform,
+  /** Windows: repaint the overlaid window controls for the page's theme. */
+  setChromeTheme: (dark: boolean) => ipcRenderer.invoke("app:chromeTheme", dark),
   build: () => ipcRenderer.invoke("app:build"),
   debugBundle: () => ipcRenderer.invoke("app:debugBundle"),
   unverified: () => ipcRenderer.invoke("app:unverified"),

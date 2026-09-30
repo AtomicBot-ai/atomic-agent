@@ -138,7 +138,7 @@ import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
-import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment } from "./platform.js";
+import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, windowChrome } from "./platform.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -381,11 +381,11 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     backgroundColor: "#191C21",
-    // The design draws its own 52px toolbar, so the frame keeps only the
-    // traffic lights and insets them into that band.
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 20, y: 20 },
-    vibrancy: "sidebar",
+    // The design draws its own 52px toolbar. On macOS the frame keeps only
+    // the traffic lights, inset into that band; on Windows the system's
+    // window controls are overlaid on its right end; Linux keeps a normal
+    // frame (platform.ts windowChrome).
+    ...windowChrome(process.platform),
     webPreferences: {
       preload: join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
@@ -1458,6 +1458,20 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:fusionWorkerModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     return applySwitch(await selectFusionWorkerModel(id));
+  });
+
+  /* Windows: the overlaid window controls are painted by the system, so they
+     follow the page's light/dark theme only when the renderer says which. */
+  ipcMain.handle("app:chromeTheme", (event, dark: unknown) => {
+    if (process.platform !== "win32") return { ok: true };
+    const w = BrowserWindow.fromWebContents(event.sender);
+    if (!w || w.isDestroyed()) return { ok: false };
+    try {
+      w.setTitleBarOverlay({ ...titleBarOverlayColors(dark === true), height: TOOLBAR_HEIGHT });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle("app:build", () => ({
@@ -8030,6 +8044,9 @@ void app.whenReady().then(async () => {
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
   if (SMOKE) TUI_BASELINE = snapshotTuiState();
+  // Windows attributes notifications to the AppUserModelID; without one set a
+  // dev or unpackaged run shows none. Same id as the bundle id on macOS.
+  if (process.platform === "win32") app.setAppUserModelId("ai.atomicbot.desktop");
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
   win = createWindow();
