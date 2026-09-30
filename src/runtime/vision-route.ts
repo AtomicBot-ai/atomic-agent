@@ -42,7 +42,10 @@ export function resolveVisionProvider(
  * it), so gating the descriptor on it would drop the tool from the
  * prompt of a session that is about to see images. The tool still
  * re-checks at call time and refuses cleanly when the loaded model has
- * no projector. Every other kind declares its capability up front.
+ * no projector. A cloud link's capability is the answer for the one
+ * MODEL it serves (`llm/provider/model-vision.ts`: config, then the
+ * catalogue, else offered until the service rejects an image), so a
+ * text-only model drops the tool and a vision model brings it back.
  */
 export function providerOffersVision(
   provider: LlmProvider,

@@ -1,4 +1,5 @@
 import {
+  ModelCannotSeeError,
   VisionUnsupportedError,
   type LlmProvider,
   type ProviderCapabilities,
@@ -53,6 +54,11 @@ import {
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
+import {
+  isImageRejection,
+  markModelCannotSee,
+  modelCannotSee,
+} from "../model-vision-rejections.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -65,7 +71,15 @@ export interface OpenAiProviderOptions {
    * `Authorization: Bearer`. See `openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * Whether the model this link serves can read images, as resolved per
+   * model by the factory (`model-vision.ts`), with `visionSource` saying
+   * where that came from. Absent means nothing describes the model:
+   * vision is offered as `assumed`, and the first image the service
+   * rejects turns it off for this model (`describeImage`).
+   */
   supportsVision?: boolean;
+  visionSource?: ProviderCapabilities["visionSource"];
   supportsParallelTools?: boolean;
   supportsPromptCache?: boolean;
   reasoningFormat?: ReasoningFormat;
@@ -144,6 +158,7 @@ export class OpenAiProvider implements LlmProvider {
   readonly toolCallAdapter: ToolCallAdapter;
   readonly streamConsumer: StreamConsumer;
   readonly capabilities: ProviderCapabilities;
+  readonly chatModelId: string;
 
   private readonly http: OpenAiHttpDeps;
   private readonly defaultChatModel: string;
@@ -184,8 +199,7 @@ export class OpenAiProvider implements LlmProvider {
       options.streamConsumer ??
       createOpenAiStreamConsumer(this.reasoningFormat);
     this.capabilities = {
-      vision: options.supportsVision ?? true,
-      visionSource: options.supportsVision ? "modalities.vision" : "absent",
+      ...openAiVisionCapabilities(options),
       toolTransport: "native_tools",
       contextWindow: 128_000,
       supportsParallelTools: options.supportsParallelTools ?? true,
@@ -194,6 +208,7 @@ export class OpenAiProvider implements LlmProvider {
       reasoningFormat: this.reasoningFormat,
     };
     this.defaultChatModel = options.defaultChatModel;
+    this.chatModelId = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.extraBody = options.extraBody;
@@ -584,13 +599,34 @@ export class OpenAiProvider implements LlmProvider {
     if (!this.capabilities.vision) {
       throw new VisionUnsupportedError(this.name);
     }
-    return describeImageViaOpenAi(
-      this.http,
-      this.defaultChatModel,
-      request,
-      this.apiPathPrefix,
-      this.providerPreferences,
-    );
+    try {
+      return await describeImageViaOpenAi(
+        this.http,
+        this.defaultChatModel,
+        request,
+        this.apiPathPrefix,
+        this.providerPreferences,
+      );
+    } catch (error) {
+      // Only a model nobody described learns from a rejection: an
+      // operator's `supportsVision` or a catalogue row is not overruled
+      // by one 400, and its error goes back as the service wrote it.
+      if (
+        this.capabilities.visionSource === "assumed" &&
+        error instanceof OpenAiHttpError &&
+        isImageRejection(error.status, error.message)
+      ) {
+        markModelCannotSee(this.id, this.defaultChatModel);
+        this.capabilities.vision = false;
+        this.capabilities.visionSource = "rejected-images";
+        throw new ModelCannotSeeError(
+          this.id,
+          this.defaultChatModel,
+          error.message,
+        );
+      }
+      throw error;
+    }
   }
 
   async listModels(): Promise<readonly string[]> {
@@ -600,6 +636,27 @@ export class OpenAiProvider implements LlmProvider {
       .map((row) => row.id)
       .filter((id): id is string => typeof id === "string");
   }
+}
+
+/**
+ * The vision half of the capabilities. The factory passes the per-model
+ * answer; a bare construction (no `supportsVision`) is `assumed`, and a
+ * model already recorded as rejecting images stays text-only across the
+ * rebuild a config write causes.
+ */
+function openAiVisionCapabilities(
+  options: OpenAiProviderOptions,
+): Pick<ProviderCapabilities, "vision" | "visionSource"> {
+  if (options.supportsVision !== undefined) {
+    return {
+      vision: options.supportsVision,
+      visionSource: options.visionSource ?? "config.provider",
+    };
+  }
+  if (modelCannotSee(options.id, options.defaultChatModel)) {
+    return { vision: false, visionSource: "rejected-images" };
+  }
+  return { vision: true, visionSource: "assumed" };
 }
 
 /**

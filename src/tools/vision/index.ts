@@ -33,6 +33,8 @@ export interface RegisterVisionToolsOptions {
   enabled: boolean;
   maxImagesPerCall: number;
   maxImageBytes: number;
+  /** See `VisionDescribeToolOptions.visionAlternatives`. */
+  visionAlternatives?: (providerId: string) => readonly string[];
   logger?: StructuredLogger | undefined;
 }
 
@@ -59,6 +61,9 @@ export function registerVisionTools(
       provider: options.provider,
       maxImagesPerCall: options.maxImagesPerCall,
       maxImageBytes: options.maxImageBytes,
+      ...(options.visionAlternatives
+        ? { visionAlternatives: options.visionAlternatives }
+        : {}),
       logger: options.logger,
     }),
   );

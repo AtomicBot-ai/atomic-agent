@@ -24,6 +24,8 @@ export type OpenRouterChatPick = {
 
 let cached: { fetchedAt: number; picks: readonly OpenRouterChatPick[] } | null =
   null;
+/** Stated image support per id from the cached fetch; see `getAdvertisedOpenRouterVision`. */
+let advertisedVision: ReadonlyMap<string, boolean> = new Map();
 
 function pricePerMillion(tokenPrice: string | undefined): number {
   const n = parseFloat(tokenPrice ?? "0");
@@ -163,6 +165,20 @@ export function getCachedOpenRouterChatPicks():
   return cached.picks;
 }
 
+/**
+ * What the last live fetch said about image input for `id`: `true` /
+ * `false` when the row carried `architecture.input_modalities`,
+ * `undefined` when it said nothing, the id was not listed, or the cache
+ * is cold or stale. Unlike the pick's `supportsVision` (where silence
+ * reads as "no"), this keeps silence apart, so the provider layer can
+ * treat an unstated model as unknown rather than text-only
+ * (`model-vision.ts`).
+ */
+export function getAdvertisedOpenRouterVision(id: string): boolean | undefined {
+  if (!cached || Date.now() - cached.fetchedAt > CACHE_TTL_MS) return undefined;
+  return advertisedVision.get(id);
+}
+
 export function listOpenRouterChatPicks(): readonly OpenRouterChatPick[] {
   return getCachedOpenRouterChatPicks() ?? picksFromStaticCatalog();
 }
@@ -235,6 +251,14 @@ async function fetchAndCacheCatalog(): Promise<boolean> {
     }
 
     if (picks.length === 0) return false;
+    const stated = new Map<string, boolean>();
+    for (const m of rows) {
+      const modalities = m.architecture?.input_modalities;
+      if (typeof m.id === "string" && Array.isArray(modalities)) {
+        stated.set(m.id, modalities.includes("image"));
+      }
+    }
+    advertisedVision = stated;
     cached = { fetchedAt: Date.now(), picks };
     return true;
   } catch {
