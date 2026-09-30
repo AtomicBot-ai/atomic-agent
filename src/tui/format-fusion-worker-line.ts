@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import { formatTokens } from "./components/format-tokens.js";
 import type { FeedEntry } from "./tui-state.js";
 
 type FusionWorkerEvent = Extract<AgentLoopEvent, { type: "fusion_worker" }>;
@@ -37,6 +38,10 @@ export function formatFusionWorkerLine(event: FusionWorkerEvent): string {
       return event.role === "orchestrator"
         ? `» ${who} — ${event.tool ?? "working"} (${event.title})`
         : `» ${who} — ${event.tool ?? "working"}`;
+    case "usage":
+      // The reducer keeps this off the feed; rendered only so a caller
+      // that does print it gets something true rather than "started".
+      return `» ${who}: ${formatTokens(event.contextTokens ?? 0)} ctx`;
     case "cancelled":
       return `» ${who}: cancelled`;
     case "failed":

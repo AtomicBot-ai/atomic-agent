@@ -807,6 +807,18 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       });
     }
     case "fusion_worker": {
+      // A token count moves the live row and nothing else: one feed
+      // line per completion per worker would bury the lines that say
+      // what happened.
+      if (event.phase === "usage") {
+        return {
+          ...state,
+          fusionLiveWorkers: reduceFusionLiveWorkers(
+            state.fusionLiveWorkers,
+            event,
+          ),
+        };
+      }
       // A fan-out can hold the orchestrator's turn for minutes with no
       // steps of its own to show, so each leg gets a start line, its
       // (bounded) tool lines and an end line — each naming the model

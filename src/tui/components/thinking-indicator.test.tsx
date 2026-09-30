@@ -122,3 +122,41 @@ describe("ThinkingIndicator", () => {
     expect(text).toMatch(/1m\d\ds/);
   });
 });
+
+describe("ThinkingIndicator fusion worker rows", () => {
+  it("prints each worker's context size on its own row, adding no row", () => {
+    const now = Date.now();
+    const worker = {
+      taskId: "t1",
+      title: "Map the routes",
+      model: "qwen-3.5-4b",
+      tool: "os.fs.read",
+      done: false,
+      startedAt: now - 5_000,
+      finishedAt: null,
+      etaSeconds: null,
+    };
+    const without = strip(
+      render(
+        <ThinkingIndicator
+          state={makeState({
+            fusionLiveWorkers: [{ ...worker, contextTokens: null }],
+          })}
+        />,
+      ).lastFrame() ?? "",
+    );
+    const withCount = strip(
+      render(
+        <ThinkingIndicator
+          state={makeState({
+            fusionLiveWorkers: [{ ...worker, contextTokens: 12_345 }],
+          })}
+        />,
+      ).lastFrame() ?? "",
+    );
+    expect(withCount).toMatch(/▸ Map the routes · qwen-3\.5-4b — os\.fs\.read · \d+s · 12\.3k ctx/);
+    expect(without).not.toContain("ctx");
+    // Same row count: the count rides the existing line.
+    expect(withCount.split("\n")).toHaveLength(without.split("\n").length);
+  });
+});

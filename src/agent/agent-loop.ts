@@ -945,7 +945,11 @@ export type AgentLoopEvent =
       type: "fusion_worker";
       taskId: string;
       title: string;
-      phase: "started" | "tool" | "finished" | "failed" | "cancelled";
+      /**
+       * `usage` is not a line: it carries a fresh `contextTokens` for the
+       * live worker row and the feed renders nothing for it.
+       */
+      phase: "started" | "tool" | "usage" | "finished" | "failed" | "cancelled";
       /**
        * Which leg this line is about. `worker` when absent, so the
        * event's original shape still reads correctly. The orchestrator
@@ -960,6 +964,14 @@ export type AgentLoopEvent =
        * here would be attributing spend to the wrong model.
        */
       model?: string;
+      /**
+       * `phase: "usage"` only: how full this worker's context is, as its
+       * last completion counted it — `timing.promptTokens`, the figure
+       * the composer's context chip takes from `llm_completed` (llama.cpp
+       * `prompt_n + tokens_cached`, so a warm KV cache is not
+       * under-counted). Measured, never estimated.
+       */
+      contextTokens?: number;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
       /**
