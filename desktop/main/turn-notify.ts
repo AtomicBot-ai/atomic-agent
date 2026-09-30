@@ -78,7 +78,8 @@ export function formatTurnNotification(p: {
   const title = p.outcome === "failed" ? "Turn failed" : p.outcome === "cancelled" ? "Turn stopped" : "Turn done";
   const parts: string[] = [];
   if (p.outcome === "failed" && p.error) parts.push(p.error);
-  parts.push(`${p.steps} step${p.steps === 1 ? "" : "s"}`, took(p.durationMs));
+  if (p.steps > 0) parts.push(`${p.steps} tool call${p.steps === 1 ? "" : "s"}`);
+  parts.push(took(p.durationMs));
   if (p.workingDirName) parts.push(p.workingDirName);
   return { title, body: cleanNotificationText(parts.join(" · ")) };
 }
