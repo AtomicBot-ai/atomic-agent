@@ -109,6 +109,29 @@ export const SLOTS_POLL_INTERVAL_MS = 15_000;
 export const SLOTS_POLL_TIMEOUT_MS = 3_000;
 
 /**
+ * Deadline for the unary requests this client makes *outside* a
+ * completion: `GET /props` (the model-profile probe at boot and at every
+ * local turn start) and `POST /apply-template` (the chat-template render
+ * a step does before it sends its prompt).
+ *
+ * Both used to inherit `requestTimeoutMs` — five minutes, the budget of
+ * a generation — and both sit on a turn's critical path before anything
+ * the operator can see: a server that accepted the connection and never
+ * answered (frozen with SIGSTOP, wedged, or any socket that just
+ * listens) held `run` at boot and a TUI turn between `turn_started` and
+ * `step_started` with no event and no log line. Neither endpoint queues
+ * behind a decode in llama.cpp — both are answered off the inference
+ * loop, in milliseconds — so a few seconds of silence already says the
+ * server is not there. Each caller has a fallback that costs nothing on
+ * a timeout: the profile manager keeps the last known profile, boot
+ * starts on the plain profile and re-probes on the first turn, and the
+ * template renderer sends the raw prompt for that step. The completion
+ * that follows is what reports the server, through its own deadlines
+ * and the provider wait.
+ */
+export const PROBE_TIMEOUT_MS = 5_000;
+
+/**
  * How long a run of polls that prove *nothing is listening* may last
  * before a first-token wait is ended as `first-token-unreachable`.
  * Floored at the idle budget by `unreachableBudgetMs()`.
@@ -405,6 +428,8 @@ export interface LlamaServerClientOptions {
   slotsPollIntervalMs?: number;
   /** Overrides `SLOTS_POLL_TIMEOUT_MS`. */
   slotsPollTimeoutMs?: number;
+  /** Overrides `PROBE_TIMEOUT_MS` (`/props`, `/apply-template`). */
+  probeTimeoutMs?: number;
   /**
    * Overrides the retry budget for `complete()` and the initial fetch
    * of `completeStream()`. When omitted, the client reads
@@ -442,6 +467,7 @@ export class LlamaServerClient {
   private readonly progressWatch: boolean;
   private readonly slotsPollIntervalMs: number;
   private readonly slotsPollTimeoutMs: number;
+  private readonly probeTimeoutMs: number;
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -493,6 +519,7 @@ export class LlamaServerClient {
     this.slotsPollIntervalMs =
       options.slotsPollIntervalMs ?? SLOTS_POLL_INTERVAL_MS;
     this.slotsPollTimeoutMs = options.slotsPollTimeoutMs ?? SLOTS_POLL_TIMEOUT_MS;
+    this.probeTimeoutMs = options.probeTimeoutMs ?? PROBE_TIMEOUT_MS;
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
     this.sleep = options.sleep ?? defaultSleep;
@@ -590,8 +617,9 @@ export class LlamaServerClient {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, "/apply-template");
+    const timeoutMs = this.probeTimeoutMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(url, {
         method: "POST",
@@ -618,21 +646,24 @@ export class LlamaServerClient {
       return json.prompt;
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
-        cause: err,
-      });
+      throw probeFailure(err, url, controller.signal.aborted, timeoutMs);
     } finally {
       clearTimeout(timer);
     }
   }
 
-  async fetchProps(): Promise<LlamaServerProps> {
+  /**
+   * `GET /props`. Bounded by `timeoutMs` (default `PROBE_TIMEOUT_MS`),
+   * body included: a server that accepts and never answers must not hold
+   * boot or a turn start for a generation's budget. Throws on any
+   * failure; a timeout says so by name and carries `timedOut`.
+   */
+  async fetchProps(timeoutMs = this.probeTimeoutMs): Promise<LlamaServerProps> {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, "/props");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(url, {
         method: "GET",
@@ -645,17 +676,7 @@ export class LlamaServerClient {
       return (await response.json()) as LlamaServerProps;
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(
-        message,
-        null,
-        url,
-        false,
-        readErrnoCode(err),
-        {
-          cause: err,
-        },
-      );
+      throw probeFailure(err, url, controller.signal.aborted, timeoutMs);
     } finally {
       clearTimeout(timer);
     }
@@ -1658,6 +1679,33 @@ function computeBackoffMs(baseMs: number, attemptNumber: number): number {
   const exp = baseMs * Math.pow(2, attemptNumber - 1);
   const jitter = exp * (Math.random() * 0.4 - 0.2);
   return Math.max(0, Math.round(exp + jitter));
+}
+
+/**
+ * The error a failed probe (`/props`, `/apply-template`) throws. When our
+ * own deadline fired, the message names the endpoint and the budget
+ * instead of undici's bare "This operation was aborted", and `timedOut`
+ * is set so nothing downstream reads it as the server's verdict.
+ */
+function probeFailure(
+  err: unknown,
+  url: string,
+  timedOut: boolean,
+  timeoutMs: number,
+): LlamaServerError {
+  const message = timedOut
+    ? `llama-server did not answer ${url} within ${timeoutMs} ms`
+    : err instanceof Error
+      ? err.message
+      : String(err);
+  return new LlamaServerError(
+    message,
+    null,
+    url,
+    timedOut,
+    readErrnoCode(err),
+    { cause: err },
+  );
 }
 
 async function defaultSleep(ms: number): Promise<void> {

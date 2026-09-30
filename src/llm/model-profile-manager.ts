@@ -98,13 +98,19 @@ export interface ModelProfileRefreshResult {
  *
  * Refresh failures are swallowed with a warning so a transient network
  * blip cannot tear down an in-flight turn; the prior profile stays
- * active until the next probe succeeds.
+ * active until the next probe succeeds. The probe is bounded by the
+ * client (`PROBE_TIMEOUT_MS`), so a server that accepts and never
+ * answers costs a turn start a few seconds, not the turn. The warning is
+ * said once per run of failures — a server that stays down would
+ * otherwise repeat it at every turn start — and its recovery once.
  */
 export class ModelProfileManager {
   private profile: ModelProfile;
   private grammar: string;
   private modelId: string | null;
   private stale = false;
+  /** A refresh failed and none has succeeded since — the warning was said. */
+  private refreshFailing = false;
   /** Single-stream decode speed of the serving daemon, tokens per second. */
   private tokensPerSecond: number | null = null;
   private readonly llama: LlamaServerClient;
@@ -308,16 +314,35 @@ export class ModelProfileManager {
               : this.tokensPerSecond;
       }
       this.stale = false;
+      if (this.refreshFailing) {
+        this.refreshFailing = false;
+        this.logger?.info("model profile refresh recovered", {
+          profile: this.profile.id,
+          modelId: this.modelId,
+        });
+      }
       return {
         profileChanged,
         profileId: this.profile.id,
         modelId: this.modelId,
       };
     } catch (err) {
-      this.logger?.warn("model profile refresh failed; keeping prior profile", {
+      const context = {
         error: err instanceof Error ? err.message : String(err),
         profile: this.profile.id,
-      });
+      };
+      if (this.refreshFailing) {
+        this.logger?.debug(
+          "model profile refresh still failing; keeping prior profile",
+          context,
+        );
+      } else {
+        this.refreshFailing = true;
+        this.logger?.warn(
+          "model profile refresh failed; keeping prior profile",
+          context,
+        );
+      }
       this.stale = false;
       return {
         profileChanged: false,

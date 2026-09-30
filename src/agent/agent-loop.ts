@@ -1188,8 +1188,6 @@ export class AgentLoop {
         : this.deps.toolDescriptors;
     };
 
-    state = await refreshMemoryContext(this.deps, state, options);
-
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
     // between turns — without this, step 0 would still build the prompt
@@ -1204,9 +1202,20 @@ export class AgentLoop {
     // arm the profile and grammar would stay pinned to whatever the
     // first fallover probed for the whole outage. Take-and-clear, so a
     // recovered primary quiets the probes again after one turn.
+    //
+    // Run beside the memory recall rather than after it: the two share
+    // nothing (recall reads the store and, for a referential follow-up,
+    // asks the model to rewrite the query; the sync reads `/props`), and
+    // both wait on the same server. In sequence, a server that accepts
+    // and never answers cost the turn the rewriter's budget PLUS the
+    // probe's before `step_started`; side by side it costs the longer
+    // of the two. Neither can throw — the refresh swallows its own
+    // failures, keeps the prior profile and is bounded by the client's
+    // `PROBE_TIMEOUT_MS`.
     const localLinkServedLastTurn =
       this.deps.localBackend?.takeLinkServed?.() ?? false;
-    if (this.deps.profileManager) {
+    const syncProfile = async (): Promise<void> => {
+      if (!this.deps.profileManager) return;
       if (this.localBackendActive()) {
         if (!(await this.deps.localBackend?.ensureProbed())) {
           await this.deps.profileManager.refresh();
@@ -1214,7 +1223,10 @@ export class AgentLoop {
       } else if (localLinkServedLastTurn) {
         await this.deps.profileManager.refresh();
       }
-    }
+    };
+    const profileSynced = syncProfile();
+    state = await refreshMemoryContext(this.deps, state, options);
+    await profileSynced;
 
     // Fusion's division of labour is per TURN, not per session: each
     // turn starts owing a plan and a fan-out before it may write. An
