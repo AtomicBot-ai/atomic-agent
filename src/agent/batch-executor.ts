@@ -125,6 +125,8 @@ export interface BatchExecutionContext {
    * transcript and handed to every call of the batch unchanged.
    */
   readRoots?: readonly string[];
+  /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
+  providerId?: string;
   /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
@@ -448,6 +450,7 @@ export async function executeBatch(
         signal: ctx.signal,
         ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
         ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
+        ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {

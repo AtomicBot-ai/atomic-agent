@@ -52,8 +52,20 @@ const VISION_COMPRESSOR_OPTIONS = {
   maxTailLines: Number.MAX_SAFE_INTEGER,
 } as const;
 
+/**
+ * Where the tool finds its provider. A fixed provider, or a lookup run
+ * on EVERY call with the step's pinned provider id
+ * (`ToolContext.providerId`, set on a fusion worker's steps) — the
+ * runtime passes the lookup so the tool follows provider switches and
+ * the fusion legs without a restart (`src/runtime/vision-route.ts`).
+ * `undefined` from the lookup means nothing can serve this step.
+ */
+export type VisionProviderSource =
+  | LlmProvider
+  | ((providerId: string | undefined) => LlmProvider | undefined);
+
 export interface VisionDescribeToolOptions {
-  provider: LlmProvider;
+  provider: VisionProviderSource;
   /** Per-call image count cap mirrored from `config.vision.maxImagesPerCall`. */
   maxImagesPerCall: number;
   /** Per-image byte cap mirrored from `config.vision.maxImageBytes`. */
@@ -126,9 +138,21 @@ export function buildVisionDescribeTool(
             ` — split into ${calls} calls of at most ${options.maxImagesPerCall}`,
         );
       }
-      if (!options.provider.capabilities.vision) {
+      // Resolved per call, never captured: the provider serving THIS
+      // step is the one whose capability counts and the one called.
+      // No fallback to another provider — a refusal names the route.
+      const provider =
+        typeof options.provider === "function"
+          ? options.provider(ctx.providerId)
+          : options.provider;
+      if (provider === undefined) {
         return errorResult(
-          `vision is not available on the active provider (${options.provider.capabilities.visionSource})`,
+          `vision is not available: provider "${ctx.providerId ?? "(active)"}" is not configured`,
+        );
+      }
+      if (!provider.capabilities.vision) {
+        return errorResult(
+          `vision is not available on the active provider (${provider.id ?? provider.name}: ${provider.capabilities.visionSource})`,
         );
       }
 
@@ -169,7 +193,7 @@ export function buildVisionDescribeTool(
       }
 
       try {
-        const result = await options.provider.describeImage({
+        const result = await provider.describeImage({
           prompt: parsed.prompt,
           images: images.map(({ id, bytes, mimeType }) => ({
             id,
@@ -184,7 +208,7 @@ export function buildVisionDescribeTool(
             status: "ok",
             output: result.text,
             details: {
-              provider: options.provider.name,
+              provider: provider.name,
               images: images.map((img) => ({
                 id: img.id,
                 path: img.path,
