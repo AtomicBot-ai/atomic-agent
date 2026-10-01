@@ -585,9 +585,11 @@ const OB_TUI_AGENT_ID = 'atomic-tui';
 const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
 /* Run mode — Fusion. `live` is the fan-out's legs while a turn runs, the way
    src/tui/fusion-live-workers.ts keeps them: ordered by first sight, finished
-   legs kept (done) until the turn ends. Declared here, before the first
-   render(), because composer() reads it. */
-const FZ = { live:[] };
+   legs kept (done) until the turn ends. `swapQueued` is a ⇄ pressed while
+   another switch was still landing (item 11, see fzSwap): the seats are
+   painted traded at once and the swap itself runs when that switch is done.
+   Declared here, before the first render(), because composer() reads it. */
+const FZ = { live:[], swapQueued:false };
 /* src/tui/run-mode/fusion-intro.ts FUSION_MARK: one model on top deciding,
    several underneath doing. */
 const FUSION_MARK = [
@@ -6449,6 +6451,8 @@ function onChatEvent(ev) {
     // r5 item 7: a background download that finished mid-turn parked its
     // activation rather than restarting `atag serve` under this turn.
     obFlushDeferredActivate();
+    // Item 11: so did a ⇄ queued behind a switch that landed while a turn held the composer.
+    fzFlushQueuedSwap();
     refreshContext();
     reconcileToolCards();
     // Cards stay pending until the session store describes them.
@@ -6838,6 +6842,10 @@ function activeProvider() {
   return (LIVE_CONFIG.llm.providers || []).find((p) => p.id === id) || null;
 }
 function activeModel() {
+  /* Item 11: a Fusion swap on its way — in flight, or queued behind another
+     switch — paints the orchestrator seat as it will land (fzSeats), ahead
+     of a `want.model` that names the seat before the trade. */
+  if (fzTrading() && selBackend() === 'fusion') return fzSeats().plans.label;
   /* r5 item 10: the operator's choice paints first — but only a NON-EMPTY
      one. An empty want means "this provider has no chat model", and the
      honest states below (the external-route blank, the download-model
@@ -10835,6 +10843,14 @@ async function swxRun(label, want, run, refuse) {
     // costs nothing. That is only true because no call site mutates
     // LIVE_CONFIG in place any more (the cloud-model row used to).
     if (SWX.pending === 0) SWX.want = null;
+    /* Item 11: a ⇄ pressed while this switch was landing (fzSwap). It runs
+       now, as its own switch — on a timer, so the caller is done with this
+       result first — or it goes with this switch's failure: it was painted
+       on top of this switch, so it rolls back with it. */
+    if (SWX.pending === 0 && FZ.swapQueued) {
+      if (res && res.ok !== false) setTimeout(fzFlushQueuedSwap, 0);
+      else FZ.swapQueued = false;
+    }
     render();
   }
 }
@@ -10896,8 +10912,8 @@ function selProviderLabel() {
   const backend = selBackend();
   if (backend === 'local') return null;
   if (backend === 'custom') return 'llama.cpp';
-  // Under Fusion this control is the ORCHESTRATOR seat.
-  if (backend === 'fusion') return (SWX.want && SWX.want.providerId) || rmNow().orchestratorProviderId || 'no provider';
+  // Under Fusion this control is the ORCHESTRATOR seat, as painted (fzSeats).
+  if (backend === 'fusion') return fzSeats().plans.provider || 'no provider';
   return selActiveProviderId() || 'no provider';
 }
 function selProviders() {
@@ -12498,6 +12514,36 @@ function fzLegLabel(rm, leg) {
   }
   return pinned || fzProviderModel(id) || id || 'cloud';
 }
+/** A swap is on its way: in flight (`want.swap`), or queued by ⇄ behind another switch. */
+function fzTrading() { return !!((SWX.want && SWX.want.swap) || FZ.swapQueued); }
+/**
+ * Item 11 — the two seats as the composer paints them, each {provider, label}:
+ * the live config under the switch that is landing (its `want` names the
+ * orchestrator it lands on), traded once for every swap on its way. Two trades
+ * are none, so ⇄ pressed again while a swap lands paints the seats back. The
+ * provider, model and workers chips all read this, so the three move together
+ * on the press; the workers chip used to wait for the agent to come back.
+ *
+ * The swap in flight trades only while the live config still has the seats it
+ * started from (`want.swap`): swxSettle re-reads the config BEFORE the
+ * `finally` drops the want, and trading the already-swapped file would paint
+ * the old seats again for as long as the mode takes to settle.
+ */
+function fzSeats() {
+  const rm = rmNow();
+  const want = SWX.want || {};
+  const plans = {provider: want.providerId || rm.orchestratorProviderId,
+    label: (typeof want.model === 'string' && want.model) || fzLegLabel(rm, 'orchestrator')};
+  const works = {provider: rm.workerProviderId, label: fzLegLabel(rm, 'worker')};
+  const from = want.swap;
+  const inFlight = !!from && from.orchestrator === rm.orchestratorProviderId && from.worker === rm.workerProviderId;
+  return ((inFlight ? 1 : 0) + (FZ.swapQueued ? 1 : 0)) % 2 ? {plans: works, works: plans} : {plans, works};
+}
+/** What a queued swap waits for, in the words of the switch ahead of it. */
+function fzQueuedWhen() {
+  const m = /^starting (.+?)…?$/.exec(String(SWX.label || ''));
+  return m ? m[1] + ' is up' : 'the switch in progress finishes';
+}
 /** The orchestrator RunModeOrchestrator.setMode will pick with no pin — painted while the switch lands. */
 function fzPredictLeg() {
   const providers = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [];
@@ -12540,9 +12586,13 @@ function fzWorkerRows() {
 /** The ⇄ between the seats and the `workers` control, drawn only on the Fusion route. */
 function fzChipsHtml() {
   if (!selHasKind('workers')) return '';
-  const rm = rmNow();
-  const label = fzLegLabel(rm, 'worker');
-  return '<button class="cchip fzswap" data-act="runmode:swap" title="Swap the seats — the orchestrator runs the workers and back" aria-label="Swap orchestrator and workers">'
+  const label = fzSeats().works.label;
+  // Item 11: a queued swap says what it waits for, and that a second press takes it back.
+  const queued = FZ.swapQueued
+    ? 'Seats swapped — this takes effect once ' + fzQueuedWhen() + '. Press again to swap back' : '';
+  return '<button class="cchip fzswap' + (queued ? ' is-queued' : '') + '" data-act="runmode:swap"'
+      + ' title="' + esc(queued || 'Swap the seats — the orchestrator runs the workers and back') + '"'
+      + ' aria-label="' + esc(queued || 'Swap orchestrator and workers') + '">'
       + ic('swap') + '</button>'
     + '<button class="cchip workerschip' + cchipOpen('workers') + '" data-sel-open="workers" data-id="' + esc(label) + '"'
       + ' title="Does the work: ' + esc(label) + '" aria-label="Does the work: ' + esc(fzSeatWord(label)) + '">' + modelMark(label, 'xs')
@@ -12652,13 +12702,48 @@ async function selChooseFusion() {
   return fzAfter(await swxRun(BSW.line, {backend:'fusion', providerId: leg || undefined, model: fzProviderModel(leg)},
     () => SWXBR.enterFusion({})), before);
 }
-/** swapLegs — the composer's ⇄ and `/runmode swap`. */
+/**
+ * swapLegs — the composer's ⇄ and `/runmode swap`.
+ *
+ * Item 11 (the lead dev: "let me swap as much as I like — a message can't be
+ * sent anyway until the server is up"). While another switch is still
+ * landing — the local model loading behind `starting <model>…`, most often —
+ * a press is not refused with a toast any more: it toggles FZ.swapQueued and
+ * the seats repaint traded on the press (fzSeats); a second press puts them
+ * back. swxRun's `finally` runs the queued swap once, through swxRun like any
+ * other switch, when the switch ahead has landed — and drops it when that
+ * switch failed, since it was painted on top of it and rolls back with it.
+ * One switch at a time still holds: a swap never runs beside another switch,
+ * it waits its turn instead of being turned away.
+ */
 async function fzSwap() {
+  if (FZ.swapQueued || (SWX.pending > 0 && !S.busy)) return fzQueueSwap();
+  return fzSwapNow();
+}
+function fzQueueSwap() {
+  if (!FZ.swapQueued && selBackend() !== 'fusion') {
+    fzNotice(SWAP_NEEDS_FUSION, 'run mode: ' + SWAP_NEEDS_FUSION);
+    return {ok:false, refusal:SWAP_NEEDS_FUSION};
+  }
+  FZ.swapQueued = !FZ.swapQueued;
+  render();
+  return {ok:true, queued:FZ.swapQueued};
+}
+async function fzSwapNow() {
   const rm = rmNow();
   if (rm.stored !== 'fusion') { fzNotice(SWAP_NEEDS_FUSION, 'run mode: ' + SWAP_NEEDS_FUSION); return {ok:false, refusal:SWAP_NEEDS_FUSION}; }
   const before = fzBefore('swapping…');
-  return fzAfter(await swxRun(BSW.line, {backend:'fusion', providerId: rm.workerProviderId || undefined, model: rm.workerModel || ''},
+  // `swap` is the whole paint: the seats it trades, which fzSeats paints traded until the file has them.
+  return fzAfter(await swxRun(BSW.line, {backend:'fusion', swap:{orchestrator: rm.orchestratorProviderId, worker: rm.workerProviderId}},
     () => SWXBR.swapFusionLegs()), before);
+}
+/** The queued swap, once nothing is landing and no turn holds the composer (swxRun's `finally`, a turn's end). */
+function fzFlushQueuedSwap() {
+  if (!FZ.swapQueued || SWX.pending > 0 || S.busy) return;
+  FZ.swapQueued = false;
+  // The switch that landed did not leave a Fusion behind: there are no seats to trade.
+  if (rmNow().stored !== 'fusion') { render(); return; }
+  fzSwapNow();
 }
 /** setWorkers — Settings › LLM's count and `/runmode workers N`. */
 async function fzSetWorkers(n) {
@@ -12755,11 +12840,12 @@ if (typeof window !== 'undefined') {
   window.__slashNames = () => SLASH.map((s) => s[0]);
   window.__approvalCat = (cat) => ({label: CATEGORY_LABEL[cat] || null, level: (CATS.find((c) => c[0] === cat) || [null, null, null])[2]});
   window.__fzProbe = (cfg, facts) => {
-    const keep = {cfg: LIVE_CONFIG, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, want: SWX.want, kind: SEL.kind};
+    const keep = {cfg: LIVE_CONFIG, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, want: SWX.want, kind: SEL.kind,
+      queued: FZ.swapQueued};
     try {
       LIVE_CONFIG = cfg;
       BSW.readyIds = facts.readyIds || []; BSW.readyLoaded = true; BSW.localLoaded = facts.localLoaded !== false;
-      SEL.local = facts.local || []; SWX.want = null;
+      SEL.local = facts.local || []; SWX.want = null; FZ.swapQueued = false;
       const rows = (kind) => { SEL.kind = kind; return selRows().map((r) => ({type:r.type, id:r.id, label:r.label, detail:r.detail || '', active:!!r.active})); };
       const tpl = document.createElement('template');
       tpl.innerHTML = composer();
@@ -12779,7 +12865,7 @@ if (typeof window !== 'undefined') {
       };
     } finally {
       LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
-      SEL.local = keep.local; SWX.want = keep.want; SEL.kind = keep.kind;
+      SEL.local = keep.local; SWX.want = keep.want; SEL.kind = keep.kind; FZ.swapQueued = keep.queued;
       render();
     }
   };
@@ -20049,10 +20135,10 @@ if (typeof window !== 'undefined') {
      what proves the switch is genuinely optimistic rather than merely fast:
      the chip and this disagree for the whole length of a switch. */
   window.__bswLive = () => {
-    const keep = SWX.want;
-    SWX.want = null;
+    const keep = SWX.want, queued = FZ.swapQueued;
+    SWX.want = null; FZ.swapQueued = false;
     try { return {backend: selBackend(), providerId: selActiveProviderId() || null, model: activeModel()}; }
-    finally { SWX.want = keep; }
+    finally { SWX.want = keep; FZ.swapQueued = queued; }
   };
   /* r5 review fix (item 10) — `window.__swxProbe` stood here and nothing ever
      called it: the acceptance check it was written for (main.ts, "send button:

@@ -285,6 +285,14 @@ export interface RunModeVerdict {
   after?: ResolvedRunMode;
   /** setWorkers' runtime_info line. */
   notice?: string;
+  /**
+   * swapLegs: the write only traded the seats of a Fusion already in force —
+   * the same two providers hold them, swapped, Fusion is in force after it,
+   * and nothing under `localModels` moved. The managed daemon serves exactly
+   * the model it served a moment ago (or is still loading it for the switch
+   * before), so there is nothing for the write to bring up or restart.
+   */
+  seatsOnly?: boolean;
 }
 
 function withoutUndefined<T extends object>(o: T): T {
@@ -341,12 +349,20 @@ export function planSwapLegs(cfg: RunModeConfig, isKeyed: (p: RunModeProvider) =
     return { write: false, before, refusal: describeRunModeDegradation({ reason: "no-second-provider", requested: "fusion" }) };
   }
   const pinned = cfg.llm?.runMode?.fusion;
-  return planEnterFusion(cfg, {
+  const local = JSON.stringify(cfg.localModels ?? null);
+  const v = planEnterFusion(cfg, {
     orchestratorProvider: w,
     workerProvider: o,
     orchestratorModel: pinned?.workerModel,
     workerModel: pinned?.orchestratorModel,
   }, isKeyed);
+  const a = v.after;
+  // A swap out of a stored-but-not-in-force Fusion is an entry into it, and
+  // brings the daemon up the way entering does: not seats-only.
+  const seatsOnly = v.write && !v.refusal && !!a && before.effective === "fusion" && a.effective === "fusion"
+    && a.orchestratorProviderId === w && a.workerProviderId === o
+    && JSON.stringify(cfg.localModels ?? null) === local;
+  return { ...v, seatsOnly };
 }
 
 /**

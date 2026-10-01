@@ -23,6 +23,7 @@ import {
   planFusionWorkers,
   planSwapLegs,
   resolveRunMode,
+  type ResolvedRunMode,
   type RunModeProvider,
   type RunModeVerdict,
 } from "./run-mode.js";
@@ -319,6 +320,25 @@ async function bringUpLocalDaemon(modelChanged: boolean): Promise<{ daemon: Daem
   return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
 }
 
+/**
+ * Whether a run-mode write has to look at the managed daemon at all: Fusion
+ * in force with a local seat on a managed model — unless the write only
+ * traded the seats (RunModeVerdict.seatsOnly). A ⇄ moves no model, so the
+ * daemon is already doing what the new seats need: serving it, or still
+ * loading it for the switch before. Looking cost a `models list`, a
+ * `models status` (up to 20 s) and, with the daemon down, a `models start`
+ * (up to 90 s) — the swap the operator saw stick (backlog item 11).
+ */
+export function runModeWantsDaemon(
+  now: ResolvedRunMode,
+  lm: { mode?: string; managed?: { modelId?: string | null } },
+  v?: RunModeVerdict,
+): boolean {
+  if (v?.seatsOnly) return false;
+  const localLeg = now.effective === "fusion" && (now.workerProviderId === LOCAL_ID || now.orchestratorProviderId === LOCAL_ID);
+  return localLeg && lm.mode === "managed" && !!lm.managed?.modelId;
+}
+
 async function afterRunModeWrite(res: {
   ok: boolean;
   changed: boolean;
@@ -340,8 +360,7 @@ async function afterRunModeWrite(res: {
      nothing the operator chose. */
   let up: { daemon: DaemonEffect; daemonLine?: string; error?: string } = { daemon: "untouched" };
   const lm = read.config.localModels ?? {};
-  const localLeg = now.effective === "fusion" && (now.workerProviderId === LOCAL_ID || now.orchestratorProviderId === LOCAL_ID);
-  if (localLeg && lm.mode === "managed" && lm.managed?.modelId) {
+  if (runModeWantsDaemon(now, lm, v)) {
     const list = await chatModelsList();
     if (list.ok && (list.models ?? []).some((m) => m.id === lm.managed?.modelId && m.downloaded)) {
       up = await bringUpLocalDaemon(false);
@@ -373,7 +392,12 @@ export async function enterFusion(pins: { orchestratorProvider?: string; workerP
   return afterRunModeWrite(await rewriteWholeConfig((cfg) => planEnterFusion(cfg, pins, isKeyed)));
 }
 
-/** swapLegs — the composer's ⇄ and `/runmode swap`. */
+/**
+ * swapLegs — the composer's ⇄ and `/runmode swap`. On a Fusion in force it
+ * is one write and the agent restart: planSwapLegs marks the verdict
+ * seats-only and the daemon is left as it is, so a swap costs what a
+ * provider switch costs.
+ */
 export async function swapFusionLegs(): Promise<SwitchResult> {
   const isKeyed = keyed();
   return afterRunModeWrite(await rewriteWholeConfig((cfg) => planSwapLegs(cfg, isKeyed)));

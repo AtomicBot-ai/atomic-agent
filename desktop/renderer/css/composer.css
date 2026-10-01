@@ -244,6 +244,9 @@
 .cfoot .fzswap{padding:0 7px;color:var(--ink-2)}
 .cfoot .fzswap > svg{width:14px;height:14px;color:currentColor}
 .cfoot .fzswap:hover{color:var(--ink)}
+/* A swap queued behind a switch that is still landing: the seats already read
+   traded, and the ⇄ wears the brand's wash until the swap runs. */
+.cfoot .fzswap.is-queued,.cfoot .fzswap.is-queued:hover{background:var(--brand-wash);color:var(--blue)}
 .cfoot .workerschip{flex:0 1 auto}
 .cfoot .workerschip .cval{max-width:24ch}
 /* The Fusion row is seven controls in the width cloud gives three: the seat
