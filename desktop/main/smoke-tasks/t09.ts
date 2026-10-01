@@ -8,8 +8,9 @@ import { BrowserWindow } from "electron";
  * World tab, which shell.css hides below 1180px: the user landed on an empty
  * chat. It is a segment of the Skills pane now, and `/tools` (the palette's
  * List built-in tools, Help › List built-in tools) lands on it at every width.
- * Every block puts back what it staged: LIVE_CAPS, the Skills pane's segment
- * and filter, the inspector, the window size, Settings closed.
+ * Every block puts back what it staged: LIVE_CAPS, the Skills pane's segment,
+ * filter and cursor, the functions it spied on, the inspector, the window
+ * size, Settings closed.
  */
 
 type Js = <T>(code: string) => Promise<T>;
@@ -19,6 +20,8 @@ type Failed = { err?: string };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/* The renderer's rule, restated: the MCP servers' own tools are out, the agent's native mcp.resource.* / mcp.prompt.* stay. */
+const builtIn = (name: string) => !name.startsWith("mcp.") || /^mcp\.(resource|prompt)\./.test(name);
 
 /* A renderer error is a failed check, never a thrown one: a throw would leave
    checks09 for the smoke runner, which has no catch, and the app would keep
@@ -42,7 +45,7 @@ function appWindow(): BrowserWindow | null {
    be drawn at this width (it is forced open for the reading, then put back). */
 const LANDING = `(async () => {
   const tick = (ms) => new Promise((r) => setTimeout(r, ms));
-  const saved = {inspector: S.inspector, inspTab: S.inspTab};
+  const saved = {inspector: S.inspector, inspTab: S.inspTab, view: SKP.view};
   try {
     window.__settingsClose();
     S.inspector = true; render();
@@ -52,7 +55,7 @@ const LANDING = `(async () => {
       rows: document.querySelectorAll('#settings [data-tool-row]').length, inspTabMoved: S.inspTab !== saved.inspTab};
   } finally {
     window.__settingsClose();
-    S.inspector = saved.inspector; S.inspTab = saved.inspTab; render();
+    S.inspector = saved.inspector; S.inspTab = saved.inspTab; SKP.view = saved.view; render();
   }
 })()`;
 type Landing = { width: number; inspectorShown: boolean; pane: string | null; view: string; rows: number; inspTabMoved: boolean };
@@ -68,8 +71,9 @@ export async function checks09(js: Js, check: Check): Promise<void> {
 async function run(js: Js, check: Check): Promise<void> {
   // The pane's own control, found by its words so the same click reaches the
   // old toolbar button (data-act="menu:help.tools") when the fix is reverted.
-  // The capabilities are staged: four built-in tools in two families, one
-  // unprefixed, and one MCP server tool that must stay out.
+  // The capabilities are staged: built-in tools in three families, one
+  // unprefixed, one of the agent's native MCP discovery tools (it stays) and
+  // one tool of an MCP server (it goes).
   const r = await safe<{
     pane: string | null; overlay: string | null; inspectorMoved: boolean; pressed: string[];
     rows: string[]; families: string[]; desc: string; counts: string; skillRows: number; back: string; backPressed: string[];
@@ -83,6 +87,7 @@ async function run(js: Js, check: Check): Promise<void> {
         {name:'os.fs.write', description:'Write a file.'},
         {name:'mcp.smoke.echo', description:'A tool of an MCP server.'},
         {name:'browser.navigate', description:'Open a URL in the active tab.'},
+        {name:'mcp.resource.list', description:'List the resources of the MCP servers.'},
         {name:'reply', description:'Answer the user.'},
         {name:'os.fs.read', description:'Read a UTF-8 text file.'},
       ]});
@@ -118,9 +123,9 @@ async function run(js: Js, check: Check): Promise<void> {
     r.err ?? JSON.stringify({ pane: r.pane, overlay: r.overlay, inspectorMoved: r.inspectorMoved, pressed: r.pressed, rows: r.rows.length, skillRows: r.skillRows }),
   );
   check(
-    "T09: the list is name and description, grouped by family, without the MCP servers' tools",
-    !r.err && same(r.rows, ["reply", "browser.navigate", "os.fs.read", "os.fs.write"]) && same(r.families, ["browser", "os.fs"])
-      && r.desc === "Read a UTF-8 text file." && r.counts === "4 tools",
+    "T09: the list is name and description, grouped by family, without the MCP servers' own tools",
+    !r.err && same(r.rows, ["reply", "browser.navigate", "mcp.resource.list", "os.fs.read", "os.fs.write"])
+      && same(r.families, ["browser", "mcp.resource", "os.fs"]) && r.desc === "Read a UTF-8 text file." && r.counts === "5 tools",
     r.err ?? JSON.stringify({ rows: r.rows, families: r.families, desc: r.desc, counts: r.counts }),
   );
   check(
@@ -129,103 +134,125 @@ async function run(js: Js, check: Check): Promise<void> {
     r.err ?? JSON.stringify({ back: r.back, pressed: r.backPressed }),
   );
 
-  // The live list: what GET /api/capabilities answers, less mcp.*, through `/tools`.
-  const live = await safe<{ want: string[] | null; mcp: number; rows: string[]; pane: string | null; view: string; counts: string }>(js, `(async () => {
+  // The live list: what GET /api/capabilities answers, less the MCP servers' tools, through `/tools`.
+  const live = await safe<{ names: string[] | null; rows: string[]; pane: string | null; view: string; counts: string }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const res = await window.atomic.capabilities();
-    const tools = res && res.ok && res.data && Array.isArray(res.data.tools) ? res.data.tools : null;
+    const v = SKP.view;
     try {
       window.__runSlash('/tools'); await tick(300);
-      return {want: tools ? tools.map((t) => t.name).filter((n) => !n.startsWith('mcp.')).sort() : null,
-        mcp: tools ? tools.filter((t) => t.name.startsWith('mcp.')).length : 0,
+      return {names: res && res.ok && res.data && Array.isArray(res.data.tools) ? res.data.tools.map((t) => t.name) : null,
         rows: [...document.querySelectorAll('#settings [data-tool-row]')].map((x) => x.dataset.toolRow),
         pane: window.__settingsPane(), view: SKP.view,
         counts: ((document.querySelector('#settings .set-toolbar .set-counts') || {}).textContent || '').trim()};
-    } finally { window.__settingsClose(); }
+    } finally { window.__settingsClose(); SKP.view = v; }
   })()`);
+  const want = live.err || !live.names ? null : live.names.filter(builtIn).sort();
   check(
-    "T09: /tools lists the agent's GET /api/capabilities tools, less mcp.*",
-    !live.err && !!live.want && live.want.length > 0 && live.pane === "skills" && live.view === "tools"
-      && same(live.rows.slice().sort(), live.want) && live.counts === `${live.want.length} tools`,
-    live.err ?? `${live.rows.length} rows, ${live.want ? live.want.length : "no"} built-in + ${live.mcp} mcp.* from the route; pane=${live.pane} view=${live.view} counts=${JSON.stringify(live.counts)}`,
+    "T09: /tools lists the agent's GET /api/capabilities tools, less the MCP servers' own",
+    !live.err && !!want && want.length > 0 && live.pane === "skills" && live.view === "tools"
+      && same(live.rows.slice().sort(), want) && live.counts === `${want.length} tools`,
+    live.err ?? `${live.rows.length} rows, ${want ? want.length : "no"} built-in of ${live.names ? live.names.length : "no"} from the route; pane=${live.pane} view=${live.view} counts=${JSON.stringify(live.counts)}`,
   );
 
-  // Capabilities not read yet: the calm line, and the list asks for them itself.
-  const empty = await safe<{ calm: string; failed: string; state: string; loading: boolean; text: string; rows0: number; rows: number; filled: boolean }>(js, `(async () => {
+  // Nothing read yet. The agent still starting: the calm line. A read that
+  // fails with the agent up: skpToolsRefresh's own failure branch, through a
+  // stand-in for the bridge. `/tools` with the agent up: it says it is
+  // loading, asks the agent itself, and lists the tools once it answers.
+  const empty = await safe<{ calm: string; failed: string; failedKept: boolean; state: string; loading: boolean; text: string; spinner: boolean; rows0: number; rows: number; filled: boolean }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const box = (html) => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent.trim(); };
-    const saved = {caps: LIVE_CAPS, err: SKP.toolsError};
+    const saved = {caps: LIVE_CAPS, err: SKP.toolsError, live: S.live, view: SKP.view};
+    let staged = null;
     try {
-      SKP.toolsError = null;
+      staged = S.live = Object.assign({}, saved.live, {state: 'starting'}); SKP.toolsLoading = true; SKP.toolsError = null;
       const calm = box(skpToolsHTML(null));
-      SKP.toolsError = 'HTTP 500 (smoke)';
+      S.live = saved.live; staged = null; SKP.toolsLoading = false;
+      LIVE_CAPS = null;
+      await skpToolsRefresh(async () => ({ok:false, error:'HTTP 500 (smoke)'}));
       const failed = box(skpToolsHTML(null));
+      const failedKept = LIVE_CAPS === null;
       SKP.toolsError = null;
       window.__settingsClose();
-      LIVE_CAPS = null;
       window.__runSlash('/tools');
       const loading = SKP.toolsLoading;
       const text = ((document.querySelector('#settings .setbody .tk-empty') || {}).textContent || '').trim();
+      const spinner = !!document.querySelector('#settings .setbody .tk-empty .tk-spin');
       const rows0 = document.querySelectorAll('#settings [data-tool-row]').length;
       let rows = 0;
       for (let i = 0; i < 40 && !rows; i++) { await tick(250); rows = document.querySelectorAll('#settings [data-tool-row]').length; }
-      return {calm, failed, state: S.live.state, loading, text, rows0, rows, filled: !!LIVE_CAPS};
+      return {calm, failed, failedKept, state: S.live.state, loading, text, spinner, rows0, rows, filled: !!LIVE_CAPS};
     } finally {
+      if (staged && S.live === staged) S.live = saved.live;
       if (!LIVE_CAPS) LIVE_CAPS = saved.caps;
-      SKP.toolsError = saved.err;
+      SKP.toolsError = saved.err; SKP.view = saved.view;
       window.__settingsClose();
     }
   })()`);
   check(
-    "T09: before the capabilities are read, a calm empty state, then the list once the agent answers",
-    !empty.err && empty.calm === "The list appears when the agent is up." && empty.text === empty.calm && empty.loading
-      && empty.rows0 === 0 && empty.rows > 0 && empty.filled,
-    empty.err ?? JSON.stringify({ text: empty.text, loading: empty.loading, rows0: empty.rows0, rows: empty.rows, filled: empty.filled }),
+    "T09: with nothing read yet, /tools says it is loading, asks the agent, then lists the tools",
+    !empty.err && empty.loading && empty.spinner && empty.text === "loading the tool list…" && empty.rows0 === 0 && empty.rows > 0 && empty.filled,
+    empty.err ?? JSON.stringify({ text: empty.text, loading: empty.loading, spinner: empty.spinner, rows0: empty.rows0, rows: empty.rows, filled: empty.filled }),
   );
   check(
-    "T09: a failed read while the agent is up says so instead",
-    !empty.err && empty.state === "connected" && /did not list its tools \(HTTP 500 \(smoke\)\)/.test(empty.failed),
-    empty.err ?? JSON.stringify({ state: empty.state, failed: empty.failed }),
+    "T09: the empty state is calm while the agent starts, and says so when a read fails with the agent up",
+    !empty.err && empty.calm === "The list appears when the agent is up." && empty.state === "connected"
+      && /did not list its tools \(HTTP 500 \(smoke\)\)/.test(empty.failed) && empty.failedKept,
+    empty.err ?? JSON.stringify({ calm: empty.calm, state: empty.state, failed: empty.failed, failedKept: empty.failedKept }),
   );
 
-  // The keys of a list with no skill row on screen: e and d must not reach a hidden skill.
-  const keys = await safe<{ busy: boolean; remove: unknown; msg: string; viewAfterE: string; scrolled: number; viewAfterF: string; topAfterF: number }>(js, `(async () => {
+  // The keys of a list with no skill row on screen: e and d must not reach a
+  // skill. skpToggle / skpRequestRemove are spied on (the skills list's own e
+  // proves the spy is in the path, once `atag skill list` has given it a row
+  // to act on), so a regression cannot touch a skill.
+  const keys = await safe<{ wired: boolean; calls: string[]; viewAfterE: string; scrolled: number; viewAfterF: string; topAfterF: number; room: number }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', {key: k, bubbles: true, cancelable: true}));
-    const saved = {view: SKP.view, filter: SKP.filter, msg: SKP.msg};
+    const saved = {view: SKP.view, filter: SKP.filter, cursor: SKP.cursor, toggle: window.skpToggle, remove: window.skpRequestRemove};
+    const calls = [];
     try {
-      window.__settingsOpen('skills');
+      window.skpToggle = (name) => { calls.push('toggle:' + name); };
+      window.skpRequestRemove = (name) => { calls.push('remove:' + name); };
+      window.__settingsOpen('skills'); await tick(60);
+      for (let i = 0; i < 80 && !skpSelected(); i++) await tick(250);
+      if (!skpSelected()) return {err: 'atag skill list gave the Skills pane no row in 20 s'};
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      key('e'); await tick(30);
+      const wired = calls.length === 1 && calls[0].startsWith('toggle:');
+      calls.length = 0;
       window.__skillsAct('tools'); await tick(60);
       if (SKP.view !== 'tools') return {err: 'no Built-in tools segment to press keys in'};
-      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-      key('e'); key('d'); await tick(100);
-      const out = {busy: SKP.busy, remove: SKP.removeConfirm, msg: SKP.msg === saved.msg ? '' : String(SKP.msg && SKP.msg.text), viewAfterE: SKP.view};
+      key('e'); key('d'); await tick(60);
+      const out = {wired, calls: calls.slice(), viewAfterE: SKP.view};
       // Down the long list, then back: the skills start at their top, not at the tools' offset.
       const body = () => document.querySelector('#settings .setbody');
       body().scrollTop = 600; await tick(30);
       out.scrolled = body().scrollTop;
       key('f'); await tick(60);
       out.viewAfterF = SKP.view; out.topAfterF = body() ? body().scrollTop : -1;
+      out.room = body() ? body().scrollHeight - body().clientHeight : 0; // > 0: the skills list scrolls, so a kept offset would show
       return out;
     } finally {
-      SKP.removeConfirm = null; SKP.view = saved.view; SKP.filter = saved.filter;
+      window.skpToggle = saved.toggle; window.skpRequestRemove = saved.remove;
+      SKP.view = saved.view; SKP.filter = saved.filter; SKP.cursor = saved.cursor;
       window.__settingsClose();
     }
   })()`);
   check(
-    "T09: in the tools list e and d reach no hidden skill; f goes back to the skills, at their top",
-    !keys.err && !keys.busy && !keys.remove && keys.msg === "" && keys.viewAfterE === "tools"
-      && keys.scrolled > 0 && keys.viewAfterF === "skills" && keys.topAfterF === 0,
+    "T09: in the tools list e and d reach no skill; f goes back to the skills, at their top",
+    !keys.err && keys.wired && keys.calls.length === 0 && keys.viewAfterE === "tools"
+      && keys.scrolled > 0 && keys.viewAfterF === "skills" && keys.topAfterF === 0 && keys.room > 0,
     keys.err ?? JSON.stringify(keys),
   );
 
   // The segment is picked, not remembered: Skills opened again shows its skills
   // (the full suite's Skills checks enter that way and read the filter bar).
   const reopen = await safe<{ view: string; pressed: string[] }>(js, `(() => {
+    const v = SKP.view;
     try {
       window.__runSlash('/tools'); window.__settingsClose(); window.__settingsOpen('skills');
       return {view: SKP.view, pressed: [...document.querySelectorAll('#settings .setbody .set-seg button.on')].map((b) => b.textContent.trim())};
-    } finally { window.__settingsClose(); }
+    } finally { window.__settingsClose(); SKP.view = v; }
   })()`);
   check(
     "T09: Skills opened again shows its skills, not the tools",
@@ -235,16 +262,37 @@ async function run(js: Js, check: Check): Promise<void> {
 
   // Help › List built-in tools — exactly the full suite's "a menu verb
   // dispatches its desktop act" (main.ts), so its new expectation is proved here too.
-  const verb = await safe<{ settings: boolean; pane: string | null; view: string; overlay: string | null }>(js,
-    "(() => { window.__settingsClose(); return Object.assign(window.__menuActivate('help.tools'), {view: window.__skillsState().view}); })()",
-  );
-  await safe<void>(js, "window.__settingsClose()");
+  const verb = await safe<{ settings: boolean; pane: string | null; view: string; overlay: string | null }>(js, `(() => {
+    const v = SKP.view;
+    try {
+      window.__settingsClose();
+      return Object.assign(window.__menuActivate('help.tools'), {view: window.__skillsState().view});
+    } finally { window.__settingsClose(); SKP.view = v; }
+  })()`);
   check(
     "T09: Help › List built-in tools opens the same segment (the full suite's menu-verb check)",
     !verb.err && verb.settings && verb.pane === "skills" && verb.view === "tools" && !verb.overlay,
     verb.err ?? JSON.stringify(verb),
   );
-  const pal = await safe<{ act: string | null }>(js, "({act: ((window.__palRows().find((r) => r[0] === 'List built-in tools') || [])[1]) || null})");
+
+  // The palette's List built-in tools, as a person reaches it: open the
+  // palette, type into its search box, click the row.
+  const PALETTE = `(async () => {
+    const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    const v = SKP.view;
+    try {
+      window.__settingsClose();
+      act('palette'); await tick(60);
+      const box = document.getElementById('palq');
+      if (!box) return {err: 'the palette did not open'};
+      box.value = 'built-in tools'; box.dispatchEvent(new Event('input', {bubbles: true})); await tick(60);
+      const row = [...document.querySelectorAll('#overlays [data-palrow]')].find((el) => el.textContent.includes('List built-in tools'));
+      if (!row) return {err: 'no List built-in tools row for "built-in tools"'};
+      row.click(); await tick(250);
+      return {pane: window.__settingsPane(), view: SKP.view, overlay: S.overlay, rows: document.querySelectorAll('#settings [data-tool-row]').length};
+    } finally { act('close'); window.__settingsClose(); SKP.view = v; }
+  })()`;
+  type Palette = { pane: string | null; view: string; overlay: string | null; rows: number };
 
   // The bug's own window: too narrow for the inspector. A real resize, so
   // the CSS rule that hid the panel is the one in force, then the narrowest
@@ -260,9 +308,15 @@ async function run(js: Js, check: Check): Promise<void> {
     await wait(500);
     const narrow = await safe<Landing>(js, LANDING);
     check(
-      "T09: on a window too narrow for the inspector, /tools (and the palette's List built-in tools) lands on Settings › Skills › Built-in tools",
-      !narrow.err && narrow.width < 1180 && !narrow.inspectorShown && narrow.pane === "skills" && narrow.view === "tools" && narrow.rows > 0 && pal.act === "tools",
-      narrow.err ?? JSON.stringify({ ...narrow, palette: pal.err ?? pal.act }),
+      "T09: on a window too narrow for the inspector, /tools lands on Settings › Skills › Built-in tools",
+      !narrow.err && narrow.width < 1180 && !narrow.inspectorShown && narrow.pane === "skills" && narrow.view === "tools" && narrow.rows > 0,
+      narrow.err ?? JSON.stringify(narrow),
+    );
+    const pal = await safe<Palette>(js, PALETTE);
+    check(
+      "T09: the palette's List built-in tools lands there too",
+      !pal.err && pal.pane === "skills" && pal.view === "tools" && !pal.overlay && pal.rows > 0,
+      pal.err ?? JSON.stringify(pal),
     );
 
     win.setContentSize(940, size[1]!);
