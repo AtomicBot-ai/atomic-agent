@@ -25,6 +25,7 @@ import { checks26 } from "./smoke-tasks/t26.js";
 import { checks27 } from "./smoke-tasks/t27.js";
 import { checks28 } from "./smoke-tasks/t28.js";
 import { checks32 } from "./smoke-tasks/t32.js";
+import { checks30 } from "./smoke-tasks/t30.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -59,7 +60,7 @@ export type SmokeDownloads = {
   running: () => { kind: string; id: string } | null;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "32"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -485,6 +486,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("28")) await guarded("28", check, () => checks28(js, check));
   // 32 — a key with a character keys don't have got in, and a saved one failed every turn as "no connection".
   if (want.has("32")) await guarded("32", check, () => checks32(js, check));
+  // 30 and 31 share one file: the quit and the model server killed by hand.
+  if (want.has("30") || want.has("31")) await guarded("30", check, () => checks30(js, check));
 
   if (want.has("23")) {
     // 23 — "This Mac" named the local route on every platform, Windows and Linux included.
