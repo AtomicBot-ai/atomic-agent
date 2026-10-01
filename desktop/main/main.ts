@@ -314,8 +314,11 @@ function writeVoicePrefs(locales: string[]): { ok: boolean; error?: string } {
 let hfLookup: AbortController | null = null;
 /* Item 7A — the projector download in flight. It shares the `cli:pull`
    stream with `cli:modelsPull` so the renderer needs one subscriber, so
-   it needs its own slot and both must refuse while the other runs. */
-let hfProjector: { controller: AbortController; id: string } | null = null;
+   it needs its own slot and both must refuse while the other runs.
+   Backlog 18 (deferred D4): which file it fetches, and its answer to come,
+   so a window reopened over it can follow it (cli:hfProjector). */
+type ProjectorAnswer = { ok: boolean; error?: string; alreadyPresent?: boolean; path?: string };
+let hfProjector: { controller: AbortController; id: string; url: string; file: string; done: Promise<ProjectorAnswer> } | null = null;
 /* r5 item 7 (setup wizard): the backend-zip download, which is a second
    long-running child in the same data dir. It takes the same single-flight
    slot as `pull` — `models update` stops the daemon to install the zip. */
@@ -350,7 +353,8 @@ let projectorStatusRead: () => Promise<ProjectorStatusAnswer> = modelsStatus;
 const smokeDownloads: SmokeDownloads = {
   hold(kind, id) {
     if (kind === "projector") {
-      const held = { controller: new AbortController(), id };
+      // No url or file: no projector call ever follows it (cli:hfProjector).
+      const held = { controller: new AbortController(), id, url: "", file: "", done: new Promise<never>(() => {}) };
       hfProjector = held;
       return () => { if (hfProjector === held) hfProjector = null; };
     }
@@ -1015,7 +1019,7 @@ function wireIpc(client: AgentClient): void {
    * caller, and a second `done` would re-enter the renderer's pull
    * subscriber and run the post-download activation twice.
    */
-  ipcMain.handle("cli:hfProjector", async (_event, payload: unknown) => {
+  ipcMain.handle("cli:hfProjector", (_event, payload: unknown) => {
     const { id, mmprojUrl, mmprojFilename, name } = (payload ?? {}) as {
       id?: unknown; mmprojUrl?: unknown; mmprojFilename?: unknown; name?: unknown;
     };
@@ -1030,6 +1034,17 @@ function wireIpc(client: AgentClient): void {
     if (typeof mmprojFilename !== "string" || !isSafeModelFilename(mmprojFilename)) {
       return { ok: false, error: "unsafe projector filename" };
     }
+    /* Backlog 18 (deferred D4): on macOS closing the window is not quitting,
+       and this download runs on. The window reopened over it resumes the very
+       same projector (renderer obSetupPullRestart), and was refused as "a
+       download is already running": a failed row, and the model never started
+       although its projector landed. The call now follows the download that
+       runs, as a model's pull is followed (renderer dlAdopt), and answers with
+       its answer — a projector has no `done` frame to follow it by. The
+       renderer never asks twice for one projector itself (dlProjectorNext). */
+    if (hfProjector && hfProjector.id === id && hfProjector.url === mmprojUrl && hfProjector.file === mmprojFilename) {
+      return hfProjector.done;
+    }
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     /* Backlog 18 review: the slot is taken BEFORE `models status` is read. A
@@ -1037,63 +1052,69 @@ function wireIpc(client: AgentClient): void {
        answered false), and the projector then came down in full under a row
        that said "Cancelling…". */
     const controller = new AbortController();
-    const slot = { controller, id };
+    let answer: (a: ProjectorAnswer) => void = () => {};
+    const done = new Promise<ProjectorAnswer>((resolve) => { answer = resolve; });
+    const slot = { controller, id, url: mmprojUrl, file: mmprojFilename, done };
     hfProjector = slot;
     const cancelled = "the projector download was cancelled — a retry starts it from the beginning";
-    try {
-      /* Deferred D6: such a Cancel ends the call at once. It used to take
-         effect only once `models status` returned — about a second, up to
-         its 30 s timeout — with the row on "Cancelling…" all that time; the
-         read is raced against the Cancel now, not waited out. */
-      const abort = new Promise<null>((resolve) => controller.signal.addEventListener("abort", () => resolve(null), { once: true }));
-      const st = await Promise.race([projectorStatusRead(), abort]);
-      if (!st || controller.signal.aborted) return { ok: false, error: cancelled };
-      const dataDir = st.ok && st.status ? st.status.dataDir : null;
-      if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
-      const dir = join(dataDir, "models", id);
-      const dest = join(dir, mmprojFilename);
-      const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
-      // Matches downloadMmproj's own early return: the installer skips when
-      // the destination exists.
-      if (existsSync(dest)) {
-        send("cli:pull", { id, line: `${label} already on disk` });
-        return { ok: true, alreadyPresent: true };
-      }
-      send("cli:pull", { id, line: `${label} 0%` });
+    const fetchIt = async (): Promise<ProjectorAnswer> => {
       try {
-        mkdirSync(dir, { recursive: true });
-        await downloadProjector(mmprojUrl, dest, {
-          signal: controller.signal,
-          onProgress: (percent, transferred, total) =>
-            send("cli:pull", {
-              id,
-              line: total > 0
-                ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
-                : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
-              /* r5 item 7 (setup wizard): its own kind, so the setup download
-                 cannot fold a projector's percent into the weights bar (the
-                 download card gives it its own row). The byte counts here are
-                 real, not parsed off the line. */
-              kind: "projector",
-              percent,
-              transferredBytes: transferred,
-              totalBytes: total,
-              label,
-            }),
-        });
-        send("cli:pull", { id, line: `${label} done` });
-        return { ok: true, path: dest };
+        /* Deferred D6: such a Cancel ends the call at once. It used to take
+           effect only once `models status` returned — about a second, up to
+           its 30 s timeout — with the row on "Cancelling…" all that time; the
+           read is raced against the Cancel now, not waited out. */
+        const abort = new Promise<null>((resolve) => controller.signal.addEventListener("abort", () => resolve(null), { once: true }));
+        const st = await Promise.race([projectorStatusRead(), abort]);
+        if (!st || controller.signal.aborted) return { ok: false, error: cancelled };
+        const dataDir = st.ok && st.status ? st.status.dataDir : null;
+        if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
+        const dir = join(dataDir, "models", id);
+        const dest = join(dir, mmprojFilename);
+        const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
+        // Matches downloadMmproj's own early return: the installer skips when
+        // the destination exists.
+        if (existsSync(dest)) {
+          send("cli:pull", { id, line: `${label} already on disk` });
+          return { ok: true, alreadyPresent: true };
+        }
+        send("cli:pull", { id, line: `${label} 0%` });
+        try {
+          mkdirSync(dir, { recursive: true });
+          await downloadProjector(mmprojUrl, dest, {
+            signal: controller.signal,
+            onProgress: (percent, transferred, total) =>
+              send("cli:pull", {
+                id,
+                line: total > 0
+                  ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
+                  : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
+                /* r5 item 7 (setup wizard): its own kind, so the setup download
+                   cannot fold a projector's percent into the weights bar (the
+                   download card gives it its own row). The byte counts here are
+                   real, not parsed off the line. */
+                kind: "projector",
+                percent,
+                transferredBytes: transferred,
+                totalBytes: total,
+                label,
+              }),
+          });
+          send("cli:pull", { id, line: `${label} done` });
+          return { ok: true, path: dest };
+        } catch (err) {
+          const message = controller.signal.aborted ? cancelled : err instanceof Error ? err.message : String(err);
+          send("cli:pull", { id, line: `${label} failed: ${message}` });
+          return { ok: false, error: message };
+        }
       } catch (err) {
-        const message = controller.signal.aborted ? cancelled : err instanceof Error ? err.message : String(err);
-        send("cli:pull", { id, line: `${label} failed: ${message}` });
-        return { ok: false, error: message };
+        // `models status` itself threw: an answer, not a rejection the renderer has to survive.
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        if (hfProjector === slot) hfProjector = null;
       }
-    } catch (err) {
-      // `models status` itself threw: an answer, not a rejection the renderer has to survive.
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      if (hfProjector === slot) hfProjector = null;
-    }
+    };
+    void fetchIt().then(answer, (err) => answer({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    return done;
   });
   ipcMain.handle("cli:modelsSearch", (_event, payload: unknown) => {
     const { query, provider, limit } = (payload ?? {}) as {
