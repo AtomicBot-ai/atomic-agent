@@ -42,16 +42,44 @@ export function attachFailedAttempts(
  * whose `cause` is the error the chain threw.
  */
 export function readFailedAttempts(err: unknown): readonly FailedAttempt[] {
+  return findInCauseChain(err, ATTEMPTS) ?? [];
+}
+
+/**
+ * Side table from a thrown error to the link that threw it, kept beside
+ * the error for the same reason as `ATTEMPTS`. A raw `fetch failed` does
+ * not say whose socket it was, and with a fallback chain it is often not
+ * the provider the user picked: a turn parked on it waits on whichever
+ * link failed last (the `provider_waiting` event names it).
+ */
+const FAILING_LINK = new WeakMap<object, string>();
+
+/** Record that `providerId` is the link that threw `err`. */
+export function attachFailingLink(err: unknown, providerId: string): void {
+  if (!providerId) return;
+  if (typeof err !== "object" || err === null) return;
+  FAILING_LINK.set(err, providerId);
+}
+
+/** The link that threw `err`, searched through its `cause` chain. */
+export function readFailingLink(err: unknown): string | undefined {
+  return findInCauseChain(err, FAILING_LINK);
+}
+
+function findInCauseChain<T>(
+  err: unknown,
+  table: WeakMap<object, T>,
+): T | undefined {
   let current = err;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
     if (typeof current !== "object" || current === null) break;
-    const found = ATTEMPTS.get(current);
-    if (found) return found;
+    const found = table.get(current);
+    if (found !== undefined) return found;
     const next = (current as { cause?: unknown }).cause;
     if (next === current) break;
     current = next;
   }
-  return [];
+  return undefined;
 }
 
 /**

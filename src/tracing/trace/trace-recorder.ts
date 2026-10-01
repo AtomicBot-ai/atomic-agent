@@ -546,6 +546,9 @@ export function createTraceRecorder(
             maxWaitMs: event.maxWaitMs,
             nextRetryMs: event.nextRetryMs,
             reason: event.reason,
+            ...(event.providerId !== undefined
+              ? { providerId: event.providerId }
+              : {}),
           });
           return;
         case "provider_recovered":

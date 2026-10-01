@@ -1,4 +1,8 @@
-import { attachFailedAttempts, type FailedAttempt } from "./failed-attempts.js";
+import {
+  attachFailedAttempts,
+  attachFailingLink,
+  type FailedAttempt,
+} from "./failed-attempts.js";
 import { isCredentialRejection } from "./link-failure-kind.js";
 import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import { shouldAdvance } from "./should-advance.js";
@@ -31,6 +35,10 @@ import { shouldAdvance } from "./should-advance.js";
  * sentence. Nothing failed before it, so nothing is recorded beside it;
  * each later link's failure is in the advance log.
  *
+ * Every thrown error also carries the id of the link that threw it
+ * (`attachFailingLink`), for the hosts that say which link a parked turn
+ * is waiting on.
+ *
  * Shared by both the non-stream (`llmComplete`) and stream-opening
  * (`llmCompleteStream`) seams. For streaming, `attempt` must resolve only
  * once the stream has successfully OPENED — a stream already emitting
@@ -58,7 +66,7 @@ export async function runWithFallback<T>(
   const cause = pick.isProbe ? null : chain.overrideCause(partitionKey);
   const failed: FailedAttempt[] = cause ? [cause] : [];
   /** The primary's own refusal of its key, when this call asked it. */
-  let primaryRefusal: { error: unknown } | null = null;
+  let primaryRefusal: { providerId: string; error: unknown } | null = null;
 
   for (;;) {
     try {
@@ -72,13 +80,15 @@ export async function runWithFallback<T>(
         // (a cancellation, a request-shape error): that one is thrown as
         // is. Only a chain that ran out of links defers to the primary.
         if (primaryRefusal !== null && shouldAdvance(err).advance) {
+          attachFailingLink(primaryRefusal.error, primaryRefusal.providerId);
           throw primaryRefusal.error;
         }
         attachFailedAttempts(err, failed);
+        attachFailingLink(err, currentId);
         throw err;
       }
       if (isCredentialRejection(err) && chain.isPrimary(currentId)) {
-        primaryRefusal = { error: err };
+        primaryRefusal = { providerId: currentId, error: err };
       }
       failed.push({ providerId: currentId, error: err });
       currentId = nextId;

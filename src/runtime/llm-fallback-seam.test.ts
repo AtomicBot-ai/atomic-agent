@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ProviderFallbackChain } from "../llm/fallback/index.js";
+import { ProviderFallbackChain, readFailingLink } from "../llm/fallback/index.js";
 import { DEFAULT_FALLBACK_TIMING } from "../llm/fallback/fallback-config.js";
 import type {
   CompletionResult,
@@ -567,19 +567,44 @@ describe("providerId pin — bypasses the chain", () => {
     const deps = seamDeps(providers);
     const pick = vi.spyOn(deps.fallbackChain, "pickProvider");
     const advance = vi.spyOn(deps.fallbackChain, "advanceFrom");
-    await expect(
-      createFallbackCompleter(deps)({ ...baseParams, providerId: "local" }),
-    ).rejects.toBeInstanceOf(OpenAiHttpError);
-    await expect(
-      drain(
-        createFallbackStreamer(deps)({ ...baseParams, providerId: "local" }),
-      ),
-    ).rejects.toBeInstanceOf(OpenAiHttpError);
+    const unary = await createFallbackCompleter(deps)({
+      ...baseParams,
+      providerId: "local",
+    }).catch((err: unknown) => err);
+    expect(unary).toBeInstanceOf(OpenAiHttpError);
+    const streamed = await drain(
+      createFallbackStreamer(deps)({ ...baseParams, providerId: "local" }),
+    ).catch((err: unknown) => err);
+    expect(streamed).toBeInstanceOf(OpenAiHttpError);
+    // A turn parked on either names the pinned link it waits on.
+    expect(readFailingLink(unary)).toBe("local");
+    expect(readFailingLink(streamed)).toBe("local");
     // A 503 would have switched the chain on the first failure. The
     // healthy cloud link was never tried, and the breaker never moved.
     expect(served).toEqual(["local", "local"]);
     expect(pick).not.toHaveBeenCalled();
     expect(advance).not.toHaveBeenCalled();
+  });
+
+  it("a stream that dies after it opened names the link that served it", async () => {
+    const dropped = new Error("terminated");
+    const providers = new Map<string, LlmProvider>([
+      [
+        "cloud",
+        {
+          ...fakeProvider("cloud", "native_tools", async () => answer("cloud")),
+          async *completeStream() {
+            yield { delta: "par", reasoningDelta: "", done: false } as StreamChunk;
+            throw dropped;
+          },
+        },
+      ],
+      ["local", fakeProvider("local", "grammar", async () => answer("local"))],
+    ]);
+    await expect(
+      drain(createFallbackStreamer(seamDeps(providers))(baseParams)),
+    ).rejects.toBe(dropped);
+    expect(readFailingLink(dropped)).toBe("cloud");
   });
 
   it("the chain-picked path reports the SERVED link's id to the usage recorders", async () => {
