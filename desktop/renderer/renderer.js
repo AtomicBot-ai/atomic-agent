@@ -8914,6 +8914,7 @@ function dlCancel() {
 
 /** A download that failed becomes a row in the card, with Retry and dismiss. */
 function dlFail(job, error, retry) {
+  obSetupPullFailed(job, error);
   dlFailClear(job.kind, job.id);
   DL.failed.push({n: ++DL.failSeq, kind: job.kind, id: job.id, error: String(error || 'the download failed'),
     // The setup queue's own jobs go back in its queue; the rest need the one pull slot free.
@@ -10570,7 +10571,18 @@ function obSetupPullResume(cfg) {
   if (m.stateDir && here && m.stateDir !== here) return false;
   const managed = ((cfg && cfg.localModels) || {}).managed || {};
   if (managed.modelId === m.id) { obSetupPullForget(); return false; }
+  /* Review S3: a resume that failed on OB_SETUP_RESUME_TRIES launches in a
+     row (its id gone from the catalogue, a full disk) is not tried again by
+     itself; the card keeps its failed row, with the reason and Retry. */
+  if ((Number(m.fails) || 0) >= OB_SETUP_RESUME_TRIES) {
+    if (!DL.failed.some((f) => f.kind === 'weights' && f.id === m.id)) {
+      dlFail({kind:'weights', id: m.id}, m.error || 'the download failed', () => obStartLocalPull(m.id, false));
+      render();
+    }
+    return true;
+  }
   if (dlBusy() || DL.projector) return true;
+  OB_SETUP_RESUME.key = obSetupPullKeyOf(m);
   obSetupPullRestart(m);
   return true;
 }
@@ -10617,6 +10629,22 @@ function obSetupPullRestart(m) {
   const mmproj = obMmprojFor(m.id, m.mmproj);
   if (mmproj && m.weightsLanded === true) { obFetchProjector(m.id, mmproj); return; }
   obStartLocalPull(m.id, false);
+}
+
+/* Review S3: which reminder this launch resumed. Its failure is counted once
+   (obSetupPullFailed); a Retry the person makes afterwards is not a resume. */
+const OB_SETUP_RESUME_TRIES = 2;
+const OB_SETUP_RESUME = {key: null};
+function obSetupPullKeyOf(m) { return m.id + '@' + m.at; }
+/** A download failed (dlFail): if it is the one this launch resumed, its reminder counts the failure. */
+function obSetupPullFailed(job, error) {
+  const m = obSetupPullGet();
+  if (!OB_SETUP_RESUME.key || !m || m.id !== job.id || obSetupPullKeyOf(m) !== OB_SETUP_RESUME.key) return;
+  OB_SETUP_RESUME.key = null;
+  try {
+    localStorage.setItem(OB_SETUP_PULL_KEY,
+      JSON.stringify(Object.assign({}, m, {fails: (Number(m.fails) || 0) + 1, error: String(error || 'the download failed')})));
+  } catch (e) { /* no storage: nothing is resumed on the next launch either */ }
 }
 
 /**
