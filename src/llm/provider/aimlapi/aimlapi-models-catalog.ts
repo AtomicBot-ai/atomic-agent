@@ -194,14 +194,15 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       contextWindow: 1_000_000,
       supportsVision: false,
     }),
-    // Mistral
+    // Mistral. Large 2512 left aimlapi's list by 2026-10-02; Small 4
+    // (2603) is the newest general Mistral row beside Medium 3.5.
     chatModel({
-      id: "mistralai/mistral-large-2512",
+      id: "mistralai/mistral-medium-3-5",
       contextWindow: 262_144,
       supportsVision: false,
     }),
     chatModel({
-      id: "mistralai/mistral-medium-3-5",
+      id: "mistralai/mistral-small-2603",
       contextWindow: 262_144,
       supportsVision: false,
     }),
@@ -265,8 +266,8 @@ export const AIMLAPI_CHAT_MODEL_ORDER: readonly string[] = [
   "alibaba/qwen3-vl-plus",
   "zhipu/glm-5-3",
   "zhipu/glm-5.2",
-  "mistralai/mistral-large-2512",
   "mistralai/mistral-medium-3-5",
+  "mistralai/mistral-small-2603",
 ];
 
 /**
