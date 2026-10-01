@@ -10438,23 +10438,47 @@ function obSetupPullResume(cfg) {
  * down, and the model is started only once it has landed.
  */
 function obFetchProjector(id, pending) {
-  DL.projector = {id, cancelled: false};
+  const mine = {id, cancelled: false};
+  DL.projector = mine;
   render();
-  BR.hfProjector(pending.id, pending.mmprojUrl, pending.mmprojFilename, pending.name).then((res) => {
-    const was = DL.projector;
-    DL.projector = null;
+  /* Backlog 18 review: every way the call can end lets go of the slot. A
+     rejected call (main's handler threw, the bridge refused an argument) left
+     DL.projector set for good — "Starting…" on the card, and every later
+     Download, Hugging Face add and Retry refused as a download already
+     running. A rejection is a failure like any other: a row with Retry. */
+  const settle = (res) => {
+    if (DL.projector === mine) DL.projector = null;
+    /* A Cancel stands even when the bytes landed before main could stop them
+       (it finished as the Cancel arrived): nothing is started after it. */
+    if (mine.cancelled) {
+      DL.error = 'the vision projector download was cancelled — the model was not started';
+      render();
+      return;
+    }
     if (!res || res.ok !== true) {
       // The daemon would serve a vision model text-only; say so and
       // do not activate behind the operator's back.
       DL.error = ((res && res.error) || 'the vision projector did not download')
         + ' — the model was not started: it would serve text only';
-      if (!(was && was.cancelled)) dlFail({kind:'projector', id}, DL.error, () => obFetchProjector(id, pending));
+      dlFail({kind:'projector', id}, DL.error, () => obFetchProjector(id, pending));
       render();
       return;
     }
     render();
     obModelLanded(id);
-  });
+  };
+  let call;
+  try { call = Promise.resolve(obProjectorPull(pending)); } catch (err) { call = Promise.reject(err); }
+  call.then(settle, (err) => settle({ok: false, error: (err && err.message) || String(err)}));
+}
+
+/**
+ * The projector's IPC (main's cli:hfProjector) on its own, as
+ * obBackendStatusText is: window.atomic is frozen, so this is where a check
+ * stands in for it.
+ */
+function obProjectorPull(pending) {
+  return BR.hfProjector(pending.id, pending.mmprojUrl, pending.mmprojFilename, pending.name);
 }
 
 /* ---- the Hugging Face branch, as its own two steps ---- */

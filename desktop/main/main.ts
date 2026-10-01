@@ -953,53 +953,62 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: "unsafe projector filename" };
     }
     if (pull || hfProjector) return { ok: false, error: "a download is already running" };
-    const st = await modelsStatus();
-    const dataDir = st.ok && st.status ? st.status.dataDir : null;
-    if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
-    const dir = join(dataDir, "models", id);
-    const dest = join(dir, mmprojFilename);
-    const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
-    // Matches downloadMmproj's own early return: the installer skips when
-    // the destination exists.
-    if (existsSync(dest)) {
-      send("cli:pull", { id, line: `${label} already on disk` });
-      return { ok: true, alreadyPresent: true };
-    }
+    /* Backlog 18 review: the slot is taken BEFORE `models status` is read. A
+       Cancel pressed during that read found nothing to abort (cli:cancelPull
+       answered false), and the projector then came down in full under a row
+       that said "Cancelling…". It is honoured as soon as the read returns. */
     const controller = new AbortController();
-    hfProjector = { controller, id };
-    send("cli:pull", { id, line: `${label} 0%` });
+    const slot = { controller, id };
+    hfProjector = slot;
+    const cancelled = "the projector download was cancelled — a retry starts it from the beginning";
     try {
-      mkdirSync(dir, { recursive: true });
-      await downloadProjector(mmprojUrl, dest, {
-        signal: controller.signal,
-        onProgress: (percent, transferred, total) =>
-          send("cli:pull", {
-            id,
-            line: total > 0
-              ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
-              : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
-            /* r5 item 7 (setup wizard): its own kind, so the setup download
-               cannot fold a projector's percent into the weights bar (the
-               download card gives it its own row). The byte counts here are
-               real, not parsed off the line. */
-            kind: "projector",
-            percent,
-            transferredBytes: transferred,
-            totalBytes: total,
-            label,
-          }),
-      });
-      send("cli:pull", { id, line: `${label} done` });
-      return { ok: true, path: dest };
+      const st = await modelsStatus();
+      if (controller.signal.aborted) return { ok: false, error: cancelled };
+      const dataDir = st.ok && st.status ? st.status.dataDir : null;
+      if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
+      const dir = join(dataDir, "models", id);
+      const dest = join(dir, mmprojFilename);
+      const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
+      // Matches downloadMmproj's own early return: the installer skips when
+      // the destination exists.
+      if (existsSync(dest)) {
+        send("cli:pull", { id, line: `${label} already on disk` });
+        return { ok: true, alreadyPresent: true };
+      }
+      send("cli:pull", { id, line: `${label} 0%` });
+      try {
+        mkdirSync(dir, { recursive: true });
+        await downloadProjector(mmprojUrl, dest, {
+          signal: controller.signal,
+          onProgress: (percent, transferred, total) =>
+            send("cli:pull", {
+              id,
+              line: total > 0
+                ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
+                : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
+              /* r5 item 7 (setup wizard): its own kind, so the setup download
+                 cannot fold a projector's percent into the weights bar (the
+                 download card gives it its own row). The byte counts here are
+                 real, not parsed off the line. */
+              kind: "projector",
+              percent,
+              transferredBytes: transferred,
+              totalBytes: total,
+              label,
+            }),
+        });
+        send("cli:pull", { id, line: `${label} done` });
+        return { ok: true, path: dest };
+      } catch (err) {
+        const message = controller.signal.aborted ? cancelled : err instanceof Error ? err.message : String(err);
+        send("cli:pull", { id, line: `${label} failed: ${message}` });
+        return { ok: false, error: message };
+      }
     } catch (err) {
-      const aborted = controller.signal.aborted;
-      const message = aborted
-        ? "the projector download was cancelled — a retry starts it from the beginning"
-        : err instanceof Error ? err.message : String(err);
-      send("cli:pull", { id, line: `${label} failed: ${message}` });
-      return { ok: false, error: message };
+      // `models status` itself threw: an answer, not a rejection the renderer has to survive.
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     } finally {
-      hfProjector = null;
+      if (hfProjector === slot) hfProjector = null;
     }
   });
   ipcMain.handle("cli:modelsSearch", (_event, payload: unknown) => {
