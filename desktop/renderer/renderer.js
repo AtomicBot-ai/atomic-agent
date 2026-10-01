@@ -10269,8 +10269,11 @@ function obPullFinished(job, ev) {
        The failure is reported on its own line instead (DL.runtimeError),
        and the model download the operator actually asked for runs. */
     dlNext();
-    // A model held back for this runtime starts once it is in place.
-    if (ok) obActivateHeld();
+    /* A model held back for this runtime starts once it is in place. If the
+       runtime did not land, the hold goes with it (R4): left armed it fired
+       on some later, unrelated runtime. A Retry on the runtime re-arms it
+       (dlRetry). */
+    if (ok) obActivateHeld(); else DL.activateAfter = null;
     return;
   }
   /* r5 review fix (item 7) — drain the queue on THIS leg too. dlNext() used to
@@ -10291,15 +10294,23 @@ function obPullFinished(job, ev) {
   const pending = OB.pendingMmproj;
   OB.pendingMmproj = null;
   if (pending && BR && BR.hfProjector) { obFetchProjector(job.id, pending); return; }
-  // Backlog 18: a re-queued runtime is now running behind these weights; the start waits for it.
-  if (dlBusy()) { DL.activateAfter = job.id; return; }
+  /* Backlog 18: a re-queued runtime is still to come behind these weights,
+     and the model cannot start without it, so the start waits for it. Only
+     for that (R4): another model queued behind this one is no reason to hold
+     this one's start, and nothing would have released it. */
+  if (dlRuntimePending()) { DL.activateAfter = job.id; return; }
   obModelLanded(job.id);
 }
 
-/** The start held back while the queue drained (DL.activateAfter). */
+/** A llama.cpp runtime still to come down: running, or queued. */
+function dlRuntimePending() {
+  return (DL.job !== null && DL.job.kind === 'runtime') || DL.queue.some((q) => q.kind === 'runtime');
+}
+
+/** The start held back for the runtime (DL.activateAfter), once that runtime is in place. */
 function obActivateHeld() {
   const id = DL.activateAfter;
-  if (!id || dlBusy() || DL.dry) return;
+  if (!id || dlRuntimePending() || DL.dry) return;
   DL.activateAfter = null;
   obModelLanded(id);
 }
@@ -10313,28 +10324,34 @@ function obActivateHeld() {
  */
 function obModelLanded(id) {
   obSetupPullLanded(id);
-  if (!obRunsOnAnotherModel()) { obActivateLocal(id); return; }
+  if (!obRunsOnAnotherModel(id)) { obActivateLocal(id); return; }
   DL.ready = {id};
   bswSnapshot();
   render();
 }
 
 /**
- * Whether the agent runs on a model other than the managed local one this
- * download is for — a cloud provider with a model, Fusion, or an endpoint of
- * the person's own that answers. Read off the route as it stands at this
+ * Whether the agent runs on a model other than `id` — a cloud provider with a
+ * model, Fusion, an endpoint of the person's own that answers, or another
+ * local model already chosen (R4: a retried model landing after a new pick
+ * must not take over from it). Read off the route as it stands at this
  * moment (a switch on its way counts, as selBackend paints it), not off how
  * it got there: the card's "Set up a cloud model meanwhile", the composer's
- * picker and Settings all count.
+ * picker and Settings all count. A first run's local route has no model
+ * chosen yet, so the download starts by itself there.
  */
-function obRunsOnAnotherModel() {
+function obRunsOnAnotherModel(id) {
   if (!LIVE_CONFIG) return false;
   const backend = selBackend();
-  if (backend === 'local') return false;
+  if (backend === 'local') {
+    const chosen = (SWX.want && SWX.want.backend === 'local' && SWX.want.model)
+      || (((LIVE_CONFIG.localModels || {}).managed) || {}).modelId;
+    return !!chosen && chosen !== id;
+  }
   if (backend === 'fusion') return true;
   if (backend === 'custom') return !composerNeedsSetup();
-  const id = selActiveProviderId();
-  const p = ((LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === id) || activeProvider();
+  const providerId = selActiveProviderId();
+  const p = ((LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === providerId) || activeProvider();
   return !!(p && p.kind !== 'llama-server' && ((SWX.want && SWX.want.model) || p.defaultChatModel || p.model));
 }
 

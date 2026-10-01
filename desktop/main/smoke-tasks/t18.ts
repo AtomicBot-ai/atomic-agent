@@ -68,6 +68,12 @@ const HELPERS = String.raw`
       cloud: txt(el.querySelector('.dlc-cloud'))};
   };
   const strip = () => { const s = document.getElementById('dlbar'); return !!(s && !s.hidden && s.getBoundingClientRect().height > 0); };
+  // A first run's route: managed local with no model chosen yet — where a landed model starts by itself.
+  const firstRunRoute = (cfg) => {
+    const lm = Object.assign({}, (cfg && cfg.localModels) || {}, {mode: 'managed'});
+    lm.managed = Object.assign({}, lm.managed || {}, {modelId: null});
+    return Object.assign({}, cfg || {}, {localModels: lm});
+  };
 `;
 
 export async function checks18(js: Js, check: Check): Promise<void> {
@@ -80,6 +86,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
     await controls(js, check);
     if (w) await otherPulls(js, check, w);
     await readyRow(js, check);
+    await heldStart(js, check);
     if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
   } finally {
     if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
@@ -105,11 +112,15 @@ async function handOverRun(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(async () => {
     ${HELPERS}
     const keep = {ob: Object.assign({}, OB), stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice(),
-      status: window.obBackendStatusText, activate: window.obActivateLocal, dry: DL.dry, room: S.room, toasts: S.toasts.slice()};
+      status: window.obBackendStatusText, activate: window.obActivateLocal, dry: DL.dry, room: S.room, toasts: S.toasts.slice(),
+      cfg: LIVE_CONFIG, refresh: window.refreshLiveConfig};
     const calls = [];
     const out = {};
     try {
       window.__dlClear();
+      LIVE_CONFIG = firstRunRoute(keep.cfg);
+      // The closing path re-reads the config; the staged first-run route has to outlive that.
+      window.refreshLiveConfig = () => Promise.resolve();
       S.toasts = []; S.room = 'chat'; render();
       DL.dry = true;
       // A machine with no llama.cpp yet: the runtime is queued in front of the weights.
@@ -156,7 +167,7 @@ async function handOverRun(js: Js, check: Check): Promise<void> {
       return out;
     } finally {
       window.obBackendStatusText = keep.status; window.obActivateLocal = keep.activate;
-      window.__dlClear(); DL.dry = keep.dry;
+      window.__dlClear(); DL.dry = keep.dry; LIVE_CONFIG = keep.cfg; window.refreshLiveConfig = keep.refresh;
       if (OB.open) window.__obClose();
       const gen = OB.openGen;
       Object.assign(OB, keep.ob, {open: false, settling: false, openGen: gen});
@@ -225,7 +236,7 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
     ${HELPERS}
     const keep = {ob: Object.assign({}, OB), stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice(),
       status: window.obBackendStatusText, activate: window.obActivateLocal, open: window.openOnboarding,
-      dry: DL.dry, room: S.room, toasts: S.toasts.slice()};
+      dry: DL.dry, room: S.room, toasts: S.toasts.slice(), cfg: LIVE_CONFIG, refresh: window.refreshLiveConfig};
     const KEY = 'atag.setupDownload';
     const marker = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return 'unreadable'; } };
     const stamp = async () => { const c = await window.atomic.configGet();
@@ -236,6 +247,8 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
     try {
       window.__dlClear();
       try { localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
+      LIVE_CONFIG = firstRunRoute(keep.cfg);
+      window.refreshLiveConfig = () => Promise.resolve();
       S.toasts = []; S.room = 'chat'; render();
       DL.dry = true;
       window.obBackendStatusText = () => { calls.push('status'); return Promise.resolve('backend: binary missing'); };
@@ -285,7 +298,7 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
       return out;
     } finally {
       window.obBackendStatusText = keep.status; window.obActivateLocal = keep.activate; window.openOnboarding = keep.open;
-      window.__dlClear(); DL.dry = keep.dry;
+      window.__dlClear(); DL.dry = keep.dry; LIVE_CONFIG = keep.cfg; window.refreshLiveConfig = keep.refresh;
       try { localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
       if (OB.open) window.__obClose();
       const gen = OB.openGen;
@@ -658,7 +671,7 @@ async function readyRow(js: Js, check: Check): Promise<void> {
     const out = {};
     const cloud = Object.assign({}, LIVE_CONFIG || {}, {llm: {activeTextProvider: 'smoke-t18-cloud', providers: [
       {id: 'smoke-t18-cloud', kind: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', defaultChatModel: 'smoke/cloud-model'}]}});
-    const another = () => (typeof obRunsOnAnotherModel === 'function' ? obRunsOnAnotherModel() : null);
+    const another = () => (typeof obRunsOnAnotherModel === 'function' ? obRunsOnAnotherModel('smoke-t18-9b') : null);
     // Seeded dry (nothing is spawned); the last job lands with the queue no longer dry.
     const land = async (jobs) => {
       window.__dlSeed(jobs);
@@ -691,9 +704,9 @@ async function readyRow(js: Js, check: Check): Promise<void> {
       if (x) x.click();
       await tick(80);
       out.dismissed = {calls: calls.slice(), card: card(), route: LIVE_CONFIG && LIVE_CONFIG.llm ? LIVE_CONFIG.llm.activeTextProvider : null};
-      // No other model by then (the local route this download is for): it starts by itself.
+      // No other model by then (a first run's local route, nothing chosen yet): it starts by itself.
       calls.length = 0;
-      LIVE_CONFIG = keep.cfg; render();
+      LIVE_CONFIG = firstRunRoute(keep.cfg); render();
       out.onLocal = another();
       await land([{kind: 'weights', id: 'smoke-t18-9b'}]);
       out.local = {calls: calls.slice(), card: card()};
@@ -736,6 +749,126 @@ async function readyRow(js: Js, check: Check): Promise<void> {
     "T18h: with no other model by then the model still starts by itself when its weights land",
     r["onLocal"] === false && JSON.stringify(local.calls) === JSON.stringify(["activate:smoke-t18-9b"]) && local.card === null,
     JSON.stringify({ onLocal: r["onLocal"], ...local }),
+  );
+}
+
+/* R4 (review): a model whose weights land with something still queued had
+   its start held behind ANY queued job, and only a landing runtime released
+   it. A retried X queued behind a new pick Y: Y landed and never started, and
+   the leftover hold fired later on an unrelated runtime and switched the
+   model. The hold is for one thing — the runtime the model needs — and it
+   goes with that runtime, landed or failed. The landings are the shipped
+   path; dlNext runs as itself but always dry, so nothing is spawned; the start
+   is a recorder that moves the route the way a real start does. */
+async function heldStart(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keep = {cfg: LIVE_CONFIG, activate: window.obActivateLocal, next: window.dlNext, snap: window.bswSnapshot,
+      models: OB.models, room: S.room, dry: DL.dry};
+    const calls = [];
+    const out = {};
+    const firstRun = () => firstRunRoute(keep.cfg);
+    const realNext = keep.next;
+    const feed = (ev) => { window.__dlFeed(ev); };
+    const runtimeNow = () => { DL.job = {kind: 'runtime', id: 'llama.cpp', percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false}; };
+    try {
+      window.__dlClear();
+      S.room = 'chat';
+      window.dlNext = function () { const d = DL.dry; DL.dry = true; try { return realNext.apply(this, arguments); } finally { DL.dry = d; } };
+      window.obActivateLocal = async (id) => {
+        calls.push('activate:' + id);
+        LIVE_CONFIG.localModels = Object.assign({}, LIVE_CONFIG.localModels, {managed: Object.assign({}, LIVE_CONFIG.localModels.managed, {modelId: id})});
+      };
+      window.bswSnapshot = () => Promise.resolve();
+      OB.models = [{id: 'smoke-x', name: 'Smoke X'}, {id: 'smoke-y', name: 'Smoke Y'}];
+
+      // A — X failed earlier; setup is re-run for Y; Retry on X queues X behind Y.
+      LIVE_CONFIG = firstRun(); render();
+      window.__dlSeed([{kind: 'weights', id: 'smoke-y'}]);
+      DL.dry = false;
+      dlFail({kind: 'weights', id: 'smoke-x'}, 'smoke: the earlier pull of X failed'); render();
+      const retry = document.querySelector('#dlcard .dlc-row.is-failed .dlc-retry');
+      if (retry) retry.click();
+      await tick(60);
+      out.queued = DL.queue.map((q) => q.kind + ':' + q.id);
+      feed({id: 'smoke-y', done: true, ok: true});
+      await tick(60);
+      out.yLanded = {calls: calls.slice(), held: DL.activateAfter, job: DL.job ? DL.job.kind + ':' + DL.job.id : null};
+      feed({id: 'smoke-x', done: true, ok: true});
+      await tick(60);
+      out.xLanded = {calls: calls.slice(), held: DL.activateAfter, card: card()};
+      // Later, a runtime that has nothing to do with either lands.
+      runtimeNow();
+      feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: true, sawProgress: false, upToDate: true});
+      await tick(60);
+      out.unrelated = {calls: calls.slice(), held: DL.activateAfter};
+
+      // B — the hold's own job: a runtime re-queued behind the weights. The start waits for it.
+      calls.length = 0;
+      window.__dlClear(); LIVE_CONFIG = firstRun(); render();
+      window.__dlSeed([{kind: 'weights', id: 'smoke-y'}]);
+      DL.queue.push({kind: 'runtime', id: 'llama.cpp'});
+      DL.dry = false;
+      feed({id: 'smoke-y', done: true, ok: true});
+      await tick(60);
+      out.waits = {calls: calls.slice(), held: DL.activateAfter, job: DL.job ? DL.job.kind : null};
+      feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: true, sawProgress: true, upToDate: false});
+      await tick(60);
+      out.released = {calls: calls.slice(), held: DL.activateAfter};
+
+      // C — that runtime fails instead: the hold goes with it, and nothing fires later.
+      calls.length = 0;
+      window.__dlClear(); LIVE_CONFIG = firstRun(); render();
+      window.__dlSeed([{kind: 'weights', id: 'smoke-y'}]);
+      DL.queue.push({kind: 'runtime', id: 'llama.cpp'});
+      DL.dry = false;
+      feed({id: 'smoke-y', done: true, ok: true});
+      await tick(60);
+      feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: false, error: 'models update exited with code 1', sawProgress: false, upToDate: false});
+      await tick(60);
+      out.failedRuntime = {calls: calls.slice(), held: DL.activateAfter};
+      runtimeNow();
+      feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: true, sawProgress: false, upToDate: true});
+      await tick(60);
+      out.laterRuntime = {calls: calls.slice(), held: DL.activateAfter};
+      return out;
+    } finally {
+      window.dlNext = keep.next; window.obActivateLocal = keep.activate; window.bswSnapshot = keep.snap;
+      LIVE_CONFIG = keep.cfg; OB.models = keep.models;
+      window.__dlClear(); DL.dry = keep.dry;
+      S.room = keep.room; render();
+    }
+  })()`);
+  const y = r["yLanded"] as { calls: string[]; held: string | null; job: string | null };
+  check(
+    "T18 R4: a model that lands with another model queued behind it starts — the hold is not for that",
+    JSON.stringify(r["queued"]) === JSON.stringify(["weights:smoke-x"]) && y.job === "weights:smoke-x"
+      && JSON.stringify(y.calls) === JSON.stringify(["activate:smoke-y"]) && y.held === null,
+    JSON.stringify({ queued: r["queued"], y }),
+  );
+  const x = r["xLanded"] as { calls: string[]; held: string | null; card: { rows: { name: string; switch: boolean }[] } | null };
+  const u = r["unrelated"] as { calls: string[]; held: string | null };
+  check(
+    "T18 R4: the retried model landing after that does not take over from the one just started — it asks — and a later, unrelated runtime starts nothing",
+    JSON.stringify(x.calls) === JSON.stringify(["activate:smoke-y"]) && !!x.card
+      && x.card.rows.some((row) => row.name === "Smoke X is ready" && row.switch)
+      && JSON.stringify(u.calls) === JSON.stringify(["activate:smoke-y"]) && u.held === null,
+    JSON.stringify({ x, u }),
+  );
+  const w = r["waits"] as { calls: string[]; held: string | null; job: string | null };
+  const rel = r["released"] as { calls: string[]; held: string | null };
+  check(
+    "T18 R4: a model whose runtime is queued behind it waits for that runtime, then starts once",
+    w.job === "runtime" && w.calls.length === 0 && w.held === "smoke-y"
+      && JSON.stringify(rel.calls) === JSON.stringify(["activate:smoke-y"]) && rel.held === null,
+    JSON.stringify({ w, rel }),
+  );
+  const f = r["failedRuntime"] as { calls: string[]; held: string | null };
+  const later = r["laterRuntime"] as { calls: string[]; held: string | null };
+  check(
+    "T18 R4: when that runtime fails the hold goes with it — nothing fires on a later runtime",
+    f.calls.length === 0 && f.held === null && later.calls.length === 0 && later.held === null,
+    JSON.stringify({ f, later }),
   );
 }
 
