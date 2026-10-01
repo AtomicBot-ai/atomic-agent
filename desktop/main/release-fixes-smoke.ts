@@ -20,6 +20,7 @@ import { checks18e } from "./smoke-tasks/t18e.js";
 import { checks22 } from "./smoke-tasks/t22.js";
 import { checks24 } from "./smoke-tasks/t24.js";
 import { checks25 } from "./smoke-tasks/t25.js";
+import { checks26 } from "./smoke-tasks/t26.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -50,7 +51,7 @@ export type SmokeDownloads = {
   offline: () => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -601,6 +602,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 25 — after a chat switch, Stop, Escape and y/n acted on the turn and the approval of another chat.
   if (want.has("25")) await guarded("25", check, () => checks25(js, check));
+
+  // 26 — a message queued in one chat ran in whatever chat was on screen when its turn ended.
+  if (want.has("26")) await guarded("26", check, () => checks26(js, check));
 
   await wait(100);
 }
