@@ -49,7 +49,7 @@ export interface CliResult {
  * full stderr still travels in `CliResult.stderr` for the logs.
  */
 export function plainCliError(stderr: string): string {
-  const frame = /^\s*at\s.*(?:file:\/\/|node:|\/|\\).*:\d+(?::\d+)?\)?\s*$/;
+  const frame = /^\s*at\s(?:.*(?:file:\/\/|node:|\/|\\).*:\d+(?::\d+)?\)?|.*\((?:index \d+|<anonymous>)\))\s*$/;
   return stderr.split("\n")
     .filter((l) => !frame.test(l) && !/^\s*Node\.js v\d+\.\d+/.test(l))
     .join("\n").trim();

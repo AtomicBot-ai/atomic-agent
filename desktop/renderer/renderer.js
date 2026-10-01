@@ -2609,10 +2609,19 @@ function composerNeedsSetup() {
    download that was already running. While that pull runs, the chip says so;
    its progress stays in the strip at the top, which repaints on every sample. */
 function dlBusy() { return DL.job !== null || DL.queue.length > 0; }
-function downloadingChipHtml() {
-  const j = DL.job || DL.queue[0] || null;
-  const what = j && j.kind !== 'runtime' && j.label ? j.label : 'your model';
-  return '<span class="cchip setupchip pullchip" title="Downloading ' + esc(what) + '. Progress is at the top of the window."'
+/** The model the wizard's pull is fetching: its weights job, even while the runtime goes first. */
+function dlModelName() {
+  const j = [DL.job].concat(DL.queue).find((x) => x && x.kind === 'weights');
+  if (!j || !j.id) return 'your model';
+  const known = (OB.models || []).find((m) => m && m.id === j.id && m.name);
+  return known ? obModelName(known) : modelWord(j.id);
+}
+/* `slot` is where it stands: in place of the setup chip (no route chosen
+   yet) or in the model slot of the local route the wizard has already
+   written, which otherwise offered "download model" for the same pull. */
+function downloadingChipHtml(slot) {
+  const what = dlModelName();
+  return '<span class="cchip ' + (slot || 'setupchip') + ' pullchip" title="Downloading ' + esc(what) + '. Progress is at the top of the window."'
     + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
@@ -3390,16 +3399,17 @@ function overlayMotionExit(was) {
    again. Each list is put back where it was — but only the SAME list, keyed
    by its first row, so a new step or a new search still starts at the top. */
 function overlayScrollKey(el) {
+  // Some rows carry an index, not an id, so the first row's words are part of the key.
   const rows = el.querySelectorAll('[data-wizmodel], [data-obrow], [data-obwiz], [data-sel-row]');
-  const d = rows.length ? rows[0].dataset : {};
-  return el.className + '|' + (d.wizmodel || d.obrow || d.obwiz || d.selRow || '') + '|' + rows.length;
+  const first = rows.length ? rows[0] : null;
+  return el.className + '|' + rows.length + '|' + (first ? (first.dataset.wizmodel || '') + first.textContent.slice(0, 60) : '');
 }
 function overlayScrollsBefore(o) {
-  return Array.from(o.querySelectorAll('.selbody, .ob-wizlist, .ob-scroll')).map((el) => ({key: overlayScrollKey(el), top: el.scrollTop}));
+  return Array.from(o.querySelectorAll('.selbody, .sellist, .ob-wizlist, .ob-scroll')).map((el) => ({key: overlayScrollKey(el), top: el.scrollTop}));
 }
 function overlayScrollsAfter(o, before) {
   if (!before.some((b) => b.top > 0)) return;
-  Array.from(o.querySelectorAll('.selbody, .ob-wizlist, .ob-scroll')).forEach((el, i) => {
+  Array.from(o.querySelectorAll('.selbody, .sellist, .ob-wizlist, .ob-scroll')).forEach((el, i) => {
     const b = before[i];
     if (b && b.top > 0 && b.key === overlayScrollKey(el)) el.scrollTop = b.top;
   });
@@ -6969,7 +6979,7 @@ function fitFor(model, ram) {
   }
   // No catalogue entry (a model added from Hugging Face). Say so, and say
   // that the figure is an estimate rather than dressing it as a fact.
-  const gb = parseFloat(String((model && model.size) || '')) || 0;
+  const gb = sizeStringGb(model && model.size);
   const needed = Math.ceil(gb * 1.6);
   if (!needed || !have) {
     return {v:'comfortable', rank:0, known:false, caution:null,
@@ -7025,7 +7035,7 @@ function orderModelsByFit(models, ram) {
     if (ua !== ub) return ua - ub;
     const ra = Number(a.recommendedRamGb) || 0, rb = Number(b.recommendedRamGb) || 0;
     if (ra !== rb) return rb - ra;
-    return (parseFloat(String(b.size)) || 0) - (parseFloat(String(a.size)) || 0);
+    return (Number(b.sizeGb) || sizeStringGb(b.size)) - (Number(a.sizeGb) || sizeStringGb(a.size));
   });
 }
 
@@ -8837,10 +8847,10 @@ function obFootHTML() {
       const picks = obPickRows();
       const row = picks[OB.cursor % Math.max(1, picks.length)];
       if (row && row.kind === 'model') {
-        const gb = obDownloadGb(row.model);
+        const size = modelSizeWord(row.model);
         right = row.model.downloaded
           ? obBtn('nav:go', 'Use ' + obModelName(row.model), 'btn-p', false, '', 'arrowR')
-          : obBtn('nav:go', gb ? 'Download ' + obGbWord(gb) : 'Download', 'btn-p', false, 'download');
+          : obBtn('nav:go', size ? 'Download ' + size : 'Download', 'btn-p', false, 'download');
       } else if (row && !OB.busy) {
         right = obBtn('nav:go', 'Continue', 'btn-p', false, '', 'arrowR');
       }
@@ -11886,10 +11896,13 @@ async function setCodingMode(id, post) {
   if (seq !== MODE.seq) return;
   if (!res || !res.ok) {
     MODE.supported = res ? res.supported : true;
-    S.log.push({id:nid(), k:'system', text: res && res.supported === false
+    const why = res && res.supported === false
       // The version, never the route name.
       ? MODE_NEEDS_NEWER
-      : 'could not change the mode: ' + esc((res && res.error) || '')});
+      : 'could not change the mode: ' + ((res && res.error) || '');
+    // An empty chat keeps its start screen here too (see the success path below).
+    if (!S.log.length) toast('The mode did not change', why, 'bad');
+    else S.log.push({id:nid(), k:'system', text: esc(why)});
     render();
     return;
   }
@@ -14069,6 +14082,7 @@ function bswSnapshot() {
 }
 /** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
 function modelChipHtml() {
+  if (dlBusy() && selBackend() === 'local') return downloadingChipHtml('modelchip');
   const label = activeModel();
   /* The operator's words: "There should be three selectors. Cloud, after
      that the provider. And after that the model. So that I would be able to
@@ -16530,7 +16544,11 @@ function llmFormatDaemon() {
    90 s after this window first sees a pid unhealthy read as starting. */
 function llmNoteDaemonHealth(st) {
   const h = st ? String(st.health || '').toLowerCase() : '';
+  if (st && st.daemonRunning && h === 'ok') LLMP.healthyPid = st.daemonPid;
   if (!st || !st.daemonRunning || h === 'ok' || /loading/.test(h)) { LLMP.downSince = null; return; }
+  /* A server that has answered before and stops is not starting: it reads
+     Not answering at once, with no grace. */
+  if (LLMP.healthyPid === st.daemonPid) { LLMP.downSince = null; return; }
   if (!LLMP.downSince || LLMP.downSince.pid !== st.daemonPid) LLMP.downSince = {pid: st.daemonPid, at: Date.now()};
 }
 function llmJustSpawned() { return !!LLMP.downSince && Date.now() - LLMP.downSince.at < 90_000; }
@@ -16638,7 +16656,13 @@ async function llmRefreshStatus(quiet) {
   LLMP.statusBusy = false;
   llmApplyStatus(status);
   LLMP.health = health && health.ok && health.data && health.data.llama ? health.data.llama : null;
-  if (!quiet || before !== JSON.stringify([LLMP.status, LLMP.statusErr, LLMP.health])) llmRepaint();
+  // The Starting grace runs out on a clock, not on a change in the status, so
+  // the word it last painted is compared too.
+  const grace = llmJustSpawned();
+  if (!quiet || before !== JSON.stringify([LLMP.status, LLMP.statusErr, LLMP.health]) || grace !== LLMP.paintedGrace) {
+    LLMP.paintedGrace = grace;
+    llmRepaint();
+  }
 }
 /* The Cloud text-models block lists the active (or first) cloud provider's catalogue. */
 function llmCloudSectionProvider() {
@@ -18241,8 +18265,10 @@ async function llmAfterPull(p) {
 if (BR) {
   BR.onPull((ev) => {
     if (!ev || !ev.done || !ev.ok) return;
-    LLMP.lastRefreshedAt = null;
-    if (llmVisible() && !LLMP.inflight) setTimeout(llmRefresh, 0);
+    const stale = () => { LLMP.lastRefreshedAt = null; if (llmVisible()) setTimeout(llmRefresh, 0); };
+    /* A read already out may have listed the models before this one landed,
+       and its finish would stamp the list fresh: mark it again after that. */
+    if (LLMP.inflight) LLMP.inflight.then(stale, stale); else stale();
   });
 }
 
