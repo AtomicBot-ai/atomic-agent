@@ -17,6 +17,7 @@ import { checks18b } from "./smoke-tasks/t18b.js";
 import { checks18c } from "./smoke-tasks/t18c.js";
 import { checks18d } from "./smoke-tasks/t18d.js";
 import { checks18e } from "./smoke-tasks/t18e.js";
+import { checks18f } from "./smoke-tasks/t18f.js";
 import { checks22 } from "./smoke-tasks/t22.js";
 import { checks24 } from "./smoke-tasks/t24.js";
 import { checks25 } from "./smoke-tasks/t25.js";
@@ -52,6 +53,10 @@ export type SmokeDownloads = {
   projectorStatus: (read: () => Promise<ProjectorStatusAnswer>) => () => void;
   /** Every download handler refuses before it spawns or fetches anything, whatever it is asked. Returns the undo. */
   offline: () => () => void;
+  /** What quitting does to the downloads before the agent stops (main's before-quit), run now. Returns the undo for what a check can carry on without. */
+  quit: () => () => void;
+  /** The download main runs, as its refusals name it, or null. */
+  running: () => { kind: string; id: string } | null;
 };
 
 export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "32"];
@@ -465,6 +470,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       await guarded("18", check, () => checks18d(js, check));
       // The rare cases deferred from it, a vision model's projector among the other downloads (smoke-tasks/t18e.ts).
       await guarded("18", check, () => checks18e(js, check, downloads));
+      // Settings' llama.cpp update against the model starts, and at quit (smoke-tasks/t18f.ts).
+      await guarded("18", check, () => checks18f(js, check, downloads));
     } finally {
       await js<unknown>("(() => { S.inspector = !!window.__t18Insp; delete window.__t18Insp; render(); })()");
       wins.forEach((x, i) => { if (!x.isDestroyed()) x.webContents.setBackgroundThrottling(throttled[i]!); });

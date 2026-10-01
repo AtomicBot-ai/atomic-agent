@@ -348,6 +348,17 @@ function downloadRunning(): { kind: string; id: string; last: Record<string, unk
   return settingsUpdate ? { kind: "update", id: "llama.cpp", last: null } : null;
 }
 const DOWNLOAD_BUSY = "a download is already running";
+/* Backlog 18 (R1): a download stops with the app rather than writing on
+   after it — the next launch resumes the setup download from its partial
+   file, and two writers on one partial file is how a resume goes wrong.
+   What quitting does before the agent stops (before-quit). A smoke check runs
+   it too (smokeDownloads.quit) and carries on with the undo it hands back. */
+function stopForQuit(): () => void {
+  pull?.cancel();
+  pullUpdate?.cancel();
+  hfProjector?.controller.abort();
+  return () => {};
+}
 /* What the projector download reads `models status` with (cli:hfProjector).
    Only the item-18 smoke stands in for it (smokeDownloads below). */
 let projectorStatusRead: () => Promise<ProjectorStatusAnswer> = modelsStatus;
@@ -383,6 +394,13 @@ const smokeDownloads: SmokeDownloads = {
   offline() {
     smokeOffline = true;
     return () => { smokeOffline = false; };
+  },
+  quit() {
+    return stopForQuit();
+  },
+  running() {
+    const r = downloadRunning();
+    return r ? { kind: r.kind, id: r.id } : null;
   },
 };
 
@@ -8379,12 +8397,7 @@ app.on("before-quit", (event) => {
   // the degraded state in which someone is most likely to be poking at the
   // microphone button.
   voice.kill();
-  /* Backlog 18 (R1): a download stops with the app rather than writing on
-     after it — the next launch resumes the setup download from its partial
-     file, and two writers on one partial file is how a resume goes wrong. */
-  pull?.cancel();
-  pullUpdate?.cancel();
-  hfProjector?.controller.abort();
+  stopForQuit();
   if (!agent) return;
   event.preventDefault();
   const client = agent;
