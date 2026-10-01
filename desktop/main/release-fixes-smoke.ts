@@ -48,7 +48,7 @@ export type SmokeDownloads = {
   offline: () => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -466,6 +466,32 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   }
   // 22 — a chat still loading when New chat was pressed came back over the new one.
   if (want.has("22")) await guarded("22", check, () => checks22(js, check));
+
+  if (want.has("23")) {
+    // 23 — "This Mac" named the local route on every platform, Windows and Linux included.
+    // It is "Local models" now (Nadya, 02.10), and the analytics row no longer says messages never leave the machine.
+    const r = await js<Record<string, unknown>>(`(() => {
+      const text = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.textContent || ''; };
+      try {
+        const runMode = text(llmRunModeHTML()), local = text(llmLocalHTML()), general = text(generalPane());
+        return {word: backendWord('local'), row: selRowName({type:'provider', id:'local-llama'}),
+          runMode: /Local models/.test(runMode), runModeOld: /This Mac/.test(runMode),
+          localTitle: /Local models/.test(local), localOld: /Models on this Mac/.test(local),
+          analytics: /never sent with analytics/.test(general), analyticsOld: /never leave/.test(general)};
+      } catch (err) { return {error: String(err && err.message || err)}; }
+    })()`);
+    check(
+      "T23: the local route is called Local models wherever it is named",
+      r.word === "Local models" && r.row === "Local models" && r.runMode === true && r.runModeOld === false
+        && r.localTitle === true && r.localOld === false,
+      JSON.stringify(r),
+    );
+    check(
+      "T23: the analytics row says what analytics never send, not that nothing leaves the machine",
+      r.analytics === true && r.analyticsOld === false,
+      JSON.stringify(r),
+    );
+  }
 
   if (want.has("19")) {
     // 19 — "What never leaves this Mac" read as a privacy promise the app does not make.
