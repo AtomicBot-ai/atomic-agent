@@ -2761,8 +2761,8 @@ function composer() {
     : WAIT
     ? '<div class="statusstrip waiting">'
       + '<span class="ss-ic"><span class="ss-dot"></span></span>'
-      + '<span class="ann">Waiting for ' + esc(providerWord(selActiveProviderId()) || 'the provider') + '</span>'
-      + (WAIT.reason ? '<span class="ob-help ss-why">' + esc(humanWaitReason(WAIT.reason)) + '</span>' : '')
+      + '<span class="ann">Waiting for ' + esc(waitProviderLabel(WAIT)) + '</span>'
+      + (waitWhy(WAIT) ? '<span class="ob-help ss-why">' + esc(waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + '</div>'
@@ -6172,6 +6172,53 @@ function waitReadout() {
   return 'attempt ' + WAIT.attempt + ' · next try ' + left + 's';
 }
 
+/* 0.6.7 item 29: what the wait is for. A newer agent names the provider the
+   turn is waiting on (`provider_id`) and why (`cause`, the agent's
+   classifyProviderWaitCause) on its provider_waiting frame. That provider is
+   not always the one picked: with a fallback chain it can be the last link,
+   and the local server appended to the chain is one the person may never
+   have chosen. The strip said "Waiting for <the picked provider>" and turned
+   every `fetch failed` into "no connection", so a stopped local server read
+   as the cloud provider being offline. Without the two fields (an older
+   agent) every word is the same as before. */
+function waitProviderName(id) {
+  return id === 'local-llama' ? 'Local models' : providerWord(id);
+}
+/** The strip's "Waiting for …": the provider the agent names, else the picked one, as before. */
+function waitProviderLabel(wait) {
+  if (wait && wait.providerId) return waitProviderName(wait.providerId);
+  return providerWord(selActiveProviderId()) || 'the provider';
+}
+/** Is `id` the managed local server (a `llama-server` entry, or the synthesized local-llama)? */
+function waitIsLocalServer(id) {
+  if (id === 'local-llama') return true;
+  const all = (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || [];
+  const entry = all.find((p) => p && p.id === id);
+  return !!entry && entry.kind === 'llama-server';
+}
+/** The agent's cause in words (the TUI's describeCause), or null when there is none to word. */
+function waitCauseWords(cause, providerId) {
+  const kind = cause && typeof cause.kind === 'string' ? cause.kind : '';
+  const local = !!providerId && waitIsLocalServer(providerId);
+  const status = cause && typeof cause.status === 'number' ? cause.status : null;
+  if (kind === 'refused') return local ? 'the local model server isn’t running' : 'connection refused';
+  if (kind === 'unreachable') return 'no connection';
+  if (kind === 'dropped') return 'connection dropped mid-reply';
+  if (kind === 'timeout') return 'the request timed out';
+  if (kind === 'loading') return 'the server is still loading the model';
+  if (kind === 'http') return status !== null ? 'HTTP ' + status : null;
+  if (kind === 'stream_error') return 'the provider reported an error mid-reply' + (status !== null ? ' (' + status + ')' : '');
+  if (kind === 'error_finish') return 'the provider ended its reply with an error';
+  return null;   // `unknown`, or a kind this window does not know yet
+}
+/** Why the turn waits: the agent's cause when it sent one, else its reason as before. */
+function waitWhy(wait) {
+  if (!wait) return '';
+  const said = wait.cause ? waitCauseWords(wait.cause, wait.providerId) : null;
+  if (said) return said;
+  return wait.reason ? humanWaitReason(wait.reason) : '';
+}
+
 /** The agent's reason, in words. `fetch failed` is undici's, not a person's. */
 function humanWaitReason(reason) {
   const r = String(reason || '');
@@ -6927,6 +6974,9 @@ function onChatEvent(ev) {
       maxWaitMs: Number(p.max_wait_ms) || 0,
       nextRetryMs: Number(p.next_retry_ms) || 0,
       reason: typeof p.reason === 'string' ? p.reason : '',
+      // Item 29: the provider waited on and the cause, when the agent names them.
+      providerId: typeof p.provider_id === 'string' && p.provider_id ? p.provider_id : null,
+      cause: p.cause && typeof p.cause === 'object' && typeof p.cause.kind === 'string' ? p.cause : null,
       until: Date.now() + (Number(p.next_retry_ms) || 0),
     };
     if (!WAIT_TICK) WAIT_TICK = setInterval(() => { if (WAIT) refreshWaitStrip(); }, 1000);

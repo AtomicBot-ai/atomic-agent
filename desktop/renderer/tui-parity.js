@@ -90,28 +90,35 @@ function tpActiveIsLocal() {
 }
 
 function tpWaitNotice(wait) {
-  const why = wait && wait.reason ? humanWaitReason(wait.reason) : '';
+  // Item 29: waitWhy is the agent's cause when it sent one, else its reason as before.
+  const why = waitWhy(wait);
   const budget = wait && wait.maxWaitMs ? ' for up to ' + tpSeconds(wait.maxWaitMs) : '';
-  return 'The model isn’t answering' + (why ? ' (' + why + ')' : '') + '. The turn is paused and retries on its own'
+  // Item 29: an agent that names the provider it waits on gets it named here.
+  const who = wait && wait.providerId ? 'No answer from ' + waitProviderName(wait.providerId) : 'The model isn’t answering';
+  return who + (why ? ' (' + why + ')' : '') + '. The turn is paused and retries on its own'
     + budget + '. Stop ends it.';
 }
 
-/** `atag models status` in one sentence, or '' when the server looks fine. */
-function tpLocalServerLine(st) {
+/** `atag models status` in one sentence, or '' when the server looks fine.
+    `said`: the notice above already says the server is not running, so only the way out is left to add. */
+function tpLocalServerLine(st, said) {
   if (!st) return '';
   if (st.fault) return 'Local model server: ' + st.fault;
-  if (st.mode === 'managed' && !st.daemonRunning) return 'The local model server isn’t running. Start it in Settings › Models.';
+  if (st.mode === 'managed' && !st.daemonRunning) return said ? 'Start it in Settings › Models.' : 'The local model server isn’t running. Start it in Settings › Models.';
   return '';
 }
 
 /** First provider_waiting frame of a wait. */
 function tpOnProviderWaiting(wait) {
   placeInLiveTurn({id:nid(), k:'system', sev:'pause', note:true, text: esc(tpWaitNotice(wait))});
-  if (!BR || !BR.modelsStatus || !tpActiveIsLocal()) return;
+  // Item 29: the local server is asked about when the wait is on it, whichever provider was picked.
+  const onLocal = wait && wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
+  if (!BR || !BR.modelsStatus || !onLocal) return;
+  const said = !!(wait && wait.providerId && wait.cause && wait.cause.kind === 'refused');
   const turnId = S.turnId;
   const streamId = S.streamId;
   BR.modelsStatus().then((res) => {
-    const line = tpLocalServerLine(res && res.ok ? res.status : null);
+    const line = tpLocalServerLine(res && res.ok ? res.status : null, said);
     // Only while the same turn is still the one on screen (switching chats keeps S.turnId but swaps S.log).
     if (!line || S.turnId !== turnId || S.streamId !== streamId || !S.log.some((m) => m.id === streamId)) return;
     placeInLiveTurn({id:nid(), k:'system', sev:'warn', note:true, text: esc(line)});
