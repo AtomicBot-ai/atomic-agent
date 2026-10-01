@@ -16576,8 +16576,25 @@ async function llmRefreshRun() {
   llmEnsureModels();
 }
 function llmApplyStatus(status) {
-  if (status && status.ok && status.status) { LLMP.status = status.status; LLMP.statusErr = null; }
+  if (status && status.ok && status.status) {
+    LLMP.status = status.status; LLMP.statusErr = null;
+    llmNoteDaemonHealth(status.status);
+    if (llmListIsStale(status.status) && !LLMP.inflight && Date.now() - (LLMP.staleHealAt || 0) > 60_000) {
+      LLMP.staleHealAt = Date.now();
+      setTimeout(llmRefresh, 0);
+    }
+  }
   else { LLMP.statusErr = (status && status.error) || 'models status failed'; }
+}
+/* The list is read once per run and the status every 5 s, so a model pulled
+   outside this pane (the first-run wizard, the composer's picker) stayed
+   "Download 6.2 GB" under a header that said Ready. When the status says the
+   active model is on disk and the list says it is not, the list is the stale
+   one. */
+function llmListIsStale(st) {
+  if (!st || !st.activeModel || st.activeDownloaded !== true || !Array.isArray(LLMP.local)) return false;
+  const row = LLMP.local.find((m) => m && m.id === st.activeModel);
+  return !!row && !row.downloaded;
 }
 async function llmRefreshStatus(quiet) {
   if (!BR || LLMP.statusBusy) return;
@@ -18181,6 +18198,18 @@ async function llmAfterPull(p) {
   const row = llmRows('local').find((r) => r.model && r.model.id === p.id);
   if (row && LLMP.mode === 'local') { llmPrimary(row); return {projector: attempted ? 'ok' : 'none', activated:true, skipped:false}; }
   return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
+}
+
+/* Any pull that lands — the wizard's, the composer's or this tab's — leaves the
+   Local list out of date: mark it so, and read it now if the tab is on screen.
+   Without this a model downloaded from the wizard kept its Download button
+   here until the app was restarted. */
+if (BR) {
+  BR.onPull((ev) => {
+    if (!ev || !ev.done || !ev.ok) return;
+    LLMP.lastRefreshedAt = null;
+    if (llmVisible() && !LLMP.inflight) setTimeout(llmRefresh, 0);
+  });
 }
 
 /* The pull stream for the LLM tab's downloads, guarded by its own owner flag like the SEL/MP subscribers. */
