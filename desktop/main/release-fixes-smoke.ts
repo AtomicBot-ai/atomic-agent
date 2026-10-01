@@ -18,6 +18,7 @@ import { checks18c } from "./smoke-tasks/t18c.js";
 import { checks18d } from "./smoke-tasks/t18d.js";
 import { checks18e } from "./smoke-tasks/t18e.js";
 import { checks22 } from "./smoke-tasks/t22.js";
+import { checks24 } from "./smoke-tasks/t24.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -48,7 +49,7 @@ export type SmokeDownloads = {
   offline: () => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -593,6 +594,9 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       JSON.stringify(b),
     );
   }
+
+  // 24 — a message sent while a chat was still opening went to the chat that was left.
+  if (want.has("24")) await guarded("24", check, () => checks24(js, check));
 
   await wait(100);
 }
