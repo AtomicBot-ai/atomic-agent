@@ -13,6 +13,45 @@ function on(channel: string, cb: (payload: unknown) => void): Unsubscribe {
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+/* Backlog 03 — what the window put on screen at boot, for `--first-run-probe`
+   (main.ts firstRunProbe) and only for it: main adds the argument to that
+   launch alone, so a normal one runs no frame loop.
+
+   A fresh install showed the chat window for half a second before the
+   wizard, then a title card that waited for a click. Both are facts about
+   FRAMES, which no read of the DOM taken afterwards can see. So every
+   animation frame from the first is classified by what it shows, and each
+   change of view is kept with its wall-clock time and frame number. It lives
+   here rather than in renderer.js so that it is watching before the page's
+   own script has run, and reads only the DOM, never the renderer's state. */
+type BootView = { view: "blank" | "chat" | "intro" | "wizard"; at: number; frame: number };
+const BOOT_PAINT: { views: BootView[]; frames: number; input: { type: string; at: number } | null; done: boolean } =
+  { views: [], frames: 0, input: null, done: false };
+
+function bootView(): BootView["view"] {
+  const ob = document.getElementById("onboarding");
+  if (ob) return ob.classList.contains("ob-intro-layer") ? "intro" : "wizard";
+  const drawn = (id: string) => (document.getElementById(id)?.childElementCount ?? 0) > 0;
+  return drawn("content") || drawn("sidebar") ? "chat" : "blank";
+}
+
+if (process.argv.includes("--atomic-boot-probe")) {
+  const frame = () => {
+    BOOT_PAINT.frames += 1;
+    const view = bootView();
+    const last = BOOT_PAINT.views[BOOT_PAINT.views.length - 1];
+    if (!last || last.view !== view) BOOT_PAINT.views.push({ view, at: Date.now(), frame: BOOT_PAINT.frames });
+    // Done once the wizard is past its title card, or after 15 s of frames.
+    if (view === "wizard" || Date.now() - BOOT_PAINT.views[0]!.at > 15_000) { BOOT_PAINT.done = true; return; }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  // The probe presses nothing; an input here would mean the card did not leave by itself.
+  for (const type of ["keydown", "mousedown", "wheel", "paste"]) {
+    document.addEventListener(type, () => { BOOT_PAINT.input ??= { type, at: Date.now() }; }, true);
+  }
+}
+
 contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
@@ -199,6 +238,8 @@ contextBridge.exposeInMainWorld("atomic", {
    *  `tuiSetupPresent` reports env var NAMES only; `importFromTui` copies only
    *  the flags that are ticked and never touches the source. */
   firstRun: () => ipcRenderer.invoke("app:firstRun"),
+  /** Backlog 03 — the boot frames above; empty unless main armed the probe. */
+  bootPaint: () => BOOT_PAINT,
   tuiSetupPresent: () => ipcRenderer.invoke("app:tuiSetupPresent"),
   importFromTui: (opts: Record<string, boolean>) => ipcRenderer.invoke("app:importFromTui", opts),
   /** r5 item 7 — setup wizard: the streamed runtime phase, the custom-endpoint

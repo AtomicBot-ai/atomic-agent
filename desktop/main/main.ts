@@ -141,6 +141,8 @@ import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
+// Backlog 03 — the first-run probe's frame log, summarised.
+import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -205,6 +207,8 @@ const FAKE_RAM_GB = (() => {
 })();
 
 let win: BrowserWindow | null = null;
+/** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
+let windowShownAt: number | null = null;
 let agent: AgentClient | null = null;
 let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
 /* Item 2 (voice input): at most one live speech helper, for the whole app.
@@ -407,6 +411,8 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       webviewTag: false,
       spellcheck: false,
+      // Backlog 03: the probe's frame log (preload.ts), armed for that launch only.
+      additionalArguments: FIRST_RUN_PROBE ? ["--atomic-boot-probe"] : [],
     },
   });
 
@@ -424,6 +430,7 @@ function createWindow(): BrowserWindow {
 
   window.once("ready-to-show", () => {
     window.show();
+    windowShownAt = Date.now();
     if (DEV) window.webContents.openDevTools({ mode: "detach" });
   });
 
@@ -8003,6 +8010,9 @@ async function claimDesktopPorts(): Promise<void> {
  * ITSELF (no `--onboarding`, no menu command, no help of any kind), then
  * says on stdout what it saw. The caller is the smoke suite, which runs this
  * against a throwaway `ATOMIC_AGENT_STATE_DIR` that it created empty.
+ * Backlog 03 adds what was on SCREEN, frame by frame (boot-paint.ts): whether
+ * the chat window showed before the wizard, and whether the title card left
+ * without being touched, and when.
  */
 async function firstRunProbe(): Promise<void> {
   const js = <T,>(code: string): Promise<T> =>
@@ -8015,15 +8025,15 @@ async function firstRunProbe(): Promise<void> {
   while (Date.now() < deadline) {
     try {
       fr = await js<FirstRun>("window.__firstRun ? window.__firstRun() : null");
-      /* r5 integration: `#onboarding .ob-title` was the pre-wizard markup and
-         no longer exists — item 7 opens on the intro (the wordmark and the
-         typewriter), and every later step carries the header subtitle. So the
+      /* r5 integration: the flow opens on the intro (the wordmark), so the
          probe asks the flow's own state whether it is open, and reads whichever
-         of the two headings the step on screen actually draws. */
+         heading the step on screen actually draws. Backlog 03: the card now
+         leaves by itself, so the next step's title (`.ob-title`; the old
+         `.ob-sub2` subtitle is no longer drawn) counts as well. */
       open = (await js<boolean>("!!(window.__ob && window.__ob().open)")) === true;
       title = (await js<string>(
         "(document.querySelector('#onboarding .ob-word')" +
-          " || document.querySelector('#onboarding .ob-sub2')" +
+          " || document.querySelector('#onboarding .ob-title')" +
           " || {}).textContent || ''",
       )) || "";
     } catch {
@@ -8031,6 +8041,21 @@ async function firstRunProbe(): Promise<void> {
     }
     if (fr && open && title) break;
     await new Promise((r) => setTimeout(r, 250));
+  }
+  /* Backlog 03 — what a person in front of the window SAW: the frame log the
+     preload keeps for this launch, read until it closes (the wizard past its
+     title card). 8 s is past the card's 5 s ceiling, so a card that waits for
+     a click is reported as one rather than waited on. */
+  let paint: BootPaintLog | null = null;
+  const settleBy = Date.now() + 8_000;
+  while (Date.now() < settleBy) {
+    try {
+      paint = await js<BootPaintLog | null>("window.atomic && window.atomic.bootPaint ? window.atomic.bootPaint() : null");
+    } catch {
+      // the page is between loads — the next pass reads it
+    }
+    if (paint?.done) break;
+    await new Promise((r) => setTimeout(r, 200));
   }
   /* Whether the seed ran is reported too: this probe is itself the case
      finding 1 is about — a FRESH directory named by ATOMIC_AGENT_STATE_DIR —
@@ -8046,6 +8071,7 @@ async function firstRunProbe(): Promise<void> {
         title,
         seeded: DESKTOP_STATE_SEEDED,
         weightsLink: existsSync(join(DESKTOP_STATE_DIR, "models", "models")),
+        ...summarizeBootPaint(paint, windowShownAt),
       }) +
       "\n",
   );
