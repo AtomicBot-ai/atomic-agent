@@ -609,6 +609,11 @@ const DL = {
   /** Backlog 18: a vision model's projector, fetched after its weights
       (obFetchProjector) — its own row in the card. */
   projector: null,  // {id, cancelled}
+  /** Deferred F8: projectors whose weights landed while something else was
+      still to come down — a llama.cpp runtime retried behind them, another
+      model, another projector. Each waits here, a queued row in the card,
+      until nothing else runs (dlProjectorNext). */
+  projectorQueue: [],   // [{id, pending}]
   /** Backlog 18: downloads that failed, each a row in the card with Retry
       until it is retried or dismissed — a failure never just vanishes. */
   failed: [],       // [{n, kind, id, error, retry}]
@@ -8291,7 +8296,8 @@ function dlStart(jobs) {
 
 function dlNext() {
   const job = DL.queue.shift();
-  if (!job) { DL.job = null; render(); return; }
+  // Drained: a vision projector that waited for the queue comes down now.
+  if (!job) { DL.job = null; render(); dlProjectorNext(); return; }
   DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false}, job);
   const mine = DL.job;
   // A job that starts again is no longer a failure: its old row goes.
@@ -8526,6 +8532,8 @@ function dlCardRows() {
       state: x.cancelled ? 'cancelling' : XPULL.key === x.key && XPULL.sawProgress ? 'active' : 'starting',
       track: XPULL, rate: XPULL.rate, samples: XPULL.samples});
   }
+  // F8: a vision projector waiting for its turn (dlProjectorPark). Its × takes it off.
+  DL.projectorQueue.forEach((p) => rows.push({src:'dl', kind:'projector', id: p.id, state:'queued', cancel:'dlc:drop:projector:' + p.id}));
   // Backlog 18: landed while the agent was on another model; it waits for a Switch.
   if (DL.ready && !rows.some((r) => r.kind === 'weights' && r.id === DL.ready.id)) {
     rows.push({src:'ready', kind:'weights', id: DL.ready.id, state:'ready'});
@@ -8590,9 +8598,9 @@ function dlCardPercent(r) {
 function dlCardLine(r) {
   if (r.state === 'failed') return r.error;
   if (r.state === 'ready') return 'Downloaded. The agent stays on its current model until you switch.';
-  if (r.state === 'queued') return 'Queued';
-  if (r.state === 'cancelling') return 'Cancelling…';
   const lead = r.kind === 'projector' ? 'Vision projector · ' : '';
+  if (r.state === 'queued') return lead + 'Queued';
+  if (r.state === 'cancelling') return 'Cancelling…';
   if (r.state === 'starting') return lead + 'Starting…';
   const t = r.track;
   const parts = [];
@@ -8857,6 +8865,8 @@ function dlCardAct(verb) {
     const rest = v.slice(5);
     const kind = rest.slice(0, rest.indexOf(':')), id = rest.slice(rest.indexOf(':') + 1);
     DL.queue = DL.queue.filter((q) => !(q.kind === kind && q.id === id));
+    // F8: so does a vision projector waiting for its turn; its model is then not started.
+    DL.projectorQueue = DL.projectorQueue.filter((p) => !(kind === 'projector' && p.id === id));
     // S1: the setup model's own row going is a download stopped: nothing to resume next launch.
     obSetupPullForgetFor([{kind, id}]);
     render();
@@ -8890,7 +8900,7 @@ function dlCancel() {
      job and its own run, its projector. A setup model queued as a run of its
      own stays, and keeps its reminder. */
   const job0 = DL.job;
-  obSetupPullForgetFor([DL.preparing, job0, DL.projector ? {kind: 'weights', id: DL.projector.id} : null]
+  obSetupPullForgetFor([DL.preparing, job0, DL.projector ? {kind: 'projector', id: DL.projector.id} : null]
     .concat(job0 ? DL.queue.filter((q) => q.run === job0.run) : []));
   DL.preparing = null;
   /* A start held for a runtime (R4) or a Switch waiting on one (S4) goes with
@@ -8910,6 +8920,8 @@ function dlCancel() {
   // Only a pick that was still starting: nothing runs, so what is queued behind it starts now.
   if (DL.queue.length) { dlNext(); return; }
   render();
+  // F8: or a vision projector that waited for that pick.
+  dlProjectorNext();
 }
 
 /** A download that failed becomes a row in the card, with Retry and dismiss. */
@@ -10435,9 +10447,15 @@ function obPullFinished(job, ev) {
   DL.landed = job.id;
   /* A vision model's projector is next — setup's pick in this launch, or the
      one the reminder kept across a quit (obSetupPullMmproj): `atag models
-     pull` brought the weights alone. */
+     pull` brought the weights alone. It comes down once nothing else does
+     (F8: a llama.cpp runtime retried behind these weights came down beside
+     it), and the model starts when it lands. */
   const pending = obSetupPullMmproj(job.id);
-  if (pending && BR && BR.hfProjector) { obSetupPullWeightsLanded(job.id, pending); obFetchProjector(job.id, pending); return; }
+  if (pending && BR && BR.hfProjector) {
+    obSetupPullWeightsLanded(job.id, pending);
+    dlProjectorPark(job.id, pending);
+    return;
+  }
   /* Backlog 18: a re-queued runtime is still to come behind these weights,
      and the model cannot start without it, so the start waits for it. Only
      for that (R4): another model queued behind this one is no reason to hold
@@ -10449,6 +10467,27 @@ function obPullFinished(job, ev) {
 /** A llama.cpp runtime still to come down: running, or queued. */
 function dlRuntimePending() {
   return (DL.job !== null && DL.job.kind === 'runtime') || DL.queue.some((q) => q.kind === 'runtime');
+}
+
+/**
+ * Deferred F8: a vision model's projector, once its weights are on disk. Main
+ * runs one download at a time, and a llama.cpp runtime retried behind the
+ * weights used to come down beside it: × on either row stopped only the
+ * projector, and the model could start while the binary was being replaced.
+ * So the projector waits, a queued row in the card, until nothing else comes
+ * down (dlProjectorNext).
+ */
+function dlProjectorPark(id, pending) {
+  DL.projectorQueue.push({id, pending});
+  if (!dlProjectorNext()) render();
+}
+
+/** The next waiting projector, once nothing else comes down. True when one started. */
+function dlProjectorNext() {
+  if (!DL.projectorQueue.length || DL.job || DL.queue.length || DL.preparing || DL.projector) return false;
+  const p = DL.projectorQueue.shift();
+  obFetchProjector(p.id, p.pending);
+  return true;
 }
 
 /** The start held back for the runtime (DL.activateAfter), once that runtime is in place. */
@@ -10540,10 +10579,10 @@ function obSetupPullRemember(id) {
 function obSetupPullForget() {
   try { localStorage.removeItem(OB_SETUP_PULL_KEY); } catch (e) { /* nothing was stored */ }
 }
-/** S1: forget it when the setup model's row is among the jobs leaving the card. */
+/** S1: forget it when the setup model's row is among the jobs leaving the card — its weights, or its vision projector. */
 function obSetupPullForgetFor(jobs) {
   const m = obSetupPullGet();
-  if (m && jobs.some((j) => j && j.kind === 'weights' && j.id === m.id)) obSetupPullForget();
+  if (m && jobs.some((j) => j && (j.kind === 'weights' || j.kind === 'projector') && j.id === m.id)) obSetupPullForget();
 }
 /** The model the setup download is for: coming down, or failed and still offered for a Retry. */
 function obSetupPullId() {
@@ -10671,6 +10710,8 @@ function obFetchProjector(id, pending) {
     if (mine.cancelled) {
       DL.error = 'the vision projector download was cancelled — the model was not started';
       render();
+      // F8: the next projector waiting for this one.
+      dlProjectorNext();
       return;
     }
     if (!res || res.ok !== true) {
@@ -10680,9 +10721,11 @@ function obFetchProjector(id, pending) {
         + ' — the model was not started: it would serve text only';
       dlFail({kind:'projector', id}, DL.error, () => obFetchProjector(id, pending));
       render();
+      dlProjectorNext();
       return;
     }
     render();
+    dlProjectorNext();
     obModelLanded(id);
   };
   let call;
@@ -21792,7 +21835,7 @@ if (typeof window !== 'undefined') {
     DL.queue = jobs.slice(1);
     DL.error = null; DL.rate = null; DL.last = null; DL.samples = 0;
     // A fresh run: nothing from an earlier seed is left on the card.
-    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null; DL.switchAfter = null;
+    DL.preparing = null; DL.projector = null; DL.projectorQueue = []; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null; DL.switchAfter = null;
     dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
     const head = jobs[0];
     // The same shape dlNext builds — including `sawProgress:false`, so a
@@ -21803,7 +21846,7 @@ if (typeof window !== 'undefined') {
   };
   window.__dlClear = () => {
     DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null;
-    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null; DL.switchAfter = null;
+    DL.preparing = null; DL.projector = null; DL.projectorQueue = []; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null; DL.switchAfter = null;
     obSetupPullForget();
     dlResetPhases(false); render(); return window.__dl();
   };
