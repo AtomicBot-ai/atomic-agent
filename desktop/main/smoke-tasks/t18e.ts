@@ -1109,7 +1109,10 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
    waits on it, and the card offers no cloud model beside one either. Each pull
    is started and ended as its owner does it, without a download and without a
    frame on the pull channel: the picker renders (selPull), Settings repaints
-   only itself and the card (llmRepaint), so the chip is read at once after it. */
+   only itself and the card (llmRepaint), so the chip is read at once after it.
+   Its review: a chosen model removed since (its id is kept) read as the model
+   during the picker's download, and a repaint swapped the chip for an equal
+   one, dropping a hover or the focus on it. */
 async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(async () => {
     ${HELPERS}
@@ -1121,11 +1124,15 @@ async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
       OB.models = OB.models.concat([{id: PICK, name: 'Smoke Pick 4B GGUF'}, {id: SETS, name: 'Smoke Settings 9B GGUF'}]);
       if (slot === 'setup') onSetupRoute();
     };
+    // Whether a repaint that changes nothing keeps the chip itself: a mark on the element, which a swap would drop.
+    const marked = () => { const el = document.querySelector('#composer .cfoot .pullchip, #composer .cfoot .setupchip, #composer .cfoot .modelchip'); if (el) el.__t18e = 1; return !!el; };
+    const kept = () => { const el = document.querySelector('#composer .cfoot .pullchip, #composer .cfoot .setupchip, #composer .cfoot .modelchip'); return !!el && el.__t18e === 1; };
     const out = {setup: {}, model: {}};
     try {
       // The setup slot.
       begin('setup');
       out.setup.before = peek();
+      out.setup.keptSetup = marked() && (llmRepaint(), kept());
       pick(PICK);
       out.setup.pick = await chip(true);
       SEL.pulling = null; render();
@@ -1133,8 +1140,10 @@ async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
       settings({kind: 'chat', id: SETS});
       out.setup.settings = peek();
       out.setup.settingsClick = await chip(true);
+      marked();
       settings({kind: 'chat', id: SETS, phase: 'mmproj'});
       out.setup.projector = peek();
+      out.setup.keptPull = kept();
       settings(null);
       out.setup.settingsEnded = peek();
       settings({kind: 'embedding', id: EMB});
@@ -1154,6 +1163,15 @@ async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
       out.model.settings = peek();
       settings(null);
       out.model.settingsEnded = peek();
+      // A chosen model removed since (models remove keeps its id), and nothing else on disk.
+      const gone = Object.assign({}, LIVE_CONFIG.localModels);
+      gone.managed = Object.assign({}, gone.managed || {}, {modelId: 'smoke-t18e-gone'});
+      LIVE_CONFIG = Object.assign({}, LIVE_CONFIG, {localModels: gone});
+      render();
+      out.model.goneBefore = peek();
+      pick(PICK);
+      out.model.gonePick = peek();
+      SEL.pulling = null; render();
       // A model on disk and chosen: its chip stays while another one comes down.
       SEL.local = SEL.local.concat([{id: ACTIVE, name: 'Smoke Active 2B GGUF', downloaded: true}]);
       const lm = Object.assign({}, LIVE_CONFIG.localModels);
@@ -1167,6 +1185,8 @@ async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
       settings({kind: 'chat', id: SETS});
       out.model.activeSettings = peek();
       settings(null);
+      // Settings' repaint and the facts' (bswRepaint), with nothing changed: the chosen model's chip is the same element.
+      out.model.keptActive = marked() && (llmRepaint(), bswRepaint(), kept());
       return out;
     } finally {
       restore();
@@ -1199,11 +1219,17 @@ async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
     JSON.stringify(s["embedding"]),
   );
   check(
-    "T18 D8: on the managed route with no model to show, the model slot reads Downloading <the model> while the picker or Settings brings one down — not nothing, nor Download a model — and a model already chosen keeps its chip",
+    "T18 D8: on the managed route with no model to run, the model slot reads Downloading <the model> while the picker or Settings brings one down — not nothing, nor Download a model, nor a chosen model removed since — and a model on disk keeps its chip",
     shows(m["before"], "Download a model") && downloading(m["pick"], "model", "Smoke Pick 4B")
       && downloading(m["settings"], "model", "Smoke Settings 9B") && shows(m["settingsEnded"], "Download a model")
+      && shows(m["goneBefore"], "Download a model") && downloading(m["gonePick"], "model", "Smoke Pick 4B")
       && shows(m["active"], "Smoke Active 2B") && shows(m["activePick"], "Smoke Active 2B") && shows(m["activeSettings"], "Smoke Active 2B"),
     JSON.stringify(m),
+  );
+  check(
+    "T18 D8: a repaint that changes nothing keeps the chip itself — Set up a model, Downloading <the model> across Settings' projector phase, a chosen model's chip under Settings' repaint and the facts' — so a hover or the focus on it stays",
+    r["setup"]?.["keptSetup"] === true && r["setup"]?.["keptPull"] === true && r["model"]?.["keptActive"] === true,
+    JSON.stringify({ setup: r["setup"]?.["keptSetup"], pull: r["setup"]?.["keptPull"], active: r["model"]?.["keptActive"] }),
   );
 }
 
