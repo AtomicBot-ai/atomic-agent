@@ -150,6 +150,38 @@ describe("fetchOpenAiCompatModels", () => {
     ).toBeUndefined();
   });
 
+  it("carries the provider's own sentence on a refusal, never the key", async () => {
+    // "http 401" alone was all a caller could show. The body says which
+    // problem it is — Anthropic's "invalid x-api-key" (wrong header) and
+    // "API key is invalid." (wrong key) are both 401s — and some services
+    // quote the key back, so it is redacted before it reaches a screen.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                message: "Incorrect API key provided: sk-echoed-secret-1234.",
+                type: "invalid_request_error",
+              },
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+
+    const failure: unknown = await fetchOpenAiCompatModels(
+      "https://echo.example",
+      "sk-echoed-secret-1234",
+    ).catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(Error);
+    const said = (failure as Error).message;
+    expect(said).toBe("http 401: Incorrect API key provided: ***.");
+    expect(said).not.toContain("sk-echoed-secret-1234");
+  });
+
   it("rejects a non-ASCII key with a readable reason, never a ByteString crash", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
