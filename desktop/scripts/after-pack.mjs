@@ -153,7 +153,7 @@ function probeDatabase(agentBin, target) {
 
 function signAdhoc(context) {
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
-  const id = context.packager.appInfo.id; // ai.atomicbot.desktop
+  const id = context.packager.appInfo.id; // io.atomicagent.desktop
   execFileSync("codesign", ["--force", "--deep", "--sign", "-", "--identifier", id, appPath], { stdio: "inherit" });
   /* `codesign -dvvv` writes its report to STDERR, not stdout: reading
      stdout returns an empty string and the check below then fails a build
@@ -169,5 +169,11 @@ export default async function afterPack(context) {
   const target = targetOf(context);
   const dest = copyAgent(context, target);
   console.log(`agent (${target.slug}) → ${dest}`);
-  if (target.platform === "darwin") signAdhoc(context);
+  // package.json keeps `mac.identity: null`, so a local `npm run dist` is
+  // ad-hoc signed here. CI overrides the identity with the Developer ID
+  // certificate (.github/workflows/desktop.yml); electron-builder then signs
+  // the app itself after this hook, and an ad-hoc pass first would be wasted.
+  if (target.platform === "darwin" && context.packager.platformSpecificBuildOptions.identity === null) {
+    signAdhoc(context);
+  }
 }

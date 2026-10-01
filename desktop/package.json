@@ -41,7 +41,7 @@
     "typescript": "^5.6.0"
   },
   "build": {
-    "appId": "ai.atomicbot.desktop",
+    "appId": "io.atomicagent.desktop",
     "productName": "Atomic Agent",
     "copyright": "Copyright (c) 2026 Atomic Bot",
     "asar": true,
@@ -78,7 +78,9 @@
         }
       ],
       "identity": null,
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "gatekeeperAssess": false,
       "extendInfo": {
         "LSMinimumSystemVersion": "12.0",

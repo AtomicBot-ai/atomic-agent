@@ -1196,7 +1196,7 @@ function wireIpc(client: AgentClient): void {
     if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
     /* The bundle id, which is what tccutil keys on — and, after the ad-hoc
        signing hook, also the app's code-signature identifier. */
-    const bundleId = "ai.atomicbot.desktop";
+    const bundleId = "io.atomicagent.desktop";
     try {
       const { execFile } = await import("node:child_process");
       await new Promise<void>((res, rej) =>
@@ -8054,7 +8054,7 @@ void app.whenReady().then(async () => {
   if (SMOKE) TUI_BASELINE = snapshotTuiState();
   // Windows attributes notifications to the AppUserModelID; without one set a
   // dev or unpackaged run shows none. Same id as the bundle id on macOS.
-  if (process.platform === "win32") app.setAppUserModelId("ai.atomicbot.desktop");
+  if (process.platform === "win32") app.setAppUserModelId("io.atomicagent.desktop");
   const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
   agent = new AgentClient(workspace);
   win = createWindow();

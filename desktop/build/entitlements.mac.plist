@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Used only by a Developer ID build (hardened runtime). Applies to the
+	     app and, as entitlementsInherit, to every binary inside it: the
+	     Electron helpers, the bundled agent (a Node SEA, same needs as
+	     scripts/entitlements.mac.plist at the repo root) and atomic-speech. -->
+
+	<!-- V8 in Electron and in the agent's embedded Node. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- The agent loads better_sqlite3.node from next to its binary. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<!-- Hold-to-talk dictation. Under the hardened runtime the microphone
+	     is denied without this, whatever the user answers in the prompt. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
