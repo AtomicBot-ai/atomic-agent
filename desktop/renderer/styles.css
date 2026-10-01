@@ -71,7 +71,7 @@
      with --on-indigo / --indigo-muted as the text on it. */
   --brand:#006AFF; --brand-press:#0058D6; --on-strong:#FFFFFF; --on-brand:var(--on-strong);
   --indigo:#294793; --on-indigo:#EEF1F6; --indigo-muted:#B9C8EA;
-  --badge:#FFFFFF; --badge-ring:rgba(16,17,18,.10);
+  --badge-ring:rgba(16,17,18,.10);
   --glass:rgba(255,255,255,.16); --glass-soft:rgba(255,255,255,.14);
   --glass-12:rgba(255,255,255,.12); --glass-18:rgba(255,255,255,.18); --glass-20:rgba(255,255,255,.2);
   --sink-on-indigo:rgba(0,0,0,.24);
@@ -97,6 +97,11 @@
      lifted blue and takes near-black (7:1). */
   --p-on-fill:#FFFFFF; --i-on-fill:#0B0B0C;
   --on-fill:var(--p-on-fill);
+  /* The round badge behind a brand mark. White on Paper; on Ink a white
+     disc glared against the near-black, so it steps down to a light grey
+     that still carries the black marks (Danya, 30.09). */
+  --p-badge:#FFFFFF; --i-badge:#D3D7DB;
+  --badge:var(--p-badge);
   --well:var(--p-well); --lift:var(--p-lift); --tint:var(--p-tint);
   --success:var(--p-success); --amber-text:var(--p-amber-text); --reasoning:var(--p-reasoning);
   --hl:var(--p-hl);
@@ -182,7 +187,7 @@
   --line:var(--i-line); --line-hair:var(--i-line-hair);
   --accent:var(--i-accent); --accent-deep:var(--i-accent-deep); --amber:var(--i-amber);
   --critical:var(--i-critical);
-  --on-fill:var(--i-on-fill);
+  --on-fill:var(--i-on-fill); --badge:var(--i-badge);
   --black:var(--i-black);
   --well:var(--i-well); --lift:var(--i-lift); --tint:var(--i-tint);
   --success:var(--i-success); --amber-text:var(--i-amber-text); --reasoning:var(--i-reasoning);
@@ -198,7 +203,7 @@
   --line:var(--i-line); --line-hair:var(--i-line-hair);
   --accent:var(--i-accent); --accent-deep:var(--i-accent-deep); --amber:var(--i-amber);
   --critical:var(--i-critical);
-  --on-fill:var(--i-on-fill);
+  --on-fill:var(--i-on-fill); --badge:var(--i-badge);
   --black:var(--i-black);
   --well:var(--i-well); --lift:var(--i-lift); --tint:var(--i-tint);
   --success:var(--i-success); --amber-text:var(--i-amber-text); --reasoning:var(--i-reasoning);
@@ -375,8 +380,8 @@ button.tk-chip{cursor:pointer}
 button.tk-chip:hover{background:var(--press)}
 
 /* ---- Icon badge and brand logos ----
-   Brand marks always sit on a white round badge so mono marks read in the
-   dark theme too. Never recolour a mark. */
+   Brand marks always sit on a light round badge (white, light grey in the
+   dark theme) so mono marks read in both themes. Never recolour a mark. */
 .tk-ico{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--hover);color:var(--ink-2)}
 .tk-ico svg{width:16px;height:16px}
 .tk-ico--sm{width:24px;height:24px}.tk-ico--sm svg{width:13px;height:13px}
@@ -390,7 +395,8 @@ button.tk-chip:hover{background:var(--press)}
 .tk-ico--green{background:var(--success-tint);color:var(--success)}
 .logo{width:30px;height:30px;border-radius:50%;background:var(--badge);box-shadow:inset 0 0 0 1px var(--badge-ring);
   display:grid;place-items:center;flex:none;overflow:hidden}
-.logo img{width:62%;height:62%;object-fit:contain;display:block}
+/* The mark fills three quarters of the badge; at 62% it read as small. */
+.logo img{width:74%;height:74%;object-fit:contain;display:block}
 .logo--sm{width:22px;height:22px}.logo--xs{width:18px;height:18px}.logo--lg{width:44px;height:44px}
 
 /* ---- Inputs ----

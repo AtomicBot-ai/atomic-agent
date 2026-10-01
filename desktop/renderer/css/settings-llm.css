@@ -174,7 +174,7 @@
    the line around it. Inline-block box, inline image, centred by margin,
    keeps the line whole. */
 .llm-pane .llm-kv :is(.logo,.tk-ico),.llm-pane .llm-prov :is(.logo,.tk-ico),.llm-pane .llm-fb-row .t :is(.logo,.tk-ico){display:inline-block;line-height:0;text-align:center}
-.llm-pane .llm-kv .logo img,.llm-pane .llm-prov .logo img,.llm-pane .llm-fb-row .t .logo img{display:inline;vertical-align:top;margin-top:19%}
+.llm-pane .llm-kv .logo img,.llm-pane .llm-prov .logo img,.llm-pane .llm-fb-row .t .logo img{display:inline;vertical-align:top;margin-top:13%}
 .llm-pane .llm-kv .tk-ico svg,.llm-pane .llm-prov .tk-ico svg,.llm-pane .llm-fb-row .t .tk-ico svg{display:inline;vertical-align:top;margin-top:calc(50% - 6.5px)}
 .llm-pane .llm-fb-row .d{padding-left:66px}
 .llm-pane .llm-mvs{display:flex;align-items:center;justify-content:flex-end;gap:2px;flex:none;width:56px}
