@@ -8816,6 +8816,8 @@ function dlCardAct(verb) {
     const rest = v.slice(5);
     const kind = rest.slice(0, rest.indexOf(':')), id = rest.slice(rest.indexOf(':') + 1);
     DL.queue = DL.queue.filter((q) => !(q.kind === kind && q.id === id));
+    // S1: the setup model's own row going is a download stopped: nothing to resume next launch.
+    obSetupPullForgetFor([{kind, id}]);
     render();
     return;
   }
@@ -8842,8 +8844,13 @@ function dlCardAct(verb) {
  * `done` frame its exit sends is read as the cancel it is.
  */
 function dlCancel() {
-  // A setup download the person stopped is not picked up again on the next launch.
-  obSetupPullForget();
+  /* A setup download the person stopped is not picked up again on the next
+     launch — but only if this Cancel takes its row (S1): the pick, the running
+     job and its own run, its projector. A setup model queued as a run of its
+     own stays, and keeps its reminder. */
+  const job0 = DL.job;
+  obSetupPullForgetFor([DL.preparing, job0, DL.projector ? {kind: 'weights', id: DL.projector.id} : null]
+    .concat(job0 ? DL.queue.filter((q) => q.run === job0.run) : []));
   DL.preparing = null;
   DL.activateAfter = null;
   const job = DL.job;
@@ -10456,6 +10463,11 @@ function obSetupPullRemember(id) {
 }
 function obSetupPullForget() {
   try { localStorage.removeItem(OB_SETUP_PULL_KEY); } catch (e) { /* nothing was stored */ }
+}
+/** S1: forget it when the setup model's row is among the jobs leaving the card. */
+function obSetupPullForgetFor(jobs) {
+  const m = obSetupPullGet();
+  if (m && jobs.some((j) => j && j.kind === 'weights' && j.id === m.id)) obSetupPullForget();
 }
 /** The model the setup download is for: coming down, or failed and still offered for a Retry. */
 function obSetupPullId() {

@@ -87,6 +87,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
     if (w) await otherPulls(js, check, w);
     await readyRow(js, check);
     await heldStart(js, check);
+    await setupRowRemoval(js, check);
     if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
   } finally {
     if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
@@ -869,6 +870,80 @@ async function heldStart(js: Js, check: Check): Promise<void> {
     "T18 R4: when that runtime fails the hold goes with it — nothing fires on a later runtime",
     f.calls.length === 0 && f.held === null && later.calls.length === 0 && later.held === null,
     JSON.stringify({ f, later }),
+  );
+}
+
+/* S1 (second review): the resume reminder lives exactly as long as the setup
+   model's row. Every way that row leaves the card forgets it — the queued
+   row's × behind a llama.cpp runtime (a first run without one), the running
+   row's Cancel, a failed row's dismiss — and a Cancel or a drop that leaves
+   the row standing does not. The queue is seeded dry. */
+async function setupRowRemoval(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const KEY = 'atag.setupDownload';
+    const marker = () => { try { const m = JSON.parse(localStorage.getItem(KEY) || 'null'); return m ? m.id : null; } catch (e) { return 'unreadable'; } };
+    const remember = (id) => { if (typeof obSetupPullRemember === 'function') obSetupPullRemember(id); };
+    const press = async (sel) => { const n = document.querySelector(sel); if (n) n.click(); await tick(60); return !!n; };
+    const keep = {room: S.room, dry: DL.dry};
+    const out = {};
+    try {
+      window.__dlClear(); S.room = 'chat'; render();
+      // The queued model behind the runtime, as a first run without llama.cpp shows it.
+      window.__dlSeed([{kind: 'runtime', id: 'llama.cpp'}, {kind: 'weights', id: 'smoke-s1'}]);
+      remember('smoke-s1');
+      await tick(60);
+      out.queued = {before: marker(), button: await press('#dlcard .dlc-x[data-act="dlc:drop:weights:smoke-s1"]'),
+        after: marker(), queue: DL.queue.map((q) => q.kind + ':' + q.id), head: DL.job ? DL.job.kind : null};
+      // A runtime queued behind the model goes: the model's row stays, and so does its reminder.
+      window.__dlSeed([{kind: 'weights', id: 'smoke-s1'}]);
+      DL.queue.push({kind: 'runtime', id: 'llama.cpp', run: DL.job.run}); render();
+      remember('smoke-s1');
+      await tick(60);
+      out.runtimeDropped = {button: await press('#dlcard .dlc-x[data-act="dlc:drop:runtime:llama.cpp"]'), after: marker()};
+      // The running row's Cancel.
+      window.__dlSeed([{kind: 'weights', id: 'smoke-s1'}]);
+      remember('smoke-s1');
+      await tick(60);
+      out.running = {button: await press('#dlcard .dlc-row .dlc-x[data-act="dlc:cancel"]'), after: marker()};
+      window.__dlFeed({id: 'smoke-s1', done: true, ok: false, error: 'download exited with code null'});
+      // A Cancel on another download, with the setup model queued behind it as a run of its own: it stays, so does the reminder.
+      window.__dlSeed([{kind: 'weights', id: 'smoke-other'}]);
+      DL.queue.push({kind: 'weights', id: 'smoke-s1', run: DL.job.run + 1000}); render();
+      remember('smoke-s1');
+      await tick(60);
+      out.otherCancelled = {button: await press('#dlcard .dlc-row .dlc-x[data-act="dlc:cancel"]'), after: marker(),
+        queue: DL.queue.map((q) => q.kind + ':' + q.id)};
+      window.__dlFeed({id: 'smoke-other', done: true, ok: false, error: 'download exited with code null'});
+      // A failed row's dismiss.
+      window.__dlSeed([{kind: 'weights', id: 'smoke-s1'}]);
+      remember('smoke-s1');
+      window.__dlFeed({id: 'smoke-s1', done: true, ok: false, error: 'smoke: network unreachable'});
+      await tick(60);
+      out.failed = {button: await press('#dlcard .dlc-row.is-failed .dlc-x'), after: marker()};
+      return out;
+    } finally {
+      window.__dlClear(); DL.dry = keep.dry; S.room = keep.room; render();
+    }
+  })()`);
+  type Step = { button: boolean; after: string | null; before?: string | null; queue?: string[]; head?: string | null };
+  const q = r["queued"] as Step, rt = r["runtimeDropped"] as Step, run = r["running"] as Step;
+  const other = r["otherCancelled"] as Step, f = r["failed"] as Step;
+  check(
+    "T18 S1: the setup model's queued row taken off the card forgets the resume reminder — the runtime in front carries on",
+    q.before === "smoke-s1" && q.button && q.after === null && JSON.stringify(q.queue) === "[]" && q.head === "runtime",
+    JSON.stringify(q),
+  );
+  check(
+    "T18 S1: the running row's Cancel and a failed row's dismiss forget it too",
+    run.button && run.after === null && f.button && f.after === null,
+    JSON.stringify({ run, f }),
+  );
+  check(
+    "T18 S1: a drop or a Cancel that leaves the setup model's row on the card keeps its reminder",
+    rt.button && rt.after === "smoke-s1" && other.button && other.after === "smoke-s1"
+      && JSON.stringify(other.queue) === JSON.stringify(["weights:smoke-s1"]),
+    JSON.stringify({ rt, other }),
   );
 }
 
