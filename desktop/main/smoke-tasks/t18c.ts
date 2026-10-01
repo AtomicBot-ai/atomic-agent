@@ -189,9 +189,9 @@ export async function checks18c(js: Js, check: Check): Promise<void> {
 
   const l0 = r["landed0"] as Launch, l2 = r["l2"] as Launch;
   check(
-    "T18 R1 projector: relaunched with the weights on disk and the projector not, the resume fetches the projector alone",
+    "T18 R1 projector: relaunched with the weights on disk and the projector not, the resume fetches the projector alone (llama.cpp is in: models status says so first)",
     !!l0.marker && l0.marker.weightsLanded === true && mmOk(l0.marker.mmproj)
-      && l2.opened === 0 && same(l2.calls, [PROJ]) && l2.queue.length === 0 && l2.projector && projectorRow(l2.card),
+      && l2.opened === 0 && same(l2.calls, ["status", PROJ]) && l2.queue.length === 0 && l2.projector && projectorRow(l2.card),
     JSON.stringify({ landed0: l0, l2 }),
   );
 
@@ -200,11 +200,11 @@ export async function checks18c(js: Js, check: Check): Promise<void> {
   const failedRow = l2Failed.card && l2Failed.card.rows.length === 1 ? l2Failed.card.rows[0]! : null;
   check(
     "T18 R1 projector: a projector that fails on a resume is a failed row with Retry and the model is not started text-only; the next launch fetches it again and starts it once it lands",
-    r["l2Answered"] === true && same(l2Failed.calls, [PROJ]) && !l2Failed.projector
+    r["l2Answered"] === true && same(l2Failed.calls, ["status", PROJ]) && !l2Failed.projector
       && !!failedRow && failedRow.retry && /^Failed · smoke: HTTP 503/.test(failedRow.line) && /not started/.test(failedRow.line)
       && !!l2Failed.marker && l2Failed.marker.weightsLanded === true && mmOk(l2Failed.marker.mmproj)
-      && l3.opened === 0 && same(l3.calls, [PROJ]) && l3.queue.length === 0 && projectorRow(l3.card)
-      && r["l3Answered"] === true && same(l3Done.calls, [PROJ, START]) && l3Done.marker === null && l3Done.card === null,
+      && l3.opened === 0 && same(l3.calls, ["status", PROJ]) && l3.queue.length === 0 && projectorRow(l3.card)
+      && r["l3Answered"] === true && same(l3Done.calls, ["status", PROJ, START]) && l3Done.marker === null && l3Done.card === null,
     JSON.stringify({ l2Failed, l3, l3Done }),
   );
 }

@@ -93,7 +93,12 @@ import {
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
-import { RELEASE_FIX_TASKS, releaseFixesSmokeTest } from "./release-fixes-smoke.js";
+import {
+  RELEASE_FIX_TASKS,
+  releaseFixesSmokeTest,
+  type ProjectorStatusAnswer,
+  type SmokeDownloads,
+} from "./release-fixes-smoke.js";
 // Lane B — context before the first message (item 3): the no-trace smoke dir.
 import { mkdirSync, rmSync } from "node:fs";
 // Item 7 (settings surface)
@@ -309,12 +314,20 @@ function writeVoicePrefs(locales: string[]): { ok: boolean; error?: string } {
 let hfLookup: AbortController | null = null;
 /* Item 7A — the projector download in flight. It shares the `cli:pull`
    stream with `cli:modelsPull` so the renderer needs one subscriber, so
-   it needs its own slot and both must refuse while the other runs. */
-let hfProjector: { controller: AbortController; id: string } | null = null;
+   it needs its own slot and both must refuse while the other runs.
+   Backlog 18 (deferred D4): which file it fetches, and its answer to come,
+   so a window reopened over it can follow it (cli:hfProjector). */
+type ProjectorAnswer = { ok: boolean; error?: string; alreadyPresent?: boolean; path?: string };
+let hfProjector: { controller: AbortController; id: string; url: string; file: string; done: Promise<ProjectorAnswer> } | null = null;
 /* r5 item 7 (setup wizard): the backend-zip download, which is a second
    long-running child in the same data dir. It takes the same single-flight
    slot as `pull` — `models update` stops the daemon to install the zip. */
 let pullUpdate: DownloadSlot | null = null;
+/* Deferred F8: Settings › Models' own llama.cpp update (cli:modelsUpdate), the
+   same `models update` without a stream. No window can follow it (it sends no
+   frames) and cli:cancelPull has no child to stop, so it is not a slot — but
+   every other download refuses while it runs (downloadRunning). */
+let settingsUpdate = false;
 
 /* Backlog 18 (review S5): on macOS closing the window is not quitting, so a
    pull runs on in main, and the window reopened from the dock resumes the
@@ -322,13 +335,56 @@ let pullUpdate: DownloadSlot | null = null;
    download and the running pull's `done` frame reached nobody: the model was
    never started. Every refusal now says which download the slot is running,
    with its last progress frame, so the window can follow its own model's
-   pull instead (renderer dlAdopt); any other download stays a refusal. */
+   pull instead (renderer dlAdopt); any other download stays a refusal.
+   Deferred F8: it is also the one test every download handler refuses on,
+   whichever download runs. The projector's own guard missed `models update`
+   and the embedding pull's missed the projector, so two ran at once, and the
+   one Cancel (cli:cancelPull) stopped only one of them. */
 function downloadRunning(): { kind: string; id: string; last: Record<string, unknown> | null } | null {
   if (hfProjector) return { kind: "projector", id: hfProjector.id, last: null };
   const slot = pullUpdate ?? pull;
-  return slot ? { kind: slot.kind, id: slot.id, last: slot.last } : null;
+  if (slot) return { kind: slot.kind, id: slot.id, last: slot.last };
+  // Its own kind: the setup queue's runtime job must not take it for a download it can follow (dlAdopt).
+  return settingsUpdate ? { kind: "update", id: "llama.cpp", last: null } : null;
 }
 const DOWNLOAD_BUSY = "a download is already running";
+/* What the projector download reads `models status` with (cli:hfProjector).
+   Only the item-18 smoke stands in for it (smokeDownloads below). */
+let projectorStatusRead: () => Promise<ProjectorStatusAnswer> = modelsStatus;
+/* Smoke only: while a check runs offline (smokeDownloads.offline), every
+   download handler refuses before anything is spawned or fetched, whatever it
+   was asked — the last line under "a check never downloads". */
+let smokeOffline = false;
+const SMOKE_OFFLINE = "smoke: offline, nothing is downloaded";
+
+/* Smoke only (backlog 18, the deferred cases): what the item-18 checks put in
+   main's place. A download held in a slot with no child behind it, and the
+   projector's `models status` read stood in, so a check can ask each download
+   handler what it does meanwhile without fetching anything. Handed to the
+   release-fix checks (release-fixes-smoke.ts); nothing else calls it. */
+const smokeDownloads: SmokeDownloads = {
+  hold(kind, id) {
+    if (kind === "projector") {
+      if (hfProjector) throw new Error(`smoke: the projector slot is taken (${hfProjector.id})`);
+      // No url or file: no projector call ever follows it (cli:hfProjector).
+      const held = { controller: new AbortController(), id, url: "", file: "", done: new Promise<never>(() => {}) };
+      hfProjector = held;
+      return () => { if (hfProjector === held) hfProjector = null; };
+    }
+    if (pullUpdate) throw new Error(`smoke: the runtime slot is taken (${pullUpdate.id})`);
+    const held: DownloadSlot = { done: new Promise<never>(() => {}), cancel: () => {}, kind, id, last: null };
+    pullUpdate = held;
+    return () => { if (pullUpdate === held) pullUpdate = null; };
+  },
+  projectorStatus(read) {
+    projectorStatusRead = read;
+    return () => { if (projectorStatusRead === read) projectorStatusRead = modelsStatus; };
+  },
+  offline() {
+    smokeOffline = true;
+    return () => { smokeOffline = false; };
+  },
+};
 
 /** One `cli:pull` progress frame, kept as its slot's last one when it carries a percent. */
 function pullFrame(slot: DownloadSlot | null, frame: Record<string, unknown>): void {
@@ -858,7 +914,9 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || pullUpdate || hfProjector) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     const started = modelsPull(id, (line) =>
       pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
@@ -877,7 +935,9 @@ function wireIpc(client: AgentClient): void {
      slot, because the CLI stops the daemon to install the zip and two
      concurrent downloads into one data dir is not a thing to allow. */
   ipcMain.handle("cli:modelsUpdateStream", () => {
-    if (pull || pullUpdate || hfProjector) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     const id = "llama.cpp";
     let slot: DownloadSlot | null = null;
     const started = modelsUpdateStream((line) =>
@@ -979,7 +1039,7 @@ function wireIpc(client: AgentClient): void {
    * caller, and a second `done` would re-enter the renderer's pull
    * subscriber and run the post-download activation twice.
    */
-  ipcMain.handle("cli:hfProjector", async (_event, payload: unknown) => {
+  ipcMain.handle("cli:hfProjector", (_event, payload: unknown) => {
     const { id, mmprojUrl, mmprojFilename, name } = (payload ?? {}) as {
       id?: unknown; mmprojUrl?: unknown; mmprojFilename?: unknown; name?: unknown;
     };
@@ -994,64 +1054,88 @@ function wireIpc(client: AgentClient): void {
     if (typeof mmprojFilename !== "string" || !isSafeModelFilename(mmprojFilename)) {
       return { ok: false, error: "unsafe projector filename" };
     }
-    if (pull || hfProjector) return { ok: false, error: "a download is already running" };
+    /* Backlog 18 (deferred D4): on macOS closing the window is not quitting,
+       and this download runs on. The window reopened over it resumes the very
+       same projector (renderer obSetupPullRestart), and was refused as "a
+       download is already running": a failed row, and the model never started
+       although its projector landed. The call now follows the download that
+       runs, as a model's pull is followed (renderer dlAdopt), and answers with
+       its answer — a projector has no `done` frame to follow it by. The
+       renderer never asks twice for one projector itself (dlProjectorNext). */
+    if (hfProjector && hfProjector.id === id && hfProjector.url === mmprojUrl && hfProjector.file === mmprojFilename) {
+      return hfProjector.done;
+    }
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     /* Backlog 18 review: the slot is taken BEFORE `models status` is read. A
        Cancel pressed during that read found nothing to abort (cli:cancelPull
        answered false), and the projector then came down in full under a row
-       that said "Cancelling…". It is honoured as soon as the read returns. */
+       that said "Cancelling…". */
     const controller = new AbortController();
-    const slot = { controller, id };
+    let answer: (a: ProjectorAnswer) => void = () => {};
+    const done = new Promise<ProjectorAnswer>((resolve) => { answer = resolve; });
+    const slot = { controller, id, url: mmprojUrl, file: mmprojFilename, done };
     hfProjector = slot;
     const cancelled = "the projector download was cancelled — a retry starts it from the beginning";
-    try {
-      const st = await modelsStatus();
-      if (controller.signal.aborted) return { ok: false, error: cancelled };
-      const dataDir = st.ok && st.status ? st.status.dataDir : null;
-      if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
-      const dir = join(dataDir, "models", id);
-      const dest = join(dir, mmprojFilename);
-      const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
-      // Matches downloadMmproj's own early return: the installer skips when
-      // the destination exists.
-      if (existsSync(dest)) {
-        send("cli:pull", { id, line: `${label} already on disk` });
-        return { ok: true, alreadyPresent: true };
-      }
-      send("cli:pull", { id, line: `${label} 0%` });
+    const fetchIt = async (): Promise<ProjectorAnswer> => {
       try {
-        mkdirSync(dir, { recursive: true });
-        await downloadProjector(mmprojUrl, dest, {
-          signal: controller.signal,
-          onProgress: (percent, transferred, total) =>
-            send("cli:pull", {
-              id,
-              line: total > 0
-                ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
-                : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
-              /* r5 item 7 (setup wizard): its own kind, so the setup download
-                 cannot fold a projector's percent into the weights bar (the
-                 download card gives it its own row). The byte counts here are
-                 real, not parsed off the line. */
-              kind: "projector",
-              percent,
-              transferredBytes: transferred,
-              totalBytes: total,
-              label,
-            }),
-        });
-        send("cli:pull", { id, line: `${label} done` });
-        return { ok: true, path: dest };
+        /* Deferred D6: such a Cancel ends the call at once. It used to take
+           effect only once `models status` returned — about a second, up to
+           its 30 s timeout — with the row on "Cancelling…" all that time; the
+           read is raced against the Cancel now, not waited out. */
+        const abort = new Promise<null>((resolve) => controller.signal.addEventListener("abort", () => resolve(null), { once: true }));
+        const st = await Promise.race([projectorStatusRead(), abort]);
+        if (!st || controller.signal.aborted) return { ok: false, error: cancelled };
+        const dataDir = st.ok && st.status ? st.status.dataDir : null;
+        if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
+        const dir = join(dataDir, "models", id);
+        const dest = join(dir, mmprojFilename);
+        const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
+        // Matches downloadMmproj's own early return: the installer skips when
+        // the destination exists.
+        if (existsSync(dest)) {
+          send("cli:pull", { id, line: `${label} already on disk` });
+          return { ok: true, alreadyPresent: true };
+        }
+        if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
+        send("cli:pull", { id, line: `${label} 0%` });
+        try {
+          mkdirSync(dir, { recursive: true });
+          await downloadProjector(mmprojUrl, dest, {
+            signal: controller.signal,
+            onProgress: (percent, transferred, total) =>
+              send("cli:pull", {
+                id,
+                line: total > 0
+                  ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
+                  : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
+                /* r5 item 7 (setup wizard): its own kind, so the setup download
+                   cannot fold a projector's percent into the weights bar (the
+                   download card gives it its own row). The byte counts here are
+                   real, not parsed off the line. */
+                kind: "projector",
+                percent,
+                transferredBytes: transferred,
+                totalBytes: total,
+                label,
+              }),
+          });
+          send("cli:pull", { id, line: `${label} done` });
+          return { ok: true, path: dest };
+        } catch (err) {
+          const message = controller.signal.aborted ? cancelled : err instanceof Error ? err.message : String(err);
+          send("cli:pull", { id, line: `${label} failed: ${message}` });
+          return { ok: false, error: message };
+        }
       } catch (err) {
-        const message = controller.signal.aborted ? cancelled : err instanceof Error ? err.message : String(err);
-        send("cli:pull", { id, line: `${label} failed: ${message}` });
-        return { ok: false, error: message };
+        // `models status` itself threw: an answer, not a rejection the renderer has to survive.
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        if (hfProjector === slot) hfProjector = null;
       }
-    } catch (err) {
-      // `models status` itself threw: an answer, not a rejection the renderer has to survive.
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      if (hfProjector === slot) hfProjector = null;
-    }
+    };
+    void fetchIt().then(answer, (err) => answer({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    return done;
   });
   ipcMain.handle("cli:modelsSearch", (_event, payload: unknown) => {
     const { query, provider, limit } = (payload ?? {}) as {
@@ -1458,7 +1542,9 @@ function wireIpc(client: AgentClient): void {
   // Shares the one `pull` slot and the `cli:pull` stream with `cli:modelsPull`.
   ipcMain.handle("cli:modelsPullEmbedding", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || pullUpdate) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     const started = modelsPullEmbedding(id, (line) =>
       pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
@@ -1473,7 +1559,21 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsUseEmbedding", (_event, id: unknown) =>
     typeof id === "string" ? modelsUseEmbedding(id) : { ok: false, error: "embedding model id required" },
   );
-  ipcMain.handle("cli:modelsUpdate", () => modelsUpdate());
+  /* Deferred F8: Settings' llama.cpp update is a download as well — it fetches
+     the runtime and replaces the binary — and it ran beside a setup download,
+     where a model landing meanwhile started on a binary being replaced. It
+     refuses while any download runs, and they refuse while it does. */
+  ipcMain.handle("cli:modelsUpdate", async () => {
+    const running = downloadRunning();
+    if (running) return { ok: false, stdout: "", stderr: "", error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
+    settingsUpdate = true;
+    try {
+      return await modelsUpdate();
+    } finally {
+      settingsUpdate = false;
+    }
+  });
   ipcMain.handle("cli:modelsDevices", () => modelsDevices());
   ipcMain.handle("cli:modelsUseDevice", (_event, id: unknown) =>
     typeof id === "string" ? modelsUseDevice(id) : { ok: false, error: "device id required" },
@@ -1884,7 +1984,7 @@ async function smokeTest(): Promise<void> {
   }
 
   if (SMOKE_TASKS) {
-    await releaseFixesSmokeTest(js, check, SMOKE_TASKS);
+    await releaseFixesSmokeTest(js, check, SMOKE_TASKS, smokeDownloads);
     process.stdout.write(`SMOKE tasks=${SMOKE_TASKS.join(",")} failures=${fail.length}\n`);
     exitAfterAgentStop(fail.length === 0 ? 0 : 1);
     return;
@@ -2828,7 +2928,7 @@ async function smokeTest(): Promise<void> {
     // leave the route changed.
     // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
     await fusionSmokeTest(js, check);
-    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS);
+    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS, smokeDownloads);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".

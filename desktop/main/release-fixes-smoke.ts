@@ -16,6 +16,7 @@ import { checks18 } from "./smoke-tasks/t18.js";
 import { checks18b } from "./smoke-tasks/t18b.js";
 import { checks18c } from "./smoke-tasks/t18c.js";
 import { checks18d } from "./smoke-tasks/t18d.js";
+import { checks18e } from "./smoke-tasks/t18e.js";
 import { checks22 } from "./smoke-tasks/t22.js";
 
 /**
@@ -30,6 +31,22 @@ import { checks22 } from "./smoke-tasks/t22.js";
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
+
+/** What the projector download's `models status` read answers: only the data dir is read. */
+export type ProjectorStatusAnswer = { ok: boolean; status?: { dataDir: string | null }; error?: string };
+/**
+ * Backlog 18 (the deferred cases): main's stand-ins for what its download
+ * handlers wait on, handed in by main.ts, which owns the slots. Nothing is
+ * spawned or fetched through them.
+ */
+export type SmokeDownloads = {
+  /** A stand-in held in main's runtime or projector slot, with no child behind it. Returns its release. */
+  hold: (kind: "runtime" | "projector", id: string) => () => void;
+  /** The projector download's `models status` read, stood in. Returns the undo. */
+  projectorStatus: (read: () => Promise<ProjectorStatusAnswer>) => () => void;
+  /** Every download handler refuses before it spawns or fetches anything, whatever it is asked. Returns the undo. */
+  offline: () => () => void;
+};
 
 export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22"];
 
@@ -57,7 +74,7 @@ function menuLabels(menu: Electron.Menu | null): string[] {
   return menu.items.flatMap((i) => [i.label, ...menuLabels(i.submenu ?? null)]);
 }
 
-export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[]): Promise<void> {
+export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[], downloads: SmokeDownloads): Promise<void> {
   const want = new Set(tasks.map((t) => t.padStart(2, "0")));
 
   if (want.has("12")) {
@@ -440,6 +457,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       await guarded("18", check, () => checks18b(js, check));
       // Its second review: a reopened window, an early landing, the resume cap, a late Cancel (smoke-tasks/t18d.ts).
       await guarded("18", check, () => checks18d(js, check));
+      // The rare cases deferred from it, a vision model's projector among the other downloads (smoke-tasks/t18e.ts).
+      await guarded("18", check, () => checks18e(js, check, downloads));
     } finally {
       await js<unknown>("(() => { S.inspector = !!window.__t18Insp; delete window.__t18Insp; render(); })()");
       wins.forEach((x, i) => { if (!x.isDestroyed()) x.webContents.setBackgroundThrottling(throttled[i]!); });
