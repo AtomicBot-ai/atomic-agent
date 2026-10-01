@@ -11577,7 +11577,12 @@ if (BR) {
   // for LLMP.pulling; the prototype Models pane's third branch went with it.
   BR.onPull((ev) => {
     if (!ev || !SEL.pulling) return;
-    if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('.popover .cap'); if (box) box.textContent = ev.line; }
+    /* Backlog 18 review: the pull's own line, and nothing else. This patched
+       the first `.popover .cap` on screen, which is the pull screen's line
+       only while that screen is up — over the provider setup the download
+       card opens ("Set up a cloud model meanwhile") it was a provider row's
+       caption, and over the coding-mode popover that popover's subtitle. */
+    if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('#overlays .selpop .selpullline'); if (box) box.textContent = ev.line; }
     if (ev.done) {
       const id = SEL.pulling; SEL.pulling = null;
       if (ev.ok) selActivate({type:'localModel', id, downloaded:true});
@@ -11924,7 +11929,27 @@ function openSelector(kind) {
   // last read (a terminal export, the .env) is what unblocks Fusion's row.
   bswRefreshFacts();
 }
-function closeSelector() { SEL.open = false; SEL.addOpen = false; WIZ.alone = false; render(); }
+function closeSelector() {
+  SEL.open = false; SEL.addOpen = false; WIZ.alone = false;
+  /* Backlog 18 review: the provider setup is drawn in this popover, so it
+     closes with it — WIZ is cleared and an entry it wrote but never finished
+     goes (wizDropUnfinished), as act('close') does. Left set, the next chip
+     click reopened that stale setup. First-run setup mounts the same wizard
+     in its own layer and keeps it. */
+  if (WIZ.phase && !OB.open) { WIZ.phase = null; wizDropUnfinished(); }
+  render();
+}
+/**
+ * Backlog 18 review: the selector's own work has landed — a composer download
+ * selected on landing, a backend or Fusion switch — and closes the popover it
+ * started in. A provider setup opened in it since (the download card's "Set
+ * up a cloud model meanwhile", Settings › Models) is the person's: it stays
+ * up, with the key being typed, until they finish or leave it.
+ */
+function closeSelectorUnlessSetup() {
+  if (SEL.open && WIZ.phase && !OB.open) { render(); return; }
+  closeSelector();
+}
 
 async function selLoadLocal() {
   SEL.localBusy = true; render();
@@ -12188,7 +12213,8 @@ async function selActivate(row) {
       SEL.err = (res && res.error) || 'could not select the model'; render(); return;
     }
     S.localModel = row.id;
-    closeSelector();
+    // A composer download lands here (selPull's listener), maybe under a provider setup opened meanwhile.
+    closeSelectorUnlessSetup();
     bswReport(res);
     if (res.daemon === 'start-failed') toast('Local daemon did not start', res.error || '');
     // r5 item 10: the live config is already re-read inside swxRun.
@@ -12255,8 +12281,8 @@ function selectorHTML() {
      popover's pull may still be running. */
   if (WIZ.phase) return wizardHTML();
   if (SEL.pulling) {
-    /* The first `.popover .cap` is the line the pull's progress events patch
-       in place (selPull's listener) — keep it first. */
+    /* `.selpullline` is the line the pull's progress events patch in place
+       (selPull's listener), and the only one. */
     return selShell('Downloading ' + SEL.pulling,
       '<div class="selbody selpull"><p class="cap selpullline">' + esc(SEL.pullLine) + '</p>'
       + '<p class="cap">It is selected automatically when it lands.</p></div>',
@@ -13371,7 +13397,7 @@ async function selChooseBackend(id) {
     selLoadLocal();
     return res;
   }
-  closeSelector();
+  closeSelectorUnlessSetup();
   return res;
 }
 
@@ -13695,7 +13721,7 @@ function fzAfter(res, before) {
   const now = rmNow();
   const entered = res.runMode ? !!res.runMode.enteredFusion : (now.effective === 'fusion' && before !== 'fusion');
   if (entered) fzIntro(now);
-  closeSelector();
+  closeSelectorUnlessSetup();
   return res;
 }
 
