@@ -151,7 +151,10 @@ function livePicks(
 
 /**
  * The provider's own model list, for the kinds that ship no catalog: the
- * entry's `/v1/models`, or Gemini's `/v1beta/openai/models`.
+ * entry's `/v1/models`, or Gemini's `/v1beta/openai/models`. Each request
+ * carries the headers the entry's chat requests carry — the entry is the
+ * auth description — so a service that does not take `Authorization:
+ * Bearer` (Anthropic's `x-api-key`) is asked the way it can answer.
  *
  * A failure lands in `failures` and yields no ids; the caller decides
  * whether it is worth saying.
@@ -179,7 +182,7 @@ async function liveModels(
   }
   const baseUrl = entry.baseUrl;
   return listOrRecord(entry, failures, () =>
-    fetchOpenAiCompatModels(baseUrl, entry.apiKey),
+    fetchOpenAiCompatModels(baseUrl, entry.apiKey, entry),
   );
 }
 
