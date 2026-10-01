@@ -27,6 +27,7 @@ import {
   versions,
 } from "node:process";
 import { currentTarget } from "./bundle-targets.js";
+import { stripAuthenticode } from "./strip-authenticode.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BUNDLE_ROOT = join(ROOT, "bundle");
@@ -149,6 +150,11 @@ async function main(): Promise<number> {
   await copyFile(execPath, binaryPath);
   if (platform !== "win32") {
     await chmod(binaryPath, 0o755);
+  } else if (await stripAuthenticode(binaryPath)) {
+    // The copy still carries the Node.js project's signature, which postject
+    // would corrupt and signtool would then refuse to replace. See
+    // strip-authenticode.ts.
+    stdout.write("      removed the stock node.exe signature before injection\n");
   }
 
   stdout.write(`[3/${steps}] injecting blob via postject\n`);
