@@ -25,7 +25,6 @@ export function buildMenu(send: (command: string) => void): void {
       label: "Atomic Agent",
       submenu: [
         { role: "about" },
-        item("Run Setup Again…", "onboarding"),
         sep,
         item("Settings…", "settings:open", "CommandOrControl+,"),
         item("Privacy…", "settings:privacy", "Shift+CommandOrControl+,"),
