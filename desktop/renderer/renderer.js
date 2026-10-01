@@ -572,7 +572,13 @@ const OBSKY = {
    ------------------------------------------------------------------ */
 const DL = {
   job: null,        // {kind, id, label, percent, transferredBytes, totalBytes, at}
-  queue: [],        // [{kind, id, label}]
+  queue: [],        // [{kind, id, label, run}]
+  /** Backlog 18 review: which run a job belongs to. One Download is one run
+      (the llama.cpp runtime it needs, then its weights); a Retry is a run of
+      its own. A Cancel takes the rest of the cancelled job's run and nothing
+      else (dlCancel); a new run is queued in front of the jobs already
+      waiting, never in place of them (dlStart). */
+  runSeq: 0,
   rate: null,       // bytes/s, EMA over the real samples only
   last: null,       // {bytes, at} — the previous sample
   error: null,
@@ -8262,9 +8268,15 @@ function dlResetPhases(withRuntime) {
  * Queue one or more downloads. Main single-flights them (one child, one
  * data dir), so a runtime phase and a weights phase are two jobs in
  * order — the card draws the head and a row for each job behind it.
+ * The jobs are one run (DL.runSeq). What is already queued stays queued
+ * behind them: a Retry pressed while obStartLocalPull was still reading
+ * `models status` went into the queue (dlRequeue), and replacing the queue
+ * here dropped it with no row left to say so (backlog 18 review).
  */
 function dlStart(jobs) {
-  DL.queue = jobs.slice();
+  const run = ++DL.runSeq;
+  const fresh = jobs.map((j) => Object.assign({}, j, {run}));
+  DL.queue = fresh.concat(DL.queue.filter((q) => !fresh.some((j) => j.kind === q.kind && j.id === q.id)));
   DL.error = null;
   DL.rate = null; DL.last = null; DL.samples = 0;
   dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
@@ -8763,19 +8775,28 @@ function dlCardAct(verb) {
 
 /**
  * The setup download's Cancel, from the card and from the setup screen alike
- * (`dl:cancel`): stop the running child and drop the jobs queued behind it —
- * the runtime is only ever queued for the model after it. The job is marked
- * first, so the `done` frame its exit sends is read as the cancel it is.
+ * (`dl:cancel`). It stops what is running — the pick still reading `models
+ * status`, the running child, a vision projector — and drops only what
+ * depends on it: the rest of the running job's own run, which is the model a
+ * llama.cpp runtime was fetched for. A Retry queued behind it is a run of its
+ * own (dlRequeue) and stays, to run next. The job is marked first, so the
+ * `done` frame its exit sends is read as the cancel it is.
  */
 function dlCancel() {
   // A setup download the person stopped is not picked up again on the next launch.
   obSetupPullForget();
   DL.preparing = null;
   DL.activateAfter = null;
-  if (DL.job) DL.job.cancelled = true;
+  const job = DL.job;
+  if (job) {
+    job.cancelled = true;
+    DL.queue = DL.queue.filter((q) => q.run !== job.run);
+  }
   if (DL.projector) DL.projector.cancelled = true;
-  DL.queue.length = 0;
-  if (BR && BR.cancelPull) BR.cancelPull();
+  // Main's one Cancel stops whichever pull it runs: only ever sent for one of ours.
+  if (job || DL.projector) { if (BR && BR.cancelPull) BR.cancelPull(); render(); return; }
+  // Only a pick that was still starting: nothing runs, so what is queued behind it starts now.
+  if (DL.queue.length) { dlNext(); return; }
   render();
 }
 
@@ -8790,7 +8811,8 @@ function dlFailClear(kind, id) {
   DL.failed = DL.failed.filter((f) => !(f.kind === kind && f.id === id));
 }
 function dlRequeue(job) {
-  const j = {kind: job.kind, id: job.id};
+  // A run of its own: a Cancel on the job in front of it does not take it (dlCancel).
+  const j = {kind: job.kind, id: job.id, run: ++DL.runSeq};
   if (DL.job || DL.preparing) { DL.queue.push(j); render(); return; }
   dlStart([j]);
 }
@@ -21518,6 +21540,9 @@ if (typeof window !== 'undefined') {
   /** Seed a queue without spawning anything, to assert the queue text. */
   window.__dlSeed = (jobs) => {
     DL.dry = true;
+    // One run, as dlStart queues one Download (a Cancel on its head takes the rest).
+    const run = ++DL.runSeq;
+    jobs = jobs.map((j) => Object.assign({}, j, {run}));
     DL.queue = jobs.slice(1);
     DL.error = null; DL.rate = null; DL.last = null; DL.samples = 0;
     // A fresh run: nothing from an earlier seed is left on the card.
