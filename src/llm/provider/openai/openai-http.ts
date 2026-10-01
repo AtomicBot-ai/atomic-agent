@@ -211,16 +211,27 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
 /**
  * The provider's own explanation, dug out of the body `httpErrorFromResponse`
  * folded into the message as `openai provider <status>: <body>`.
- *
- * OpenAI-compatible errors are `{"error": {"message": …}}`; a few
- * providers send `{"message": …}` or `{"error": "…"}`, and some send
- * plain text. Anything unrecognisable is passed through as trimmed text
- * rather than dropped — an unhelpful sentence is still better evidence
- * than a status code alone. Bounded so a provider that echoes the whole
- * request cannot flood a chat row.
  */
 function providerReason(err: OpenAiHttpError): string {
-  const body = err.message.replace(/^openai provider \d+:\s*/, "").trim();
+  return providerErrorSentence(
+    err.message.replace(/^openai provider \d+:\s*/, ""),
+  );
+}
+
+/**
+ * The provider's own sentence out of an error body. Exported for the
+ * model-list fetchers, whose refusals had only a status to show.
+ *
+ * OpenAI-compatible errors are `{"error": {"message": …}}`; a few
+ * providers send `{"message": …}` or `{"error": "…"}`, Google's
+ * OpenAI-compatible surface wraps the object in an array
+ * (`[{"error": {…}}]`), and some send plain text. Anything unrecognisable
+ * is passed through as trimmed text rather than dropped — an unhelpful
+ * sentence is still better evidence than a status code alone. Bounded so
+ * a provider that echoes the whole request cannot flood a chat row.
+ */
+export function providerErrorSentence(raw: string): string {
+  const body = raw.trim();
   if (!body) return "";
   let text: string;
   try {
@@ -246,6 +257,16 @@ function providerReason(err: OpenAiHttpError): string {
 }
 
 function messageFromErrorJson(parsed: unknown): string {
+  // Google's array form: the first element that says something. Read as
+  // an object it had no message, and "Please pass a valid API key" was
+  // dropped from a Gemini refusal.
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      const message = messageFromErrorJson(item);
+      if (message) return message;
+    }
+    return "";
+  }
   if (!parsed || typeof parsed !== "object") return "";
   const root = parsed as { error?: unknown; message?: unknown };
   if (typeof root.message === "string" && root.message.trim()) {

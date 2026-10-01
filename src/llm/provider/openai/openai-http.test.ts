@@ -805,6 +805,17 @@ describe("humanizeOpenAiHttpError", () => {
     expect(humanizeOpenAiHttpError(withBody(413, "payload too large\n"))).toContain("payload too large");
   });
 
+  /* Google's OpenAI-compatible surface wraps its error object in an array.
+     It parsed, carried no top-level message, and the sentence was dropped:
+     a bad Gemini key read only "rejected the request (400)." */
+  it("reads the sentence out of Gemini's array-wrapped error", () => {
+    const body =
+      '[{\n  "error": {\n    "code": 400,\n    "message": "Please pass a valid API key",\n    "status": "INVALID_ARGUMENT"\n  }\n}\n]';
+    const said = humanizeOpenAiHttpError(withBody(400, body));
+    expect(said).toContain("rejected the request (400). Please pass a valid API key");
+    expect(said).not.toContain('"error"');
+  });
+
   it("says only what it knows when the body carried nothing", () => {
     /* No sentence from the provider, so none is invented — but a 402 still
        explains the mechanism, because that part is true whatever the body
