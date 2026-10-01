@@ -423,4 +423,18 @@ async function storedKeyInWindow(js: Js, check: Check): Promise<void> {
       && /saved for .*character keys don\u2019t have/.test(String(r["failLine"] ?? "")),
     show({ waitLine: r["waitLine"], failLine: r["failLine"] }),
   );
+  // Backlog 29: the agent's own sentence about a refused or unusable key reaches the person, worded for the desktop.
+  const said = await js<Record<string, unknown>>(`(() => {
+    const refused = turnFailureLine({category:'transport', error:'"aimlapi" rejected the API key (401). Check the key in the Providers panel.'});
+    const unusable = turnFailureLine({category:'transport', error:"\\"aimlapi\\" can't use its API key: the key has a character API keys never contain, so it was not sent. Re-enter the key in the Providers panel."});
+    const outage = turnFailureLine({category:'transport', error:'fetch failed'});
+    return {refused, unusable, outage};
+  })()`);
+  check(
+    "T32: a turn the agent ended on a refused or unusable key says so in its words, pointing at Settings › Models, not \"not answering\"",
+    /rejected the API key \(401\)/.test(String(said.refused)) && /Settings › Models/.test(String(said.refused))
+      && !/not answering/.test(String(said.refused)) && /can't use its API key/.test(String(said.unusable))
+      && !/Providers panel/.test(String(said.unusable)) && /not answering/.test(String(said.outage)),
+    show(said),
+  );
 }

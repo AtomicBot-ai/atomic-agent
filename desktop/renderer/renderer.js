@@ -6935,6 +6935,14 @@ function turnFailureLine(ev) {
      reached it; whatever the chain's last link said ("fetch failed" from a
      local fallback) is not why the turn failed. */
   if (entry && savedKeyInvalid(entry)) return esc(savedKeyTurnLine(id) + (waited ? ' The turn gave up' + waited + '.' : ''));
+  /* Backlog 29: the agent names a key it could not use or that the provider
+     refused ("… can't use its API key: …", "… rejected the API key (401) …").
+     That sentence is the reason; "not answering" would send the person to
+     their network. The TUI's "Providers panel" is Settings › Models here. */
+  const said = String((ev && ev.error) || '');
+  if (/can't use its API key|rejected the API key|has no API key/i.test(said)) {
+    return esc(said.replace(/the Providers panel/g, 'Settings › Models') + (waited ? ' The turn gave up' + waited + '.' : ''));
+  }
   if (providerFailure(ev)) {
     const host = providerHost(entry);
     return esc((id ? providerWord(id) : 'The provider') + ' is not answering'
