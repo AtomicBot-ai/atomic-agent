@@ -11,6 +11,7 @@ const IS_MAC = PLATFORM === 'darwin';
 const IS_WIN = PLATFORM === 'win32';
 /** What the copy calls the machine: "this Mac" on macOS, as it always has. */
 const THIS_MACHINE = IS_MAC ? 'this Mac' : 'this computer';
+const THIS_MACHINE_CAP = IS_MAC ? 'This Mac' : 'This computer';
 
 /** A chord as this platform spells it. The app writes chords the Mac way
     ('⌥ ⌘ E'); off macOS ⌘ reads Ctrl, and the Option-chords read Ctrl
@@ -1661,7 +1662,7 @@ const shortModel = (id) => id.replace(/-instruct$/, '');
    the visible text is for a person. Nothing here invents a name: a model
    the catalogue does not know keeps its id, a provider with no preset keeps
    its id. */
-const BACKEND_WORDS = {cloud:'Cloud', local:'This Mac', custom:'Custom server', fusion:'Fusion'};
+const BACKEND_WORDS = {cloud:'Cloud', local:'Local models', custom:'Custom server', fusion:'Fusion'};
 function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
 /** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
 function providerWord(id) {
@@ -2782,7 +2783,7 @@ function composer() {
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
-         Calm (S2): the chips print human words ("This Mac", "OpenRouter",
+         Calm (S2): the chips print human words ("Local models", "OpenRouter",
          "Gemma 4 E4B") and no caption — the icon and the word say which
          control it is, the tooltip and aria-label name it. The raw id each
          chip stands for is its `data-id`, which is what the drivers and the
@@ -4377,7 +4378,7 @@ function generalPane() {
       + tpNotifyRowHTML()
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments never leave ' + THIS_MACHINE + '. '
+          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments are never sent with analytics. '
             + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
@@ -9222,7 +9223,7 @@ function obModelRowLabel(model, isBest) {
  * window made up about it.
  */
 function obModelRowDetail(model) {
-  const facts = [modelBlurb(model), modelSizeWord(model), model.downloaded ? 'already on this Mac' : '']
+  const facts = [modelBlurb(model), modelSizeWord(model), model.downloaded ? 'already on ' + THIS_MACHINE : '']
     .filter(Boolean).join(' · ');
   const note = modelPickNote(model, OB.ram);
   return '<span>' + esc(facts) + '</span>'
@@ -9249,7 +9250,7 @@ function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
   if (fit.v === 'over') {
     const need = fit.known && model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fit.short.replace(/^will not run — n/, 'N').replace(/^n/, 'N');
-    return {v:'over', text: need + (ram ? '. This Mac has ' + ram + ' GB.' : '.')};
+    return {v:'over', text: need + (ram ? '. ' + THIS_MACHINE_CAP + ' has ' + ram + ' GB.' : '.')};
   }
   if (fit.v === 'tight') return {v:'tight', text:'Tight fit on ' + ram + ' GB. It will run slowly.'};
   if (model.uncensored && model.tag) return {v:'caution', text: String(model.tag)};
@@ -9275,7 +9276,7 @@ function obNothingFitsLine() {
 function obOutOfReachHTML() {
   const out = obOutOfReach();
   if (!out.length) return '';
-  return '<div class="ob-h ob-out-h">' + esc('Needs more memory than this Mac has') + '</div>'
+  return '<div class="ob-h ob-out-h">' + esc('Needs more memory than ' + THIS_MACHINE + ' has') + '</div>'
     + '<div class="ob-out-list">' + out.map((model) =>
       '<div class="ob-out">' + modelMark(model.id, 'xs')
       + '<span class="t">' + esc(obModelName(model)) + '</span>'
@@ -9738,7 +9739,7 @@ function obWizardHTML() {
             + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '"></div>')
       + '<div class="ob-wizlist">'
         + group('', top)
-        + group('Local on this Mac', local)
+        + group('Local on ' + THIS_MACHINE, local)
         + group(top.length || local.length ? 'More providers' : '', rest)
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
@@ -9774,7 +9775,7 @@ function obWizardHTML() {
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on this Mac needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -9786,7 +9787,7 @@ function obWizardHTML() {
         : '')
     /* Calm (S6, U14): where the key goes, in the user's words; the file, the
        variable and the mode are the tooltip. */
-    + (k.env ? '<div class="ob-help" title="' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '">Your key stays on this Mac.</div>' : '')
+    + (k.env ? '<div class="ob-help" title="' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '">Your key stays on ' + THIS_MACHINE + '.</div>' : '')
     + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
     + (unchecked
       ? '<div class="ob-foot">'
@@ -12379,7 +12380,7 @@ function selOutOfReach() {
 /** A popover row's name as a person reads it; `label` keeps what the row stands for. */
 function selRowName(r) {
   if (r.type === 'backend') return backendWord(r.id);
-  if (r.type === 'provider' || r.type === 'fusionLeg') return r.id === 'local-llama' ? 'This Mac' : providerWord(r.id);
+  if (r.type === 'provider' || r.type === 'fusionLeg') return r.id === 'local-llama' ? 'Local models' : providerWord(r.id);
   if (r.type === 'workerModel') return modelWord(r.id);
   return String(r.label || '');
 }
@@ -12396,7 +12397,7 @@ function selRows() {
     const ready = selProviders().filter((p) => BSW.readyIds.includes(p.id)).length;
     const here = selBackend();
     const customUrl = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.url) || '';
-    /* Calm (S7): the rows speak the chip's words ("Cloud", "This Mac",
+    /* Calm (S7): the rows speak the chip's words ("Cloud", "Local models",
        "Custom server", "Fusion" — backendWord, drawn in selectorHTML) and
        each detail is one plain line. `id` stays the route, `label` the id. */
     const customHost = customUrl ? hostOf(customUrl) : '';
@@ -12406,7 +12407,7 @@ function selRows() {
          : 'no provider yet · add one in Settings › Models',
        active: here === 'cloud'},
       {type:'backend', id:'local', label:'local',
-       detail: 'a model Atomic Agent runs on this Mac',
+       detail: 'a model Atomic Agent runs on ' + THIS_MACHINE,
        active: here === 'local'},
       {type:'backend', id:'custom', label:'custom',
        detail: customHost ? 'your llama.cpp server at ' + customHost : 'your own llama.cpp server · set it up in Settings › Models',
@@ -12460,7 +12461,7 @@ function selRows() {
       .map((m) => {
         const note = modelPickNote(m, ram);
         return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
-          detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on this Mac' : custom ? 'not downloaded' : '']
+          detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
             .filter(Boolean).join(' · '),
           note};
       });
@@ -12720,10 +12721,10 @@ function selectorHTML() {
   const out = selOutOfReach();
   /* The out-of-reach names sit after the models and before the trailing
      "Download more models…" row, as the wizard keeps its Hugging Face row last. */
-  const outHTML = out.length ? '<div class="selouth">Needs more memory than this Mac has</div>'
+  const outHTML = out.length ? '<div class="selouth">' + esc('Needs more memory than ' + THIS_MACHINE + ' has') + '</div>'
     + out.map((m) => '<div class="selout" data-id="' + esc(m.id) + '">' + modelMark(m.id, 'xs')
       + '<span class="nm">' + selHilite(llmModelName(m), SEL.filter) + '</span>'
-      + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This Mac has.*$/, '')) + '</span></div>').join('')
+      + '<span class="cap">' + esc((modelPickNote(m, hostRamGb()) || {text:''}).text.replace(/\. This (Mac|computer) has.*$/, '')) + '</span></div>').join('')
     : '';
   const firstAction = rows.findIndex((r) => r.type === 'action');
   const list = '<div class="sellist">'
@@ -15751,7 +15752,7 @@ function modelChipHtml() {
      `data-id` carries the id, the tooltip names both. */
   const fz = selHasKind('workers');
   const word = cta ? 'Download a model' : fz ? fzSeatWord(label) : modelWord(label);
-  const tip = cta ? 'No model on this Mac yet — download one'
+  const tip = cta ? 'No model on ' + THIS_MACHINE + ' yet — download one'
     : (fz ? 'Plans the work: ' : 'Model: ') + (word === label ? label : word + ' (' + label + ')');
   return '<button class="cchip modelchip' + (cta ? ' dlchip' : '') + cchipOpen('model') + '" data-sel-open="model" data-id="' + esc(label) + '"'
     + (cta ? ' data-sel-dl="1"' : '')
@@ -18729,7 +18730,7 @@ function llmRunModeHTML() {
   const mode = rm.effective;
   const blocker = BSW.readyLoaded ? fzBlocker() : null;
   const MODES = [
-    ['local', 'This Mac', 'Everything runs on this Mac', 'laptop'],
+    ['local', 'Local models', 'Everything runs on ' + THIS_MACHINE, 'laptop'],
     ['cloud', 'Cloud', 'Everything runs on the provider', 'cloud'],
     ['fusion', 'Fusion', blocker && mode !== 'fusion' ? blocker : 'A cloud model plans, local workers do the work', 'fusion'],
   ];
@@ -18757,7 +18758,7 @@ function llmNowHTML() {
   let model = active ? (active.defaultChatModel || active.model || null) : null;
   if (!model && local) model = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || null;
   const route = llmRouteMode();
-  const where = route === 'external' ? 'a custom server' : local ? 'this Mac' : active ? providerWord(active.id) : 'no provider';
+  const where = route === 'external' ? 'a custom server' : local ? THIS_MACHINE : active ? providerWord(active.id) : 'no provider';
   const d = llmFormatDaemon();
   const word = !local || route === 'external' ? '' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting'
     : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? (llmJustSpawned() ? 'Starting' : 'Not answering') : '';
@@ -18842,7 +18843,7 @@ function llmAdvancedHTML(mode) {
     + '<div class="llm-adv-h">Active route</div>'
     + llmRouteCardHTML()
     + (mode !== 'cloud' && mode !== 'fallback'
-      ? '<div class="llm-adv-h">Model server on this Mac</div>'
+      ? '<div class="llm-adv-h">Local model server</div>'
         + '<div class="llm-adv-acts">'
           + btn('llm:daemon', llmDaemonUp() ? 'Stop' : 'Start', 'Start or stop the local model server (s)')
           + btn('llm:backend', 'Update llama.cpp', 'Fetch the newest llama.cpp backend now (B)')
@@ -18956,10 +18957,10 @@ function llmLocalHTML() {
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
   const ram = hostRamGb();
   // r7 models: the basis for the order and for every fit line below it.
-  return llmSectionHTML('Models on this Mac', text, 0, cursor, null, false, {
+  return llmSectionHTML('Local models', text, 0, cursor, null, false, {
       note: '<p class="llm-ram">' + esc(ram
-        ? 'Downloaded first, then the best fit for this Mac’s ' + ram + ' GB of memory.'
-        : 'Reading this Mac’s memory…') + '</p>',
+        ? 'Downloaded first, then the best fit for ' + THIS_MACHINE + '’s ' + ram + ' GB of memory.'
+        : 'Reading ' + THIS_MACHINE + '’s memory…') + '</p>',
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     + llmTuneHTML()
     + llmSectionHTML('Embedding models', emb, text.length, cursor)
@@ -19007,7 +19008,7 @@ function llmExternalHTML() {
   return llmSectionHTML('Custom llama.cpp server', rows, 0, LLMP.cursor.external, null, false,
       {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'})
     + llmStatusNoteHTML(status, llmStatusTone(status))
-    + '<p class="llm-back">To go back to a model on this Mac, <button class="llm-link" data-act="llm:mode:local">pick one under Local</button>.</p>'
+    + '<p class="llm-back">To go back to a local model, <button class="llm-link" data-act="llm:mode:local">pick one under Local models</button>.</p>'
     + llmTuneHTML();
 }
 /* Gaps 11: the three knobs agent v0.6.3 reads on every local completion
@@ -19102,14 +19103,14 @@ function llmFallbackHTML() {
           + '<span class="llm-id mono">' + esc(l.providerId + (l.modelLabel ? '/' + l.modelLabel : '')) + '</span></span>'
           + '<span class="d">' + esc(l.kind) + '</span></span>'
         + '<span class="tk-chip tk-chip--sm' + tone + '">' + esc(note) + '</span>'
-        + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="This Mac, as the last resort">' + ic('lock') + '</span>'
+        + '<span class="llm-mvs">' + (l.isAppendedLocal ? '<span class="llm-lock" title="Local models, as the last resort">' + ic('lock') + '</span>'
           : sel ? move(-1, pos > 0, 'chevU', 'Move up (&lt;)') + move(1, pos >= 0 && pos < declared.length - 1, 'chevD', 'Move down (&gt;)')
             + (pos >= 0 ? '<span role="button" class="llm-rowact" data-act="llm:fb:remove" title="Remove (d)">Remove</span>' : '') : '') + '</span>'
         + '</button>';
     }).join('') + '</div>' : '')
     + '<div class="llm-fbl">'
       + '<button class="tk-switch' + (view.appendLocal ? ' on' : '') + '" role="switch" aria-checked="' + view.appendLocal + '" data-act="llm:fb:local" aria-label="Append local as last resort"></button>'
-      + '<span class="llm-fbl-t">Use this Mac as the last resort</span>'
+      + '<span class="llm-fbl-t">Use local models as the last resort</span>'
       + '<span class="grow"></span><span class="set-state' + (view.appendLocal ? ' on' : '') + '">' + (view.appendLocal ? 'On' : 'Off') + '</span>'
     + '</div></section>';
 }

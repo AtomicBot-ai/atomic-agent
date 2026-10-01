@@ -6130,7 +6130,7 @@ async function settingsTestPartC(
     + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
     + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Chats run on", "Models on this Mac", "Embedding models", "Add from Hugging Face", "Advanced"];
+  const localCopy = ["Chats run on", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
   if (!same(localView.modes, ["Local", "Cloud", "Custom server"]) || !same(localView.on, ["Local"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
@@ -6288,7 +6288,7 @@ async function settingsTestPartC(
     "llm tab: Fallback pane shows the resolver's effective chain",
     // Calm (S5): the chain in words — Primary / Fallback / Last resort, "Use this Mac as the last resort" with its On/Off.
     same(fbLinks, expectedChain) && fb.fallback.links[0]?.isActive === true && fbBody.includes("Fallback chain")
-      && fbDrawn && fbBody.includes("Primary") && fbBody.includes("Use this Mac as the last resort") && fbBody.includes(appendLocal ? "On" : "Off"),
+      && fbDrawn && fbBody.includes("Primary") && fbBody.includes("Use local models as the last resort") && fbBody.includes(appendLocal ? "On" : "Off"),
     `${JSON.stringify(fbLinks)} vs ${JSON.stringify(expectedChain)} appendLocal=${appendLocal}${fbDrawn ? "" : " drawn " + JSON.stringify(fbRows)}`,
   );
   const llmBefore = cfg0.llm;
