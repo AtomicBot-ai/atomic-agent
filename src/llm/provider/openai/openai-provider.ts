@@ -46,6 +46,7 @@ import {
 import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
+import { openAiChatPathPrefix } from "./openai-chat-path.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import {
@@ -164,6 +165,11 @@ export class OpenAiProvider implements LlmProvider {
   private readonly http: OpenAiHttpDeps;
   private readonly defaultChatModel: string;
   private readonly apiPathPrefix: string;
+  /**
+   * Prefix of the chat route. The same as `apiPathPrefix` everywhere but
+   * on a root that serves chat outside `/v1` (`openai-chat-path.ts`).
+   */
+  private readonly chatPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
   private readonly extraBody: Record<string, unknown> | undefined;
   private readonly maxOutputTokens: number | undefined;
@@ -211,6 +217,12 @@ export class OpenAiProvider implements LlmProvider {
     this.defaultChatModel = options.defaultChatModel;
     this.chatModelId = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
+    // An explicit prefix (Gemini's `/v1beta/openai`) is the whole answer
+    // for both routes; the `/v1` default is a guess the root can correct.
+    this.chatPathPrefix =
+      options.apiPathPrefix === undefined
+        ? openAiChatPathPrefix(options.baseUrl)
+        : this.apiPathPrefix;
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.extraBody = options.extraBody;
     this.maxOutputTokens = options.maxOutputTokens;
@@ -254,7 +266,7 @@ export class OpenAiProvider implements LlmProvider {
         (body) =>
           openAiPostJson(
             this.http,
-            `${this.apiPathPrefix}/chat/completions`,
+            `${this.chatPathPrefix}/chat/completions`,
             body,
             request,
             (sent) => {
@@ -355,7 +367,7 @@ export class OpenAiProvider implements LlmProvider {
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     let shape = this.shapeFor(request);
     let body = this.buildBody(request, true, shape);
-    const path = `${this.apiPathPrefix}/chat/completions`;
+    const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
     let streamFinal: StreamFinalResult | void = undefined;
@@ -656,7 +668,7 @@ export class OpenAiProvider implements LlmProvider {
         this.http,
         this.defaultChatModel,
         request,
-        this.apiPathPrefix,
+        this.chatPathPrefix,
         this.providerPreferences,
       );
     } catch (error) {

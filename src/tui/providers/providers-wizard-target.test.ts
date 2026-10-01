@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetConfigCache } from "../../config/index.js";
+import { verifyProviderKey } from "../../llm/provider/verify/index.js";
 import { upsertLlmProvider } from "../persist-llm-provider.js";
 import {
   apiKeyForWizard,
@@ -326,5 +327,34 @@ describe("verifyTargetForWizard", () => {
     });
     expect(target?.baseUrl).toBe("https://vllm.example");
     expect(target?.probeModels).toEqual(["my-model"]);
+  });
+
+  it("checks a Perplexity key on the route Perplexity serves chat from", async () => {
+    // `/v1/chat/completions` is a 404 there, which the check reports as
+    // "the provider failed" for a key that may be perfectly good.
+    const target = verifyTargetForWizard({
+      ...withKey("openai-compatible", "perplexity"),
+      baseUrlLine: "https://api.perplexity.ai",
+      chatModelLine: "sonar",
+    });
+    expect(target).not.toBeNull();
+    const fetchImpl = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "pong" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const result = await verifyProviderKey(target!, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(
+      "https://api.perplexity.ai/chat/completions",
+    );
+    expect(result.status).toBe("ok");
   });
 });
