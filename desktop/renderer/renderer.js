@@ -19471,9 +19471,22 @@ async function llmBackendUpdate() {
   LLMP.busy = true; LLMP.msg = {text:'local-llm: updating the llama.cpp backend…'}; llmRepaint();
   const res = await BR.modelsUpdate();
   LLMP.busy = false;
-  if (!res || res.ok === false) { LLMP.statusErr = llmFail('models update failed', res); }
+  /* Deferred F8: main runs one download at a time, and refuses this one while
+     another runs, naming it. A failure is said in LLMP.msg, which stays (the
+     5 s status poll clears LLMP.statusErr), and replaces "updating…", which
+     otherwise stayed on for good. */
+  if (res && res.ok === false && res.running) {
+    LLMP.msg = {text:'! the llama.cpp backend was not updated: ' + llmRunningWord(res.running)
+      + ' is downloading. Update it once that has finished.'};
+  } else if (!res || res.ok === false) LLMP.msg = {text:'! ' + llmFail('models update failed', res)};
   else LLMP.msg = {text:'local-llm: backend update — ' + ((res.stdout || '').trim().split('\n').pop() || 'done')};
   llmRefresh();
+}
+/** The download main's refusal names (downloadRunning), in words. */
+function llmRunningWord(running) {
+  if (running.kind === 'runtime' || running.kind === 'update') return 'the llama.cpp runtime';
+  const name = dlCardName({kind: running.kind, id: running.id});
+  return running.kind === 'projector' ? 'the vision projector of ' + name : name;
 }
 async function llmAutoUpdateToggle() {
   if (!BR) return;
