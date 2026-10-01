@@ -5937,6 +5937,8 @@ document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   // Item 7: Ctrl+Enter inside the Tasks create form submits the task, not the composer.
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
+  // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
+  if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
@@ -16774,15 +16776,20 @@ function mcpAddModalHTML() {
   const m = MCP.addModal;
   return '<div class="tk-modal sd-modal" role="dialog" aria-label="Add MCP server">'
     + '<div class="sd-mhead"><span class="tk-ico tk-ico--blue">' + ic('plug') + '</span><h4>Add MCP server</h4></div>'
-    + '<p>Paste one MCP server config as JSON. Bare object, or the Claude Desktop / Cursor envelope <span class="sd-code">{ "mcpServers": { ... } }</span>.</p>'
-    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="6" spellcheck="false" placeholder=\'{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}\'' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    /* Plain words (Danya, 30.09): the old line named two other products'
+       config "envelopes", and two more lines explained key chords and the
+       stdio auto-promotion. Every shape it listed is still accepted. */
+    + '<p>Paste the server\u2019s config (JSON). It\u2019s usually in the server\u2019s README.</p>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc(mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
-    + '<div class="acts"><span class="sd-cap sd-grow">Shift/Alt+Enter adds a line · then press Restart on its row to connect it</span>'
+    + '<div class="acts"><span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
-    + '<button class="btn btn-p sm" data-act="mcp:addSubmit"' + (m.submitting ? ' disabled' : '') + '>Add</button></div>'
-    // Secondary: under the actions, so the error and Add stay in view on a short window.
-    + '<p class="sd-cap sd-block">Top-level <span class="sd-code">command</span> + <span class="sd-code">args</span> (no <span class="sd-code">transport</span> wrapper) is also accepted and auto-promoted to stdio.</p></div>';
+    + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting ? ' disabled' : '') + '>Add</button></div></div>';
+}
+/** The add box's example, laid out on lines the way a README shows it. */
+function mcpJsonExample() {
+  return '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
 }
 function mcpRemoveModalHTML() {
   const c = MCP.removeConfirm;
@@ -16917,11 +16924,12 @@ function mcpAct(what) {
   // 0.6.6 live routes (mcp-live.js): R restart, e toggle on / off.
   if (verb === 'restart' || verb === 'enable' || verb === 'disable' || verb === 'toggle') { mcpLiveAct(verb, sel()); return; }
 }
-/* mcp-key-bindings.ts. The add modal's textarea keeps Enter for submit and
-   Shift/Alt+Enter for a newline, as the TUI's MultiLineEditor does. */
+/* mcp-key-bindings.ts. The TUI's MultiLineEditor submits on Enter; in a
+   window, a box for a pasted multi-line config is a text box like any other:
+   Enter starts a new line, Add (or ⌘/Ctrl+Enter, routed in the keydown
+   handler before the composer's own ⌘+Enter) adds the server. */
 function mcpKey(e, k, inText) {
   if (e.target.id === 'mcp-json') {
-    if (k === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); mcpAddSubmit(e.target.value); return true; }
     if (k === 'Escape') { e.preventDefault(); MCP.addModal = null; render(); return true; }
     return false;
   }
