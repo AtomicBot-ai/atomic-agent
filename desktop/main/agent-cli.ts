@@ -836,9 +836,23 @@ function chatCompletionsUrl(kind: string, baseUrl?: string): string | null {
   // Google's OpenAI-compatible shim, the surface the agent's gemini provider uses.
   if (kind === "gemini") return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (kind === "openai-compatible" || kind === "qwen-openai-compatible") {
-    return baseUrl ? `${root(baseUrl)}/v1/chat/completions` : null;
+    return baseUrl ? `${root(baseUrl)}${chatPathPrefix(root(baseUrl))}/chat/completions` : null;
   }
   return null;
+}
+
+/* The agent's openAiChatPathPrefix rule (src/llm/provider/openai/openai-chat-path.ts),
+   so the key is checked on the URL the turns will use. Perplexity serves chat
+   at the bare root of api.perplexity.ai and answers 404 under /v1; its Router
+   API (`/router`) and every other root keep `/v1`. */
+function chatPathPrefix(root: string): string {
+  try {
+    const url = new URL(root);
+    const bare = url.pathname === "" || url.pathname === "/";
+    return bare && url.hostname.toLowerCase() === "api.perplexity.ai" ? "" : "/v1";
+  } catch {
+    return "/v1";
+  }
 }
 
 /**
@@ -948,9 +962,16 @@ export async function verifyProviderKey(
   let detail = "";
   try {
     const text = (await res.text()).slice(0, 2000);
-    const parsed = JSON.parse(text) as { error?: { message?: string } | string; message?: string };
-    const e = parsed.error;
-    detail = (typeof e === "string" ? e : e?.message) || parsed.message || text;
+    const parsed: unknown = JSON.parse(text);
+    // Google's OpenAI-compatible surface wraps the error object in an
+    // array, `[{"error": {...}}]`; read as an object it had no message and
+    // the person got the raw JSON instead of "Please pass a valid API key".
+    const body = (Array.isArray(parsed) ? parsed[0] : parsed) as
+      | { error?: { message?: string } | string; message?: string }
+      | null
+      | undefined;
+    const e = body?.error;
+    detail = (typeof e === "string" ? e : e?.message) || body?.message || text;
   } catch {
     detail = "";
   }
