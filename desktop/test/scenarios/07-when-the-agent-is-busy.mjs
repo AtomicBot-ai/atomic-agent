@@ -29,7 +29,7 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../drive.mjs';
 import {
-  scenario, main, check, pick, providerKey, sleep, SCENARIO_NAME,
+  scenario, main, check, pick, providerKey, SCENARIO_NAME,
 } from '../harness.mjs';
 
 export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app }) => {
@@ -37,11 +37,10 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app }
   const errText = `((document.querySelector('#onboarding .ob-err')||{textContent:''}).textContent||'').trim()`;
 
   await app.waitFor(`!!document.querySelector('#onboarding')`, 'the first-run wizard', { timeout: 90000 });
-  for (let i = 0; i < 8; i++) {
-    if (await app.eval(`/Cloud models/.test(${wizText})`)) break;
-    await app.press('Enter');
-    await sleep(500);
-  }
+  /* Backlog 03: the title card leaves by itself once the setup data is read,
+     so nothing is pressed to get past it — an Enter landing just after it
+     left would choose the highlighted route on the screen behind it. */
+  await app.waitFor(`/Cloud models/.test(${wizText})`, 'the three backend choices', { timeout: 30000 });
   // The rows are two-stage — one click selects, the next activates.
   await pick(app, 'Cloud models', `/LLM provider/.test(${wizText})`, 'the provider list');
   await pick(app, 'AI/ML API', `!!document.querySelector('#wiz-key')`, 'the key field');
