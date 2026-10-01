@@ -1,11 +1,473 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { BrowserWindow } from "electron";
+
 /**
  * Release-fix checks for backlog item 18 (see main/release-fixes-smoke.ts).
  * Run alone with `--smoke --smoke-task=18`.
+ *
+ * 18 — "why am I sitting here". First-run Download parked the person on a
+ * "Downloading your model" screen for minutes, and the #dlbar strip that
+ * carried the download afterwards was a flex child between the toolbar and
+ * the chat: the whole chat jumped down ~46px when it came and back up when
+ * it went. Download now hands over the agent at once — the same hand-over
+ * as "Start using the agent now" — and the download lives in a card floating
+ * in the window's bottom-right corner (Atomic Chat's DownloadPanel).
+ *
+ * Nothing is downloaded and nothing restarts: the queue runs dry (DL.dry —
+ * no child is spawned), `models status` and the activation are swapped for
+ * recorders, the flow is the test jump (testClose — no closing write, no
+ * agent bounce), and everything touched is put back. The card is read off
+ * the DOM, not through a hook, so the same checks run against a build
+ * without it and say what is missing.
+ *
+ * T18_SHOTS=<dir> also writes the card's screenshots there (light and dark,
+ * open and folded) for the product owner.
  */
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
+type Box = { top: number; bottom: number; left: number; right: number; width: number; height: number };
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/* Shared by every probe below: a tick, a box, the card as a person reads it. */
+const HELPERS = String.raw`
+  const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+  const box = (n) => { if (!n) return null; const r = n.getBoundingClientRect();
+    return {top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right),
+      width: Math.round(r.width), height: Math.round(r.height)}; };
+  const txt = (n) => (n ? (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim() : '');
+  const card = () => {
+    const el = document.getElementById('dlcard');
+    if (!el || el.hidden || !el.firstElementChild) return null;
+    return {box: box(el.firstElementChild), title: txt(el.querySelector('.dlc-ttl > span')),
+      count: txt(el.querySelector('.dlc-count, .dlc-n')), folded: !!el.querySelector('.dlc-badge'),
+      rows: [...el.querySelectorAll('.dlc-row')].map((r) => ({name: txt(r.querySelector('.dlc-name')),
+        line: txt(r.querySelector('.dlc-line')), cancel: (r.querySelector('.dlc-x') || {dataset: {}}).dataset.act || null,
+        retry: !!r.querySelector('.dlc-retry')})),
+      cloud: txt(el.querySelector('.dlc-cloud'))};
+  };
+  const strip = () => { const s = document.getElementById('dlbar'); return !!(s && !s.hidden && s.getBoundingClientRect().height > 0); };
+`;
 
 export async function checks18(js: Js, check: Check): Promise<void> {
-  void js; void check;
+  const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed()) ?? null;
+  const size = w ? (w.getContentSize() as [number, number]) : null;
+  try {
+    await handOver(js, check);
+    await geometry(js, check, w);
+    await controls(js, check);
+    if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
+  } finally {
+    if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
+    await js<unknown>(`(() => { if (window.__dlClear) window.__dlClear(); S.toasts = []; renderToasts();
+      document.documentElement.removeAttribute('data-theme');
+      try { const t = localStorage.getItem('atag.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { /* follow macOS */ }
+      render(); })()`);
+  }
+}
+
+/* (a) Download in the wizard closes it on the chat, with the card carrying
+   the queued model; the model is still started when its weights land. */
+async function handOver(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keep = {ob: Object.assign({}, OB), stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice(),
+      status: window.obBackendStatusText, activate: window.obActivateLocal, dry: DL.dry, room: S.room, toasts: S.toasts.slice()};
+    const calls = [];
+    const out = {};
+    try {
+      window.__dlClear();
+      S.toasts = []; S.room = 'chat'; render();
+      DL.dry = true;
+      // A machine with no llama.cpp yet: the runtime is queued in front of the weights.
+      window.obBackendStatusText = () => { calls.push('status'); return Promise.resolve('backend: binary missing'); };
+      window.obActivateLocal = async (id) => { calls.push('activate:' + id); };
+      OB.models = [{id:'smoke-t18-9b', name:'Smoke Model 9B GGUF', size:'6.2 GB', sizeGb:6.2, context:'32k',
+        minRamGb:4, recommendedRamGb:8, downloaded:false}];
+      OB.ram = 64;
+      window.__obOpen('local_pick', {stamped:['localSetupSeenAt']});
+      await tick(150);
+      const go = document.querySelector('#onboarding .ob-foot [data-obact="nav:go"]');
+      out.button = go ? txt(go) : null;
+      if (go) go.click();
+      for (let i = 0; i < 60 && OB.open; i++) await tick(100);
+      await tick(150);
+      out.open = OB.open; out.step = OB.step; out.wizardInDom = !!document.getElementById('onboarding');
+      out.handOver = OB.handOver; out.outcome = OB.outcome; out.skipSecond = OB.skipSecondOffer;
+      out.composer = !!document.getElementById('composer') && S.room === 'chat';
+      out.card = card(); out.strip = strip();
+      out.queue = (DL.job ? [DL.job.kind + ':' + DL.job.id] : []).concat(DL.queue.map((q) => q.kind + ':' + q.id));
+      out.toastCarried = typeof obClosingToastCarried === 'function' ? obClosingToastCarried('local') : null;
+      out.toasts = S.toasts.map((t) => t.t);
+      out.chip = txt(document.querySelector('#composer .pullchip'));
+      // The runtime lands, then the weights move: the queue drains onto the model.
+      window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:true, upToDate:false});
+      window.__dlFeed({id:'smoke-t18-9b', kind:'weights', percent:41, transferredBytes:2684354560, totalBytes:6657199308});
+      await tick(60);
+      out.moving = card();
+      // ... and land, with the queue no longer dry: the activation is the shipped path.
+      out.callsBeforeLand = calls.slice();
+      DL.dry = false;
+      window.__dlFeed({id:'smoke-t18-9b', done:true, ok:true});
+      await tick(100);
+      out.calls = calls.slice();
+      out.after = card();
+      out.toastCarriedIdle = typeof obClosingToastCarried === 'function' ? obClosingToastCarried('local') : null;
+      return out;
+    } finally {
+      window.obBackendStatusText = keep.status; window.obActivateLocal = keep.activate;
+      window.__dlClear(); DL.dry = keep.dry;
+      if (OB.open) window.__obClose();
+      const gen = OB.openGen;
+      Object.assign(OB, keep.ob, {open: false, settling: false, openGen: gen});
+      for (const k of Object.keys(OB_STAMPED)) delete OB_STAMPED[k];
+      Object.assign(OB_STAMPED, keep.stamped);
+      OB_STAMP_LOG.length = 0; keep.log.forEach((e) => OB_STAMP_LOG.push(e));
+      S.room = keep.room; S.toasts = keep.toasts; render();
+    }
+  })()`);
+  const c = r["card"] as { rows: { name: string; line: string }[]; title: string; count: string } | null;
+  check(
+    "T18a: Download in the wizard closes setup at once and lands on the chat — the same hand-over as Start using the agent now",
+    r["button"] === "Download 6.2 GB" && r["open"] === false && r["wizardInDom"] === false && r["composer"] === true
+      && r["handOver"] === true && r["outcome"] === "local" && r["skipSecond"] === true,
+    JSON.stringify({ button: r["button"], open: r["open"], step: r["step"], handOver: r["handOver"], outcome: r["outcome"], composer: r["composer"] }),
+  );
+  check(
+    "T18a: the card in the corner shows the queued download — llama.cpp runtime, then the model by its own name",
+    !!c && c.title === "Downloading" && c.count === "2" && c.rows.length === 2
+      && c.rows[0]!.name === "llama.cpp runtime" && /^Starting/.test(c.rows[0]!.line)
+      && c.rows[1]!.name === "Smoke Model 9B" && c.rows[1]!.line === "Queued"
+      && JSON.stringify(r["queue"]) === JSON.stringify(["runtime:llama.cpp", "weights:smoke-t18-9b"])
+      && /Downloading Smoke Model 9B/.test(String(r["chip"])),
+    JSON.stringify({ card: c, queue: r["queue"], chip: r["chip"] }),
+  );
+  const moving = r["moving"] as { rows: { name: string; line: string }[] } | null;
+  check(
+    "T18a: as the weights move the row reads \"2.5 of 6.2 GB · 41% · …\"",
+    !!moving && moving.rows.length === 1 && moving.rows[0]!.name === "Smoke Model 9B"
+      && /^2\.5 of 6\.2 GB · 41% · /.test(moving.rows[0]!.line),
+    JSON.stringify(moving),
+  );
+  check(
+    "T18a: the model is still started when its weights land, and the card goes",
+    JSON.stringify(r["callsBeforeLand"]) === JSON.stringify(["status"])
+      && JSON.stringify(r["calls"]) === JSON.stringify(["status", "activate:smoke-t18-9b"]) && r["after"] === null,
+    JSON.stringify({ before: r["callsBeforeLand"], after: r["calls"], card: r["after"] }),
+  );
+  check(
+    "T18a: no \"Your model is downloading\" toast over the card — while it is up it says so itself",
+    r["toastCarried"] === true && r["toastCarriedIdle"] === false && !(r["toasts"] as string[]).includes("Your model is downloading"),
+    JSON.stringify({ carried: r["toastCarried"], idle: r["toastCarriedIdle"], toasts: r["toasts"] }),
+  );
+}
+
+/* (b)(c)(d) Where the card stands, at the smallest window and at the
+   default one; that the chat does not move when it comes and goes; that
+   there is no strip; that toasts stay readable above it. */
+async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<void> {
+  type Geo = {
+    width: number; height: number; card: { box: Box } | null; folded: { box: Box } | null; strip: boolean;
+    composer: Box | null; dock: Box | null; send: Box | null; chips: Box | null; toolbar: Box | null; main: Box | null;
+    sendHit: boolean; chipHit: boolean; still: Record<string, number | null>[]; stillChat: Record<string, number | null>[];
+    toasts: { shown: number; hidden: number; lowest: number; newest: boolean; limit: number } | null;
+  };
+  const sizes: [number, number][] = [[940, 620], [1280, 820]];
+  for (const [cw, ch] of sizes) {
+    if (w) { w.setContentSize(cw, ch); await wait(500); }
+    const g = await js<Geo>(String.raw`(async () => {
+      ${HELPERS}
+      const keep = {room: S.room, log: S.log, toasts: S.toasts.slice(), console: S.console};
+      const out = {width: innerWidth, height: innerHeight};
+      // Where everything in the chat column is, to the pixel.
+      const marks = () => ({main: (box(document.getElementById('main')) || {}).top ?? null,
+        scroller: (box(document.getElementById('scroller')) || {}).top ?? null,
+        composer: (box(document.getElementById('composer')) || {}).top ?? null,
+        greeting: (box(document.querySelector('.emptyhead')) || {}).top ?? null,
+        first: (box(document.querySelector('#scroller .turn')) || {}).top ?? null});
+      // The card comes, folds, opens and goes; the chat is measured at each step.
+      const cycle = async () => {
+        const still = [marks()];
+        window.__dlSeed([{kind:'runtime', id:'llama.cpp'}, {kind:'weights', id:'qwen-3.5-9b'}]);
+        window.__dlFeed({id:'llama.cpp', kind:'runtime', percent:40, transferredBytes:30000000, totalBytes:75000000});
+        await tick(120);
+        still.push(marks());
+        const f = document.querySelector('#dlcard .dlc-fold');
+        if (f) f.click();
+        await tick(80);
+        still.push(marks());
+        const b = document.querySelector('#dlcard .dlc-badge');
+        if (b) b.click();
+        await tick(80);
+        still.push(marks());
+        window.__dlClear();
+        await tick(120);
+        still.push(marks());
+        return still;
+      };
+      try {
+        window.__dlClear();
+        S.toasts = []; S.room = 'chat'; render();
+        await tick(120);
+        // On the empty chat, and in a conversation.
+        out.still = await cycle();
+        S.log = [{id: nid(), k:'user', text:'smoke t18: what is in this folder?'},
+          {id: nid(), k:'assistant', text:'smoke t18: a reply long enough to wrap onto a second line when the window is narrow, which is exactly when a strip pushing the chat down would show.'}];
+        render();
+        await tick(150);
+        out.stillChat = await cycle();
+        S.log = keep.log; render();
+        await tick(120);
+        // The two-job queue a fresh Mac gets, the runtime 40% of the way.
+        window.__dlSeed([{kind:'runtime', id:'llama.cpp'}, {kind:'weights', id:'qwen-3.5-9b'}]);
+        window.__dlFeed({id:'llama.cpp', kind:'runtime', percent:40, transferredBytes:30000000, totalBytes:75000000});
+        await tick(120);
+        out.card = card(); out.strip = strip();
+        const comp = document.getElementById('composer');
+        out.composer = box(comp);
+        out.dock = box(document.querySelector('#content .composerwrap'));
+        const send = document.querySelector('#composer .sendbtn');
+        out.send = box(send);
+        out.chips = box(document.querySelector('#composer .cfoot'));
+        out.toolbar = box(document.getElementById('toolbar'));
+        out.main = box(document.getElementById('main'));
+        // A press on the send button and on the last chip reaches them, not the card.
+        const hit = (b, sel) => { if (!b) return false; const n = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+          return !!(n && n.closest(sel)); };
+        out.sendHit = hit(out.send, '.sendbtn');
+        const chipEls = [...document.querySelectorAll('#composer .cfoot .cchip')];
+        out.chipHit = chipEls.length > 0 && chipEls.every((n) => hit(box(n), '.cchip'));
+        // Folded, the badge stands in the same corner.
+        const fold = document.querySelector('#dlcard .dlc-fold');
+        if (fold) fold.click();
+        await tick(80);
+        const badge = document.querySelector('#dlcard .dlc-badge');
+        out.folded = badge ? {box: box(badge)} : null;
+        if (badge) badge.click();
+        await tick(80);
+        // Toasts, with the card up: a short window holding five at once.
+        for (let i = 0; i < 5; i++) toast('Smoke t18 toast ' + (i + 1), 'A second line, so it is as tall as most toasts are.');
+        await tick(300);
+        const live = [...document.querySelectorAll('#toasts > .toast')].filter((n) => !n.classList.contains('out'));
+        const shown = live.filter((n) => !n.hidden && n.getBoundingClientRect().height > 0);
+        const cardTop = (card() || {box: {top: 0}}).box.top;
+        out.toasts = {shown: shown.length, hidden: live.length - shown.length, limit: cardTop,
+          lowest: Math.round(Math.max(0, ...shown.map((n) => n.getBoundingClientRect().bottom))),
+          newest: shown.length > 0 && shown[shown.length - 1] === live[live.length - 1]};
+        S.toasts = []; renderToasts();
+        window.__dlClear();
+        return out;
+      } finally {
+        window.__dlClear();
+        S.room = keep.room; S.log = keep.log; S.toasts = keep.toasts; render();
+      }
+    })()`);
+    const tag = `${g.width}×${g.height}`;
+    const c = g.card?.box ?? null;
+    const corner = !!c && Math.abs(c.right - (g.width - 16)) <= 1 && c.top >= (g.toolbar?.bottom ?? 0);
+    const clear = !!c && !!g.composer && !!g.dock && c.bottom <= g.dock.top && c.bottom <= g.composer.top
+      && !!g.send && c.bottom <= g.send.top && g.sendHit && g.chipHit;
+    check(
+      `T18b: at ${tag} the card is in the bottom-right corner, above the composer — the send button and the chips are not under it`,
+      g.width === cw && corner && clear,
+      JSON.stringify({ card: c, composer: g.composer, dock: g.dock?.top, send: g.send, sendHit: g.sendHit, chipHit: g.chipHit, toolbar: g.toolbar?.bottom }),
+    );
+    const f = g.folded?.box ?? null;
+    check(
+      `T18b: at ${tag} folded, the round badge holds the same corner, above the composer`,
+      !!f && f.width === 44 && f.height === 44 && Math.abs(f.right - (g.width - 16)) <= 1 && !!g.dock && f.bottom <= g.dock.top,
+      JSON.stringify({ badge: f, dock: g.dock?.top }),
+    );
+    const steady = (s: Record<string, number | null>[]) => s.length === 5
+      && ["main", "scroller", "composer", "greeting", "first"].every((k) => s.every((m) => m[k] === s[0]![k]));
+    check(
+      `T18c: at ${tag} the chat does not move when the card comes, folds, opens and goes — on the empty chat and in a conversation`,
+      steady(g.still) && g.still[0]!["greeting"] !== null && steady(g.stillChat) && g.stillChat[0]!["first"] !== null
+        && g.still[0]!["composer"] !== null,
+      JSON.stringify({ empty: g.still[0], chat: g.stillChat[0], moved: [...g.still, ...g.stillChat].filter((m, i, a) =>
+        JSON.stringify(m) !== JSON.stringify(i < g.still.length ? g.still[0] : g.stillChat[0])) }),
+    );
+    check(
+      `T18d: at ${tag} there is no download strip between the toolbar and the chat while the card shows`,
+      g.strip === false && !!g.main && !!g.toolbar && g.main.top === g.toolbar.bottom && !!c,
+      JSON.stringify({ strip: g.strip, toolbar: g.toolbar?.bottom, main: g.main?.top }),
+    );
+    const t = g.toasts;
+    check(
+      `T18b: at ${tag} the toasts stop above the card, and the newest one is always shown`,
+      !!t && t.shown >= 1 && t.newest && t.lowest <= t.limit,
+      JSON.stringify(t),
+    );
+  }
+}
+
+/* (e)(f) Fold and unfold, the count, Cancel, a failure's Retry, and the
+   cloud offer — each through the card's own buttons. */
+async function controls(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keep = {cancel: window.dlCancel, room: S.room};
+    const out = {};
+    let cancels = 0;
+    const press = async (sel) => { const n = document.querySelector(sel); if (n) n.click(); await tick(60); return !!n; };
+    try {
+      window.__dlClear();
+      S.room = 'chat'; render();
+      window.__dlSeed([{kind:'runtime', id:'llama.cpp'}, {kind:'weights', id:'qwen-3.5-9b'}]);
+      await tick(60);
+      out.open = card();
+      out.folded = (await press('#dlcard .dlc-fold')) ? card() : null;
+      out.foldedLabel = (document.querySelector('#dlcard .dlc-badge') || {getAttribute: () => null}).getAttribute('aria-expanded');
+      out.unfolded = (await press('#dlcard .dlc-badge')) ? card() : null;
+
+      // Cancel on the running row: the setup download's own cancel path.
+      if (typeof window.dlCancel === 'function') {
+        const real = window.dlCancel;
+        window.dlCancel = function () { cancels++; return real.apply(this, arguments); };
+      }
+      const x = document.querySelector('#dlcard .dlc-row .dlc-x');
+      out.cancelAct = x ? x.dataset.act : null;
+      if (x) x.click();
+      await tick(60);
+      out.cancels = cancels;
+      out.afterCancel = {queued: DL.queue.length, cancelled: !!(DL.job && DL.job.cancelled), card: card()};
+      // Its child exits non-zero, as a killed one does: a cancel, not a failure.
+      window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:false, error:'models update exited with code null', sawProgress:false, upToDate:false});
+      await tick(60);
+      out.afterExit = {card: card(), failed: DL.failed ? DL.failed.length : null, job: !!DL.job};
+
+      // A failure stays, with Retry; Retry puts it back in the queue.
+      window.__dlSeed([{kind:'weights', id:'qwen-3.5-9b'}]);
+      window.__dlFeed({id:'qwen-3.5-9b', done:true, ok:false, error:'network unreachable'});
+      await tick(60);
+      out.failed = card();
+      out.retried = (await press('#dlcard .dlc-retry')) ? {card: card(), job: DL.job ? DL.job.kind + ':' + DL.job.id : null} : null;
+      window.__dlFeed({id:'qwen-3.5-9b', done:true, ok:false, error:'network unreachable'});
+      await tick(60);
+      out.dismissed = (await press('#dlcard .dlc-row .dlc-x[data-act^="dlc:dismiss"]')) ? card() : 'no dismiss';
+
+      // A queued row's own Cancel takes only that row.
+      window.__dlSeed([{kind:'runtime', id:'llama.cpp'}, {kind:'weights', id:'qwen-3.5-9b'}]);
+      await tick(60);
+      const second = document.querySelectorAll('#dlcard .dlc-row .dlc-x')[1];
+      if (second) second.click();
+      await tick(60);
+      out.dropped = {card: card(), head: DL.job ? DL.job.kind : null, queued: DL.queue.length};
+
+      // "Set up a cloud model meanwhile" opens the cloud setup the composer and Settings use.
+      out.cloudLink = (card() || {}).cloud || '';
+      await press('#dlcard .dlc-cloud');
+      await tick(150);
+      const pop = document.querySelector('#overlays .selpop');
+      out.cloud = {sel: SEL.open, phase: WIZ.phase, title: txt(pop && pop.querySelector('.selttl')), rows: pop ? pop.querySelectorAll('[data-wiz-kind]').length : 0};
+      // Its own Cancel closes it again, onto the agent window and the card.
+      await press('#overlays .selpop [data-act="wiz:cancel"]');
+      await tick(150);
+      out.cancelled = {sel: SEL.open, phase: WIZ.phase, pop: !!document.querySelector('#overlays .selpop'), card: !!card()};
+      act('close');
+      await tick(60);
+      return out;
+    } finally {
+      if (keep.cancel) window.dlCancel = keep.cancel;
+      act('close');
+      window.__dlClear();
+      S.room = keep.room; render();
+    }
+  })()`);
+  type Card = { title: string; count: string; folded: boolean; rows: { name: string; line: string; cancel: string | null; retry: boolean }[]; cloud: string } | null;
+  const open = r["open"] as Card, folded = r["folded"] as Card, unfolded = r["unfolded"] as Card;
+  check(
+    "T18e: with two downloads the card says 2, folds to a round badge that still says 2, and opens again",
+    !!open && open.count === "2" && open.rows.length === 2 && !open.folded
+      && !!folded && folded.folded && folded.count === "2" && folded.rows.length === 0 && r["foldedLabel"] === "false"
+      && !!unfolded && !unfolded.folded && unfolded.rows.length === 2,
+    JSON.stringify({ open, folded, unfolded }),
+  );
+  const ac = r["afterCancel"] as { queued: number; cancelled: boolean; card: Card };
+  const ax = r["afterExit"] as { card: Card; failed: number | null; job: boolean };
+  check(
+    "T18e: a row's Cancel takes the setup download's cancel path — the child is stopped, what was queued behind it goes, and its exit is not a failure",
+    r["cancelAct"] === "dlc:cancel" && r["cancels"] === 1 && ac.queued === 0 && ac.cancelled === true
+      && !!ac.card && ac.card.rows.length === 1 && /Cancelling/.test(ac.card.rows[0]!.line)
+      && ax.card === null && ax.failed === 0 && ax.job === false,
+    JSON.stringify({ act: r["cancelAct"], cancels: r["cancels"], afterCancel: ac, afterExit: ax }),
+  );
+  const failed = r["failed"] as Card;
+  const retried = r["retried"] as { card: Card; job: string | null } | null;
+  check(
+    "T18e: a failed download stays as a row with its error and Retry, and Retry queues it again",
+    !!failed && failed.title === "Download failed" && failed.rows.length === 1 && failed.rows[0]!.retry
+      && /network unreachable/.test(failed.rows[0]!.line) && /Set up a cloud model instead/.test(failed.cloud)
+      && !!retried && retried.job === "weights:qwen-3.5-9b" && !!retried.card && retried.card.rows.length === 1
+      && !retried.card.rows[0]!.retry && /^Starting/.test(retried.card.rows[0]!.line),
+    JSON.stringify({ failed, retried }),
+  );
+  check("T18e: a failed row can be dismissed", r["dismissed"] === null, JSON.stringify(r["dismissed"]));
+  const dropped = r["dropped"] as { card: Card; head: string | null; queued: number };
+  check(
+    "T18e: a queued row's Cancel takes only that row; the running one carries on",
+    dropped.head === "runtime" && dropped.queued === 0 && !!dropped.card && dropped.card.rows.length === 1
+      && dropped.card.rows[0]!.name === "llama.cpp runtime",
+    JSON.stringify(dropped),
+  );
+  const cloud = r["cloud"] as { sel: boolean; phase: string | null; title: string; rows: number };
+  const cancelled = r["cancelled"] as { sel: boolean; phase: string | null; pop: boolean; card: boolean };
+  check(
+    "T18f: \"Set up a cloud model meanwhile\" opens the cloud setup the composer and Settings use, and its Cancel closes it",
+    r["cloudLink"] === "Set up a cloud model meanwhile" && cloud.sel === true && cloud.phase === "pick_kind"
+      && cloud.title === "Add a provider" && cloud.rows > 0
+      && cancelled.sel === false && cancelled.phase === null && cancelled.pop === false && cancelled.card === true,
+    JSON.stringify({ link: r["cloudLink"], cloud, cancelled }),
+  );
+}
+
+/* For the product owner: the card on the chat, light and dark, open and
+   folded, at the default window size. Only with T18_SHOTS set. */
+async function shots(js: Js, w: BrowserWindow, dir: string): Promise<void> {
+  mkdirSync(dir, { recursive: true });
+  // An empty composer: a draft starting with "/" would open the slash list over the card.
+  await js<unknown>("(() => { window.__t18Draft = S.draft; S.draft = ''; render(); })()");
+  const stage = (theme: string, folded: boolean, rows: string) => js<unknown>(String.raw`(async () => {
+    const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    document.documentElement.setAttribute('data-theme', ${JSON.stringify(theme)});
+    window.__dlClear();
+    S.toasts = []; S.room = 'chat';
+    if (!OB.models.some((m) => m.id === 'qwen-3.5-9b')) OB.models = OB.models.concat([{id:'qwen-3.5-9b', name:'Qwen 3.5 9B'}]);
+    const GiB = 1073741824;
+    if (${JSON.stringify(rows)} === 'two') {
+      window.__dlSeed([{kind:'runtime', id:'llama.cpp'}, {kind:'weights', id:'qwen-3.5-9b'}]);
+      window.__dlFeed({id:'llama.cpp', kind:'runtime', percent:60, transferredBytes:Math.round(0.6 * 70 * 1048576), totalBytes:70 * 1048576});
+    } else if (${JSON.stringify(rows)} === 'failed') {
+      window.__dlSeed([{kind:'weights', id:'qwen-3.5-9b'}]);
+      window.__dlFeed({id:'qwen-3.5-9b', done:true, ok:false, error:'the connection to huggingface.co was reset'});
+    } else {
+      window.__dlSeed([{kind:'weights', id:'qwen-3.5-9b'}]);
+      window.__dlFeed({id:'qwen-3.5-9b', kind:'weights', percent:41, transferredBytes:Math.round(2.5 * GiB), totalBytes:Math.round(6.2 * GiB)});
+      DL.rate = (3.7 * GiB) / 180; DL.samples = 4;
+    }
+    DLC.collapsed = ${folded ? "true" : "false"};
+    render();
+    await tick(400);
+  })()`);
+  const cases: [string, string, boolean, string, number, number][] = [
+    ["card-light-open.png", "light", false, "one", 1280, 820],
+    ["card-dark-open.png", "dark", false, "one", 1280, 820],
+    ["card-light-folded.png", "light", true, "two", 1280, 820],
+    ["card-dark-folded.png", "dark", true, "two", 1280, 820],
+    ["card-light-two-rows.png", "light", false, "two", 1280, 820],
+    ["card-dark-failed.png", "dark", false, "failed", 1280, 820],
+    ["card-light-940.png", "light", false, "two", 940, 620],
+    ["card-dark-940-open.png", "dark", false, "one", 940, 620],
+  ];
+  for (const [file, theme, folded, rows, cw, ch] of cases) {
+    const [nw, nh] = w.getContentSize();
+    if (nw !== cw || nh !== ch) { w.setContentSize(cw, ch); await wait(500); }
+    await stage(theme, folded, rows);
+    const img = await w.webContents.capturePage();
+    writeFileSync(join(dir, file), img.toPNG());
+  }
+  await js<unknown>("(() => { window.__dlClear(); DLC.collapsed = false; S.draft = window.__t18Draft || ''; delete window.__t18Draft; render(); })()");
 }
