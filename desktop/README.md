@@ -1137,14 +1137,16 @@ during the testing phase."*
   fully separate; the *shell* is shared. Launch the desktop from a shell with
   no provider keys exported if that matters for a test.
 - **Making it a first run again is one gesture:** `rm -rf
-  ~/.atomic-agent-desktop`. The wizard opens on the next launch, because
-  `app:firstRun` reports the latched flag rather than inferring one from a
-  file the agent has already written. The suite proves that end to end
-  rather than by inspection: `electron . --first-run-probe` boots a window
-  against whatever `ATOMIC_AGENT_STATE_DIR` names, starts no `atag serve`,
-  and prints one `FIRSTRUNPROBE {json}` line saying whether the latch said
-  fresh and whether the wizard put itself on screen. The smoke run makes an
-  empty directory and drives it.
+  ~/.atomic-agent-desktop`. The wizard opens on the next launch, in the
+  window's first paint: main hands the latched flag to the window as it
+  creates it (`app:firstRun` reports the same flag) rather than anything
+  inferring one from a file the agent has already written. The suite proves
+  that end to end rather than by inspection: `electron . --first-run-probe`
+  boots a window against whatever `ATOMIC_AGENT_STATE_DIR` names, starts no
+  `atag serve`, and prints one `FIRSTRUNPROBE {json}` line saying whether the
+  latch said fresh, whether the wizard put itself on screen, whether any
+  frame of the chat window was painted before it, and whether its title card
+  then left by itself. The smoke run makes an empty directory and drives it.
 - The window says which directory it owns: the diagnostics line under
   Settings carries a `state <dir>` segment beside `agent <bin>`.
 
