@@ -141,7 +141,14 @@ describe("fallback partition of the query rewriter (real runner + seam + chain)"
     expect(h.chain.activeOverrideFor("rewriter:s1")).toBe("local-llama");
   });
 
-  it("documents the defect: the same refusal on the bare session id flips the turn", async () => {
+  it("the same refusal on the bare session id no longer strands the turn on local", async () => {
+    // This used to flip the turn: the refusal moved the partition onto the
+    // local link, which failed too, and inside the probe throttle the next
+    // main step was sent there and died `fetch failed`. A link that only
+    // stood in for a refusal, and never served, no longer holds the
+    // partition (item 29), so the main step asks the primary each time.
+    // The rewriter's own partition is still what keeps its refusals out of
+    // the turn's provider notices and breaker counts.
     const h = harness();
     const bareRewrite = () =>
       h
@@ -154,20 +161,13 @@ describe("fallback partition of the query rewriter (real runner + seam + chain)"
         })
         .catch(() => undefined);
 
-    await bareRewrite();
-    // First turn survives only because the primary is probed back once...
-    await expect(h.mainStep()).resolves.toMatchObject({
-      modelId: "cloud-model",
-    });
-    h.advance(60_000);
-    await bareRewrite();
-    // ...the next one is inside the probe throttle and lands on local.
-    await expect(h.mainStep()).rejects.toThrow("fetch failed");
-
-    expect(h.chain.activeOverrideFor("s1")).toBe("local-llama");
-    expect(h.chain.pickProvider("s1")).toEqual({
-      providerId: "local-llama",
-      isProbe: false,
-    });
+    for (let turn = 0; turn < 2; turn += 1) {
+      await bareRewrite();
+      await expect(h.mainStep()).resolves.toMatchObject({
+        modelId: "cloud-model",
+      });
+      h.advance(60_000);
+    }
+    expect(h.chain.activeOverrideFor("s1")).toBeNull();
   });
 });

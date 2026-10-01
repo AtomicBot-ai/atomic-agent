@@ -1,5 +1,7 @@
 import { attachFailedAttempts, type FailedAttempt } from "./failed-attempts.js";
+import { isCredentialRejection } from "./link-failure-kind.js";
 import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
+import { shouldAdvance } from "./should-advance.js";
 
 /**
  * Drive a unit of work through the fallback chain.
@@ -29,6 +31,17 @@ import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
  * one sentence per failed turn (the HTTP stream the desktop reads) names
  * the first recorded link instead: see `buildStreamEventHook`.
  *
+ * **Except when the primary refused its key.** A 401/403 from the primary
+ * in this very call (`isCredentialRejection`: a wrong, dead or missing
+ * key, or one that could not even be sent) outranks whatever the links
+ * after it said, and its error is the one thrown. The last link's error
+ * would otherwise decide the turn, and a stopped local server's `fetch
+ * failed` parks it for the whole outage wait, telling the user the model
+ * is not answering while the fix is the key (item 29). The primary's own
+ * error classifies as a refusal, so the turn ends at once with its
+ * sentence. Nothing failed before it, so nothing is recorded beside it;
+ * each later link's failure is in the advance log.
+ *
  * Shared by both the non-stream (`llmComplete`) and stream-opening
  * (`llmCompleteStream`) seams. For streaming, `attempt` must resolve only
  * once the stream has successfully OPENED — a stream already emitting
@@ -55,6 +68,8 @@ export async function runWithFallback<T>(
   // the primary's real refusal was last mentioned anywhere.
   const cause = pick.isProbe ? null : chain.overrideCause(partitionKey);
   const failed: FailedAttempt[] = cause ? [cause] : [];
+  /** The primary's own refusal of its key, when this call asked it. */
+  let primaryRefusal: { error: unknown } | null = null;
 
   for (;;) {
     try {
@@ -64,8 +79,17 @@ export async function runWithFallback<T>(
     } catch (err) {
       const nextId = chain.advanceFrom(currentId, err, partitionKey);
       if (nextId === null) {
+        // `null` is also the answer for an error that must not fall over
+        // (a cancellation, a request-shape error): that one is thrown as
+        // is. Only a chain that ran out of links defers to the primary.
+        if (primaryRefusal !== null && shouldAdvance(err).advance) {
+          throw primaryRefusal.error;
+        }
         attachFailedAttempts(err, failed);
         throw err;
+      }
+      if (isCredentialRejection(err) && chain.isPrimary(currentId)) {
+        primaryRefusal = { error: err };
       }
       failed.push({ providerId: currentId, error: err });
       currentId = nextId;

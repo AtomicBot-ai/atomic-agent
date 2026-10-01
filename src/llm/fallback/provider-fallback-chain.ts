@@ -1,6 +1,7 @@
 import { describeReason } from "./describe-reason.js";
 import type { FailedAttempt } from "./failed-attempts.js";
 import type { ResolvedFallbackChain } from "./fallback-config.js";
+import { isOutageFailure } from "./link-failure-kind.js";
 import {
   logFallbackAdvance,
   type FallbackLogger,
@@ -87,6 +88,19 @@ export class ProviderFallbackChain {
    * chain, drops a stale override that no longer names a chain member,
    * and — when the primary's cooldown has elapsed and the probe throttle
    * allows — routes this one turn back to the primary as a probe.
+   *
+   * One override is not sticky at all: a stand-in for a primary that
+   * said no. When the primary refused the request (a bad or missing key,
+   * an unknown model: anything but not answering, see `isOutageFailure`)
+   * and the link the chain moved onto has not served anything since, the
+   * next call starts from the primary again, whatever the cooldown and
+   * the probe throttle say. Both exist to keep turns off a primary that
+   * is down, and this one is up: it answered, and what it objected to is
+   * fixed by the user, who may well be fixing it while the turn waits.
+   * The stand-in, meanwhile, has proven nothing; staying on it is how a
+   * parked turn spent five minutes retrying a stopped local server and
+   * never asked the primary again (item 29). Once the stand-in does serve
+   * a call, it is a working fallback and the usual stickiness applies.
    */
   pickProvider(partitionKey: string = DEFAULT_PARTITION): ProviderPick {
     const { chain } = this.resolve();
@@ -112,6 +126,14 @@ export class ProviderFallbackChain {
     // On an override: consider probing the primary.
     const now = this.now();
     const b = this.breaker(p, primary);
+    if (
+      !p.overrideServed &&
+      p.overrideCause !== null &&
+      !isOutageFailure(p.overrideCause.error)
+    ) {
+      b.lastProbeAt = now;
+      return { providerId: primary, isProbe: true };
+    }
     const cooledDown = now >= b.cooldownUntil;
     const throttleOk =
       now - b.lastProbeAt >= this.resolve().timing.probeThrottleMs;
@@ -174,6 +196,7 @@ export class ProviderFallbackChain {
     b.cooldownUntil = 0;
     b.cooldownStep = 0;
     b.lastFailureAt = 0;
+    if (id === p.overrideId) p.overrideServed = true;
 
     const { chain } = this.resolve();
     const primary = chain[0];
@@ -202,6 +225,11 @@ export class ProviderFallbackChain {
   /** Why `partitionKey` is on an override: the primary's latest failure. */
   overrideCause(partitionKey = DEFAULT_PARTITION): FailedAttempt | null {
     return this.partitions.get(partitionKey)?.overrideCause ?? null;
+  }
+
+  /** Whether `id` heads the live chain: the provider the user picked. */
+  isPrimary(id: string): boolean {
+    return this.resolve().chain[0] === id;
   }
 
   private registerFailure(
@@ -251,10 +279,12 @@ export class ProviderFallbackChain {
     if (fromId === primary && !p.overrideId) {
       p.overrideId = toId;
       p.announcedOverride = false;
+      p.overrideServed = false;
     } else if (p.overrideId) {
       // Chain continued past a dead deeper link — keep the override
       // pointed at the newest working candidate.
       p.overrideId = toId;
+      p.overrideServed = false;
     }
     if (fromId === primary && p.overrideId) {
       p.overrideCause = { providerId: fromId, error: err };
@@ -274,6 +304,7 @@ export class ProviderFallbackChain {
     p.overrideId = null;
     p.announcedOverride = false;
     p.overrideCause = null;
+    p.overrideServed = false;
   }
 
   private partition(key: string): PartitionState {
