@@ -8303,8 +8303,7 @@ function dlNext() {
      phase state is touched here; dlResetPhases and dlOnPull own them. */
   render();
   if (!BR || DL.dry) return;
-  const started = job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
-  started.then((res) => {
+  const refused = (res) => {
     // Only this job's refusal: a cancel and a new pick may have moved on.
     if (res && res.ok === false && DL.job === mine) {
       DL.job = null;
@@ -8320,9 +8319,26 @@ function dlNext() {
       DL.error = res.error || 'could not start the download';
       DL.weights.state = 'waiting';
       dlFail(job, DL.error);
-      render();
+      /* Backlog 18 review: and the queue goes on. A Retry kept behind it
+         (dlStart) sat on Queued for good, and dlBusy() refused every
+         Download after it; now it starts, or meets the same refusal and is
+         a row too. */
+      dlNext();
     }
-  });
+  };
+  // A call that is rejected is refused like any other, not left on Starting… for good.
+  let started;
+  try { started = Promise.resolve(dlPullStart(job)); } catch (err) { started = Promise.reject(err); }
+  started.then(refused, (err) => refused({ok: false, error: (err && err.message) || String(err)}));
+}
+
+/**
+ * The setup queue's IPC — `models update` for the runtime, `models pull` for
+ * weights — on its own, as obProjectorPull is: window.atomic is frozen, so
+ * this is where a check stands in for it.
+ */
+function dlPullStart(job) {
+  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
 }
 
 /** One structured `cli:pull` sample. Never interpolated between them. */
