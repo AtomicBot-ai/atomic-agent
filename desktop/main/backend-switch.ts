@@ -15,6 +15,7 @@ import {
   setMemoryEmbeddingsEnabled,
   setProviderModel,
   useManagedMode,
+  type CliResult,
   type ProviderEntry,
 } from "./agent-cli.js";
 import {
@@ -56,7 +57,11 @@ export type DaemonEffect =
   | "stop-failed"
   | "started"
   | "restarted"
-  | "start-failed";
+  | "start-failed"
+  /** A bring-up that started nothing because the model is not on disk (or the list could not be read) — not "already running". */
+  | "skipped"
+  /** A background bring-up that a stop or a route change ended (item 11): it reports nothing and does nothing more. */
+  | "superseded";
 
 export interface SwitchResult {
   ok: boolean;
@@ -146,7 +151,8 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
-  if (cloud && !keepFusion) await afterBackgroundBringUp();
+  // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
+  if (cloud && !keepFusion) supersedeBringUp();
   if (cloud && !keepFusion && (await localDaemonRunning())) {
     const s = await modelsStop();
     if (s.ok) {
@@ -192,29 +198,20 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
   if (!w.ok) return { ok: false, error: w.error };
   if (w.changed) restart = true;
 
-  await afterBackgroundBringUp();
-  const running = await localDaemonRunning();
-  let daemon: DaemonEffect = "untouched";
-  let daemonLine: string | undefined;
-  let error: string | undefined;
-  if (running && changed) {
-    daemonLine = `local-llm: restarting daemon for ${modelId}…`;
-    const s = await modelsStop();
-    if (!s.ok) {
-      daemon = "stop-failed";
-      daemonLine = `local-llm: stop failed — ${s.error ?? "unknown error"}`;
-    } else {
+  // Another model: a background start for the old one is moot (item 11); the same one is waited for.
+  if (changed) supersedeBringUp();
+  const { daemon, daemonLine, error } = await withDaemonLock(async (): Promise<BringUp> => {
+    const running = await localDaemonRunning();
+    if (running && changed) {
+      const s = await modelsStop();
+      if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
       const st = await modelsStart();
-      daemon = st.ok ? "restarted" : "start-failed";
-      daemonLine = st.ok ? readyLine(st.stdout) : undefined;
-      if (!st.ok) error = st.error;
+      return st.ok ? { daemon: "restarted", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
     }
-  } else if (!running) {
+    if (running) return { daemon: "untouched" };
     const st = await modelsStart();
-    daemon = st.ok ? "started" : "start-failed";
-    daemonLine = st.ok ? readyLine(st.stdout) : undefined;
-    if (!st.ok) error = st.error;
-  }
+    return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+  });
   return {
     ok: true,
     providerId: LOCAL_ID,
@@ -310,73 +307,137 @@ function keyed(): (p: RunModeProvider) => boolean {
 
 export type BringUp = { daemon: DaemonEffect; daemonLine?: string; error?: string };
 
-/** Start the managed daemon when it is down (restart it when the model moved). */
-async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
-  await afterBackgroundBringUp();
-  return bringUpLocalDaemonNow(modelChanged);
+/* ---- the managed daemon: starts one at a time, stops at once (item 11) ----
+   Every sequence that checks the daemon and then starts (or restarts) it holds
+   this lock, first come first served. Two `models start` never run side by
+   side — a second one beside a starting daemon is the agent-side duplicate
+   localDaemonRunning describes — and when a long one ends, the sequences
+   queued behind it go one by one, not all at once. A stop never takes it: a
+   stop must not wait out a load of up to 90 s (supersedeBringUp). */
+let daemonChain: Promise<void> = Promise.resolve();
+function withDaemonLock<T>(run: () => Promise<T>): Promise<T> {
+  const next = daemonChain.then(run, run);
+  daemonChain = next.then(() => undefined, () => undefined);
+  return next;
 }
-async function bringUpLocalDaemonNow(modelChanged: boolean): Promise<BringUp> {
-  const running = await localDaemonRunning();
-  if (running && !modelChanged) return { daemon: "untouched" };
-  if (running) {
-    const s = await modelsStop();
-    if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
+
+/** Start the managed daemon when it is down (restart it when the model moved), in its turn. */
+async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
+  // Another model: a background start for the old one is moot.
+  if (modelChanged) supersedeBringUp();
+  return withDaemonLock(async (): Promise<BringUp> => {
+    const running = await localDaemonRunning();
+    if (running && !modelChanged) return { daemon: "untouched" };
+    if (running) {
+      const s = await modelsStop();
+      if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
+      const st = await modelsStart();
+      return st.ok ? { daemon: "restarted", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+    }
     const st = await modelsStart();
-    return st.ok ? { daemon: "restarted", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
-  }
-  const st = await modelsStart();
+    return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+  });
+}
+/** Only a model that is on disk is started: a start for a file that is not there is a failure about nothing the operator chose. */
+async function onDisk(modelId: string): Promise<boolean> {
+  const list = await chatModelsList();
+  return list.ok && (list.models ?? []).some((m) => m.id === modelId && m.downloaded);
+}
+
+/* ---- the bring-up nobody waits on (item 11) ----
+   A ⇄ moves no model, so it never waits on the daemon: that wait — a `models
+   status`, and with the daemon down a whole `models start` — is the swap the
+   operator saw stick. But a daemon that is down (stopped in Settings ›
+   Models, crashed) would leave the local seat with nothing serving it, so
+   the swap starts it in the background, as the TUI's setMode does (`void
+   localModels.startDaemon()`); the launch start is one too. One at a time, in
+   the lock's turn. A stop, or a route change that makes it moot, supersedes
+   it: its `models start` is killed, and it reports nothing and starts
+   nothing after. */
+export interface BringUpSteps { signal: AbortSignal; superseded(): boolean; starting(): void }
+interface Background { superseded: boolean; starting: boolean; abort: AbortController; done: Promise<BringUp> }
+export type BringUpReport = (r: BringUp & { modelId: string; via: "swap" | "launch" }) => void;
+const SUPERSEDED: BringUp = { daemon: "superseded" };
+let background: Background | null = null;
+let reportBringUp: BringUpReport = () => {};
+
+/** main.ts: where a background bring-up says how it ended. Hands back the one it replaces. */
+export function onBackgroundBringUp(report: BringUpReport): BringUpReport {
+  const was = reportBringUp;
+  reportBringUp = report;
+  return was;
+}
+/** The background bring-up on its way, or null. */
+export function bringUpInFlight(): Promise<BringUp> | null {
+  return background ? background.done : null;
+}
+function startInBackground(task: (s: BringUpSteps) => Promise<BringUp>): { done: Promise<BringUp>; adopted: boolean } {
+  if (background) return { done: background.done, adopted: true };
+  const b = { superseded: false, starting: false, abort: new AbortController() } as Background;
+  const steps: BringUpSteps = { signal: b.abort.signal, superseded: () => b.superseded, starting: () => { b.starting = true; } };
+  b.done = withDaemonLock(() => (b.superseded ? Promise.resolve(SUPERSEDED) : task(steps)))
+    .catch((err): BringUp => ({ daemon: "start-failed", error: err instanceof Error ? err.message : String(err) }))
+    .then((r) => (b.superseded ? SUPERSEDED : r))
+    .finally(() => { if (background === b) background = null; });
+  background = b;
+  return { done: b.done, adopted: false };
+}
+/**
+ * End the background bring-up, if one is on its way: its `models start` is
+ * killed, and it reports nothing and does nothing more. Answers whether it had
+ * got as far as starting — what it spawned is then the caller's to stop.
+ */
+export function supersedeBringUp(): boolean {
+  const b = background;
+  if (!b) return false;
+  background = null;
+  b.superseded = true;
+  b.abort.abort();
+  return b.starting;
+}
+/** status → start, checking after each step whether a stop has ended it. */
+async function startIfDown(s: BringUpSteps): Promise<BringUp> {
+  if (await localDaemonRunning()) return { daemon: "untouched" };
+  if (s.superseded()) return SUPERSEDED;
+  s.starting();
+  const st = await modelsStart({ signal: s.signal });
   return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
 }
-/** The same, only for a model that is on disk: a start for a file that is not there is a failure about nothing the operator chose. */
-async function bringUpIfOnDisk(modelId: string, bringUp: () => Promise<BringUp>): Promise<BringUp> {
-  const list = await chatModelsList();
-  return list.ok && (list.models ?? []).some((m) => m.id === modelId && m.downloaded) ? bringUp() : { daemon: "untouched" };
+function report(r: BringUp, modelId: string, via: "swap" | "launch"): void {
+  if (r.daemon !== "started" && r.daemon !== "start-failed") return;   // nothing started, or it was superseded
+  try { reportBringUp({ ...r, modelId, via }); } catch { /* a report never fails the bring-up */ }
 }
-
-/* ---- the daemon a ⇄ does not wait for (item 11) ----
-   A swap moves no model, so it never waits on the daemon: that wait — a
-   `models status`, and with the daemon down a whole `models start` — is the
-   swap the operator saw stick. But a daemon that is down (stopped in
-   Settings › Models, crashed) would leave the local seat with nothing
-   serving it, and every turn would fail. So the swap starts it in the
-   background, as the TUI's setMode does (`void localModels.startDaemon()`).
-   One at a time — the launch start (main.ts) runs as one too — and every
-   path that checks, starts or stops the daemon waits for it first: a second
-   `models start` beside a starting daemon is the agent-side duplicate
-   localDaemonRunning describes. */
-let inBackground: Promise<BringUp> | null = null;
-let reportBringUp: (r: BringUp & { modelId: string }) => void = () => {};
-
-function tracked(task: () => Promise<BringUp>): Promise<BringUp> {
-  const p: Promise<BringUp> = task()
-    .catch((err): BringUp => ({ daemon: "start-failed", error: err instanceof Error ? err.message : String(err) }))
-    .finally(() => { if (inBackground === p) inBackground = null; });
-  inBackground = p;
-  return p;
-}
-/** A bring-up that is not a switch's own — the launch start — run as the one in flight (or that one, if one already is). */
-export function trackBringUp(task: () => Promise<BringUp>): Promise<BringUp> {
-  return inBackground ?? tracked(task);
-}
-
-/** main.ts: where a background bring-up says how it ended (the agent log and the window). */
-export function onBackgroundBringUp(report: (r: BringUp & { modelId: string }) => void): void {
-  reportBringUp = report;
-}
-/** The bring-up a swap started and did not wait for, while it runs. */
-export function backgroundBringUp(): Promise<BringUp> | null {
-  return inBackground;
-}
-/** Wait for a background bring-up, if one is running, so nothing starts or stops the daemon under it; how it ended, or null. */
-export async function afterBackgroundBringUp(): Promise<BringUp | null> {
-  return inBackground ? inBackground : null;
-}
-function bringUpInBackground(modelId: string): void {
-  if (inBackground) return;   // the one in flight serves the same model
-  void tracked(() => bringUpIfOnDisk(modelId, () => bringUpLocalDaemonNow(false))).then((r) => {
-    if (r.daemon === "untouched") return;
-    try { reportBringUp({ ...r, modelId }); } catch { /* a report never fails the bring-up */ }
+/** A ⇄'s: the local seat's daemon, for a model on disk, not waited for. */
+function bringUpBehindSwap(modelId: string): void {
+  const { done, adopted } = startInBackground(async (s) => {
+    if (!(await onDisk(modelId))) return { daemon: "skipped" };
+    if (s.superseded()) return SUPERSEDED;
+    return startIfDown(s);
   });
+  // One already on its way serves the same model, and says how it went itself.
+  if (!adopted) void done.then((r) => report(r, modelId, "swap"));
+}
+/**
+ * The launch start (main.ts startLocalDaemonAtBoot, once it has found the
+ * model on disk), as the background bring-up. One already on its way — a ⇄'s
+ * — is adopted, and says how it went itself: the start is logged once.
+ */
+export function bringUpAtLaunch(modelId: string): Promise<BringUp> {
+  const { done, adopted } = startInBackground(startIfDown);
+  if (!adopted) void done.then((r) => report(r, modelId, "launch"));
+  return done;
+}
+/** Settings › Models › Start: in its turn, and no second `models start` for a daemon that is already up. */
+export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean }> {
+  return withDaemonLock(async () => {
+    if (await localDaemonRunning()) return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
+    return modelsStart();
+  });
+}
+/** Settings › Models › Stop, and quitting: at once — a bring-up on its way is ended, not waited for. */
+export function stopDaemonNow(): Promise<CliResult> {
+  supersedeBringUp();
+  return modelsStop();
 }
 
 /** Whether the seats need the managed daemon: Fusion in force with a local seat on a managed model. */
@@ -417,13 +478,15 @@ async function afterRunModeWrite(res: {
      — so nothing else would bring a local leg up. Entering Fusion or pinning
      a seat waits for it (started when down, only for a model on disk); a
      seats-only ⇄ starts it in the background and does not wait (see
-     bringUpInBackground). */
+     bringUpBehindSwap). */
   let up: BringUp = { daemon: "untouched" };
   const lm = read.config.localModels ?? {};
   const modelId = lm.managed?.modelId ?? "";
   const plan = runModeDaemonPlan(now, lm, v);
-  if (plan === "wait") up = await bringUpIfOnDisk(modelId, () => bringUpLocalDaemon(false));
-  else if (plan === "background") bringUpInBackground(modelId);
+  if (plan === "wait") up = (await onDisk(modelId)) ? await bringUpLocalDaemon(false) : { daemon: "skipped" };
+  else if (plan === "background") bringUpBehindSwap(modelId);
+  // The seats no longer need it (a seat moved to the cloud): a start on its way is moot, and what it spawned goes.
+  else if (supersedeBringUp()) await modelsStop();
   return {
     ok: true,
     providerId: leg,
@@ -491,6 +554,8 @@ export async function selectFusionWorkerModel(modelId: string): Promise<SwitchRe
   if (!row.downloaded) {
     return { ok: false, needsDownload: true, modelId, error: `local model ${modelId} is not downloaded` };
   }
+  // The workers move to another model: a background start for the one they leave is moot (item 11).
+  if (!row.active) supersedeBringUp();
   const isKeyed = keyed();
   const pin = await rewriteWholeConfig((cfg): RunModeVerdict => {
     const rm = resolveRunMode(cfg);

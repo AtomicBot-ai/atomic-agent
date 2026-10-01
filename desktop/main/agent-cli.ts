@@ -55,7 +55,7 @@ export function plainCliError(stderr: string): string {
     .join("\n").trim();
 }
 
-async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliResult> {
+async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal): Promise<CliResult> {
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
@@ -67,10 +67,15 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
       // put every config write back on the operator's ~/.atomic-agent.
       env: agentEnv(),
       ...(cwd ? { cwd } : {}),
+      ...(signal ? { signal } : {}),
     });
     return { ok: true, stdout, stderr };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message?: string; killed?: boolean; code?: string | number };
+    // Item 11: killed on purpose (a stop superseded the start), not timed out.
+    if (signal?.aborted) {
+      return { ok: false, stdout: e.stdout ?? "", stderr: e.stderr ?? "", error: `\`atag ${args.slice(0, 2).join(" ")}\` was stopped before it finished` };
+    }
     /* r6 (human-scenario round): say what went wrong, in words.
        When `execFile` kills a child on `timeout`, its message is the whole
        command line — the wizard printed
@@ -609,9 +614,9 @@ export function parseChatStartSpeed(stdout: string): { pid: number; tokensPerSec
    modelsStart, so this is the one place to catch it. */
 let lastChatSpeed: { pid: number; tokensPerSecond: number } | null = null;
 
-/** Start the managed llama daemon after switching to a local model. */
-export async function modelsStart(): Promise<CliResult> {
-  const res = await cli(["models", "start"], 90_000);
+/** Start the managed llama daemon after switching to a local model. `signal` kills the start (item 11: a stop that supersedes it). */
+export async function modelsStart(opts: { signal?: AbortSignal } = {}): Promise<CliResult> {
+  const res = await cli(["models", "start"], 90_000, undefined, opts.signal);
   if (res.ok) {
     const speed = parseChatStartSpeed(res.stdout);
     if (speed) lastChatSpeed = speed;

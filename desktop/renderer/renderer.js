@@ -6969,9 +6969,16 @@ if (BR) {
     if (LOGS.length > 300) LOGS.shift();
     if (S.consoleOpen) renderConsole();
   });
-  // Item 11: a ⇄ starts a daemon that is down without waiting for it; how that
-  // went is told the way a switch's own daemon line is (bswReport).
-  if (BR.onDaemon) BR.onDaemon((r) => { if (r && r.daemon) bswReport(Object.assign({ok: true}, r)); });
+  /* Item 11: a ⇄ starts a daemon that is down without waiting for it. How that
+     went comes in up to 90 s later, in whatever chat is open by then — so it
+     is the app line and, when it failed, a toast; never a row in that chat. */
+  if (BR.onDaemon) BR.onDaemon((r) => {
+    if (!r || !r.daemon) return;
+    if (r.daemon === 'start-failed') {
+      appSay('Local model daemon did not start', 'caution');
+      toast('The local model did not start', r.error || '', 'bad');
+    } else if (r.daemon === 'started') appSay(r.daemonLine || 'local-llm: daemon started');
+  });
   BR.status().then(applyStatus);
 
   // Stop routes to the real turn, and the workspace chip opens a picker.
@@ -11009,8 +11016,8 @@ function swxWatchdog(label) {
   SWX.err = swxSlowLine(label);
   render();
 }
-/** A switch that did what it was for — a local model that did not start is a failure, though the write landed. */
-function swxLanded(res) { return !!res && res.ok !== false && res.daemon !== 'start-failed'; }
+/** A switch that did what it was for — a local model that did not start (or stop) is a failure, though the write landed. */
+function swxLanded(res) { return !!res && res.ok !== false && res.daemon !== 'start-failed' && res.daemon !== 'stop-failed'; }
 async function swxRun(label, want, run, refuse) {
   // Every switch below writes config and restarts `atag serve`, which
   // would abort a running turn. Same guard, same words, as before.
@@ -12985,7 +12992,8 @@ async function selChooseFusion() {
  * instead of being turned away.
  */
 async function fzSwap(fromSlash) {
-  if (FZ.swapQueued || (SWX.pending > 0 && !S.busy)) return fzQueueSwap(fromSlash);
+  // An open approval queues it too: a swap now would restart the agent under the gate.
+  if (FZ.swapQueued || ((SWX.pending > 0 || S.pending) && !S.busy)) return fzQueueSwap(fromSlash);
   return fzSwapNow();
 }
 function fzQueueSwap(fromSlash) {
@@ -18268,6 +18276,8 @@ async function llmDaemon(which) {
   const res = which === 'stop' ? await BR.modelsStop() : await BR.modelsStart();
   LLMP.daemonPhase = null;
   if (!res || res.ok === false) { LLMP.statusErr = llmFail('models ' + which + ' failed', res); }
+  // Item 11: Start finds the daemon already up (a ⇄'s or the launch's start got there first) — it says so.
+  else if (which === 'start' && res.alreadyRunning) LLMP.msg = {text:'local-llm: daemon already running'};
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
 }

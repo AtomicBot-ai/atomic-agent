@@ -76,7 +76,7 @@ import {
 } from "./huggingface.js";
 import {
   activateProvider,
-  afterBackgroundBringUp,
+  bringUpAtLaunch,
   enterFusion,
   onBackgroundBringUp,
   selectCloudModel,
@@ -84,10 +84,11 @@ import {
   selectLocalModel,
   setFusionWorkers,
   runModeWantsDaemon,
+  startDaemonNow,
+  stopDaemonNow,
+  supersedeBringUp,
   swapFusionLegs,
   switchBackend,
-  trackBringUp,
-  type BringUp,
   type SwitchResult,
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
@@ -617,6 +618,16 @@ function appendAgentLog(line: string): void {
 
 const AGENT_SAID: string[] = [];
 
+/**
+ * Item 11: the route left the managed daemon behind (Settings or the wizard
+ * pointed it at an external server). A background start on its way is moot:
+ * it is ended, and what it already spawned is stopped.
+ */
+async function leaveManagedRoute<T extends { ok: boolean }>(res: T): Promise<T> {
+  if (res.ok && supersedeBringUp()) await modelsStop();
+  return res;
+}
+
 function wireIpc(client: AgentClient): void {
   /* End-of-turn notification (tui.notify): a native notification when a
      turn ends while the window is not focused. Never during the smoke run,
@@ -1028,14 +1039,9 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     return removeProvider(id);
   });
-  /* Item 11: never beside the start a ⇄ left running in the background — and
-     not again after it when it brought the daemon up (or found it up): a
-     second `models start` against a running daemon is the agent-side duplicate. */
-  ipcMain.handle("cli:modelsStart", async () => {
-    const bg = await afterBackgroundBringUp();
-    if (bg && (bg.daemon === "started" || bg.daemon === "untouched")) return { ok: true, stdout: "", stderr: "" };
-    return modelsStart();
-  });
+  /* Item 11: in its turn behind any start on its way, and not a second
+     `models start` for a daemon that is already up (alreadyRunning). */
+  ipcMain.handle("cli:modelsStart", () => startDaemonNow());
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -1110,8 +1116,8 @@ function wireIpc(client: AgentClient): void {
   // Review fix (item 5): Settings › LLM › External writes mode + url + the
   // local-llama provider url in one whole-file write, as the TUI's
   // persistUserLocalLlmUrl does. Two leaf writes left the provider url stale.
-  ipcMain.handle("cli:setExternalLlamaUrl", (_event, url: unknown) =>
-    typeof url === "string" ? setExternalLlamaUrl(url) : { ok: false, changed: false, error: "url required" },
+  ipcMain.handle("cli:setExternalLlamaUrl", async (_event, url: unknown) =>
+    typeof url === "string" ? leaveManagedRoute(await setExternalLlamaUrl(url)) : { ok: false, changed: false, error: "url required" },
   );
   ipcMain.handle("cli:providersReady", () => providersReady());
 
@@ -1382,7 +1388,8 @@ function wireIpc(client: AgentClient): void {
   // --- Item 7 part C (LLM / Telegram / Import tabs) ---
   ipcMain.handle("cli:modelsStatus", () => modelsStatus());
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
-  ipcMain.handle("cli:modelsStop", async () => { await afterBackgroundBringUp(); return modelsStop(); });
+  // Item 11: at once — a start on its way is ended, not waited for.
+  ipcMain.handle("cli:modelsStop", () => stopDaemonNow());
   ipcMain.handle("cli:modelsRemove", (_event, id: unknown) =>
     typeof id === "string" ? modelsRemove(id) : { ok: false, error: "model id required" },
   );
@@ -1517,7 +1524,8 @@ function wireIpc(client: AgentClient): void {
       : `[desktop] started the local model daemon (${r.modelId})`;
     console.error(line);
     send("agent:log", { stream: "stderr", line });
-    send("cli:daemon", r);
+    // The launch start was only ever a log line; a ⇄'s also tells the window.
+    if (r.via === "swap") send("cli:daemon", r);
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
@@ -1579,13 +1587,13 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:detectImportAgents", () => ({ ok: true, agents: detectImportAgents() }));
   /* r5 item 7 (setup wizard): the custom-endpoint branch's ONE whole-file
      write (persistUserRemoteLlmUrls), chat + embeddings + routing together. */
-  ipcMain.handle("cli:setExternalLlamaUrls", (_event, payload: unknown) => {
+  ipcMain.handle("cli:setExternalLlamaUrls", async (_event, payload: unknown) => {
     const p = (payload ?? {}) as { chatUrl?: unknown; embeddingUrl?: unknown };
     if (typeof p.chatUrl !== "string" || !p.chatUrl) return { ok: false, changed: false, error: "chat url required" };
-    return setExternalLlamaUrls({
+    return leaveManagedRoute(await setExternalLlamaUrls({
       chatUrl: p.chatUrl,
       ...(typeof p.embeddingUrl === "string" && p.embeddingUrl ? { embeddingUrl: p.embeddingUrl } : {}),
-    });
+    }));
   });
   ipcMain.handle("app:llamaLogTail", (_event, dataDir: unknown) =>
     typeof dataDir === "string" && dataDir.startsWith("/") ? llamaLogTail(dataDir) : { ok: false, error: "data dir required" },
@@ -8011,19 +8019,11 @@ async function startLocalDaemonAtBoot(): Promise<void> {
     if (!localRoute && !fusionLocalSeat) return;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
-    // Item 11: as the bring-up in flight, so a ⇄ or a switch made while the
-    // model loads waits for it rather than starting a second daemon beside it.
-    const r = await trackBringUp(async (): Promise<BringUp> => {
-      if (await localDaemonRunning()) return { daemon: "untouched" };
-      const res = await modelsStart();
-      return res.ok ? { daemon: "started" } : { daemon: "start-failed", error: res.error };
-    });
-    if (r.daemon === "untouched") return;
-    const line = r.daemon === "started"
-      ? `[desktop] started the local model daemon (${st.status.activeModel})`
-      : `[desktop] could not start the local model daemon: ${r.error ?? "unknown error"}`;
-    console.error(line);
-    send("agent:log", { stream: "stderr", line });
+    /* Item 11: as the background bring-up — a ⇄ or a start made while the
+       model loads queues behind it rather than starting a second daemon, and
+       a stop (a cloud switch, Settings › Stop) ends it at once instead of
+       waiting out the load. It says how it went through onBackgroundBringUp. */
+    await bringUpAtLaunch(st.status.activeModel);
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -8221,7 +8221,8 @@ async function stopLocalDaemonOnQuit(): Promise<void> {
     const managed = lm?.managed as { stopOnExit?: boolean } | undefined;
     if (lm?.mode !== "managed" || managed?.stopOnExit === false) return;
     await Promise.race([
-      modelsStop(),
+      // Item 11: a start still on its way is killed rather than left to finish after the app is gone.
+      stopDaemonNow(),
       new Promise((resolve) => setTimeout(resolve, 5_000)),
     ]);
   } catch {
