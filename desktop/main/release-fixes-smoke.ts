@@ -30,6 +30,23 @@ export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10"
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* A task file that throws (a renderer error inside `js`) or never settles
+   used to hang the whole run instead of failing it. Either is one FAIL here,
+   and the run goes on to the next item. */
+async function guarded(id: string, check: Check, run: () => Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("did not finish within 180 s")), 180_000); }),
+    ]);
+  } catch (err) {
+    check(`T${id}: its checks ran to the end`, false, err instanceof Error ? err.message : String(err));
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function menuLabels(menu: Electron.Menu | null): string[] {
   if (!menu) return [];
   return menu.items.flatMap((i) => [i.label, ...menuLabels(i.submenu ?? null)]);
@@ -390,11 +407,11 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // The remaining items keep their checks in their own files (main/smoke-tasks/),
   // so they can be built in parallel without touching this one. 13 also covers 14.
-  if (want.has("03")) await checks03(js, check);
-  if (want.has("09")) await checks09(js, check);
-  if (want.has("10")) await checks10(js, check);
-  if (want.has("11")) await checks11(js, check);
-  if (want.has("13") || want.has("14")) await checks13(js, check);
+  if (want.has("03")) await guarded("03", check, () => checks03(js, check));
+  if (want.has("09")) await guarded("09", check, () => checks09(js, check));
+  if (want.has("10")) await guarded("10", check, () => checks10(js, check));
+  if (want.has("11")) await guarded("11", check, () => checks11(js, check));
+  if (want.has("13") || want.has("14")) await guarded("13", check, () => checks13(js, check));
 
   await wait(100);
 }
