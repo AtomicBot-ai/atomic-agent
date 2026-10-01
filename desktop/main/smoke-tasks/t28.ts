@@ -37,7 +37,7 @@ const CHAT_B = `${PREFIX}b`;
 const TURN_A = `${PREFIX}turn-a`;
 const TURN_B = `${PREFIX}turn-b`;
 const MODEL = `${PREFIX}model`;
-const TITLE_A = "smoke t28: chat A, still answering";
+const TITLE_A = "smoke t28: the chat left answering";
 const q = (v: unknown) => JSON.stringify(v);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -208,7 +208,8 @@ async function scenario(
   );
   check(
     "T28: the refusal names the chat that is answering",
-    !!named && named.t === "Not while a turn is running" && named.s.includes(TITLE_A) && /still answering/.test(named.s),
+    !!named && named.t === "Not while a turn is running"
+      && named.s === `\u201c${TITLE_A}\u201d is still answering. Wait for it to finish or stop it, then switch.`,
     q(named),
   );
 
