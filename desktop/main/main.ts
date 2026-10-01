@@ -437,7 +437,16 @@ function writePrefs(raw: unknown): { ok: boolean; error?: string } {
   }
 }
 
+/* Backlog 18 review: only this launch's first window is the fresh one. A
+   window reopened from the Dock in the same process (macOS keeps the app
+   running) was told the state dir was fresh too, so it dropped the setup
+   download the first window had started (obBootGate forgets the reminder on
+   a fresh state) and opened setup over it. */
+const FRESH_WINDOW: { handedOut: boolean; id: number | null } = { handedOut: false, id: null };
+
 function createWindow(): BrowserWindow {
+  const freshHere = DESKTOP_STATE_WAS_FRESH && !FRESH_WINDOW.handedOut;
+  FRESH_WINDOW.handedOut = true;
   const window = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -463,7 +472,7 @@ function createWindow(): BrowserWindow {
          window used to show first. The probe's frame log is armed for that
          launch only. */
       additionalArguments: [
-        ...(DESKTOP_STATE_WAS_FRESH ? ["--atomic-fresh-state"] : []),
+        ...(freshHere ? ["--atomic-fresh-state"] : []),
         ...(FIRST_RUN_PROBE ? ["--atomic-boot-probe"] : []),
       ],
       // The probe counts frames, and a window the smoke starts behind others
@@ -471,6 +480,7 @@ function createWindow(): BrowserWindow {
       backgroundThrottling: !FIRST_RUN_PROBE,
     },
   });
+  if (freshHere) FRESH_WINDOW.id = window.webContents.id;
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -1609,8 +1619,8 @@ function wireIpc(client: AgentClient): void {
     arch: process.arch,
   }));
 
-  ipcMain.handle("app:firstRun", () => ({
-    fresh: DESKTOP_STATE_WAS_FRESH,
+  ipcMain.handle("app:firstRun", (event) => ({
+    fresh: DESKTOP_STATE_WAS_FRESH && event.sender.id === FRESH_WINDOW.id,
     stateDir: DESKTOP_STATE_DIR,
     tuiStateDir: TUI_STATE_DIR,
     tuiSetupFound: existsSync(join(TUI_STATE_DIR, "config.json")) && DESKTOP_STATE_DIR !== TUI_STATE_DIR,
