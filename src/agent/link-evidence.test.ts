@@ -58,6 +58,49 @@ describe("extractLinks", () => {
   });
 });
 
+describe("extractLinks in other scripts", () => {
+  const URL = "https://a.io/docs/page";
+
+  it("stops at the quotes, brackets and punctuation of other scripts", () => {
+    expect(extractLinks(`Ссылка: «${URL}»`)).toEqual([URL]);
+    expect(extractLinks(`“${URL}”`)).toEqual([URL]);
+    expect(extractLinks(`见${URL}。`)).toEqual([URL]);
+    expect(extractLinks(`见${URL}，谢谢`)).toEqual([URL]);
+    expect(extractLinks(`「${URL}」と（${URL}）`)).toEqual([URL]);
+    expect(extractLinks(`${URL}…`)).toEqual([URL]);
+    expect(extractLinks(`${URL}—подробнее`)).toEqual([URL]);
+  });
+
+  it("stops where CJK text runs on with no space", () => {
+    expect(extractLinks(`${URL}中文标题`)).toEqual([URL]);
+    expect(extractLinks(`${URL}を参照`)).toEqual([URL]);
+  });
+
+  it("keeps a Cyrillic path whole", () => {
+    expect(extractLinks("https://ru.wikipedia.org/wiki/Москва, см.")).toEqual([
+      "https://ru.wikipedia.org/wiki/Москва",
+    ]);
+  });
+
+  it("does not flag a correctly copied link in a Russian or CJK reply", () => {
+    const sources = linkSources(turnWith(`1. ${URL}`));
+    for (const reply of [
+      `Вот: «${URL}»`,
+      `见${URL}。`,
+      `见${URL}，谢谢`,
+      `See ${URL}…`,
+    ]) {
+      expect(unsourcedLinks(reply, sources)).toEqual([]);
+    }
+  });
+
+  it("stores a source link glued to CJK text under its own key", () => {
+    const sources = linkSources(turnWith(`结果：${URL}中文标题`));
+    expect(sources.known.has(normalizeLink(URL)!)).toBe(true);
+    expect(unsourcedLinks(`见 ${URL}`, sources)).toEqual([]);
+  });
+});
+
 describe("normalizeLink", () => {
   it("ignores scheme, www., host case, trailing slash and fragment", () => {
     const key = normalizeLink("https://example.com/docs/page");

@@ -50,7 +50,23 @@ export interface LinkSources {
 /** The most links a notice names; the rest are counted, not quoted. */
 const MAX_NAMED = 5;
 
-const URL_RE = /\bhttps?:\/\/[^\s<>"'`[\]{}|\\^]+/gi;
+/**
+ * What ends a link besides whitespace and ASCII delimiters: the quotes,
+ * brackets and sentence punctuation of other scripts (`«…»`, `“…”`,
+ * `「…」`, `（…）`, `。，、；：！？`, `…`, dashes), the CJK punctuation and
+ * fullwidth blocks, and CJK script itself — Chinese and Japanese text
+ * runs on with no space after a link (`见https://…，谢谢`). Cyrillic and
+ * other letters stay in, so an IRI path like `/wiki/Москва` is whole.
+ */
+const NON_ASCII_STOPS =
+  "«»“”‘’„‟‹›「」『』（）【】〔〕〖〗《》〈〉。，、；：！？…‥—–" +
+  "\\u3000-\\u303F\\uFF00-\\uFFEF" +
+  "\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}";
+
+const URL_RE = new RegExp(
+  `\\bhttps?:\\/\\/[^\\s<>"'\`[\\]{}|\\\\^${NON_ASCII_STOPS}]+`,
+  "giu",
+);
 
 /** Characters a sentence or markup puts after a link, not part of it. */
 const TRAILING = /[.,;:!?'"*_~>]+$/;
