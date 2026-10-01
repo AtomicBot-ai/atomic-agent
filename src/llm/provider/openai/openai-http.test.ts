@@ -897,19 +897,24 @@ describe("a key problem the request itself shows", () => {
   });
 
   it("a key set by hand in the entry's headers counts as sent", async () => {
-    const err = await caught(() =>
-      openAiPostJson(
-        {
-          ...depsWith(async () => errorResponse(403, "forbidden")),
-          apiKey: "",
-          extraHeaders: { Authorization: "Bearer sk-by-hand" },
-        },
-        "/v1/chat/completions",
-        {},
-        {},
-      ),
-    );
-    expect(err.keyProblem).toBeUndefined();
+    for (const extraHeaders of [
+      { Authorization: "Bearer sk-by-hand" },
+      { "x-goog-api-key": "AIza-by-hand" },
+    ]) {
+      const err = await caught(() =>
+        openAiPostJson(
+          {
+            ...depsWith(async () => errorResponse(403, "forbidden")),
+            apiKey: "",
+            extraHeaders,
+          },
+          "/v1/chat/completions",
+          {},
+          {},
+        ),
+      );
+      expect(err.keyProblem).toBeUndefined();
+    }
   });
 });
 

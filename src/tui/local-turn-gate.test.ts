@@ -7,6 +7,7 @@ import {
   downloadProgressFor,
   evaluateLocalTurnGate,
   reduceChatPull,
+  servingChainLength,
   type LocalTurnGateFacts,
 } from "./local-turn-gate.js";
 
@@ -179,6 +180,44 @@ describe("evaluateLocalTurnGate — chain length >1 notices, never blocks", () =
     if (decision.kind !== "notice") return;
     expect(decision.text).toContain("53% · 2.1 GB / 4.2 GB");
     expect(decision.text).not.toContain("\n");
+  });
+});
+
+describe("servingChainLength — the links a turn can actually walk", () => {
+  const local = {
+    id: "local-llama",
+    kind: "llama-server",
+    url: "http://127.0.0.1:8080",
+  };
+  const dashscope = {
+    id: "dashscope",
+    kind: "openai-compatible",
+    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode",
+    defaultChatModel: "qwen-plus",
+  };
+
+  it("does not count a fallback link the runtime skips for having no key", () => {
+    // Counted, the gate would run the turn "through the fallback chain"
+    // that at runtime is the missing local model alone.
+    expect(
+      servingChainLength(
+        llmConfig({
+          providers: [local, dashscope],
+          fallback: { chain: ["local-llama", "dashscope"] },
+        }),
+      ),
+    ).toBe(1);
+  });
+
+  it("counts it once it has a key", () => {
+    expect(
+      servingChainLength(
+        llmConfig({
+          providers: [local, { ...dashscope, apiKey: "sk-test" }],
+          fallback: { chain: ["local-llama", "dashscope"] },
+        }),
+      ),
+    ).toBe(2);
   });
 });
 

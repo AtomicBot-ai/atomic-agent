@@ -4,10 +4,15 @@ import {
   isKnownLocalModelId,
   isModelDownloaded,
 } from "../local-llm/index.js";
-import { resolveFallbackChain } from "../llm/fallback/index.js";
+import {
+  lacksRequiredApiKeyIn,
+  resolveFallbackChain,
+  withoutKeylessLinks,
+} from "../llm/fallback/index.js";
 import {
   activeTextProviderIsLlamaServer,
   resolveLlmConfig,
+  type ResolvedLlmConfig,
 } from "../llm/provider/registry/index.js";
 import { formatBytes } from "./hooks/use-transfer-rate.js";
 import type { LocalModelsPullState } from "./local-models/local-models-panel-state.js";
@@ -41,7 +46,7 @@ export interface LocalTurnGateFacts {
   modelId: string | null;
   /** GGUF on disk? Only meaningful when the gate is in scope. */
   modelDownloaded: boolean;
-  /** Effective chain length from `resolveFallbackChain` (1 = no fallback). */
+  /** Links a turn can actually walk: `servingChainLength` (1 = no fallback). */
   fallbackChainLength: number;
 }
 
@@ -86,8 +91,20 @@ export function readLocalTurnGateFacts(): LocalTurnGateFacts {
     modelId,
     modelDownloaded,
     fallbackChainLength:
-      inScope && !modelDownloaded ? resolveFallbackChain(llm).chain.length : 1,
+      inScope && !modelDownloaded ? servingChainLength(llm) : 1,
   };
+}
+
+/**
+ * How many links of the chain a turn can actually walk: the configured
+ * chain minus the fallback links the runtime skips for having no key
+ * (`withoutKeylessLinks`, as `createFallbackChainResolver` applies it).
+ * Counting those would let a turn run "through the fallback chain" that
+ * at runtime is the missing local model alone, and park on it.
+ */
+export function servingChainLength(llm: ResolvedLlmConfig): number {
+  return withoutKeylessLinks(resolveFallbackChain(llm), lacksRequiredApiKeyIn(llm))
+    .chain.length;
 }
 
 /**

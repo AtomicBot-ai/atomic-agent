@@ -12,7 +12,10 @@ export {
   type FallbackTiming,
   type ResolvedFallbackChain,
 } from "./fallback-config.js";
-export { lacksRequiredApiKey } from "./missing-api-key.js";
+export {
+  lacksRequiredApiKey,
+  lacksRequiredApiKeyIn,
+} from "./missing-api-key.js";
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
 export { runWithFallback } from "./run-with-fallback.js";
 export {

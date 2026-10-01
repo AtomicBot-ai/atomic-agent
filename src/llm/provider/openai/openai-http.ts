@@ -744,19 +744,19 @@ async function httpErrorFromResponse(
 
 /**
  * Whether the request carried a credential at all: the resolved key, or
- * one the entry sets by hand in its static headers. Keyless servers send
+ * a header the entry sets by hand whose name looks like one (`key`,
+ * `auth`, `token`: a proxy's own scheme counts too). Keyless servers send
  * none on purpose, so this only means something next to a 401/403.
  */
 function sentCredential(deps: OpenAiHttpDeps): boolean {
   if ((deps.apiKey ?? "").trim().length > 0) return true;
   const named = deps.apiKeyHeader?.trim().toLowerCase();
-  return Object.keys(deps.extraHeaders ?? {}).some((name) => {
+  return Object.entries(deps.extraHeaders ?? {}).some(([name, value]) => {
     const lower = name.trim().toLowerCase();
     return (
-      lower === "authorization" ||
-      lower === "x-api-key" ||
-      lower === "api-key" ||
-      lower === named
+      typeof value === "string" &&
+      value.trim().length > 0 &&
+      (/key|auth|token/i.test(lower) || lower === named)
     );
   });
 }
