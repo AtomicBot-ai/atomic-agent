@@ -494,6 +494,26 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       r.hf === true && r.label === "Add a model from Hugging Face…" && r.hint === false && r.oldHint === false,
       JSON.stringify(r),
     );
+    // Same spot in the recording: the marks were small, and a white disc glared in the dark theme.
+    const b = await js<Record<string, unknown>>(`(() => {
+      const probe = document.createElement('span'); probe.className = 'logo';
+      probe.innerHTML = '<img src="logos/google.svg" alt="">'; document.body.appendChild(probe);
+      const root = document.documentElement, had = root.getAttribute('data-theme');
+      try {
+        root.setAttribute('data-theme', 'light'); const light = getComputedStyle(probe).backgroundColor;
+        root.setAttribute('data-theme', 'dark'); const dark = getComputedStyle(probe).backgroundColor;
+        const share = parseFloat(getComputedStyle(probe.querySelector('img')).width) / parseFloat(getComputedStyle(probe).width);
+        return {light, dark, share: Math.round(share * 100) / 100};
+      } finally {
+        if (had == null) root.removeAttribute('data-theme'); else root.setAttribute('data-theme', had);
+        probe.remove();
+      }
+    })()`);
+    check(
+      "T21: a mark sits on white in the light theme, light grey in the dark one, and fills three quarters of it",
+      b.light === "rgb(255, 255, 255)" && b.dark === "rgb(211, 215, 219)" && b.share === 0.74,
+      JSON.stringify(b),
+    );
   }
 
   await wait(100);
