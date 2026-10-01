@@ -309,4 +309,23 @@ export async function checks11(js: Js, check: Check): Promise<void> {
     await configSetWhole(live);
     rmSync(dir, { recursive: true, force: true });
   }
+
+  // Launch: a Fusion in force with a local seat gets its daemon started like the
+  // local route does (startLocalDaemonAtBoot); two cloud seats do not.
+  {
+    const lm = { mode: "managed", managed: { modelId: "qwen-3.5-4b" } };
+    const fusionLocal: RunModeConfig = {
+      llm: { activeTextProvider: "aimlapi", providers: [{ id: "local-llama", kind: "llama-server" }, { id: "aimlapi", kind: "aimlapi" }],
+        runMode: { mode: "fusion", fusion: { orchestratorProvider: "aimlapi", workerProvider: "local-llama" } } },
+      localModels: lm,
+    } as RunModeConfig;
+    const fusionCloud: RunModeConfig = {
+      llm: { activeTextProvider: "aimlapi", providers: [{ id: "aimlapi", kind: "aimlapi" }, { id: "openrouter", kind: "openrouter" }],
+        runMode: { mode: "fusion", fusion: { orchestratorProvider: "aimlapi", workerProvider: "openrouter" } } },
+      localModels: lm,
+    } as RunModeConfig;
+    const a = runModeWantsDaemon(resolveRunMode(fusionLocal), lm);
+    const b = runModeWantsDaemon(resolveRunMode(fusionCloud), lm);
+    check("T11: at launch, Fusion with a local seat starts its model server; two cloud seats do not", a === true && b === false, JSON.stringify({ fusionLocal: a, fusionCloud: b }));
+  }
 }

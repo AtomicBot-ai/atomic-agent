@@ -79,10 +79,12 @@ import {
   selectFusionWorkerModel,
   selectLocalModel,
   setFusionWorkers,
+  runModeWantsDaemon,
   swapFusionLegs,
   switchBackend,
   type SwitchResult,
 } from "./backend-switch.js";
+import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
 import { RELEASE_FIX_TASKS, releaseFixesSmokeTest } from "./release-fixes-smoke.js";
 // Lane B — context before the first message (item 3): the no-trace smoke dir.
@@ -7941,7 +7943,13 @@ async function startLocalDaemonAtBoot(): Promise<void> {
     // No `llm` block means the agent synthesizes `local-llama`, the local route.
     const active = cfg.llm ? cfg.llm.activeTextProvider : "local-llama";
     const entry = cfg.llm?.providers?.find((p) => p.id === active);
-    if (cfg.llm && (!entry || entry.kind !== "llama-server")) return;
+    const localRoute = !cfg.llm || (!!entry && entry.kind === "llama-server");
+    /* Fusion with a local seat needs the daemon as much as the local route:
+       its active provider is the cloud orchestrator, so the check above let
+       it through to nothing, and the only thing that used to start it was a
+       ⇄ swap, as a side effect — which a swap no longer does (item 11). */
+    const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
+    if (!localRoute && !fusionLocalSeat) return;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
     if (await localDaemonRunning()) return;
