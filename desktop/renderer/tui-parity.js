@@ -95,6 +95,11 @@ function tpActiveIsLocal() {
 }
 
 function tpWaitNotice(wait) {
+  /* Backlog 32: the active provider's saved key is one the agent will not
+     send, so the wait is on some fallback link's "fetch failed", and "no
+     connection" would send the person looking at their network. */
+  const badKey = activeSavedKeyInvalid();
+  if (badKey) return savedKeyTurnLine(badKey) + ' The turn is paused; Stop ends it.';
   // Item 29: waitWhy is the agent's cause when it sent one, else its reason as before.
   const why = waitWhy(wait);
   const budget = wait && wait.maxWaitMs ? ' for up to ' + tpSeconds(wait.maxWaitMs) : '';

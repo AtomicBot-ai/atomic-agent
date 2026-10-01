@@ -501,6 +501,47 @@ export function explainConfigWriteFailure(error: string | undefined): string | u
   );
 }
 
+/* ---------------------------------------------------------------
+   Backlog 32 — an API key is plain ASCII, and nothing else gets in.
+
+   A key travels in an HTTP header, and a header value cannot carry a
+   character outside that range. The agent refuses such a key on every
+   request, before anything is sent (`assertAsciiApiKey`,
+   src/llm/provider/openai/ascii-header-guard.ts), and its TUI refuses it on
+   the key screen (`apiKeyPhaseError`, src/tui/providers/providers-wizard-target.ts).
+   The desktop did neither. A key with a letter typed in another keyboard
+   layout, or with a zero-width space a copy brought along (trim() takes the
+   no-break space at either end, not that), was saved as it was; the key
+   check below turned fetch's own refusal of the header into "Could not reach
+   api.aimlapi.com — the key was not checked" and offered Save unchecked; and
+   every turn on that provider then fell over to the next one in the chain
+   and parked on its `fetch failed` — "no connection", for a request that
+   never left the machine.
+
+   So the key fields clean what they are given (renderer.js does the same on
+   paste and on save), main refuses to save what is still not a key, the
+   check refuses it in its own words, and a key already saved that way is not
+   counted as a key at all: Settings › Models and the composer say it needs
+   pasting again.
+   --------------------------------------------------------------- */
+
+/** Invisible format characters a copy carries along and no key has: soft hyphen, zero-width space/joiners, direction marks, word joiner, BOM. */
+const INVISIBLE_IN_KEY = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+/** What a key field keeps of what it was given: no invisible characters anywhere, no whitespace (the no-break space included) at either end. */
+export function cleanApiKey(raw: string): string {
+  return raw.replace(INVISIBLE_IN_KEY, "").trim();
+}
+
+/** The agent's own rule for a key (`isAsciiOnly` in ascii-header-guard.ts). */
+export function apiKeyCharsOk(key: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /^[\x00-\x7f]*$/.test(key);
+}
+
+/** Said wherever a key that still has such a character is refused. */
+export const API_KEY_CHAR_ERROR = "That key has a character keys don’t have; paste it again.";
+
 /** Add a provider, or replace the entry that already carries its id. */
 export function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
   return withConfigLock(() => upsertProviderNow(entry));
@@ -509,6 +550,12 @@ export function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
 async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
   if (!/^[\w.-]{1,48}$/.test(entry.id)) {
     return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${entry.id}` };
+  }
+  // Backlog 32: every window path that saves a key comes through here.
+  if (typeof entry.apiKey === "string" && entry.apiKey.length > 0) {
+    const key = cleanApiKey(entry.apiKey);
+    if (!apiKeyCharsOk(key)) return { ok: false, stdout: "", stderr: "", error: API_KEY_CHAR_ERROR };
+    entry = { ...entry, apiKey: key };
   }
   const current = await configGet();
   if (!current.ok || !current.config) {
@@ -737,6 +784,8 @@ export interface ProviderVerification {
   checked: boolean;
   status?: number;
   error?: string;
+  /** Backlog 32: the key has a character keys don't have, so it was refused here, unsent. */
+  keyChars?: boolean;
 }
 
 /** Ask the provider to complete one token, and report what it said. */
@@ -749,6 +798,15 @@ export async function verifyProviderKey(
   if (!url) return { ok: false, checked: false, error: `this build cannot check a ${entry.kind || "provider"} key` };
   if (!model) return { ok: false, checked: false, error: "no model to check the key against" };
   const key = resolveKeyValue(entry);
+  /* Backlog 32: such a key cannot go into the header. fetch refuses it before
+     it opens a connection (a TypeError for a character above U+00FF), and the
+     catch below used to read that as an unreachable host — "the key was not
+     checked", with Save unchecked on offer. A no-break space inside the key
+     would go out as it is and come back a 401. It is a verdict on the key,
+     reached here, and nothing is sent. */
+  if (key && !apiKeyCharsOk(key)) {
+    return { ok: false, checked: true, keyChars: true, error: API_KEY_CHAR_ERROR };
+  }
   // A keyless local server is asked the same one-token question, just without Authorization.
   if (!key && !isKeylessLocalProviderEntry(entry)) {
     return {
@@ -1423,6 +1481,8 @@ export interface KeyEnvNames {
   present: Set<string>;
   /** Set to a non-empty value — what `key.length > 0` sees. */
   nonEmpty: Set<string>;
+  /** Backlog 32: non-empty, with a character no key has — the agent refuses to send it. */
+  badChars: Set<string>;
 }
 
 // r5 review fix — exported for tui-import.ts, which has to answer
@@ -1431,10 +1491,12 @@ export interface KeyEnvNames {
 export function keyNamesAvailable(): KeyEnvNames {
   const present = new Set<string>();
   const nonEmpty = new Set<string>();
+  const badChars = new Set<string>();
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     present.add(k);
     if (v.length > 0) nonEmpty.add(k);
+    if (v.length > 0 && !apiKeyCharsOk(v)) badChars.add(k);
   }
   try {
     const text = readFileSync(join(stateDirPath(), ".env"), "utf8");
@@ -1444,12 +1506,14 @@ export function keyNamesAvailable(): KeyEnvNames {
       const name = m[1]!;
       if (present.has(name)) continue; // the environment wins, as in load-dotenv.ts
       present.add(name);
-      if (m[2]!.trim().replace(/^["']|["']$/g, "").length > 0) nonEmpty.add(name);
+      const value = m[2]!.trim().replace(/^["']|["']$/g, "");
+      if (value.length > 0) nonEmpty.add(name);
+      if (value.length > 0 && !apiKeyCharsOk(value)) badChars.add(name);
     }
   } catch {
     // no .env — the environment alone decides
   }
-  return { present, nonEmpty };
+  return { present, nonEmpty, badChars };
 }
 
 /**
@@ -1474,10 +1538,35 @@ export function isKeylessLocalProviderEntry(entry: ProviderEntry): boolean {
   return isLocalProviderUrl(entry.baseUrl ?? "");
 }
 
-/** Ready to route to: a key, or a keyless local server (isCloudTextProviderReady). */
+/** Ready to route to: a key, or a keyless local server (isCloudTextProviderReady) — and never a key the agent will refuse to send (backlog 32). */
 export function providerIsUsable(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
+  if (providerKeyInvalid(entry, names)) return false;
   return providerHasKey(entry, names) || isKeylessLocalProviderEntry(entry);
 }
+
+/**
+ * Backlog 32: the key the agent would send for this entry has a character no
+ * key has, so every request is refused before it leaves the machine. Same
+ * precedence as `providerHasKey` (the agent's resolveLlmProviderApiKey): the
+ * entry's own key, else the variable it reads. The value is tested where it
+ * lies and never leaves main.
+ */
+export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
+  if (entry.apiKey && entry.apiKey.length > 0) return !apiKeyCharsOk(entry.apiKey);
+  if (entry.kind === "subscription-cli") return false;
+  let name: string | undefined;
+  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) name = entry.apiKeyEnvVar;
+  else if (entry.kind === "openrouter") name = "OPENROUTER_API_KEY";
+  else if (entry.kind === "aimlapi") name = "AIMLAPI_API_KEY";
+  else if (entry.kind === "gemini") name = "GEMINI_API_KEY";
+  else if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+    name = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
+  }
+  return !!name && names.badChars.has(name);
+}
+
+/** What a switch says when the saved key is one the agent will not send. */
+export const STORED_KEY_INVALID = "its saved API key has a character keys don’t have; paste it again";
 
 export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
@@ -1515,15 +1604,19 @@ export function rewriteWholeConfig<V extends { write: boolean }>(
   });
 }
 
-/** Ids of the configured cloud providers that have a usable key, for the selector's row copy. */
-export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; error?: string }> {
+/**
+ * Ids of the configured cloud providers that have a usable key, for the
+ * selector's row copy — and (backlog 32) of those whose saved key is one the
+ * agent will not send, so the window can say so rather than "no API key".
+ */
+export async function providersReady(): Promise<{ ok: boolean; ids?: string[]; invalidKeyIds?: string[]; error?: string }> {
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
   const names = keyNamesAvailable();
-  const ids = (read.config.llm?.providers ?? [])
-    .filter((p) => p.kind !== "llama-server" && providerIsUsable(p, names))
-    .map((p) => p.id);
-  return { ok: true, ids };
+  const cloud = (read.config.llm?.providers ?? []).filter((p) => p.kind !== "llama-server");
+  const ids = cloud.filter((p) => providerIsUsable(p, names)).map((p) => p.id);
+  const invalidKeyIds = cloud.filter((p) => providerKeyInvalid(p, names)).map((p) => p.id);
+  return { ok: true, ids, invalidKeyIds };
 }
 
 

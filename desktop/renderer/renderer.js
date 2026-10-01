@@ -237,6 +237,37 @@ const PRESETS = [
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
   KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local}));
+/* Backlog 32 — a key is plain ASCII, and the key fields keep it that way
+   (main/agent-cli.ts has the same rule, and why: the agent refuses any other
+   key on every request, before anything is sent). Pasted or typed, a key
+   loses the invisible characters a copy brings along — zero-width space and
+   joiners, word joiner, soft hyphen, direction marks, BOM — and the
+   whitespace at either end, the no-break space included. A key that still
+   has a character keys don't have is refused with KEY_CHAR_ERROR, and a key
+   already saved like that is named as such wherever its provider shows. */
+const KEY_INVISIBLE = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const KEY_CHAR_ERROR = 'That key has a character keys don’t have; paste it again.';
+function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
+/* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
+function keyCharsOk(key) { return /^[\x00-\x7f]*$/.test(String(key == null ? '' : key)); }
+/** A saved key the agent will not send: the entry's own, or one main found in the environment or .env (providersReady). */
+function savedKeyInvalid(p) {
+  if (!p) return false;
+  if (p.apiKey && String(p.apiKey).length) return !keyCharsOk(p.apiKey);
+  return (BSW.invalidKeyIds || []).includes(p.id);
+}
+function savedKeyLine(id) { return 'The key saved for ' + providerWord(id) + ' has a character keys don’t have; paste it again.'; }
+/** For a turn on such a provider: what happened, instead of the fallback's "no connection". */
+function savedKeyTurnLine(id) {
+  const name = providerWord(id);
+  return 'The key saved for ' + name + ' has a character keys don’t have, so nothing was sent to ' + name + '. Paste it again in Settings › Models.';
+}
+/** The active provider, when its saved key is one the agent will not send. */
+function activeSavedKeyInvalid() {
+  const id = selActiveProviderId();
+  const entry = (selProviders() || []).find((p) => p.id === id);
+  return entry && savedKeyInvalid(entry) ? id : null;
+}
 /* What is left of the prototype's Models pane after Settings › LLM replaced
    it (review fix): no rows of its own any more — only the provider-add and
    model-search writers, which the `--smoke --models` harness drives directly
@@ -707,7 +738,7 @@ const OB_TUI_AGENT_ID = 'atomic-tui';
    says "download model" once it has, as the TUI's does — and `readyLoaded`
    whether the key facts have landed at all: until they have, the rows say
    "checking keys…" rather than a "no API key" that is not known yet. */
-const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false };
+const BSW = { line:'', readyIds:[], readyLoaded:false, localLoaded:false, gating:false, invalidKeyIds:[] };
 /* Run mode — Fusion. `live` is the fan-out's legs while a turn runs, the way
    src/tui/fusion-live-workers.ts keeps them: ordered by first sight, finished
    legs kept (done) until the turn ends. `swapQueued` is a ⇄ pressed while
@@ -2767,8 +2798,8 @@ function composer() {
     : WAIT
     ? '<div class="statusstrip waiting">'
       + '<span class="ss-ic"><span class="ss-dot"></span></span>'
-      + '<span class="ann">Waiting for ' + esc(waitProviderLabel(WAIT)) + '</span>'
-      + (waitWhy(WAIT) ? '<span class="ob-help ss-why">' + esc(waitWhy(WAIT)) + '</span>' : '')
+      + '<span class="ann">Waiting for ' + esc(activeSavedKeyInvalid() ? (providerWord(selActiveProviderId()) || 'the provider') : waitProviderLabel(WAIT)) + '</span>'
+      + ((activeSavedKeyInvalid() || waitWhy(WAIT)) ? '<span class="ob-help ss-why">' + esc(activeSavedKeyInvalid() ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + '</div>'
@@ -5664,6 +5695,32 @@ document.addEventListener('click', (e) => {
   if (t.closest('#composer') && !t.closest('button')) { const en = $('#entry'); if (en) en.focus(); }
 });
 
+/* Backlog 32 — a key field cleans what is pasted into it (cleanKeyInput),
+   and refuses a paste that still has a character keys don't have, leaving
+   the field as it was: in a password field nobody can see a zero-width
+   space, or a letter from the other keyboard layout. A paste that is fine
+   goes in where the caret is and is announced as typing, so the field's own
+   `input` handling (state, errors cleared) runs exactly as for a keystroke. */
+const KEY_FIELDS = new Set(['wiz-key', 'sel-key', 'mp-key']);
+document.addEventListener('paste', (e) => {
+  const el = e.target;
+  if (!el || !KEY_FIELDS.has(el.id) || !e.clipboardData) return;
+  e.preventDefault();
+  const text = cleanKeyInput(e.clipboardData.getData('text/plain') || e.clipboardData.getData('text'));
+  if (!keyCharsOk(text)) {
+    if (el.id === 'wiz-key') { WIZ.error = KEY_CHAR_ERROR; WIZ.errorDetail = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; }
+    else if (el.id === 'sel-key') SEL.err = KEY_CHAR_ERROR;
+    else MP.err = KEY_CHAR_ERROR;
+    render();
+    return;
+  }
+  const at = el.selectionStart == null ? el.value.length : el.selectionStart;
+  const to = el.selectionEnd == null ? el.value.length : el.selectionEnd;
+  el.value = el.value.slice(0, at) + text + el.value.slice(to);
+  el.setSelectionRange(at + text.length, at + text.length);
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+});
+
 document.addEventListener('input', (e) => {
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
@@ -6874,6 +6931,10 @@ function turnFailureLine(ev) {
   const id = selActiveProviderId();
   const entry = (selProviders() || []).find((p) => p.id === id);
   const waited = turnWaited();
+  /* Backlog 32: on a provider whose saved key the agent will not send, nothing
+     reached it; whatever the chain's last link said ("fetch failed" from a
+     local fallback) is not why the turn failed. */
+  if (entry && savedKeyInvalid(entry)) return esc(savedKeyTurnLine(id) + (waited ? ' The turn gave up' + waited + '.' : ''));
   if (providerFailure(ev)) {
     const host = providerHost(entry);
     return esc((id ? providerWord(id) : 'The provider') + ' is not answering'
@@ -12470,7 +12531,8 @@ async function mpSetModel(model) {
     () => SWXBR.selectCloudModel(id, model));
   MP.busy = false;
   if (!res || !res.ok) {
-    MP.err = res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not set the model');
+    MP.err = res && res.needsKey && res.keyInvalid ? savedKeyLine(id)
+      : res && res.needsKey ? 'no API key for ' + id + ' — add one with the wizard or export its variable' : ((res && res.error) || 'could not set the model');
     render(); return;
   }
   MP.pickFor = null; MP.picks = [];
@@ -12482,7 +12544,9 @@ async function mpSetModel(model) {
 async function mpSaveProvider() {
   const preset = PRESETS[MP.presetCur];
   const keyInput = document.getElementById('mp-key');
-  const apiKey = (keyInput && keyInput.value.trim()) || '';
+  // Backlog 32: the field's key, cleaned; a key with a character keys don't have goes no further.
+  const apiKey = cleanKeyInput(keyInput && keyInput.value);
+  if (!keyCharsOk(apiKey)) { MP.err = KEY_CHAR_ERROR; render(); return; }
   MP.busy = true; MP.err = null; render();
   const entry = {
     id: preset.id, kind: preset.kind, baseUrl: preset.baseUrl, apiKeyEnvVar: preset.env,
@@ -12694,6 +12758,7 @@ function swxFailLine(label, res) {
   const head = String(label || 'the switch').replace(/[…\.\s]+$/, '');
   if (!res) return head + ' — the agent did not answer';
   if (res.needsProvider) return head + ' — no cloud provider is configured yet';
+  if (res.needsKey && res.keyInvalid) return head + ' — the key saved for ' + providerWord(res.providerId) + ' has a character keys don\u2019t have; paste it again';
   if (res.needsKey) return head + ' — no API key for ' + (res.providerId || 'that provider');
   if (res.needsModel) return head + ' — no local model is on disk yet';
   if (res.needsDownload) return head + ' — that model is not downloaded yet';
@@ -13067,7 +13132,8 @@ function selRows() {
     // providerRows: hasApiKey ? (chatModel ?? 'default model') : 'no API key'.
     const rows = selProviders().map((p) => ({
       type:'provider', id:p.id, label:p.id,
-      detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model') : 'no API key',
+      detail: !BSW.readyLoaded ? 'checking keys…' : BSW.readyIds.includes(p.id) ? (p.defaultChatModel || p.model || 'default model')
+        : savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'no API key',
       /* A key we were never able to check is not a key we know works,
          and the row has to keep saying so until a turn proves otherwise. */
       unverified: UNVERIFIED.indexOf(p.id) >= 0,
@@ -13190,7 +13256,7 @@ async function selActivate(row) {
       () => SWXBR.activateProvider(row.id));
     SEL.busy = false; BSW.line = '';
     if (!res || !res.ok) {
-      if (res && res.needsKey) { bswOpenKey(row.id); return; }
+      if (res && res.needsKey) { bswOpenKey(row.id, res.keyInvalid); return; }
       // U29: no model yet; its model list is the next step, as on success.
       if (res && res.needsChatModel) { SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render(); selLoadModels(row.id); return; }
       SEL.err = (res && res.error) || 'could not switch provider'; render(); return;
@@ -13220,7 +13286,7 @@ async function selActivate(row) {
     closeSelector();
     await swxRun('switching…', {providerId: pid, model: row.id}, async () => {
       const res = await SWXBR.selectCloudModel(pid, row.id);
-      if (!res || !res.ok) toast('Could not select the model', res && res.needsKey ? 'no API key for ' + pid : ((res && res.error) || ''));
+      if (!res || !res.ok) toast('Could not select the model', res && res.needsKey && res.keyInvalid ? savedKeyLine(pid) : res && res.needsKey ? 'no API key for ' + pid : ((res && res.error) || ''));
       else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
       return res;
     });
@@ -13424,7 +13490,9 @@ function selShell(title, body, foot, lead) {
 async function selSavePreset() {
   const preset = PRESETS[SEL.presetCur];
   const input = document.getElementById('sel-key');
-  const apiKey = (input && input.value.trim()) || '';
+  // Backlog 32: the field's key, cleaned; a key with a character keys don't have goes no further.
+  const apiKey = cleanKeyInput(input && input.value);
+  if (!keyCharsOk(apiKey)) { SEL.err = KEY_CHAR_ERROR; render(); return; }
   SEL.busy = true; SEL.err = null; render();
   const entry = {id:preset.id, kind:preset.kind, baseUrl:preset.baseUrl, apiKeyEnvVar:preset.env};
   if (apiKey) entry.apiKey = apiKey;
@@ -13441,7 +13509,8 @@ async function selSavePreset() {
   // activating it without one would stop the agent from starting.
   if (res && res.needsChatModel) { SEL.addOpen = false; SEL.kind = 'model'; SEL.cursor = 0; render(); selLoadModels(preset.id); return; }
   if (!res || !res.ok) {
-    SEL.err = res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
+    SEL.err = res && res.needsKey && res.keyInvalid ? savedKeyLine(preset.id)
+      : res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
     render(); refreshLiveConfig(); return;
   }
   bswReport(res);
@@ -14407,7 +14476,7 @@ async function selChooseBackend(id) {
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
     if (res && res.needsProvider) { SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render(); return res; }
-    if (res && res.needsKey) { bswOpenKey(res.providerId); return res; }
+    if (res && res.needsKey) { bswOpenKey(res.providerId, res.keyInvalid); return res; }
     SEL.err = (res && res.error) || 'could not switch to ' + id;
     toast('Could not switch to ' + id, SEL.err);
     render();
@@ -14717,7 +14786,7 @@ async function fzLoadFacts() {
   const jobs = [];
   if (!BSW.readyLoaded) {
     jobs.push(BR.providersReady().then((r) => {
-      if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; BSW.readyLoaded = true; }
+      if (r && r.ok && Array.isArray(r.ids)) { BSW.readyIds = r.ids; BSW.readyLoaded = true; BSW.invalidKeyIds = Array.isArray(r.invalidKeyIds) ? r.invalidKeyIds : []; }
     }).catch(() => {}));
   }
   if (!BSW.localLoaded) jobs.push(bswSnapshot());
@@ -14736,7 +14805,7 @@ function fzBefore(label) {
 function fzAfter(res, before) {
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
-    if (res && res.needsKey) { bswOpenKey(res.providerId); return res; }
+    if (res && res.needsKey) { bswOpenKey(res.providerId, res.keyInvalid); return res; }
     if (res && res.needsDownload && res.modelId) { SWX.err = null; selPull(res.modelId); return res; }
     // A refusal wrote nothing and failed nothing: a notice, not the composer's "Switch failed".
     if (res && res.refusal) { SWX.err = null; fzNotice(res.refusal, 'run mode: ' + res.refusal); return res; }
@@ -15487,10 +15556,21 @@ async function wizNextStep() {
      both to the empty string and the entry was rewritten without the key the
      user had just typed. Absent field means "unchanged", not "cleared". */
   const key = document.getElementById('wiz-key');
-  if (key) WIZ.apiKey = key.value.trim();
+  if (key) WIZ.apiKey = cleanKeyInput(key.value);
   const url = document.getElementById('wiz-url');
   if (url) WIZ.baseUrl = url.value.trim();
   if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { WIZ.error = 'That does not look like a URL.'; render(); return; }
+  /* Backlog 32 — a key with a character keys don't have stops here, on its
+     own screen, before anything is saved or asked. It used to be saved, then
+     sent to the check, whose fetch refused the header — which read as "Could
+     not reach api.aimlapi.com — the key was not checked", with Save unchecked
+     on offer, so it was saved anyway and every turn on it failed. Save
+     unchecked comes through here too. */
+  if (!keyCharsOk(WIZ.apiKey)) {
+    WIZ.phase = 'configure'; WIZ.error = KEY_CHAR_ERROR; WIZ.errorDetail = null;
+    WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
+    render(); return;
+  }
   WIZ.phase = 'verifying'; WIZ.error = null; render();
 
   // Lane B — backend switch: opened for an existing entry without a key
@@ -15582,10 +15662,15 @@ async function wizNextStep() {
     /* Calm (S6, U14): a plain sentence; the provider's own words ("User not
        found") are the Details under it. */
     const service = k.label.split(' (')[0];
-    WIZ.error = proof.status === 402
+    /* Backlog 32: `keyChars` is main refusing the key the agent would send (one
+       read from .env, the field left blank) before asking anyone — not the
+       provider turning it down. A refused key is never one to save unchecked. */
+    WIZ.error = proof.keyChars ? KEY_CHAR_ERROR
+      : proof.status === 402
       ? service + ' accepted this key, but the account cannot pay for a request.'
       : service + ' didn\u2019t accept this key. Check that you copied all of it.';
-    const said = String(proof.error || '').replace(/^the provider rejected this key:\s*/, '');
+    WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false;
+    const said = proof.keyChars ? '' : String(proof.error || '').replace(/^the provider rejected this key:\s*/, '');
     WIZ.errorDetail = said ? {for: WIZ.error, text: said} : null;
     render(); refreshLiveConfig();
     return;
@@ -15641,7 +15726,8 @@ async function wizNextStep() {
     () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
   if (!sel || !sel.ok) {
     WIZ.phase = 'configure';
-    WIZ.error = sel && sel.needsKey ? 'saved, but the agent sees no key for it — enter one above or export ' + (k.env || 'its variable')
+    WIZ.error = sel && sel.needsKey && sel.keyInvalid ? savedKeyLine(id)
+      : sel && sel.needsKey ? 'saved, but the agent sees no key for it — enter one above or export ' + (k.env || 'its variable')
       : 'saved, but could not activate it' + (sel && sel.error ? ': ' + sel.error : '');
     render(); refreshLiveConfig(); return;
   }
@@ -16358,15 +16444,16 @@ function bswReport(res, extra) {
   render();
 }
 
-/** The TUI's answer to a provider without a key: its configure step. */
-function bswOpenKey(id) {
+/** The TUI's answer to a provider without a key: its configure step. Backlog 32: a saved key the agent will not send opens the same step, saying so. */
+function bswOpenKey(id, keyInvalid) {
   // The entry's kind decides which configure step opens (the TUI's
   // openProviderConfigFor), so a hand-named entry gets one too; the id
   // only matches a preset when the entry was created from it.
   const entry = selProviders().find((p) => p.id === id);
   const row = (entry && KIND_ROWS.find((k) => k.kind === entry.kind)) || KIND_ROWS.find((k) => k.id === id);
   const env = (entry && entry.apiKeyEnvVar) || (row && row.env);
-  SEL.err = 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');
+  SEL.err = keyInvalid || savedKeyInvalid(entry) ? savedKeyLine(id)
+    : 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');
   if (row) { WIZ.row = row; WIZ.forId = id; WIZ.phase = 'configure'; WIZ.apiKey = ''; WIZ.baseUrl = (entry && entry.baseUrl) || ''; WIZ.error = SEL.err; }
   render();
 }
@@ -16377,9 +16464,10 @@ function bswRefreshFacts() {
   BR.providersReady().then((r) => {
     // A failed read keeps the previous ids (and the previous "loaded" state).
     if (!(r && r.ok && Array.isArray(r.ids))) return;
-    const was = JSON.stringify([BSW.readyLoaded, BSW.readyIds]);
+    const was = JSON.stringify([BSW.readyLoaded, BSW.readyIds, BSW.invalidKeyIds]);
     BSW.readyIds = r.ids; BSW.readyLoaded = true;
-    if (JSON.stringify([BSW.readyLoaded, BSW.readyIds]) !== was) bswRepaint();
+    BSW.invalidKeyIds = Array.isArray(r.invalidKeyIds) ? r.invalidKeyIds : [];
+    if (JSON.stringify([BSW.readyLoaded, BSW.readyIds, BSW.invalidKeyIds]) !== was) bswRepaint();
   });
   if (selLocalRoute() && !SEL.localBusy && !SEL.pulling) bswSnapshot();
 }
@@ -19203,16 +19291,18 @@ function llmLocalRows() {
   return rows;
 }
 function llmProviderRow(p) {
-  const hasKey = llmHasKey(p);
+  // Backlog 32: a saved key the agent will not send is no key: its row says so and Enter opens the key screen.
+  const badKey = p.kind !== 'subscription-cli' && savedKeyInvalid(p);
+  const hasKey = !badKey && llmHasKey(p);
   const active = p.id === llmActiveTextId();
-  const auth = p.kind === 'subscription-cli' ? 'cli auth' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
-  return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey,
+  const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
+  return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
-    enterEffect: !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
+    enterEffect: badKey ? 'Enter: paste the API key for ' + p.id + ' again' : !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
     text: p.id + ' [' + p.kind + '] ' + auth};
 }
 function llmChatRow(p, modelId) {
-  const hasKey = llmHasKey(p);
+  const hasKey = !savedKeyInvalid(p) && llmHasKey(p);
   const active = p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
   // OpenRouter/AI-ML rows show formatOpenRouterChatModelDetails / formatAimlapiChatModelDetails in the TUI — an in-process catalogue
   // formatter the CLI does not print, so every kind gets the generic effect here.
@@ -19222,7 +19312,7 @@ function llmChatRow(p, modelId) {
     text: p.id + '/' + modelId + ' [text]'};
 }
 function llmEmbRow(p, modelId) {
-  const hasKey = llmHasKey(p);
+  const hasKey = !savedKeyInvalid(p) && llmHasKey(p);
   const active = p.id === llmActiveEmbId() && p.defaultEmbeddingModel === modelId;
   return {kind:'cloudEmbeddingModel', id:'cloud-embedding:' + p.id + ':' + modelId, provider:p, providerId:p.id, modelId, active, available:hasKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
@@ -19635,14 +19725,17 @@ function llmRowHTML(row, index, cursor) {
     const auth = row.text.indexOf(head) === 0 ? row.text.slice(head.length) : '';
     const name = providerWord(p.id);
     // Until the key names are read every row says "missing key"; it is drawn neutral until they are.
-    const tone = !llmKeysKnown() ? 'line' : auth === 'key ok' ? 'green' : auth === 'missing key' ? 'red' : 'line';
-    const AUTH = {'key ok':'Key saved', 'missing key':'No key', 'no key needed':'No key needed', 'cli auth':'Signed in with its CLI'};
+    // Backlog 32: an invalid saved key is known from the key itself, so it is red at once.
+    const tone = auth === 'invalid key' ? 'red' : !llmKeysKnown() ? 'line' : auth === 'key ok' ? 'green' : auth === 'missing key' ? 'red' : 'line';
+    const AUTH = {'key ok':'Key saved', 'invalid key':'Key invalid', 'missing key':'No key', 'no key needed':'No key needed', 'cli auth':'Signed in with its CLI'};
     const t = '<span class="llm-name">' + esc(name) + '</span>'
       + (name !== p.id ? ' <span class="llm-id mono">' + esc(p.id) + '</span>' : '')
       + ' ' + chip(tone, esc(AUTH[auth] || auth))
       // Saved without a key check (the wizard's Save unchecked) — the same flag the composer's provider list shows.
       + (UNVERIFIED.indexOf(p.id) >= 0 ? ' ' + chip('amber', 'Unverified') : '');
-    return open + radio + llmProviderMark(p, 'sm') + '<span class="body"><span class="t">' + t + '</span></span>'
+    return open + radio + llmProviderMark(p, 'sm') + '<span class="body"><span class="t">' + t + '</span>'
+      + (row.badKey ? '<span class="d llm-sub">' + esc('Its saved key has a character keys don\u2019t have. Edit to paste it again.') + '</span>' : '')
+      + '</span>'
       + rowAct('llm:edit:' + p.id, 'Edit') + rowAct('llm:removeAt:' + index, 'Remove') + effect + '</button>';
   }
   if (row.kind === 'cloudChatModel' || row.kind === 'cloudEmbeddingModel') {
@@ -20100,7 +20193,8 @@ async function llmSwitchProvider(id) {
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
   if (!res || !res.ok) {
-    llmReport(res && res.needsKey ? 'no API key for ' + id + ' — add one with n (the wizard) or export its variable' : llmFail('switch provider failed', res), 'cloud');
+    llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(id)
+      : res && res.needsKey ? 'no API key for ' + id + ' — add one with n (the wizard) or export its variable' : llmFail('switch provider failed', res), 'cloud');
     llmRepaint(); return false;
   }
   bswReport(res);
@@ -20124,7 +20218,8 @@ async function llmSelectChatModel(pid, modelId) {
     (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false;
   if (!res || !res.ok) {
-    llmReport(res && res.needsKey ? 'no API key for ' + pid + ' — add one with n (the wizard) or export its variable' : llmFail('select model failed', res), 'cloud');
+    llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(pid)
+      : res && res.needsKey ? 'no API key for ' + pid + ' — add one with n (the wizard) or export its variable' : llmFail('select model failed', res), 'cloud');
     llmRepaint(); return;
   }
   bswReport(res, 'Selected chat model ' + pid + '/' + modelId + '.');
@@ -20327,7 +20422,8 @@ async function llmPrimary(row) {
    custom row). */
 function llmOpenWizard(provider, baseUrl) {
   SEL.open = true; SEL.addOpen = false; SEL.err = null; WIZ.alone = false;
-  WIZ.error = null; WIZ.busy = false; WIZ.apiKey = '';
+  // Backlog 32: opened for a provider whose saved key the agent will not send — the screen says why.
+  WIZ.error = provider && savedKeyInvalid(provider) ? savedKeyLine(provider.id) : null; WIZ.busy = false; WIZ.apiKey = '';
   if (provider) {
     const row = KIND_ROWS.find((k) => k.id === provider.id) || KIND_ROWS.find((k) => k.kind === provider.kind && !k.custom) || KIND_ROWS.find((k) => k.custom);
     WIZ.row = baseUrl ? Object.assign({}, row, {baseUrl}) : row;

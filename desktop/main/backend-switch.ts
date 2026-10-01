@@ -8,6 +8,8 @@ import {
   modelsUse,
   providerHasKey,
   providerIsUsable,
+  providerKeyInvalid,
+  STORED_KEY_INVALID,
   parseChatStartSpeed,
   readWholeConfig,
   rewriteWholeConfig,
@@ -80,6 +82,8 @@ export interface SwitchResult {
   needsProvider?: boolean;
   /** The chosen provider has no key — open its configure step, as the TUI does. */
   needsKey?: boolean;
+  /** Backlog 32: with needsKey — it has a saved key, but one the agent will not send. */
+  keyInvalid?: boolean;
   /** activateLocal: nothing downloaded — the route moved, the model switch should open. */
   needsModel?: boolean;
   /** activateProvider: the entry has no chat model yet (U29) — open its model list. */
@@ -96,6 +100,13 @@ export interface SwitchResult {
 }
 
 const LOCAL_ID = "local-llama";
+
+/** A provider that cannot be routed to for want of a key: none at all, or (backlog 32) a saved one the agent will not send. */
+function needsKeyFor(entry: ProviderEntry, providerId: string): SwitchResult {
+  return providerKeyInvalid(entry)
+    ? { ok: false, needsKey: true, keyInvalid: true, providerId, error: STORED_KEY_INVALID }
+    : { ok: false, needsKey: true, providerId, error: "no API key" };
+}
 
 function transportFor(id: string): "grammar+llama-server" | "native_tools" {
   return id === LOCAL_ID ? "grammar+llama-server" : "native_tools";
@@ -128,7 +139,7 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   if (!entry) return { ok: false, error: `provider "${id}" is not configured` };
   const cloud = entry.kind !== "llama-server";
   if (cloud && !providerIsUsable(entry)) {
-    return { ok: false, needsKey: true, providerId: id, error: "no API key" };
+    return needsKeyFor(entry, id);
   }
   // U29: an entry with no chat model cannot be built by the agent, and as the
   // active provider it would stop `atag serve` from starting. Pick the model
@@ -280,7 +291,7 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === providerId);
   if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
   if (entry.kind !== "llama-server" && !providerIsUsable(entry)) {
-    return { ok: false, needsKey: true, providerId, error: "no API key" };
+    return needsKeyFor(entry, providerId);
   }
   const modelChanged = entry.defaultChatModel !== modelId.trim();
   const w = await setProviderModel(providerId, modelId.trim());

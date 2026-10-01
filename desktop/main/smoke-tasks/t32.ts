@@ -49,16 +49,16 @@ type Fetch = typeof globalThis.fetch;
 type Call = { ch: string; id?: unknown; apiKey?: unknown; on?: unknown };
 
 const ID = "smoke-t32";
-const SENTENCE = "That key has a character keys don’t have; paste it again.";
+const SENTENCE = "That key has a character keys don\u2019t have; paste it again.";
 /** A Cyrillic es where a Latin c belongs: a key typed in the wrong keyboard layout. */
-const CYRILLIC = "smoke-t32-key-с";
+const CYRILLIC = "smoke-t32-key-\u0441";
 /** A no-break space inside the key: Latin-1, so the real fetch would send it as it is. */
-const NBSP_INSIDE = "smoke-t32-key inside";
+const NBSP_INSIDE = "smoke-t32-key\u00a0inside";
 /** What a copy from a web page or a chat can carry around a key. */
-const PASTED = " ​ smoke-t32-key-0123456789​ ⁠";
+const PASTED = "\u00a0\u200b smoke-t32-key-0123456789\u200b\u00a0\u2060";
 const PASTED_CLEAN = "smoke-t32-key-0123456789";
 /** What a real paste leaves in the field (the browser keeps both): trim() takes the NBSP, not the zero-width space. */
-const LEFTOVER = " smoke-t32-key-0123​";
+const LEFTOVER = "\u00a0smoke-t32-key-0123\u200b";
 const LEFTOVER_CLEAN = "smoke-t32-key-0123";
 const MODEL = "openai/gpt-5.5-2026-04-23";
 
@@ -152,7 +152,7 @@ function storedKey(check: Check): void {
   const had = Object.prototype.hasOwnProperty.call(process.env, VAR) ? process.env[VAR] : undefined;
   try {
     const viaEnv: ProviderEntry = { id: ID, kind: "openai-compatible", baseUrl: "https://smoke-t32.invalid", apiKeyEnvVar: VAR, defaultChatModel: "m" };
-    process.env[VAR] = "smoke-t32-key​";
+    process.env[VAR] = "smoke-t32-key\u200b";
     const bad = providerIsUsable(viaEnv, keyNamesAvailable());
     process.env[VAR] = "smoke-t32-key";
     const good = providerIsUsable(viaEnv, keyNamesAvailable());
@@ -376,20 +376,20 @@ async function storedKeyInWindow(js: Js, check: Check): Promise<void> {
   check(
     "T32: Settings › Models marks a saved key with such a character as invalid next to its provider, and Enter opens the key screen",
     settings.available === false && settings.action === "configure" && /Key invalid/.test(stext)
-      && /character keys don’t have/.test(stext) && !/Key saved/.test(stext),
+      && /character keys don\u2019t have/.test(stext) && !/Key saved/.test(stext),
     show(settings),
   );
   const keyScreen = (r["keyScreen"] ?? {}) as { err?: unknown; wizErr?: unknown; phase?: unknown };
   check(
     "T32: the composer's provider list says the saved key is invalid, and choosing it opens the key screen saying why",
     /invalid/i.test(String(r["listed"] ?? "")) && keyScreen.phase === "configure"
-      && /saved for .*character keys don’t have/.test(String(keyScreen.wizErr ?? "")),
+      && /saved for .*character keys don\u2019t have/.test(String(keyScreen.wizErr ?? "")),
     show({ listed: r["listed"], keyScreen }),
   );
   check(
     "T32: a turn on that provider names its saved key — not \"no connection\"",
-    /saved for .*character keys don’t have/.test(String(r["waitLine"] ?? "")) && !/no connection/.test(String(r["waitLine"] ?? ""))
-      && /saved for .*character keys don’t have/.test(String(r["failLine"] ?? "")),
+    /saved for .*character keys don\u2019t have/.test(String(r["waitLine"] ?? "")) && !/no connection/.test(String(r["waitLine"] ?? ""))
+      && /saved for .*character keys don\u2019t have/.test(String(r["failLine"] ?? "")),
     show({ waitLine: r["waitLine"], failLine: r["failLine"] }),
   );
 }
