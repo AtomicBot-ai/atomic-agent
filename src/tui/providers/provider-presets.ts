@@ -35,6 +35,12 @@
  * list does not live under `<root>/v1/models`: DeepInfra serves it at
  * `/v1/openai/models`, which this convention cannot express.
  * Re-verified 2026-08-20.
+ *
+ * Probe the chat route the same way. `/v1/models` passing proves nothing
+ * about it: Perplexity lists its models there but serves chat at
+ * `<root>/chat/completions` and answers 404 under `/v1`, and its preset
+ * shipped failing every turn until `openai-chat-path.ts` learned that
+ * root. A chat route outside `<root>/v1` needs an entry there.
  */
 export interface ProviderPreset {
   /** Stable id used as the provider entry id when adding. */
@@ -221,6 +227,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
   {
     id: "perplexity",
     label: "Perplexity",
+    // Chat is `/chat/completions` here, not `/v1/...`: see openai-chat-path.ts.
     baseUrl: "https://api.perplexity.ai",
     envVar: "PERPLEXITY_API_KEY",
     note: "Sonar models with live web grounding",
