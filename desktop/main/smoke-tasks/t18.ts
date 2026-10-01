@@ -88,6 +88,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
     await readyRow(js, check);
     await heldStart(js, check);
     await setupRowRemoval(js, check);
+    await switchBehindRuntime(js, check);
     if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
   } finally {
     if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
@@ -944,6 +945,96 @@ async function setupRowRemoval(js: Js, check: Check): Promise<void> {
     rt.button && rt.after === "smoke-s1" && other.button && other.after === "smoke-s1"
       && JSON.stringify(other.queue) === JSON.stringify(["weights:smoke-s1"]),
     JSON.stringify({ rt, other }),
+  );
+}
+
+/* S4 (second review): the llama.cpp runtime failed, the model landed while the
+   agent was on a cloud model, and the card asks. Switch pressed while a
+   retried runtime is still coming waits for it and starts the model once; a
+   ready row that was switched or dismissed is the person's answer, and a
+   runtime landing later never brings it back or starts it again. The
+   landings are the shipped path; dlNext runs as itself but always dry; the
+   start is a recorder. */
+async function switchBehindRuntime(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keep = {cfg: LIVE_CONFIG, activate: window.obActivateLocal, next: window.dlNext, snap: window.bswSnapshot,
+      models: OB.models, room: S.room, dry: DL.dry, toasts: S.toasts.slice()};
+    const calls = [];
+    const realNext = keep.next;
+    const cloud = Object.assign({}, keep.cfg || {}, {llm: {activeTextProvider: 'smoke-t18-cloud', providers: [
+      {id: 'smoke-t18-cloud', kind: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', defaultChatModel: 'smoke/cloud-model'}]}});
+    const press = async (sel) => { const n = document.querySelector(sel); if (n) n.click(); await tick(60); return !!n; };
+    const ready = () => !!document.querySelector('#dlcard .dlc-row.is-ready');
+    const feed = (ev) => window.__dlFeed(ev);
+    // The runtime fails, then the model lands on a cloud route: the ready row, and the runtime's failure row.
+    const stage = async () => {
+      calls.length = 0;
+      window.__dlClear(); LIVE_CONFIG = cloud; render();
+      window.__dlSeed([{kind: 'runtime', id: 'llama.cpp'}, {kind: 'weights', id: 'smoke-s4'}]);
+      DL.dry = false;
+      feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: false, error: 'models update exited with code 1', sawProgress: false, upToDate: false});
+      feed({id: 'smoke-s4', done: true, ok: true});
+      await tick(80);
+      return ready();
+    };
+    const retryRuntime = () => press('#dlcard .dlc-row.is-failed .dlc-retry');
+    const runtimeLands = async () => { feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: true, sawProgress: true, upToDate: false}); await tick(80); };
+    const out = {};
+    try {
+      S.room = 'chat';
+      window.dlNext = function () { const d = DL.dry; DL.dry = true; try { return realNext.apply(this, arguments); } finally { DL.dry = d; } };
+      window.obActivateLocal = async (id) => { calls.push('activate:' + id); };
+      window.bswSnapshot = () => Promise.resolve();
+      OB.models = [{id: 'smoke-s4', name: 'Smoke S4'}];
+
+      // A — Switch while the retried runtime is still coming down.
+      out.a = {staged: await stage()};
+      out.a.retried = await retryRuntime();
+      out.a.pending = !!(DL.job && DL.job.kind === 'runtime');
+      out.a.switchButton = await press('#dlcard .dlc-switch');
+      out.a.afterSwitch = {calls: calls.slice(), ready: ready()};
+      await runtimeLands();
+      out.a.afterRuntime = {calls: calls.slice(), ready: ready()};
+
+      // B — dismissed, then the runtime retried and landed.
+      out.b = {staged: await stage()};
+      out.b.dismissed = await press('#dlcard .dlc-row.is-ready .dlc-x');
+      out.b.retried = await retryRuntime();
+      await runtimeLands();
+      out.b.after = {calls: calls.slice(), ready: ready()};
+
+      // C — switched while the runtime had failed (nothing pending), then the runtime retried and landed.
+      out.c = {staged: await stage()};
+      out.c.switchButton = await press('#dlcard .dlc-switch');
+      out.c.afterSwitch = calls.slice();
+      out.c.retried = await retryRuntime();
+      await runtimeLands();
+      out.c.after = {calls: calls.slice(), ready: ready()};
+      return out;
+    } finally {
+      window.dlNext = keep.next; window.obActivateLocal = keep.activate; window.bswSnapshot = keep.snap;
+      LIVE_CONFIG = keep.cfg; OB.models = keep.models;
+      window.__dlClear(); DL.dry = keep.dry;
+      S.room = keep.room; S.toasts = keep.toasts; render();
+    }
+  })()`);
+  const a = r["a"] as { staged: boolean; retried: boolean; pending: boolean; switchButton: boolean;
+    afterSwitch: { calls: string[]; ready: boolean }; afterRuntime: { calls: string[]; ready: boolean } };
+  check(
+    "T18 S4: Switch pressed while the llama.cpp runtime is still coming waits for it, then starts the model once — no second question",
+    a.staged && a.retried && a.pending && a.switchButton && a.afterSwitch.calls.length === 0 && !a.afterSwitch.ready
+      && JSON.stringify(a.afterRuntime.calls) === JSON.stringify(["activate:smoke-s4"]) && !a.afterRuntime.ready,
+    JSON.stringify(a),
+  );
+  const b = r["b"] as { staged: boolean; dismissed: boolean; retried: boolean; after: { calls: string[]; ready: boolean } };
+  const c = r["c"] as { staged: boolean; switchButton: boolean; afterSwitch: string[]; retried: boolean; after: { calls: string[]; ready: boolean } };
+  check(
+    "T18 S4: a ready row that was dismissed or switched is never brought back, or started again, by a runtime landing later",
+    b.staged && b.dismissed && b.retried && b.after.calls.length === 0 && !b.after.ready
+      && c.staged && c.switchButton && JSON.stringify(c.afterSwitch) === JSON.stringify(["activate:smoke-s4"]) && c.retried
+      && JSON.stringify(c.after.calls) === JSON.stringify(["activate:smoke-s4"]) && !c.after.ready,
+    JSON.stringify({ b, c }),
   );
 }
 

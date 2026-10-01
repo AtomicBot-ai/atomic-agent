@@ -624,6 +624,9 @@ const DL = {
       switched to by itself: the card keeps "<model> is ready" with Switch
       (obModelLanded). Gone on a restart, which is fine. */
   ready: null,      // {id}
+  /** S4: a Switch pressed while the runtime the model needs was still coming —
+      the person's answer, carried out once when that runtime lands (obActivateHeld). */
+  switchAfter: null,
 };
 /* Backlog 18 — the download card's own state (renderDlcard). Declared up
    here for the same reason as DL: the first top-level render() reads it. */
@@ -8807,6 +8810,17 @@ function dlCardAct(verb) {
   if (v === 'switch' || v === 'keep') {
     const id = DL.ready && DL.ready.id;
     DL.ready = null;
+    // S4: answered, either way — a runtime Retry never asks again or starts it again (dlRetry).
+    if (id && DL.landed === id) DL.landed = null;
+    if (v === 'switch' && id && dlRuntimePending()) {
+      /* The llama.cpp runtime it needs is still coming down: starting now
+         would fail with no binary. The switch waits for it, and happens once. */
+      DL.switchAfter = id;
+      const name = dlCardName({kind: 'weights', id});
+      toast(name + ' starts after the runtime', 'The llama.cpp runtime is still downloading. The switch happens as soon as it is in place.');
+      render();
+      return;
+    }
     render();
     if (v === 'switch' && id) obActivateLocal(id);
     return;
@@ -8852,7 +8866,12 @@ function dlCancel() {
   obSetupPullForgetFor([DL.preparing, job0, DL.projector ? {kind: 'weights', id: DL.projector.id} : null]
     .concat(job0 ? DL.queue.filter((q) => q.run === job0.run) : []));
   DL.preparing = null;
-  DL.activateAfter = null;
+  /* A start held for a runtime (R4) or a Switch waiting on one (S4) goes with
+     that runtime — kept only while another one still comes after this Cancel. */
+  if (!DL.queue.some((q) => q.kind === 'runtime' && !(job0 && q.run === job0.run))) {
+    DL.activateAfter = null;
+    DL.switchAfter = null;
+  }
   const job = DL.job;
   if (job) {
     job.cancelled = true;
@@ -8892,8 +8911,12 @@ function dlRetry(n) {
   }
   DL.failed = DL.failed.filter((x) => x !== f);
   /* The runtime is what a landed model was missing: once it is in place, start
-     that model (obActivateHeld) — the start that failed without it. */
-  if (f.kind === 'runtime' && DL.landed && !DL.activateAfter) DL.activateAfter = DL.landed;
+     that model (obActivateHeld) — the start that failed without it. Not one the
+     person already answered on its ready row (S4: Switch or dismiss clears
+     DL.landed), and not one still asking there: its Switch works once the
+     runtime is in. */
+  if (f.kind === 'runtime' && DL.landed && !DL.activateAfter && !DL.switchAfter
+      && !(DL.ready && DL.ready.id === DL.landed)) DL.activateAfter = DL.landed;
   f.retry();
   render();
 }
@@ -10361,7 +10384,7 @@ function obPullFinished(job, ev) {
        runtime did not land, the hold goes with it (R4): left armed it fired
        on some later, unrelated runtime. A Retry on the runtime re-arms it
        (dlRetry). */
-    if (ok) obActivateHeld(); else DL.activateAfter = null;
+    if (ok) obActivateHeld(); else { DL.activateAfter = null; DL.switchAfter = null; }
     return;
   }
   /* r5 review fix (item 7) — drain the queue on THIS leg too. dlNext() used to
@@ -10397,10 +10420,13 @@ function dlRuntimePending() {
 
 /** The start held back for the runtime (DL.activateAfter), once that runtime is in place. */
 function obActivateHeld() {
-  const id = DL.activateAfter;
-  if (!id || dlRuntimePending() || DL.dry) return;
+  if (dlRuntimePending() || DL.dry) return;
+  const sw = DL.switchAfter, id = DL.activateAfter;
+  DL.switchAfter = null;
   DL.activateAfter = null;
-  obModelLanded(id);
+  // S4: a Switch the person pressed while the runtime came down — no second question.
+  if (sw) obActivateLocal(sw);
+  if (id && id !== sw) obModelLanded(id);
 }
 
 /**
@@ -21641,7 +21667,7 @@ if (typeof window !== 'undefined') {
     DL.queue = jobs.slice(1);
     DL.error = null; DL.rate = null; DL.last = null; DL.samples = 0;
     // A fresh run: nothing from an earlier seed is left on the card.
-    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null;
+    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null; DL.switchAfter = null;
     dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
     const head = jobs[0];
     // The same shape dlNext builds — including `sawProgress:false`, so a
@@ -21652,7 +21678,7 @@ if (typeof window !== 'undefined') {
   };
   window.__dlClear = () => {
     DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null;
-    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null;
+    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null; DL.switchAfter = null;
     obSetupPullForget();
     dlResetPhases(false); render(); return window.__dl();
   };
