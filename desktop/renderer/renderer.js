@@ -10465,12 +10465,24 @@ function obActivateHeld() {
  * under the person, and the card asks instead ("<model> is ready" · Switch).
  * The picker's list is re-read either way, so the model reads as on disk there.
  */
-function obModelLanded(id) {
+function obModelLanded(id, configRead) {
   obSetupPullLanded(id);
+  /* Review S6: that choice is read off the agent's config, and before the
+     agent has connected there is none in hand (LIVE_CONFIG). A resumed setup
+     download whose weights were already on disk lands that early, and "no
+     config" read as "no model chosen": it started the model over the cloud
+     model the person had moved to. The config is read first, then decided. */
+  if (!LIVE_CONFIG && !configRead) { obModelLandedRead(id); return; }
   if (!obRunsOnAnotherModel(id)) { obActivateLocal(id); return; }
   DL.ready = {id};
   bswSnapshot();
   render();
+}
+
+/** Review S6: a landing before the agent connected reads the config, then is decided (obModelLanded). */
+async function obModelLandedRead(id) {
+  try { await refreshLiveConfig(); } catch (e) { /* still none in hand: obRunsOnAnotherModel asks */ }
+  obModelLanded(id, true);
 }
 
 /**
@@ -10481,10 +10493,13 @@ function obModelLanded(id) {
  * moment (a switch on its way counts, as selBackend paints it), not off how
  * it got there: the card's "Set up a cloud model meanwhile", the composer's
  * picker and Settings all count. A first run's local route has no model
- * chosen yet, so the download starts by itself there.
+ * chosen yet, so the download starts by itself there. With no config to read
+ * it off (review S6: unreadable even after obModelLanded asked for it), the
+ * answer is yes: not knowing what the agent is on is no licence to switch it,
+ * so the card asks.
  */
 function obRunsOnAnotherModel(id) {
-  if (!LIVE_CONFIG) return false;
+  if (!LIVE_CONFIG) return true;
   const backend = selBackend();
   if (backend === 'local') {
     const chosen = (SWX.want && SWX.want.backend === 'local' && SWX.want.model)
