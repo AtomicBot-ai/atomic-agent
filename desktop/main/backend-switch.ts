@@ -1,6 +1,7 @@
 import {
   abortStarts,
   chatModelsList,
+  closeStarts,
   daemonPidsIn,
   keyNamesAvailable,
   killDaemonLeftovers,
@@ -19,6 +20,8 @@ import {
   setActiveTextProvider,
   setMemoryEmbeddingsEnabled,
   setProviderModel,
+  START_REFUSED_MOVED_ON,
+  START_REFUSED_QUITTING,
   useManagedMode,
   type CliResult,
   type ProviderEntry,
@@ -213,23 +216,10 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
   if (!w.ok) return { ok: false, error: w.error };
   if (w.changed) restart = true;
 
-  // Another model: a background start for the old one is moot (item 11); the same one is waited for.
-  if (changed) supersedeBringUp();
-  const asked = startsMark;
-  const { daemon, daemonLine, error } = await withDaemonLock(async (): Promise<BringUp> => {
-    // Backlog 18: a stop or a route change came while this waited for its turn.
-    if (startsMark !== asked) return SUPERSEDED;
-    const running = await localDaemonRunning();
-    if (running && changed) {
-      const s = await modelsStop();
-      if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
-      const st = await modelsStart();
-      return st.ok ? { daemon: "restarted", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
-    }
-    if (running) return { daemon: "untouched" };
-    const st = await modelsStart();
-    return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
-  }, () => SUPERSEDED);
+  /* Another model: a background start for the old one is moot (item 11); the
+     same one is waited for. The daemon's turn is bringUpLocalDaemon's, which
+     this body was a copy of: started when down, restarted when the model moved. */
+  const { daemon, daemonLine, error } = await bringUpLocalDaemon(changed);
   return {
     ok: true,
     providerId: LOCAL_ID,
@@ -351,10 +341,18 @@ function withDaemonLock<T>(run: () => Promise<T>, whenClosed: () => T): Promise<
 export function inDaemonTurn<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
   return withDaemonLock(run, whenClosed);
 }
-/** Quitting (main.ts stopForQuit): no turn begins after this. The undo is for a smoke check, which carries on after it. */
+/**
+ * Quitting (main.ts stopForQuit): no turn begins after this, and no `models
+ * start` spawns — not even one whose turn began before (agent-cli
+ * closeStarts). The undo is for a smoke check, which carries on after it.
+ */
 export function closeDaemonTurns(): () => void {
   turnsClosed = true;
-  return () => { turnsClosed = false; };
+  const reopenStarts = closeStarts();
+  return () => {
+    turnsClosed = false;
+    reopenStarts();
+  };
 }
 /* Backlog 18 (its review): a start waiting for its turn can wait out a whole
    llama.cpp update, minutes, and the window lets go of its switch after 45 s —
@@ -365,24 +363,33 @@ export function closeDaemonTurns(): () => void {
    more would hold the model's memory, on a route that has moved on. */
 let startsMark = 0;
 
-/** Start the managed daemon when it is down (restart it when the model moved), in its turn. */
+/** Start the managed daemon when it is down (restart it when the model moved), in its turn. A model pick's and a worker pin's. */
 async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
   // Another model: a background start for the old one is moot.
   if (modelChanged) supersedeBringUp();
   const asked = startsMark;
+  /* Backlog 18: whether a stop or a route change came since this was asked for.
+     Asked as its turn begins, and (its second review) again at the spawn
+     itself (modelsStart): the turn's `models status` and `models stop` take
+     seconds, and one that comes in them would otherwise still be followed by a
+     start nobody asks for any more. */
+  const stillAsked = () => startsMark === asked;
+  const start = async (effect: "started" | "restarted"): Promise<BringUp> => {
+    const st = await modelsStart({ stillWanted: stillAsked });
+    // It reached its spawn after a stop, a switch or the quit: nothing was started.
+    if (st.notStarted) return SUPERSEDED;
+    return st.ok ? { daemon: effect, daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+  };
   return withDaemonLock(async (): Promise<BringUp> => {
-    // Backlog 18: a stop or a route change came while this waited for its turn.
-    if (startsMark !== asked) return SUPERSEDED;
+    if (!stillAsked()) return SUPERSEDED;
     const running = await localDaemonRunning();
     if (running && !modelChanged) return { daemon: "untouched" };
     if (running) {
       const s = await modelsStop();
       if (!s.ok) return { daemon: "stop-failed", daemonLine: `local-llm: stop failed — ${s.error ?? "unknown error"}` };
-      const st = await modelsStart();
-      return st.ok ? { daemon: "restarted", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+      return start("restarted");
     }
-    const st = await modelsStart();
-    return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
+    return start("started");
   }, () => SUPERSEDED);
 }
 /** Only a model that is on disk is started: a start for a file that is not there is a failure about nothing the operator chose. */
@@ -450,6 +457,8 @@ async function startIfDown(s: BringUpSteps): Promise<BringUp> {
   if (s.superseded()) return SUPERSEDED;
   s.starting();
   const st = await modelsStart({ signal: s.signal });
+  // The quit had begun (closeStarts): nothing was started.
+  if (st.notStarted) return SUPERSEDED;
   return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
 }
 function report(r: BringUp, modelId: string, via: "swap" | "launch"): void {
@@ -479,12 +488,14 @@ export function bringUpAtLaunch(modelId: string): Promise<BringUp> {
 /** Settings › Models › Start: in its turn, and no second `models start` for a daemon that is already up. */
 export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean }> {
   const asked = startsMark;
+  const stillAsked = () => startsMark === asked;
   return withDaemonLock(async () => {
     // Backlog 18: a stop or a route change came while this waited for its turn.
-    if (startsMark !== asked) return { ok: false, stdout: "", stderr: "", error: "a stop or a switch came first — the model server was not started" };
+    if (!stillAsked()) return { ok: false, stdout: "", stderr: "", error: START_REFUSED_MOVED_ON };
     if (await localDaemonRunning()) return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
-    return modelsStart();
-  }, () => ({ ok: false, stdout: "", stderr: "", error: "the app is quitting — the model server was not started" }));
+    // Its second review: asked again at the spawn — one may have come, or the quit begun, during that status read.
+    return modelsStart({ stillWanted: stillAsked });
+  }, () => ({ ok: false, stdout: "", stderr: "", error: START_REFUSED_QUITTING }));
 }
 /** Settings › Models › Stop, and quitting: at once — a bring-up on its way is ended, not waited for. */
 export function stopDaemonNow(): Promise<CliResult> {
@@ -498,8 +509,11 @@ export function stopDaemonNow(): Promise<CliResult> {
  * stop, bounded; then whatever the daemons' pid files still name is killed by
  * this process outright: a llama-server that ignored SIGTERM, or a stop that did
  * not finish in time. Answers the pids that last step had to kill.
+ * Backlog 18 (its second review): and no start spawns after this, though its
+ * turn began before (closeDaemonTurns; stopForQuit has closed them already).
  */
 export async function stopDaemonForQuit(dataDir: string): Promise<number[]> {
+  closeDaemonTurns();
   supersedeBringUp();
   await abortStarts(1_500);
   const named = daemonPidsIn(dataDir);

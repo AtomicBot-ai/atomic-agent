@@ -667,6 +667,25 @@ let lastChatSpeed: { pid: number; tokensPerSecond: number } | null = null;
    that outlives the app brings a model server up after the app's stop ran. */
 const startsOnTheirWay = new Set<{ abort: AbortController; done: Promise<unknown> }>();
 
+/* Backlog 18 (its second review): set once quitting has begun (closeStarts).
+   Killing the starts on their way (abortStarts) was not enough. A start whose
+   daemon turn began before the quit can still be in that turn's `models status`
+   or `models stop` — item 31's reaping alone takes 2 s or more — and its
+   `models start` came after every start on its way had been killed: the
+   llama-server came up after the app was gone. */
+let startsClosed = false;
+
+/** Quitting (backend-switch closeDaemonTurns): no `models start` spawns from here on. The undo is for a smoke check, which carries on after it. */
+export function closeStarts(): () => void {
+  startsClosed = true;
+  return () => { startsClosed = false; };
+}
+
+/** What a start that spawned nothing says: the app is quitting. */
+export const START_REFUSED_QUITTING = "the app is quitting — the model server was not started";
+/** What a start that spawned nothing says: a stop or a switch came after it was asked for. */
+export const START_REFUSED_MOVED_ON = "a stop or a switch came first — the model server was not started";
+
 /**
  * Start the managed llama daemon after switching to a local model. `signal`
  * kills the start (item 11: a stop that supersedes it).
@@ -677,8 +696,21 @@ const startsOnTheirWay = new Set<{ abort: AbortController; done: Promise<unknown
  * closes its port and never answers, so the start sat out its whole 90 s, and
  * with it the daemon's turn — every Start, launch start, model pick and swap
  * queued behind it said nothing for a minute and a half.
+ *
+ * Backlog 18 (its second review): once the quit has begun (closeStarts), or
+ * when `stillWanted` says a stop or a switch came after the start was asked
+ * for, it spawns nothing and answers `notStarted`. Both are asked here, at the
+ * spawn itself — nothing from this line to `cli` spawning `models start`
+ * awaits — and not only as the start's daemon turn began: that turn's own
+ * `models status` or `models stop` takes seconds.
  */
-export async function modelsStart(opts: { signal?: AbortSignal } = {}): Promise<CliResult> {
+export async function modelsStart(
+  opts: { signal?: AbortSignal; stillWanted?: () => boolean } = {},
+): Promise<CliResult & { notStarted?: boolean }> {
+  if (startsClosed) return { ok: false, stdout: "", stderr: "", error: START_REFUSED_QUITTING, notStarted: true };
+  if (opts.stillWanted && !opts.stillWanted()) {
+    return { ok: false, stdout: "", stderr: "", error: START_REFUSED_MOVED_ON, notStarted: true };
+  }
   const abort = new AbortController();
   const forward = () => abort.abort();
   if (opts.signal?.aborted) abort.abort();

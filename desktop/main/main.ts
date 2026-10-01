@@ -365,7 +365,9 @@ let quitting = false;
    file, and two writers on one partial file is how a resume goes wrong.
    Settings' llama.cpp update stops too, and no daemon turn begins after this
    (closeDaemonTurns): a model start that waited behind that update would
-   otherwise bring a model server up as the app goes.
+   otherwise bring a model server up as the app goes. Its second review: nor
+   does a `models start` spawn whose turn began before, still in that turn's
+   `models status` or `models stop` (agent-cli closeStarts).
    What quitting does before the agent stops (before-quit, and the smoke's
    exitAfterAgentStop). A smoke check runs it too (smokeDownloads.quit) and
    carries on with the undo it hands back. */
