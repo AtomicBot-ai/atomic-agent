@@ -84,6 +84,7 @@ import {
   type SwitchResult,
 } from "./backend-switch.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
+import { RELEASE_FIX_TASKS, releaseFixesSmokeTest } from "./release-fixes-smoke.js";
 // Lane B — context before the first message (item 3): the no-trace smoke dir.
 import { mkdirSync, rmSync } from "node:fs";
 // Item 7 (settings surface)
@@ -148,6 +149,18 @@ const FORCE_ONBOARDING = process.argv.includes("--onboarding");
 const MODELS_TEST = process.argv.includes("--models");
 /** `--smoke --smoke-fusion` runs only the run-mode (Fusion) checks — the whole smoke is ~30 minutes. */
 const FUSION_ONLY = process.argv.includes("--smoke-fusion");
+/**
+ * `--smoke --smoke-task=04,06` runs only the 0.6.7 release-fix checks for
+ * those backlog items (main/release-fixes-smoke.ts), so one fix can be
+ * proved in a minute instead of a half-hour full pass. `--smoke-task=all`
+ * runs every one of them; a plain `--smoke` runs them all as well.
+ */
+const SMOKE_TASKS = (() => {
+  const hit = process.argv.find((a) => a.startsWith("--smoke-task="));
+  if (!hit) return null;
+  const ids = hit.slice("--smoke-task=".length).split(",").map((s) => s.trim()).filter(Boolean);
+  return ids.includes("all") ? RELEASE_FIX_TASKS.slice() : ids;
+})();
 /**
  * r5 item 9, review fix (minor) — `--first-run-probe`.
  *
@@ -1728,6 +1741,13 @@ async function smokeTest(): Promise<void> {
     check("no chat is highlighted at boot", boot.onRows === 0, `${boot.total} chats loaded, ${boot.onRows} highlighted`);
   }
 
+  if (SMOKE_TASKS) {
+    await releaseFixesSmokeTest(js, check, SMOKE_TASKS);
+    process.stdout.write(`SMOKE tasks=${SMOKE_TASKS.join(",")} failures=${fail.length}\n`);
+    exitAfterAgentStop(fail.length === 0 ? 0 : 1);
+    return;
+  }
+
   /* r5 item 7 review fix: the `wizard opens` check used to live here,
      inside `if (FORCE_ONBOARDING)` — and `npm run smoke` passes only
      `--smoke`, so it never ran and the acceptance it stood for was not
@@ -2666,6 +2686,7 @@ async function smokeTest(): Promise<void> {
     // leave the route changed.
     // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
     await fusionSmokeTest(js, check);
+    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
