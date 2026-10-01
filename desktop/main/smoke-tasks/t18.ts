@@ -59,6 +59,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
     await handOver(js, check);
     await geometry(js, check, w);
     await controls(js, check);
+    if (w) await otherPulls(js, check, w);
     if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
   } finally {
     if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
@@ -422,6 +423,65 @@ async function controls(js: Js, check: Check): Promise<void> {
       && cancelled.sel === false && cancelled.phase === null && cancelled.pop === false && cancelled.card === true,
     JSON.stringify({ link: r["cloudLink"], cloud, cancelled }),
   );
+}
+
+/* (g) The composer picker's pull and Settings › Models' pull report in the
+   same card, through the real `cli:pull` channel. Only frames that END a pull
+   badly are sent: a good one would start the model and restart the agent. */
+async function otherPulls(js: Js, check: Check, w: BrowserWindow): Promise<void> {
+  const send = (ev: Record<string, unknown>) => w.webContents.send("cli:pull", ev);
+  const read = () => js<unknown>(String.raw`(() => { ${HELPERS} return card(); })()`);
+  type Card = { title: string; rows: { name: string; line: string; cancel: string | null; retry: boolean }[] } | null;
+  await js<unknown>(`(() => { window.__t18Keep = {sel: SEL.pulling, line: SEL.pullLine, err: SEL.err, llm: LLMP.pulling,
+    status: LLMP.statusErr, log: LLMP.pullLog}; window.__dlClear(); S.room = 'chat';
+    SEL.pulling = 'smoke-t18-sel'; SEL.pullLine = ''; render(); })()`);
+  try {
+    await wait(100);
+    const selStarting = (await read()) as Card;
+    send({ id: "smoke-t18-sel", line: "[=====               ] 25%  1.00 GB / 4.00 GB  file", kind: "weights",
+      percent: 25, transferredBytes: 1073741824, totalBytes: 4294967296 });
+    await wait(200);
+    const selMoving = (await read()) as Card;
+    send({ id: "smoke-t18-sel", done: true, ok: false, error: "smoke t18: the picker's pull failed" });
+    await wait(200);
+    const selFailed = (await read()) as Card;
+    await js<unknown>(`(() => { const x = document.querySelector('#dlcard .dlc-row .dlc-x[data-act^="dlc:dismiss"]'); if (x) x.click(); })()`);
+    await wait(100);
+    const dismissed = (await read()) as Card;
+    // Settings › Models: its row, and its own Cancel through the card.
+    await js<unknown>("(() => { LLMP.pulling = {kind:'chat', id:'smoke-t18-llm'}; LLMP.pullLog = []; llmRepaint(); })()");
+    await wait(100);
+    send({ id: "smoke-t18-llm", line: "[==========          ] 50%  2.00 GB / 4.00 GB  file", kind: "weights",
+      percent: 50, transferredBytes: 2147483648, totalBytes: 4294967296 });
+    await wait(200);
+    const llm = (await read()) as Card;
+    await js<unknown>("(() => { const x = document.querySelector('#dlcard .dlc-row .dlc-x'); if (x) x.click(); })()");
+    await wait(150);
+    const llmPulling = await js<unknown>("LLMP.pulling");
+    // The cancelled child exits non-zero: a cancel, not a failure.
+    send({ id: "smoke-t18-llm", done: true, ok: false, error: "download exited with code null" });
+    await wait(200);
+    const afterCancel = (await read()) as Card;
+    check(
+      "T18g: the composer picker's pull is a row in the card — named, then moving, then a failure with Retry that can be dismissed",
+      !!selStarting && selStarting.rows.length === 1 && /^Starting/.test(selStarting.rows[0]!.line)
+        && selStarting.rows[0]!.cancel === "sel:cancelPull"
+        && !!selMoving && /^1\.0 of 4\.0 GB · 25% · /.test(selMoving.rows[0]?.line ?? "")
+        && !!selFailed && selFailed.title === "Download failed" && selFailed.rows[0]!.retry
+        && /the picker's pull failed/.test(selFailed.rows[0]!.line) && dismissed === null,
+      JSON.stringify({ selStarting, selMoving, selFailed, dismissed }),
+    );
+    check(
+      "T18g: Settings › Models' pull is a row too, its Cancel is Settings' own, and the cancelled exit leaves no failure",
+      !!llm && llm.rows.length === 1 && llm.rows[0]!.cancel === "llm:cancelPull" && /^2\.0 of 4\.0 GB · 50% · /.test(llm.rows[0]!.line)
+        && llmPulling === null && afterCancel === null,
+      JSON.stringify({ llm, llmPulling, afterCancel }),
+    );
+  } finally {
+    await js<unknown>(`(() => { const k = window.__t18Keep || {}; SEL.pulling = k.sel || null; SEL.pullLine = k.line || '';
+      SEL.err = k.err || null; LLMP.pulling = k.llm || null; LLMP.statusErr = k.status || null; LLMP.pullLog = k.log || [];
+      delete window.__t18Keep; window.__dlClear(); act('close'); render(); })()`);
+  }
 }
 
 /* For the product owner: the card on the chat, light and dark, open and
