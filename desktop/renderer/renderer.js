@@ -1754,10 +1754,12 @@ function render() {
 
 /* Calm (S1): the toolbar names the open chat and nothing else — no tool
    count, no "running" word (the sidebar dot and the composer already say
-   that). A chat that has not been saved yet is "New chat". */
+   that). A chat that has not been saved yet is "New chat", until its first
+   message names its stand-in row (item 27). */
 function roomTitle() {
   if (S.room === 'chat') {
-    const ses = SESSIONS.find((x) => x.id === S.sessionId);
+    // Item 27: a new chat's stand-in names it here too, as its row does.
+    const ses = S.sessionId ? chatById(S.sessionId) : null;
     return ses && ses.t ? ses.t : 'New chat';
   }
   if (S.room === 'tasks')  return 'Tasks';
@@ -5012,6 +5014,10 @@ function act(a) {
                            syncWindowGround(); syncChromeTheme(); render(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
+  // Item 27: a new chat whose first turn has not been stored yet has nothing to delete; say so rather than nothing.
+  if (k === 'delask' && !SESSIONS.some((x) => x.id === v) && PENDING_CHATS.has(v)) {
+    toast('This chat is still starting', 'It can be deleted once its first reply is in'); return;
+  }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
                            if (deleteRefused(v)) { render(); return; }   // Backlog 25: before the question, not after it
                            S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
@@ -6779,18 +6785,44 @@ function noteFirstPrompt(turnId, sid) {
   FIRST_TURNS.delete(turnId);
   if (!sid || PENDING_CHATS.has(sid) || SESSIONS.some((s) => s.id === sid)) return;
   PENDING_CHATS.set(sid, {id:sid, t:String(text).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
-    named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true});
+    named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true, endedAt:null});
+}
+
+/* Item 27: how long a stand-in outlives its first turn while the agent stores
+   that turn. A turn's end can be the window's own: Stop aborts the stream at
+   once (agent-client.ts cancel), and the agent writes the stopped turn only
+   when its loop has wound down, so the list read at that moment still shows
+   the chat with no turn. Two more reads follow: one a moment later, one as
+   the wait runs out. */
+const PENDING_GRACE_MS = 5000;
+
+/** Item 27: the first turn of a stand-in's chat ended. */
+function notePendingEnded(sid) {
+  const row = PENDING_CHATS.get(sid);
+  if (!row) return;
+  row.endedAt = Date.now();
+  setTimeout(() => { refreshSessions(); }, 1500);
+  setTimeout(() => { refreshSessions(); }, PENDING_GRACE_MS + 100);
 }
 
 /** Item 27: after the list is read again, a stand-in goes once the list has
-    its chat, or once its first turn is over and the list still does not
-    (the turn ended with nothing stored, for example because the agent
-    restarted under it). */
+    its chat, or once its first turn has been over for PENDING_GRACE_MS and
+    the list still does not (the turn ended with nothing stored, for example
+    because the agent restarted under it). A turn running in it keeps it. */
 function settlePendingChats() {
   const running = new Set(RUNNING.values());
-  for (const id of [...PENDING_CHATS.keys()]) {
-    if (SESSIONS.some((s) => s.id === id) || !running.has(id)) PENDING_CHATS.delete(id);
+  const now = Date.now();
+  for (const [id, row] of [...PENDING_CHATS]) {
+    if (SESSIONS.some((s) => s.id === id)) { PENDING_CHATS.delete(id); continue; }
+    if (running.has(id)) { row.endedAt = null; continue; }
+    if (row.endedAt === null) row.endedAt = now;   // its turn left RUNNING without a last frame
+    if (now - row.endedAt >= PENDING_GRACE_MS) PENDING_CHATS.delete(id);
   }
+}
+
+/** A chat by id, stored or still a stand-in (item 27). */
+function chatById(id) {
+  return SESSIONS.find((s) => s.id === id) || PENDING_CHATS.get(id) || null;
 }
 
 /* ---------------------------------------------------------------
@@ -6899,6 +6931,7 @@ function onChatEvent(ev) {
       RUNNING.delete(ev.turnId);
       queueTurnEnded(sid, ev.turnId);   // Backlog 26
       FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
+      if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       // Review fix: the turn is over, so nothing of it is waiting for an
       // approval any more. Without this the row kept saying "waiting for your
@@ -6963,6 +6996,7 @@ function onChatEvent(ev) {
       S.sessionId = S.agentSession;
     }
     renderSidebar();
+    renderToolbar();   // item 27: a new chat's title is its first message from here, as its row's is
     return;
   }
   if (ev.kind === 'provider_waiting') {
@@ -15942,7 +15976,7 @@ document.addEventListener('contextmenu', (e) => {
     // argument is the row's CURRENT unread state — main disables the item when
     // the row already reads unread, so the menu never offers a no-op.
     sendSessionMenu(row.dataset.ses, PREFS.pinned.includes(row.dataset.ses),
-                    chatDot(SESSIONS.find((x) => x.id === row.dataset.ses))[0] !== 'empty');
+                    chatDot(chatById(row.dataset.ses))[0] !== 'empty');   // item 27: a stand-in's dot too
     return;
   }
   const f = e.target.closest('[data-file]');
