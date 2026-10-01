@@ -15,6 +15,7 @@ import { checks13 } from "./smoke-tasks/t13.js";
 import { checks18 } from "./smoke-tasks/t18.js";
 import { checks18b } from "./smoke-tasks/t18b.js";
 import { checks18c } from "./smoke-tasks/t18c.js";
+import { checks18d } from "./smoke-tasks/t18d.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -436,6 +437,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       await guarded("18", check, () => checks18c(js, check));
       // Its review follow-ups, in their own file (smoke-tasks/t18b.ts).
       await guarded("18", check, () => checks18b(js, check));
+      // Its second review: a reopened window, an early landing, the resume cap, a late Cancel (smoke-tasks/t18d.ts).
+      await guarded("18", check, () => checks18d(js, check));
     } finally {
       await js<unknown>("(() => { S.inspector = !!window.__t18Insp; delete window.__t18Insp; render(); })()");
       wins.forEach((x, i) => { if (!x.isDestroyed()) x.webContents.setBackgroundThrottling(throttled[i]!); });
