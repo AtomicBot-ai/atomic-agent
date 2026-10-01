@@ -250,3 +250,36 @@ export function stopLocalDaemonsForCloudSelection(
     callbacks.onLocalModelsDaemonStopRequested?.();
   }
 }
+
+/**
+ * `d` on the Cloud pane: open the remove-provider confirm for the
+ * provider row under the cursor. Model rows and anything that is not a
+ * cloud provider row are a quiet no-op, like `d` on a non-link row of
+ * the Fallback pane.
+ *
+ * The active text provider is refused with a status line instead of a
+ * confirm. `removeLlmProvider` would otherwise silently re-point chat at
+ * `local-llama`, which may have no model downloaded — the next turn
+ * would fail somewhere the operator is not looking. Same rule as the
+ * Fallback pane, where the active head cannot be removed either: switch
+ * first, then remove.
+ */
+export function requestCloudProviderRemoval(
+  row: LlmPanelRow | null,
+  dispatch: (action: TuiAction) => void,
+): void {
+  if (row?.kind !== "cloudProvider") return;
+  const provider = row.provider;
+  // Belt and braces: the Cloud pane never lists the local provider, and
+  // `removeLlmProvider` refuses `local-llama` on its own.
+  if (provider.kind === "llama-server") return;
+  if (provider.isActiveText) {
+    dispatch({
+      type: "providers_status",
+      source: "cloud",
+      line: `${provider.id} is the active provider; switch to another provider or a local model before removing it`,
+    });
+    return;
+  }
+  dispatch({ type: "providers_remove_opened", id: provider.id });
+}

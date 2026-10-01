@@ -203,18 +203,40 @@ export function removeLlmProvider(id: string): void {
     activeEmbeddingProvider = remaining[0]?.id ?? "local-llama";
   }
   const runMode = scrubRunModeProviderPins(file.llm.runMode, id);
-  const next: UserConfigFile = {
-    ...file,
-    llm: {
-      ...file.llm,
-      activeTextProvider,
-      activeEmbeddingProvider,
-      providers: remaining,
-      ...(runMode ? { runMode } : {}),
-    },
+  const fallback = scrubFallbackChain(file.llm.fallback, id);
+  const nextLlm: UserLlmFileConfig = {
+    ...file.llm,
+    activeTextProvider,
+    activeEmbeddingProvider,
+    providers: remaining,
+    ...(runMode ? { runMode } : {}),
   };
+  if (fallback) nextLlm.fallback = fallback;
+  else delete nextLlm.fallback;
+  const next: UserConfigFile = { ...file, llm: nextLlm };
   writeUserConfigFileSync(path, next);
   resetConfigCache();
+}
+
+/**
+ * Drop a removed provider from `llm.fallback.chain`. The loader rejects a
+ * chain id that is not a configured provider (`parseLlmFallbackConfig`),
+ * so leaving it behind would make the whole config unreadable on the next
+ * load. Timing knobs and `appendLocal` are kept; a chain that ends up
+ * empty is omitted, which `resolveFallbackChain` reads as "just the
+ * active provider" — the same as an empty one. Returns `undefined` when
+ * nothing is left of the block.
+ */
+function scrubFallbackChain(
+  fallback: UserLlmFallbackConfig | undefined,
+  id: string,
+): UserLlmFallbackConfig | undefined {
+  if (!fallback) return undefined;
+  const { chain, ...rest } = fallback;
+  const nextChain = chain?.filter((entry) => entry !== id);
+  const next: UserLlmFallbackConfig =
+    nextChain && nextChain.length > 0 ? { ...rest, chain: nextChain } : rest;
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 export function setActiveEmbeddingProviderInConfig(id: string): void {

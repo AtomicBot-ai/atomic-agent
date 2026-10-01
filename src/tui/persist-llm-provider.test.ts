@@ -13,6 +13,7 @@ import { getConfig } from "../config/index.js";
 import {
   dotenvKeyForProviderKind,
   parseAddProviderJson,
+  removeLlmProvider,
   restoreProviderDefaultChatModelInConfig,
   setProviderDefaultChatModelInConfig,
 } from "./persist-llm-provider.js";
@@ -168,5 +169,112 @@ describe("restoreProviderDefaultChatModelInConfig", () => {
       restoreProviderDefaultChatModelInConfig("ghost", "anything"),
     ).not.toThrow();
     expect(rawProvider("cloud").defaultChatModel).toBe("was-here");
+  });
+});
+
+/**
+ * `removeLlmProvider` backs the LLM tab's `d` on a Cloud provider row
+ * (reported on Discord: "I can't delete a cloud provider"). Tested
+ * against a real config file because the failure it guards against is
+ * a file the loader refuses to read back.
+ */
+describe("removeLlmProvider", () => {
+  let stateDir: string;
+
+  function write(fallback?: Record<string, unknown>): void {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        activeTextProvider: "openrouter",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server" },
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            defaultChatModel: "openai/gpt-4o-mini",
+          },
+          {
+            id: "groq",
+            kind: "openai-compatible",
+            baseUrl: "https://api.groq.com/openai/v1",
+            apiKeyEnvVar: "GROQ_API_KEY",
+          },
+        ],
+        ...(fallback ? { fallback } : {}),
+      },
+    } as never);
+    resetConfigCache();
+  }
+
+  function rawLlm(): Record<string, unknown> {
+    const file = JSON.parse(
+      readFileSync(getUserConfigPath(stateDir), "utf8"),
+    ) as { llm: Record<string, unknown> };
+    return file.llm;
+  }
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-remove-llm-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+  });
+
+  it("drops the provider from llm.providers and persists it", () => {
+    write();
+    removeLlmProvider("groq");
+    expect(getConfig().llm?.providers.map((p) => p.id)).toEqual([
+      "local-llama",
+      "openrouter",
+    ]);
+    expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+  });
+
+  it("drops it from the fallback chain so the config still loads", () => {
+    // Before: the id stayed in `llm.fallback.chain`, and the loader
+    // rejects a chain id that is not a configured provider, so the next
+    // config read threw instead of returning the remaining providers.
+    write({
+      chain: ["openrouter", "groq"],
+      appendLocal: false,
+      failureThreshold: 3,
+    });
+    removeLlmProvider("groq");
+    expect(rawLlm().fallback).toEqual({
+      chain: ["openrouter"],
+      appendLocal: false,
+      failureThreshold: 3,
+    });
+    expect(() => getConfig()).not.toThrow();
+    expect(getConfig().llm?.providers.map((p) => p.id)).not.toContain("groq");
+  });
+
+  it("omits a chain that ends up empty and keeps the other knobs", () => {
+    write({ chain: ["groq"], appendLocal: true });
+    removeLlmProvider("groq");
+    expect(rawLlm().fallback).toEqual({ appendLocal: true });
+    expect(() => getConfig()).not.toThrow();
+  });
+
+  it("drops the fallback block when the chain was all it held", () => {
+    write({ chain: ["groq"] });
+    removeLlmProvider("groq");
+    expect(rawLlm()).not.toHaveProperty("fallback");
+    expect(() => getConfig()).not.toThrow();
+  });
+
+  it("refuses the built-in local provider", () => {
+    write();
+    expect(() => removeLlmProvider("local-llama")).toThrow(/built-in/);
+    expect(getConfig().llm?.providers.map((p) => p.id)).toContain(
+      "local-llama",
+    );
   });
 });
