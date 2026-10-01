@@ -3231,7 +3231,9 @@ export async function createAgentRuntime(
       ...(runOptions.providerId !== undefined
         ? { pinnedProviderId: runOptions.providerId }
         : {}),
-      fallbackOverrideId: fallbackChain.activeOverrideFor(session.id),
+      // Not a stand-in the chain will pass over for the primary: the
+      // turn starts on the primary then, and that is what it is told.
+      fallbackOverrideId: fallbackChain.standingOverrideFor(session.id),
     });
     const previousRoute = readSessionRoute(session.metadata);
     const routeNote =
