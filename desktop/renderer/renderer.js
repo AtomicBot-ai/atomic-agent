@@ -10427,7 +10427,10 @@ function obPullFinished(job, ev) {
      DL.job = null and a repaint. The activation below is unaffected; it does
      not read DL.job. */
   dlNext();
-  if (!ok) { render(); return; }
+  /* A cancelled pull starts and stamps nothing, even when its bytes finished
+     as the Cancel came in and the child exited 0: the person said stop, as a
+     projector's Cancel is honoured. */
+  if (!ok || job.cancelled) { render(); return; }
   if (DL.dry) { render(); return; }
   DL.landed = job.id;
   /* A vision model's projector is next — setup's pick in this launch, or the
