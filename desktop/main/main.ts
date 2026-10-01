@@ -47,6 +47,8 @@ import {
   configSetWhole,
   explainConfigWriteFailure,
   readWholeConfig,
+  rewriteWholeConfig,
+  withConfigLock,
   localDaemonRunning,
   modelsStop,
   providerHasKey,
@@ -8002,15 +8004,16 @@ async function pruneIncompleteProvidersAtBoot(): Promise<void> {
 async function claimDesktopPorts(): Promise<void> {
   if (!DESKTOP_STATE_WAS_FRESH) return;
   try {
-    const read = await readWholeConfig();
-    if (!read.ok || !read.config) return;
-    const cfg = read.config;
     // r5 review fix: the port move is one pure function (state-dir.ts
     // claimPortsIn) so the suite can assert it without a fresh directory —
     // it moves the embedding daemon's PORT as well as the client's url,
     // which is what the first cut missed.
-    if (!claimPortsIn(cfg as unknown as Record<string, unknown>)) return;
-    await configSetWhole(cfg);
+    // Backlog 03: read and written under ONE hold of the config lock. The
+    // wizard is on screen from the first paint now, so its first writes
+    // (the title card's stamp, the Local route) can land while this boot
+    // write is still being planned — and a write built from a snapshot
+    // taken outside the lock would undo them.
+    await rewriteWholeConfig((cfg) => ({ write: claimPortsIn(cfg as unknown as Record<string, unknown>) }));
   } catch {
     // A port that could not be claimed shows up as a daemon that will not
     // start, with the agent's own message — not as a window that never opens.
@@ -8088,6 +8091,11 @@ async function firstRunProbe(): Promise<void> {
       }) +
       "\n",
   );
+  /* Backlog 03: the card writes its intro stamp as it leaves, through the
+     config lock. Let that write land first (bounded): an `atag config set`
+     left running outlives this process and puts a config.json back into the
+     throwaway directory the caller has just removed. */
+  await Promise.race([withConfigLock(async () => undefined), new Promise((r) => setTimeout(r, 10_000))]);
   app.exit(0);
 }
 
