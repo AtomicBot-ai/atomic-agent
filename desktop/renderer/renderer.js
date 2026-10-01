@@ -15403,7 +15403,7 @@ function ensureSkillsPoll() {
 function skillsTabEntered() {
   if (SKP.timer) { clearInterval(SKP.timer); SKP.timer = null; }
   // Item 09: the section opens on its skills; Built-in tools is picked (its segment, `/tools`, which enters through here first).
-  if (SKP.view !== 'skills') { SKP.view = 'skills'; render(); }
+  if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); render(); }
   ensureSkillsPoll();
   tpSkillsOmittedRefresh();
 }
@@ -15515,16 +15515,21 @@ function skpHubCtaHTML() {
     + ic('chevR') + '</button></div>';
 }
 /* Item 09: the agent's built-in tools — GET /api/capabilities `tools` less the
-   MCP servers' `mcp.<server>.*` (Connections › MCP servers lists those). Grouped
-   as the TUI's `/tools` groups them (tools-listing.ts familyOf: the name up to
-   its last dot), families and names sorted; the unprefixed ones (reply, finish)
-   lead, with no heading. null until the capabilities have been read. */
+   MCP servers' own `mcp.<server>.*` (Connections › MCP servers lists those);
+   the native discovery tools `mcp.resource.*` / `mcp.prompt.*` the agent adds
+   once MCP is on are its own and stay. This is the runtime registry, so a tool
+   the TUI's `/tools` drops by config is listed (github.* without a token,
+   fusion.delegate outside Fusion): the route says nothing about those gates.
+   Families as the TUI's `/tools` makes them (tools-listing.ts familyOf: the
+   name up to its last dot), families and names sorted; the unprefixed ones
+   (reply, finish), each its own family there, lead together with no heading.
+   null until the capabilities have been read. */
 function skpBuiltinTools() {
   if (!LIVE_CAPS || !Array.isArray(LIVE_CAPS.tools)) return null;
   const byFamily = new Map();
   LIVE_CAPS.tools.forEach((t) => {
     const name = t && typeof t.name === 'string' ? t.name : '';
-    if (!name || name.startsWith('mcp.')) return;
+    if (!name || (name.startsWith('mcp.') && !/^mcp\.(resource|prompt)\./.test(name))) return;
     const dot = name.lastIndexOf('.');
     const family = dot < 0 ? '' : name.slice(0, dot);
     if (!byFamily.has(family)) byFamily.set(family, []);
@@ -15536,8 +15541,10 @@ function skpBuiltinTools() {
 /* The Skills table's card and rows: the glyph the tool's transcript card wears, name, description. */
 function skpToolsHTML(groups) {
   if (!groups) {
-    // Not read yet: the agent is still starting (loadResources repaints when it answers), or the read failed.
-    const failed = SKP.toolsError && S.live.state === 'connected';
+    // Not read yet: being read, the agent still starting (loadResources repaints when it answers), or a failed read.
+    const up = S.live.state === 'connected';
+    if (up && SKP.toolsLoading) return '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>loading the tool list…</p></div>';
+    const failed = up && SKP.toolsError;
     return '<div class="tk-empty set-empty"><span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('wand') + '</span>'
       + '<p>' + (failed ? 'The agent did not list its tools (' + esc(SKP.toolsError) + '). Refresh to ask again.' : 'The list appears when the agent is up.') + '</p></div>';
   }
@@ -15552,25 +15559,31 @@ function skpToolsHTML(groups) {
     + '</div>';
 }
 /* Item 09: into the Built-in tools segment (its button, `/tools`, the palette),
-   out of a detail or the hub first as Back would. LIVE_CAPS is null until
+   out of a detail, the hub or a confirm first: `/tools` from the palette can
+   arrive over a remove confirm, whose y would act on a skill no longer on
+   screen. One already submitting is left to finish. LIVE_CAPS is null until
    loadResources has had an answer, so a missing list is asked for here. */
 function skpShowTools() {
   if (SKP.view !== 'tools') skpListTop();
   SKP.view = 'tools'; SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null;
   SKP.hubCard = null; SKP.hubSearchEditing = false;
+  if (SKP.removeConfirm && !SKP.removeConfirm.submitting) SKP.removeConfirm = null;
+  if (SKP.installConfirm && !SKP.installing) SKP.installConfirm = null;
   if (!LIVE_CAPS) skpToolsRefresh();
 }
 /* The other list starts at its top: renderSettings keeps a pane's scroll across repaints, and both lists are this pane. */
 function skpListTop() { const body = document.querySelector('#settings .setbody'); if (body) body.scrollTop = 0; }
-async function skpToolsRefresh() {
+/* `read` stands in for BR.capabilities() in --smoke, so the failed-read branch runs for real. */
+async function skpToolsRefresh(read) {
   if (!BR || !BR.capabilities || SKP.toolsLoading) return;
   SKP.toolsLoading = true;
   let res = null;
-  try { res = await BR.capabilities(); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  try { res = await (read ? read() : BR.capabilities()); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
   SKP.toolsLoading = false;
   if (res && res.ok && res.data) { LIVE_CAPS = res.data; SKP.toolsError = null; }
   else SKP.toolsError = (res && res.error) || 'no answer';
-  if (skillsVisible() && SKP.view === 'tools') render();
+  // A late answer repaints only the list it is for, and never under the caret in the hub's search box.
+  if (skillsVisible() && SKP.mode === 'list' && SKP.view === 'tools' && !skpTyping()) render();
 }
 /* ST-07: name, state, source and version, then SKILL.md itself. */
 function skpDetailHTML() {
@@ -15851,6 +15864,7 @@ async function skpInstall(ack) {
   SKP.installing = false;
   if (res && res.ok) {
     SKP.installConfirm = null; SKP.hubCard = null; SKP.mode = 'list';
+    SKP.view = 'skills'; // Item 09: the hub can be opened from Built-in tools; the new skill is on the skills list
     SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
     await skpReloadRows(); render(); return;
   }
@@ -15870,7 +15884,7 @@ function skillsAct(what) {
   if (verb === 'removeConfirm') { skpConfirmRemove(); return; }
   if (verb === 'removeCancel') { SKP.removeConfirm = null; render(); return; }
   if (verb === 'refresh') {
-    if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); return; } // Item 09: the list on screen is the agent's tools
+    if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
     refreshSkillList();
     if (SKP.mode === 'detail' && SKP.detailName) skpOpenDetail(SKP.detailName);
     return;
