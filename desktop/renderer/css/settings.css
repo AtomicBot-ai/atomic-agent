@@ -242,6 +242,7 @@ button.set-search:hover{border-color:var(--bd)}
 .set-diagcode{padding:10px 12px;border-radius:var(--r-block);background:var(--well);font-size:11.5px;line-height:1.55;color:var(--ink-2);
   overflow-wrap:anywhere;user-select:text}
 .set-privgrid{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px}
+.set-privnote{margin-top:10px}
 .set-privcol{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:var(--r-card);background:var(--well)}
 .set-privcol .tk-sh{padding:0;min-height:20px;color:var(--ink)}
 .set-privul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}

@@ -4343,10 +4343,14 @@ function privacyPane() {
         + '<button class="btn btn-s sm" data-act="settings:general">Open General</button>'
       + '</div>'
     + '</div>'
+    /* Said about analytics, not about the Mac: "never leaves this Mac" read as
+       a promise the app does not make (a cloud model is sent the messages).
+       The agent swaps the IP for 0.0.0.0 before an event goes out. */
     + '<div class="set-privgrid">'
-      + sentList('What analytics send', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
-      + sentList('What never leaves this Mac', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
+      + sentList('Sent with analytics', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
+      + sentList('Never sent with analytics', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
     + '</div>'
+    + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
     + '</div>';
 }
 /* B3: `agent.readScope` — the user file's value, else the schema default. */
