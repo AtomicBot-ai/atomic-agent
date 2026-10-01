@@ -246,8 +246,11 @@ describe("an exhausted fallback chain, through the agent loop", () => {
     const waiting = events.filter((e) => e.type === "provider_waiting");
     expect(waiting).toHaveLength(1);
     expect(waiting[0]).toMatchObject({ reason: "fetch failed" });
-    // The retried step went to the fallback only.
-    expect(calls).toEqual(["openrouter", "local", "local"]);
+    // The retried step walks the chain from the primary again. The local
+    // link only stood in after a 404, which is not the primary being
+    // down, so it earned no stickiness: a model id fixed during the wait
+    // is picked up by the next retry.
+    expect(calls).toEqual(["openrouter", "local", "openrouter", "local"]);
 
     expect(chatText(events)).toBe(
       `Turn failed [transport]: fetch failed (after "openrouter" failed: ${CLOUD_404})`,

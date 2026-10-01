@@ -167,9 +167,11 @@ describe("runWithFallback", () => {
 
     it("still names the primary's failure when the fallback fails", async () => {
       const chain = stickyChain();
+      // The primary is down (503), which arms its cooldown: what keeps a
+      // call on the fallback.
       await expect(
         runWithFallback(chain, async (id) => {
-          throw id === "primary" ? http(404) : new TypeError("fetch failed");
+          throw id === "primary" ? http(503) : new TypeError("fetch failed");
         }),
       ).rejects.toBeInstanceOf(TypeError);
 
@@ -209,6 +211,125 @@ describe("runWithFallback", () => {
         "primary",
       );
       expect(chain.overrideCause()).toBeNull();
+    });
+  });
+
+  describe("a call that starts on a stand-in after the primary refused", () => {
+    // Same clock as above: inside the probe throttle, so nothing but the
+    // stand-in rule sends a call back to the primary.
+    function chainAt1000(ids: string[]): ProviderFallbackChain {
+      return new ProviderFallbackChain({
+        resolve: () => ({ chain: ids, timing: DEFAULT_FALLBACK_TIMING }),
+        now: () => 1_000,
+      });
+    }
+
+    it("asks the primary again: the fallback only stood in and never served", async () => {
+      const chain = chainAt1000(["primary", "backup"]);
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "primary" ? http(404) : new TypeError("fetch failed");
+        }),
+      ).rejects.toBeInstanceOf(TypeError);
+
+      const seen: string[] = [];
+      await expect(
+        runWithFallback(chain, async (id) => {
+          seen.push(id);
+          return id;
+        }),
+      ).resolves.toBe("primary");
+      expect(seen).toEqual(["primary"]);
+      // The probe brought it back: the override is gone.
+      expect(chain.activeOverride).toBeNull();
+    });
+
+    it("keeps a fallback that served, as before", async () => {
+      const chain = chainAt1000(["primary", "backup"]);
+      await runWithFallback(chain, async (id) => {
+        if (id === "primary") throw http(404);
+        return id;
+      });
+      const seen: string[] = [];
+      await runWithFallback(chain, async (id) => {
+        seen.push(id);
+        return id;
+      });
+      expect(seen).toEqual(["backup"]);
+    });
+  });
+
+  describe("an exhausted chain whose primary refused its key", () => {
+    it("throws the primary's refusal, not the last link's outage", async () => {
+      const chain = makeChain(["aimlapi", "dashscope", "local"]);
+      const refusal = http(401);
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "aimlapi") throw refusal;
+          if (id === "dashscope") throw http(503);
+          throw new TypeError("fetch failed");
+        }),
+      ).rejects.toBe(refusal);
+      // Nothing failed before it; the later links are in the advance log.
+      expect(readFailedAttempts(refusal)).toEqual([]);
+    });
+
+    it("is the same on a probe of the primary", async () => {
+      let now = 1_000;
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["primary", "backup"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        now: () => now,
+      });
+      // The primary goes down and the backup serves: a real override.
+      await runWithFallback(chain, async (id) => {
+        if (id === "primary") throw http(503);
+        return id;
+      });
+      now += DEFAULT_FALLBACK_TIMING.probeThrottleMs;
+      const refusal = http(403);
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "primary" ? refusal : new TypeError("fetch failed");
+        }),
+      ).rejects.toBe(refusal);
+    });
+
+    it("leaves a refusal further down the chain to the last link, as before", async () => {
+      const chain = makeChain(["primary", "backup"]);
+      const last = http(401);
+      await expect(
+        runWithFallback(chain, async (id) => {
+          throw id === "primary" ? http(503) : last;
+        }),
+      ).rejects.toBe(last);
+      expect(readFailedAttempts(last).map((a) => a.providerId)).toEqual([
+        "primary",
+      ]);
+    });
+
+    it("still throws a later link's non-fallover error as is", async () => {
+      const chain = makeChain(["primary", "backup"]);
+      const grammar = new GrammarError("bad", "");
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "primary") throw http(401);
+          throw grammar;
+        }),
+      ).rejects.toBe(grammar);
+    });
+
+    it("a lone primary throws its own refusal, unchanged", async () => {
+      const chain = makeChain(["only"]);
+      const refusal = http(401);
+      await expect(
+        runWithFallback(chain, async () => {
+          throw refusal;
+        }),
+      ).rejects.toBe(refusal);
+      expect(readFailedAttempts(refusal)).toEqual([]);
     });
   });
 

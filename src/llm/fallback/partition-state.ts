@@ -46,6 +46,12 @@ export interface PartitionState {
    * switched away, refreshed by each failed probe. Null on the primary.
    */
   overrideCause: FailedAttempt | null;
+  /**
+   * Whether the link `overrideId` points at has answered since the
+   * pointer last moved. False while it only stood in: the chain advanced
+   * onto it and it has not served anything yet, or it failed too.
+   */
+  overrideServed: boolean;
 }
 
 export function freshPartition(): PartitionState {
@@ -54,5 +60,6 @@ export function freshPartition(): PartitionState {
     overrideId: null,
     announcedOverride: false,
     overrideCause: null,
+    overrideServed: false,
   };
 }
