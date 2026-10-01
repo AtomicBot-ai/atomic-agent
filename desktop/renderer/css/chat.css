@@ -127,6 +127,22 @@
 .discbody{margin:2px 0 4px 16px;padding:2px 0 2px 16px;border-left:2px solid var(--bd-2);
   color:var(--ink-2);font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
 
+/* "Working…" (0.6.7 item 10) — from the send to the turn's first step or word
+   (workingRowHTML). It takes the reasoning line's box: the height, inset, gap
+   and type of `.disc`, the spinner in the chevron's 14px slot, so the
+   Reasoning line or tool step that replaces it lands where it stood. The word
+   shimmers, a lighter band crossing the muted ink, and the seconds count in
+   tabular figures. Reduced motion: the word is plain text in the secondary
+   ink, and the spinner keeps the kit's slower turn (styles.css). */
+.tk-work{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;
+  font-size:13.5px;color:var(--ink-3);white-space:nowrap}
+.tk-work .tk-spin{width:12px;height:12px;margin:0 1px;border-width:1.5px}
+.tk-work-t{background:linear-gradient(90deg,var(--ink-3) 40%,var(--ink) 50%,var(--ink-3) 60%) 0 0/300% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:chat-shimmer 2.4s linear infinite}
+.tk-work-n{font-variant-numeric:tabular-nums}
+@keyframes chat-shimmer{from{background-position:100% 0}to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){.tk-work-t{animation:none;background:none;color:var(--ink-2)}}
+
 /* tool calls and folded runs — `.card` / `.cardhead` / `.cardbody` / `.cardsum`
    / `.du` / `.nm` are what the smoke and drivers read. At rest a row has no
    surface of its own; hover fills it; open, it becomes a quiet panel with the

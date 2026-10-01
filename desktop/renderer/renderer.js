@@ -1892,7 +1892,8 @@ function item(m, end) {
   if (m.k === 'assistant' && m.placeholder && m.failed) return '';
   if (m.k === 'assistant' && pausedKind(m)) return pausedRowHTML(m);
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
-  if (m.k === 'assistant') return '<div class="turn"><div></div>'
+  // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
+  if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
     + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + attachStrip(m) + msgActs(m)
     + (end ? '<div class="endmark' + (end === 'latest' ? ' latest' : '') + '" title="Turn complete">' + MARK_MONO + '</div>' : '')
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
@@ -1927,6 +1928,69 @@ function item(m, end) {
   if (m.k === 'tool') return '<div class="turn tk-step" id="turn-' + m.id + '"><div></div><div>' + toolCard(m) + '</div></div>';
   if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
   return '';
+}
+
+/* ============================================================
+   0.6.7 item 10 — "Working…" until the turn shows anything.
+
+   After a send, a local model reads the whole prompt before its first frame,
+   and on a long system prompt that is 30-40 s in which nothing appeared under
+   the message just sent; only the composer's travelling light moved. The
+   designer: "I don't even see that it's working". So while the reply is still
+   empty and nothing of the turn is on screen yet — the row before the reply
+   is the message itself — a quiet line under the message says the agent is on
+   it and for how long.
+
+   Nothing has to take the line down. Reasoning, tool steps, notices and
+   approvals are spliced in AHEAD of the streaming item, so on the frame the
+   first of them arrives the row before the reply stops being the message and
+   that row takes the line's place; the first words fill the reply, which does
+   the same. It sits in the Reasoning line's box (chat.css), which is what most
+   often replaces it, so that swap moves nothing.
+
+   The line is drawn ahead of the reply's own row, not instead of it: that row
+   keeps its empty `.prose` and its reserved action row (msgActs) exactly as
+   before. The line itself carries neither `.tk-asst` nor `.prose`, so nothing
+   that reads replies off the page (drive.mjs lastReply, cloud-setup's prose
+   reader, turn-order's rows) can take it for one, and it is no S.log entry,
+   so copy, history and the end mark never see it.
+
+   The seconds count from S.turnStartedAt, stamped at the send. They tick
+   without a render(): one 1 s interval, started by the drawing, rewrites the
+   counter's text while a line is on screen and stops itself when none is.
+   ============================================================ */
+function workingShown(m) {
+  if (!m || m.k !== 'assistant' || m.id !== S.streamId || !S.busy || String(m.text || '').trim()) return false;
+  const prev = S.log[S.log.indexOf(m) - 1];
+  return !!prev && prev.k === 'user';
+}
+/** Time since the send, in the failure line's words ("12 s", "1 min 5 s"). */
+function workingElapsed() {
+  const s = S.turnStartedAt ? Math.max(0, Math.floor((Date.now() - S.turnStartedAt) / 1000)) : 0;
+  return s >= 60 ? Math.floor(s / 60) + ' min ' + (s % 60) + ' s' : s + ' s';
+}
+function workingRowHTML(m) {
+  if (!workingShown(m)) return '';
+  workingTickStart();
+  return '<div class="turn tk-working"><div></div><div><div class="tk-work"><span class="tk-spin"></span>'
+    + '<span class="tk-work-t">Working…</span><span class="tk-work-n">' + workingElapsed() + '</span></div></div></div>';
+}
+let WORKING_TICK = 0;
+function workingTickStart() {
+  if (WORKING_TICK) return;
+  WORKING_TICK = setInterval(() => {
+    const on = document.querySelectorAll('#scroller .tk-work-n');
+    const m = S.streamId ? S.log.find((x) => x.id === S.streamId) : null;
+    if (on.length && workingShown(m)) {
+      const t = workingElapsed();
+      on.forEach((el) => { el.textContent = t; });
+      return;
+    }
+    clearInterval(WORKING_TICK); WORKING_TICK = 0;
+    // On screen after its moment passed: a repaint that skipped the
+    // transcript left it there, and one render puts that right.
+    if (on.length) render();
+  }, 1000);
 }
 
 /* ============================================================
@@ -6054,6 +6118,13 @@ function startLiveTurn(text) {
   S.reasonId = null;
   FZ.live = [];
   S.busy = true; S.stick = true;
+  /* When the turn started, so a failure can say how long it waited
+     rather than only that it gave up. A turn could spend 95 seconds
+     retrying while the transcript said nothing about any of it.
+     0.6.7 item 10: stamped at the send, before the first frame, because the
+     "Working…" line (workingRowHTML) counts from it from that frame on —
+     stamped when BR.chat answered, the first frame read the last turn's. */
+  S.turnStartedAt = Date.now();
   const streaming = {id:nid(), k:'assistant', text:''};
   S.streamId = streaming.id;
   S.log.push(streaming);
@@ -6069,10 +6140,6 @@ function startLiveTurn(text) {
       return;
     }
     S.turnId = res.turnId;
-    /* When the turn started, so a failure can say how long it waited
-       rather than only that it gave up. A turn could spend 95 seconds
-       retrying while the transcript said nothing about any of it. */
-    S.turnStartedAt = Date.now();
     // item 6: the sidebar's running dot follows the stream, not S.busy.
     RUNNING.set(res.turnId, S.agentSession || null);
     renderSidebar();
