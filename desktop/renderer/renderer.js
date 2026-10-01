@@ -603,6 +603,8 @@ const DL = {
       `atag serve`, which would kill that turn. Held here until
       obFlushDeferredActivate finds the turn over. */
   deferred: null,
+  /** Backlog 28: obFlushDeferredSoon's timer, while one is set. */
+  deferTimer: 0,
   /** Backlog 18: the pick between Download and the queue starting —
       obStartLocalPull reads `models status` first. The card shows it at
       once ("Starting…"), and a Cancel in that window drops it. */
@@ -1749,6 +1751,8 @@ function render() {
   /* Item 11: a queued ⇄ runs on the paint after the last thing holding it
      goes — a switch, a turn, an approval — whichever path cleared it. */
   fzFlushSoon();
+  // Backlog 28: so does a landed model's start, held by a turn in another chat.
+  obFlushDeferredSoon();
 }
 
 
@@ -10957,10 +10961,12 @@ async function obActivateLocal(id) {
      so completion routinely lands in the middle of a turn, and
      `selectLocalModel` makes main stop and restart `atag serve`
      (applySwitch), which would kill it. Every other restarting path in
-     this file refuses while `S.busy`; this one DEFERS rather than
+     this file refuses while a turn runs; this one DEFERS rather than
      refusing, because nobody asked for the switch at this instant.
-     obFlushDeferredActivate runs it the moment the turn ends. */
-  if (S.busy) {
+     obFlushDeferredActivate runs it the moment the turn ends.
+     Backlog 28: a turn in any chat, not only the one on screen
+     (restartStopsTurn) — the restart stops them all. */
+  if (restartStopsTurn()) {
     DL.deferred = id;
     toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends');
     render();
@@ -10993,12 +10999,20 @@ async function obActivateLocal(id) {
  * The activation obActivateLocal deferred, run when the turn that blocked
  * it ends. Called from the one place a turn actually finishes (the
  * done/aborted/error frame), so there is a single flush point.
+ * Backlog 28: and only once no chat has a turn left running. The frame
+ * above only finishes the turn on screen, so a deferral held by another
+ * chat's turn is let go on the paint after that turn ends
+ * (obFlushDeferredSoon, run by render() as a queued ⇄ is).
  */
 function obFlushDeferredActivate() {
   const id = DL.deferred;
-  if (!id || S.busy) return;
+  if (!id || restartStopsTurn()) return;
   DL.deferred = null;
   obActivateLocal(id);
+}
+function obFlushDeferredSoon() {
+  if (!DL.deferred || DL.deferTimer || restartStopsTurn()) return;
+  DL.deferTimer = setTimeout(() => { DL.deferTimer = 0; obFlushDeferredActivate(); }, 0);
 }
 
 /** A queue entry finished. Called from the one `cli:pull` subscriber. */
@@ -12446,7 +12460,8 @@ async function mpSearch() {
 }
 
 async function mpSetModel(model) {
-  if (S.busy) { toast('Not while a turn is running'); return; }
+  const held = restartStopsTurn();   // Backlog 28: a turn in any chat
+  if (held) { restartRefusedToast(held); return; }
   const id = MP.pickFor;
   MP.busy = true; MP.err = null; render();
   // The TUI's selectChatModel also activates the provider; here that
@@ -12716,11 +12731,57 @@ function swxWatchdog(label) {
 }
 /** A switch that did what it was for — a local model that did not start (or stop) is a failure, though the write landed. */
 function swxLanded(res) { return !!res && res.ok !== false && res.daemon !== 'start-failed' && res.daemon !== 'stop-failed'; }
+/**
+ * Backlog 28 — would restarting `atag serve` now stop a turn, and whose?
+ *
+ * The rule is lane B's own, from main/backend-switch.ts: "`atag serve` pins
+ * the active provider at boot and 0.5.4 has no reload route, so main.ts
+ * restarts the child whenever a result says `restart: true`. That is why
+ * every entry point in the renderer refuses to run while a turn is in
+ * flight." The restart aborts every turn the window streams, in every chat,
+ * and a switch to the cloud stops the local model server first. The entry
+ * points asked `S.busy`, which only says whether the chat on screen is
+ * busy. Once chats ran side by side that was no longer "a turn is in
+ * flight": New chat, or opening another chat, puts S.busy down while the
+ * chat just left is still answering. A local↔cloud switch from there
+ * restarted the agent under that reply. It never arrived, and nothing said
+ * why: "a session on local, then a new one on cloud, and both stall".
+ *
+ * Any turn now counts: S.busy (the chat on screen, also before its first
+ * frame) or RUNNING (every turn this window streams, whichever chat it is
+ * in; fzSwapWaitsFor and applySessionModelStamp already read it). Null when
+ * nothing runs. `here` when it is the chat on screen, whose refusal keeps
+ * its words. Otherwise `title` names the chat that is answering, when its
+ * row is known.
+ */
+function restartStopsTurn() {
+  if (S.busy) return {here:true, title:''};
+  const sids = [...RUNNING.values()];
+  if (!sids.length) return null;
+  if (sids.some((sid) => sid && (sid === S.sessionId || sid === S.agentSession))) return {here:true, title:''};
+  const sid = sids.find(Boolean);
+  const row = sid ? SESSIONS.find((x) => x.id === sid) : null;
+  return {here:false, title: row && row.t ? String(row.t) : ''};
+}
+/** What a refusal says about a turn in another chat ('' for the chat on screen). */
+function restartStopsLine(held) {
+  if (!held || held.here) return '';
+  return (held.title ? '“' + clipWords(held.title, 48) + '” is' : 'Another chat is')
+    + ' still answering. Wait for it to finish or stop it, then switch.';
+}
+/** The refusal toast every restarting switch shows (Backlog 28). */
+function restartRefusedToast(held) {
+  toast('Not while a turn is running', restartStopsLine(held) || undefined);
+}
 async function swxRun(label, want, run, refuse) {
   // Every switch below writes config and restarts `atag serve`, which
-  // would abort a running turn. Same guard, same words, as before.
-  if (S.busy) {
-    if (refuse) refuse(); else toast('Not while a turn is running');
+  // would abort a running turn.
+  /* Backlog 28: a running turn in ANY chat (restartStopsTurn), and the chat
+     on screen keeps its words. The coding mode (`route:false`) restarts
+     nothing, so it keeps the old rule. */
+  const held = want && want.route === false ? (S.busy ? {here:true, title:''} : null) : restartStopsTurn();
+  if (held) {
+    if (refuse) refuse(held); else restartRefusedToast(held);
     return {ok:false, error:'a turn is running'};
   }
   /* r5 review fix (item 10) — one SWX slot, so one switch at a time.
@@ -13088,8 +13149,9 @@ async function selActivate(row) {
   }
   // Lane B — backend switch: every branch below writes through main's
   // port of the TUI's persist helpers and ends in an agent restart, so
-  // none of them may run while a turn is in flight.
-  if (S.busy) { toast('Not while a turn is running'); return; }
+  // none of them may run while a turn is in flight — in any chat (Backlog 28).
+  const held = restartStopsTurn();
+  if (held) { restartRefusedToast(held); return; }
   /* Run mode — Fusion (activateComposerSwitchRow). Under Fusion the provider
      control re-pins the ORCHESTRATOR: the plain activation would move
      activeTextProvider away from the pin and drop the mode. A provider with
@@ -13370,7 +13432,7 @@ async function selSavePreset() {
   if (preset.headers) entry.headers = preset.headers;
   let res = await BR.upsertProvider(entry);
   if (res && res.ok === false) { SEL.busy = false; SEL.err = res.error || 'could not save the provider'; render(); return; }
-  if (S.busy) { SEL.busy = false; SEL.err = 'saved, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
+  if (restartStopsTurn()) { SEL.busy = false; SEL.err = 'saved, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
   BSW.line = 'switching…';
   res = await swxRun(BSW.line, {providerId: preset.id},
     () => SWXBR.activateProvider(preset.id));
@@ -14317,8 +14379,10 @@ async function selChooseBackend(id) {
   // what to do with the daemon) is the TUI's activateCloud/activateLocal,
   // ported into main's switchBackend; the write is whole-file, and the
   // agent is restarted by main because `atag serve` pins its provider at
-  // boot. A running turn would be aborted by that restart, so refuse.
-  if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
+  // boot. A running turn would be aborted by that restart, so refuse —
+  // a turn in any chat, not only the one on screen (Backlog 28).
+  const held = restartStopsTurn();
+  if (held) { restartRefusedToast(held); return {ok:false, error:'a turn is running'}; }
   SEL.err = null; SEL.busy = true; BSW.line = id === 'local' ? 'switching to local…' : 'switching to cloud…'; render();
   /* r5 item 10. `want:{backend:id}` paints the id the operator clicked:
      selBackend answers 'cloud' | 'custom' | 'local', and switchBackend('local')
@@ -14691,7 +14755,8 @@ function fzAfter(res, before) {
 
 /** activateFusion: the pre-flight's one line, or RunModeOrchestrator.setMode("fusion"). */
 async function selChooseFusion() {
-  if (S.busy) { toast('Not while a turn is running'); return {ok:false, error:'a turn is running'}; }
+  const held = restartStopsTurn();   // Backlog 28: a turn in any chat
+  if (held) { restartRefusedToast(held); return {ok:false, error:'a turn is running'}; }
   if (!BSW.readyLoaded || !BSW.localLoaded) await fzLoadFacts();
   const blocker = fzBlocker();
   if (blocker) { fzNotice('fusion: ' + blocker); return {ok:false, error:blocker, blocker:true}; }
@@ -15217,7 +15282,8 @@ async function applySessionModelStamp() {
   if (!stamp || !BR) return;
   // Not "if S.busy": a restart aborts every turn this process is
   // streaming, including ones in chats the user is not looking at.
-  if (RUNNING.size > 0 || S.busy) { toast('Not while a turn is running'); return; }
+  const held = restartStopsTurn();
+  if (held) { restartRefusedToast(held); return; }
   // A local route has no cloud model to pick: `selectCloudModel` writes
   // defaultChatModel on the provider entry, which llama-server ignores.
   const entry = llmProvider(stamp.providerId);
@@ -15568,8 +15634,8 @@ async function wizNextStep() {
   }
   WIZ.modelChosen = false;
   // Lane B — backend switch: one write for the model + the activation, then
-  // the restart main does for it. Not while a turn runs.
-  if (S.busy) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
+  // the restart main does for it. Not while a turn runs, in any chat (Backlog 28).
+  if (restartStopsTurn()) { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
   const sel = await swxRun('switching…', {providerId: id, model},
     () => SWXBR.selectCloudModel(id, model),
     () => { WIZ.phase = 'configure'; WIZ.error = 'saved and verified, but not activated while a turn is running'; render(); });
@@ -20008,6 +20074,11 @@ async function llmWrite(path, value) {
 function llmFail(prefix, res) { return prefix + ': ' + ((res && res.error) || 'unknown error'); }
 /* The serve process keeps its boot-time provider registry (the TUI hot-reloads its own); every route write says so. */
 function llmRestartMsg(text) { LLMP.msg = {text, restart:true}; }
+/** Settings › LLM's refusal for a switch while a turn runs: its own words, then whose turn (Backlog 28). */
+function llmRestartRefusal(held) {
+  const line = restartStopsLine(held);
+  return 'Not while a turn is running — the switch restarts the agent' + (line ? '. ' + line : '');
+}
 /* Integration seam (lane B + lane C): a route switch from the LLM tab goes
    through lane B's activateProvider / selectCloudModel — the same whole-file
    llm write, key check, cloud-route daemon stop (with memory.embeddings.enabled
@@ -20016,14 +20087,15 @@ function llmRestartMsg(text) { LLMP.msg = {text, restart:true}; }
    activeTextProvider. The serve process is restarted by main (applySwitch), so
    the message reports the switch instead of asking for a restart. */
 async function llmSwitchProvider(id) {
-  if (S.busy) { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); return false; }
+  const held = restartStopsTurn();   // Backlog 28: a turn in any chat
+  if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return false; }
   LLMP.busy = true; llmRepaint();
   // r5 item 10: Settings is an in-window overlay, so this locks the same
   // composer the selector does. The refusal keeps the tab's own llmReport
   // wording rather than the selector's toast.
   const res = await swxRun('switching…', {providerId: id},
     () => SWXBR.activateProvider(id),
-    () => { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); });
+    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false;
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
@@ -20043,12 +20115,13 @@ async function llmSwitchProvider(id) {
   return true;
 }
 async function llmSelectChatModel(pid, modelId) {
-  if (S.busy) { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); return; }
+  const held = restartStopsTurn();   // Backlog 28: a turn in any chat
+  if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return; }
   LLMP.busy = true; llmRepaint();
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
   const res = await swxRun('switching…', {providerId: pid, model: modelId},
     () => SWXBR.selectCloudModel(pid, modelId),
-    () => { llmReport('Not while a turn is running — the switch restarts the agent', 'cloud'); llmRepaint(); });
+    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false;
   if (!res || !res.ok) {
     llmReport(res && res.needsKey ? 'no API key for ' + pid + ' — add one with n (the wizard) or export its variable' : llmFail('select model failed', res), 'cloud');
