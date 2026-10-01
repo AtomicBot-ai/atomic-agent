@@ -606,9 +606,30 @@ export class ProvidersOrchestrator {
     }
   }
 
+  /** True when `id` serves chat per the runtime registry or the config file on disk. */
+  private isLiveActiveTextProvider(id: string): boolean {
+    if (this.runtime.providerRegistry.activeTextProviderId === id) return true;
+    return resolveLlmConfig(getConfig()).activeTextProvider === id;
+  }
+
   async removeProviderById(id: string): Promise<void> {
     this.bus.emit({ type: "providers_busy", busy: true });
     try {
+      // The panel's `isActiveText` is a snapshot from the last refresh;
+      // Telegram `/model` or a run-mode change elsewhere can move the
+      // active route without the TUI rows following. Check the live
+      // state — the runtime registry and a fresh config read — before
+      // anything is written: `providerRegistry.removeProvider` refuses
+      // the active provider too, but only after `removeLlmProvider` has
+      // already rewritten the file.
+      if (this.isLiveActiveTextProvider(id)) {
+        this.bus.emit({
+          type: "providers_remove_failed",
+          error: activeProviderRemovalMessage(id),
+        });
+        this.refresh();
+        return;
+      }
       removeLlmProvider(id);
       await this.runtime.providerRegistry.removeProvider(id);
       await this.runtime.reloadLlmProviders();
@@ -627,6 +648,15 @@ export class ProvidersOrchestrator {
       this.bus.emit({ type: "providers_busy", busy: false });
     }
   }
+}
+
+/**
+ * Why `d` / the remove confirm refuses `id`: it is the provider serving
+ * chat. Shared by the Cloud pane's snapshot guard and the orchestrator's
+ * live check so both read the same.
+ */
+export function activeProviderRemovalMessage(id: string): string {
+  return `${id} is the active provider; switch to another provider or a local model before removing it`;
 }
 
 /**

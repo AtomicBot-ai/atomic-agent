@@ -123,3 +123,33 @@ describe("a refresh that switches the active text route", () => {
     expect(next.contextUsage.contextWindow).toBe(32_768);
   });
 });
+
+describe("providers_remove_failed", () => {
+  it("routes the error to the Cloud pane even after an External-pane line", () => {
+    // The Cloud pane only renders cloud-sourced status lines; a failed
+    // removal that kept the previous "external" source stayed invisible.
+    const base = createInitialTuiState({
+      session: { id: "s1", workingDir: "/tmp" },
+    });
+    const state = {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        statusLine: "probe ok",
+        statusLineSource: "external" as const,
+        removeConfirm: { id: "groq" },
+        busy: true,
+      },
+    };
+    const next = reduceProvidersPanel(state, {
+      type: "providers_remove_failed",
+      error: "groq is the active provider",
+    } as never);
+    expect(next?.providersPanel).toMatchObject({
+      statusLine: "groq is the active provider",
+      statusLineSource: "cloud",
+      removeConfirm: null,
+      busy: false,
+    });
+  });
+});

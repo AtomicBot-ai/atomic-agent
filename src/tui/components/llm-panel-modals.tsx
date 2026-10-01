@@ -91,7 +91,7 @@ export function LlmPanelModals({
           Drops it from config and the fallback chain. An API key kept in .env
           is left in place.
         </Text>
-        <Text color={theme.colors.muted}>y confirm · n/Esc cancel</Text>
+        <Text color={theme.colors.muted}>y/Enter confirm · n/Esc cancel</Text>
       </PromptBox>
     );
   }

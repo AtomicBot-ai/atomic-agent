@@ -5,7 +5,10 @@ import type {
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import { configureWizardKindForRow } from "../providers/providers-orchestrator.js";
+import {
+  activeProviderRemovalMessage,
+  configureWizardKindForRow,
+} from "../providers/providers-orchestrator.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
@@ -277,7 +280,7 @@ export function requestCloudProviderRemoval(
     dispatch({
       type: "providers_status",
       source: "cloud",
-      line: `${provider.id} is the active provider; switch to another provider or a local model before removing it`,
+      line: activeProviderRemovalMessage(provider.id),
     });
     return;
   }
