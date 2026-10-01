@@ -835,6 +835,84 @@ describe("humanizeOpenAiHttpError", () => {
   });
 });
 
+describe("a key problem the request itself shows", () => {
+  const caught = async (run: () => Promise<unknown>): Promise<OpenAiHttpError> => {
+    try {
+      await run();
+    } catch (err) {
+      if (err instanceof OpenAiHttpError) return err;
+      throw err;
+    }
+    throw new Error("expected an OpenAiHttpError");
+  };
+
+  it("a key with a non-ASCII character was never sent, and the message says so", async () => {
+    const fetchImpl = vi.fn();
+    const err = await caught(() =>
+      openAiPostJson(
+        { ...depsWith(fetchImpl as unknown as typeof fetch), apiKey: "sk-ключ", label: "aimlapi" },
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(err.status).toBe(401);
+    expect(err.keyProblem).toBe("non_ascii");
+    expect(humanizeOpenAiHttpError(err)).toBe(
+      '"aimlapi" can\'t use its API key: the key has a character API keys never contain (often a letter or quote picked up while pasting), so it was not sent. Re-enter the key in the Providers panel.',
+    );
+  });
+
+  it("a 401 to a request that carried no key says no key is set", async () => {
+    const err = await caught(() =>
+      openAiPostJson(
+        {
+          ...depsWith(async () => errorResponse(401, '{"error":{"message":"You didn\'t provide an API key."}}')),
+          apiKey: "",
+          label: "dashscope",
+        },
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(err.keyProblem).toBe("missing");
+    expect(humanizeOpenAiHttpError(err)).toBe(
+      '"dashscope" needs an API key and none is set. Add the key in the Providers panel.',
+    );
+  });
+
+  it("a 401 to a key that was sent stays the provider's refusal", async () => {
+    const err = await caught(() =>
+      openAiPostJson(
+        depsWith(async () => errorResponse(401, "invalid key")),
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(err.keyProblem).toBeUndefined();
+    expect(humanizeOpenAiHttpError(err)).toContain("rejected the API key (401)");
+  });
+
+  it("a key set by hand in the entry's headers counts as sent", async () => {
+    const err = await caught(() =>
+      openAiPostJson(
+        {
+          ...depsWith(async () => errorResponse(403, "forbidden")),
+          apiKey: "",
+          extraHeaders: { Authorization: "Bearer sk-by-hand" },
+        },
+        "/v1/chat/completions",
+        {},
+        {},
+      ),
+    );
+    expect(err.keyProblem).toBeUndefined();
+  });
+});
+
 describe("classification", () => {
   it("classifies every cloud HTTP status as transport, never tool", () => {
     for (const status of [400, 401, 403, 404, 429, 500, 502, 503]) {

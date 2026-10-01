@@ -1,3 +1,4 @@
+import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
 import {
@@ -34,6 +35,18 @@ export type OpenAiHttpDeps = {
    */
   logger?: CreditLimitLogger;
 };
+
+/**
+ * A key problem the request itself shows, without asking the provider:
+ *
+ *  - `non_ascii`: the key has a character no API key has (a letter from
+ *    another keyboard layout, a typographic quote picked up while
+ *    pasting). It cannot go in a header, so nothing was sent; the 401 is
+ *    ours, built in `openAiFetch`.
+ *  - `missing`: no key was set, so the request went out without one, and
+ *    the service answered 401/403.
+ */
+export type OpenAiKeyProblem = "non_ascii" | "missing";
 
 /**
  * Typed failure for the OpenAI-compatible HTTP path, mirroring
@@ -74,6 +87,7 @@ export class OpenAiHttpError extends Error {
       body?: ProviderErrorBody;
       generationId?: string;
       streamError?: string;
+      keyProblem?: OpenAiKeyProblem;
     },
   ) {
     super(message);
@@ -88,7 +102,18 @@ export class OpenAiHttpError extends Error {
     if (options?.streamError !== undefined) {
       this.streamError = options.streamError;
     }
+    if (options?.keyProblem !== undefined) {
+      this.keyProblem = options.keyProblem;
+    }
   }
+
+  /**
+   * What is wrong with the key itself, when the request shows it, for a
+   * 401 the provider did not get to judge on the merits. Absent on every
+   * other error, a 401 for a key that was sent included: that one the
+   * provider refused, and only it knows why.
+   */
+  readonly keyProblem?: OpenAiKeyProblem;
 
   /**
    * The error body read for its reason (`parseProviderErrorBody`):
@@ -162,6 +187,14 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
       `Can't reach ${who} — no response from ${hostOf(err.url)}. ` +
       `Tried ${OPENAI_MAX_ATTEMPTS} times. Check the provider URL or your connection.`
     );
+  }
+  if (err.keyProblem === "non_ascii") {
+    // Nothing was sent, so nothing was "rejected": say what is wrong with
+    // the key instead of quoting a status the provider never answered.
+    return `${who} can't use its API key: the key has a character API keys never contain (often a letter or quote picked up while pasting), so it was not sent. Re-enter the key in the Providers panel.`;
+  }
+  if (err.keyProblem === "missing") {
+    return `${who} needs an API key and none is set. Add the key in the Providers panel.`;
   }
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
@@ -614,6 +647,8 @@ export async function openAiFetch(
       false,
       null,
       deps.label,
+      undefined,
+      isAsciiOnly(deps.apiKey) ? undefined : { keyProblem: "non_ascii" },
     );
   }
   const controller = new AbortController();
@@ -690,6 +725,8 @@ async function httpErrorFromResponse(
     (res.status === 429 || res.status === 503
       ? parseRetryInfoDelayMs(text)
       : null);
+  const keyMissing =
+    (res.status === 401 || res.status === 403) && !sentCredential(deps);
   return new OpenAiHttpError(
     `openai provider ${res.status}: ${text.slice(0, OPENAI_ERROR_DETAIL_MAX_LEN)}`,
     res.status,
@@ -698,8 +735,30 @@ async function httpErrorFromResponse(
     retryAfterMs,
     deps.label,
     undefined,
-    { body: parseProviderErrorBody(text) },
+    {
+      body: parseProviderErrorBody(text),
+      ...(keyMissing ? { keyProblem: "missing" as const } : {}),
+    },
   );
+}
+
+/**
+ * Whether the request carried a credential at all: the resolved key, or
+ * one the entry sets by hand in its static headers. Keyless servers send
+ * none on purpose, so this only means something next to a 401/403.
+ */
+function sentCredential(deps: OpenAiHttpDeps): boolean {
+  if ((deps.apiKey ?? "").trim().length > 0) return true;
+  const named = deps.apiKeyHeader?.trim().toLowerCase();
+  return Object.keys(deps.extraHeaders ?? {}).some((name) => {
+    const lower = name.trim().toLowerCase();
+    return (
+      lower === "authorization" ||
+      lower === "x-api-key" ||
+      lower === "api-key" ||
+      lower === named
+    );
+  });
 }
 
 /**
