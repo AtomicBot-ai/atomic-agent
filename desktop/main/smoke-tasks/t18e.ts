@@ -170,7 +170,15 @@ const HELPERS = String.raw`
     if (saved !== null) localStorage.setItem(KEY, saved); else localStorage.removeItem(KEY);
     held.length = 0; calls.length = 0; T.opened = 0;
     DL.dry = false;
-    await obBootGate(FIRSTRUN);
+    /* The gate reads the config through the real CLI first ('atag config get'),
+       and on a loaded Mac that read can fail: then it resumes nothing, as a real
+       launch would not either. With a reminder to resume, it is read again —
+       up to three launches — rather than calling that a failure of the resume. */
+    const moved = () => !!(DL.job || DL.projector || DL.preparing || DL.failed.length || calls.length);
+    for (let tries = 0; tries < 3; tries++) {
+      await obBootGate(FIRSTRUN);
+      if (moved() || localStorage.getItem(KEY) === null) break;
+    }
     for (let i = 0; i < 60 && !DL.job && !DL.projector && !calls.includes(PROJ); i++) await tick(50);
     await tick(100);
   };
@@ -191,6 +199,9 @@ export async function checks18e(js: Js, check: Check, main: SmokeDownloads): Pro
   try {
     await step("D1 (F8) main", () => mainGuards(js, check, main));
     await step("D1 (F8)", () => projectorBehindRuntime(js, check));
+    await step("D1 (F8)", () => runtimeRefused(js, check));
+    await step("D1 (F8)", () => startStaysGone(js, check));
+    await step("D1 (F8) Settings", () => settingsUpdateRefused(js, check, main));
     await step("D2", () => runtimeRetryAfterProjector(js, check));
     await step("D2", () => runtimeRetryAfterLanding(js, check));
     await step("D3", () => dismissFailedProjector(js, check));
@@ -365,6 +376,209 @@ async function projectorBehindRuntime(js: Js, check: Check): Promise<void> {
       && typeof r["retryAct"] === "string" && r["retriedHeld"] === ID
       && same(failRetried.calls, [PROJ, START]) && failRetried.card === null && failRetried.marker === null,
     JSON.stringify({ failedRuntime, failLanded, retry: r["retryAct"], held: r["retriedHeld"], failRetried }),
+  );
+}
+
+/* D1 (F8): the retried runtime does not even start — main refuses it, another
+   download having got there first. That runtime did not land either, so what
+   was held for it goes, as for a cancelled or a failed one: a vision model's
+   start, and a text model's (R4). This time the queue asks main for its jobs,
+   through the dlSpawn recorder, which refuses the runtime. */
+async function runtimeRefused(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const out = {};
+    let refuse = true;
+    const asking = () => {
+      window.dlNext = keep.next;
+      window.dlSpawn = (job) => {
+        T.spawns.push(job.kind + ':' + job.id);
+        return Promise.resolve(job.kind === 'runtime' && refuse
+          ? {ok: false, error: 'a download is already running', running: {kind: 'weights', id: 'smoke-t18e-other', last: null}}
+          : {ok: true, started: true});
+      };
+    };
+    try {
+      // The vision model.
+      stage(); asking(); refuse = true;
+      remember();
+      window.__dlSeed([{kind: 'weights', id: ID}]);
+      DL.dry = false;
+      dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
+      render(); await tick(60);
+      out.retried = await pressIn('llama.cpp runtime', '.dlc-retry');
+      feed({id: ID, done: true, ok: true});
+      await tick(150);
+      out.refused = seen({spawns: T.spawns.slice()});
+      out.answered = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      out.landed = seen({marker: marker(), landed: DL.landed});
+      // Main is free again: Retry on the runtime, which lands.
+      refuse = false;
+      out.retryAct = await pressIn('llama.cpp runtime', '.dlc-retry');
+      out.held = DL.activateAfter;
+      runtimeEnds(true);
+      await tick(150);
+      out.done = seen({marker: marker()});
+
+      // A text model, held for the same refused runtime; later an unrelated runtime lands.
+      stage(); asking(); refuse = true;
+      window.__dlSeed([{kind: 'weights', id: 'smoke-t18e-text'}]);
+      DL.dry = false;
+      dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
+      render(); await tick(60);
+      await pressIn('llama.cpp runtime', '.dlc-retry');
+      feed({id: 'smoke-t18e-text', done: true, ok: true});
+      await tick(150);
+      out.textRefused = seen({held: DL.activateAfter});
+      DL.job = {kind: 'runtime', id: 'llama.cpp', percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false};
+      runtimeEnds(true);
+      await tick(150);
+      out.textLater = seen();
+      return out;
+    } finally {
+      restore();
+    }
+  })()`);
+  const refused = r["refused"] as Seen & { spawns: string[] }, landed = r["landed"] as Seen, done = r["done"] as Seen;
+  check(
+    "T18 D1 (F8): a retried runtime that main refuses to start takes the vision model's held start with it — the projector lands and starts nothing; once a Retry brings the runtime in, the model starts",
+    typeof r["retried"] === "string" && same(refused.spawns, ["runtime:llama.cpp"]) && same(refused.failed, ["runtime:llama.cpp"])
+      && same(refused.calls, [PROJ]) && refused.projector === ID
+      && r["answered"] === true && same(landed.calls, [PROJ]) && landed.landed === ID && landed.marker?.id === ID
+      && typeof r["retryAct"] === "string" && r["held"] === ID
+      && same(done.calls, [PROJ, START]) && done.card === null && done.marker === null,
+    JSON.stringify({ retried: r["retried"], refused, landed, retry: r["retryAct"], held: r["held"], done }),
+  );
+  const textRefused = r["textRefused"] as Seen, textLater = r["textLater"] as Seen;
+  check(
+    "T18 D1 (F8): a text model's start held for that refused runtime goes with it too (R4) — a later, unrelated runtime landing starts nothing",
+    textRefused.held === null && same(textRefused.failed, ["runtime:llama.cpp"]) && textRefused.calls.length === 0
+      && textLater.calls.length === 0,
+    JSON.stringify({ textRefused, textLater }),
+  );
+}
+
+/* D1 (F8), the other ways a runtime does not land, and what comes after: the
+   projector that came down without its start fails and is retried from its
+   row; the runtime's child exits 0 just as its Cancel comes in; and a runtime
+   still queued behind another model's download is taken off the card. */
+async function startStaysGone(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const out = {};
+    const begin = async () => {
+      stage();
+      remember();
+      window.__dlSeed([{kind: 'weights', id: ID}]);
+      DL.dry = false;
+      dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
+      render(); await tick(60);
+      await pressIn('llama.cpp runtime', '.dlc-retry');
+      feed({id: ID, done: true, ok: true});
+      await tick(120);
+    };
+    try {
+      // (e) Cancelled runtime; the projector then fails, and is retried from its row.
+      await begin();
+      await pressIn('llama.cpp runtime', '.dlc-x');
+      feed({id: 'llama.cpp', kind: 'runtime', done: true, ok: false, error: 'models update exited with code null', sawProgress: false, upToDate: false});
+      await tick(120);
+      out.eAnswered = answer({ok: false, error: 'smoke t18e: the connection was reset'});
+      await tick(150);
+      out.eFailed = seen({marker: marker()});
+      out.eRetry = await pressIn(NAME, '.dlc-retry');
+      await tick(60);
+      out.eAnswered2 = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      out.eLanded = seen({marker: marker(), landed: DL.landed});
+
+      // (f) The runtime's child exits 0 as its Cancel comes in.
+      await begin();
+      await pressIn('llama.cpp runtime', '.dlc-x');
+      runtimeEnds(true);
+      await tick(120);
+      out.fAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      out.fLanded = seen({marker: marker()});
+
+      // (g) A runtime queued behind another model's download is taken off; the vision model waited on it.
+      stage();
+      remember();
+      OB.models = OB.models.concat([{id: 'smoke-t18e-y', name: 'Smoke T18e Y'}]);
+      window.__dlSeed([{kind: 'weights', id: ID}]);
+      DL.dry = false;
+      DL.queue.push({kind: 'weights', id: 'smoke-t18e-y', run: DL.runSeq + 100});
+      DL.queue.push({kind: 'runtime', id: 'llama.cpp', run: DL.runSeq + 101});
+      render(); await tick(60);
+      feed({id: ID, done: true, ok: true});
+      await tick(120);
+      out.gParked = seen();
+      out.gDrop = await pressIn('llama.cpp runtime', '.dlc-x');
+      feed({id: 'smoke-t18e-y', done: true, ok: true});
+      await tick(150);
+      out.gAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      out.gLanded = seen({marker: marker()});
+      return out;
+    } finally {
+      restore();
+    }
+  })()`);
+  const eFailed = r["eFailed"] as Seen, eLanded = r["eLanded"] as Seen;
+  check(
+    "T18 D1 (F8): a vision model's start gone with its cancelled runtime stays gone when its projector fails and is retried from its row — no start without llama.cpp, the reminder kept",
+    r["eAnswered"] === true && same(eFailed.failed, [`projector:${ID}`]) && eFailed.marker?.id === ID
+      && typeof r["eRetry"] === "string" && /^dlc:retry:/.test(r["eRetry"] as string) && r["eAnswered2"] === true
+      && same(eLanded.calls, [PROJ, PROJ]) && eLanded.card === null && eLanded.landed === ID && eLanded.marker?.id === ID,
+    JSON.stringify({ eFailed, retry: r["eRetry"], eLanded }),
+  );
+  const fLanded = r["fLanded"] as Seen;
+  check(
+    "T18 D1 (F8): a runtime cancelled as its child exits 0 counts as cancelled — the held vision model is not started when its projector lands, as a text model's hold is dropped",
+    r["fAnswered"] === true && same(fLanded.calls, [PROJ]) && fLanded.card === null && fLanded.marker?.id === ID,
+    JSON.stringify(fLanded),
+  );
+  const gParked = r["gParked"] as Seen, gLanded = r["gLanded"] as Seen;
+  check(
+    "T18 D1 (F8): a queued runtime taken off the card takes the held vision model's start with it — its projector lands and starts nothing, while the model in front starts as it lands",
+    gParked.job === "weights:smoke-t18e-y" && same(gParked.queue, ["runtime:llama.cpp"])
+      && same(lines(gParked.card), ["Smoke T18e Y | Starting…", "llama.cpp runtime | Queued", `${NAME} | Vision projector · Queued`])
+      && r["gDrop"] === "dlc:drop:runtime:llama.cpp" && r["gAnswered"] === true
+      && same(gLanded.calls, [PROJ, "activate:smoke-t18e-y"]) && gLanded.card === null && gLanded.marker?.id === ID,
+    JSON.stringify({ gParked, drop: r["gDrop"], gLanded }),
+  );
+}
+
+/* D1 (F8), Settings: B (the llama.cpp update) while a download runs is refused
+   by main. Settings says so where it stays, and not "updating…" for good. */
+async function settingsUpdateRefused(js: Js, check: Check, main: SmokeDownloads): Promise<void> {
+  const probe = String.raw`(async () => {
+    const keep = {msg: LLMP.msg, err: LLMP.statusErr, busy: LLMP.busy, refresh: window.llmRefresh};
+    try {
+      LLMP.busy = false; LLMP.msg = null; LLMP.statusErr = null;
+      window.llmRefresh = () => Promise.resolve();
+      await llmBackendUpdate();
+      return {msg: LLMP.msg ? LLMP.msg.text : null, busy: LLMP.busy};
+    } finally {
+      LLMP.msg = keep.msg; LLMP.statusErr = keep.err; LLMP.busy = keep.busy; window.llmRefresh = keep.refresh;
+    }
+  })()`;
+  const release = main.hold("projector", "custom-smoke-t18e-held");
+  let busy: { msg: string | null; busy: boolean } | null = null;
+  try {
+    busy = await within(10_000, "Settings' update", js<{ msg: string | null; busy: boolean }>(probe));
+  } finally {
+    release();
+  }
+  // Main offline and nothing running: a plain failure, said the same way.
+  const failed = await within(10_000, "Settings' update", js<{ msg: string | null; busy: boolean }>(probe));
+  check(
+    "T18 D1 (F8): Settings' llama.cpp update refused while a projector downloads says so and stays said — what is downloading, no \"updating…\" left behind; a plain failure is said the same way",
+    !!busy && busy.busy === false
+      && busy.msg === "! the llama.cpp backend was not updated: the vision projector of smoke-t18e-held is downloading. Update it once that has finished."
+      && failed.busy === false && failed.msg === "! models update failed: smoke: offline, nothing is downloaded",
+    JSON.stringify({ busy, failed }),
   );
 }
 
