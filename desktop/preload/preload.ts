@@ -122,6 +122,8 @@ contextBridge.exposeInMainWorld("atomic", {
   resetMicPermission: () => ipcRenderer.invoke("app:resetMicPermission"),
   openMicSettings: () => ipcRenderer.invoke("app:openMicSettings"),
   openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
+  /** 13: the page's ground colour (#rrggbb), for the window's own background. */
+  windowGround: (color: string) => ipcRenderer.invoke("app:windowGround", color),
   // item 6: the sidebar's own pin/read state (Electron userData/prefs.json) and the row menu
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
   prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>

@@ -1242,6 +1242,17 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
     if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
   });
+  // 13: the window's own background is what shows wherever the page has not
+  // painted yet — a frame between layers, the strip a resize uncovers. It was
+  // a fixed near-black, a dark flash on the light theme; the renderer hands
+  // over the page's own ground whenever the theme can have changed.
+  ipcMain.handle("app:windowGround", (event, color: unknown) => {
+    if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) return { ok: false, error: "expected #rrggbb" };
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return { ok: false, error: "no window" };
+    target.setBackgroundColor(color);
+    return { ok: true };
+  });
 
   // --- Item 7 (settings surface): tasks, health, config unset, schedule preview ---
   const taskId = (id: unknown): string | null =>

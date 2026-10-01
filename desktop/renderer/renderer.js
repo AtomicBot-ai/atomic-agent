@@ -1513,6 +1513,13 @@ const ATTN = new Set();                  // sessions whose last desktop-run turn
 /* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
    See the top of onChatEvent. */
 const STREAM_ERR = new Map();
+/* 13/14: a stream frame waiting to be painted (streamPaint). `chat` — the
+   transcript changed (a reply delta, a new reasoning row); `reason` — only the
+   running reasoning block's text grew. */
+const STREAM_PAINT = {raf:0, timer:0, chat:false, reason:false};
+/* 14: the inspector tab whose body is on screen, so a rebuild of the same tab
+   keeps its scroll and a switch to another starts at the top. */
+const INSP_VIEW = {tab:null};
 const RUNNING = new Map();
 const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
@@ -1569,6 +1576,8 @@ S.log = [
    render
    ============================================================ */
 function render() {
+  // 13/14: a whole render paints everything a waiting stream frame would have.
+  dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
   // r5 item 7: the download strip is chrome, painted before the overlay
   // layer so renderOverlays can measure it and sit under it.
@@ -3115,6 +3124,89 @@ function expandGroupInPlace(id) {
   S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
 }
 
+/* ---- 13/14: stream frames ----
+   A reasoning chunk and a reply delta used to call render() each: the whole
+   window (toolbar, sidebar, every message's markdown, the blurred composer
+   with its running light, the inspector, the overlays) was rebuilt per token,
+   20-60 times a second for as long as a turn streamed. Those rebuilds are when
+   the window's own dark ground showed through in flashes (13), and the
+   inspector, rebuilt from the top each time, would not stay where it was
+   scrolled (14).
+
+   A chunk now only says what it changed and asks for a frame, and the frame
+   paints what arrived since the last one, once:
+   - a delta, or a new reasoning row: the transcript column alone, rebuilt from
+     S.log exactly as chatView() builds it, the scroll kept as afterChat keeps
+     it. The composer (its focus, caret and running light), the sidebar and the
+     rest of the window are not touched.
+   - more reasoning: nothing in the transcript while its row is closed (the row
+     reads "Reasoning · 1 step" whatever the text is); an open row's body grows
+     in place. The inspector's Reasoning well grows in place too.
+   render() paints all of that, so it takes a waiting frame with it: the end of
+   a turn renders, and so always draws the final text. */
+function streamPaint(what) {
+  STREAM_PAINT[what] = true;
+  if (STREAM_PAINT.raf) return;
+  STREAM_PAINT.raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(paintStream) : -1;
+  // No frames come while the window is hidden or covered; the timer lands the
+  // text anyway (throttled in the background), so nothing piles up unpainted.
+  STREAM_PAINT.timer = setTimeout(paintStream, 250);
+}
+function dropStreamPaint() {
+  if (!STREAM_PAINT.raf) return;
+  if (STREAM_PAINT.raf > 0) cancelAnimationFrame(STREAM_PAINT.raf);
+  clearTimeout(STREAM_PAINT.timer);
+  STREAM_PAINT.raf = 0; STREAM_PAINT.timer = 0; STREAM_PAINT.chat = false; STREAM_PAINT.reason = false;
+}
+function paintStream() {
+  const chat = STREAM_PAINT.chat, reason = STREAM_PAINT.reason;
+  dropStreamPaint();
+  const block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
+  if ((chat || (reason && block && !growReasonRow(block))) && !repaintTranscript()) { render(); return; }
+  if (block) growInspectorReasoning(block);
+}
+
+/** The transcript column alone, rebuilt the way chatView() builds it, with
+    the scroll kept the way afterChat keeps it: at the bottom while stuck
+    there, and otherwise where it was — the scroller itself stays. False when
+    the chat is on screen without a column to rebuild. */
+function repaintTranscript() {
+  if (S.room !== 'chat') return true;   // not on screen; the room switch renders it
+  const sc = $('#scroller');
+  const col = sc && S.log.length ? sc.querySelector(':scope > .col720') : null;
+  if (!col) return false;
+  col.innerHTML = renderItems();
+  if (S.stick) sc.scrollTop = sc.scrollHeight;
+  return true;
+}
+
+/** An open reasoning row's body, grown in place. False when it should be on
+    screen and is not, so the caller rebuilds the transcript instead. */
+function growReasonRow(block) {
+  if (!block.open || S.room !== 'chat') return true;
+  const body = document.querySelector('#turn-' + block.id + ' .discbody');
+  if (!body) return false;
+  growText(body, block.text);
+  if (S.stick) { const sc = $('#scroller'); if (sc) sc.scrollTop = sc.scrollHeight; }
+  return true;
+}
+
+/* An element's text as esc(text) inside its markup would parse — CR and CRLF
+   read as LF, NUL is dropped, and a <pre> drops the one newline right after
+   its start tag — so a frame painted here and a whole render agree to the
+   character. When the text only grew, the text node is kept and appended to:
+   the layout is not thrown away, and a selection someone holds in it stays. */
+function growText(el, text) {
+  let want = String(text || '').replace(/\r\n?|\0/g, (c) => (c === '\0' ? '' : '\n'));
+  if (el.tagName === 'PRE' && want[0] === '\n') want = want.slice(1);
+  const n = el.firstChild;
+  if (n && n.nodeType === 3 && !n.nextSibling && want.startsWith(n.data)) {
+    if (want.length > n.data.length) n.appendData(want.slice(n.data.length));
+    return;
+  }
+  if (el.textContent !== want) el.textContent = want;
+}
+
 /* ---------------- rooms ---------------- */
 function segControl(items, cur, actPrefix) {
   return '<div class="seg">' + items.map(([id, label]) =>
@@ -3147,10 +3239,18 @@ function memoryView() {
 }
 
 /* ---------------- inspector ---------------- */
+/* shell.css does not draw the panel under 1180px wide, whatever S.inspector
+   says. What is not on screen is not rebuilt; crossing back repaints it (the
+   listener sits by the sidebar's own breakpoint, after the first render). */
+const INSP_NARROW = typeof window !== 'undefined' && window.matchMedia
+  ? window.matchMedia('(max-width:1180px)') : {matches:false, addEventListener(){}};
+/** At the end of its scroll (or too short to scroll): the place that follows new text. */
+function inspAtEnd(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 4; }
+
 function renderInspector() {
   const el = $('#inspector');
   el.classList.toggle('hide', !S.inspector);
-  if (!S.inspector) return;
+  if (!S.inspector || INSP_NARROW.matches) return;
   const tabs = [['steps','Steps'],['reasoning','Reasoning'],['world','World']];
   let body = '';
   if (S.inspTab === 'steps') {
@@ -3171,7 +3271,8 @@ function renderInspector() {
   } else if (S.inspTab === 'reasoning') {
     const r = S.log.filter((m) => m.k === 'reason');
     // Soft Tactile (SH-06): a sentence-case label over a mono well per step.
-    body = r.length ? r.map((m) => '<div class="insp-rs"><div class="insp-lbl">Step ' + m.steps + '</div>'
+    // 14: `data-rs` is how a stream frame finds the running block's well.
+    body = r.length ? r.map((m) => '<div class="insp-rs" data-rs="' + esc(m.id) + '"><div class="insp-lbl">Step ' + m.steps + '</div>'
         + '<pre class="tk-out">' + esc(m.text) + '</pre></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
   } else if (S.inspTab === 'world') {
@@ -3185,10 +3286,32 @@ function renderInspector() {
         + '<dt>tools</dt><dd>' + esc(tools) + '</dd></dl>'
       : '<p class="cap">Connect an agent to see what it can reach.</p>';
   }
+  /* 14: the body is rebuilt, so where it was scrolled is kept — a reader
+     scrolled up stays there, one at the end stays at the end as text arrives,
+     like the chat. Only for the same tab and a body that was on screen: a tab
+     switch, or a panel just shown, starts at the top as it always has. */
+  const prev = el.querySelector('.inspbody');
+  const keep = prev && prev.clientHeight > 0 && INSP_VIEW.tab === S.inspTab ? (inspAtEnd(prev) ? 'end' : prev.scrollTop) : null;
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     // Calm (S1): no session-id footer. The id is one palette row away
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
     + '<div class="inspbody">' + body + '</div>';
+  INSP_VIEW.tab = S.inspTab;
+  const now = keep === null ? null : el.querySelector('.inspbody');
+  if (now) now.scrollTop = keep === 'end' ? now.scrollHeight : keep;
+}
+
+/** 14: the running reasoning block's text, grown in its inspector well in
+    place — no rebuild, so the panel scrolls like any text: left alone when
+    scrolled up, kept at the end when it was there. */
+function growInspectorReasoning(block) {
+  if (!S.inspector || INSP_NARROW.matches || S.inspTab !== 'reasoning') return;
+  const pre = document.querySelector('#inspector .insp-rs[data-rs="' + block.id + '"] > .tk-out');
+  if (!pre) { renderInspector(); return; }   // a new block: its well is drawn by a rebuild
+  const body = pre.closest('.inspbody');
+  const end = !!body && inspAtEnd(body);
+  growText(pre, block.text);
+  if (end) body.scrollTop = body.scrollHeight;
 }
 
 /* ---------------- console ---------------- */
@@ -4606,7 +4729,7 @@ function act(a) {
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
-                           render(); return; }
+                           syncWindowGround(); render(); return; }
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
@@ -5886,7 +6009,28 @@ document.addEventListener('keydown', (e) => {
 
 // The theme picked in the palette or View › Appearance (act 'theme') survives a relaunch.
 try { const t = localStorage.getItem('atag.theme'); if (t === 'light' || t === 'dark') { S.theme = t; document.documentElement.setAttribute('data-theme', t); } } catch (e) { /* no storage: follow macOS */ }
+/* 13: the window's own background follows the page's ground. Wherever the
+   page has not painted — a frame between layers, the strip a resize uncovers
+   — the window shows its BrowserWindow background, which main.ts creates
+   near-black: a dark flash on the light theme. It is handed over here at
+   boot, on a theme pick (act 'theme'), and when macOS switches appearance
+   while the theme follows it. */
+const WINDOW_GROUND = {sent:''};
+function syncWindowGround() {
+  if (!BR || !BR.windowGround || !document.body) return;
+  const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(getComputedStyle(document.body).backgroundColor);
+  if (!m || (m[4] !== undefined && Number(m[4]) < 1)) return;   // only an opaque ground can stand in for the page
+  const hex = '#' + m.slice(1, 4).map((v) => Number(v).toString(16).padStart(2, '0')).join('');
+  if (hex === WINDOW_GROUND.sent) return;
+  WINDOW_GROUND.sent = hex;
+  Promise.resolve(BR.windowGround(hex)).catch(() => { /* the window keeps the ground it had */ });
+}
 render();
+syncWindowGround();
+if (window.matchMedia) {
+  const osDark = window.matchMedia('(prefers-color-scheme: dark)');
+  if (osDark.addEventListener) osDark.addEventListener('change', () => syncWindowGround());
+}
 setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
 /* r5 item 2: below 1000px the sidebar collapses to the same 52px rail with no
    class at all, so the button's glow has to track the breakpoint too or it
@@ -5896,6 +6040,9 @@ setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
    resize listener: there is none in this file, and a per-frame render() would
    rebuild the composer on every drag pixel. */
 if (NARROW.addEventListener) NARROW.addEventListener('change', () => renderToolbar());
+// 14: the inspector is not rebuilt while the window is too narrow to show it,
+// so widening the window past 1180px repaints it.
+if (INSP_NARROW.addEventListener) INSP_NARROW.addEventListener('change', () => renderInspector());
 
 
 /* ============================================================
@@ -6350,9 +6497,12 @@ function onChatEvent(ev) {
       block = {id:nid(), k:'reason', steps:1, open:false, text:''};
       S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
+      streamPaint('chat');   // a new row in the transcript
     }
     block.text += text;
-    render();
+    // 13/14: one paint per frame for however many chunks arrive in it, and
+    // only what the text reaches — see streamPaint.
+    streamPaint('reason');
     return;
   }
   if (ev.kind === 'tool_progress') {
@@ -6366,7 +6516,7 @@ function onChatEvent(ev) {
     return;
   }
   if (ev.kind === 'delta') {
-    if (item) { item.text += ev.text; render(); }
+    if (item) { item.text += ev.text; streamPaint('chat'); }   // 13/14: the transcript, once per frame
     return;
   }
   /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
