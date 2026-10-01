@@ -218,7 +218,17 @@ let win: BrowserWindow | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
 let windowShownAt: number | null = null;
 let agent: AgentClient | null = null;
-let pull: { done: Promise<unknown>; cancel: () => void } | null = null;
+/* A download in the one single-flight slot (`pull`, `pullUpdate`): its child,
+   which job it is, and its last progress frame. Backlog 18 (review S5): every
+   "already running" refusal names it (downloadRunning). */
+type DownloadSlot = {
+  done: Promise<unknown>;
+  cancel: () => void;
+  kind: "weights" | "embedding" | "runtime";
+  id: string;
+  last: Record<string, unknown> | null;
+};
+let pull: DownloadSlot | null = null;
 /* Item 2 (voice input): at most one live speech helper, for the whole app.
    Created here rather than inside wireIpc because createWindow's permission
    handlers read `voice.armed`, and both quit paths have to be able to kill
@@ -304,7 +314,27 @@ let hfProjector: { controller: AbortController; id: string } | null = null;
 /* r5 item 7 (setup wizard): the backend-zip download, which is a second
    long-running child in the same data dir. It takes the same single-flight
    slot as `pull` — `models update` stops the daemon to install the zip. */
-let pullUpdate: { done: Promise<unknown>; cancel: () => void } | null = null;
+let pullUpdate: DownloadSlot | null = null;
+
+/* Backlog 18 (review S5): on macOS closing the window is not quitting, so a
+   pull runs on in main, and the window reopened from the dock resumes the
+   setup download it remembers. Refused with no name, that read as a failed
+   download and the running pull's `done` frame reached nobody: the model was
+   never started. Every refusal now says which download the slot is running,
+   with its last progress frame, so the window can follow its own model's
+   pull instead (renderer dlAdopt); any other download stays a refusal. */
+function downloadRunning(): { kind: string; id: string; last: Record<string, unknown> | null } | null {
+  if (hfProjector) return { kind: "projector", id: hfProjector.id, last: null };
+  const slot = pullUpdate ?? pull;
+  return slot ? { kind: slot.kind, id: slot.id, last: slot.last } : null;
+}
+const DOWNLOAD_BUSY = "a download is already running";
+
+/** One `cli:pull` progress frame, kept as its slot's last one when it carries a percent. */
+function pullFrame(slot: DownloadSlot | null, frame: Record<string, unknown>): void {
+  if (slot && typeof frame["percent"] === "number") slot.last = frame;
+  send("cli:pull", frame);
+}
 
 /**
  * r5 item 7 (setup wizard) — the CLI's own progress line, as numbers.
@@ -818,11 +848,12 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || pullUpdate || hfProjector) return { ok: false, error: "a download is already running" };
+    if (pull || pullUpdate || hfProjector) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    let slot: DownloadSlot | null = null;
     const started = modelsPull(id, (line) =>
-      send("cli:pull", { id, line, ...parsePullProgress(line, "weights") }),
+      pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
     );
-    pull = started;
+    pull = slot = { ...started, kind: "weights", id, last: null };
     void started.done.then((res) => {
       pull = null;
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
@@ -836,12 +867,13 @@ function wireIpc(client: AgentClient): void {
      slot, because the CLI stops the daemon to install the zip and two
      concurrent downloads into one data dir is not a thing to allow. */
   ipcMain.handle("cli:modelsUpdateStream", () => {
-    if (pull || pullUpdate || hfProjector) return { ok: false, error: "a download is already running" };
+    if (pull || pullUpdate || hfProjector) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
     const id = "llama.cpp";
+    let slot: DownloadSlot | null = null;
     const started = modelsUpdateStream((line) =>
-      send("cli:pull", { id, line, ...parsePullProgress(line, "runtime") }),
+      pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
     );
-    pullUpdate = started;
+    pullUpdate = slot = { ...started, kind: "runtime", id, last: null };
     void started.done.then((res) => {
       pullUpdate = null;
       send("cli:pull", {
@@ -1416,11 +1448,12 @@ function wireIpc(client: AgentClient): void {
   // Shares the one `pull` slot and the `cli:pull` stream with `cli:modelsPull`.
   ipcMain.handle("cli:modelsPullEmbedding", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || pullUpdate) return { ok: false, error: "a download is already running" };
+    if (pull || pullUpdate) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    let slot: DownloadSlot | null = null;
     const started = modelsPullEmbedding(id, (line) =>
-      send("cli:pull", { id, line, ...parsePullProgress(line, "weights") }),
+      pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
     );
-    pull = started;
+    pull = slot = { ...started, kind: "embedding", id, last: null };
     void started.done.then((res) => {
       pull = null;
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });

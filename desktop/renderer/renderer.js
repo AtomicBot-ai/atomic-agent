@@ -8309,6 +8309,8 @@ function dlNext() {
   const refused = (res) => {
     // Only this job's refusal: a cancel and a new pick may have moved on.
     if (res && res.ok === false && DL.job === mine) {
+      // Review S5: main already runs this very job (a window reopened over it) — it is followed, not failed.
+      if (dlAdopt(mine, res.running)) return;
       DL.job = null;
       if (mine.cancelled) { dlNext(); return; }   // nothing ran, and the cancel stands
       if (job.kind === 'runtime') {
@@ -8347,6 +8349,26 @@ function dlSpawn(job) {
  */
 function dlPullStart(job) {
   return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
+}
+
+/**
+ * Review S5. On macOS closing the window is not quitting: the pull runs on in
+ * main, and the window reopened from the dock resumes the setup download it
+ * remembers (obBootGate). Main refuses a second pull, and that refusal read
+ * as "Download failed" while the real pull's `done` frame went nowhere — the
+ * model was never started or stamped. Main's refusal names the download it
+ * runs (`running`); when that is this very job, the job stays at the head of
+ * the queue and follows it: its last progress frame now, every frame after,
+ * and its `done` into obPullFinished. Any other download is still a refusal,
+ * and so is one this window follows already (the composer's, Settings', a
+ * projector), which must not be taken twice. A cancelled job takes nothing.
+ */
+function dlAdopt(job, running) {
+  if (!running || running.kind !== job.kind || running.id !== job.id) return false;
+  if (job.cancelled || xpullOwner()) return false;
+  if (running.last) dlOnPull(running.last);
+  render();
+  return true;
 }
 
 /** One structured `cli:pull` sample. Never interpolated between them. */
