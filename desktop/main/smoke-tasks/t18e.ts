@@ -972,10 +972,8 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       }
       return out;
     };
-    const run = async (slot) => {
-      const out = {};
-      // (a) The weights land with a retried llama.cpp runtime next: the projector waits behind it (D1).
-      stage(); if (slot === 'setup') onSetupRoute();
+    // The weights land with a retried llama.cpp runtime next: the projector waits behind it (D1).
+    const park = async () => {
       remember();
       window.__dlSeed([{kind: 'weights', id: ID}]);
       DL.dry = false;
@@ -984,6 +982,14 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       await pressIn('llama.cpp runtime', '.dlc-retry');
       feed({id: ID, done: true, ok: true});
       await tick(120);
+    };
+    // The projector's row in the card: the name it goes by there.
+    const row = () => { const c = card(); const p = c && c.rows.find((x) => /^Vision projector/.test(x.line)); return p ? p.name : null; };
+    const run = async (slot) => {
+      const out = {};
+      // (a) The projector queued behind the runtime.
+      stage(); if (slot === 'setup') onSetupRoute();
+      await park();
       out.parked = Object.assign(await chip(true), {waiting: DL.projectorQueue.map((p) => p.id)});
       // (b) The runtime is in: the projector comes down.
       runtimeEnds(true);
@@ -1009,7 +1015,21 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       return out;
     };
     try {
-      return {setup: await run('setup'), model: await run('model')};
+      const out = {setup: await run('setup'), model: await run('model')};
+      /* (e) A model no list in the window knows by name: setup's own list
+         (OB.models) is read on its model step, and a relaunch has none. A
+         Hugging Face model's id is custom-<slug>; the chip names it as its
+         row in the card does. */
+      stage();
+      OB.models = [];
+      await park();
+      out.unnamed = Object.assign(await chip(false), {row: row()});
+      runtimeEnds(true);
+      await tick(120);
+      out.unnamedFetching = Object.assign(await chip(false), {row: row()});
+      out.unnamedAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      return out;
     } finally {
       EXT.url = keepExt.url; EXT.model = keepExt.model;
       restore();
@@ -1052,6 +1072,16 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       && r[s]?.answered === true && r[s]?.resumeAnswered === true
       && same(at(s, "landed")?.calls, [PROJ, START]) && same(at(s, "resumeLanded")?.calls, ["status", PROJ, START])),
     detail("landed", "resumeLanded"),
+  );
+  const unnamed = r["unnamed"] as (Chip & { row: string | null }) | null;
+  const unnamedFetching = r["unnamedFetching"] as (Chip & { row: string | null }) | null;
+  check(
+    "T18 D7: a vision model no list in the window knows by name — as after a relaunch — is named on the chip as its row in the card names it, queued and coming down",
+    !!unnamed?.row && unnamed.pull && unnamed.text === `Downloading ${unnamed.row}` && unnamed.job === "runtime:llama.cpp"
+      && !!unnamedFetching && unnamedFetching.pull && unnamedFetching.row === unnamed.row
+      && unnamedFetching.text === `Downloading ${unnamed.row}` && unnamedFetching.projector === ID
+      && r["unnamedAnswered"] === true,
+    JSON.stringify({ unnamed, unnamedFetching }),
   );
 }
 
