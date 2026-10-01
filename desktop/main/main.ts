@@ -93,7 +93,12 @@ import {
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
-import { RELEASE_FIX_TASKS, releaseFixesSmokeTest } from "./release-fixes-smoke.js";
+import {
+  RELEASE_FIX_TASKS,
+  releaseFixesSmokeTest,
+  type ProjectorStatusAnswer,
+  type SmokeDownloads,
+} from "./release-fixes-smoke.js";
 // Lane B — context before the first message (item 3): the no-trace smoke dir.
 import { mkdirSync, rmSync } from "node:fs";
 // Item 7 (settings surface)
@@ -329,6 +334,31 @@ function downloadRunning(): { kind: string; id: string; last: Record<string, unk
   return slot ? { kind: slot.kind, id: slot.id, last: slot.last } : null;
 }
 const DOWNLOAD_BUSY = "a download is already running";
+/* What the projector download reads `models status` with (cli:hfProjector).
+   Only the item-18 smoke stands in for it (smokeDownloads below). */
+let projectorStatusRead: () => Promise<ProjectorStatusAnswer> = modelsStatus;
+
+/* Smoke only (backlog 18, the deferred cases): what the item-18 checks put in
+   main's place. A download held in a slot with no child behind it, and the
+   projector's `models status` read stood in, so a check can ask each download
+   handler what it does meanwhile without fetching anything. Handed to the
+   release-fix checks (release-fixes-smoke.ts); nothing else calls it. */
+const smokeDownloads: SmokeDownloads = {
+  hold(kind, id) {
+    if (kind === "projector") {
+      const held = { controller: new AbortController(), id };
+      hfProjector = held;
+      return () => { if (hfProjector === held) hfProjector = null; };
+    }
+    const held: DownloadSlot = { done: new Promise<never>(() => {}), cancel: () => {}, kind, id, last: null };
+    pullUpdate = held;
+    return () => { if (pullUpdate === held) pullUpdate = null; };
+  },
+  projectorStatus(read) {
+    projectorStatusRead = read;
+    return () => { if (projectorStatusRead === read) projectorStatusRead = modelsStatus; };
+  },
+};
 
 /** One `cli:pull` progress frame, kept as its slot's last one when it carries a percent. */
 function pullFrame(slot: DownloadSlot | null, frame: Record<string, unknown>): void {
@@ -1004,7 +1034,7 @@ function wireIpc(client: AgentClient): void {
     hfProjector = slot;
     const cancelled = "the projector download was cancelled — a retry starts it from the beginning";
     try {
-      const st = await modelsStatus();
+      const st = await projectorStatusRead();
       if (controller.signal.aborted) return { ok: false, error: cancelled };
       const dataDir = st.ok && st.status ? st.status.dataDir : null;
       if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
@@ -1884,7 +1914,7 @@ async function smokeTest(): Promise<void> {
   }
 
   if (SMOKE_TASKS) {
-    await releaseFixesSmokeTest(js, check, SMOKE_TASKS);
+    await releaseFixesSmokeTest(js, check, SMOKE_TASKS, smokeDownloads);
     process.stdout.write(`SMOKE tasks=${SMOKE_TASKS.join(",")} failures=${fail.length}\n`);
     exitAfterAgentStop(fail.length === 0 ? 0 : 1);
     return;
@@ -2828,7 +2858,7 @@ async function smokeTest(): Promise<void> {
     // leave the route changed.
     // Run mode — Fusion: resolver, rows, writes through the planners, frames. No restart.
     await fusionSmokeTest(js, check);
-    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS);
+    await releaseFixesSmokeTest(js, check, RELEASE_FIX_TASKS, smokeDownloads);
     await backendSwitchTest(js, check);
 
     /* r5 item 10 — "measure and report the real wall time of each switch".
