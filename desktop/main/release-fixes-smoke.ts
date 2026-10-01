@@ -22,6 +22,7 @@ import { checks24 } from "./smoke-tasks/t24.js";
 import { checks25 } from "./smoke-tasks/t25.js";
 import { checks26 } from "./smoke-tasks/t26.js";
 import { checks27 } from "./smoke-tasks/t27.js";
+import { checks28 } from "./smoke-tasks/t28.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -52,7 +53,7 @@ export type SmokeDownloads = {
   offline: () => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -472,6 +473,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("22")) await guarded("22", check, () => checks22(js, check));
   // 27 — a new chat was not on the sidebar until its first reply landed.
   if (want.has("27")) await guarded("27", check, () => checks27(js, check));
+  // 28 — a switch from a new chat restarted the agent under the turn still running in the chat it left.
+  if (want.has("28")) await guarded("28", check, () => checks28(js, check));
 
   if (want.has("23")) {
     // 23 — "This Mac" named the local route on every platform, Windows and Linux included.
