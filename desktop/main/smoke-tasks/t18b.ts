@@ -180,6 +180,25 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
         && !!chip && next["open"] === true && next["phase"] === null && next["wizard"] === false && next["kind"] === chip,
       JSON.stringify({ left, chip, next }),
     );
+
+    // Every close of the selector (closeSelector — the custom-endpoint and
+    // Download-more rows, a switch that lands with nothing over it) takes the
+    // setup drawn in it along, as act('close') does.
+    const HALF2 = `${HALF}-2`;
+    const direct = await js<Record<string, unknown>>(`(() => {
+      act('close');
+      SEL.open = true; WIZ.row = KIND_ROWS.find((k) => k.custom); WIZ.phase = 'configure';
+      WIZ.unfinishedId = ${JSON.stringify(HALF2)}; render();
+      const up = !!document.querySelector('#overlays .selpop #wiz-key');
+      closeSelector();
+      return {up, open: SEL.open, phase: WIZ.phase, unfinished: WIZ.unfinishedId,
+        pop: !!document.querySelector('#overlays .selpop'), calls: window.__t18bCalls.slice()}; })()`);
+    check(
+      "T18-F2: closing the selector closes the provider setup drawn in it — cleared and its unfinished entry dropped, nothing stale to reopen",
+      direct["up"] === true && direct["open"] === false && direct["pop"] === false && direct["phase"] === null
+        && direct["unfinished"] === null && ((direct["calls"] as string[]) ?? []).includes(`drop:${HALF2}`),
+      JSON.stringify(direct),
+    );
   } finally {
     await js<unknown>(`(() => { const k = window.__t18bKeep || {};
       WIZ.unfinishedId = null; act('close');
@@ -196,7 +215,8 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
 async function queue(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(async () => {
     ${HELPERS}
-    const keep = {status: window.obBackendStatusText, activate: window.obActivateLocal, room: S.room, managed: OB.managedWrite};
+    const keep = {status: window.obBackendStatusText, activate: window.obActivateLocal, room: S.room, managed: OB.managedWrite,
+      pullStart: window.dlPullStart};
     const out = {};
     const press = async (sel) => { const n = document.querySelector(sel); if (n) n.click(); await tick(80); return n ? (n.dataset.act || true) : null; };
     try {
@@ -257,9 +277,46 @@ async function queue(js: Js, check: Check): Promise<void> {
       window.__dlFeed({id:'smoke-t18b-x', done:true, ok:false, error:'download exited with code null'});
       await tick(80);
       out.runtimeRuns = Object.assign({card: card()}, jobs());
+
+      // Two retries queued behind a running model; the first one runs and is cancelled.
+      window.__dlClear();
+      window.__dlSeed([{kind:'weights', id:'smoke-t18b-j'}]);
+      dlFail({kind:'weights', id:'smoke-t18b-r1'}, 'smoke t18b: failed earlier');
+      dlFail({kind:'weights', id:'smoke-t18b-r2'}, 'smoke t18b: failed earlier');
+      render(); await tick(60);
+      await press('#dlcard .dlc-retry');
+      await press('#dlcard .dlc-retry');
+      window.__dlFeed({id:'smoke-t18b-j', done:true, ok:true});
+      await tick(80);
+      out.retryRuns = jobs();
+      await press('#dlcard .dlc-row .dlc-x[data-act="dlc:cancel"]');
+      out.retryCancelled = jobs();
+      window.__dlFeed({id:'smoke-t18b-r1', done:true, ok:false, error:'download exited with code null'});
+      await tick(80);
+      out.secondRuns = jobs();
+
+      // (a) Main refuses the new Download's start (another pull got there first);
+      // a Retry pressed while it was still starting is queued behind it.
+      window.__dlClear(); release = null;
+      const starts = [];
+      window.dlPullStart = (job) => {
+        starts.push(job.kind + ':' + job.id);
+        return job.id === 'smoke-t18b-x2' ? Promise.resolve({ok: false, error: 'a download is already running'})
+          : Promise.reject(new Error('smoke t18b: the bridge refused the call'));
+      };
+      DL.dry = false;   // the starts go to the stand-in above, never to main
+      dlFail({kind:'weights', id:'smoke-t18b-y2'}, 'smoke t18b: failed earlier');
+      const third = obStartLocalPull('smoke-t18b-x2', false);
+      await tick(80);
+      await press('#dlcard .dlc-retry');
+      if (release) release('backend: binary ok');
+      await third;
+      await tick(150);
+      out.refused = Object.assign({card: card(), starts: starts.slice(), busy: dlBusy()}, jobs());
       return out;
     } finally {
       window.obBackendStatusText = keep.status; window.obActivateLocal = keep.activate; OB.managedWrite = keep.managed;
+      if (keep.pullStart) window.dlPullStart = keep.pullStart; else delete window.dlPullStart;
       window.__dlClear(); S.room = keep.room; render();
     }
   })()`);
@@ -297,6 +354,24 @@ async function queue(js: Js, check: Check): Promise<void> {
     rk.job === "weights:smoke-t18b-x:cancelled" && JSON.stringify(rk.queue) === JSON.stringify(["runtime:llama.cpp"])
       && rr.job === "runtime:llama.cpp" && rr.queue.length === 0 && rr.failed.length === 0,
     JSON.stringify({ kept: rk, runs: rr }),
+  );
+  const q = (k: string) => r[k] as { job: string | null; queue: string[]; failed: string[] };
+  check(
+    "T18-F3b: a Cancel on a retried download takes only it — another Retry queued behind it runs next",
+    q("retryRuns").job === "weights:smoke-t18b-r1" && JSON.stringify(q("retryRuns").queue) === JSON.stringify(["weights:smoke-t18b-r2"])
+      && q("retryCancelled").job === "weights:smoke-t18b-r1:cancelled"
+      && JSON.stringify(q("retryCancelled").queue) === JSON.stringify(["weights:smoke-t18b-r2"])
+      && q("secondRuns").job === "weights:smoke-t18b-r2" && q("secondRuns").failed.length === 0,
+    JSON.stringify({ runs: r["retryRuns"], cancelled: r["retryCancelled"], second: r["secondRuns"] }),
+  );
+  const rf = r["refused"] as { card: Card; starts: string[]; busy: boolean; job: string | null; queue: string[]; failed: string[] };
+  check(
+    "T18-F3a: a Download whose start main refuses is a failed row and the queue goes on — the Retry behind it is not left on Queued to refuse every later Download",
+    JSON.stringify(rf.starts) === JSON.stringify(["weights:smoke-t18b-x2", "weights:smoke-t18b-y2"])
+      && rf.job === null && rf.queue.length === 0 && rf.busy === false
+      && JSON.stringify([...rf.failed].sort()) === JSON.stringify(["weights:smoke-t18b-x2", "weights:smoke-t18b-y2"])
+      && !!rf.card && rf.card.rows.length === 2 && rf.card.rows.every((x) => x.retry),
+    JSON.stringify(rf),
   );
 }
 

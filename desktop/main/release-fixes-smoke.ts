@@ -423,11 +423,18 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     const wins = BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed());
     const throttled = wins.map((x) => x.webContents.getBackgroundThrottling());
     wins.forEach((x) => x.webContents.setBackgroundThrottling(false));
+    /* The card's corner is the window's with the inspector closed; with it
+       open the card stands to its left (t18b checks that). The full suite
+       reaches this block with whatever the inspector was left at, so it is
+       closed here — not through its toggle, which would persist — and put
+       back after. */
+    await js<unknown>("(() => { window.__t18Insp = S.inspector; S.inspector = false; render(); })()");
     try {
       await guarded("18", check, () => checks18(js, check));
       // Its review follow-ups, in their own file (smoke-tasks/t18b.ts).
       await guarded("18", check, () => checks18b(js, check));
     } finally {
+      await js<unknown>("(() => { S.inspector = !!window.__t18Insp; delete window.__t18Insp; render(); })()");
       wins.forEach((x, i) => { if (!x.isDestroyed()) x.webContents.setBackgroundThrottling(throttled[i]!); });
     }
   }
