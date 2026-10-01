@@ -323,6 +323,11 @@ let hfProjector: { controller: AbortController; id: string; url: string; file: s
    long-running child in the same data dir. It takes the same single-flight
    slot as `pull` — `models update` stops the daemon to install the zip. */
 let pullUpdate: DownloadSlot | null = null;
+/* Deferred F8: Settings › Models' own llama.cpp update (cli:modelsUpdate), the
+   same `models update` without a stream. No window can follow it (it sends no
+   frames) and cli:cancelPull has no child to stop, so it is not a slot — but
+   every other download refuses while it runs (downloadRunning). */
+let settingsUpdate = false;
 
 /* Backlog 18 (review S5): on macOS closing the window is not quitting, so a
    pull runs on in main, and the window reopened from the dock resumes the
@@ -338,7 +343,9 @@ let pullUpdate: DownloadSlot | null = null;
 function downloadRunning(): { kind: string; id: string; last: Record<string, unknown> | null } | null {
   if (hfProjector) return { kind: "projector", id: hfProjector.id, last: null };
   const slot = pullUpdate ?? pull;
-  return slot ? { kind: slot.kind, id: slot.id, last: slot.last } : null;
+  if (slot) return { kind: slot.kind, id: slot.id, last: slot.last };
+  // Its own kind: the setup queue's runtime job must not take it for a download it can follow (dlAdopt).
+  return settingsUpdate ? { kind: "update", id: "llama.cpp", last: null } : null;
 }
 const DOWNLOAD_BUSY = "a download is already running";
 /* What the projector download reads `models status` with (cli:hfProjector).
@@ -1552,9 +1559,20 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsUseEmbedding", (_event, id: unknown) =>
     typeof id === "string" ? modelsUseEmbedding(id) : { ok: false, error: "embedding model id required" },
   );
-  ipcMain.handle("cli:modelsUpdate", () => {
+  /* Deferred F8: Settings' llama.cpp update is a download as well — it fetches
+     the runtime and replaces the binary — and it ran beside a setup download,
+     where a model landing meanwhile started on a binary being replaced. It
+     refuses while any download runs, and they refuse while it does. */
+  ipcMain.handle("cli:modelsUpdate", async () => {
+    const running = downloadRunning();
+    if (running) return { ok: false, stdout: "", stderr: "", error: DOWNLOAD_BUSY, running };
     if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
-    return modelsUpdate();
+    settingsUpdate = true;
+    try {
+      return await modelsUpdate();
+    } finally {
+      settingsUpdate = false;
+    }
   });
   ipcMain.handle("cli:modelsDevices", () => modelsDevices());
   ipcMain.handle("cli:modelsUseDevice", (_event, id: unknown) =>
