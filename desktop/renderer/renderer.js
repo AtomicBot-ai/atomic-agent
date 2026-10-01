@@ -8877,9 +8877,10 @@ function dlCardAct(verb) {
   if (v.indexOf('dismiss:') === 0) {
     const n = Number(v.slice(8));
     const f = DL.failed.find((x) => x.n === n);
-    // A failed setup download put aside is not retried behind the person's back on the next launch.
-    const m = obSetupPullGet();
-    if (f && m && f.kind === 'weights' && f.id === m.id) obSetupPullForget();
+    /* A failed setup download put aside is not retried behind the person's
+       back on the next launch — its vision projector included (deferred D3:
+       a dismissed projector came down again on the next launch). */
+    obSetupPullForgetFor([f]);
     DL.failed = DL.failed.filter((x) => x.n !== n);
     render();
   }
