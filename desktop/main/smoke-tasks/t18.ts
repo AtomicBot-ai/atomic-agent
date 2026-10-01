@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { BrowserWindow } from "electron";
 
+import { configGet, configSetWhole } from "../agent-cli.js";
+
 /**
  * Release-fix checks for backlog item 18 (see main/release-fixes-smoke.ts).
  * Run alone with `--smoke --smoke-task=18`.
@@ -31,6 +33,22 @@ type Check = (name: string, ok: boolean, detail?: string) => void;
 type Box = { top: number; bottom: number; left: number; right: number; width: number; height: number };
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/* The `tui.onboarding.*` stamps in this lane's own config file, read and put
+   back whole — the hand-over below takes the real closing path, which writes
+   them (the same snapshot-and-restore main.ts's onboardingTest does). */
+type CfgTui = { tui?: { onboarding?: Record<string, unknown> } } & Record<string, unknown>;
+async function readStamps(): Promise<Record<string, unknown> | null> {
+  const r = await configGet();
+  return r.ok && r.config ? { ...((r.config as CfgTui).tui?.onboarding ?? {}) } : null;
+}
+async function writeStamps(block: Record<string, unknown>): Promise<boolean> {
+  const r = await configGet();
+  if (!r.ok || !r.config) return false;
+  const next = JSON.parse(JSON.stringify(r.config)) as CfgTui;
+  next.tui = { ...(next.tui ?? {}), onboarding: block };
+  return (await configSetWhole(next)).ok;
+}
 
 /* Shared by every probe below: a tick, a box, the card as a person reads it. */
 const HELPERS = String.raw`
@@ -74,6 +92,15 @@ export async function checks18(js: Js, check: Check): Promise<void> {
 /* (a) Download in the wizard closes it on the chat, with the card carrying
    the queued model; the model is still started when its weights land. */
 async function handOver(js: Js, check: Check): Promise<void> {
+  const stampsBefore = await readStamps();
+  try {
+    await handOverRun(js, check);
+  } finally {
+    if (stampsBefore) await writeStamps(stampsBefore);
+  }
+}
+
+async function handOverRun(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(async () => {
     ${HELPERS}
     const keep = {ob: Object.assign({}, OB), stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice(),
@@ -91,6 +118,10 @@ async function handOver(js: Js, check: Check): Promise<void> {
         minRamGb:4, recommendedRamGb:8, downloaded:false}];
       OB.ram = 64;
       window.__obOpen('local_pick', {stamped:['localSetupSeenAt']});
+      /* The real closing path, toast included — the test jump's testClose
+         returns before the toast line, which is how this check once passed
+         with the toast's guard gone. restarted: no agent bounce. */
+      OB.testClose = false; OB.restarted = true;
       await tick(150);
       const go = document.querySelector('#onboarding .ob-foot [data-obact="nav:go"]');
       out.button = go ? txt(go) : null;
@@ -104,6 +135,9 @@ async function handOver(js: Js, check: Check): Promise<void> {
       out.queue = (DL.job ? [DL.job.kind + ':' + DL.job.id] : []).concat(DL.queue.map((q) => q.kind + ':' + q.id));
       out.toastCarried = typeof obClosingToastCarried === 'function' ? obClosingToastCarried('local') : null;
       out.toasts = S.toasts.map((t) => t.t);
+      // The flow closed through its closing write, not the test jump's early return.
+      out.closedForReal = OB_STAMP_LOG.some((e) => e.step === 'finished' && e.written === true)
+        || OB_STAMP_LOG.some((e) => e.step === 'finished' && e.owed === true);
       out.chip = txt(document.querySelector('#composer .pullchip'));
       // The runtime lands, then the weights move: the queue drains onto the model.
       window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:true, upToDate:false});
@@ -161,9 +195,10 @@ async function handOver(js: Js, check: Check): Promise<void> {
     JSON.stringify({ before: r["callsBeforeLand"], after: r["calls"], card: r["after"] }),
   );
   check(
-    "T18a: no \"Your model is downloading\" toast over the card — while it is up it says so itself",
-    r["toastCarried"] === true && r["toastCarriedIdle"] === false && !(r["toasts"] as string[]).includes("Your model is downloading"),
-    JSON.stringify({ carried: r["toastCarried"], idle: r["toastCarriedIdle"], toasts: r["toasts"] }),
+    "T18a: no \"Your model is downloading\" toast over the card — while it is up it says so itself (the real closing path)",
+    r["toastCarried"] === true && r["toastCarriedIdle"] === false && r["closedForReal"] === true
+      && !(r["toasts"] as string[]).some((t) => t === "Your model is downloading" || t === "Setup complete"),
+    JSON.stringify({ carried: r["toastCarried"], idle: r["toastCarriedIdle"], closedForReal: r["closedForReal"], toasts: r["toasts"] }),
   );
 }
 
