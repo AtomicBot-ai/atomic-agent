@@ -978,9 +978,10 @@ function wireIpc(client: AgentClient): void {
             line: total > 0
               ? `${label} ${percent}% (${(transferred / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} MB)`
               : `${label} ${(transferred / 1e6).toFixed(1)} MB`,
-            /* r5 item 7 (setup wizard): its own kind, so the download strip
-               cannot fold a projector's percent into the weights bar. The
-               byte counts here are real, not parsed off the line. */
+            /* r5 item 7 (setup wizard): its own kind, so the setup download
+               cannot fold a projector's percent into the weights bar (the
+               download card gives it its own row). The byte counts here are
+               real, not parsed off the line. */
             kind: "projector",
             percent,
             transferredBytes: transferred,
@@ -8775,7 +8776,7 @@ async function onboardingTest(
     );
     await js<ObState>("window.__obClose()");
 
-    /* ---- the download strip ---- */
+    /* ---- the setup download, and the card that reports it (backlog 18; it was a strip) ---- */
     /* THE PARSER ITSELF, against the CLI's own line — the review found
        this check feeding `__dlFeed` an already-parsed object and then
        asserting arithmetic on its own input, so `parsePullProgress` (the
@@ -8810,22 +8811,23 @@ async function onboardingTest(
       `runtime=${JSON.stringify(parsedRuntime)} loose=${JSON.stringify(parsedLoose)} none=${JSON.stringify(parsedNone)}`,
     );
 
-    // And the strip renders what that parse produced — the same object
-    // main puts on the wire, fed through the one `cli:pull` subscriber.
-    // Calm (S1, U5): the strip is drawn in the agent window only — during
-    // setup the wizard carries the progress — so these strip checks run with
-    // the wizard closed, and the setup half is asserted after them.
+    // And the download card renders what that parse produced — the same
+    // object main puts on the wire, fed through the one `cli:pull` subscriber.
+    // Calm (S1, U5): the card is drawn in the agent window only — during
+    // setup the wizard carries the progress — so these checks run with the
+    // wizard closed, and the setup half is asserted after them. (Backlog 18:
+    // the card replaced the #dlbar strip; `window.__dl()` reads the card.)
     await js<Dl>("window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}])");
     const beforeFeed = await js<Dl>("window.__dl()");
     const fed = await js<Dl>(
       `window.__dlFeed(Object.assign({id:'qwen3.5-4b'}, ${JSON.stringify(parsed)}))`,
     );
     check(
-      "wizard: the strip is fed parsed numbers, not a log line",
+      "wizard: the download card is fed parsed numbers, not a log line",
       fed.visible && fed.percent === 25 && fed.total === 5046586573 &&
         fed.transferred === 1267015352 && fed.measured === true &&
-        // ... and before the first real sample it draws no bar at all.
-        beforeFeed.measured === false && beforeFeed.text.includes("starting…") &&
+        // ... and before the first real sample it draws no figures at all.
+        beforeFeed.measured === false && /starting…/i.test(beforeFeed.text) &&
         !/%/.test(beforeFeed.text),
       `visible=${fed.visible} percent=${fed.percent} transferred=${fed.transferred} total=${fed.total} pre=${JSON.stringify(beforeFeed.text)}`,
     );
@@ -8888,7 +8890,7 @@ async function onboardingTest(
     await js<ObState>("window.__obClose()");
     const stripBack = await js<Dl>("window.__dl()");
     check(
-      "wizard: the strip comes back in the agent window when setup closes",
+      "wizard: the download card comes back in the agent window when setup closes",
       stripBack.visible && stripBack.percent === 25,
       `visible=${stripBack.visible} percent=${stripBack.percent}`,
     );
@@ -8907,7 +8909,8 @@ async function onboardingTest(
     check(
       "wizard: a runtime phase queues in front of the weights and says so",
       queued.label === "llama.cpp" && queued.kind === "runtime" && queued.queued === 1 &&
-        queued.text.includes("· 1 more queued") &&
+        // Backlog 18: the card draws the queued job as its own row.
+        /llama\.cpp runtime Starting…/.test(queued.text) && /Queued/.test(queued.text) &&
         queued.phases.runtime === "waiting" && queued.phases.weights === "waiting" &&
         queued.measured === false &&
         moving.phases.runtime === "active" && moving.drove.runtime === true,
@@ -11435,10 +11438,10 @@ async function r5SeamTest(
   );
   await js<unknown>("window.__obClose()");
 
-  /* ---- seam (b): the download strip (item 7) and the switch lock (item 10)
-     both live in the chrome around the composer. The strip is a flex child
-     above #main; the lock is inside the composer. Neither may hide the
-     other, and the strip's presence must not push the composer off. ---- */
+  /* ---- seam (b): the setup download (item 7) and the switch lock (item 10)
+     both live around the composer. The download is the card floating in the
+     window's corner above the composer (backlog 18; it was a strip above
+     #main); the lock is inside the composer. Neither may hide the other. ---- */
   type Box = { top: number; bottom: number; height: number };
   type Coex = {
     dl: { visible: boolean; text: string };
@@ -11449,21 +11452,22 @@ async function r5SeamTest(
     "(() => { window.__dlSeed([{kind:'weights', id:'qwen3.5-4b'}]);" +
       " window.__dlFeed({id:'qwen3.5-4b', percent:40, transferredBytes:1, totalBytes:2, sawProgress:true});" +
       " const dl = window.__dl();" +
-      " const b = document.querySelector('#dlbar').getBoundingClientRect();" +
-      " const e = document.querySelector('#entry').getBoundingClientRect();" +
+      " const card = document.querySelector('#dlcard > *');" +
+      " const b = card ? card.getBoundingClientRect() : {top: 0, bottom: 0, height: 0, left: 0, right: 0};" +
+      " const e = document.querySelector('#composer').getBoundingClientRect();" +
       " const box = (r) => ({top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height)});" +
       " return {dl: {visible: dl.visible, text: dl.text}, bar: box(b), entry: box(e)," +
       " send: window.__sendButton()," +
-      " overlaps: b.bottom > e.top && b.top < e.bottom}; })()",
+      " overlaps: b.bottom > e.top && b.top < e.bottom && b.right > e.left && b.left < e.right}; })()",
   );
   check(
-    "seam: the download strip and the composer are both on screen, neither over the other",
+    "seam: the download card and the composer are both on screen, neither over the other",
     coex.dl.visible && coex.bar.height > 0 && coex.entry.height > 0
       && coex.bar.bottom <= coex.entry.top && !coex.overlaps,
-    `dlbar=${JSON.stringify(coex.bar)} entry=${JSON.stringify(coex.entry)} strip="${coex.dl.text}"`,
+    `card=${JSON.stringify(coex.bar)} composer=${JSON.stringify(coex.entry)} card text="${coex.dl.text}"`,
   );
-  /* Now the lock, with the strip still up: the send button has to reach its
-     locked face and come back, and the strip has to be untouched by it. */
+  /* Now the lock, with the card still up: the send button has to reach its
+     locked face and come back, and the card has to be untouched by it. */
   type Sample = {
     disabled: boolean; aria: string | null; spins: number;
     dlVisible: boolean; dlText: string;
@@ -11475,7 +11479,7 @@ async function r5SeamTest(
       " return {mid, after: window.__seamSample(), dl: {percent: window.__dl().percent}}; })()",
   );
   check(
-    "seam: the switch lock paints on the send button while the strip keeps reporting",
+    "seam: the switch lock paints on the send button while the download card keeps reporting",
     !!locked.mid && locked.mid.disabled === true && locked.mid.aria === "true"
       && locked.mid.spins === 1
       && locked.mid.dlVisible === true && /40%/.test(locked.mid.dlText)
@@ -11524,10 +11528,11 @@ async function r5SeamTest(
   await js<unknown>("window.__planRestore(0)");
 
   /* ---- seam (d): the chrome lane's settings button and the sidebar lists
-     survive the wizard's first-run layer. The layer no longer starts at
-     inset 0 — it starts below the download strip — so the check is both
-     that the chrome is still THERE underneath and that nothing behind the
-     layer can be operated while it is up. --------------------------- */
+     survive the wizard's first-run layer. The layer started below the
+     download strip when this was written (backlog 18 retired the strip and
+     the layer covers the whole window again), so the check is both that the
+     chrome is still THERE underneath and that nothing behind the layer can
+     be operated while it is up. ------------------------------------- */
   type Under = {
     btn: { act: string; aria: string | null; text: string } | null;
     chats: number; headers: string[];
