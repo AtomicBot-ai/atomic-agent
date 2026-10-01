@@ -1636,6 +1636,10 @@ const SIDEBAR_PAGE = 15;                 // rows per list before "Load more"
 const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
 const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
 const PENDING_APPROVALS = new Map();     // sessionId → approvalId, from /api/events
+/* Backlog 25: sessionId → the card drawn for that chat's open request, so the
+   chat can draw it again when it is opened again (openSession). Good only
+   while PENDING_APPROVALS still holds that card's approvalId. */
+const APPROVAL_CARDS = new Map();
 const ATTN = new Set();                  // sessions whose last desktop-run turn ended in error
 /* B5: turnId → {ev, after} for a named `event: error` frame seen mid-stream.
    See the top of onChatEvent. */
@@ -2575,12 +2579,14 @@ function apprCard(m) {
     const label = ok ? 'Approved'
       : m.state === 'denying' ? 'Denying…'
       : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
+      : m.state === 'stopped' ? 'Not answered — the run was stopped'   // Backlog 25: its turn was stopped
       : 'Denied';
     /* Soft Tactile: the receipt pill. The label still opens the row's text
        ("Approved · 14:32:09"), which scenario 05 reads back. */
     const glyph = ok ? toolGlyph('ok')
       : m.state === 'denying' ? '<span class="tk-gly"><span class="tk-spin"></span></span>'
       : m.state === 'undelivered' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
+      : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
       + glyph + '<span class="apprlbl"><b>' + label + '</b> · <span class="mono">' + m.at + '</span></span>'
@@ -2598,7 +2604,7 @@ function apprCard(m) {
   const res = apprResource(m);
   const typed = !!(m.approvalId && m.sessionId && m.sessionId === S.agentSession);
   const pv = String(m.preview || '').trim();
-  return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard">'
+  return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard" data-appr-id="' + esc(m.approvalId || '') + '">'
     + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'shield') + '</span>'
       + '<div class="apprmain"><div class="ttl">' + apprAsk(m) + '</div>'
       + (why ? '<div class="apprwhy">' + why + '</div>' : '')
@@ -2982,10 +2988,11 @@ function swxHoldsComposer() {
  * Until openSession's answer lands, S.agentSession is still the PREVIOUS
  * chat's (or null), so a message sent from the "loading session…" view went
  * out with that session: into the chat the person had just left, or into a
- * fresh one. And openSession leaves S.busy up for a chat whose turn is live,
- * so the same Enter could steer the previous chat's running turn instead, or
- * deny its open approval in the words typed here. A failed open leaves the
- * same gap for as long as it is on screen. Both hold the message in the box.
+ * fresh one. And until backlog 25 openSession left the previous chat's S.busy
+ * and approval card up for a chat whose turn is live, so the same Enter could
+ * steer that chat's running turn instead, or deny its open approval in the
+ * words typed here. A failed open leaves the same gap for as long as it is on
+ * screen. Both hold the message in the box.
  * (A failed reload of the chat the next message already goes with holds
  * nothing: see openSession.)
  */
@@ -2995,9 +3002,9 @@ function openHoldsComposer() {
 
 function sendButton() {
   /* Backlog 24 — the open hold, drawn like the switch lock below. It comes
-     before the busy branch: while a chat opens, S.busy and S.pending can
-     still be the previous chat's, and the Stop or steer arrow they draw
-     would act on a turn that is not on screen. No spinner: the transcript's
+     before the busy branch: while a chat opens, S.busy and S.pending are not
+     yet that chat's, and the Stop or steer arrow they draw would act on a
+     turn that is not on screen. No spinner: the transcript's
      "loading session…" row already has one. */
   if (openHoldsComposer()) {
     const say = OPENING.failed
@@ -4985,12 +4992,15 @@ function act(a) {
   if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
+                           if (deleteRefused(v)) { render(); return; }   // Backlog 25: before the question, not after it
                            S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
                            render(); return; }
   // item 6: a real delete. The old branch only spliced the array, so the row
   // came back on the next load — DELETE /api/sessions/{id} removes it for good
   // (idempotent, so an id that is already gone still answers 200).
   if (k === 'del')       { if (!BR || !BR.deleteSession) return;
+                           // Backlog 25: and here, for a turn that started while the question was up.
+                           if (deleteRefused(v)) { close(); render(); return; }
                            BR.deleteSession(v).then((res) => {
                              if (!res || !res.ok) { close(); render(); toast('Could not delete the session', (res && res.error) || ''); return; }
                              const i = SESSIONS.findIndex((x) => x.id === v);
@@ -4999,7 +5009,11 @@ function act(a) {
                              PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
                              delete PREFS.seen[v];
                              savePrefs();
-                             if (S.sessionId === v) { S.sessionId = ''; S.agentSession = null; S.log = []; }
+                             /* Backlog 25: the chat's card goes with it, and the empty view that
+                                takes its place answers no request, as after New chat. (A chat whose
+                                turn runs here never gets this far: deleteRefused.) */
+                             if (S.pending && S.pending.sessionId === v) forgetApprovalCard();
+                             if (S.sessionId === v) { S.sessionId = ''; S.agentSession = null; S.log = []; S.busy = false; forgetApprovalCard(); }
                              close(); render(); toast('Session deleted', gone);
                            });
                            return; }
@@ -5323,6 +5337,51 @@ function answer(key) {
   answerLive(req, key);
 }
 
+/* Backlog 25: the turn chat `sid` is running in this window, or null.
+   RUNNING (turnId → session) follows a turn's chat after the person has left
+   it; the newest entry wins. */
+function sessionTurnId(sid) {
+  if (!sid) return null;
+  let found = null;
+  for (const [turnId, s] of RUNNING) if (s === sid) found = turnId;
+  return found;
+}
+
+/* Backlog 25: the turn of the chat on screen, or null when it runs none.
+   S.turnId is the turn this window started LAST, and it stays the turn of the
+   chat that was left until that turn ends: Ctrl+., Run › Stop, /abort and
+   Escape in chat B cancelled chat A's turn. The streaming row on screen names
+   its own turn (a new chat's first turn has no session id until its first
+   frame), and a turn that kept running while the person was in another chat
+   is found by this chat's id. */
+function screenTurnId() {
+  const item = S.streamId ? S.log.find((m) => m.id === S.streamId) : null;
+  if (item && item.turn && RUNNING.has(item.turn)) return item.turn;
+  return sessionTurnId(S.sessionId);
+}
+
+/* Backlog 25: the turn an approval card holds up. That is the turn of the chat
+   that asked, which need not be the chat on screen (placeInLiveTurn draws
+   another chat's request in this one); a request that names no chat is taken
+   to be the chat on screen's. */
+function approvalTurnId(req) {
+  return req && req.sessionId ? sessionTurnId(req.sessionId) : screenTurnId();
+}
+
+/* Backlog 25 (Nadya, 02.10): a chat whose turn is running here is not
+   deleted, as in the TUI (chat-orchestrator.ts deleteSession): the person
+   stops it first. The agent's DELETE neither refuses nor stops the turn, so
+   the turn ran on with no row left to reach it from (Stop acts on the chat
+   on screen), and its end writes the transcript back, which brings the row
+   back. A turn this window did not start (a scheduled task, Telegram) is not
+   known here; the TUI asks the runtime, the window cannot. */
+function deleteRefused(id) {
+  if (!sessionTurnId(id)) return false;
+  if (id === S.sessionId) toast('This chat is still working', 'Stop it first (Esc or the Stop button), then delete it', 'bad');
+  else toast('This chat is still working', 'Open it and stop it first, then delete it', 'bad');
+  return true;
+}
+
 function abort() {
   clearTimeout(timer); clearInterval(ticker);
   if (!S.busy && !S.pending) return;
@@ -5330,8 +5389,19 @@ function abort() {
   // the window said it had stopped, and the sidebar dot would have to lie one
   // way or the other. The `aborted` frame clears the RUNNING entry, so the dot
   // pulses until the agent has actually stopped.
-  if (S.turnId && BR) BR.cancel(S.turnId);
-  S.busy = false; dropPendingApproval();
+  /* Backlog 25: the turn of the chat on screen, not S.turnId; with none, the
+     turn behind the approval card on screen (a request another chat's turn
+     raised is drawn here too, and its card is why the Stop button shows).
+     The card goes with the turn that asked, because dropPendingApproval is
+     honest only for a turn cancelled with it: another chat's card stays when
+     it was this chat's own turn that stopped, and still answers its turn. */
+  const card = S.pending;
+  const asker = card ? approvalTurnId(card) : null;
+  const stopping = screenTurnId() || asker;
+  if (stopping && BR) BR.cancel(stopping);
+  S.busy = false;
+  if (card && asker && asker === stopping) stoppedCard(card);
+  if (!card || !asker || asker === stopping) dropPendingApproval();
   S.log.push({id:nid(), k:'system', sev:'stop', text:'Stopped. Everything so far is kept.'});
   render();
 }
@@ -5446,7 +5516,20 @@ document.addEventListener('click', (e) => {
       && !t.closest('.pal, .sheet, .popover, .alertbox')) {
     act('settings:close'); return;
   }
-  const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
+  const ap = t.closest('[data-appr]');
+  if (ap) {
+    /* Backlog 25: a card's buttons answer that card. S.pending is only the
+       newest request, and one view can show two open cards: a chat's own,
+       drawn again when it is opened, and one another chat's turn raised
+       meanwhile. A card whose request is no longer open answers nothing. */
+    const box = ap.closest('[data-appr-id]');
+    const req = box ? S.log.find((m) => m.k === 'approval' && !m.state && m.approvalId && m.approvalId === box.dataset.apprId) : null;
+    if (req && req !== S.pending) {
+      if (req.sessionId && PENDING_APPROVALS.get(req.sessionId) === req.approvalId) answerLive(req, ap.dataset.appr);
+      return;
+    }
+    answer(ap.dataset.appr); return;
+  }
   const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
   // item 6: the pin button sits inside the row, so it has to win over it
   const pn = t.closest('[data-pin]');
@@ -6585,7 +6668,10 @@ function startLiveTurn(text) {
   render();
   // The agent holds the session, so a turn sends the new message and the
   // session id — not a replay of everything said so far.
-  BR.chat([{role:'user', content:text}], S.agentSession || undefined).then((res) => {
+  // Backlog 25: read once. The person can open another chat before the
+  // agent answers, and the turn still runs in the session it was sent with.
+  const session = S.agentSession || undefined;
+  BR.chat([{role:'user', content:text}], session).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
@@ -6593,8 +6679,11 @@ function startLiveTurn(text) {
       return;
     }
     S.turnId = res.turnId;
+    // Backlog 25: the streaming row knows its own turn, which Stop reads
+    // (screenTurnId): S.turnId moves on with the next turn in any chat.
+    streaming.turn = res.turnId;
     // item 6: the sidebar's running dot follows the stream, not S.busy.
-    RUNNING.set(res.turnId, S.agentSession || null);
+    RUNNING.set(res.turnId, session || null);
     renderSidebar();
   });
 }
@@ -6894,7 +6983,14 @@ function onChatEvent(ev) {
        credit — agent-loop.ts formatTaskStoppedReply) rather than finished;
        the reply row then offers to continue. */
     if (ev.kind === 'finish') { if (item && ev.reason) item.finish = String(ev.reason); return; }
-    S.busy = false; S.turnId = null; clearInterval(ticker);
+    /* Backlog 25: "busy" is the chat on screen's, as in the RUNNING
+       bookkeeping above. When this turn is a chat the person left (turnSid)
+       and the chat on screen runs a turn of its own, that one keeps it, or
+       Escape and the Stop button would no longer reach it. A turn of the chat
+       on screen always ends its busy: a chat runs one turn at a time, so
+       another entry RUNNING still holds for it is one whose end never came. */
+    if (!(turnSid && turnSid !== S.sessionId && screenTurnId())) S.busy = false;
+    S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
     /* Item 1 (plan hand-off): finishTurn's rule, restated —
@@ -7087,11 +7183,14 @@ function onApprovalEvent(payload) {
     // not start (a scheduled task's, say).
     sessionId: payload.sessionId || null,
   };
-  if (req.sessionId) PENDING_APPROVALS.set(req.sessionId, req.approvalId);
+  if (req.sessionId) { PENDING_APPROVALS.set(req.sessionId, req.approvalId); APPROVAL_CARDS.set(req.sessionId, req); }
   S.pending = req;
   placeInLiveTurn(req, {afterTool: req.tool, sessionId: req.sessionId});
   S.apprFocused = false;
-  S.busy = false;
+  // Backlog 25: waiting is not "busy" for the chat that asked. A request
+  // another chat's turn raised is drawn here too, and leaves this chat's own
+  // turn running, with its Stop.
+  if (!req.sessionId || !S.agentSession || req.sessionId === S.agentSession) S.busy = false;
   render();
 }
 
@@ -7114,6 +7213,16 @@ function dropPendingApproval() {
 /** The approval card leaves this view; the request itself is untouched. */
 function forgetApprovalCard() {
   S.pending = null;
+}
+
+/* Backlog 25: the card of a turn that Stop cancelled says so, instead of
+   going on drawing Allow / Deny buttons that nothing is waiting for. Only
+   where the turn that asked was the one cancelled: a card whose turn is
+   not known here is dropped as before, its request may still be open. */
+function stoppedCard(req) {
+  if (!req || req.state) return;
+  req.state = 'stopped';
+  req.at = new Date().toTimeString().slice(0, 8);
 }
 
 function pick(obj, ...keys) {
@@ -7152,7 +7261,9 @@ function agentReplyWords(why) {
 }
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a';
-  S.pending = null;
+  // Backlog 25: an older card answered by its own button (see the click
+  // delegator) leaves the newest request, and its card, open.
+  if (S.pending === req) S.pending = null;
   if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // item 6: the row stops asking
   req.state = approve ? 'approved' : 'denied';
   req.at = new Date().toTimeString().slice(0, 8);
@@ -7174,15 +7285,21 @@ function answerLive(req, key) {
      and the agent carries on with the refusal. The one verdict that really
      does leave this window idle is the abort below, so it is excluded.
      Guarded on this window owning the turn — an approval raised by another
-     session (a scheduled task's) must not make THIS chat look busy. */
-  if (key !== 'esc' && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
+     session (a scheduled task's) must not make THIS chat look busy.
+     Backlog 25: "the turn" is the one that asked (approvalTurnId), not
+     S.turnId, the window's last-started turn: that can be another chat's,
+     and Abort run (Esc) below cancelled it while the asking turn ran on. */
+  const turn = approvalTurnId(req);
+  if (key !== 'esc' && turn && (!req.sessionId || req.sessionId === S.agentSession)) {
     S.busy = true;
   }
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
     if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
   });
-  if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
+  // Backlog 25: the chat on screen stays busy when the turn stopped here was
+  // another chat's, drawn here, and its own runs on.
+  if (key === 'esc') { if (turn) BR.cancel(turn); const own = screenTurnId(); S.busy = !!own && own !== turn; }
   render();
 }
 
@@ -7235,7 +7352,8 @@ async function denyByProse(req, text, post) {
      operator's words. The window must therefore go back to saying so. Only
      on `landed`: if the verdict never reached the gate there is nothing
      running to report on. */
-  if (landed && S.turnId && (!req.sessionId || req.sessionId === S.agentSession)) {
+  // Backlog 25: the turn that asked, as in answerLive.
+  if (landed && approvalTurnId(req) && (!req.sessionId || req.sessionId === S.agentSession)) {
     S.busy = true;
   }
   /* Calm (S4): plain words. The route's 404 body ("approvalId not pending:
@@ -7302,7 +7420,19 @@ if (BR) {
   // Stop routes to the real turn, and the workspace chip opens a picker.
   const originalAct = act;
   act = function (a) {
-    if (a === 'stop' && S.turnId) { BR.cancel(S.turnId); S.busy = false; clearInterval(ticker); render(); return; }
+    /* Backlog 25: the turn of the chat on screen (screenTurnId). S.turnId is
+       the window's last-started turn, so Ctrl+., Run › Stop and /abort in
+       chat B cancelled chat A's. With no turn running here, Stop goes on to
+       abort(), which stops another chat's turn only when that turn's own
+       approval card is on screen. */
+    const stopping = a === 'stop' ? screenTurnId() : null;
+    if (stopping) {
+      BR.cancel(stopping); S.busy = false; clearInterval(ticker);
+      // The card goes with the turn that asked, as in abort(): left up, its
+      // buttons and the next message answered a request nobody holds.
+      if (S.pending && approvalTurnId(S.pending) === stopping) { stoppedCard(S.pending); dropPendingApproval(); }
+      render(); return;
+    }
     if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); LLMP.tune.msg = null; BR.restart().then(applyStatus); return; }
     if (a === 'workspace' || a === 'workspace:choose') {
       BR.chooseWorkspace().then((dir) => {
@@ -14572,14 +14702,17 @@ async function openSession(id) {
   OPENING = opening;
   S.room = 'chat';
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
-  // A live turn belonging to another session keeps its own state; only the
-  // window's view of "busy" is reset when nothing of this session is running.
   // Review fix: the card leaves the view with the old transcript, but the
   // request is still open at the agent — dropping it from PENDING_APPROVALS
   // here made the waiting chat's dot go empty ("read") while the agent sat
   // blocked on the gate. The map is cleared by a verdict or by the turn's own
   // terminal frame, nowhere else.
-  if (!live) { S.busy = false; forgetApprovalCard(); }
+  /* Backlog 25: the window's "busy" and the card go for a chat whose turn is
+     live too. Kept, they were the PREVIOUS chat's: Escape stopped that chat's
+     turn, and y/n (focus is on the sidebar row, not in the editor) answered
+     its request, whose card was no longer on screen. This chat's own come
+     back with its transcript (below). */
+  S.busy = false; forgetApprovalCard();
   S.stick = true;
   render();
 
@@ -14601,6 +14734,9 @@ async function openSession(id) {
      may land: not the transcript, not an error line, not the session the
      next message continues. */
   if (seq !== OPEN_SEQ || S.sessionId !== id) return;
+  /* Backlog 25: a request that came in while this loaded was drawn under
+     "loading session…", which goes now. This chat's own is drawn again below. */
+  forgetApprovalCard();
   if (!res || !res.ok || !res.data) {
     S.log = [{id:nid(), k:'system', text:'could not open that session: ' + esc((res && res.error) || 'unknown error')}];
     render();
@@ -14617,15 +14753,26 @@ async function openSession(id) {
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
   // — the TUI's "a turn is still running here".
-  if (live) {
-    S.busy = true;
-    S.log.push({id:nid(), k:'system', text:'a turn is still running here — the reply lands when it finishes'});
-  }
+  // Backlog 25: set outright, not only raised: a verdict that came back while
+  // this loaded (denyByProse) may have raised it for the chat that was left.
+  S.busy = live;
+  if (live) S.log.push({id:nid(), k:'system', text:'a turn is still running here — the reply lands when it finishes'});
   // Anything sent from here continues that session rather than starting a new one.
   S.agentSession = id;
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
   noteSessionModelStamp(data);
+  /* Backlog 25: if that turn is waiting on a request it raised here, its card
+     is drawn again, as the last row, so the chat shows what it waits for and
+     y/n answer this chat's own request. Only while the request is still
+     open: a verdict or the turn's end takes it out of PENDING_APPROVALS.
+     Waiting is not "busy", as when the card first came. The focus is left
+     where it is: the box takes typing while a chat loads, and a card taking
+     the focus mid-word would let the y in "why" allow the call. */
+  const asked = live ? APPROVAL_CARDS.get(id) : null;
+  if (asked && !asked.state && PENDING_APPROVALS.get(id) === asked.approvalId) {
+    S.log.push(asked); S.pending = asked; S.apprFocused = true; S.busy = false;
+  }
   render();
   refreshContext();
   /* Backlog 24: a turn of this chat ended while a chat was loading, with a
@@ -21559,7 +21706,7 @@ if (typeof window !== 'undefined') {
   // onChatEvent path for the frames a synthetic turn can carry.
   window.__fakeTurn = () => {
     const turnId = 'smoke-turn-' + Date.now().toString(16) + '-' + Math.floor(Math.random() * 1e6).toString(16);
-    const streaming = {id:nid(), k:'assistant', text:''};
+    const streaming = {id:nid(), k:'assistant', text:'', turn:turnId};   // the row knows its turn, as startLiveTurn's does
     S.streamId = streaming.id; S.log.push(streaming);
     S.turnId = turnId; S.busy = true;
     RUNNING.set(turnId, S.agentSession || null);
