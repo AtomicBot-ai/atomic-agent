@@ -12,6 +12,7 @@ import { checks09 } from "./smoke-tasks/t09.js";
 import { checks10 } from "./smoke-tasks/t10.js";
 import { checks11 } from "./smoke-tasks/t11.js";
 import { checks13 } from "./smoke-tasks/t13.js";
+import { checks18 } from "./smoke-tasks/t18.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -26,7 +27,7 @@ import { checks13 } from "./smoke-tasks/t13.js";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "19", "20"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -412,6 +413,7 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("10")) await guarded("10", check, () => checks10(js, check));
   if (want.has("11")) await guarded("11", check, () => checks11(js, check));
   if (want.has("13") || want.has("14")) await guarded("13", check, () => checks13(js, check));
+  if (want.has("18")) await guarded("18", check, () => checks18(js, check));
 
   if (want.has("19")) {
     // 19 — "What never leaves this Mac" read as a privacy promise the app does not make.
