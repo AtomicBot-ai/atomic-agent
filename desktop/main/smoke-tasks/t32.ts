@@ -324,6 +324,37 @@ async function wizard(js: Js, check: Check, calls: string[]): Promise<void> {
       fromEnv["phase"] === "configure" && fromEnv["error"] === SENTENCE && fromEnv["unchecked"] === false && fromEnv["saveUnchecked"] === false,
       show(fromEnv),
     );
+
+    // The key screen of a provider whose saved key is bad, Next with the field
+    // left blank: blank keeps that key, so the screen asks for a new one and
+    // saves nothing. The provider is staged in the window's copy of the config.
+    seen.length = 0;
+    // A blank field reads the key from .env: the check is stood in too, so a
+    // key this run's state happens to hold is never sent anywhere.
+    for (const w of wins) w.webContents.ipc.handle("cli:verifyProviderKey", () => { seen.push({ ch: "verify" }); return { ok: false, checked: true, error: "smoke t32: not asked" }; });
+    let blank: Record<string, unknown> = {};
+    try {
+      blank = await js<Record<string, unknown>>(`(async () => {
+        const keep = LIVE_CONFIG;
+        try {
+          const cfg = JSON.parse(JSON.stringify(LIVE_CONFIG || {}));
+          cfg.llm = cfg.llm || {};
+          cfg.llm.providers = (cfg.llm.providers || []).filter((x) => x.id !== 'aimlapi')
+            .concat([{id: 'aimlapi', kind: 'aimlapi', baseUrl: 'https://api.aimlapi.com', apiKey: ${q(CYRILLIC)}, defaultChatModel: ${q(MODEL)}}]);
+          LIVE_CONFIG = cfg;
+          const k = window.__t32Open(); if (!k) return {field: null};
+          act('wiz:next'); await window.__t32Settle(); return window.__t32View();
+        } finally { LIVE_CONFIG = keep; }
+      })()`);
+    } finally {
+      for (const w of wins) if (!w.isDestroyed()) w.webContents.ipc.removeHandler("cli:verifyProviderKey");
+    }
+    check(
+      "T32: Next with the field blank on a provider whose saved key is bad asks for the key again and saves nothing",
+      blank["phase"] === "configure" && /^The key saved for AI\/ML API has a character keys don’t have/.test(String(blank["error"] ?? ""))
+        && blank["saveUnchecked"] === false && !seen.some((c) => c.ch === "upsert" || c.ch === "verify"),
+      show({ blank, calls: seen }),
+    );
   } finally {
     /* The setup is closed with nothing left to drop, before the stand-ins come
        off: a removal it still owed would otherwise reach the real config. */
