@@ -27,7 +27,7 @@ import { checks18 } from "./smoke-tasks/t18.js";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -465,6 +465,33 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     check(
       "T20: Enter starts a new line in the box; Add or Cmd+Enter adds the server",
       r.enterSubmits === 0 && r.stillOpen === true && r.cmdEnterSubmits === 1,
+      JSON.stringify(r),
+    );
+  }
+
+  if (want.has("21")) {
+    // 21 — Gemma wore a star nobody knew; the Hugging Face row had a grey hint beside it.
+    const r = await js<Record<string, unknown>>(`(async () => {
+      const box = document.createElement('div'); box.innerHTML = obLocalPickHTML();
+      const hf = box.querySelector('.ob-hfrow');
+      const img = new Image();
+      const loaded = await new Promise((res) => {
+        img.onload = () => res(true); img.onerror = () => res(false); setTimeout(() => res(false), 3000);
+        img.src = 'logos/google.svg';
+      });
+      return {gemma: modelMark('gemma-4-12b-it'), gguf: modelMark('unsloth/gemma-3-4b-it-GGUF'), gemini: modelMark('gemini-2.5-pro'),
+        loaded, hf: !!hf, label: hf ? hf.querySelector('.t').textContent : null, hint: hf ? !!hf.querySelector('.d') : null,
+        oldHint: /owner\\/repo id or a huggingface/.test(box.innerHTML)};
+    })()`);
+    check(
+      "T21: Gemma models wear Google's mark, and the mark loads",
+      /logos\/google\.svg/.test(String(r.gemma)) && /logos\/google\.svg/.test(String(r.gguf))
+        && /gemini-color\.svg/.test(String(r.gemini)) && r.loaded === true,
+      JSON.stringify(r),
+    );
+    check(
+      "T21: Add a model from Hugging Face stands alone, no grey hint beside it",
+      r.hf === true && r.label === "Add a model from Hugging Face…" && r.hint === false && r.oldHint === false,
       JSON.stringify(r),
     );
   }
