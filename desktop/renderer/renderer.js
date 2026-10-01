@@ -2803,7 +2803,7 @@ function composer() {
          chip stands for is its `data-id`, which is what the drivers and the
          smoke compare. */
       + '<div class="cfoot' + (selHasKind('workers') ? ' is-fusion' : '') + '">'
-        + (composerNeedsSetup() ? (dlBusy() ? downloadingChipHtml() : setupChipHtml()) : routeChipsHtml(backend))
+        + (composerNeedsSetup() ? (dlChipBusy() ? downloadingChipHtml() : setupChipHtml()) : routeChipsHtml(backend))
         + '<span class="cgrow"></span>'
         + contextChip()
         + codingModeChip()
@@ -2833,12 +2833,26 @@ function composerNeedsSetup() {
    its progress is in the download card in the corner, which repaints on
    every sample. */
 function dlBusy() { return DL.job !== null || DL.queue.length > 0 || DL.preparing !== null; }
-/** The model the wizard's pull is fetching: its weights job, even while the runtime goes first. */
+/* Backlog 18, deferred: what the chip reads. dlBusy() is the queue alone, and
+   stays so for the guards that read it. A vision model's projector comes down
+   after the queue, in a slot of its own (DL.projector), or waits for it
+   (DL.projectorQueue): the same model, still on its way. Read as idle, the
+   chip went back to "Set up a model", whose Download was then refused as a
+   download already running. A projector-only resume's Starting… (DL.preparing,
+   kind projector) is in dlBusy() already. */
+function dlChipBusy() { return dlBusy() || DL.projector !== null || DL.projectorQueue.length > 0; }
+/**
+ * The model the wizard's pull is fetching: its weights job, even while the
+ * runtime goes first; else the vision model whose projector is still to come.
+ * Named as its row in the card is (dlCardName): setup's own list (OB.models)
+ * is read on its model step, and a relaunch has none, so a Hugging Face
+ * model's custom-<slug> id read raw on the chip and trimmed in the card.
+ */
 function dlModelName() {
-  const j = [DL.job].concat(DL.queue, [DL.preparing]).find((x) => x && x.kind === 'weights');
-  if (!j || !j.id) return 'your model';
-  const known = (OB.models || []).find((m) => m && m.id === j.id && m.name);
-  return known ? obModelName(known) : modelWord(j.id);
+  const j = [DL.job].concat(DL.queue, [DL.preparing]).find((x) => x && x.kind === 'weights')
+    || [DL.projector, DL.preparing && DL.preparing.kind === 'projector' ? DL.preparing : null]
+      .concat(DL.projectorQueue).find((x) => x && x.id);
+  return j && j.id ? dlCardName({kind: 'weights', id: j.id}) : 'your model';
 }
 /* `slot` is where it stands: in place of the setup chip (no route chosen
    yet) or in the model slot of the local route the wizard has already
@@ -15843,7 +15857,7 @@ function bswSnapshot() {
 }
 /** The model chip, as the composer draws it: nothing when there is no model (the TUI renders no control then). */
 function modelChipHtml() {
-  if (dlBusy() && selBackend() === 'local') return downloadingChipHtml('modelchip');
+  if (dlChipBusy() && selBackend() === 'local') return downloadingChipHtml('modelchip');
   const label = activeModel();
   /* The operator's words: "There should be three selectors. Cloud, after
      that the provider. And after that the model. So that I would be able to
