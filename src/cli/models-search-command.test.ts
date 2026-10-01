@@ -332,6 +332,52 @@ describe("runModelsSearch", () => {
         /^could not list models from "gemini": no API key/,
       );
     });
+
+    // Anthropic's preset authenticates with `x-api-key` and a pinned
+    // `anthropic-version`; a Bearer key on /v1/models is answered
+    // "invalid x-api-key" whatever the key is.
+    it("lists an Anthropic entry with the headers Anthropic chat uses", async () => {
+      const fetchMock = vi.fn(
+        async (_url: string, _init?: RequestInit) =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { type: "model", id: "claude-sonnet-5" },
+                { type: "model", id: "claude-opus-5" },
+              ],
+              has_more: false,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const hits = await collectHits(
+        [
+          {
+            id: "anthropic",
+            kind: "openai-compatible",
+            baseUrl: "https://api.anthropic.com",
+            apiKey: "sk-ant-search-headers",
+            apiKeyHeader: "x-api-key",
+            headers: { "anthropic-version": "2023-06-01" },
+          },
+        ],
+        true,
+      );
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "https://api.anthropic.com/v1/models",
+      );
+      expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+        "x-api-key": "sk-ant-search-headers",
+        "anthropic-version": "2023-06-01",
+      });
+      expect(hits).toEqual([
+        { providerId: "anthropic", id: "claude-opus-5" },
+        { providerId: "anthropic", id: "claude-sonnet-5" },
+      ]);
+    });
   });
 
   // Last in the file on purpose: a live refresh writes the fetcher's
