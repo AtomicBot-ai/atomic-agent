@@ -2826,14 +2826,18 @@ function dlBusy() { return DL.job !== null || DL.queue.length > 0 || DL.preparin
    download already running. A projector-only resume's Starting… (DL.preparing,
    kind projector) is in dlBusy() already. */
 function dlChipBusy() { return dlBusy() || DL.projector !== null || DL.projectorQueue.length > 0; }
-/** The model the wizard's pull is fetching: its weights job, even while the runtime goes first; else the vision model whose projector is still to come. */
+/**
+ * The model the wizard's pull is fetching: its weights job, even while the
+ * runtime goes first; else the vision model whose projector is still to come.
+ * Named as its row in the card is (dlCardName): setup's own list (OB.models)
+ * is read on its model step, and a relaunch has none, so a Hugging Face
+ * model's custom-<slug> id read raw on the chip and trimmed in the card.
+ */
 function dlModelName() {
   const j = [DL.job].concat(DL.queue, [DL.preparing]).find((x) => x && x.kind === 'weights')
     || [DL.projector, DL.preparing && DL.preparing.kind === 'projector' ? DL.preparing : null]
       .concat(DL.projectorQueue).find((x) => x && x.id);
-  if (!j || !j.id) return 'your model';
-  const known = (OB.models || []).find((m) => m && m.id === j.id && m.name);
-  return known ? obModelName(known) : modelWord(j.id);
+  return j && j.id ? dlCardName({kind: 'weights', id: j.id}) : 'your model';
 }
 /* `slot` is where it stands: in place of the setup chip (no route chosen
    yet) or in the model slot of the local route the wizard has already
