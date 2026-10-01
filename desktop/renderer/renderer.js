@@ -8114,7 +8114,10 @@ function obOutOfReach() {
 function obChooseHTML() {
   /* Route cards: where it runs, the route, one line, and the digit that
      jumps to it. */
-  const look = {local:['laptop', ' tk-ico--indigo'], cloud:['cloud', ' tk-ico--blue'], custom:['server', '']};
+  /* One tone for all three. Indigo, blue and grey read as three different
+     kinds of button (Danya and Nadya, 30.09–01.10); which card is chosen is
+     the ring and the tick, not the icon's colour. */
+  const look = {local:['laptop', ' tk-ico--blue'], cloud:['cloud', ' tk-ico--blue'], custom:['server', ' tk-ico--blue']};
   const rows = OB_CHOICES.map((choice, i) => {
     const l = look[choice.id] || ['server', ''];
     /* Calm (S6): a click picks the card (tick); Continue, Enter or a double
@@ -8440,8 +8443,8 @@ function obProposeHTML() {
     : {label:'Set up a cloud model too', detail:'an API key and a model — about a minute, for the heavy turns'};
   const rows = [accept, OB_COPY.proposeSkip];
   const icons = [
-    local ? '<span class="tk-ico tk-ico--indigo">' + ic('laptop') + '</span>'
-      : '<span class="tk-ico tk-ico--blue">' + ic('cloud') + '</span>',
+    // The same tone as the route cards on the choose step.
+    '<span class="tk-ico tk-ico--blue">' + ic(local ? 'laptop' : 'cloud') + '</span>',
     '<span class="tk-ico">' + ic('arrowR') + '</span>',
   ];
   return obReadyHTML(obConfiguredLabel())
