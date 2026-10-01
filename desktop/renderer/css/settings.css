@@ -213,6 +213,16 @@ button.set-search:hover{border-color:var(--bd)}
 .set-skmd{margin:0;min-height:120px;padding:14px 16px;font-size:12px;line-height:1.6}
 .set-mdmore{color:var(--ink-2)}
 .set-loading{display:flex;align-items:center;gap:8px;color:var(--ink-2)}
+/* Built-in tools (item 09): the Skills table's card and rows — the glyph of the
+   tool's transcript card, name, description — under a heading per family. */
+.set-tlcols,.set-tlrow{display:grid;grid-template-columns:40px minmax(150px,230px) minmax(0,1fr);align-items:center;column-gap:14px}
+.set-tlcols{padding:6px 12px;font:600 12px/1.2 var(--font-ui);color:var(--ink-2)}
+.set-tlfam{padding:14px 12px 4px;font:500 12px/1.2 var(--font-mono);letter-spacing:0;color:var(--ink-2)}
+.set-tlic{display:flex;justify-content:center;color:var(--ink-3)}
+.set-tlic svg{width:14px;height:14px}
+.set-tlrow .t{font:500 13px/1.3 var(--font-mono);letter-spacing:0;color:var(--ink)}
+.set-tlrow .d{min-width:0;font-size:13px;color:var(--ink-2);white-space:nowrap}
+@media (max-width:1000px){.set-tlcols,.set-tlrow{grid-template-columns:40px minmax(120px,210px) minmax(0,1fr);column-gap:10px}}
 
 /* ---------------- Privacy (ST-33) ---------------- */
 .set-setlist{padding:6px}

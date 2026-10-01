@@ -4033,13 +4033,17 @@ async function settingsTest(
     JSON.stringify(navDom),
   );
   // `go.observe.world` used to prove this; that node is gone. `help.tools` is
-  // the surviving verb with the same observable result (the inspector on its
-  // World tab) and, unlike `session.context`, it leaves no overlay open across
-  // the checks that follow.
-  const dispatched = await js<{ settings: boolean; inspector: boolean; inspTab: string; overlay: string | null }>("window.__menuActivate('help.tools')");
+  // the surviving verb with an observable result that, unlike
+  // `session.context`, leaves no overlay open across the checks that follow.
+  // Item 09: that result is Settings › Skills › Built-in tools now, not the
+  // inspector's World tab (hidden outright below 1180px), so the window is
+  // closed first: open again, on that segment, is the act having run.
+  const dispatched = await js<{ settings: boolean; pane: string | null; view: string; overlay: string | null }>(
+    "(() => { window.__settingsClose(); return Object.assign(window.__menuActivate('help.tools'), {view: window.__skillsState().view}); })()",
+  );
   check(
     "settings: a menu verb dispatches its desktop act",
-    !dispatched.settings && dispatched.inspector && dispatched.inspTab === "world" && !dispatched.overlay,
+    dispatched.settings && dispatched.pane === "skills" && dispatched.view === "tools" && !dispatched.overlay,
     JSON.stringify(dispatched),
   );
   const gone = await js<{ ids: string[]; subs: number; rows: number }>(

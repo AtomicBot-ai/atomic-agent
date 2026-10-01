@@ -925,6 +925,8 @@ const SKP = {
   hubCard:null, hubCardLoading:false, cardScroll:0, removeConfirm:null, timer:null,
   detailSource:null, // 'route' (GET /api/skills/{name}) | 'skillShow' (`atag skill show`) — which source filled detailBody
   routeOverride:null, // --smoke only: a substitute answer for the route, so the skill-show fallback can be driven on 0.5.4 (its registry never 404s a skill disabled after boot)
+  view:'skills', // Item 09: 'skills' (the rows, under `filter`) | 'tools' (the agent's built-in tools) — the segment beside the filters
+  toolsLoading:false, toolsError:null, // Item 09: the Built-in tools list's own GET /api/capabilities read
 };
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32, SKP_CARD_LINES = 24; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx / HUB_CARD_BODY_WINDOW
@@ -4655,7 +4657,12 @@ function act(a) {
     });
     return;
   }
-  if (a === 'tools') { close(); S.inspector = true; writePaneFlag('atag.inspector', true); S.inspTab = 'world'; render(); return; }
+  /* Item 09: `/tools`, the palette's List built-in tools and Help › List built-in
+     tools. This opened the inspector on its World tab, which shell.css hides
+     outright below 1180px: on a narrower window the verb closed whatever was open
+     and showed nothing. Settings › Skills › Built-in tools is on screen at every
+     width and says what each tool does; World (names only) is still `/world`. */
+  if (a === 'tools') { act('settings:skills'); skillsAct('tools'); return; }
   if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
   if (a === 'quit') { close(); if (BR && BR.quit) { BR.quit(); return; } render(); toast('This is a prototype', 'Nothing to quit'); return; }
   if (a === 'about') { close(); render(); toast('Atomic Agent 0.3.7', 'Local-first agent · GAIA L1 69.8%'); return; }
@@ -15385,16 +15392,18 @@ function skpTyping() { const el = document.activeElement; return !!el && el.id =
    Here every refresh is an `atag skill list` subprocess, so the timer runs
    only while the tab is visible, restarts on every entry (the first tick is
    5 s after entering, never on the click) and stops while a detail, the
-   hub or a modal is open. `a auto` turns it off. */
+   hub, the Built-in tools list or a modal is open. `a auto` turns it off. */
 function ensureSkillsPoll() {
   if (!BR || SKP.timer) return;
   SKP.timer = setInterval(() => {
     if (!skillsVisible()) { clearInterval(SKP.timer); SKP.timer = null; return; }
-    if (SKP.auto && SKP.mode === 'list' && !SKP.removeConfirm && !SKP.busy) refreshSkillList();
+    if (SKP.auto && SKP.mode === 'list' && SKP.view === 'skills' && !SKP.removeConfirm && !SKP.busy) refreshSkillList();
   }, 5000);
 }
 function skillsTabEntered() {
   if (SKP.timer) { clearInterval(SKP.timer); SKP.timer = null; }
+  // Item 09: the section opens on its skills; Built-in tools is picked (its segment, `/tools`, which enters through here first).
+  if (SKP.view !== 'skills') { SKP.view = 'skills'; render(); }
   ensureSkillsPoll();
   tpSkillsOmittedRefresh();
 }
@@ -15420,26 +15429,35 @@ function skillsTab() {
     const rows = SK.rows || [];
     const visible = skpVisibleRows();
     const enabledCount = rows.filter((r) => r.enabled).length;
+    // Item 09: the Built-in tools segment shows the agent's own tools in place of the skill rows.
+    const tools = SKP.mode === 'list' && SKP.view === 'tools';
+    const groups = tools ? skpBuiltinTools() : null;
+    const toolCount = groups ? groups.reduce((n, g) => n + g.tools.length, 0) : 0;
     // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools` —
-    // a segmented control, the counts, the auto readout, Built-in tools and the Skills Hub (ST-06).
+    // a segmented control (the filters and Built-in tools), the counts, the auto readout and the Skills Hub (ST-06).
     const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
-      + '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
-        + SKP_FILTERS.map((f) => '<button class="skpf' + (f === SKP.filter ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + (f === SKP.filter) + '">' + f + '</button>').join('')
+      + '<div class="tk-seg set-seg" role="group" aria-label="Show">'
+        + SKP_FILTERS.map((f) => { const on = !tools && f === SKP.filter; return '<button class="skpf' + (on ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + on + '">' + f + '</button>'; }).join('')
+        // Item 09: this was a toolbar button that closed Settings for the inspector. It is a segment of its own, not one of
+        // SKP_FILTERS (the `f` cycle), and it replaces the button: both in this no-wrap row overflow it by 50px on a
+        // 940px window and cut Browse Skills Hub off at the pane's edge.
+        + '<button class="skpf' + (tools ? ' on' : '') + '" data-act="skills:tools" aria-pressed="' + tools + '" title="/tools">Built-in tools</button>'
       + '</div>'
-      + '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
-      + '<button class="set-readout" data-act="skills:auto" title="Auto-refresh every 5 s — a toggles">'
-        + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
-        + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>'
+      + (tools
+        ? '<span class="set-counts">' + (groups ? toolCount + (toolCount === 1 ? ' tool' : ' tools') : '') + '</span>'
+        : '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
+          + '<button class="set-readout" data-act="skills:auto" title="Auto-refresh every 5 s — a toggles">'
+            + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
+            + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>')
       + '<span class="grow"></span>'
       + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
-      + '<button class="btn btn-g sm" data-act="menu:help.tools" title="/tools">Built-in tools</button>'
       + '<button class="btn btn-t sm" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
       + '</div></div>';
     view = bar
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
-      + (SK.err ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
+      + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
-      + (SKP.mode === 'detail' ? skpDetailHTML() : tpSkillsOmittedHTML() + skpListHTML(visible));
+      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : tpSkillsOmittedHTML() + skpListHTML(visible));
   }
   return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
@@ -15495,6 +15513,64 @@ function skpHubCtaHTML() {
     + '<span class="body"><span class="t">Skills Hub</span>'
       + '<span class="d">Browse and install skills from ClawHub</span></span>'
     + ic('chevR') + '</button></div>';
+}
+/* Item 09: the agent's built-in tools — GET /api/capabilities `tools` less the
+   MCP servers' `mcp.<server>.*` (Connections › MCP servers lists those). Grouped
+   as the TUI's `/tools` groups them (tools-listing.ts familyOf: the name up to
+   its last dot), families and names sorted; the unprefixed ones (reply, finish)
+   lead, with no heading. null until the capabilities have been read. */
+function skpBuiltinTools() {
+  if (!LIVE_CAPS || !Array.isArray(LIVE_CAPS.tools)) return null;
+  const byFamily = new Map();
+  LIVE_CAPS.tools.forEach((t) => {
+    const name = t && typeof t.name === 'string' ? t.name : '';
+    if (!name || name.startsWith('mcp.')) return;
+    const dot = name.lastIndexOf('.');
+    const family = dot < 0 ? '' : name.slice(0, dot);
+    if (!byFamily.has(family)) byFamily.set(family, []);
+    byFamily.get(family).push({name, description: typeof t.description === 'string' ? t.description : ''});
+  });
+  return [...byFamily.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([family, list]) => ({family, tools: list.sort((a, b) => a.name.localeCompare(b.name))}));
+}
+/* The Skills table's card and rows: the glyph the tool's transcript card wears, name, description. */
+function skpToolsHTML(groups) {
+  if (!groups) {
+    // Not read yet: the agent is still starting (loadResources repaints when it answers), or the read failed.
+    const failed = SKP.toolsError && S.live.state === 'connected';
+    return '<div class="tk-empty set-empty"><span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('wand') + '</span>'
+      + '<p>' + (failed ? 'The agent did not list its tools (' + esc(SKP.toolsError) + '). Refresh to ask again.' : 'The list appears when the agent is up.') + '</p></div>';
+  }
+  if (!groups.length) return '<div class="tk-empty set-empty"><span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('wand') + '</span><p>The agent lists no built-in tools.</p></div>';
+  return '<div class="tk-list set-sklist set-tllist">'
+    + '<div class="set-tlcols"><span></span><span>Name</span><span>Description</span></div>'
+    + groups.map((g) => (g.family ? '<div class="set-tlfam">' + esc(g.family) + '</div>' : '')
+      + g.tools.map((t) => '<div class="tk-li set-tlrow" data-tool-row="' + esc(t.name) + '">'
+        + '<span class="set-tlic">' + ic(toolIcon(t.name)) + '</span>'
+        + '<span class="t mono" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
+        + '<span class="d" title="' + esc(t.description) + '">' + esc(t.description) + '</span></div>').join('')).join('')
+    + '</div>';
+}
+/* Item 09: into the Built-in tools segment (its button, `/tools`, the palette),
+   out of a detail or the hub first as Back would. LIVE_CAPS is null until
+   loadResources has had an answer, so a missing list is asked for here. */
+function skpShowTools() {
+  if (SKP.view !== 'tools') skpListTop();
+  SKP.view = 'tools'; SKP.mode = 'list'; SKP.detailName = null; SKP.detailBody = null;
+  SKP.hubCard = null; SKP.hubSearchEditing = false;
+  if (!LIVE_CAPS) skpToolsRefresh();
+}
+/* The other list starts at its top: renderSettings keeps a pane's scroll across repaints, and both lists are this pane. */
+function skpListTop() { const body = document.querySelector('#settings .setbody'); if (body) body.scrollTop = 0; }
+async function skpToolsRefresh() {
+  if (!BR || !BR.capabilities || SKP.toolsLoading) return;
+  SKP.toolsLoading = true;
+  let res = null;
+  try { res = await BR.capabilities(); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  SKP.toolsLoading = false;
+  if (res && res.ok && res.data) { LIVE_CAPS = res.data; SKP.toolsError = null; }
+  else SKP.toolsError = (res && res.error) || 'no answer';
+  if (skillsVisible() && SKP.view === 'tools') render();
 }
 /* ST-07: name, state, source and version, then SKILL.md itself. */
 function skpDetailHTML() {
@@ -15794,12 +15870,17 @@ function skillsAct(what) {
   if (verb === 'removeConfirm') { skpConfirmRemove(); return; }
   if (verb === 'removeCancel') { SKP.removeConfirm = null; render(); return; }
   if (verb === 'refresh') {
+    if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); return; } // Item 09: the list on screen is the agent's tools
     refreshSkillList();
     if (SKP.mode === 'detail' && SKP.detailName) skpOpenDetail(SKP.detailName);
     return;
   }
   if (verb === 'auto') { SKP.auto = !SKP.auto; render(); return; }
-  if (verb === 'filter') { SKP.filter = arg && SKP_FILTERS.includes(arg) ? arg : SKP_FILTERS[(SKP_FILTERS.indexOf(SKP.filter) + 1) % SKP_FILTERS.length]; SKP.cursor = 0; render(); return; }
+  if (verb === 'filter') {
+    if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); } // Item 09: back from the Built-in tools list
+    SKP.filter = arg && SKP_FILTERS.includes(arg) ? arg : SKP_FILTERS[(SKP_FILTERS.indexOf(SKP.filter) + 1) % SKP_FILTERS.length]; SKP.cursor = 0; render(); return;
+  }
+  if (verb === 'tools') { skpShowTools(); render(); return; }
   if (verb === 'page') { const n = skpVisibleRows().length; SKP.cursor = Math.max(0, Math.min(SKP.cursor + (arg === 'up' ? -SKP_MAX_ROWS : SKP_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'back') {
     if (SKP.installConfirm) { SKP.installConfirm = null; render(); return; }
@@ -15858,6 +15939,12 @@ function skillsKey(e, k, inText) {
     if (k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
     if (k === 'e') { e.preventDefault(); skillsAct('toggle'); return true; }
     if (k === 'r') { e.preventDefault(); skillsAct('refresh'); return true; }
+    return false;
+  }
+  // Item 09: no skill row is on screen to move over, toggle or remove; f goes back to the skills.
+  if (SKP.view === 'tools') {
+    const keys = {r:'refresh', f:'filter:' + SKP.filter, i:'hub'};
+    if (keys[k]) { e.preventDefault(); skillsAct(keys[k]); return true; }
     return false;
   }
   const rows = skpVisibleRows();
@@ -16799,7 +16886,7 @@ if (typeof window !== 'undefined') {
   window.__skillsRows = () => (SK.rows ? SK.rows.length : 0); // every `atag skill list` row, as loaded (the list paints a 14-row window of them)
   window.__skillsWindow = () => ({painted: document.querySelectorAll('#settings [data-skill-row]').length, visible: skpVisibleRows().length, max: SKP_MAX_ROWS,
     above: (document.querySelector('#settings [data-act="skills:page:up"]') || {}).textContent || '', below: (document.querySelector('#settings [data-act="skills:page:down"]') || {}).textContent || ''});
-  window.__skillsState = () => ({mode: SKP.mode, cursor: SKP.cursor, filter: SKP.filter, auto: SKP.auto, busy: SKP.busy, detailName: SKP.detailName,
+  window.__skillsState = () => ({mode: SKP.mode, view: SKP.view, cursor: SKP.cursor, filter: SKP.filter, auto: SKP.auto, busy: SKP.busy, detailName: SKP.detailName,
     detailBody: SKP.detailBody, detailSource: SKP.detailSource, lastError: SKP.lastError, msg: SKP.msg ? SKP.msg.text : '', restart: !!(SKP.msg && SKP.msg.restart),
     hubRows: SKP.hubRows.map((r) => ({identifier: r.identifier, source: r.source, downloads: r.downloads})), hubLoading: SKP.hubLoading, hubError: SKP.hubError,
     hubCard: SKP.hubCard ? {identifier: SKP.hubCard.identifier, name: SKP.hubCard.name, repo: SKP.hubCard.repo, version: SKP.hubCard.version,
