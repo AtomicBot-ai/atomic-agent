@@ -21,7 +21,7 @@ import { resolveBinary } from "./agent-client.js";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-export const RELEASE_FIX_TASKS = ["04", "05", "06", "07", "08", "12", "15"];
+export const RELEASE_FIX_TASKS = ["04", "05", "06", "07", "08", "12", "15", "16", "17"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -120,7 +120,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("05")) {
     // 05 — a model pulled outside the Models tab kept its Download button under a header that said Ready.
     const r = await js<Record<string, unknown>>(`(async () => {
-      const saved = {local: LLMP.local, heal: LLMP.staleHealAt, inflight: LLMP.inflight, refresh: window.llmRefresh, status: LLMP.status, err: LLMP.statusErr, down: LLMP.downSince};
+      if (LLMP.inflight) { try { await LLMP.inflight; } catch (e) { /* its own report */ } }
+      const saved = {local: LLMP.local, heal: LLMP.staleHealAt, refresh: window.llmRefresh, status: LLMP.status, err: LLMP.statusErr, down: LLMP.downSince};
       let refreshed = 0;
       try {
         LLMP.local = [{id:'qwen-3.5-9b', downloaded:false}, {id:'gemma-4-12b', downloaded:false}];
@@ -137,7 +138,7 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
         await new Promise((res) => setTimeout(res, 50));
         return {staleWhenListLags, notStaleWhenNotOnDisk, notStaleWhenAgreeing, refreshed};
       } finally {
-        window.llmRefresh = saved.refresh; LLMP.local = saved.local; LLMP.staleHealAt = saved.heal; LLMP.inflight = saved.inflight;
+        window.llmRefresh = saved.refresh; LLMP.local = saved.local; LLMP.staleHealAt = saved.heal;
         LLMP.status = saved.status; LLMP.statusErr = saved.err; LLMP.downSince = saved.down;
       }
     })()`);
@@ -185,20 +186,42 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       JSON.stringify(r),
     );
     check("T08: inside a conversation the change is still a transcript line", r.lineInChat === true, JSON.stringify(r));
+    const f = await js<Record<string, unknown>>(`(async () => {
+      await window.__newSession();
+      const toastsBefore = S.toasts.length;
+      await setCodingMode('plan', async () => ({ok:false, error:'smoke t08 refusal'}));
+      await new Promise((res) => setTimeout(res, 150));
+      const out = {log: S.log.length, empty: !!document.querySelector('.emptychat'), toast: (S.toasts.slice(toastsBefore).map((t) => t.t + ' / ' + t.s).pop()) || null};
+      SWX.err = null; render();
+      return out;
+    })()`);
+    check(
+      "T08: a refused mode change on an empty chat is a toast too, and the start screen stays",
+      f.log === 0 && f.empty === true && typeof f.toast === "string" && /did not change/.test(f.toast as string) && /smoke t08 refusal/.test(f.toast as string),
+      JSON.stringify(f),
+    );
   }
 
   if (want.has("07")) {
-    // 07a — "Setup complete" while the model is still downloading.
-    const a = await js<Record<string, unknown>>(`(() => {
-      const saved = DL.job;
+    // 07a/07b — "Setup complete" and "Set up a model" while the model is still downloading.
+    // The wizard queues {kind:'runtime', id:'llama.cpp'} then {kind:'weights', id:<model>}.
+    const a = await js<Record<string, unknown>>(`(async () => {
+      const saved = {job: DL.job, queue: DL.queue.slice()};
       try {
-        DL.job = {kind:'model', id:'qwen-3.5-9b', label:'Qwen 3.5 9B', percent:10};
+        DL.job = {kind:'runtime', id:'llama.cpp', percent:40}; DL.queue = [{kind:'weights', id:'qwen-3.5-4b'}];
         const downloading = obClosingToast('local');
-        const chip = downloadingChipHtml();
         const busy = dlBusy();
-        DL.job = null;
-        return {downloading, done: obClosingToast('local'), skipped: obClosingToast('skipped'), chip, busy, idle: dlBusy()};
-      } finally { DL.job = saved; }
+        const name = dlModelName();
+        const setupSlot = downloadingChipHtml();
+        render(); await new Promise((r) => setTimeout(r, 100));
+        const pc = document.querySelector('#composer .cfoot .pullchip');
+        const onScreen = pc ? {text: pc.textContent.trim(), cls: pc.className, tag: pc.tagName, act: pc.getAttribute('data-act') || pc.getAttribute('data-sel-open')} : null;
+        const route = selBackend();
+        DL.job = null; DL.queue = [];
+        render(); await new Promise((r) => setTimeout(r, 100));
+        const gone = !document.querySelector('#composer .cfoot .pullchip');
+        return {downloading, done: obClosingToast('local'), skipped: obClosingToast('skipped'), busy, idle: dlBusy(), name, setupSlot, onScreen, route, gone};
+      } finally { DL.job = saved.job; DL.queue = saved.queue; render(); }
     })()`);
     check(
       "T07a: closing setup during a download says the model is downloading, not Setup complete",
@@ -206,10 +229,13 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
         && (a.done as string[])[0] === "Setup complete" && (a.skipped as string[])[0] === "Setup skipped",
       JSON.stringify([a.downloading, a.done, a.skipped]),
     );
+    const shown = a.onScreen as { text: string; cls: string; tag: string; act: string | null } | null;
     check(
-      "T07b: while the wizard's download runs the composer says Downloading, and it is not a button",
-      a.busy === true && a.idle === false && /Downloading Qwen 3\.5 9B/.test(a.chip as string) && !/data-act|<button/.test(a.chip as string),
-      JSON.stringify({ busy: a.busy, idle: a.idle, chip: a.chip }),
+      "T07b: while the wizard's download runs, the composer shows Downloading <the model> in place of a control",
+      a.busy === true && a.idle === false && /qwen.?3\.5.?4b/i.test(String(a.name))
+        && !!shown && /^Downloading /.test(shown.text) && /qwen.?3\.5.?4b/i.test(shown.text) && shown.tag === "SPAN" && !shown.act
+        && /Downloading/.test(String(a.setupSlot)) && a.gone === true,
+      JSON.stringify({ route: a.route, name: a.name, onScreen: a.onScreen, gone: a.gone }),
     );
     // 07c — the 45 s watchdog's line outlived a switch that landed.
     const c = await js<Record<string, unknown>>(`(async () => {
@@ -248,21 +274,23 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     );
     // 07e — "Not answering" for the half minute a fresh server needs to open its port.
     const e = await js<Record<string, unknown>>(`(() => {
-      const saved = LLMP.downSince;
+      const saved = LLMP.downSince, savedPid = LLMP.healthyPid;
       try {
-        LLMP.downSince = null;
+        LLMP.downSince = null; LLMP.healthyPid = null;
         llmNoteDaemonHealth({daemonRunning:true, daemonPid:4242, health:'down'});
         const fresh = llmJustSpawned();
         LLMP.downSince.at = Date.now() - 120000;
         const old = llmJustSpawned();
         llmNoteDaemonHealth({daemonRunning:true, daemonPid:4242, health:'ok'});
         const healthyClears = LLMP.downSince === null;
-        return {fresh, old, healthyClears};
-      } finally { LLMP.downSince = saved; }
+        llmNoteDaemonHealth({daemonRunning:true, daemonPid:4242, health:'down'});
+        const hungAfterOk = llmJustSpawned();
+        return {fresh, old, healthyClears, hungAfterOk};
+      } finally { LLMP.downSince = saved; LLMP.healthyPid = savedPid; }
     })()`);
     check(
-      "T07e: a just-spawned server reads Starting for its first 90 s, then Not answering",
-      e.fresh === true && e.old === false && e.healthyClears === true,
+      "T07e: a just-spawned server reads Starting for its first 90 s, then Not answering; one that answered before gets no grace",
+      e.fresh === true && e.old === false && e.healthyClears === true && e.hungAfterOk === false,
       JSON.stringify(e),
     );
   }
@@ -308,6 +336,48 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       JSON.stringify(r),
     );
     check("T15: a new search still starts the list at the top", r.afterSearch === 0, JSON.stringify(r));
+  }
+
+  if (want.has("16")) {
+    // 16 — downloaded models first in Settings › Models and in the composer's picker.
+    const r = await js<Record<string, unknown>>(`(() => {
+      const saved = {local: LLMP.local, emb: LLMP.emb};
+      try {
+        LLMP.local = [
+          {id:'big-remote', size:'6.2 GB', sizeGb:6.2, recommendedRamGb:8, minRamGb:6, downloaded:false},
+          {id:'small-on-disk', size:'3.4 GB', sizeGb:3.4, recommendedRamGb:8, minRamGb:6, downloaded:true},
+          {id:'mid-remote', size:'5.2 GB', sizeGb:5.2, recommendedRamGb:8, minRamGb:6, downloaded:false},
+        ];
+        LLMP.emb = [{id:'e-remote', size:'33 MB', downloaded:false}, {id:'e-on-disk', size:'118 MB', downloaded:true}];
+        const rows = llmLocalRows();
+        const text = rows.filter((x) => x.kind === 'localTextModel').map((x) => x.model.id);
+        const emb = rows.filter((x) => x.kind === 'localEmbeddingModel').map((x) => x.model.id);
+        const helper = onDiskFirst([{id:'a'}, {id:'b', downloaded:true}, {id:'c'}, {id:'d', downloaded:true}]).map((m) => m.id).join(',');
+        return {text, emb, helper};
+      } finally { LLMP.local = saved.local; LLMP.emb = saved.emb; }
+    })()`);
+    check(
+      "T16: models on this Mac come first, the rest keep their fit order",
+      JSON.stringify(r.text) === JSON.stringify(["small-on-disk", "big-remote", "mid-remote"])
+        && JSON.stringify(r.emb) === JSON.stringify(["e-on-disk", "e-remote"]) && r.helper === "b,d,a,c",
+      JSON.stringify(r),
+    );
+  }
+
+  if (want.has("17")) {
+    // 17 — the three route cards on the first step wore indigo, blue and grey icons.
+    const r = await js<Record<string, unknown>>(`(() => {
+      const html = obChooseHTML();
+      const box = document.createElement('div'); box.innerHTML = html;
+      const icons = Array.from(box.querySelectorAll('.ob-routes .tk-ico')).map((i) => i.className);
+      return {icons, indigo: /tk-ico--indigo/.test(html)};
+    })()`);
+    const icons = r.icons as string[];
+    check(
+      "T17: the three route cards wear one icon tone",
+      icons.length === 3 && new Set(icons).size === 1 && /tk-ico--blue/.test(icons[0] ?? "") && r.indigo === false,
+      JSON.stringify(r),
+    );
   }
 
   await wait(100);
