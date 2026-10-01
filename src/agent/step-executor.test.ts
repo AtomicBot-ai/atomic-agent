@@ -5273,6 +5273,182 @@ describe("claims need evidence (F9b)", () => {
   });
 });
 
+describe("links need a source (#581)", () => {
+  // A reply link no tool result this turn holds, on a host those results
+  // linked to, is held back once with a notice naming it; the second
+  // time it is delivered and marked. The forced final step never holds.
+  const grammarsDir = join(process.cwd(), "grammars");
+  const RESULT_URL =
+    "https://www.tomshardware.com/pc-components/gpus/nvidia-rtx-5090-review";
+  const MANGLED =
+    "https://www.tomshardware.com/pc-components/gpus/rtx-5090-review";
+
+  async function run(
+    replyText: string,
+    options: {
+      noticed?: boolean;
+      terminalOnly?: boolean;
+      linkEvidence?: false;
+      claimEvidence?: boolean;
+    } = {},
+  ) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-581", workingDir: "/w" });
+    session.turns.push({ kind: "user", text: "find the 5090 review", at: 1 });
+    session.turns.push({
+      kind: "assistant_tool_call",
+      tool: "os.web.search",
+      args: { query: "rtx 5090 review" },
+      at: 2,
+    });
+    session.turns.push({
+      kind: "tool_result",
+      tool: "os.web.search",
+      status: "ok",
+      summary: `1. Nvidia RTX 5090 review\n   ${RESULT_URL}`,
+      at: 3,
+    });
+    let noticed = options.noticed ?? false;
+    let marks = 0;
+    let claimMarks = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "find the 5090 review",
+        ...(options.terminalOnly ? { terminalOnly: true } : {}),
+      },
+      {
+        registry,
+        ...(options.linkEvidence === false
+          ? {}
+          : {
+              linkEvidence: {
+                noticed: () => noticed,
+                markNoticed: () => {
+                  noticed = true;
+                  marks += 1;
+                },
+              },
+            }),
+        ...(options.claimEvidence === true
+          ? {
+              claimEvidence: {
+                noticed: () => claimMarks > 0,
+                markNoticed: () => {
+                  claimMarks += 1;
+                },
+              },
+            }
+          : {}),
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: JSON.stringify([{ tool: "reply", args: { text: replyText } }]),
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    return { outcome, marks: () => marks, claimMarks: () => claimMarks };
+  }
+
+  it("holds a reply whose link no result holds, once, with a notice naming it", async () => {
+    const { outcome, marks } = await run(`The review: ${MANGLED}`);
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual(["reply"]);
+    expect(outcome.toolResults[0]!.status).toBe("error");
+    expect(outcome.toolResults[0]!.summary).toContain("not delivered");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      notDelivered: true,
+      unsourcedLinks: [MANGLED],
+    });
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty(
+      "unverifiedClaims",
+    );
+    expect(outcome.trimmedBatchNotice).toContain(`Your reply links "${MANGLED}"`);
+    expect(outcome.trimmedBatchNotice).toContain("no tool result this turn holds");
+    expect(marks()).toBe(1);
+    const last =
+      outcome.nextSession.turns[outcome.nextSession.turns.length - 1];
+    expect(last?.kind).toBe("tool_result");
+  });
+
+  it("delivers a reply that copies the link from the result", async () => {
+    const { outcome, marks } = await run(`The review: ${RESULT_URL}.`);
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unsourcedLinks");
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+    expect(marks()).toBe(0);
+  });
+
+  it("delivers the second reply that still carries the link, and marks it", async () => {
+    const { outcome, marks } = await run(`The review: ${MANGLED}`, {
+      noticed: true,
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      unsourcedLinks: [MANGLED],
+    });
+    expect(marks()).toBe(0);
+  });
+
+  it("never holds the forced final step's reply, but marks it", async () => {
+    const { outcome, marks } = await run(`The review: ${MANGLED}`, {
+      terminalOnly: true,
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      unsourcedLinks: [MANGLED],
+    });
+    expect(marks()).toBe(0);
+  });
+
+  it("does nothing when the loop passes no link state", async () => {
+    const { outcome } = await run(`The review: ${MANGLED}`, {
+      linkEvidence: false,
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unsourcedLinks");
+  });
+
+  it("holds once for a claim and a link together, naming both", async () => {
+    const { outcome, marks, claimMarks } = await run(
+      `I verified the page: ${MANGLED}`,
+      { claimEvidence: true },
+    );
+    expect(outcome.terminal).toBeNull();
+    expect(outcome.toolResults[0]!.details).toMatchObject({
+      notDelivered: true,
+      unverifiedClaims: ["verified"],
+      unsourcedLinks: [MANGLED],
+    });
+    expect(outcome.trimmedBatchNotice).toContain('Your reply claims "verified"');
+    expect(outcome.trimmedBatchNotice).toContain(`Your reply links "${MANGLED}"`);
+    expect(marks()).toBe(1);
+    expect(claimMarks()).toBe(1);
+  });
+});
+
 describe("the operator's request reaches the prompt (F22)", () => {
   it("renders ### request when the step context carries it and the packer dropped its turn", async () => {
     const grammarsDir = join(process.cwd(), "grammars");
