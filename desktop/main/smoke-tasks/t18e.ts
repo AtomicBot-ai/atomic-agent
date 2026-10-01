@@ -25,6 +25,10 @@ import type { ProjectorStatusAnswer, SmokeDownloads } from "../release-fixes-smo
  *        instead of following it, as it follows the weights and the runtime.
  *   D5 — the projector-only resume never checked that llama.cpp is installed.
  *   D6 — an early projector Cancel waited for `models status` to return.
+ *   D7 — the composer's chip knew the queue alone: while the projector came
+ *        down or waited its turn it offered "Set up a model", whose Download
+ *        then refused, and behind the llama.cpp runtime it said "Downloading
+ *        your model".
  *
  * Nothing is downloaded and nothing restarts. Main runs this whole file offline
  * (smokeDownloads.offline): every download handler refuses before it spawns or
@@ -50,6 +54,8 @@ type Jobs = { job: string | null; queue: string[]; projector: string | null; fai
 type Answer = { ok?: boolean; error?: string; running?: { kind?: string; id?: string } | null; alreadyPresent?: boolean } | string | null;
 type Marker = { id?: string; weightsLanded?: boolean; fails?: number } | null;
 type Seen = Jobs & { calls: string[]; card: Card; marker?: Marker; landed?: string | null; held?: string | null };
+type Chip = Jobs & { route: string; needsSetup: boolean; text: string; tag: string | null; slot: string | null; pull: boolean;
+  act: string | null; opened: number; waiting?: string[]; preparing?: string | null; calls?: string[] };
 
 const ID = "custom-smoke-t18e-vl";
 const FILE = "mmproj-smoke-t18e.gguf";
@@ -208,6 +214,7 @@ export async function checks18e(js: Js, check: Check, main: SmokeDownloads): Pro
     await step("D4", () => reopenOverProjector(js, check, main));
     await step("D5", () => resumeChecksRuntime(js, check));
     await step("D6", () => earlyProjectorCancel(js, check, main));
+    await step("D7", () => chipFollowsProjector(js, check));
     if (process.env["T18E_SHOTS"]) await shots(js, process.env["T18E_SHOTS"]);
   } finally {
     online();
@@ -928,6 +935,124 @@ async function earlyProjectorCancel(js: Js, check: Check, main: SmokeDownloads):
     reads.splice(0).forEach((res) => res({ ok: false, error: "smoke t18e: released" }));
     if (!ended) { await wait(300); await restore(js); }
   }
+}
+
+/* D7: the composer's chip read the setup download through dlBusy() and
+   dlModelName(), which know the queue alone. While the vision model's projector
+   came down, or waited for the queue, the chip went back to "Set up a model" —
+   whose setup then refused its Download, a download being already running — or,
+   on the managed route, to the route's own controls; and with the projector
+   parked behind the llama.cpp runtime it said "Downloading your model". Both
+   places the chip stands are read: the setup slot (the agent's default server,
+   where nothing answers: composerNeedsSetup) and the model slot of the managed
+   route setup writes. */
+async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keepExt = {url: EXT.url, model: EXT.model};
+    // The setup slot: the agent's default route, its server read already with nothing answering, so the poller does not ask again.
+    const onSetupRoute = () => {
+      const lm = Object.assign({}, (keep.cfg && keep.cfg.localModels) || {}, {mode: 'external', url: DEFAULT_LLAMA_URL});
+      LIVE_CONFIG = Object.assign({}, keep.cfg || {}, {localModels: lm});
+      EXT.url = DEFAULT_LLAMA_URL; EXT.model = null;
+      render();
+    };
+    // The chip where the route's controls go, and, while a download runs, what a click on it opens (setup is a recorder here).
+    const chip = async (click) => {
+      const foot = document.querySelector('#composer .cfoot');
+      const el = foot ? foot.querySelector('.pullchip') || foot.querySelector('.setupchip') : null;
+      const out = Object.assign({route: selBackend(), needsSetup: composerNeedsSetup(), text: txt(el), tag: el ? el.tagName : null,
+        slot: !el ? null : el.classList.contains('modelchip') ? 'model' : el.classList.contains('setupchip') ? 'setup' : 'other',
+        pull: !!el && el.classList.contains('pullchip'), act: el ? el.getAttribute('data-act') : null, opened: 0}, jobs());
+      if (click && el) {
+        const was = T.opened;
+        el.click();
+        await tick(60);
+        out.opened = T.opened - was;
+      }
+      return out;
+    };
+    const run = async (slot) => {
+      const out = {};
+      // (a) The weights land with a retried llama.cpp runtime next: the projector waits behind it (D1).
+      stage(); if (slot === 'setup') onSetupRoute();
+      remember();
+      window.__dlSeed([{kind: 'weights', id: ID}]);
+      DL.dry = false;
+      dlFail({kind: 'runtime', id: 'llama.cpp'}, 'smoke t18e: the runtime download failed earlier');
+      render(); await tick(60);
+      await pressIn('llama.cpp runtime', '.dlc-retry');
+      feed({id: ID, done: true, ok: true});
+      await tick(120);
+      out.parked = Object.assign(await chip(true), {waiting: DL.projectorQueue.map((p) => p.id)});
+      // (b) The runtime is in: the projector comes down.
+      runtimeEnds(true);
+      await tick(120);
+      out.fetching = await chip(true);
+      // (c) It lands, and the model starts.
+      out.answered = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      out.landed = Object.assign(await chip(false), {calls: calls.slice()});
+      // (d) A projector-only resume (D5): its Starting… while models status is read, then the projector.
+      stage(); if (slot === 'setup') onSetupRoute();
+      let releaseStatus = null;
+      window.obBackendStatusText = () => { calls.push('status'); return new Promise((res) => { releaseStatus = res; }); };
+      obResumeProjector(ID, MM);
+      await tick(80);
+      out.preparing = Object.assign(await chip(true), {preparing: DL.preparing ? DL.preparing.kind + ':' + DL.preparing.id : null});
+      if (releaseStatus) releaseStatus('backend: binary ok');
+      await tick(120);
+      out.resumed = await chip(true);
+      out.resumeAnswered = answer({ok: true, path: '/smoke/t18e/' + FILE});
+      await tick(150);
+      out.resumeLanded = Object.assign(await chip(false), {calls: calls.slice()});
+      return out;
+    };
+    try {
+      return {setup: await run('setup'), model: await run('model')};
+    } finally {
+      EXT.url = keepExt.url; EXT.model = keepExt.model;
+      restore();
+    }
+  })()`);
+  const slots = ["setup", "model"] as const;
+  const route = { setup: { route: "custom", needsSetup: true }, model: { route: "local", needsSetup: false } };
+  const at = (slot: (typeof slots)[number], key: string) => (r[slot]?.[key] ?? null) as Chip | null;
+  // Downloading <the model>, a plain label in the chip's own slot: no control, and a click on it opens nothing.
+  const names = (c: Chip | null, slot: (typeof slots)[number]) =>
+    !!c && c.route === route[slot].route && c.needsSetup === route[slot].needsSetup
+      && c.pull && c.slot === slot && c.tag === "SPAN" && c.text === `Downloading ${NAME}` && !c.act && c.opened === 0;
+  const each = (key: string, more: (c: Chip, slot: (typeof slots)[number]) => boolean) =>
+    slots.every((s) => { const c = at(s, key); return names(c, s) && more(c!, s); });
+  const detail = (...keys: string[]) =>
+    JSON.stringify(Object.fromEntries(slots.map((s) => [s, Object.fromEntries(keys.map((k) => [k, r[s]?.[k] ?? null]))])));
+  check(
+    "T18 D7: with a vision model's projector queued behind the llama.cpp runtime, the composer's chip says Downloading <the model>, not Downloading your model — in the setup slot and in the managed route's model slot",
+    each("parked", (c) => c.job === "runtime:llama.cpp" && c.projector === null && same(c.waiting, [ID])),
+    detail("parked"),
+  );
+  check(
+    "T18 D7: while that projector comes down the chip stays — not Set up a model, whose setup would refuse its Download, nor the route's own controls — and a click on it opens nothing",
+    each("fetching", (c) => c.projector === ID && c.job === null && c.queue.length === 0),
+    detail("fetching"),
+  );
+  check(
+    "T18 D7: a projector-only resume names the model from its Starting… on, and keeps the chip while the projector comes down",
+    each("preparing", (c) => c.preparing === `projector:${ID}` && c.projector === null)
+      && each("resumed", (c) => c.projector === ID && c.job === null),
+    detail("preparing", "resumed"),
+  );
+  // Gone once it lands: the setup slot offers setup again; the managed route draws its own controls.
+  const back = (c: Chip | null, slot: (typeof slots)[number]) =>
+    !!c && !c.pull && c.projector === null && c.route === route[slot].route
+      && (slot === "model" || (c.text === "Set up a model" && c.act === "onboarding:choose"));
+  check(
+    "T18 D7: once the projector lands the chip goes — the setup slot offers Set up a model again — and the model starts, once",
+    slots.every((s) => back(at(s, "landed"), s) && back(at(s, "resumeLanded"), s)
+      && r[s]?.answered === true && r[s]?.resumeAnswered === true
+      && same(at(s, "landed")?.calls, [PROJ, START]) && same(at(s, "resumeLanded")?.calls, ["status", PROJ, START])),
+    detail("landed", "resumeLanded"),
+  );
 }
 
 /* For the product owner: the card as D1 leaves it — the llama.cpp runtime
