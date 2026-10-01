@@ -613,6 +613,11 @@ const DL = {
       `models update` is replacing the binary under it (obActivateHeld). */
   landed: null,
   activateAfter: null,
+  /** Backlog 18 (Nadya, 01.10): a model whose weights landed while the agent
+      was already on another model — a cloud one set up meanwhile. It is not
+      switched to by itself: the card keeps "<model> is ready" with Switch
+      (obModelLanded). Gone on a restart, which is fine. */
+  ready: null,      // {id}
 };
 /* Backlog 18 — the download card's own state (renderDlcard). Declared up
    here for the same reason as DL: the first top-level render() reads it. */
@@ -8454,6 +8459,10 @@ function dlCardRows() {
       state: x.cancelled ? 'cancelling' : XPULL.key === x.key && XPULL.sawProgress ? 'active' : 'starting',
       track: XPULL, rate: XPULL.rate, samples: XPULL.samples});
   }
+  // Backlog 18: landed while the agent was on another model; it waits for a Switch.
+  if (DL.ready && !rows.some((r) => r.kind === 'weights' && r.id === DL.ready.id)) {
+    rows.push({src:'ready', kind:'weights', id: DL.ready.id, state:'ready'});
+  }
   // A failure whose model is downloading again is that download's row now.
   DL.failed.forEach((f) => {
     if (rows.some((r) => r.kind === f.kind && r.id === f.id)) return;
@@ -8513,6 +8522,7 @@ function dlCardPercent(r) {
 /** The line under a row's bar. No bar figures before the first real sample. */
 function dlCardLine(r) {
   if (r.state === 'failed') return r.error;
+  if (r.state === 'ready') return 'Downloaded. The agent stays on its current model until you switch.';
   if (r.state === 'queued') return 'Queued';
   if (r.state === 'cancelling') return 'Cancelling…';
   const lead = r.kind === 'projector' ? 'Vision projector · ' : '';
@@ -8527,6 +8537,16 @@ function dlCardLine(r) {
 
 function dlCardRowHTML(r, i) {
   const name = dlCardName(r);
+  if (r.state === 'ready') {
+    // No bar: there is nothing left to move. Switch is the start it did not get by itself.
+    return '<li class="dlc-row is-ready" data-dlc-row="' + i + '">'
+      + '<div class="dlc-top"><span class="dlc-name" title="' + esc(r.id) + '">' + esc(name + ' is ready') + '</span>'
+      + '<button class="btn btn-t xs dlc-switch" data-act="dlc:switch" aria-label="Switch to ' + esc(name) + '"'
+      + ' title="Switch the agent to ' + esc(name) + '">Switch</button>'
+      + '<button class="iconbtn sm dlc-x" data-act="dlc:keep" aria-label="Dismiss, and keep the current model"'
+      + ' title="Keep the current model">' + ic('x') + '</button></div>'
+      + '<p class="dlc-line">' + esc(dlCardLine(r)) + '</p></li>';
+  }
   const failed = r.state === 'failed';
   const ctl = failed
     ? '<button class="btn btn-t xs dlc-retry" data-act="dlc:retry:' + r.n + '">' + ic('retry') + 'Retry</button>'
@@ -8544,14 +8564,20 @@ function dlCardRowHTML(r, i) {
 
 /** Open: a header with the count and the fold, the rows, the cloud offer. */
 function dlCardHTML(rows) {
-  const moving = rows.some((r) => r.state !== 'failed');
+  const moving = rows.some((r) => r.state !== 'failed' && r.state !== 'ready');
+  const failed = rows.some((r) => r.state === 'failed');
+  const ready = rows.some((r) => r.state === 'ready');
   const n = rows.length;
   /* The setup screen's "set up a cloud model meanwhile" offer moved here with
-     the download it was about. Not for an embedding model: nothing waits on it. */
-  const offer = rows.some((r) => r.kind !== 'embedding');
+     the download it was about. Not for an embedding model: nothing waits on it.
+     Not beside a ready row alone either: that model landed while the agent was
+     already on another one. */
+  const offer = (moving || failed) && rows.some((r) => r.kind !== 'embedding' && r.state !== 'ready');
+  const title = moving ? 'Downloading' : failed && ready ? 'Downloads' : failed ? 'Download failed' : 'Download complete';
+  const glyph = moving ? ic('download') : failed ? ic('alert') : ic('check');
   return '<section class="dlc" role="region" aria-label="Downloads">'
-    + '<div class="dlc-head"><span class="dlc-ttl' + (moving ? '' : ' is-failed') + '">' + ic(moving ? 'download' : 'alert')
-      + '<span>' + (moving ? 'Downloading' : 'Download failed') + '</span>'
+    + '<div class="dlc-head"><span class="dlc-ttl' + (moving ? '' : failed ? ' is-failed' : ' is-done') + '">' + glyph
+      + '<span>' + title + '</span>'
       // A pill, not part of the sentence — the DownloadPanel's own choice.
       + (n > 1 ? '<span class="dlc-count">' + n + '</span>' : '') + '</span>'
       + '<button class="iconbtn sm dlc-fold" data-act="dlc:fold" aria-label="Collapse downloads" aria-expanded="true"'
@@ -8565,8 +8591,10 @@ function dlCardHTML(rows) {
 /** Folded: a round button that is still a live count. Red when one failed. */
 function dlCardBadgeHTML(rows) {
   const failed = rows.some((r) => r.state === 'failed');
+  const moving = rows.some((r) => r.state !== 'failed' && r.state !== 'ready');
   return '<button class="dlc-badge' + (failed ? ' has-failed' : '') + '" data-act="dlc:unfold" aria-expanded="false"'
-    + ' aria-label="Show downloads (' + rows.length + ')" title="' + (failed ? 'A download failed' : 'Downloading') + '">'
+    + ' aria-label="Show downloads (' + rows.length + ')" title="'
+    + (failed ? 'A download failed' : moving ? 'Downloading' : 'Download complete') + '">'
     + ic('download') + '<span class="dlc-n">' + rows.length + '</span></button>';
 }
 
@@ -8577,6 +8605,10 @@ function renderDlcard() {
      setup — the wizard covers the whole window, toolbar included, and its
      own download screen carries the progress — so the card comes up when
      the wizard hands over the agent. */
+  /* A ready model the agent has got onto some other way (the picker,
+     Settings) needs no Switch any more. */
+  if (DL.ready && liveBackend() === 'local'
+      && (((LIVE_CONFIG && LIVE_CONFIG.localModels) || {}).managed || {}).modelId === DL.ready.id) DL.ready = null;
   const rows = OB.open ? [] : dlCardRows();
   if (!rows.length) {
     if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
@@ -8693,6 +8725,18 @@ function dlCardAct(verb) {
     return;
   }
   if (v === 'cancel') { dlCancel(); return; }
+  /* Backlog 18: the ready row. Switch is exactly the start the model did not
+     get by itself — obActivateLocal, through the same switch funnel as the
+     composer's picker (swxRun), waiting for a running turn to end as it
+     always has. Dismiss keeps the current model; the downloaded one stays
+     in the picker and Settings. */
+  if (v === 'switch' || v === 'keep') {
+    const id = DL.ready && DL.ready.id;
+    DL.ready = null;
+    render();
+    if (v === 'switch' && id) obActivateLocal(id);
+    return;
+  }
   if (v.indexOf('drop:') === 0) {
     // A queued job has no child yet: it simply leaves the queue.
     const rest = v.slice(5);
@@ -10240,7 +10284,7 @@ function obPullFinished(job, ev) {
   if (pending && BR && BR.hfProjector) { obFetchProjector(job.id, pending); return; }
   // Backlog 18: a re-queued runtime is now running behind these weights; the start waits for it.
   if (dlBusy()) { DL.activateAfter = job.id; return; }
-  obActivateLocal(job.id);
+  obModelLanded(job.id);
 }
 
 /** The start held back while the queue drained (DL.activateAfter). */
@@ -10248,7 +10292,40 @@ function obActivateHeld() {
   const id = DL.activateAfter;
   if (!id || dlBusy() || DL.dry) return;
   DL.activateAfter = null;
-  obActivateLocal(id);
+  obModelLanded(id);
+}
+
+/**
+ * Backlog 18 (Nadya, 01.10): a setup download has landed. The model starts by
+ * itself — the obActivateLocal it always had — unless the agent already runs
+ * on another model by now (obRunsOnAnotherModel): then it is not switched
+ * under the person, and the card asks instead ("<model> is ready" · Switch).
+ * The picker's list is re-read either way, so the model reads as on disk there.
+ */
+function obModelLanded(id) {
+  if (!obRunsOnAnotherModel()) { obActivateLocal(id); return; }
+  DL.ready = {id};
+  bswSnapshot();
+  render();
+}
+
+/**
+ * Whether the agent runs on a model other than the managed local one this
+ * download is for — a cloud provider with a model, Fusion, or an endpoint of
+ * the person's own that answers. Read off the route as it stands at this
+ * moment (a switch on its way counts, as selBackend paints it), not off how
+ * it got there: the card's "Set up a cloud model meanwhile", the composer's
+ * picker and Settings all count.
+ */
+function obRunsOnAnotherModel() {
+  if (!LIVE_CONFIG) return false;
+  const backend = selBackend();
+  if (backend === 'local') return false;
+  if (backend === 'fusion') return true;
+  if (backend === 'custom') return !composerNeedsSetup();
+  const id = selActiveProviderId();
+  const p = ((LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === id) || activeProvider();
+  return !!(p && p.kind !== 'llama-server' && ((SWX.want && SWX.want.model) || p.defaultChatModel || p.model));
 }
 
 /**
@@ -10272,7 +10349,7 @@ function obFetchProjector(id, pending) {
       return;
     }
     render();
-    obActivateLocal(id);
+    obModelLanded(id);
   });
 }
 
@@ -21317,7 +21394,7 @@ if (typeof window !== 'undefined') {
     DL.queue = jobs.slice(1);
     DL.error = null; DL.rate = null; DL.last = null; DL.samples = 0;
     // A fresh run: nothing from an earlier seed is left on the card.
-    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null;
+    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null;
     dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
     const head = jobs[0];
     // The same shape dlNext builds — including `sawProgress:false`, so a
@@ -21328,7 +21405,7 @@ if (typeof window !== 'undefined') {
   };
   window.__dlClear = () => {
     DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null;
-    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null;
+    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null;
     dlResetPhases(false); render(); return window.__dl();
   };
   window.__obImport = () => ({
