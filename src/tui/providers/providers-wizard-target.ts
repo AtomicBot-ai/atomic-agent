@@ -20,6 +20,7 @@ import {
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
+import { openAiChatPathPrefix } from "../../llm/provider/openai/openai-chat-path.js";
 import {
   DEFAULT_OPENROUTER_BASE,
   OPENROUTER_APP_CATEGORIES,
@@ -260,7 +261,9 @@ export function endpointForKind(
       apiPathPrefix: GEMINI_API_PATH_PREFIX,
     };
   }
-  return { baseUrl: baseUrlForWizard(wizard), apiPathPrefix: "/v1" };
+  // The key check and the contract probe both post `<prefix>/chat/completions`.
+  const baseUrl = baseUrlForWizard(wizard);
+  return { baseUrl, apiPathPrefix: openAiChatPathPrefix(baseUrl) };
 }
 
 /**

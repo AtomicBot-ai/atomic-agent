@@ -97,7 +97,7 @@ export interface ProviderContractProbeTarget {
   readonly label: string;
   /** API root without the version prefix, already normalized. */
   readonly baseUrl: string;
-  /** Version prefix the service uses: `/v1`, Gemini's `/v1beta/openai`. */
+  /** Prefix of the chat route: `/v1`, Gemini's `/v1beta/openai`, Perplexity's `""`. */
   readonly apiPathPrefix: string;
   /** Trimmed key, or `""` for a service that authenticates without one. */
   readonly apiKey: string;
