@@ -247,8 +247,11 @@ try {
      ============================================================ */
   step(1, 'first run opens on the intro');
   await app.waitFor(`!!document.querySelector('#onboarding')`, { timeoutMs: 40000 });
+  /* Backlog 03: the intro leaves by itself once the setup data is read, so
+     the wizard may already be past it when this looks — either is it having
+     opened by itself. */
   check('the wizard opened by itself on a fresh state dir',
-    await app.js(`document.querySelector('#onboarding').className.includes('ob-intro-layer')`));
+    await app.js(`!!(window.__ob && window.__ob().open && ['intro', 'choose'].includes(window.__ob().step))`));
 
   step(2, 'press on the intro to get to the backend choice');
   /* The intro takes two presses while the tagline is still typing — the

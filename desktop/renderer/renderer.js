@@ -378,10 +378,10 @@ const OB_COPY = {
   // onboarding-choose-step.tsx:30-33
   chooseExplainer: [
     'You can add the others later.'],
-  // onboarding-intro-step.tsx:53 / :12, logo.tsx TAGLINE
+  // onboarding-intro-step.tsx:12, logo.tsx TAGLINE. Not the TUI's :53
+  // "press any key" line: the desktop's card leaves by itself (backlog 03).
   tagline: 'Local AI-First Agent',
   taglineMsPerChar: 45,
-  pressAnyKey: 'Click anywhere, or press any key',
   wordmark: 'Atomic Agent',
   // onboarding-header.tsx:9
   headerWordmark: 'Atomic Agent',
@@ -7743,11 +7743,40 @@ function obSkyStop() {
   if (OBSKY.typer) { clearInterval(OBSKY.typer); OBSKY.typer = 0; }
 }
 
-/** One input, one dismissal. The TUI's two-stage advance
- *  (use-intro-input.ts:57-67) existed because the tagline typed itself in and
- *  the first key was needed to hurry it; the card is now at rest the moment it
- *  exists, so a second press would just be a press that did nothing — and the
- *  card says "click anywhere, or press any key", which has to be true. */
+/* Backlog 03 — the title card is a loader, not a gate. It used to wait for a
+   click or a key, under a line asking for one, while openOnboarding read what
+   the next screens need (the RAM, the key names, the config, which providers
+   are ready). It now leaves by itself once those reads are in, but not before
+   it has been up OB_INTRO_MIN_MS — a card, not a flicker — and at
+   OB_INTRO_MAX_MS whatever the reads are doing. An input still skips it at
+   once. Each timer carries the flow it was armed for: a card closed and
+   opened again in between is a new card, and only its own timers move it. */
+const OB_INTRO_MIN_MS = 700;
+const OB_INTRO_MAX_MS = 5000;
+
+/** The card is up: note when, and arm the ceiling. */
+function obIntroArm(gen) {
+  OB.introShownAt = Date.now();
+  setTimeout(() => obIntroAuto(gen), OB_INTRO_MAX_MS);
+}
+
+/** The reads are in: leave as soon as the card has had its minimum. */
+function obIntroLoaded(gen) {
+  const up = Date.now() - (OB.introShownAt || 0);
+  setTimeout(() => obIntroAuto(gen), Math.max(0, OB_INTRO_MIN_MS - up));
+}
+
+function obIntroAuto(gen) {
+  if ((OB.openGen || 0) !== gen) return;
+  obIntroAdvance();
+}
+
+/** One input, one dismissal — and, since backlog 03, the timers above. The
+ *  TUI's two-stage advance (use-intro-input.ts:57-67) existed because the
+ *  tagline typed itself in and the first key was needed to hurry it; the card
+ *  is at rest the moment it exists, so a second press would just be a press
+ *  that did nothing. It no longer asks for a press at all: an input only makes
+ *  it leave sooner. */
 function obIntroAdvance() {
   if (!OB.open || OB.step !== 'intro') return;
   // Recorded as it is dismissed, not at the end of the flow
@@ -7791,19 +7820,20 @@ function obIntroHTML() {
      build this is, on one indigo block with a soft brand glow behind the
      mark. Nothing animates, and it sizes to the window.
 
-     `.ob-introc` keeps exactly its five children — the glow belongs to the
-     card, not the column — and the rule stays as a spacer: the smoke reads
-     both, and Soft Tactile draws no 3px rules (see onboarding.css). */
-  /* r2 (DMG feedback): the build line is gone from the card and the rail —
-     `.ob-introc` now holds four children. The build is still in Settings
-     and on the empty chat's card. */
+     `.ob-introc` holds the card's own children only — the glow belongs to
+     the card, not the column — and the rule stays as a spacer: the smoke
+     reads both, and Soft Tactile draws no 3px rules (see onboarding.css). */
+  /* r2 (DMG feedback): the build line is gone from the card and the rail.
+     The build is still in Settings and on the empty chat's card.
+     Backlog 03: so is "Click anywhere, or press any key" — the card leaves
+     by itself once the setup data is read (obIntroArm) — and `.ob-introc`
+     holds three children: the mark, the name and the rule. */
   return '<div id="ob-intro">'
     + '<span class="ob-glow" aria-hidden="true"></span>'
     + '<div class="ob-introc">'
       + '<span class="ob-markbig">' + MARK_COLOR.replace('width="16" height="16"', 'width="96" height="96"') + '</span>'
       + '<h1 class="ob-word">' + esc(OB_COPY.wordmark) + '</h1>'
       + '<hr class="ob-rule">'
-      + '<span class="ob-any">' + esc(OB_COPY.pressAnyKey) + '</span>'
     + '</div></div>';
 }
 
@@ -9933,6 +9963,7 @@ async function openOnboarding(at) {
   });
   // A new flow: any settle still out for the previous one must not touch it (obSettle).
   OB.openGen = (OB.openGen || 0) + 1;
+  const gen = OB.openGen;
   // A re-run (the menu's `onboarding`, or --onboarding) stamps again.
   for (const leaf of Object.keys(OB_STAMPED)) delete OB_STAMPED[leaf];
   // The one place a fresh intro starts from zero — obSkyStart itself
@@ -9940,6 +9971,8 @@ async function openOnboarding(at) {
   obSkyReset();
   OB_LAST_STEP = first;
   render();
+  // Backlog 03: the title card is the loader for the reads below.
+  if (first === 'intro') obIntroArm(gen);
   if (!BR) return;
   OB.ram = await loadHostRamGb();
   OB.keyEnv = (await BR.keyEnv()) || {};
@@ -9952,6 +9985,7 @@ async function openOnboarding(at) {
   const ready = await BR.providersReady();
   OB.cloudReady = !!(ready && ready.ok && (ready.ids || []).length > 0);
   render();
+  if (first === 'intro') obIntroLoaded(gen);
 }
 
 /* r5 review fix (item 7) — OB.cloudReady used to be written exactly once, in
@@ -10079,7 +10113,7 @@ function obKeydown(e) {
   const inField = (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
     && !!(target.closest && target.closest('#onboarding'));
   if (OB.step === 'intro') {
-    // "press any key", taken literally (use-intro-input.ts).
+    // Any key skips the card (use-intro-input.ts); it also leaves by itself.
     e.preventDefault(); e.stopPropagation();
     obIntroAdvance();
     return;
@@ -10316,7 +10350,19 @@ if (BR) {
      finished. Either one opens the wizard.
      r5 integration — the cloud half of needsOnboarding() needs
      providersReady()'s key check (item 7), so the inferred half waits for
-     that second round trip; the latched half does not depend on it. */
+     that second round trip; the latched half does not depend on it.
+     Backlog 03 — and the latched half waits for nothing at all. It used to
+     ride the same round trips (firstRun, then `atag config get`, then the
+     key check), so a fresh install showed the chat window for a second or
+     so before the wizard covered it. Main now hands the latch over with
+     the window (BR.freshAtBoot, read by the preload before this script
+     runs), and the wizard opens in a microtask queued here: that runs as
+     soon as this script has finished — every declaration openOnboarding
+     reaches has run by then — and before the browser paints anything, so
+     the first frame is the title card. The round trip below stays as the
+     inferred half, and as the latched half for a bridge that could not say. */
+  const freshAtBoot = !!BR.freshAtBoot;
+  if (freshAtBoot) queueMicrotask(() => openOnboarding());
   if (BR && BR.build) BR.build().then((b) => { BUILD = b; render(); }).catch(() => {});
   /* Calm (S6): the host's RAM once at boot, so the composer's model picker
      ranks and labels rows with the same figure as the wizard and Settings
@@ -10324,11 +10370,14 @@ if (BR) {
      every row said "no RAM guidance"). */
   loadHostRamGb().then((n) => { if (n) render(); }).catch(() => {});
   if (BR && BR.unverified) BR.unverified().then((ids) => { UNVERIFIED = ids || []; render(); }).catch(() => {});
-  Promise.all([BR.firstRun ? BR.firstRun() : Promise.resolve(null), BR.configGet()]).then(async ([fr, res]) => {
+  (BR.firstRun ? BR.firstRun() : Promise.resolve(null)).then(async (fr) => {
     FIRSTRUN = fr;
+    if (freshAtBoot) return;
+    if (fr && fr.fresh) { openOnboarding(); return; }
+    const res = await BR.configGet();
     let ids = null;
     try { const ready = await BR.providersReady(); if (ready && ready.ok) ids = ready.ids || []; } catch (e) { ids = null; }
-    if ((fr && fr.fresh) || (res && res.ok && needsOnboarding(res.config, ids))) openOnboarding();
+    if (res && res.ok && needsOnboarding(res.config, ids)) openOnboarding();
   });
 
   const prevAct = act;
@@ -10407,10 +10456,11 @@ function obVisibilityChanged(hidden) {
   else if (OB.open && OB.step === 'intro') obSkyResume();
 }
 document.addEventListener('visibilitychange', () => obVisibilityChanged(document.hidden));
-/* "press any key" answered on every channel the TUI answers it on —
+/* The skip, answered on every channel the TUI answers "press any key" on —
    keys, a mouse press, a wheel notch and a non-empty paste
    (intro-input.ts:26-41). A release is not a press, and an empty paste
-   is not a keystroke. */
+   is not a keystroke. The card no longer asks for any of them (backlog 03):
+   it leaves by itself, and these only make it leave sooner. */
 /* The card leaves on the whole gesture, not on the press.
    It used to dismiss on `pointerdown`, which was survivable while the intro
    took two inputs — the first only finished the typewriter. Now that one

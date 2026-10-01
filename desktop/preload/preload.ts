@@ -238,6 +238,9 @@ contextBridge.exposeInMainWorld("atomic", {
    *  `tuiSetupPresent` reports env var NAMES only; `importFromTui` copies only
    *  the flags that are ticked and never touches the source. */
   firstRun: () => ipcRenderer.invoke("app:firstRun"),
+  /** Backlog 03 — `firstRun().fresh`, handed over with the window rather than
+   *  asked for, so the renderer can open the wizard before its first paint. */
+  freshAtBoot: process.argv.includes("--atomic-fresh-state"),
   /** Backlog 03 — the boot frames above; empty unless main armed the probe. */
   bootPaint: () => BOOT_PAINT,
   tuiSetupPresent: () => ipcRenderer.invoke("app:tuiSetupPresent"),

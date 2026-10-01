@@ -92,19 +92,25 @@ try {
      PART 1 — the real first run. Mouse only, no fixtures at all.
      ================================================================ */
   await app.waitFor('#onboarding', { timeout: 90000 });
-  check('the wizard opens itself on a fresh state directory', (await step()) === 'intro');
-  await snapshot('intro');
+  /* Backlog 03: the title card leaves by itself once the setup data is read,
+     so by the time this driver looks it may already be on the choose step.
+     Either one is the wizard having opened itself. */
+  const first = await step();
+  check('the wizard opens itself on a fresh state directory', first === 'intro' || first === 'choose', first);
+  if (first === 'intro') {
+    await snapshot('intro');
 
-  /* ONE click leaves the title card. It used to take two — the first
-     finished a typewriter reveal that no longer exists — and a driver still
-     spending two inputs here spent the second one on the setup screen behind
-     it, choosing a route nobody asked for.
+    /* ONE click leaves the title card. It used to take two — the first
+       finished a typewriter reveal that no longer exists — and a driver still
+       spending two inputs here spent the second one on the setup screen behind
+       it, choosing a route nobody asked for.
 
-     `scroll: false` for the same reason the harness documents: the
-     scroll-into-view wheel is itself an input the card answers, so a
-     scrolling click is two inputs, not one. */
-  await app.clickSel('#onboarding', { scroll: false });
-  check('one click leaves the title card', (await step()) === 'choose', await step());
+       `scroll: false` for the same reason the harness documents: the
+       scroll-into-view wheel is itself an input the card answers, so a
+       scrolling click is two inputs, not one. */
+    await app.clickSel('#onboarding', { scroll: false });
+    check('one click leaves the title card', (await step()) === 'choose', await step());
+  }
   await snapshot('choose');
 
   /* --- THE ROOT DEFECT, as Calm S6 redefined it: one click on a row must

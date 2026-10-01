@@ -411,8 +411,15 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       webviewTag: false,
       spellcheck: false,
-      // Backlog 03: the probe's frame log (preload.ts), armed for that launch only.
-      additionalArguments: FIRST_RUN_PROBE ? ["--atomic-boot-probe"] : [],
+      /* Backlog 03: the first-run latch rides in with the window, so the
+         renderer opens the wizard before its first paint instead of after a
+         round trip (preload.ts freshAtBoot) — on a fresh install the chat
+         window used to show first. The probe's frame log is armed for that
+         launch only. */
+      additionalArguments: [
+        ...(DESKTOP_STATE_WAS_FRESH ? ["--atomic-fresh-state"] : []),
+        ...(FIRST_RUN_PROBE ? ["--atomic-boot-probe"] : []),
+      ],
     },
   });
 
@@ -8377,7 +8384,11 @@ async function onboardingTest(
        again after four awaited IPC round trips. There is nothing to restart
        now — the card is at rest the moment it exists — so what the second
        render must not disturb is the card's own content. */
-    await js<unknown>("window.__obMenuOpen()");
+    /* Backlog 03: the card now leaves by itself once openOnboarding's reads
+       are in (700 ms at the soonest). This check is about a repaint, not the
+       card's timers, so this flow's own are retired — they only act on the
+       flow generation they were armed for. */
+    await js<unknown>("(window.__obMenuOpen(), OB.openGen += 1)");
     const openedNow = await js<ObState>("window.__ob()");
     await new Promise((r) => setTimeout(r, 250));
     const cardBefore = await js<string>("((document.querySelector('.ob-introc')||{}).textContent||'').trim()");
@@ -8414,8 +8425,9 @@ async function onboardingTest(
        single input that leaves.
 
        r2 (DMG feedback): the build line and the keycap hint strip are gone
-       from every first-run screen, at the operator's request — so the card
-       has four children, and neither a build nor a strip is drawn. */
+       from every first-run screen, at the operator's request. Backlog 03:
+       so is the "Click anywhere, or press any key" line — the card leaves by
+       itself — so it has three children, and none of the three is drawn. */
     let ob = await js<ObState>("window.__obOpen('intro')");
     await new Promise((r) => setTimeout(r, 300));
     const card = await js<{
@@ -8437,11 +8449,11 @@ async function onboardingTest(
       };
     })()`);
     check(
-      "wizard: the title card is the mark, the name and one rule — no build line, no hint strip",
+      "wizard: the title card is the mark, the name and one rule — no build line, no hint strip, no dismiss line",
       ob.step === "intro" && !card.canvas && !card.head
         && card.word === "Atomic Agent" && card.rule === 3
         && card.build === 0 && card.hints === 0
-        && card.dismissLabel.length > 0 && card.extras === 4,
+        && card.dismissLabel === "" && card.extras === 3,
       JSON.stringify(card),
     );
     check(
@@ -8450,7 +8462,7 @@ async function onboardingTest(
       `canvas=${card.canvas}`,
     );
 
-    // One input dismisses it, which is what the card says.
+    // One input still dismisses it at once (the test jump arms no timers).
     ob = await js<ObState>("window.__obOpen('intro')");
     await new Promise((r) => setTimeout(r, 200));
     const afterFirst = await js<ObState>("window.__obKey('down')");

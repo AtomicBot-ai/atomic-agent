@@ -58,9 +58,9 @@
 #onboarding > *{-webkit-app-region:no-drag}
 
 /* ---------------- the title card (ON-01) ----------------
-   `.ob-introc` keeps exactly its five children (mark, name, rule, build,
-   dismiss line) — the smoke counts them — so the glow is a sibling and the
-   dismiss line is placed against the card, not the column. The rule is
+   `.ob-introc` holds only the card's own children (mark, name, rule) — the
+   smoke counts them — so the glow is a sibling. The build line went in r2,
+   and the dismiss line in backlog 03: the card leaves by itself. The rule is
    kept as a 3px transparent spacer: Soft Tactile draws no 3px rules, and
    the smoke still reads its border width. Nothing here animates. */
 #onboarding.ob-intro-layer{display:block;background:var(--indigo)}
@@ -75,8 +75,6 @@
 .ob-introc .ob-markbig svg{display:block;width:96px;height:96px}
 .ob-introc .ob-word{position:relative;margin:24px 0 0;font:700 64px/1.05 var(--font-ui);letter-spacing:-.055em;color:var(--on-strong)}
 .ob-introc .ob-rule{position:relative;width:0;height:0;margin:0;border:0;border-top:3px solid transparent}
-.ob-introc .ob-any{position:absolute;left:0;right:0;bottom:34px;font:400 13px/1.4 var(--font-ui);
-  letter-spacing:0;text-transform:none;color:var(--indigo-muted)}
 
 /* ---------------- the rail ----------------
    Room at the top for the real macOS traffic lights (hiddenInset at 20,20);
