@@ -8,6 +8,7 @@ import {
 import type { ModelCatalogEntry } from "../llm/provider/model-resolver.js";
 import { searchModels } from "../llm/provider/model-search.js";
 import { fetchOpenAiCompatModels } from "../llm/provider/openai/fetch-openai-compat-models.js";
+import { fetchGeminiModels } from "../llm/provider/gemini/fetch-gemini-models.js";
 import {
   listAimlapiChatPicks,
   refreshAimlapiChatCatalogFromApi,
@@ -34,6 +35,16 @@ export type ModelSearchHit = {
   providerId: string;
   id: string;
   entry?: ModelCatalogEntry | undefined;
+};
+
+/**
+ * A live model list that was asked for and did not come back, with the
+ * reason in the provider's words. Collected rather than thrown: one
+ * provider being down must not fail a search the others can answer.
+ */
+export type LiveListFailure = {
+  providerId: string;
+  reason: string;
 };
 
 export type ModelsSearchOptions = {
@@ -89,6 +100,7 @@ export function parseModelsSearchArgs(
 export async function collectHits(
   entries: readonly LlmProviderConfigEntry[],
   refresh: boolean,
+  failures: LiveListFailure[] = [],
 ): Promise<readonly ModelSearchHit[]> {
   const hits: ModelSearchHit[] = [];
   for (const entry of entries) {
@@ -108,7 +120,7 @@ export async function collectHits(
     // only ever adds ids — after `--refresh` it is the fresh catalog.
     for (const pick of livePicks(entry)) add(pick.id, pick.entry);
     for (const model of entry.userModels ?? []) add(model.id);
-    if (refresh) for (const id of await liveCompatModels(entry)) add(id);
+    if (refresh) for (const id of await liveModels(entry, failures)) add(id);
   }
   return hits;
 }
@@ -137,9 +149,27 @@ function livePicks(
   return [];
 }
 
-async function liveCompatModels(
+/**
+ * The provider's own model list, for the kinds that ship no catalog: the
+ * entry's `/v1/models`, or Gemini's `/v1beta/openai/models`.
+ *
+ * A failure lands in `failures` and yields no ids; the caller decides
+ * whether it is worth saying.
+ */
+async function liveModels(
   entry: LlmProviderConfigEntry,
+  failures: LiveListFailure[],
 ): Promise<readonly string[]> {
+  if (entry.kind === "gemini") {
+    // Google lists its models only for a key: without one the route
+    // answers 404 "Requested entity was not found", which reads as a
+    // wrong URL rather than as the missing key it is.
+    if (!entry.apiKey) {
+      failures.push({ providerId: entry.id, reason: missingKeyReason(entry) });
+      return [];
+    }
+    return listOrRecord(entry, failures, () => fetchGeminiModels(entry.apiKey));
+  }
   if (!entry.baseUrl) return [];
   if (
     entry.kind !== "openai-compatible" &&
@@ -147,11 +177,36 @@ async function liveCompatModels(
   ) {
     return [];
   }
+  const baseUrl = entry.baseUrl;
+  return listOrRecord(entry, failures, () =>
+    fetchOpenAiCompatModels(baseUrl, entry.apiKey),
+  );
+}
+
+async function listOrRecord(
+  entry: LlmProviderConfigEntry,
+  failures: LiveListFailure[],
+  list: () => Promise<readonly string[]>,
+): Promise<readonly string[]> {
   try {
-    return await fetchOpenAiCompatModels(entry.baseUrl, entry.apiKey);
-  } catch {
+    return await list();
+  } catch (err) {
+    failures.push({
+      providerId: entry.id,
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return [];
   }
+}
+
+/** Names the variable the key would come from, as `resolveLlmProviderApiKey` reads it. */
+function missingKeyReason(entry: LlmProviderConfigEntry): string {
+  // The runtime entry is the file entry spread (`mapUserLlmToRuntime`),
+  // so a preset's own variable is on it even though this type omits it.
+  const named = (entry as { apiKeyEnvVar?: unknown }).apiKeyEnvVar;
+  const envVar =
+    typeof named === "string" && named.length > 0 ? named : "GEMINI_API_KEY";
+  return `no API key — set ${envVar}`;
 }
 
 function formatHit(hit: ModelSearchHit): string {
@@ -194,7 +249,19 @@ export async function runModelsSearch(
     return 1;
   }
 
-  const hits = await collectHits(entries, options.refresh);
+  const failures: LiveListFailure[] = [];
+  const hits = await collectHits(entries, options.refresh, failures);
+  if (hits.length === 0 && failures.length > 0) {
+    // The live list was the whole answer and it did not come back. Say
+    // why, in the provider's words, rather than "ships no catalog": the
+    // desktop's model step shows this line under the key it just took.
+    for (const failure of failures) {
+      process.stderr.write(
+        `could not list models from ${JSON.stringify(failure.providerId)}: ${failure.reason}\n`,
+      );
+    }
+    return 1;
+  }
   if (hits.length === 0) {
     process.stderr.write(
       "no searchable cloud models: the configured providers ship no catalog. " +

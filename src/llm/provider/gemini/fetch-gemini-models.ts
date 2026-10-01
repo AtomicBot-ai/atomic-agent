@@ -10,6 +10,7 @@ import {
   DEFAULT_GEMINI_BASE,
   GEMINI_API_PATH_PREFIX,
 } from "./gemini-provider.js";
+import { modelListHttpError } from "../openai/fetch-openai-compat-models.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -59,14 +60,31 @@ export async function fetchGeminiModels(
       signal: AbortSignal.timeout(10_000),
     },
   );
-  if (!res.ok) throw new Error(`http ${res.status}`);
+  if (!res.ok) throw await modelListHttpError(res, apiKey);
   const json = (await res.json()) as { data?: readonly { id?: unknown }[] };
-  const ids = (json.data ?? [])
-    .map((row) => row?.id)
-    .filter((id): id is string => typeof id === "string" && id.length > 0)
-    .sort((a, b) => a.localeCompare(b));
+  const ids = [
+    ...new Set(
+      (json.data ?? [])
+        .map((row) => row?.id)
+        .filter((id): id is string => typeof id === "string")
+        .map(chatModelId)
+        .filter((id) => id.length > 0),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
   if (ids.length === 0) throw new Error("server listed no models");
 
   cache.set(cacheKey(apiKey), { fetchedAt: Date.now(), ids });
   return ids;
+}
+
+/**
+ * The id as chat requests and saved configs spell it. Google's
+ * OpenAI-compatible list can name a model by its resource path,
+ * `models/gemini-3.8-flash`, while the provider default
+ * (`GEMINI_DEFAULT_CHAT_MODEL`), Google's own chat examples and every
+ * entry the wizards save say `gemini-3.8-flash`; a long-form id matches
+ * none of them.
+ */
+function chatModelId(id: string): string {
+  return id.startsWith("models/") ? id.slice("models/".length) : id;
 }

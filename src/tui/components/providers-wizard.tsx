@@ -50,10 +50,13 @@ function providerLabelForWizard(w: ProvidersWizardState): string {
  */
 function explainModelListError(error: string, w: ProvidersWizardState): string {
   const service = providerLabelForWizard(w);
-  if (error.includes("401") || error.includes("403")) {
+  // `http <status>` leads; the provider's own sentence may follow it, and
+  // a number inside that sentence is not the status.
+  const status = /^http (\d{3})\b/.exec(error)?.[1];
+  if (status === "401" || status === "403") {
     return `${service} rejected this key, check it belongs to ${service}`;
   }
-  if (error.includes("404")) {
+  if (status === "404") {
     return `${service} has no model list at this URL`;
   }
   return `could not list models from ${service} (${error})`;

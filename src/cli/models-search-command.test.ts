@@ -211,6 +211,129 @@ describe("runModelsSearch", () => {
     expect(err.join("")).toMatch(/no searchable cloud models/);
   });
 
+  describe("live lists of the kinds that ship no catalog", () => {
+    const GEMINI_MODELS_URL =
+      "https://generativelanguage.googleapis.com/v1beta/openai/models";
+
+    /** The entry the desktop wizard writes: the key lives in GEMINI_API_KEY. */
+    function writeGeminiConfig(): void {
+      writeFileSync(
+        getUserConfigPath(stateDir),
+        JSON.stringify({
+          version: USER_CONFIG_VERSION,
+          llm: {
+            activeTextProvider: "gemini",
+            activeEmbeddingProvider: "gemini",
+            toolTransport: "auto",
+            providers: [
+              { id: "gemini", kind: "gemini", apiKeyEnvVar: "GEMINI_API_KEY" },
+            ],
+          },
+        }),
+        "utf8",
+      );
+      resetConfigCache();
+    }
+
+    afterEach(() => {
+      delete process.env.GEMINI_API_KEY;
+      vi.unstubAllGlobals();
+    });
+
+    // The desktop's model step runs exactly this command; it exited 1
+    // with "no searchable cloud models" for every Gemini key.
+    it("lists Gemini's models with --refresh, under the ids its chat route takes", async () => {
+      process.env.GEMINI_API_KEY = "gm-search-list-key";
+      writeGeminiConfig();
+      const fetchMock = vi.fn(
+        async (_url: string, _init?: RequestInit) =>
+          new Response(
+            JSON.stringify({
+              object: "list",
+              data: [
+                { id: "models/gemini-3.8-flash", object: "model" },
+                { id: "models/gemini-3.5-flash-lite", object: "model" },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const code = await runModelsSearch([
+        " ",
+        "--provider",
+        "gemini",
+        "--limit",
+        "200",
+        "--json",
+        "--refresh",
+      ]);
+
+      expect(err.join("")).toBe("");
+      expect(code).toBe(0);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(GEMINI_MODELS_URL);
+      expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+        Authorization: "Bearer gm-search-list-key",
+      });
+      expect(JSON.parse(out.join(""))).toEqual([
+        { provider: "gemini", id: "gemini-3.5-flash-lite" },
+        { provider: "gemini", id: "gemini-3.8-flash" },
+      ]);
+    });
+
+    it("says the key was refused, in Google's words, instead of 'no catalog'", async () => {
+      process.env.GEMINI_API_KEY = "gm-search-refused-key";
+      writeGeminiConfig();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: 400,
+                  message: "Please pass a valid API key",
+                  status: "INVALID_ARGUMENT",
+                },
+              }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+        ),
+      );
+
+      const code = await runModelsSearch([
+        " ",
+        "--provider",
+        "gemini",
+        "--json",
+        "--refresh",
+      ]);
+
+      expect(code).toBe(1);
+      expect(out.join("")).toBe("");
+      const said = err.join("");
+      expect(said).toBe(
+        'could not list models from "gemini": http 400: Please pass a valid API key\n',
+      );
+      expect(said).not.toContain("gm-search-refused-key");
+    });
+
+    it("names the missing key instead of asking Google without one", async () => {
+      writeGeminiConfig();
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      expect(
+        await runModelsSearch([" ", "--provider", "gemini", "--refresh"]),
+      ).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(err.join("")).toMatch(
+        /^could not list models from "gemini": no API key/,
+      );
+    });
+  });
+
   // Last in the file on purpose: a live refresh writes the fetcher's
   // module-global pick cache, which outlives this test.
   it("--refresh searches the live catalog, not just the bundled snapshot", async () => {
