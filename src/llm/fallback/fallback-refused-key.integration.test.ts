@@ -33,7 +33,7 @@ import { describeFailedAttempts } from "./failed-attempts.js";
 import { ProviderFallbackChain } from "./provider-fallback-chain.js";
 
 /**
- * Item 29, the field report (desktop trace e508aeda, turn 1): the active
+ * Item 29, the field report (a desktop trace, turn 1): the active
  * provider is AI/ML API with a key that has a non-ASCII character in it,
  * `llm.fallback.chain` names DashScope, whose entry carries no key, and
  * the auto-appended local server had been stopped by the switch to cloud.
