@@ -1671,6 +1671,18 @@ let DRAIN_OWED = false;
    each `{queued, ahead, owed}`: S.queued, STEER.ahead and DRAIN_OWED as they
    were when the person left the chat. See stashQueue. */
 const QUEUES = new Map();
+/* 0.6.7 item 27: a new chat appears on the list as soon as its first message
+   is sent. The agent's list only counts a chat once it has a stored turn, and
+   a turn is stored when it ends, so the chat used to appear only when its
+   first reply landed. On a local model that is 30-90 s; on a turn waiting for
+   a provider it can be minutes. The TUI puts a stand-in on its rail as soon as
+   the first prompt is sent (chat-orchestrator.ts noteFirstPrompt), and so does
+   this. FIRST_TURNS: turnId → a new chat's first prompt, until the turn's
+   session_id frame names the session. PENDING_CHATS: sessionId → the stand-in
+   row, until the list has that chat with a turn, or its turn ends without
+   one. */
+const FIRST_TURNS = new Map();
+const PENDING_CHATS = new Map();
 const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
@@ -1862,10 +1874,14 @@ function sidebarTasks() {
   return {rows, hidden: all.length - rows.length, running: TASKS.filter((t) => t.status === 'running').length};
 }
 
-/** Chats: sessions with at least one saved turn, pinned first, newest first. */
+/** Chats: sessions with at least one saved turn, pinned first, newest first.
+    Item 27: a new chat whose first turn is still running stands where its
+    stored row will land, at the top of the unpinned ones. */
 function sidebarChats() {
   const pinnedSet = new Set(PREFS.pinned);
-  const all = SESSIONS.filter((s) => pinnedSet.has(s.id)).concat(SESSIONS.filter((s) => !pinnedSet.has(s.id)));
+  const stored = new Set(SESSIONS.map((s) => s.id));
+  const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
+  const all = SESSIONS.filter((s) => pinnedSet.has(s.id)).concat(pending, SESSIONS.filter((s) => !pinnedSet.has(s.id)));
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
   return {rows, hidden: all.length - rows.length};
 }
@@ -6566,7 +6582,9 @@ function applySessions(res) {
   SESSIONS.length = 0;
   res.data.sessions.forEach((x) => {
     if (!x || !x.id || !((x.turnCount || 0) > 0)) return;
-    const was = before.get(x.id);
+    // Item 27: a chat that was a stand-in keeps the name it showed, rather
+    // than showing its id until nameVisibleSessions names it again.
+    const was = before.get(x.id) || PENDING_CHATS.get(x.id);
     // 0.6.6: the agent's own name for the chat wins over its first prompt (session-titles.js).
     const title = sessionTitleOf(x) || (was && was.titled ? was.t : null);
     SESSIONS.push({
@@ -6579,6 +6597,7 @@ function applySessions(res) {
       turnCount:x.turnCount || 0,
     });
   });
+  settlePendingChats();
   return true;
 }
 
@@ -6678,6 +6697,9 @@ function startLiveTurn(text) {
   S.log.push(streaming);
   clearInterval(ticker);
   render();
+  // Item 27: with no session yet, this message opens a new chat, and the
+  // chat's row goes on the list when the stream names its session.
+  const opensChat = !S.agentSession;
   // The agent holds the session, so a turn sends the new message and the
   // session id — not a replay of everything said so far.
   // Backlog 25: read once. The person can open another chat before the
@@ -6696,8 +6718,32 @@ function startLiveTurn(text) {
     streaming.turn = res.turnId;
     // item 6: the sidebar's running dot follows the stream, not S.busy.
     RUNNING.set(res.turnId, session || null);
+    if (opensChat) FIRST_TURNS.set(res.turnId, text);
     renderSidebar();
   });
+}
+
+/** Item 27: the stream named the session a new chat's first turn runs in.
+    Its stand-in row goes on the list, named by that first message, the way
+    nameVisibleSessions names a stored row. */
+function noteFirstPrompt(turnId, sid) {
+  const text = FIRST_TURNS.get(turnId);
+  if (text === undefined) return;
+  FIRST_TURNS.delete(turnId);
+  if (!sid || PENDING_CHATS.has(sid) || SESSIONS.some((s) => s.id === sid)) return;
+  PENDING_CHATS.set(sid, {id:sid, t:String(text).trim().replace(/\s+/g, ' ').slice(0, 72) || '(empty)',
+    named:true, titled:false, updatedAt:Date.now(), status:'', turnCount:0, pending:true});
+}
+
+/** Item 27: after the list is read again, a stand-in goes once the list has
+    its chat, or once its first turn is over and the list still does not
+    (the turn ended with nothing stored, for example because the agent
+    restarted under it). */
+function settlePendingChats() {
+  const running = new Set(RUNNING.values());
+  for (const id of [...PENDING_CHATS.keys()]) {
+    if (SESSIONS.some((s) => s.id === id) || !running.has(id)) PENDING_CHATS.delete(id);
+  }
 }
 
 /* ---------------------------------------------------------------
@@ -6798,12 +6844,14 @@ function onChatEvent(ev) {
       RUNNING.set(ev.turnId, sid);
       // Backlog 26: a new chat's queue, waiting under its first turn, now goes by the chat's session.
       moveQueue('turn:' + ev.turnId, sid);
+      noteFirstPrompt(ev.turnId, sid);   // item 27: a new chat is on the list from here
       renderSidebar();
     }
     if (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') {
       const sid = RUNNING.get(ev.turnId);
       RUNNING.delete(ev.turnId);
       queueTurnEnded(sid, ev.turnId);   // Backlog 26
+      FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       // Review fix: the turn is over, so nothing of it is waiting for an
       // approval any more. Without this the row kept saying "waiting for your
