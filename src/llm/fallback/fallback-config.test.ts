@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveFallbackChain,
+  withoutKeylessLinks,
   withoutUnbuiltLinks,
   DEFAULT_FALLBACK_TIMING,
 } from "./fallback-config.js";
@@ -276,5 +277,28 @@ describe("withoutUnbuiltLinks", () => {
     const input = { chain: ["gemini", "local-llama"], timing };
     expect(withoutUnbuiltLinks(input, () => true)).toBe(input);
     expect(withoutUnbuiltLinks(input, () => false).chain).toEqual(["gemini"]);
+  });
+});
+
+describe("withoutKeylessLinks", () => {
+  const timing = DEFAULT_FALLBACK_TIMING;
+  it("skips a fallback link with no key, and reports it as skipped", () => {
+    const skipped: string[] = [];
+    const out = withoutKeylessLinks(
+      { chain: ["aimlapi", "dashscope", "local-llama"], timing },
+      (id) => id === "dashscope",
+      (id) => skipped.push(id),
+    );
+    expect(out.chain).toEqual(["aimlapi", "local-llama"]);
+    expect(skipped).toEqual(["dashscope"]);
+  });
+
+  it("keeps the primary even without a key: its own refusal is the message", () => {
+    const input = { chain: ["dashscope", "local-llama"], timing };
+    const skipped: string[] = [];
+    expect(
+      withoutKeylessLinks(input, (id) => id === "dashscope", (id) => skipped.push(id)),
+    ).toBe(input);
+    expect(skipped).toEqual([]);
   });
 });

@@ -1,5 +1,7 @@
 import {
+  lacksRequiredApiKey,
   resolveFallbackChain,
+  withoutKeylessLinks,
   withoutUnbuiltLinks,
   type ResolvedFallbackChain,
 } from "../llm/fallback/index.js";
@@ -21,31 +23,54 @@ export interface FallbackChainResolverDeps {
 /**
  * The `resolve` the runtime's `ProviderFallbackChain` runs on every pick
  * and every advance: the configured chain (`resolveFallbackChain`), minus
- * the links that cannot serve a turn at all.
+ * the links that cannot serve a turn at all. That is a link the registry
+ * did not build, and a link with no API key for a service that wants one
+ * (`lacksRequiredApiKey`); the primary is never dropped.
  *
  * Separate from bootstrap so the whole path from a config to the links a
- * turn walks can be driven by a test with fake providers. A link it drops
- * is logged once, not once per resolve: this runs on every turn.
+ * turn walks can be driven by a test with fake providers. A dropped link
+ * is logged once, not once per resolve: this runs on every turn. A keyless
+ * link is logged again if it loses its key again after getting one, since
+ * the config is read live and a key saved mid-session brings it back.
  */
 export function createFallbackChainResolver(
   deps: FallbackChainResolverDeps,
 ): () => ResolvedFallbackChain {
   const droppedFallbackLinks = new Set<string>();
+  let keylessLinks = new Set<string>();
   return () => {
-    const resolved = resolveFallbackChain(deps.readLlmConfig());
+    const llm = deps.readLlmConfig();
+    let resolved = resolveFallbackChain(llm);
     const listIds = deps.builtProviderIds();
-    if (!listIds) return resolved;
-    const built = new Set(listIds);
-    return withoutUnbuiltLinks(
+    if (listIds) {
+      const built = new Set(listIds);
+      resolved = withoutUnbuiltLinks(
+        resolved,
+        (id) => built.has(id),
+        (id) => {
+          if (droppedFallbackLinks.has(id)) return;
+          droppedFallbackLinks.add(id);
+          deps.logger.warn("llm: fallback link skipped (provider not built)", {
+            id,
+          });
+        },
+      );
+    }
+    const entries = new Map(llm.providers.map((p) => [p.id, p]));
+    const keylessNow = new Set<string>();
+    resolved = withoutKeylessLinks(
       resolved,
-      (id) => built.has(id),
       (id) => {
-        if (droppedFallbackLinks.has(id)) return;
-        droppedFallbackLinks.add(id);
-        deps.logger.warn("llm: fallback link skipped (provider not built)", {
-          id,
-        });
+        const entry = entries.get(id);
+        return entry !== undefined && lacksRequiredApiKey(entry);
+      },
+      (id) => {
+        keylessNow.add(id);
+        if (keylessLinks.has(id)) return;
+        deps.logger.warn("llm: fallback link skipped (no key)", { id });
       },
     );
+    keylessLinks = keylessNow;
+    return resolved;
   };
 }

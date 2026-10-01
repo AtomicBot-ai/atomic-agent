@@ -210,8 +210,40 @@ export function withoutUnbuiltLinks(
   isBuilt: (id: string) => boolean,
   onDrop?: (id: string) => void,
 ): ResolvedFallbackChain {
+  return keepLinks(resolved, isBuilt, onDrop);
+}
+
+/**
+ * Drop fallback links that have no API key for a service that wants one
+ * (`lacksRequiredApiKey`).
+ *
+ * Such a link was configured but never set up, which is common: a desktop
+ * import copies the terminal agent's `fallback.chain` and its provider
+ * entries without their keys. Trying it only adds a guaranteed 401 to the
+ * turn, filed as one more provider failing. Skipped instead, and the
+ * caller says so (`onSkip`), so a skipped link never reads as a failure.
+ *
+ * The primary is always kept, keyless or not: it is the provider the user
+ * picked, and its own refusal is the message they need. Like
+ * `withoutUnbuiltLinks`, this is applied at runtime only; the config's
+ * chain, and the Fallback pane that edits it, still list the link.
+ */
+export function withoutKeylessLinks(
+  resolved: ResolvedFallbackChain,
+  lacksKey: (id: string) => boolean,
+  onSkip?: (id: string) => void,
+): ResolvedFallbackChain {
+  return keepLinks(resolved, (id) => !lacksKey(id), onSkip);
+}
+
+/** Keep the primary and every later link `keep` accepts. */
+function keepLinks(
+  resolved: ResolvedFallbackChain,
+  keep: (id: string) => boolean,
+  onDrop?: (id: string) => void,
+): ResolvedFallbackChain {
   const chain = resolved.chain.filter((id, i) => {
-    if (i === 0 || isBuilt(id)) return true;
+    if (i === 0 || keep(id)) return true;
     onDrop?.(id);
     return false;
   });
