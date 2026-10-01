@@ -1035,14 +1035,19 @@ function wireIpc(client: AgentClient): void {
     /* Backlog 18 review: the slot is taken BEFORE `models status` is read. A
        Cancel pressed during that read found nothing to abort (cli:cancelPull
        answered false), and the projector then came down in full under a row
-       that said "Cancelling…". It is honoured as soon as the read returns. */
+       that said "Cancelling…". */
     const controller = new AbortController();
     const slot = { controller, id };
     hfProjector = slot;
     const cancelled = "the projector download was cancelled — a retry starts it from the beginning";
     try {
-      const st = await projectorStatusRead();
-      if (controller.signal.aborted) return { ok: false, error: cancelled };
+      /* Deferred D6: such a Cancel ends the call at once. It used to take
+         effect only once `models status` returned — about a second, up to
+         its 30 s timeout — with the row on "Cancelling…" all that time; the
+         read is raced against the Cancel now, not waited out. */
+      const abort = new Promise<null>((resolve) => controller.signal.addEventListener("abort", () => resolve(null), { once: true }));
+      const st = await Promise.race([projectorStatusRead(), abort]);
+      if (!st || controller.signal.aborted) return { ok: false, error: cancelled };
       const dataDir = st.ok && st.status ? st.status.dataDir : null;
       if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
       const dir = join(dataDir, "models", id);
