@@ -8331,8 +8331,13 @@ function dlNext() {
   };
   // A call that is rejected is refused like any other, not left on Starting… for good.
   let started;
-  try { started = Promise.resolve(dlPullStart(job)); } catch (err) { started = Promise.reject(err); }
+  try { started = Promise.resolve(dlSpawn(job)); } catch (err) { started = Promise.reject(err); }
   started.then(refused, (err) => refused({ok: false, error: (err && err.message) || String(err)}));
+}
+
+/** The one call the setup queue makes to main for a job (dlPullStart below does the IPC). */
+function dlSpawn(job) {
+  return dlPullStart(job);
 }
 
 /**
