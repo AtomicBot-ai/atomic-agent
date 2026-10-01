@@ -667,23 +667,40 @@ let lastChatSpeed: { pid: number; tokensPerSecond: number } | null = null;
    that outlives the app brings a model server up after the app's stop ran. */
 const startsOnTheirWay = new Set<{ abort: AbortController; done: Promise<unknown> }>();
 
-/** Start the managed llama daemon after switching to a local model. `signal` kills the start (item 11: a stop that supersedes it). */
+/**
+ * Start the managed llama daemon after switching to a local model. `signal`
+ * kills the start (item 11: a stop that supersedes it).
+ *
+ * Item 31: a start whose server has answered healthy and then closed its port
+ * is ended at once. `models start` probes a fresh server's speed with one
+ * request and waits for its answer; a server killed by hand during that probe
+ * closes its port and never answers, so the start sat out its whole 90 s, and
+ * with it the daemon's turn — every Start, launch start, model pick and swap
+ * queued behind it said nothing for a minute and a half.
+ */
 export async function modelsStart(opts: { signal?: AbortSignal } = {}): Promise<CliResult> {
   const abort = new AbortController();
   const forward = () => abort.abort();
   if (opts.signal?.aborted) abort.abort();
   else opts.signal?.addEventListener("abort", forward, { once: true });
+  const port = managedPortFromFile();
+  let gone = false;
+  const watch = port === null ? null : watchStartedServer(port, () => { gone = true; abort.abort(); });
   const run = cli(["models", "start"], 90_000, undefined, abort.signal);
   const entry = { abort, done: run };
   startsOnTheirWay.add(entry);
   try {
     const res = await run;
+    if (gone) {
+      return { ...res, ok: false, error: "the model server stopped answering while it was starting — it was not started; start it again" };
+    }
     if (res.ok) {
       const speed = parseChatStartSpeed(res.stdout);
       if (speed) lastChatSpeed = speed;
     }
     return res;
   } finally {
+    watch?.stop();
     opts.signal?.removeEventListener("abort", forward);
     startsOnTheirWay.delete(entry);
   }
@@ -699,6 +716,61 @@ export async function abortStarts(ms: number): Promise<number> {
   for (const s of starts) s.abort.abort();
   if (starts.length) await Promise.race([Promise.allSettled(starts.map((s) => s.done)), new Promise((r) => setTimeout(r, ms))]);
   return starts.length;
+}
+
+/** Item 31: how long a started server's port may refuse connections before its start is ended. */
+const START_GONE_MS = 2_000;
+
+/**
+ * Watch the managed port through a start: once the server has answered
+ * healthy (200), a port that then refuses connections for START_GONE_MS means
+ * it is going away, and `gone` is called once. A server that never gets that
+ * far (it is still loading, or a GPU build that fails and falls back) is
+ * never judged here — `models start` reports those itself.
+ */
+function watchStartedServer(port: number, gone: () => void): { stop: () => void } {
+  let healthy = false;
+  let refusedSince: number | null = null;
+  let looking = false;
+  let fired = false;
+  const timer = setInterval(() => {
+    if (looking || fired) return;
+    looking = true;
+    void portAnswer(port).then((a) => {
+      looking = false;
+      if (fired) return;   // stopped meanwhile: the start is over
+      if (a.kind === "answer") {
+        if (a.status === 200) healthy = true;
+        refusedSince = null;
+        return;
+      }
+      if (a.kind !== "refused" || !healthy) return;
+      refusedSince ??= Date.now();
+      if (Date.now() - refusedSince >= START_GONE_MS) {
+        fired = true;
+        gone();
+      }
+    });
+  }, 500);
+  timer.unref?.();
+  return { stop: () => { fired = true; clearInterval(timer); } };
+}
+
+/**
+ * `localModels.managed.port` as the CLI reads it, straight from
+ * `<stateDir>/config.json` (no `config get` per start); 19091, the agent's
+ * default, when the file names none; null when the file cannot be read.
+ */
+function managedPortFromFile(): number | null {
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as {
+      localModels?: { managed?: { port?: unknown } };
+    };
+    const port = cfg.localModels?.managed?.port;
+    return typeof port === "number" && Number.isInteger(port) && port > 0 ? port : 19091;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1458,11 +1530,25 @@ async function setMemoryEmbeddingsEnabledNow(enabled: boolean): Promise<WriteRes
  * `atag models status` prints `daemon:         running (pid N)  <url>` or
  * `stopped` in managed mode, and only `mode: external` + `url:` in
  * external mode (src/cli/models-handlers.ts runLocalModelsStatus).
+ *
+ * Item 31: "running" is judged by the port, not by the pid alone. A
+ * llama-server that gets SIGTERM while a request is open on it (killed by
+ * hand mid-turn, or during `models start`'s speed probe) closes its port and
+ * then waits for that request for good: its pid stays alive and `models
+ * status` keeps printing `running (pid N)`. Every start took that for a
+ * daemon that was up — Settings' Start said "already running", the launch
+ * start and a model pick started nothing — and only a cloud switch, which
+ * stops first, brought the model back. So a pid that is alive while its port
+ * refuses connections, through a short grace (a server spawned a moment ago
+ * binds within a second; a loading one answers 503), is stopped through
+ * `models stop` (SIGTERM, then SIGKILL after 3 s) and counted down, and the
+ * start that asked brings a fresh one up. `reapWedged: false` is for a stop
+ * decision (the cloud switch), where anything still there is stopped anyway.
  */
-export async function localDaemonRunning(): Promise<boolean> {
+export async function localDaemonRunning(opts: { reapWedged?: boolean } = {}): Promise<boolean> {
   const res = await cli(["models", "status"], 20_000);
-  if (!res.ok) return false;
-  if (/^daemon:\s+running/m.test(res.stdout)) return true;
+  // An agent that printed the whole status and then failed on an extra still told us the status (modelsStatus).
+  if (!res.ok && !/^mode:/m.test(res.stdout)) return false;
   /* `daemon:` is read from a pid file; `health:` is read from the port, and
      the two disagree. `atag models start` against a daemon that is ALREADY
      up spawns a duplicate that cannot bind, dies, and records its pid —
@@ -1473,7 +1559,60 @@ export async function localDaemonRunning(): Promise<boolean> {
      dead one). That is an agent-side defect, not the desktop's, and it is
      not this fixture's to assert. What the switch owes the user is a local
      route that ANSWERS, so the port is the authority here. */
-  return /^health:\s+ok/m.test(res.stdout);
+  if (/^health:\s+ok/m.test(res.stdout)) return true;
+  const daemon = /^daemon:[ \t]+running \(pid (\d+)\)[ \t]*(\S*)/m.exec(res.stdout);
+  if (!daemon) return false;
+  if (opts.reapWedged === false) return true;
+  // `health:` is not `ok` while a model loads either (the agent reads llama-server's 503 as `down`), so the port itself is asked.
+  const port = portOfUrl(daemon[2] ?? "");
+  if (port === null || !(await refusesThroughout(port, WEDGED_GRACE_MS))) return true;
+  const stop = await modelsStop();
+  console.error(
+    `[desktop] the model server (pid ${daemon[1]}) was alive with its port closed — `
+      + (stop.ok ? "stopped it" : `could not stop it: ${stop.error ?? "unknown error"}`),
+  );
+  return false;
+}
+
+/** Item 31: how long a live daemon's port may refuse connections before the daemon counts as down. */
+const WEDGED_GRACE_MS = 2_000;
+
+/** The port of `http://127.0.0.1:N`, or null. */
+function portOfUrl(url: string): number | null {
+  const m = /^https?:\/\/[^/\s:]+:(\d+)/.exec(url);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * One look at a local port: `answer` is any HTTP status (llama-server says 503
+ * while a model loads), `refused` is nothing listening, `silent` is no answer in
+ * time (a busy or frozen listener — never read as gone). 2.5 s: Windows takes
+ * about two seconds to refuse a connection to a closed local port.
+ */
+export async function portAnswer(port: number, timeoutMs = 2_500): Promise<{ kind: "answer"; status: number } | { kind: "refused" | "silent" }> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    void res.body?.cancel().catch(() => undefined);
+    return { kind: "answer", status: res.status };
+  } catch (err) {
+    const code = (err as { cause?: { code?: unknown } }).cause?.code;
+    return { kind: code === "ECONNREFUSED" ? "refused" : "silent" };
+  }
+}
+
+/**
+ * Whether `port` stays shut for `ms`: no look answers, and the last one is
+ * refused. A look that gets no answer in time (or meets a pooled connection the
+ * server has just closed) proves nothing either way, so it only keeps looking.
+ */
+async function refusesThroughout(port: number, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const look = await portAnswer(port);
+    if (look.kind === "answer") return false;
+    if (Date.now() >= until) return look.kind === "refused";
+    await new Promise((r) => setTimeout(r, 250));
+  }
 }
 
 /** LocalModelsOrchestrator.stopDaemon's process half: stops chat + embedding daemons. */

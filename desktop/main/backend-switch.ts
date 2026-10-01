@@ -167,7 +167,8 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   let daemonLine: string | undefined;
   // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
   if (cloud && !keepFusion) supersedeBringUp();
-  if (cloud && !keepFusion && (await localDaemonRunning())) {
+  // A stop decision: whatever is still there, answering or not (item 31), is stopped and said so.
+  if (cloud && !keepFusion && (await localDaemonRunning({ reapWedged: false }))) {
     const s = await modelsStop();
     if (s.ok) {
       daemon = "stopped";
