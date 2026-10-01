@@ -46,7 +46,7 @@ const HELPERS = String.raw`
       count: txt(el.querySelector('.dlc-count, .dlc-n')), folded: !!el.querySelector('.dlc-badge'),
       rows: [...el.querySelectorAll('.dlc-row')].map((r) => ({name: txt(r.querySelector('.dlc-name')),
         line: txt(r.querySelector('.dlc-line')), cancel: (r.querySelector('.dlc-x') || {dataset: {}}).dataset.act || null,
-        retry: !!r.querySelector('.dlc-retry')})),
+        retry: !!r.querySelector('.dlc-retry'), switch: !!r.querySelector('.dlc-switch')})),
       cloud: txt(el.querySelector('.dlc-cloud'))};
   };
   const strip = () => { const s = document.getElementById('dlbar'); return !!(s && !s.hidden && s.getBoundingClientRect().height > 0); };
@@ -60,6 +60,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
     await geometry(js, check, w);
     await controls(js, check);
     if (w) await otherPulls(js, check, w);
+    await readyRow(js, check);
     if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
   } finally {
     if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
@@ -484,6 +485,100 @@ async function otherPulls(js: Js, check: Check, w: BrowserWindow): Promise<void>
   }
 }
 
+/* (h) Backlog 18 follow-up (Nadya, 01.10): a model that lands while the agent
+   is already on another model — here a cloud provider set up meanwhile — is
+   not switched to by itself. The card keeps "<model> is ready" with Switch and
+   a dismiss: Switch is the start it did not get, once; dismiss keeps the cloud
+   model. With no other model by then it starts by itself, as before. The
+   landing is the shipped path (obPullFinished); the start is a recorder. */
+async function readyRow(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keep = {cfg: LIVE_CONFIG, activate: window.obActivateLocal, snap: window.bswSnapshot, models: OB.models,
+      room: S.room, dry: DL.dry};
+    const calls = [];
+    let snaps = 0;
+    const out = {};
+    const cloud = Object.assign({}, LIVE_CONFIG || {}, {llm: {activeTextProvider: 'smoke-t18-cloud', providers: [
+      {id: 'smoke-t18-cloud', kind: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', defaultChatModel: 'smoke/cloud-model'}]}});
+    const another = () => (typeof obRunsOnAnotherModel === 'function' ? obRunsOnAnotherModel() : null);
+    // Seeded dry (nothing is spawned); the last job lands with the queue no longer dry.
+    const land = async (jobs) => {
+      window.__dlSeed(jobs);
+      for (const j of jobs.slice(0, -1)) window.__dlFeed({id: j.id, kind: j.kind, done: true, ok: true, sawProgress: true, upToDate: false});
+      DL.dry = false;
+      window.__dlFeed({id: jobs[jobs.length - 1].id, done: true, ok: true});
+      await tick(80);
+    };
+    try {
+      window.__dlClear();
+      S.room = 'chat';
+      window.obActivateLocal = async (id) => { calls.push('activate:' + id); };
+      window.bswSnapshot = () => { snaps++; return Promise.resolve(); };
+      OB.models = [{id: 'smoke-t18-9b', name: 'Smoke Model 9B GGUF', downloaded: false}];
+      // A cloud model set up while the runtime and then the model came down.
+      LIVE_CONFIG = cloud; render();
+      out.onCloud = another();
+      await land([{kind: 'runtime', id: 'llama.cpp'}, {kind: 'weights', id: 'smoke-t18-9b'}]);
+      out.landed = {calls: calls.slice(), card: card(), snaps};
+      const sw = document.querySelector('#dlcard .dlc-switch');
+      if (sw) sw.click();
+      await tick(80);
+      out.switched = {calls: calls.slice(), card: card()};
+      // Again, and dismissed this time: the cloud model stays.
+      calls.length = 0;
+      await land([{kind: 'weights', id: 'smoke-t18-9b'}]);
+      out.again = card();
+      const x = document.querySelector('#dlcard .dlc-row.is-ready .dlc-x');
+      if (x) x.click();
+      await tick(80);
+      out.dismissed = {calls: calls.slice(), card: card(), route: LIVE_CONFIG && LIVE_CONFIG.llm ? LIVE_CONFIG.llm.activeTextProvider : null};
+      // No other model by then (the local route this download is for): it starts by itself.
+      calls.length = 0;
+      LIVE_CONFIG = keep.cfg; render();
+      out.onLocal = another();
+      await land([{kind: 'weights', id: 'smoke-t18-9b'}]);
+      out.local = {calls: calls.slice(), card: card()};
+      return out;
+    } finally {
+      window.obActivateLocal = keep.activate; window.bswSnapshot = keep.snap;
+      LIVE_CONFIG = keep.cfg; OB.models = keep.models;
+      window.__dlClear(); DL.dry = keep.dry;
+      S.room = keep.room; render();
+    }
+  })()`);
+  type Card = { title: string; cloud: string; rows: { name: string; line: string; cancel: string | null; switch: boolean }[] } | null;
+  const landed = r["landed"] as { calls: string[]; card: Card; snaps: number };
+  const c = landed.card;
+  check(
+    "T18h: a model that lands while the agent is on a cloud model is not switched to — the card says it is ready, once, with Switch",
+    r["onCloud"] === true && landed.calls.length === 0 && !!c && c.title === "Download complete" && c.rows.length === 1
+      && c.rows[0]!.name === "Smoke Model 9B is ready" && c.rows[0]!.switch && c.rows[0]!.cancel === "dlc:keep"
+      && /stays on its current model until you switch/.test(c.rows[0]!.line) && c.cloud === "" && landed.snaps >= 1,
+    JSON.stringify({ onCloud: r["onCloud"], ...landed }),
+  );
+  const switched = r["switched"] as { calls: string[]; card: Card };
+  check(
+    "T18h: Switch starts it, exactly once, and the row goes",
+    JSON.stringify(switched.calls) === JSON.stringify(["activate:smoke-t18-9b"]) && switched.card === null,
+    JSON.stringify(switched),
+  );
+  const dismissed = r["dismissed"] as { calls: string[]; card: Card; route: string | null };
+  const again = r["again"] as Card;
+  check(
+    "T18h: dismissing the ready row keeps the cloud model and starts nothing",
+    !!again && again.rows.length === 1 && again.rows[0]!.switch
+      && dismissed.calls.length === 0 && dismissed.card === null && dismissed.route === "smoke-t18-cloud",
+    JSON.stringify({ again, dismissed }),
+  );
+  const local = r["local"] as { calls: string[]; card: Card };
+  check(
+    "T18h: with no other model by then the model still starts by itself when its weights land",
+    r["onLocal"] === false && JSON.stringify(local.calls) === JSON.stringify(["activate:smoke-t18-9b"]) && local.card === null,
+    JSON.stringify({ onLocal: r["onLocal"], ...local }),
+  );
+}
+
 /* For the product owner: the card on the chat, light and dark, open and
    folded, at the default window size. Only with T18_SHOTS set. */
 async function shots(js: Js, w: BrowserWindow, dir: string): Promise<void> {
@@ -500,6 +595,12 @@ async function shots(js: Js, w: BrowserWindow, dir: string): Promise<void> {
     if (${JSON.stringify(rows)} === 'two') {
       window.__dlSeed([{kind:'runtime', id:'llama.cpp'}, {kind:'weights', id:'qwen-3.5-9b'}]);
       window.__dlFeed({id:'llama.cpp', kind:'runtime', percent:60, transferredBytes:Math.round(0.6 * 70 * 1048576), totalBytes:70 * 1048576});
+    } else if (${JSON.stringify(rows)} === 'ready') {
+      // On a cloud model by the time the weights landed: the ready row.
+      window.__t18Cfg = window.__t18Cfg || LIVE_CONFIG;
+      LIVE_CONFIG = Object.assign({}, window.__t18Cfg, {llm: {activeTextProvider: 'openrouter', providers: [
+        {id: 'openrouter', kind: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', defaultChatModel: 'openrouter/auto'}]}});
+      DL.ready = {id: 'qwen-3.5-9b'};
     } else if (${JSON.stringify(rows)} === 'failed') {
       window.__dlSeed([{kind:'weights', id:'qwen-3.5-9b'}]);
       window.__dlFeed({id:'qwen-3.5-9b', done:true, ok:false, error:'the connection to huggingface.co was reset'});
@@ -521,6 +622,8 @@ async function shots(js: Js, w: BrowserWindow, dir: string): Promise<void> {
     ["card-dark-failed.png", "dark", false, "failed", 1280, 820],
     ["card-light-940.png", "light", false, "two", 940, 620],
     ["card-dark-940-open.png", "dark", false, "one", 940, 620],
+    ["card-light-ready.png", "light", false, "ready", 1280, 820],
+    ["card-dark-ready.png", "dark", false, "ready", 1280, 820],
   ];
   for (const [file, theme, folded, rows, cw, ch] of cases) {
     const [nw, nh] = w.getContentSize();
@@ -528,6 +631,8 @@ async function shots(js: Js, w: BrowserWindow, dir: string): Promise<void> {
     await stage(theme, folded, rows);
     const img = await w.webContents.capturePage();
     writeFileSync(join(dir, file), img.toPNG());
+    // The ready case borrows a cloud route; every other case is on the real one.
+    await js<unknown>("(() => { if (window.__t18Cfg) { LIVE_CONFIG = window.__t18Cfg; delete window.__t18Cfg; } DL.ready = null; })()");
   }
   await js<unknown>("(() => { window.__dlClear(); DLC.collapsed = false; S.draft = window.__t18Draft || ''; delete window.__t18Draft; render(); })()");
 }
