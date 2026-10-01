@@ -14,6 +14,7 @@ import { checks11 } from "./smoke-tasks/t11.js";
 import { checks13 } from "./smoke-tasks/t13.js";
 import { checks18 } from "./smoke-tasks/t18.js";
 import { checks18b } from "./smoke-tasks/t18b.js";
+import { checks18c } from "./smoke-tasks/t18c.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -431,6 +432,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     await js<unknown>("(() => { window.__t18Insp = S.inspector; S.inspector = false; render(); })()");
     try {
       await guarded("18", check, () => checks18(js, check));
+      // R1's resume of a vision model's projector (smoke-tasks/t18c.ts).
+      await guarded("18", check, () => checks18c(js, check));
       // Its review follow-ups, in their own file (smoke-tasks/t18b.ts).
       await guarded("18", check, () => checks18b(js, check));
     } finally {
