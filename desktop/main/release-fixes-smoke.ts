@@ -481,7 +481,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   // 22 — a chat still loading when New chat was pressed came back over the new one.
   if (want.has("22")) await guarded("22", check, () => checks22(js, check));
   // 27 — a new chat was not on the sidebar until its first reply landed.
-  if (want.has("27")) await guarded("27", check, () => checks27(js, check));
+  // Item 29's desktop checks live in t27.ts with item 27's, so either id runs them.
+  if (want.has("27") || want.has("29")) await guarded("27", check, () => checks27(js, check));
   // 28 — a switch from a new chat restarted the agent under the turn still running in the chat it left.
   if (want.has("28")) await guarded("28", check, () => checks28(js, check));
   // 32 — a key with a character keys don't have got in, and a saved one failed every turn as "no connection".

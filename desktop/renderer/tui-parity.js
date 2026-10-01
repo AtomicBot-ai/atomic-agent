@@ -98,7 +98,7 @@ function tpWaitNotice(wait) {
   /* Backlog 32: the active provider's saved key is one the agent will not
      send, so the wait is on some fallback link's "fetch failed", and "no
      connection" would send the person looking at their network. */
-  const badKey = activeSavedKeyInvalid();
+  const badKey = badKeyForWait(wait);
   if (badKey) return savedKeyTurnLine(badKey) + ' The turn is paused; Stop ends it.';
   // Item 29: waitWhy is the agent's cause when it sent one, else its reason as before.
   const why = waitWhy(wait);
@@ -124,7 +124,8 @@ function tpOnProviderWaiting(wait) {
   // Item 29: the local server is asked about when the wait is on it, whichever provider was picked.
   const onLocal = wait && wait.providerId ? waitIsLocalServer(wait.providerId) : tpActiveIsLocal();
   if (!BR || !BR.modelsStatus || !onLocal) return;
-  const said = !!(wait && wait.providerId && wait.cause && wait.cause.kind === 'refused');
+  // The notice above says the server is not running only when it is not the saved-key notice.
+  const said = !badKeyForWait(wait) && !!(wait && wait.providerId && wait.cause && wait.cause.kind === 'refused');
   const turnId = S.turnId;
   const streamId = S.streamId;
   BR.modelsStatus().then((res) => {

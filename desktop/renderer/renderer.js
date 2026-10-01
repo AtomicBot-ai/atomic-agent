@@ -160,7 +160,7 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
 const KIND_ROWS = [
   {id:'openrouter', kind:'openrouter', label:'OpenRouter (cloud chat + optional cloud embed)', env:'OPENROUTER_API_KEY', defaultModel:'openrouter/auto'},
   {id:'aimlapi', kind:'aimlapi', label:'AI/ML API (1000+ models, OpenAI-compatible)', env:'AIMLAPI_API_KEY'},
-  {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY'},
+  {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY', defaultModel:'gemini-2.5-flash'},
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
@@ -267,6 +267,14 @@ function activeSavedKeyInvalid() {
   const id = selActiveProviderId();
   const entry = (selProviders() || []).find((p) => p.id === id);
   return entry && savedKeyInvalid(entry) ? id : null;
+}
+/** Backlog 32 with 29: the bad saved key is why a wait happens only when the
+    agent waits on that very provider, or does not say which link it waits on.
+    A fallback that was serving and is now down is an outage, not the key. */
+function badKeyForWait(wait) {
+  const bad = activeSavedKeyInvalid();
+  const on = wait && wait.providerId;
+  return bad && (!on || on === bad) ? bad : null;
 }
 /* What is left of the prototype's Models pane after Settings › LLM replaced
    it (review fix): no rows of its own any more — only the provider-add and
@@ -2798,8 +2806,8 @@ function composer() {
     : WAIT
     ? '<div class="statusstrip waiting">'
       + '<span class="ss-ic"><span class="ss-dot"></span></span>'
-      + '<span class="ann">Waiting for ' + esc(activeSavedKeyInvalid() ? (providerWord(selActiveProviderId()) || 'the provider') : waitProviderLabel(WAIT)) + '</span>'
-      + ((activeSavedKeyInvalid() || waitWhy(WAIT)) ? '<span class="ob-help ss-why">' + esc(activeSavedKeyInvalid() ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
+      + '<span class="ann">Waiting for ' + esc(badKeyForWait(WAIT) ? (providerWord(selActiveProviderId()) || 'the provider') : waitProviderLabel(WAIT)) + '</span>'
+      + ((badKeyForWait(WAIT) || waitWhy(WAIT)) ? '<span class="ob-help ss-why">' + esc(badKeyForWait(WAIT) ? 'its saved key is invalid' : waitWhy(WAIT)) + '</span>' : '')
       + '<span class="ss-grow"></span>'
       + '<span class="readout">' + esc(waitReadout()) + '</span>'
       + '</div>'
@@ -6940,7 +6948,7 @@ function turnFailureLine(ev) {
      That sentence is the reason; "not answering" would send the person to
      their network. The TUI's "Providers panel" is Settings › Models here. */
   const said = String((ev && ev.error) || '');
-  if (/can't use its API key|rejected the API key|has no API key/i.test(said)) {
+  if (/can't use its API key|rejected the API key|needs an API key and none is set/i.test(said)) {
     return esc(said.replace(/the Providers panel/g, 'Settings › Models') + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
   if (providerFailure(ev)) {
@@ -12833,7 +12841,7 @@ function restartStopsTurn() {
   if (!sids.length) return null;
   if (sids.some((sid) => sid && (sid === S.sessionId || sid === S.agentSession))) return {here:true, title:''};
   const sid = sids.find(Boolean);
-  const row = sid ? SESSIONS.find((x) => x.id === sid) : null;
+  const row = sid ? chatById(sid) : null;
   return {here:false, title: row && row.t ? String(row.t) : ''};
 }
 /** What a refusal says about a turn in another chat ('' for the chat on screen). */
