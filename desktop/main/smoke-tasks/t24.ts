@@ -199,6 +199,8 @@ const H = String.raw`
     if (e) e.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
     return !!e;
   };
+  // The messages queued in chat id, on screen or not (backlog 26 gave every chat its own queue).
+  const waiting = (id) => typeof queuedIn === 'function' ? queuedIn(id).slice() : S.queued.slice();
   const view = () => {
     const b = document.querySelector('#composer .sendbtn'), e = document.getElementById('entry');
     return {sessionId: S.sessionId, agentSession: S.agentSession, busy: !!S.busy,
@@ -240,6 +242,7 @@ const RESET = `(() => { ${H}
   S.toasts = []; renderToasts();
   for (const [turn, sid] of [...RUNNING]) if (mine(turn) || mine(sid)) RUNNING.delete(turn);
   for (const sid of [...PENDING_APPROVALS.keys()]) if (mine(sid)) PENDING_APPROVALS.delete(sid);
+  if (typeof QUEUES !== 'undefined') for (const key of [...QUEUES.keys()]) if (mine(key)) QUEUES.delete(key);
   render();
   return true;
 })()`;
@@ -263,6 +266,7 @@ const RESTORE = `(async () => { ${H}
   for (const [turn, sid] of [...RUNNING]) if (mine(turn) || mine(sid)) RUNNING.delete(turn);
   for (const sid of [...PENDING_APPROVALS.keys()]) if (mine(sid)) PENDING_APPROVALS.delete(sid);
   for (const sid of [...ATTN]) if (mine(sid)) ATTN.delete(sid);
+  if (typeof QUEUES !== 'undefined') for (const key of [...QUEUES.keys()]) if (mine(key)) QUEUES.delete(key);
   for (let i = SESSIONS.length - 1; i >= 0; i--) if (mine(SESSIONS[i].id)) SESSIONS.splice(i, 1);
   const seen = Object.keys(PREFS.seen).filter(mine);
   seen.forEach((sid) => { delete PREFS.seen[sid]; });
@@ -481,22 +485,25 @@ async function turnEndsWhileOpening(js: Js, check: Check, agent: StandIn, w: Bro
   await settle(js);
   const during = await js<View>(VIEW);
   const out = agent.since(mark);
+  const waits = () => js<string[]>(`(() => { ${H} return waiting(${q(left)}); })()`);
+  const left1 = await waits();
   check(
     "T24: a turn that ends while a chat is opening does not send its queued message from under the loading line",
-    landed && held && out.length === 0 && during.rows[0] === LOADING && during.queued.length === 1 && during.queued[0] === queued,
-    `landed=${landed} held=${held} sent=${show(out)} during=${show(during)}`,
+    landed && held && out.length === 0 && during.rows[0] === LOADING && left1.length === 1 && left1[0] === queued,
+    `landed=${landed} held=${held} sent=${show(out)} during=${show(during)} waiting=${show(left1)}`,
   );
   agent.release(slow, loaded(slow, turns("SLOW", 1)));
   await settle(js);
   const onSlow = await js<View>(VIEW);
+  const left2 = await waits();
   const fresh = await js<boolean>(`(async () => { ${H} const ok = newChat(); await tick(150); return ok; })()`);
   const elsewhere = await land(js, other, "smoke t24: a chat opened after");
   await settle(js);
   const away = agent.since(mark);
   check(
     "T24: that message does not run in the chat that was loading, in a new chat, or in another chat opened after",
-    has(onSlow, "SLOW answer 1") && onSlow.queued.length === 1 && fresh && elsewhere && away.length === 0,
-    `onSlow=${show(onSlow)} fresh=${fresh} elsewhere=${elsewhere} sent=${show(away)}`,
+    has(onSlow, "SLOW answer 1") && left2.length === 1 && left2[0] === queued && fresh && elsewhere && away.length === 0,
+    `onSlow=${show(onSlow)} waiting=${show(left2)} fresh=${fresh} elsewhere=${elsewhere} sent=${show(away)}`,
   );
   const back = await land(js, left, "smoke t24: a chat with a message queued");
   await settle(js);

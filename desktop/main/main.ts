@@ -5531,7 +5531,8 @@ async function hfAndDeltaTest(
   check(
     "steer: a result that arrives after a chat switch writes into neither transcript and leaves the new draft alone",
     untouched(swSteered) && untouched(swQueued)
-      // The park itself still happens - the queue tray is window-global.
+      // The park itself still happens, in the queue of the chat it was typed in (backlog 26:
+      // the probe moves only S.agentSession, so that is still the queue on screen).
       && JSON.stringify(swQueued.queued) === JSON.stringify(["a message typed while chat A was running"])
       && swQueued.ahead === 1
       && JSON.stringify(swSteered.queued) === JSON.stringify([])
