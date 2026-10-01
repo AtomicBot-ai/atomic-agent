@@ -89,6 +89,23 @@ describe("AIMLAPI_MODELS_CATALOG", () => {
     }
   });
 
+  it("drops Mistral Large 2512, which aimlapi no longer lists, for a current Mistral", () => {
+    // Checked against https://api.aimlapi.com/v1/models on 2026-10-02:
+    // `mistralai/mistral-large-2512` is gone from every type; the newest
+    // general Mistral chat rows are Medium 3.5 and Small 4 (2603).
+    expect(AIMLAPI_MODELS_CATALOG.has("mistralai/mistral-large-2512")).toBe(
+      false,
+    );
+    expect(AIMLAPI_CHAT_MODEL_ORDER).not.toContain(
+      "mistralai/mistral-large-2512",
+    );
+    expect(AIMLAPI_MODELS_CATALOG.get("mistralai/mistral-small-2603")).toMatchObject({
+      kind: "chat",
+      contextWindow: 262_144,
+    });
+    expect(AIMLAPI_CHAT_MODEL_ORDER).toContain("mistralai/mistral-small-2603");
+  });
+
   it("includes at least one embedding row for cloud-side hybrid recall", () => {
     let embeddingCount = 0;
     for (const [, entry] of AIMLAPI_MODELS_CATALOG) {
