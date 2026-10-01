@@ -321,6 +321,15 @@ export class AgentClient extends EventEmitter {
     this.status.workingDir = workingDir;
   }
 
+  /**
+   * The turns streaming from this agent right now, in every chat. A switch
+   * does not restart the agent under one (backend-switch restartAfterSwitch);
+   * `idle` is emitted when the last of them ends on its own.
+   */
+  get turnsInFlight(): number {
+    return this.turns.size;
+  }
+
   private setStatus(patch: Partial<AgentStatus>): void {
     this.status = { ...this.status, ...patch };
     this.emit("status", this.status);
@@ -844,8 +853,18 @@ export class AgentClient extends EventEmitter {
         error: aborted ? null : err instanceof Error ? err.message : String(err),
       });
     } finally {
-      this.turns.delete(turnId);
+      const ended = this.turns.delete(turnId);
       this.completions.delete(turnId);
+      /* The last turn has ended on its own (finished, failed, or stopped from
+         the window) — not by stop(), which drops them all and is a restart
+         already. A restart a switch held back for the turns runs now. */
+      if (ended && this.turns.size === 0 && !this.stopping) {
+        try {
+          this.emit("idle");
+        } catch {
+          /* a listener's failure is not this turn's */
+        }
+      }
     }
   }
 

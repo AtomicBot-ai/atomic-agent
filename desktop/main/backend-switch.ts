@@ -56,7 +56,8 @@ import { isIncompleteProvider } from "./provider-hygiene.js";
  * provider in its own process; `atag serve` pins the active provider at
  * boot and 0.5.4 has no reload route, so main.ts restarts the child
  * whenever a result says `restart: true`. That is why every entry point
- * in the renderer refuses to run while a turn is in flight.
+ * in the renderer refuses to run while a turn is in flight — and why main
+ * holds the restart back itself while one is (restartAfterSwitch).
  */
 
 export type DaemonEffect =
@@ -82,8 +83,10 @@ export interface SwitchResult {
   daemon?: DaemonEffect;
   /** The TUI's runtime_info line for the daemon effect, when there is one. */
   daemonLine?: string;
-  /** main.ts restarts `atag serve` when true. */
+  /** main.ts restarts `atag serve` when true (restartAfterSwitch says when it does not). */
   restart?: boolean;
+  /** Set by main.ts's applySwitch: the switch landed, but `atag serve` was not restarted under the turns still running — it restarts once the last one ends. */
+  restartHeld?: boolean;
   /** activateCloud: no cloud provider configured — open the add wizard. */
   needsProvider?: boolean;
   /** The chosen provider has no key — open its configure step, as the TUI does. */
@@ -227,7 +230,8 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
     transport: transportFor(LOCAL_ID),
     daemon,
     daemonLine,
-    restart,
+    // Backlog 18 (its second review): a superseded start restarts nothing (restartAfterSwitch).
+    restart: restart && daemon !== "superseded",
     error,
   };
 }
@@ -342,9 +346,10 @@ export function inDaemonTurn<T>(run: () => Promise<T>, whenClosed: () => T): Pro
   return withDaemonLock(run, whenClosed);
 }
 /**
- * Quitting (main.ts stopForQuit): no turn begins after this, and no `models
- * start` spawns — not even one whose turn began before (agent-cli
- * closeStarts). The undo is for a smoke check, which carries on after it.
+ * Quitting (main.ts stopForQuit): no turn begins after this, no `models start`
+ * spawns — not even one whose turn began before (agent-cli closeStarts) — and
+ * no switch restarts the agent (restartAfterSwitch). The undo is for a smoke
+ * check, which carries on after it.
  */
 export function closeDaemonTurns(): () => void {
   turnsClosed = true;
@@ -521,6 +526,110 @@ export async function stopDaemonForQuit(dataDir: string): Promise<number[]> {
   return killDaemonLeftovers([...named, ...daemonPidsIn(dataDir)]);
 }
 
+/* ---- the agent's restart after a switch (backlog 18, its second review) ----
+   `atag serve` takes its route at boot, so a switch that moved the file ends in
+   main restarting it (main.ts applySwitch), and the restart aborts every turn
+   the window streams. The renderer refuses a switch while any chat has a turn
+   running (item 28), but a switch can land long after the window let go of
+   it: a model pick, or the deferred activation of a finished download, waits
+   for its daemon turn behind the llama.cpp update — minutes — while the window
+   gives up on it at 45 s and unlocks send. The person starts a turn, the
+   update ends, and the pick's restart aborted that turn. So main decides here,
+   whatever the window believed:
+
+   - A superseded result restarts nothing. A stop or a later switch came while
+     it waited for its turn, and a later switch restarts the agent for its own
+     route: this one's would be a second restart, for nothing. Settings › Stop
+     is the one that moves no route. The agent then stays on the route it
+     booted with until the next switch or restart, though the file names this
+     one's; with the model server just stopped, a restart onto it would have
+     had nothing to answer on.
+   - While a turn runs, the restart is held back and the answer says so
+     (`restartHeld`). The config is already written, and the window's chips
+     read the file, so an agent left on its old route would answer the next
+     message on a route the window does not show — less expected than a
+     restart. The held restart therefore runs as soon as the last turn ends
+     (lastTurnEnded, the AgentClient's `idle`), which is when the switch would
+     have restarted had it landed then; a turn asked for while it runs (a
+     message queued behind the one that ended goes out at that very moment)
+     waits for it in main and runs on the agent it brings up. A switch that
+     comes first restarts it instead, and so does anything else that starts
+     `atag serve` (agentStarting): a new agent reads the file as it is.
+   - Nothing restarts once the app quits (closeDaemonTurns).
+   One restart at a time: a switch or a turn that comes while one runs waits
+   for it to end. */
+
+/** What a switch restarts: main.ts hands in its AgentClient (restartsAgent). */
+export interface SwitchAgent {
+  /** The turns the window streams from `atag serve` right now. */
+  turnsInFlight(): number;
+  /** Stop `atag serve` and start it again, on the config as the file has it then. */
+  restart(): Promise<void>;
+}
+let switchAgent: SwitchAgent | null = null;
+let restartOwed = false;
+let restarting: Promise<void> | null = null;
+
+/** main.ts: the agent a switch restarts. Hands back the one it replaces — a smoke check stands in, and puts it back. */
+export function restartsAgent(agent: SwitchAgent | null): SwitchAgent | null {
+  const was = switchAgent;
+  switchAgent = agent;
+  return was;
+}
+
+function restartNow(agent: SwitchAgent): Promise<void> {
+  restartOwed = false;
+  const run: Promise<void> = agent.restart()
+    .catch(() => undefined)   // the agent's own status says how its start went
+    .finally(() => { if (restarting === run) restarting = null; });
+  restarting = run;
+  return run;
+}
+
+/** Wait out a switch's restart on its way, and any that follows it; answers whether there was one. main.ts: applySwitch, and agent:chat. */
+export async function waitForSwitchRestart(): Promise<boolean> {
+  let waited = false;
+  while (restarting) {
+    waited = true;
+    await restarting;
+  }
+  return waited;
+}
+
+/**
+ * applySwitch's restart. `wanted`: the result moved the file or serve is behind
+ * it, and the app is not quitting (main.ts). Answers whether the agent was
+ * restarted, and `restartHeld` when this switch's restart waits for the turns
+ * in flight. A restart owed to an earlier switch is paid by this one.
+ */
+export async function restartAfterSwitch(
+  res: SwitchResult,
+  wanted: boolean,
+): Promise<{ restart: boolean; restartHeld?: true }> {
+  await waitForSwitchRestart();
+  const agent = switchAgent;
+  const mine = wanted && res.ok && res.daemon !== "superseded";
+  if (!agent || turnsClosed || !res.ok || !(mine || restartOwed)) return { restart: false };
+  if (agent.turnsInFlight() > 0) {
+    restartOwed = true;
+    return mine ? { restart: false, restartHeld: true } : { restart: false };
+  }
+  await restartNow(agent);
+  return { restart: true };
+}
+
+/** main.ts, as the last turn the window streams ends on its own (AgentClient `idle`): a restart held back for the turns runs now. */
+export function lastTurnEnded(): void {
+  const agent = switchAgent;
+  if (!restartOwed || restarting || turnsClosed || !agent || agent.turnsInFlight() > 0) return;
+  void restartNow(agent);
+}
+
+/** main.ts, as `atag serve` starts, whoever starts it: the new agent reads the file as it is, so no restart is owed. */
+export function agentStarting(): void {
+  restartOwed = false;
+}
+
 /** Whether the seats need the managed daemon: Fusion in force with a local seat on a managed model. */
 export function runModeWantsDaemon(now: ResolvedRunMode, lm: { mode?: string; managed?: { modelId?: string | null } }): boolean {
   const localLeg = now.effective === "fusion" && (now.workerProviderId === LOCAL_ID || now.orchestratorProviderId === LOCAL_ID);
@@ -574,7 +683,8 @@ async function afterRunModeWrite(res: {
     model: entry ? (entry.defaultChatModel ?? entry.model ?? null) : null,
     transport: transportFor(leg),
     ...up,
-    restart: res.changed,
+    // Backlog 18 (its second review): a superseded start restarts nothing (restartAfterSwitch).
+    restart: res.changed && up.daemon !== "superseded",
     runMode: {
       before: v?.before.effective ?? now.effective,
       after: now.effective,
@@ -658,7 +768,8 @@ export async function selectFusionWorkerModel(modelId: string): Promise<SwitchRe
     ...settled,
     ...up,
     modelId,
-    restart: !!settled.restart || changed,
+    // Backlog 18 (its second review): a superseded start restarts nothing (restartAfterSwitch).
+    restart: (!!settled.restart || changed) && up.daemon !== "superseded",
   };
 }
 

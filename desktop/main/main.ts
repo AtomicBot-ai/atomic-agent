@@ -78,11 +78,15 @@ import {
 } from "./huggingface.js";
 import {
   activateProvider,
+  agentStarting,
   bringUpAtLaunch,
   closeDaemonTurns,
   enterFusion,
   inDaemonTurn,
+  lastTurnEnded,
   onBackgroundBringUp,
+  restartAfterSwitch,
+  restartsAgent,
   selectCloudModel,
   selectFusionWorkerModel,
   selectLocalModel,
@@ -94,6 +98,7 @@ import {
   supersedeBringUp,
   swapFusionLegs,
   switchBackend,
+  waitForSwitchRestart,
   type SwitchResult,
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
@@ -903,7 +908,7 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("agent:chat", (_event, payload: unknown) => {
+  ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
     const { messages, sessionId } = payload as {
       messages?: Array<{ role: string; content: string }>;
       sessionId?: string;
@@ -915,6 +920,14 @@ function wireIpc(client: AgentClient): void {
       .filter((m) => m && typeof m.role === "string" && typeof m.content === "string")
       .map((m) => ({ role: m.role, content: m.content }));
     if (!clean.length) return { ok: false, error: "no usable messages" };
+    /* Backlog 18 (its second review): a restart a switch held back for the
+       turns runs as the last one ends (backend-switch restartAfterSwitch), and
+       a message queued behind that turn goes out at that very moment. A turn
+       asked for while a switch's restart runs waits for it, and runs on the
+       agent it brings up rather than on one being stopped. */
+    if ((await waitForSwitchRestart()) && client.status.state !== "connected") {
+      return { ok: false, error: client.status.error ?? "the agent did not come back after the switch restarted it" };
+    }
     const turnId = randomUUID();
     turnNotifier.begin(turnId);
     void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
@@ -1300,7 +1313,29 @@ function wireIpc(client: AgentClient): void {
   // The write is only half of a switch: `atag serve` pins its provider at
   // boot and has no reload route on 0.5.4, so a result that says
   // `restart` is followed by the same stop+start `agent:restart` does.
+  /* Backlog 18 (its second review): whether and when the restart comes is
+     backend-switch's call (restartAfterSwitch) — never under a turn in flight,
+     never for a superseded result. It is handed this client: the turns it
+     streams, its restart, the moment its last turn ends, and any new start. */
+  restartsAgent({
+    turnsInFlight: () => client.turnsInFlight,
+    restart: async () => {
+      await client.stop();
+      await client.start();
+    },
+  });
+  // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.
+  client.on("idle", () => {
+    if (client.status.state === "connected") lastTurnEnded();
+  });
+  // Whoever starts `atag serve` again, it reads the file as it is: no restart is owed.
+  client.on("status", (status: { state?: string }) => {
+    if (status.state === "starting") agentStarting();
+  });
   const applySwitch = async (res: SwitchResult) => {
+    // A restart on its way (one held back for a turn, run as that turn ended)
+    // lands first: this switch is judged against the agent it brings up.
+    await waitForSwitchRestart();
     // The file moved (res.restart), or serve booted on a different route
     // than the file now names — for a cloud route the chat model counts
     // too, since serve pins the provider entry it read at boot.
@@ -1309,12 +1344,13 @@ function wireIpc(client: AgentClient): void {
       && (boot.provider !== res.providerId
         || (res.transport === "native_tools" && (boot.model ?? null) !== (res.model ?? null)));
     // Backlog 18: never once the app is quitting (stopForQuit).
-    const restart = !!res.ok && (!!res.restart || behind) && !quitting;
-    if (restart) {
-      await client.stop();
-      await client.start();
-    }
-    return { ...res, restart, status: client.status };
+    const wanted = !!res.ok && (!!res.restart || behind) && !quitting;
+    /* Its second review: a superseded result restarts nothing (a stop or a
+       later switch came while it waited for the daemon's turn), and while a
+       turn runs in any chat the restart is held back — `restartHeld`, for the
+       window to say why — and runs once the last one ends. */
+    const { restart, restartHeld } = await restartAfterSwitch(res, wanted);
+    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), status: client.status };
   };
   ipcMain.handle("cli:switchBackend", async (_event, kind: unknown) => {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
