@@ -57,6 +57,38 @@ describe("provider_waiting over SSE", () => {
     });
   });
 
+  it("says which link the turn waits on and what failed, when the loop knows", () => {
+    const sse = makeSse();
+    buildStreamEventHook(sse.writer as never, env(true))({
+      ...waiting,
+      cause: { kind: "unreachable" },
+      providerId: "local-llama",
+    } as never);
+    expect(sse.written[0]!.payload).toMatchObject({
+      reason: "fetch failed",
+      cause: { kind: "unreachable" },
+      provider_id: "local-llama",
+    });
+
+    const http = makeSse();
+    buildStreamEventHook(http.writer as never, env(true))({
+      ...waiting,
+      reason: '"cloud" is having server trouble (503).',
+      cause: { kind: "http", status: 503 },
+    } as never);
+    expect(http.written[0]!.payload).toMatchObject({
+      cause: { kind: "http", status: 503 },
+    });
+    expect(http.written[0]!.payload).not.toHaveProperty("provider_id");
+  });
+
+  it("leaves both out when the event has neither, as older hosts saw it", () => {
+    const sse = makeSse();
+    buildStreamEventHook(sse.writer as never, env(true))(waiting as never);
+    expect(sse.written[0]!.payload).not.toHaveProperty("cause");
+    expect(sse.written[0]!.payload).not.toHaveProperty("provider_id");
+  });
+
   it("says when the provider came back, so the readout can stop", () => {
     const sse = makeSse();
     buildStreamEventHook(sse.writer as never, env(true))({

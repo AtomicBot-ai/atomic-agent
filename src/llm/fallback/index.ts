@@ -16,8 +16,10 @@ export { lacksRequiredApiKey } from "./missing-api-key.js";
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
 export { runWithFallback } from "./run-with-fallback.js";
 export {
+  attachFailingLink,
   describeFailedAttempts,
   readFailedAttempts,
+  readFailingLink,
   summarizeFailedAttempts,
   type FailedAttempt,
 } from "./failed-attempts.js";

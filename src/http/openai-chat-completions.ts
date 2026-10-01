@@ -462,6 +462,12 @@ export function buildStreamEventHook(
        OpenAI-compatible client has no idea what to do with it. */
     if (event.type === "provider_waiting") {
       if (env.request.extensionsEnabled) {
+        /* `reason` is the raw failure line and stays what older hosts
+           read. `cause` is the same failure as data (`{kind}`, plus
+           `status` when a response had one), and `provider_id` the link
+           the turn is waiting on: with a fallback chain often not the
+           provider the operator picked. Both optional, both absent when
+           the loop does not know. */
         sse.writeEvent("provider_waiting", {
           object: "atomic.provider_waiting",
           session_id: env.session.id,
@@ -470,6 +476,10 @@ export function buildStreamEventHook(
           max_wait_ms: event.maxWaitMs,
           next_retry_ms: event.nextRetryMs,
           reason: event.reason,
+          ...(event.cause !== undefined ? { cause: event.cause } : {}),
+          ...(event.providerId !== undefined
+            ? { provider_id: event.providerId }
+            : {}),
         });
       }
       return;

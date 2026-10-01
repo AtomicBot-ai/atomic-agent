@@ -361,7 +361,7 @@ describe("an outage on a healthy chain still parks the turn", () => {
     rmSync(workingDir, { recursive: true, force: true });
   });
 
-  it("waits on the local link and keeps the sticky retries", async () => {
+  it("waits on the local link, names it, and keeps the sticky retries", async () => {
     const calls: string[] = [];
     const providers = new Map<string, LlmProvider>([
       [
@@ -434,6 +434,7 @@ describe("an outage on a healthy chain still parks the turn", () => {
     expect(parked[0]).toMatchObject({
       reason: "fetch failed",
       cause: { kind: "unreachable" },
+      providerId: "local-llama",
     });
     // The primary went down (503): its cooldown keeps the retry on the
     // link it fell over to, exactly as before.

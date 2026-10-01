@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   describeFailedAttempts,
   readFailedAttempts,
+  readFailingLink,
 } from "./failed-attempts.js";
 import { runWithFallback } from "./run-with-fallback.js";
 import { ProviderFallbackChain } from "./provider-fallback-chain.js";
@@ -272,6 +273,7 @@ describe("runWithFallback", () => {
       ).rejects.toBe(refusal);
       // Nothing failed before it; the later links are in the advance log.
       expect(readFailedAttempts(refusal)).toEqual([]);
+      expect(readFailingLink(refusal)).toBe("aimlapi");
     });
 
     it("is the same on a probe of the primary", async () => {
@@ -331,6 +333,18 @@ describe("runWithFallback", () => {
       ).rejects.toBe(refusal);
       expect(readFailedAttempts(refusal)).toEqual([]);
     });
+  });
+
+  it("marks the thrown error with the link that threw it", async () => {
+    const chain = makeChain(["cloud", "local"]);
+    const last = new TypeError("fetch failed");
+    await expect(
+      runWithFallback(chain, async (id) => {
+        if (id === "cloud") throw http(500);
+        throw last;
+      }),
+    ).rejects.toBe(last);
+    expect(readFailingLink(last)).toBe("local");
   });
 
   describe("logging", () => {

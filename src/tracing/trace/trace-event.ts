@@ -236,6 +236,8 @@ export interface TraceProviderWaiting extends TraceEventBase {
   maxWaitMs: number;
   nextRetryMs: number;
   reason: string;
+  /** The provider link the turn waits on, when the loop knows it. */
+  providerId?: string;
 }
 
 /**

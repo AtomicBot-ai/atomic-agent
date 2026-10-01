@@ -242,10 +242,19 @@ describe("an exhausted fallback chain, through the agent loop", () => {
       wait: true,
     });
 
-    // The wait itself is untouched: same trigger, same raw reason.
+    // The wait itself is untouched: same trigger, same raw reason. It now
+    // also names the link it waits on, which is not the one the user
+    // picked.
     const waiting = events.filter((e) => e.type === "provider_waiting");
     expect(waiting).toHaveLength(1);
-    expect(waiting[0]).toMatchObject({ reason: "fetch failed" });
+    expect(waiting[0]).toMatchObject({
+      reason: "fetch failed",
+      providerId: "local",
+    });
+    expect(trace.find((e) => e.type === "provider_waiting")).toMatchObject({
+      reason: "fetch failed",
+      providerId: "local",
+    });
     // The retried step walks the chain from the primary again. The local
     // link only stood in after a 404, which is not the primary being
     // down, so it earned no stickiness: a model id fixed during the wait
