@@ -96,13 +96,13 @@
       "title": "Atomic Agent",
       "contents": [
         {
-          "x": 120,
-          "y": 190,
+          "x": 170,
+          "y": 265,
           "type": "file"
         },
         {
-          "x": 532,
-          "y": 190,
+          "x": 490,
+          "y": 265,
           "type": "link",
           "path": "/Applications"
         }
