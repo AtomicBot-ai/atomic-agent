@@ -105,11 +105,8 @@ import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import { resolveModelPricingFor } from "./resolve-model-pricing.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { LearnedContextWindows } from "./learned-context-windows.js";
-import {
-  ProviderFallbackChain,
-  resolveFallbackChain,
-  withoutUnbuiltLinks,
-} from "../llm/fallback/index.js";
+import { ProviderFallbackChain } from "../llm/fallback/index.js";
+import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import {
   createFallbackCompleter,
   createFallbackStreamer,
@@ -1106,23 +1103,12 @@ export async function createAgentRuntime(
   // Set once the provider registry exists (below). Until then the chain
   // is taken from config as before; nothing picks a provider that early.
   let builtProviderIds: (() => readonly string[]) | null = null;
-  const droppedFallbackLinks = new Set<string>();
   const fallbackChain = new ProviderFallbackChain({
-    resolve: () => {
-      const resolved = resolveFallbackChain(resolveLlmConfig(getConfig()));
-      const listIds = builtProviderIds;
-      if (!listIds) return resolved;
-      const built = new Set(listIds());
-      return withoutUnbuiltLinks(
-        resolved,
-        (id) => built.has(id),
-        (id) => {
-          if (droppedFallbackLinks.has(id)) return;
-          droppedFallbackLinks.add(id);
-          logger.warn("llm: fallback link skipped (provider not built)", { id });
-        },
-      );
-    },
+    resolve: createFallbackChainResolver({
+      readLlmConfig: () => resolveLlmConfig(getConfig()),
+      builtProviderIds: () => builtProviderIds?.() ?? null,
+      logger,
+    }),
     noticeSink: (notice) =>
       emitAgentLoopEvent({ type: "provider_switched", ...notice }),
     logger,
