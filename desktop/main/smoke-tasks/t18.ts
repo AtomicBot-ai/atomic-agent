@@ -522,6 +522,7 @@ async function readyRow(js: Js, check: Check): Promise<void> {
       await land([{kind: 'runtime', id: 'llama.cpp'}, {kind: 'weights', id: 'smoke-t18-9b'}]);
       out.landed = {calls: calls.slice(), card: card(), snaps};
       const sw = document.querySelector('#dlcard .dlc-switch');
+      out.switchBefore = {button: !!sw, calls: calls.slice()};
       if (sw) sw.click();
       await tick(80);
       out.switched = {calls: calls.slice(), card: card()};
@@ -557,11 +558,13 @@ async function readyRow(js: Js, check: Check): Promise<void> {
       && /stays on its current model until you switch/.test(c.rows[0]!.line) && c.cloud === "" && landed.snaps >= 1,
     JSON.stringify({ onCloud: r["onCloud"], ...landed }),
   );
+  const before = r["switchBefore"] as { button: boolean; calls: string[] };
   const switched = r["switched"] as { calls: string[]; card: Card };
   check(
     "T18h: Switch starts it, exactly once, and the row goes",
-    JSON.stringify(switched.calls) === JSON.stringify(["activate:smoke-t18-9b"]) && switched.card === null,
-    JSON.stringify(switched),
+    before.button && before.calls.length === 0
+      && JSON.stringify(switched.calls) === JSON.stringify(["activate:smoke-t18-9b"]) && switched.card === null,
+    JSON.stringify({ before, switched }),
   );
   const dismissed = r["dismissed"] as { calls: string[]; card: Card; route: string | null };
   const again = r["again"] as Card;
