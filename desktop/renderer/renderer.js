@@ -613,7 +613,7 @@ const DL = {
       still to come down — a llama.cpp runtime retried behind them, another
       model, another projector. Each waits here, a queued row in the card,
       until nothing else runs (dlProjectorNext). */
-  projectorQueue: [],   // [{id, pending}]
+  projectorQueue: [],   // [{id, pending, run}]
   /** Backlog 18: downloads that failed, each a row in the card with Retry
       until it is retried or dismissed — a failure never just vanishes. */
   failed: [],       // [{n, kind, id, error, retry}]
@@ -8901,8 +8901,13 @@ function dlCancel() {
      job and its own run, its projector. A setup model queued as a run of its
      own stays, and keeps its reminder. */
   const job0 = DL.job;
+  /* F8: so does a projector waiting behind the running job's own run — the
+     llama.cpp runtime a resumed projector waits for (obResumeProjector). One
+     waiting behind a run of its own stays, to come down next. */
+  const parked = job0 ? DL.projectorQueue.filter((p) => p.run === job0.run) : [];
   obSetupPullForgetFor([DL.preparing, job0, DL.projector ? {kind: 'projector', id: DL.projector.id} : null]
-    .concat(job0 ? DL.queue.filter((q) => q.run === job0.run) : []));
+    .concat(job0 ? DL.queue.filter((q) => q.run === job0.run) : [], parked.map((p) => ({kind: 'projector', id: p.id}))));
+  DL.projectorQueue = DL.projectorQueue.filter((p) => parked.indexOf(p) < 0);
   DL.preparing = null;
   /* A start held for a runtime (R4) or a Switch waiting on one (S4) goes with
      that runtime — kept only while another one still comes after this Cancel. */
@@ -10456,7 +10461,7 @@ function obPullFinished(job, ev) {
   if (pending && BR && BR.hfProjector) {
     DL.landed = null;
     obSetupPullWeightsLanded(job.id, pending);
-    dlProjectorPark(job.id, pending);
+    dlProjectorPark(job.id, pending, job.run);
     return;
   }
   DL.landed = job.id;
@@ -10479,10 +10484,11 @@ function dlRuntimePending() {
  * weights used to come down beside it: × on either row stopped only the
  * projector, and the model could start while the binary was being replaced.
  * So the projector waits, a queued row in the card, until nothing else comes
- * down (dlProjectorNext).
+ * down (dlProjectorNext). `run` is the run it belongs to: a Cancel on that
+ * run's job takes it too (dlCancel).
  */
-function dlProjectorPark(id, pending) {
-  DL.projectorQueue.push({id, pending});
+function dlProjectorPark(id, pending, run) {
+  DL.projectorQueue.push({id, pending, run});
   if (!dlProjectorNext()) render();
 }
 
@@ -10667,14 +10673,37 @@ function obSetupPullWeightsLanded(id, mmproj) {
  * The remembered download, started again with its projector step. Weights
  * still to come resume, and obPullFinished fetches the projector after them,
  * from the reminder. Weights already on disk (a quit during the projector, or
- * after it failed): only the projector is fetched. Either way the model starts
- * once its projector has landed and never without it — a projector that fails
- * is a failed row with Retry (obFetchProjector).
+ * after it failed): only the projector is fetched (obResumeProjector). Either
+ * way the model starts once its projector has landed and never without it — a
+ * projector that fails is a failed row with Retry (obFetchProjector).
  */
 function obSetupPullRestart(m) {
   const mmproj = obMmprojFor(m.id, m.mmproj);
-  if (mmproj && m.weightsLanded === true) { obFetchProjector(m.id, mmproj); return; }
+  if (mmproj && m.weightsLanded === true) { obResumeProjector(m.id, mmproj); return; }
   obStartLocalPull(m.id, false);
+}
+
+/**
+ * Deferred D5: the projector alone, its weights on disk. The model it starts
+ * when it lands needs the llama.cpp runtime as much as a resumed download of
+ * its weights does, and the runtime is not always there (its own download
+ * failed before the quit). So `models status` is read first, as
+ * obStartLocalPull reads it: a missing binary comes down first, in its own
+ * run, and the projector waits for it in that run (dlProjectorPark), so a
+ * Cancel on the runtime takes the projector too. The card shows the projector
+ * from "Starting…" while the status is read, and a Cancel there starts nothing.
+ */
+async function obResumeProjector(id, pending) {
+  const token = {kind:'projector', id};
+  DL.preparing = token;
+  render();
+  const needsRuntime = obBackendMissing(await obBackendStatusText());
+  if (DL.preparing !== token) return;
+  DL.preparing = null;
+  if (needsRuntime) dlStart([{kind:'runtime', id:'llama.cpp'}]);
+  // A Retry pressed while the status was read waits in the queue (dlRequeue): it goes first.
+  else if (DL.queue.length) dlNext();
+  dlProjectorPark(id, pending, needsRuntime ? DL.runSeq : null);
 }
 
 /* Review S3: which reminder this launch resumed. Its failure is counted once
