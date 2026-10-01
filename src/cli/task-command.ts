@@ -2,6 +2,7 @@ import { getConfig } from "../config/index.js";
 import {
   TaskStore,
   TaskValidationError,
+  resolveScheduledFor,
   type TaskRecord,
   type TaskSchedule,
   type TaskStatus,
@@ -246,17 +247,23 @@ async function handleCreate(args: string[]): Promise<number> {
   }
 
   const store = openTaskStore();
+  const now = Date.now();
   try {
-    const created = store.create({
-      ...(sessionId ? { sessionId } : {}),
-      userMessage: message,
-      origin: "cli",
-      triggerSource: "user",
-      maxAttempts,
-      maxSteps,
-      ...(notify ? { notify } : {}),
-      ...(schedule ? { schedule } : {}),
-    });
+    const created = store.create(
+      {
+        ...(sessionId ? { sessionId } : {}),
+        userMessage: message,
+        origin: "cli",
+        triggerSource: "user",
+        maxAttempts,
+        maxSteps,
+        ...(notify ? { notify } : {}),
+        ...(schedule
+          ? { schedule, scheduledFor: resolveScheduledFor(schedule, now) }
+          : {}),
+      },
+      now,
+    );
     process.stdout.write(`${JSON.stringify(created, null, 2)}\n`);
     return 0;
   } catch (err) {

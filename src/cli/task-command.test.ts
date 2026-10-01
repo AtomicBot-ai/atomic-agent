@@ -183,6 +183,29 @@ describe("taskCommand", () => {
     expect(stderr()).toMatch(/task not found/);
   });
 
+  it("create --at persists scheduledFor and keeps the task out of the due set until then", async () => {
+    const futureAt = Date.now() + 3_600_000; // 1h in the future
+    const code = await taskCommand([
+      "create",
+      "--message",
+      "deferred work",
+      "--at",
+      String(futureAt),
+    ]);
+    expect(code).toBe(0);
+    const created = JSON.parse(stdout());
+    expect(created.scheduledFor).toBe(futureAt);
+    expect(created.status).toBe("pending");
+
+    const store = new TaskStore({ dbFile: getConfig().paths.tasksDbFile });
+    try {
+      // One-shot --at must not fire on the next tick: it should not be due yet.
+      expect(store.listDue(futureAt - 1)).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
   it("list reports an empty placeholder when no tasks exist", async () => {
     const code = await taskCommand(["list"]);
     expect(code).toBe(0);
