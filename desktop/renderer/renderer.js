@@ -10971,6 +10971,10 @@ async function obSettle() {
     ? {leaf: closing, at: stamp, step: 'finished', written: false, owed: true}
     : {leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
   if (owedFor) obSetupPullRemember(owedFor);
+  /* S3: setup finished on another route with no setup download left to come —
+     an earlier one's reminder would only restart, on every launch, a download
+     the person has moved past. One still running here keeps its own. */
+  else if (closing === 'completedAt' && obSetupPullId() === null) obSetupPullForget();
   if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
   const res = owedFor ? {ok: true} : await BR.configSet('tui.onboarding.' + closing, stamp);
   if (stale()) return;

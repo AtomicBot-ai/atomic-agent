@@ -89,6 +89,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
     await heldStart(js, check);
     await setupRowRemoval(js, check);
     await switchBehindRuntime(js, check);
+    await setupDoneElsewhere(js, check);
     if (process.env["T18_SHOTS"] && w) await shots(js, w, process.env["T18_SHOTS"]);
   } finally {
     if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(300); }
@@ -1035,6 +1036,66 @@ async function switchBehindRuntime(js: Js, check: Check): Promise<void> {
       && c.staged && c.switchButton && JSON.stringify(c.afterSwitch) === JSON.stringify(["activate:smoke-s4"]) && c.retried
       && JSON.stringify(c.after.calls) === JSON.stringify(["activate:smoke-s4"]) && !c.after.ready,
     JSON.stringify({ b, c }),
+  );
+}
+
+/* S3 (second review, its first half): setup finishing on another route — here
+   a cloud model, the second-backend offer skipped — forgets an earlier setup
+   download's reminder, which would otherwise restart on every launch a
+   download the person has moved past. A setup download still running in this
+   session keeps its reminder. The flow is the test jump (testClose), so the
+   closing write is decided but not made. */
+async function setupDoneElsewhere(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const KEY = 'atag.setupDownload';
+    const marker = () => { try { const m = JSON.parse(localStorage.getItem(KEY) || 'null'); return m ? m.id : null; } catch (e) { return 'unreadable'; } };
+    const remember = (id) => { if (typeof obSetupPullRemember === 'function') obSetupPullRemember(id); };
+    const keep = {ob: Object.assign({}, OB), stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice(),
+      room: S.room, dry: DL.dry, toasts: S.toasts.slice()};
+    // Setup closes on a cloud model: the second-backend offer skipped, the import step already offered.
+    const finishOnCloud = async () => {
+      window.__obOpen('propose_second', {stamped: ['importOfferedAt', 'proposedSecondBackendAt']});
+      window.__obSeed({offer: 'local', outcome: 'cloud'});
+      await tick(100);
+      window.__obKey('esc');
+      for (let i = 0; i < 200 && OB.open; i++) await tick(100);   // up to 20 s: obSettle reads first
+      return {open: OB.open, closing: OB_STAMP_LOG.filter((e) => e.step === 'finished').map((e) => e.leaf)};
+    };
+    const out = {};
+    try {
+      window.__dlClear(); S.room = 'chat'; render();
+      // A reminder left by an earlier session's setup download, which failed; nothing of it in memory now.
+      remember('smoke-s3');
+      out.earlier = {before: marker(), flow: await finishOnCloud(), after: marker()};
+      // A setup download still running when setup finishes elsewhere keeps its reminder.
+      window.__dlSeed([{kind: 'weights', id: 'smoke-s3'}]);
+      remember('smoke-s3');
+      out.running = {before: marker(), flow: await finishOnCloud(), after: marker()};
+      return out;
+    } finally {
+      window.__dlClear(); DL.dry = keep.dry;
+      try { localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
+      if (OB.open) window.__obClose();
+      const gen = OB.openGen;
+      Object.assign(OB, keep.ob, {open: false, settling: false, openGen: gen});
+      for (const k of Object.keys(OB_STAMPED)) delete OB_STAMPED[k];
+      Object.assign(OB_STAMPED, keep.stamped);
+      OB_STAMP_LOG.length = 0; keep.log.forEach((e) => OB_STAMP_LOG.push(e));
+      S.room = keep.room; S.toasts = keep.toasts; render();
+    }
+  })()`);
+  type Run = { before: string | null; after: string | null; flow: { open: boolean; closing: string[] } };
+  const e = r["earlier"] as Run, run = r["running"] as Run;
+  check(
+    "T18 S3: setup finishing on a cloud model forgets an earlier setup download's reminder — it is not restarted on the next launch",
+    e.before === "smoke-s3" && e.flow.open === false && e.flow.closing.includes("completedAt") && e.after === null,
+    JSON.stringify(e),
+  );
+  check(
+    "T18 S3: a setup download still running when setup finishes elsewhere keeps its reminder",
+    run.before === "smoke-s3" && run.flow.open === false && run.after === "smoke-s3",
+    JSON.stringify(run),
   );
 }
 
