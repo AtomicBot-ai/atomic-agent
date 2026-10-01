@@ -29,6 +29,9 @@ import type { ProjectorStatusAnswer, SmokeDownloads } from "../release-fixes-smo
  *        down or waited its turn it offered "Set up a model", whose Download
  *        then refused, and behind the llama.cpp runtime it said "Downloading
  *        your model".
+ *   D8 — the same chip during the composer picker's or Settings › Models'
+ *        download of a chat model: "Set up a model" on the setup slot, nothing
+ *        or "Download a model" on the managed route's model slot.
  *
  * Nothing is downloaded and nothing restarts. Main runs this whole file offline
  * (smokeDownloads.offline): every download handler refuses before it spawns or
@@ -104,7 +107,9 @@ const HELPERS = String.raw`
     keep: {status: window.obBackendStatusText, activate: window.obActivateLocal, pull: window.obProjectorPull,
       next: window.dlNext, spawn: window.dlSpawn, open: window.openOnboarding, refresh: window.refreshLiveConfig,
       snap: window.bswSnapshot, cfg: LIVE_CONFIG, dry: DL.dry, models: OB.models, testClose: OB.testClose,
-      log: OB_STAMP_LOG.slice(), room: S.room, toasts: S.toasts.slice(), marker: localStorage.getItem(KEY)}});
+      log: OB_STAMP_LOG.slice(), room: S.room, toasts: S.toasts.slice(), marker: localStorage.getItem(KEY),
+      ext: {url: EXT.url, model: EXT.model}, sel: SEL.pulling, selLine: SEL.pullLine, selLocal: SEL.local,
+      localLoaded: BSW.localLoaded, llm: LLMP.pulling, llmLog: LLMP.pullLog}});
   const calls = T.calls, held = T.held, keep = T.keep;
   const marker = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return 'unreadable'; } };
   // The setup download's reminder, as the hand-over writes it for a vision pick.
@@ -128,11 +133,40 @@ const HELPERS = String.raw`
     await tick(80);
     return n ? (n.dataset.act || true) : null;
   };
+  // The chip where the route's controls go (D7, D8): the setup slot, or the model slot. Read at once.
+  const peek = () => {
+    const foot = document.querySelector('#composer .cfoot');
+    const el = foot ? foot.querySelector('.pullchip') || foot.querySelector('.setupchip') || foot.querySelector('.modelchip') : null;
+    return Object.assign({route: selBackend(), needsSetup: composerNeedsSetup(), text: txt(el), tag: el ? el.tagName : null,
+      slot: !el ? null : el.classList.contains('modelchip') ? 'model' : el.classList.contains('setupchip') ? 'setup' : 'other',
+      pull: !!el && el.classList.contains('pullchip'), act: el ? el.getAttribute('data-act') : null, opened: 0}, jobs());
+  };
+  // The same, and with click: what a click on it opens (setup is a recorder here).
+  const chip = async (click) => {
+    const out = peek();
+    const el = click ? document.querySelector('#composer .cfoot .pullchip, #composer .cfoot .setupchip') : null;
+    if (el) {
+      const was = T.opened;
+      el.click();
+      await tick(60);
+      out.opened = T.opened - was;
+    }
+    return out;
+  };
+  // The setup slot: the agent's default route, its server read already with nothing answering, so the poller does not ask again.
+  const onSetupRoute = () => {
+    const lm = Object.assign({}, (keep.cfg && keep.cfg.localModels) || {}, {mode: 'external', url: DEFAULT_LLAMA_URL});
+    LIVE_CONFIG = Object.assign({}, keep.cfg || {}, {localModels: lm});
+    EXT.url = DEFAULT_LLAMA_URL; EXT.model = null;
+    render();
+  };
   const stage = () => {
     window.__dlClear();
     try { localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
     calls.length = 0; held.length = 0; T.spawns.length = 0; T.opened = 0; T.statusText = 'backend: binary ok';
     S.room = 'chat'; S.toasts = [];
+    // No other download runs: the composer picker's and Settings' slots are empty.
+    SEL.pulling = null; LLMP.pulling = null;
     window.obBackendStatusText = () => { calls.push('status'); return Promise.resolve(T.statusText); };
     window.obActivateLocal = async (id) => { calls.push('activate:' + id); };
     window.obProjectorPull = (p) => { calls.push('projector:' + p.id); return new Promise((res) => held.push(res)); };
@@ -161,6 +195,9 @@ const HELPERS = String.raw`
       LIVE_CONFIG = keep.cfg; OB.models = keep.models; OB.testClose = keep.testClose; OB.pendingMmproj = null;
       OB_STAMP_LOG.length = 0; keep.log.forEach((e) => OB_STAMP_LOG.push(e));
       S.room = keep.room; S.toasts = keep.toasts;
+      EXT.url = keep.ext.url; EXT.model = keep.ext.model;
+      SEL.pulling = keep.sel; SEL.pullLine = keep.selLine; SEL.local = keep.selLocal; BSW.localLoaded = keep.localLoaded;
+      LLMP.pulling = keep.llm; LLMP.pullLog = keep.llmLog;
       try { window.__dlClear(); } catch (e) { /* the rest is put back all the same */ }
       DL.dry = keep.dry;
       try { if (keep.marker !== null) localStorage.setItem(KEY, keep.marker); else localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
@@ -215,6 +252,7 @@ export async function checks18e(js: Js, check: Check, main: SmokeDownloads): Pro
     await step("D5", () => resumeChecksRuntime(js, check));
     await step("D6", () => earlyProjectorCancel(js, check, main));
     await step("D7", () => chipFollowsProjector(js, check));
+    await step("D8", () => chipFollowsOtherPulls(js, check));
     if (process.env["T18E_SHOTS"]) await shots(js, process.env["T18E_SHOTS"]);
   } finally {
     online();
@@ -949,29 +987,6 @@ async function earlyProjectorCancel(js: Js, check: Check, main: SmokeDownloads):
 async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(async () => {
     ${HELPERS}
-    const keepExt = {url: EXT.url, model: EXT.model};
-    // The setup slot: the agent's default route, its server read already with nothing answering, so the poller does not ask again.
-    const onSetupRoute = () => {
-      const lm = Object.assign({}, (keep.cfg && keep.cfg.localModels) || {}, {mode: 'external', url: DEFAULT_LLAMA_URL});
-      LIVE_CONFIG = Object.assign({}, keep.cfg || {}, {localModels: lm});
-      EXT.url = DEFAULT_LLAMA_URL; EXT.model = null;
-      render();
-    };
-    // The chip where the route's controls go, and, while a download runs, what a click on it opens (setup is a recorder here).
-    const chip = async (click) => {
-      const foot = document.querySelector('#composer .cfoot');
-      const el = foot ? foot.querySelector('.pullchip') || foot.querySelector('.setupchip') : null;
-      const out = Object.assign({route: selBackend(), needsSetup: composerNeedsSetup(), text: txt(el), tag: el ? el.tagName : null,
-        slot: !el ? null : el.classList.contains('modelchip') ? 'model' : el.classList.contains('setupchip') ? 'setup' : 'other',
-        pull: !!el && el.classList.contains('pullchip'), act: el ? el.getAttribute('data-act') : null, opened: 0}, jobs());
-      if (click && el) {
-        const was = T.opened;
-        el.click();
-        await tick(60);
-        out.opened = T.opened - was;
-      }
-      return out;
-    };
     // The weights land with a retried llama.cpp runtime next: the projector waits behind it (D1).
     const park = async () => {
       remember();
@@ -1031,7 +1046,6 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       await tick(150);
       return out;
     } finally {
-      EXT.url = keepExt.url; EXT.model = keepExt.model;
       restore();
     }
   })()`);
@@ -1082,6 +1096,140 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
       && unnamedFetching.text === `Downloading ${unnamed.row}` && unnamedFetching.projector === ID
       && r["unnamedAnswered"] === true,
     JSON.stringify({ unnamed, unnamedFetching }),
+  );
+}
+
+/* D8: the other two downloads the card follows — the composer picker's
+   (SEL.pulling) and Settings › Models' (LLMP.pulling, its vision projector
+   phase included) — left the chip as it was. On the setup slot it offered
+   "Set up a model", whose Download then refused, a download being already
+   running; on the managed route with no model to show it drew nothing, or
+   "Download a model". A chat model is what they bring down, and it is started
+   when it lands, as the setup download's is. An embedding model is not: nothing
+   waits on it, and the card offers no cloud model beside one either. Each pull
+   is started and ended as its owner does it, without a download and without a
+   frame on the pull channel: the picker renders (selPull), Settings repaints
+   only itself and the card (llmRepaint), so the chip is read at once after it.
+   Its review: a chosen model removed since (its id is kept) read as the model
+   during the picker's download, and a repaint swapped the chip for an equal
+   one, dropping a hover or the focus on it. */
+async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const PICK = 'smoke-t18e-pick', SETS = 'smoke-t18e-settings', EMB = 'smoke-t18e-embedding', ACTIVE = 'smoke-t18e-active';
+    const pick = (id) => { SEL.pulling = id; SEL.pullLine = 'starting…'; render(); };
+    const settings = (p) => { LLMP.pulling = p; LLMP.pullLog = []; llmRepaint(); };
+    const begin = (slot) => {
+      stage();
+      OB.models = OB.models.concat([{id: PICK, name: 'Smoke Pick 4B GGUF'}, {id: SETS, name: 'Smoke Settings 9B GGUF'}]);
+      if (slot === 'setup') onSetupRoute();
+    };
+    // Whether a repaint that changes nothing keeps the chip itself: a mark on the element, which a swap would drop.
+    const marked = () => { const el = document.querySelector('#composer .cfoot .pullchip, #composer .cfoot .setupchip, #composer .cfoot .modelchip'); if (el) el.__t18e = 1; return !!el; };
+    const kept = () => { const el = document.querySelector('#composer .cfoot .pullchip, #composer .cfoot .setupchip, #composer .cfoot .modelchip'); return !!el && el.__t18e === 1; };
+    const out = {setup: {}, model: {}};
+    try {
+      // The setup slot.
+      begin('setup');
+      out.setup.before = peek();
+      out.setup.keptSetup = marked() && (llmRepaint(), kept());
+      pick(PICK);
+      out.setup.pick = await chip(true);
+      SEL.pulling = null; render();
+      out.setup.pickEnded = peek();
+      settings({kind: 'chat', id: SETS});
+      out.setup.settings = peek();
+      out.setup.settingsClick = await chip(true);
+      marked();
+      settings({kind: 'chat', id: SETS, phase: 'mmproj'});
+      out.setup.projector = peek();
+      out.setup.keptPull = kept();
+      settings(null);
+      out.setup.settingsEnded = peek();
+      settings({kind: 'embedding', id: EMB});
+      out.setup.embedding = Object.assign(peek(), {offer: !!document.querySelector('#dlcard .dlc-cloud')});
+      settings(null);
+
+      // The managed route's model slot, with nothing on disk and nothing chosen: the call to download one.
+      begin('model');
+      SEL.local = [{id: PICK, name: 'Smoke Pick 4B GGUF', downloaded: false}, {id: SETS, name: 'Smoke Settings 9B GGUF', downloaded: false}];
+      BSW.localLoaded = true;
+      render();
+      out.model.before = peek();
+      pick(PICK);
+      out.model.pick = peek();
+      SEL.pulling = null; render();
+      settings({kind: 'chat', id: SETS});
+      out.model.settings = peek();
+      settings(null);
+      out.model.settingsEnded = peek();
+      // A chosen model removed since (models remove keeps its id), and nothing else on disk.
+      const gone = Object.assign({}, LIVE_CONFIG.localModels);
+      gone.managed = Object.assign({}, gone.managed || {}, {modelId: 'smoke-t18e-gone'});
+      LIVE_CONFIG = Object.assign({}, LIVE_CONFIG, {localModels: gone});
+      render();
+      out.model.goneBefore = peek();
+      pick(PICK);
+      out.model.gonePick = peek();
+      SEL.pulling = null; render();
+      // A model on disk and chosen: its chip stays while another one comes down.
+      SEL.local = SEL.local.concat([{id: ACTIVE, name: 'Smoke Active 2B GGUF', downloaded: true}]);
+      const lm = Object.assign({}, LIVE_CONFIG.localModels);
+      lm.managed = Object.assign({}, lm.managed || {}, {modelId: ACTIVE});
+      LIVE_CONFIG = Object.assign({}, LIVE_CONFIG, {localModels: lm});
+      render();
+      out.model.active = peek();
+      pick(PICK);
+      out.model.activePick = peek();
+      SEL.pulling = null; render();
+      settings({kind: 'chat', id: SETS});
+      out.model.activeSettings = peek();
+      settings(null);
+      // Settings' repaint and the facts' (bswRepaint), with nothing changed: the chosen model's chip is the same element.
+      out.model.keptActive = marked() && (llmRepaint(), bswRepaint(), kept());
+      return out;
+    } finally {
+      restore();
+    }
+  })()`);
+  const s = (r["setup"] ?? {}) as Record<string, Chip & { offer?: boolean }>;
+  const m = (r["model"] ?? {}) as Record<string, Chip>;
+  const on = (c: Chip | undefined, slot: "setup" | "model") =>
+    !!c && (slot === "setup" ? c.route === "custom" && c.needsSetup : c.route === "local" && !c.needsSetup);
+  // Downloading <the model>, a plain label in the chip's own slot: no control, and a click on it opens nothing.
+  const downloading = (c: Chip | undefined, slot: "setup" | "model", name: string) =>
+    on(c, slot) && !!c && c.slot === slot && c.pull && c.tag === "SPAN" && !c.act && c.text === `Downloading ${name}` && c.opened === 0;
+  const offersSetup = (c: Chip | undefined) =>
+    on(c, "setup") && !!c && c.slot === "setup" && !c.pull && c.text === "Set up a model" && c.act === "onboarding:choose";
+  const shows = (c: Chip | undefined, text: string) => on(c, "model") && !!c && c.slot === "model" && !c.pull && c.text === text;
+  check(
+    "T18 D8: on the setup slot the composer picker's download reads Downloading <the model> — not Set up a model, whose setup would refuse its Download — a click on it opens nothing, and Set up a model is back once it ends",
+    offersSetup(s["before"]) && downloading(s["pick"], "setup", "Smoke Pick 4B") && offersSetup(s["pickEnded"]),
+    JSON.stringify({ before: s["before"], pick: s["pick"], ended: s["pickEnded"] }),
+  );
+  check(
+    "T18 D8: Settings › Models' download reads the same, its vision projector phase too, though Settings repaints only itself and the card",
+    downloading(s["settings"], "setup", "Smoke Settings 9B") && downloading(s["settingsClick"], "setup", "Smoke Settings 9B")
+      && downloading(s["projector"], "setup", "Smoke Settings 9B") && offersSetup(s["settingsEnded"]),
+    JSON.stringify({ settings: s["settings"], click: s["settingsClick"], projector: s["projector"], ended: s["settingsEnded"] }),
+  );
+  check(
+    "T18 D8: an embedding model's download leaves Set up a model as it is — nothing waits on it, and the card offers no cloud model beside it",
+    offersSetup(s["embedding"]) && s["embedding"]?.offer === false,
+    JSON.stringify(s["embedding"]),
+  );
+  check(
+    "T18 D8: on the managed route with no model to run, the model slot reads Downloading <the model> while the picker or Settings brings one down — not nothing, nor Download a model, nor a chosen model removed since — and a model on disk keeps its chip",
+    shows(m["before"], "Download a model") && downloading(m["pick"], "model", "Smoke Pick 4B")
+      && downloading(m["settings"], "model", "Smoke Settings 9B") && shows(m["settingsEnded"], "Download a model")
+      && shows(m["goneBefore"], "Download a model") && downloading(m["gonePick"], "model", "Smoke Pick 4B")
+      && shows(m["active"], "Smoke Active 2B") && shows(m["activePick"], "Smoke Active 2B") && shows(m["activeSettings"], "Smoke Active 2B"),
+    JSON.stringify(m),
+  );
+  check(
+    "T18 D8: a repaint that changes nothing keeps the chip itself — Set up a model, Downloading <the model> across Settings' projector phase, a chosen model's chip under Settings' repaint and the facts' — so a hover or the focus on it stays",
+    r["setup"]?.["keptSetup"] === true && r["setup"]?.["keptPull"] === true && r["model"]?.["keptActive"] === true,
+    JSON.stringify({ setup: r["setup"]?.["keptSetup"], pull: r["setup"]?.["keptPull"], active: r["model"]?.["keptActive"] }),
   );
 }
 

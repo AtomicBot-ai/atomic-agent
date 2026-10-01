@@ -2803,7 +2803,7 @@ function composer() {
          chip stands for is its `data-id`, which is what the drivers and the
          smoke compare. */
       + '<div class="cfoot' + (selHasKind('workers') ? ' is-fusion' : '') + '">'
-        + (composerNeedsSetup() ? (dlChipBusy() ? downloadingChipHtml() : setupChipHtml()) : routeChipsHtml(backend))
+        + (composerNeedsSetup() ? setupSlotHtml() : routeChipsHtml(backend))
         + '<span class="cgrow"></span>'
         + contextChip()
         + codingModeChip()
@@ -2841,18 +2841,35 @@ function dlBusy() { return DL.job !== null || DL.queue.length > 0 || DL.preparin
    download already running. A projector-only resume's Starting… (DL.preparing,
    kind projector) is in dlBusy() already. */
 function dlChipBusy() { return dlBusy() || DL.projector !== null || DL.projectorQueue.length > 0; }
+/* The other two downloads the card follows (xpullOwner), when what they bring
+   down is a chat model: the composer picker's (SEL.pulling) and Settings ›
+   Models' (LLMP.pulling, its vision projector phase included). Each starts the
+   model when it lands, as the setup download does, and setup's own Download is
+   refused meanwhile. Its id, else null. Not an embedding model: nothing waits
+   on it, and the card offers no cloud model beside one either. */
+function xpullChatModel() {
+  if (SEL.pulling) return SEL.pulling;
+  const p = LLMP.pulling;
+  return p && p.kind === 'chat' ? p.id : null;
+}
+/** The setup slot: "Set up a model", or, while a chat model comes down already, what it is. */
+function setupSlotHtml() {
+  return dlChipBusy() || xpullChatModel() ? downloadingChipHtml() : setupChipHtml();
+}
 /**
  * The model the wizard's pull is fetching: its weights job, even while the
- * runtime goes first; else the vision model whose projector is still to come.
- * Named as its row in the card is (dlCardName): setup's own list (OB.models)
- * is read on its model step, and a relaunch has none, so a Hugging Face
- * model's custom-<slug> id read raw on the chip and trimmed in the card.
+ * runtime goes first; else the vision model whose projector is still to come;
+ * with the setup download idle, the chat model the picker or Settings brings
+ * down. Named as its row in the card is (dlCardName): setup's own list
+ * (OB.models) is read on its model step, and a relaunch has none, so a Hugging
+ * Face model's custom-<slug> id read raw on the chip and trimmed in the card.
  */
 function dlModelName() {
   const j = [DL.job].concat(DL.queue, [DL.preparing]).find((x) => x && x.kind === 'weights')
     || [DL.projector, DL.preparing && DL.preparing.kind === 'projector' ? DL.preparing : null]
       .concat(DL.projectorQueue).find((x) => x && x.id);
-  return j && j.id ? dlCardName({kind: 'weights', id: j.id}) : 'your model';
+  const id = j && j.id ? j.id : dlChipBusy() ? null : xpullChatModel();
+  return id ? dlCardName({kind: 'weights', id}) : 'your model';
 }
 /* `slot` is where it stands: in place of the setup chip (no route chosen
    yet) or in the model slot of the local route the wizard has already
@@ -15859,6 +15876,16 @@ function bswSnapshot() {
 function modelChipHtml() {
   if (dlChipBusy() && selBackend() === 'local') return downloadingChipHtml('modelchip');
   const label = activeModel();
+  /* The managed route with no model to run — none chosen, only the call to
+     download one, or nothing on disk at all (a chosen model removed since:
+     `models remove` keeps its id, and while the picker pulls, activeModel()
+     names it) — while the picker or Settings brings a chat model down: the
+     chip says so, as for the setup download. A model on disk keeps its chip;
+     the download is another one. */
+  if (selBackend() === 'local' && xpullChatModel()
+      && (!label || label === DOWNLOAD_MODEL_LABEL || (BSW.localLoaded && !(SEL.local || []).some((m) => m && m.downloaded)))) {
+    return downloadingChipHtml('modelchip');
+  }
   /* The operator's words: "There should be three selectors. Cloud, after
      that the provider. And after that the model. So that I would be able to
      choose the model from the cloud provider."
@@ -15909,6 +15936,34 @@ function modelChipHtml() {
     + '<span class="cval">' + esc(word) + '</span>' + ic('chevD', 'chev') + '</button>';
 }
 /**
+ * The composer's route chip, repainted in place: the setup slot, or the model
+ * slot. Calm (S6): the "Set up a model" chip stands in for the whole route, so
+ * no model chip joins it. A route that changed is a render's to redraw.
+ */
+function composerChipRepaint() {
+  const foot = document.querySelector('#composer .cfoot');
+  if (!foot) return;
+  const setup = foot.querySelector(':scope > .setupchip');
+  if (setup) {
+    if (composerNeedsSetup()) chipSwap(setup, setupSlotHtml());
+    return;
+  }
+  const html = modelChipHtml();
+  const el = foot.querySelector('.modelchip');
+  if (el) { if (!html) el.remove(); else chipSwap(el, html); }
+  else if (html) { const spacer = foot.querySelector(':scope > .cgrow'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
+}
+/* A chip put in place of `el`, unless it draws the same. The DOM writes an
+   icon's `<path/>` back as `<path></path>`, so its markup never equalled the
+   string it came from, and every repaint swapped the chip for itself: a hover
+   or the keyboard's focus on it went with it. The nodes are compared instead. */
+function chipSwap(el, html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const next = t.content.firstElementChild;
+  if (next && !el.isEqualNode(next)) el.replaceWith(next);
+}
+/**
  * What the two facts change on screen, repainted in place. These land
  * seconds after a switch or the boot — two atag subprocesses — while the
  * user may already be typing the first message; a full render() would
@@ -15918,14 +15973,7 @@ function modelChipHtml() {
  * caret carried across.
  */
 function bswRepaint() {
-  const foot = document.querySelector('.cfoot');
-  // Calm (S6): the "Set up a model" chip stands in for the whole route; no model chip joins it.
-  if (foot && !foot.querySelector('.setupchip')) {
-    const html = modelChipHtml();
-    const el = foot.querySelector('.modelchip');
-    if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
-    else if (html) { const spacer = foot.querySelector(':scope > .cgrow'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
-  }
+  composerChipRepaint();
   // Calm (S3): the empty chat's quiet line names the model too — the same
   // catalogue name, swapped in place (the plate has no input to disturb).
   const plate = document.querySelector('.emptychat .emptyplate');
@@ -18569,8 +18617,10 @@ async function llmEnsureModels() {
 function llmRepaint() {
   if (llmVisible()) paneRepaintKeepFocus(llmTab());
   // Backlog 18: LLMP.pulling moves without a render (a pull starting, ending,
-  // its projector phase); the download card shows it.
+  // its projector phase); the download card shows it, and the composer's chip
+  // says it while it brings a chat model down (xpullChatModel).
   renderDlcard();
+  composerChipRepaint();
 }
 /* Only the model list repaints on a filter keystroke (the input keeps its caret). */
 function llmRepaintList() {
