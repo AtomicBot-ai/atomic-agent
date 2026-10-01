@@ -8135,8 +8135,19 @@ function obModelName(model) { return llmModelName(model); }
 /** What one pick downloads, in GB: the weights, plus the projector a vision
     model's pull fetches with them. 0 when the catalogue does not say. */
 function obDownloadGb(model) {
-  const weights = Number(model && model.sizeGb) || parseFloat(String((model && model.size) || '')) || 0;
+  const weights = Number(model && model.sizeGb) || sizeStringGb(model && model.size);
   return weights + (Number(model && model.mmprojSizeGb) || 0);
+}
+/* A catalogue size string in GB. The embedding catalogue writes its sizes as
+   "33 MB" with no sizeGb beside them, and reading that number as gigabytes
+   put "Download 635 GB" on a 635 MB pull. A bare number is the curated
+   catalogue's GB. */
+function sizeStringGb(size) {
+  const m = /^\s*([\d.]+)\s*([KMGT]?)i?B?\s*$/i.exec(String(size || ''));
+  const n = m ? parseFloat(m[1]) : NaN;
+  if (!Number.isFinite(n)) return 0;
+  const unit = m[2].toUpperCase();
+  return unit === 'K' ? n / (1024 * 1024) : unit === 'M' ? n / 1024 : unit === 'T' ? n * 1024 : n;
 }
 function obGbWord(gb) { return (Math.round(gb * 10) / 10).toFixed(1).replace(/\.0$/, '') + ' GB'; }
 
@@ -8178,6 +8189,8 @@ function modelBlurb(model) {
 }
 function modelSizeWord(model) {
   const gb = obDownloadGb(model);
+  // Under a gigabyte the catalogue's own words ("33 MB") beat a rounded "0 GB".
+  if (gb && gb < 1 && !Number(model && model.sizeGb) && model && model.size) return String(model.size);
   return gb ? obGbWord(gb) : String((model && model.size) || '');
 }
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
