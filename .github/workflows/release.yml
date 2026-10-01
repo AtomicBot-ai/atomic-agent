@@ -227,11 +227,16 @@ jobs:
           $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
           foreach ($f in $sqlite) { $targets += $f.FullName }
 
+          # signtool is a native command, so a failure sets $LASTEXITCODE but does
+          # not trip $ErrorActionPreference. Check it, or an unsigned binary ships
+          # (v0.6.6's atomic-agent.exe did).
           Write-Host "Signing $($targets.Count) binaries"
           foreach ($t in $targets) {
             Write-Host "Signing: $t"
             signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $t"; exit 1 }
             signtool verify /pa "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $t"; exit 1 }
           }
       # --- end Windows code signing ---------------------------------------------
 
