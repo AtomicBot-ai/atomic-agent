@@ -11850,7 +11850,12 @@ async function setCodingMode(id, post) {
   // identical today and this is what keeps them that way.
   const look = CODING_MODES.find((m) => m.id === res.mode);
   const summary = (res.look && res.look.summary) || (look ? look.summary : res.mode);
-  S.log.push({id:nid(), k:'system', text: esc(summary)});
+  /* On an empty chat a transcript line would be the chat's first item and
+     take the start screen ("What should we work on?", the suggestions, the
+     folder) off the screen with it. Say it in a toast there instead; inside a
+     conversation the line stays, where it records when the stance changed. */
+  if (!S.log.length) toast('Mode changed to ' + (look ? look.word : res.mode), summary);
+  else S.log.push({id:nid(), k:'system', text: esc(summary)});
   render();
 }
 
