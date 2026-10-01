@@ -10426,6 +10426,11 @@ function obPullFinished(job, ev) {
        weights` row reading `waiting` for ever with no way back to it.
        The failure is reported on its own line instead (DL.runtimeError),
        and the model download the operator actually asked for runs. */
+    /* A vision model whose weights landed while this runtime was still to
+       come has its start held for it too (dlProjectorPark). When the runtime
+       does not land, that start goes with it, as below for a text model (R4):
+       the projector still comes down, the model is not started. */
+    if (!ok) DL.projectorQueue.forEach((p) => { if (p.held) p.noStart = true; });
     dlNext();
     /* A model held back for this runtime starts once it is in place. If the
        runtime did not land, the hold goes with it (R4): left armed it fired
@@ -10485,10 +10490,15 @@ function dlRuntimePending() {
  * projector, and the model could start while the binary was being replaced.
  * So the projector waits, a queued row in the card, until nothing else comes
  * down (dlProjectorNext). `run` is the run it belongs to: a Cancel on that
- * run's job takes it too (dlCancel).
+ * run's job takes it too (dlCancel). `held`: a llama.cpp runtime was still to
+ * come when it was parked, and the model's start waits on it, as a text
+ * model's does (DL.activateAfter); a runtime that does not land takes that
+ * start with it (obPullFinished), and the model is then not started when the
+ * projector lands — a Retry on the runtime starts it (dlRetry), and the
+ * reminder is kept for the next launch.
  */
 function dlProjectorPark(id, pending, run) {
-  DL.projectorQueue.push({id, pending, run});
+  DL.projectorQueue.push({id, pending, run, held: dlRuntimePending()});
   if (!dlProjectorNext()) render();
 }
 
@@ -10496,7 +10506,7 @@ function dlProjectorPark(id, pending, run) {
 function dlProjectorNext() {
   if (!DL.projectorQueue.length || DL.job || DL.queue.length || DL.preparing || DL.projector) return false;
   const p = DL.projectorQueue.shift();
-  obFetchProjector(p.id, p.pending);
+  obFetchProjector(p.id, p.pending, p.noStart === true);
   return true;
 }
 
@@ -10725,9 +10735,11 @@ function obSetupPullFailed(job, error) {
 /**
  * A vision model's projector, after its weights: `atag models pull` fetches
  * the weights and stops. Its own row in the download card while it comes
- * down, and the model is started only once it has landed.
+ * down, and the model is started only once it has landed — and not at all
+ * when `noStart`: the llama.cpp runtime that start waited on did not land
+ * (dlProjectorPark).
  */
-function obFetchProjector(id, pending) {
+function obFetchProjector(id, pending, noStart) {
   const mine = {id, cancelled: false};
   DL.projector = mine;
   render();
@@ -10761,6 +10773,8 @@ function obFetchProjector(id, pending) {
     DL.landed = id;
     render();
     dlProjectorNext();
+    // Its runtime did not land: no start, and the reminder stays (obSetupPullLanded is not reached).
+    if (noStart) return;
     obModelLanded(id);
   };
   let call;
