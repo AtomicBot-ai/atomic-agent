@@ -1517,9 +1517,11 @@ const STREAM_ERR = new Map();
    transcript changed (a reply delta, a new reasoning row); `reason` — only the
    running reasoning block's text grew. */
 const STREAM_PAINT = {raf:0, timer:0, chat:false, reason:false};
-/* 14: the inspector tab whose body is on screen, so a rebuild of the same tab
-   keeps its scroll and a switch to another starts at the top. */
-const INSP_VIEW = {tab:null};
+/* 14: what the inspector body on screen was built from — the tab, and the
+   transcript (S.log is a new array for every chat, new chat and clear) — so a
+   rebuild of the same view keeps its scroll and anything else starts at the
+   top. */
+const INSP_VIEW = {tab:null, log:null};
 const RUNNING = new Map();
 const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
@@ -3194,14 +3196,19 @@ function growReasonRow(block) {
 /* An element's text as esc(text) inside its markup would parse — CR and CRLF
    read as LF, NUL is dropped, and a <pre> drops the one newline right after
    its start tag — so a frame painted here and a whole render agree to the
-   character. When the text only grew, the text node is kept and appended to:
-   the layout is not thrown away, and a selection someone holds in it stays. */
+   character. When the text only grew, the text nodes are kept and the last
+   one appended to (the parser cuts a long text into several, 64K each): the
+   layout is not thrown away, and a selection someone holds in it stays. */
 function growText(el, text) {
   let want = String(text || '').replace(/\r\n?|\0/g, (c) => (c === '\0' ? '' : '\n'));
   if (el.tagName === 'PRE' && want[0] === '\n') want = want.slice(1);
-  const n = el.firstChild;
-  if (n && n.nodeType === 3 && !n.nextSibling && want.startsWith(n.data)) {
-    if (want.length > n.data.length) n.appendData(want.slice(n.data.length));
+  let have = '', last = null;
+  for (let n = el.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType !== 3) { last = null; break; }
+    have += n.data; last = n;
+  }
+  if (last && want.startsWith(have)) {
+    if (want.length > have.length) last.appendData(want.slice(have.length));
     return;
   }
   if (el.textContent !== want) el.textContent = want;
@@ -3250,7 +3257,8 @@ function inspAtEnd(el) { return el.scrollHeight - el.scrollTop - el.clientHeight
 function renderInspector() {
   const el = $('#inspector');
   el.classList.toggle('hide', !S.inspector);
-  if (!S.inspector || INSP_NARROW.matches) return;
+  // Not rebuilt, so not remembered either: the panel shown again starts at the top.
+  if (!S.inspector || INSP_NARROW.matches) { INSP_VIEW.tab = null; return; }
   const tabs = [['steps','Steps'],['reasoning','Reasoning'],['world','World']];
   let body = '';
   if (S.inspTab === 'steps') {
@@ -3288,15 +3296,16 @@ function renderInspector() {
   }
   /* 14: the body is rebuilt, so where it was scrolled is kept — a reader
      scrolled up stays there, one at the end stays at the end as text arrives,
-     like the chat. Only for the same tab and a body that was on screen: a tab
-     switch, or a panel just shown, starts at the top as it always has. */
+     like the chat. Only for the same tab of the same transcript, rebuilt
+     while on screen: a tab switch, another chat, or a panel just shown starts
+     at the top as it always has. */
   const prev = el.querySelector('.inspbody');
-  const keep = prev && prev.clientHeight > 0 && INSP_VIEW.tab === S.inspTab ? (inspAtEnd(prev) ? 'end' : prev.scrollTop) : null;
+  const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log ? (inspAtEnd(prev) ? 'end' : prev.scrollTop) : null;
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     // Calm (S1): no session-id footer. The id is one palette row away
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
     + '<div class="inspbody">' + body + '</div>';
-  INSP_VIEW.tab = S.inspTab;
+  INSP_VIEW.tab = S.inspTab; INSP_VIEW.log = S.log;
   const now = keep === null ? null : el.querySelector('.inspbody');
   if (now) now.scrollTop = keep === 'end' ? now.scrollHeight : keep;
 }
@@ -4931,6 +4940,11 @@ function submit() {
   S.draft = ''; if (e) { e.value = ''; autosize(e); }
   ctxDraftChanged(); // Lane B — item 3: the sent draft leaves the projection
   S.slash = false;
+  // 13: with the box empty the button beside it is Stop again while a turn
+  // runs. The next streamed token used to redraw it by rendering the whole
+  // window; stream frames no longer touch the composer, and a steer's POST can
+  // take a while to answer and render.
+  refreshSend();
   /* Item 1 (approval parity): a prompt is open and the operator typed prose
      instead of a verdict. That IS the verdict — src/tui/submit-handler.ts:
      this one call is denied with THEIR words as the model-visible reason ("put
