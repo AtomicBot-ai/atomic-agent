@@ -14276,6 +14276,9 @@ function sessionTurnsToLog(turns) {
   return log;
 }
 
+/* Backlog 22: bumped by every openSession that starts a load, so an answer
+   that a newer load overtook can tell (see the check after the await). */
+let OPEN_SEQ = 0;
 async function openSession(id) {
   if (!BR || !id) return;
   // item 6: is a turn of this session streaming into this window right now?
@@ -14296,6 +14299,9 @@ async function openSession(id) {
      deliberately not persisted), and inferring one from the reply text would
      be fabrication — so a reopened session never gets one back. */
   clearPlanOffer();
+  // Backlog 22: below the early return, which starts no load and so must not
+  // orphan one already on its way for this chat.
+  const seq = ++OPEN_SEQ;
   S.sessionId = id;
   S.room = 'chat';
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
@@ -14311,6 +14317,14 @@ async function openSession(id) {
   render();
 
   const res = await BR.session(id);
+  /* Backlog 22: the person may have moved on while this was loading. New
+     chat, another chat or a delete moved S.sessionId (set above, before the
+     await). A newer load of this same chat (the reload a turn's end starts in
+     onChatEvent) took OPEN_SEQ: its answer is newer than this one, and `live`
+     here was read before that turn ended. Either way nothing of this answer
+     may land: not the transcript, not an error line, not the session the
+     next message continues. */
+  if (seq !== OPEN_SEQ || S.sessionId !== id) return;
   if (!res || !res.ok || !res.data) {
     S.log = [{id:nid(), k:'system', text:'could not open that session: ' + esc((res && res.error) || 'unknown error')}];
     render();
