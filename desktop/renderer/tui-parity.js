@@ -84,9 +84,14 @@ function tpNotifyRowHTML() {
    what it finds: a server that is not running, or the fault its log shows. */
 
 function tpActiveIsLocal() {
+  /* Item 29: this looked the picked provider up in selProviders(), which
+     leaves the llama-server entries out, so it never found the local one and
+     the local server's status line below never showed on the local route.
+     No `llm` block at all is the local route too: the agent synthesizes
+     local-llama. */
+  if (LIVE_CONFIG && !LIVE_CONFIG.llm) return true;
   const id = selActiveProviderId();
-  const entry = (selProviders() || []).find((p) => p.id === id);
-  return !!entry && entry.kind === 'llama-server';
+  return !!id && waitIsLocalServer(id);
 }
 
 function tpWaitNotice(wait) {
