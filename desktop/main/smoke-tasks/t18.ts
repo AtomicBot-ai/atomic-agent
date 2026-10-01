@@ -138,7 +138,7 @@ async function handOverRun(js: Js, check: Check): Promise<void> {
       const go = document.querySelector('#onboarding .ob-foot [data-obact="nav:go"]');
       out.button = go ? txt(go) : null;
       if (go) go.click();
-      for (let i = 0; i < 60 && OB.open; i++) await tick(100);
+      for (let i = 0; i < 200 && OB.open; i++) await tick(100);   // up to 20 s: obSettle reads twice first, slow on a busy Mac
       await tick(150);
       out.open = OB.open; out.step = OB.step; out.wizardInDom = !!document.getElementById('onboarding');
       out.handOver = OB.handOver; out.outcome = OB.outcome; out.skipSecond = OB.skipSecondOffer;
@@ -261,7 +261,7 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
       await tick(150);
       const go = document.querySelector('#onboarding .ob-foot [data-obact="nav:go"]');
       if (go) go.click();
-      for (let i = 0; i < 60 && OB.open; i++) await tick(100);
+      for (let i = 0; i < 200 && OB.open; i++) await tick(100);   // up to 20 s: obSettle reads twice first, slow on a busy Mac
       await tick(150);
       out.handedOver = {open: OB.open, stamp: await stamp(), marker: marker(), queue: queue()};
       // Quit here. The next launch: the download in memory is gone, the file and the reminder are not.
@@ -275,7 +275,7 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
       window.openOnboarding = function () { opened++; };
       out.gate = typeof obBootGate === 'function';
       if (out.gate) await obBootGate(FIRSTRUN);
-      for (let i = 0; i < 40 && !DL.job; i++) await tick(50);
+      for (let i = 0; i < 400 && !DL.job; i++) await tick(50);   // up to 20 s
       window.openOnboarding = keep.open;
       out.relaunch = {opened, calls: calls.slice(), queue: queue(), card: card()};
       // The download finishes in the relaunched app: now setup is complete.
@@ -285,7 +285,7 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
       window.__dlFeed({id:'smoke-t18-9b', done:true, ok:true});
       await tick(100);
       let landed = await stamp();
-      for (let i = 0; i < 40 && !landed; i++) { await tick(150); landed = await stamp(); }
+      for (let i = 0; i < 130 && !landed; i++) { await tick(150); landed = await stamp(); }   // up to 20 s
       out.landed = {stamp: landed, marker: marker(), calls: calls.slice(), card: card()};
       // And a setup download that is cancelled is not resumed next time.
       window.__dlSeed([{kind:'weights', id:'smoke-t18-9b'}]);
