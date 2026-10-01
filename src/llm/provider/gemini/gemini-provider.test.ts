@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import { GeminiProvider } from "./gemini-provider.js";
+import {
+  humanizeOpenAiHttpError,
+  OpenAiHttpError,
+} from "../openai/openai-http.js";
 import { registerBuiltInProviderKinds } from "../registry/register-built-in-providers.js";
 import { getProviderFactory } from "../registry/provider-types.js";
 
@@ -146,6 +150,32 @@ describe("GeminiProvider", () => {
       reachable: true,
       status: 200,
     });
+  });
+
+  it("keeps Gemini's own sentence when it wraps the error in an array", async () => {
+    // Byte for byte what the chat route answered a dummy key on
+    // 2026-10-02: the error object inside a one-element array.
+    const body =
+      '[{\n  "error": {\n    "code": 400,\n    "message": "Please pass a valid API key",\n    "status": "INVALID_ARGUMENT"\n  }\n}\n]\n';
+    const fetchImpl = vi.fn(async (url: string) => {
+      expect(url).toBe(GEMINI_CHAT_URL);
+      return new Response(body, {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const provider = await buildGeminiProvider(
+      fetchImpl as unknown as typeof fetch,
+    );
+
+    const error = await provider
+      .complete({ prompt: "hi", maxTokens: 16, temperature: 0 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(OpenAiHttpError);
+    expect(humanizeOpenAiHttpError(error as OpenAiHttpError)).toBe(
+      '"gemini" rejected the request (400). Please pass a valid API key',
+    );
   });
 
   it("does not expose the API key in provider errors", async () => {
