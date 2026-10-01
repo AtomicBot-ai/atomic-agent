@@ -15876,11 +15876,16 @@ function bswSnapshot() {
 function modelChipHtml() {
   if (dlChipBusy() && selBackend() === 'local') return downloadingChipHtml('modelchip');
   const label = activeModel();
-  /* The managed route with no model to show — none chosen, or only the call to
-     download one — while the picker or Settings brings a chat model down: the
-     chip says so, as for the setup download. A model already chosen keeps its
-     chip; the download is another one. */
-  if ((!label || label === DOWNLOAD_MODEL_LABEL) && selBackend() === 'local' && xpullChatModel()) return downloadingChipHtml('modelchip');
+  /* The managed route with no model to run — none chosen, only the call to
+     download one, or nothing on disk at all (a chosen model removed since:
+     `models remove` keeps its id, and while the picker pulls, activeModel()
+     names it) — while the picker or Settings brings a chat model down: the
+     chip says so, as for the setup download. A model on disk keeps its chip;
+     the download is another one. */
+  if (selBackend() === 'local' && xpullChatModel()
+      && (!label || label === DOWNLOAD_MODEL_LABEL || (BSW.localLoaded && !(SEL.local || []).some((m) => m && m.downloaded)))) {
+    return downloadingChipHtml('modelchip');
+  }
   /* The operator's words: "There should be three selectors. Cloud, after
      that the provider. And after that the model. So that I would be able to
      choose the model from the cloud provider."
@@ -15940,14 +15945,23 @@ function composerChipRepaint() {
   if (!foot) return;
   const setup = foot.querySelector(':scope > .setupchip');
   if (setup) {
-    const html = composerNeedsSetup() ? setupSlotHtml() : '';
-    if (html && setup.outerHTML !== html) setup.outerHTML = html;
+    if (composerNeedsSetup()) chipSwap(setup, setupSlotHtml());
     return;
   }
   const html = modelChipHtml();
   const el = foot.querySelector('.modelchip');
-  if (el) { if (!html) el.remove(); else if (el.outerHTML !== html) el.outerHTML = html; }
+  if (el) { if (!html) el.remove(); else chipSwap(el, html); }
   else if (html) { const spacer = foot.querySelector(':scope > .cgrow'); if (spacer) spacer.insertAdjacentHTML('beforebegin', html); }
+}
+/* A chip put in place of `el`, unless it draws the same. The DOM writes an
+   icon's `<path/>` back as `<path></path>`, so its markup never equalled the
+   string it came from, and every repaint swapped the chip for itself: a hover
+   or the keyboard's focus on it went with it. The nodes are compared instead. */
+function chipSwap(el, html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const next = t.content.firstElementChild;
+  if (next && !el.isEqualNode(next)) el.replaceWith(next);
 }
 /**
  * What the two facts change on screen, repainted in place. These land
