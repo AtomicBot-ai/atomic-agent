@@ -124,7 +124,13 @@
           ]
         }
       ],
-      "artifactName": "Atomic-Agent-Setup-${version}-${arch}.${ext}"
+      "artifactName": "Atomic-Agent-Setup-${version}-${arch}.${ext}",
+      "signtoolOptions": {
+        "sign": "./scripts/win-sign.cjs",
+        "signingHashAlgorithms": [
+          "sha256"
+        ]
+      }
     },
     "nsis": {
       "oneClick": false,

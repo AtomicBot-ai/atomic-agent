@@ -7,9 +7,11 @@
 # (desktop/scripts/after-pack.mjs) runs the bundled agent once to prove it can
 # open its database, so none of this can be cross-built from one machine.
 #
-# The agent bundle steps mirror .github/workflows/release.yml. Signing is left
-# out: the macOS app is ad-hoc signed by afterPack (same as a local
-# `npm run dist`), and Windows signing is a TODO below.
+# The agent bundle steps mirror .github/workflows/release.yml. The macOS app
+# is ad-hoc signed by afterPack (same as a local `npm run dist`). On Windows,
+# when the repo has the DigiCert KeyLocker secrets, the agent binaries are
+# signed before they are bundled and electron-builder signs the app exe, the
+# installer and the uninstaller through desktop/scripts/win-sign.cjs.
 
 name: Desktop packages
 
@@ -89,20 +91,99 @@ jobs:
       - name: Build Node SEA binary
         run: npm run bundle:build-binary
 
-      # TODO(windows-signing): sign the agent and the desktop app with DigiCert
-      # KeyLocker. release.yml already has the working steps ("Setup DigiCert
-      # KeyLocker", "Verify", "Sync certificates", "Setup Windows SDK
-      # signtool", "Sign Windows binaries") that sign bundle\win32-x64\
-      # atomic-agent.exe, rg.exe and better_sqlite3.node BEFORE "Package
-      # bundle". To finish:
-      #   1. copy those steps here, gated on `env.HAS_WIN_SIGNING == 'true'`;
-      #   2. sign the desktop exe + NSIS installer through electron-builder
-      #      (`win.signtoolOptions.sign` pointing at a small script that runs
-      #      `signtool sign /sha1 $SM_CODE_SIGNING_CERT_SHA1_HASH ...`).
-      # Until then the installer is unsigned and SmartScreen will warn.
-      - name: Windows code signing (TODO, not wired)
+      # ---- Windows code signing (DigiCert KeyLocker) --------------------------
+      # Same setup as release.yml. Without the secrets these steps are skipped
+      # and the installer comes out unsigned (SmartScreen will warn).
+      - name: Unsigned Windows build
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING != 'true'
+        run: echo "::warning::DigiCert secrets are missing; the Windows installer is unsigned."
+
+      - name: Setup DigiCert KeyLocker (Windows)
         if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
-        run: echo "::notice::DigiCert secrets are present but desktop signing is not wired yet; the installer is unsigned."
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $headers = @{ "x-api-key" = $env:SM_API_KEY }
+          $smctlUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
+          Invoke-WebRequest -Uri $smctlUrl -Headers $headers -OutFile smtools.msi
+          Start-Process msiexec.exe -ArgumentList "/i", "smtools.msi", "/quiet", "/norestart" -Wait
+
+          $smctlPath = "C:\Program Files\DigiCert\DigiCert One Signing Manager Tools"
+          echo "$smctlPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $certBytes = [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64)
+          $certPath = "$env:RUNNER_TEMP\digicert_client_cert.p12"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          echo "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify DigiCert KeyLocker setup (Windows)
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl healthcheck
+
+      - name: Sync certificates to Windows Store (Windows)
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl windows certsync
+
+      - name: Setup Windows SDK signtool (Windows)
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\*" } |
+            Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
+            Select-Object -First 1
+
+          if ($signtoolPath) {
+            $signtoolDir = $signtoolPath.DirectoryName
+            Write-Host "Found signtool at: $signtoolDir"
+            echo "$signtoolDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Error "signtool.exe not found in Windows SDK"
+            exit 1
+          }
+
+      # The agent binaries are signed at their source paths, before "Package
+      # bundle" copies them; afterPack then copies the bundle into
+      # resources/agent. Authenticode signatures live inside the file, so both
+      # copies keep them. electron-builder only signs what it builds itself.
+      - name: Sign agent binaries (Windows)
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @((Get-Item "bundle\win32-x64\atomic-agent.exe").FullName)
+          $rg = "assets\ripgrep\win32-x64\rg.exe"
+          if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
+          $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
+          foreach ($f in $sqlite) { $targets += $f.FullName }
+
+          # signtool is a native command: check $LASTEXITCODE, a failure does
+          # not trip $ErrorActionPreference.
+          foreach ($t in $targets) {
+            Write-Host "Signing: $t"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $t"; exit 1 }
+            signtool verify /pa "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $t"; exit 1 }
+          }
+      # ---- end Windows code signing -------------------------------------------
 
       - name: Package bundle
         run: npx tsx scripts/package-bundle.ts "${{ matrix.slug }}"
@@ -120,9 +201,31 @@ jobs:
       # once; the job fails here if the bundle is missing or cannot open its
       # database. npmRebuild rebuilds any native desktop dependency for this
       # runner's platform (there are none today).
+      # On Windows electron-builder hands the app exe, the installer and the
+      # uninstaller to desktop/scripts/win-sign.cjs, which signs with the same
+      # KeyLocker certificate. The secrets are only passed to the Windows job;
+      # elsewhere the hook is never called.
       - name: Package desktop app
         working-directory: desktop
+        env:
+          SM_API_KEY: ${{ matrix.slug == 'win32-x64' && secrets.SM_API_KEY || '' }}
+          SM_CLIENT_CERT_PASSWORD: ${{ matrix.slug == 'win32-x64' && secrets.SM_CLIENT_CERT_PASSWORD || '' }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ matrix.slug == 'win32-x64' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}
+          SM_HOST: https://clientauth.one.digicert.com
         run: npx electron-builder ${{ matrix.builder }} --publish never
+
+      - name: Verify Windows signatures
+        if: matrix.slug == 'win32-x64' && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "desktop\release\*.exe") +
+            @(Get-Item "desktop\release\win-unpacked\Atomic Agent.exe") +
+            @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe")
+          foreach ($f in $files) {
+            Write-Host "Verifying: $($f.FullName)"
+            signtool verify /pa "$($f.FullName)"
+            if ($LASTEXITCODE -ne 0) { Write-Error "not signed: $($f.FullName)"; exit 1 }
+          }
 
       - name: List packages
         run: ls -la desktop/release
