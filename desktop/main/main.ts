@@ -420,6 +420,9 @@ function createWindow(): BrowserWindow {
         ...(DESKTOP_STATE_WAS_FRESH ? ["--atomic-fresh-state"] : []),
         ...(FIRST_RUN_PROBE ? ["--atomic-boot-probe"] : []),
       ],
+      // The probe counts frames, and a window the smoke starts behind others
+      // is throttled to a few a second; it keeps every one. That launch only.
+      backgroundThrottling: !FIRST_RUN_PROBE,
     },
   });
 
@@ -436,7 +439,10 @@ function createWindow(): BrowserWindow {
   );
 
   window.once("ready-to-show", () => {
-    window.show();
+    // The probe shows its window without taking the keyboard: it runs beside
+    // whatever the operator is typing into, and a stray key would end its card.
+    if (FIRST_RUN_PROBE) window.showInactive();
+    else window.show();
     windowShownAt = Date.now();
     if (DEV) window.webContents.openDevTools({ mode: "detach" });
   });
