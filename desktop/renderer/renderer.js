@@ -7010,6 +7010,13 @@ const SMALL_MODEL_CAUTION = 'A small model: quick, but weaker at long multi-step
  * Reduced-refusal weights sink to the bottom of their band, the way the
  * TUI's own picker pins them (models-catalog.ts `uncensored`).
  */
+/* What is already on this Mac comes first, then the rest, each group in the
+   order it was given (the fit order). Nadya, 01.10: "put the downloaded ones
+   on top, so you can see at once what is there". The first-run picker keeps
+   the plain fit order: there it recommends what to download. */
+function onDiskFirst(models) {
+  return models.filter((m) => m && m.downloaded).concat(models.filter((m) => !(m && m.downloaded)));
+}
 function orderModelsByFit(models, ram) {
   return models.slice().sort((a, b) => {
     const fa = fitFor(a, ram), fb = fitFor(b, ram);
@@ -10964,7 +10971,7 @@ function selRows() {
        Mac has", with no download one click away. One already on disk stays
        a row (it is the operator's to use), with its caution. */
     const ram = hostRamGb();
-    const rows = orderModelsByFit(selLocalMatches(), ram)
+    const rows = onDiskFirst(orderModelsByFit(selLocalMatches(), ram))
       .filter((m) => m.downloaded || m.active || fitFor(m, ram).v !== 'over')
       .map((m) => {
         const note = modelPickNote(m, ram);
@@ -16670,7 +16677,7 @@ function llmLocalRows() {
      that is not this one); what it may not do is pretend it will run. */
   const ram = hostRamGb();
   const best = bestModelFor(LLMP.local || [], ram);
-  orderModelsByFit(LLMP.local || [], ram).forEach((m) => {
+  onDiskFirst(orderModelsByFit(LLMP.local || [], ram)).forEach((m) => {
     const active = localActive && m.active && daemonWorks;
     const pull = LLMP.pulling && LLMP.pulling.kind === 'chat' && LLMP.pulling.id === m.id;
     let primary, effect;
@@ -16695,7 +16702,7 @@ function llmLocalRows() {
   const embActive = llmLocalEmbActive();
   const embWorks = llmEmbDaemonHealthy();
   const embEnabled = llmEmbCfg().enabled === true;
-  (LLMP.emb || []).forEach((m) => {
+  onDiskFirst(LLMP.emb || []).forEach((m) => {
     const active = embActive && m.active && embWorks;
     const pull = LLMP.pulling && LLMP.pulling.kind === 'embedding' && LLMP.pulling.id === m.id;
     let primary, effect;
@@ -17186,7 +17193,7 @@ function llmLocalHTML() {
   // r7 models: the basis for the order and for every fit line below it.
   return llmSectionHTML('Models on this Mac', text, 0, cursor, null, false, {
       note: '<p class="llm-ram">' + esc(ram
-        ? 'Best fit first for this Mac’s ' + ram + ' GB of memory.'
+        ? 'Downloaded first, then the best fit for this Mac’s ' + ram + ' GB of memory.'
         : 'Reading this Mac’s memory…') + '</p>',
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     + llmTuneHTML()
