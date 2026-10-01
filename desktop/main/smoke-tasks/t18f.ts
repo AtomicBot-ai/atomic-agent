@@ -7,6 +7,7 @@ import { resolveBinary } from "../agent-client.js";
 import {
   bringUpAtLaunch,
   bringUpInFlight,
+  inDaemonTurn,
   onBackgroundBringUp,
   selectLocalModel,
   supersedeBringUp,
@@ -36,6 +37,13 @@ import type { SmokeDownloads } from "../release-fixes-smoke.js";
  *   U4 — The update could not be stopped: quitting stopped the downloads on the
  *        card only, and it wrote on after the app was gone. Quitting stops it
  *        now, and a start that waited behind it does not begin as the app goes.
+ *   U5 — Its review: a start waiting behind the update can wait minutes, and
+ *        the window lets go of its switch after 45 s. A stop or a route change
+ *        meanwhile (here Settings › Stop) used to leave it to start a server
+ *        nobody wanted any more once the update ended; it starts nothing now.
+ *   U6 — And a model pick waiting behind it at quit was answered as the quit
+ *        closed the turns, and its restart of the agent (applySwitch) left a
+ *        fresh `atag serve` behind the app. No restart once the app quits.
  *
  * Nothing is downloaded and no model server comes up. As T11 does, every call
  * goes through a guard in front of the agent binary that writes each verb down
@@ -43,24 +51,35 @@ import type { SmokeDownloads } from "../release-fixes-smoke.js";
  * status` reach the agent, and refuses a pull. Its update stops the server and
  * then holds until the check lets it end (a minute at most); a killed one never
  * writes its end. Its start marks the server up as it begins and ends after
- * `slow` seconds. The config is the local route on a model on disk, so a pick
- * writes nothing and nothing restarts; the config is put back after, and the
- * real binary only once nothing the guard answered is still running.
+ * `slow` seconds. Every other call reaches the agent and is written down as it
+ * ends too (`config get end`), which is how a check knows a model pick has
+ * made its reads and asked for its turn; an agent (`serve`) started through it
+ * is written down and then runs as itself. The config is the local
+ * route on a model on disk, so a pick writes nothing and nothing restarts
+ * (but in U6); the config is put back after, and the real binary only once
+ * nothing the guard answered is still running or waiting for its turn.
  */
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
-type Answer = { ok?: boolean; started?: boolean; alreadyRunning?: boolean; error?: string; stdout?: string } | null;
+type Answer = {
+  ok?: boolean; started?: boolean; alreadyRunning?: boolean; error?: string; stdout?: string;
+  daemon?: string; restart?: boolean;
+} | null;
 type Frame = { id?: string; done?: boolean; ok?: boolean; error?: string | null; kind?: string };
 type Guard = {
   model: string;
   pidFile: string;
+  /** The config a first run has: managed, no model chosen yet — a pick writes its model and asks for a restart. */
+  firstRun: UserConfigShape;
   verbs: () => string[];
   has: (verb: string) => boolean;
   /** A fresh log, the server down, the update held; a start takes `startSeconds`. */
   reset: (startSeconds: number) => void;
   letUpdateEnd: () => void;
   until: (pred: () => boolean, ms: number) => Promise<boolean>;
+  /** A model pick (selectLocalModel) has made its reads and asked for its turn. */
+  pickAsked: () => Promise<boolean>;
 };
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -122,6 +141,9 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     providers: providers.some((p) => p.id === "local-llama") ? providers : [...providers, { id: "local-llama", kind: "llama-server" }],
     runMode: { mode: "local" },
   };
+  // A first run's route on it: managed, no model chosen yet (U6).
+  const firstRun = clone(localCfg);
+  firstRun.localModels = { ...(firstRun.localModels ?? {}), managed: { ...(firstRun.localModels?.managed ?? {}), modelId: null } };
 
   const dir = mkdtempSync(join(tmpdir(), "aa-t18f-"));
   const log = join(dir, "verbs.log");
@@ -134,7 +156,7 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
   writeFileSync(guard, [
     "#!/bin/sh",
     `case "$1 $2" in`,
-    `  "models update") echo "models update begin" >> ${q(log)}; echo $$ > ${q(pidFile)}; rm -f ${q(up)}`,
+    `  "models update") echo "models update begin" >> ${q(log)}; echo $$ > ${q(`${pidFile}.tmp`)}; mv ${q(`${pidFile}.tmp`)} ${q(pidFile)}; rm -f ${q(up)}`,
     `    n=0; while [ ! -f ${q(ends)} ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); done`,
     `    echo "models update end" >> ${q(log)}; echo "done. run 'atomic-agent models start' to use the new backend."; exit 0;;`,
     `  "models start") echo "models start begin" >> ${q(log)}; : > ${q(up)}`,
@@ -145,7 +167,10 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     `    if [ -f ${q(up)} ]; then printf 'mode:           managed\\ndaemon:         running (pid 1)\\nhealth:         ok\\n'`,
     `    else printf 'mode:           managed\\ndaemon:         stopped\\nhealth:         down\\n'; fi; exit 0;;`,
     `  "models pull"|"models pull-embedding") echo "refused $1 $2" >> ${q(log)}; exit 1;;`,
-    `  *) printf '%s %s\\n' "$1" "$2" >> ${q(log)};;`,
+    // An agent started through the guard is written down, and then runs as itself.
+    `  serve\\ *) echo "serve" >> ${q(log)};;`,
+    // Anything else reaches the agent, its end written down too.
+    `  *) printf '%s %s\\n' "$1" "$2" >> ${q(log)}; ${q(bin)} "$@"; c=$?; printf '%s %s end\\n' "$1" "$2" >> ${q(log)}; exit $c;;`,
     "esac",
     `exec ${q(bin)} "$@"`,
     "",
@@ -158,9 +183,33 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     while (!pred() && Date.now() < end) await wait(50);
     return pred();
   };
+  /* A pick reads the catalogue (`models list`), then the config twice (and on
+     a first run's route writes its model, `models use`), and then asks for its
+     turn. It has asked once every such call since its `models list` has ended,
+     two config reads among them, and none began for half a second. */
+  const PICK_CALLS = ["models list", "config get", "config set", "models use"];
+  const pickAsked = async () => {
+    let begun = -1;
+    let quietSince = Date.now();
+    const end = Date.now() + 20_000;
+    while (Date.now() < end) {
+      const v = verbs();
+      const s = v.includes("models list") ? v.slice(v.indexOf("models list")) : [];
+      const b = PICK_CALLS.reduce((n, c) => n + count(s, c), 0);
+      const e = PICK_CALLS.reduce((n, c) => n + count(s, `${c} end`), 0);
+      if (b !== begun) { begun = b; quietSince = Date.now(); }
+      if (count(s, "config get end") >= 2 && e === b && Date.now() - quietSince >= 500) {
+        await wait(200);
+        return true;
+      }
+      await wait(50);
+    }
+    return false;
+  };
   const g: Guard = {
     model: model.id,
     pidFile,
+    firstRun,
     verbs,
     has: (verb) => verbs().includes(verb),
     reset: (startSeconds) => {
@@ -170,15 +219,18 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     },
     letUpdateEnd: () => writeFileSync(ends, ""),
     until,
+    pickAsked,
   };
-  // Nothing the guard answers may still be running when the real binary is let back in.
+  // Nothing the guard answers may still be running, or waiting for its turn, when the real binary is let back in.
   const settle = async () => {
     g.letUpdateEnd();
     await until(() => main.running() === null, 15_000);
     const bg = bringUpInFlight();
     if (bg) await Promise.race([bg, wait(20_000)]);
     if (bringUpInFlight()) { supersedeBringUp(); await wait(500); }
-    return main.running() === null && !bringUpInFlight();
+    // A start that waited for its turn (a pick, Settings' Start) has had it once an empty turn comes.
+    const turns = await Promise.race([inDaemonTurn(async () => true, () => true), wait(30_000).then(() => false)]);
+    return turns && main.running() === null && !bringUpInFlight();
   };
   const step = async (name: string, run: () => Promise<void>) => {
     try {
@@ -192,12 +244,15 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
   const keepBin = process.env.ATOMIC_AGENT_BIN;
   // A launch start asked for here is the check's: the window is not told of it.
   const mainReport = onBackgroundBringUp(() => {});
+  let guarded = false;
   let settled = false;
   try {
     const busy = main.running();
     if (busy) throw new Error(`a download is already running: ${JSON.stringify(busy)}`);
-    await configSetWhole(localCfg);
+    const routed = await configSetWhole(localCfg);
+    if (!routed.ok) throw new Error(`the local route was not written: ${routed.error ?? "no reason given"}`);
     process.env.ATOMIC_AGENT_BIN = guard;
+    guarded = true;
     // The update is only ever asked for with the guard in front of the agent.
     if (resolveBinary() !== guard) throw new Error(`the guard is not the binary main runs (${resolveBinary()})`);
     // The setup's runtime download tells the window how it ended: those frames, collected.
@@ -208,11 +263,14 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     await step("U1", () => startsWaitForUpdate(js, check, g));
     await step("U2", () => updateWaitsForStart(js, check, g));
     await step("U3", () => runtimeDownloadTakesTurn(js, check, g, main));
+    await step("U5", () => startsDroppedOnceMovedOn(js, check, g));
     await step("U4", () => quitStopsUpdate(js, check, g, main));
+    await step("U6", () => noRestartAtQuit(js, check, g, main));
     settled = await settle();
   } catch (err) {
     check("T18 U: the update and the starts ran against a guarded agent", false, err instanceof Error ? err.message : String(err));
-    settled = await settle();
+    // Before the guard went in nothing here asked main for anything.
+    settled = guarded ? await settle() : true;
   } finally {
     onBackgroundBringUp(mainReport);
     await js<unknown>("(() => { if (window.__t18fOff) window.__t18fOff(); delete window.__t18fOff; delete window.__t18f; })()")
@@ -223,13 +281,13 @@ export async function checks18f(js: Js, check: Check, main: SmokeDownloads): Pro
     } else {
       check("T18 U: nothing the guard answered was left running before the guard was taken away", false, "still running — the guard stays in place");
     }
-    await configSetWhole(live);
+    const back = await configSetWhole(live);
+    if (!back.ok) check("T18 U: the config the checks found was put back", false, back.error ?? "no reason given");
   }
 }
 
-/* U1: three starts asked for while Settings' update runs. The pick reads the
-   catalogue and the config before it asks for its turn, a few CLI reads: the
-   window to watch opens once its `models list` is in, and stays open 5 s. */
+/* U1: three starts asked for while Settings' update runs; the window to watch
+   opens once the pick has asked for its turn, and stays open a second. */
 async function startsWaitForUpdate(js: Js, check: Check, g: Guard): Promise<void> {
   g.reset(1);
   const update = js<Answer>("window.atomic.modelsUpdate()");
@@ -237,8 +295,8 @@ async function startsWaitForUpdate(js: Js, check: Check, g: Guard): Promise<void
   const pick = selectLocalModel(g.model);
   const settings = js<Answer>("window.atomic.modelsStart()");
   const launch = bringUpAtLaunch(g.model);
-  await g.until(() => g.has("models list"), 10_000);
-  await wait(5_000);
+  if (!(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
+  await wait(1_000);
   const during = g.verbs();
   g.letUpdateEnd();
   const u = await within(15_000, "Settings' update", update);
@@ -258,10 +316,10 @@ async function startsWaitForUpdate(js: Js, check: Check, g: Guard): Promise<void
   );
 }
 
-/* U2: a start on its way (3 s), then Settings' update. Once it begins, the
+/* U2: a start on its way (5 s), then Settings' update. Once it begins, the
    update ends at once. */
 async function updateWaitsForStart(js: Js, check: Check, g: Guard): Promise<void> {
-  g.reset(3);
+  g.reset(5);
   const settings = js<Answer>("window.atomic.modelsStart()");
   if (!(await g.until(() => g.has("models start begin"), 10_000))) throw new Error("Settings' Start never began");
   g.letUpdateEnd();
@@ -303,8 +361,8 @@ async function runtimeDownloadTakesTurn(js: Js, check: Check, g: Guard, main: Sm
     JSON.stringify({ asked, mid, after, start: s, frames }),
   );
 
-  // (b) Asked for while a start is on its way (3 s), then its ×.
-  g.reset(3);
+  // (b) Asked for while a start is on its way (5 s), then its ×.
+  g.reset(5);
   const settings2 = js<Answer>("window.atomic.modelsStart()");
   if (!(await g.until(() => g.has("models start begin"), 10_000))) throw new Error("Settings' Start never began");
   const asked2 = await within(10_000, "the runtime download", js<Answer>("window.atomic.modelsUpdateStream()"));
@@ -339,6 +397,8 @@ async function quitStopsUpdate(js: Js, check: Check, g: Guard, main: SmokeDownlo
   const update = js<Answer>("window.atomic.modelsUpdate()");
   if (!(await g.until(() => g.has("models update begin") && existsSync(g.pidFile), 10_000))) throw new Error("Settings' update never began");
   const pid = Number(readFileSync(g.pidFile, "utf8").trim());
+  // 0 would be this process group, which is always alive.
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error(`the update's pid was not read: ${JSON.stringify(readFileSync(g.pidFile, "utf8"))}`);
   const settings = js<Answer>("window.atomic.modelsStart()");
   const launch = bringUpAtLaunch(g.model);
   await wait(1_000);
@@ -374,5 +434,62 @@ async function quitStopsUpdate(js: Js, check: Check, g: Guard, main: SmokeDownlo
     "T18 U4: a model start waiting behind that update does not begin as the app quits — Settings' Start and the launch start",
     !after.includes("models start begin") && !late.includes("models start begin") && s?.ok === false && l?.daemon === "superseded",
     JSON.stringify({ start: s, launch: l, verbs: late }),
+  );
+}
+
+/* U5: a model pick and Settings' Start waiting behind Settings' update, and
+   Settings' Stop meanwhile — standing for every stop and route change
+   (supersedeBringUp): a cloud pick, another model, the seats moving to the
+   cloud. Once the update ends neither may start a server. */
+async function startsDroppedOnceMovedOn(js: Js, check: Check, g: Guard): Promise<void> {
+  g.reset(1);
+  const update = js<Answer>("window.atomic.modelsUpdate()");
+  if (!(await g.until(() => g.has("models update begin"), 10_000))) throw new Error("Settings' update never began");
+  const pick = selectLocalModel(g.model);
+  if (!(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
+  const settings = js<Answer>("window.atomic.modelsStart()");
+  await wait(500);
+  const stop = await within(10_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
+  g.letUpdateEnd();
+  const u = await within(15_000, "Settings' update", update);
+  const [p, s] = await within(30_000, "the starts asked for during it", Promise.all([pick, settings]));
+  await wait(1_500);
+  const after = g.verbs();
+  check(
+    "T18 U5: a model pick and Settings' Start waiting behind Settings' llama.cpp update start nothing once a stop came meanwhile — no server nobody asks for any more",
+    stop?.ok === true && u?.ok === true && after.includes("models stop") && !after.includes("models start begin")
+      && p.ok === true && p.daemon === "superseded" && s?.ok === false,
+    JSON.stringify({ stop, update: u, pick: { ok: p.ok, daemon: p.daemon, error: p.error }, settings: s, verbs: after }),
+  );
+}
+
+/* U6: on a first run's route (no model chosen yet) a model pick writes its
+   model and asks for the agent's restart. It waits behind Settings' update,
+   and the app quits. The pick goes through the real IPC, so its answer passes
+   applySwitch, which restarted the agent then: a fresh `atag serve` left
+   behind the app. The guard writes down an agent started through it. */
+async function noRestartAtQuit(js: Js, check: Check, g: Guard, main: SmokeDownloads): Promise<void> {
+  const routed = await configSetWhole(g.firstRun);
+  if (!routed.ok) throw new Error(`a first run's route was not written: ${routed.error ?? "no reason given"}`);
+  g.reset(1);
+  const update = js<Answer>("window.atomic.modelsUpdate()");
+  if (!(await g.until(() => g.has("models update begin"), 10_000))) throw new Error("Settings' update never began");
+  const pick = js<Answer>(`window.atomic.selectLocalModel(${JSON.stringify(g.model)})`);
+  if (!(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
+  const reopen = main.quit();
+  let u: Answer = null;
+  let p: Answer = null;
+  try {
+    u = await within(10_000, "Settings' update once the app quits", update);
+    p = await within(30_000, "the pick once the app quits", pick);
+    await wait(1_500);
+  } finally {
+    reopen();
+  }
+  const after = g.verbs();
+  check(
+    "T18 U6: a model pick waiting behind Settings' llama.cpp update as the app quits does not restart the agent — no fresh `atag serve` is left behind the app",
+    u?.ok === false && !!p && p.restart === false && !after.includes("serve") && !after.includes("models start begin"),
+    JSON.stringify({ update: u, pick: p ? { ok: p.ok, daemon: p.daemon, restart: p.restart, error: p.error } : null, verbs: after }),
   );
 }
