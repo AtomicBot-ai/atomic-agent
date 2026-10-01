@@ -18,6 +18,9 @@
  * with `__obOpen`/`__obSeed` — a fixture, exactly as a fixture stages a
  * database row — and then every control on them is clicked for real.
  * Staging is never the thing under test; the click always is.
+ * (Backlog 18: a real Download no longer stops on `local_download` — it
+ * hands over the agent at once and the download card carries the pull —
+ * so that screen is reached for a model already on disk, or staged.)
  *
  *   ATOMIC_AGENT_STATE_DIR=/some/empty/dir node test/onboarding-mouse.mjs
  *

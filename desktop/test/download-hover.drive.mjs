@@ -4,19 +4,24 @@
  *
  * What the operator saw: while a model downloads, the percentage, the
  * transferred bytes and the ETA change on every sample the CLI emits, so
- * the HTML the surface would draw is DIFFERENT every time — and both
- * surfaces that draw it rebuilt themselves whole with `innerHTML`. The node
+ * the HTML the surface would draw is DIFFERENT every time — and the
+ * surfaces that drew it rebuilt themselves whole with `innerHTML`. The node
  * under the pointer is destroyed and recreated on every sample, and
  * `:hover` cannot survive its own element being replaced. That is the
  * flicker.
  *
- * This driver parks a real pointer on a real control and watches it while a
- * REAL `atag models pull` reports, on the two surfaces a download repaints:
+ * Backlog 18 moved the download out of the wizard: Download hands over the
+ * agent at once, and the pull reports in the download card in the window's
+ * bottom-right corner — the one surface a download repaints now. This
+ * driver parks a real pointer on each of the card's controls and watches
+ * it while a REAL `atag models pull` reports:
  *
- *   A. the wizard's download screen — its two offer cards;
- *   B. the wait-or-jump screen — its rows (the "patterns" of the report);
- *   C. the agent window's own download strip — its Cancel button, which is
- *      on screen everywhere in the app while a pull runs.
+ *   A. the running row's Cancel (×);
+ *   B. the "Set up a cloud model meanwhile" offer under the rows;
+ *   C. the folded card's round badge.
+ *
+ * (The wizard's download screen and the wait-or-jump rows, which lanes A
+ * and B watched before, are no longer on screen during a download.)
  *
  * How it looks, and why that is proof rather than a guess: the identity of
  * the node under the pointer is read with `DOM.getNodeForLocation`, from
@@ -40,8 +45,8 @@
 
 import { join } from 'node:path';
 import {
-  SMALL_MODEL, arg, boxOf, cancelPull, configureCloud, dl, freshRun, hoverAt,
-  launch, nodeIdAt, ob, passIntro, pickLocalModel, reporter, scrollTo, sleep, waitForRealSamples,
+  CARD_CANCEL, SMALL_MODEL, arg, boxOf, cancelPull, dl, freshRun, hoverAt,
+  launch, nodeIdAt, passIntro, pickLocalModel, reporter, sleep, waitForRealSamples,
 } from './drive-download-lib.mjs';
 
 const PORT = Number(arg('port', '9422'));
@@ -83,12 +88,11 @@ async function watch(app, sel, drive) {
   let settledAt = Date.now();
   const FADE_MS = 250;
   /* What the download IS, as against how far along it is. A queue that moves
-     from the llama.cpp runtime to the model weights changes the strip's
-     label and drops its "· 1 more queued" suffix — the surface genuinely
-     says something else and rebuilding it is right. A rebuild while THIS is
-     unchanged is a repaint driven by nothing but the percentage, which is
-     the flicker. The two are counted apart so the check can name the one it
-     is about. */
+     from the llama.cpp runtime to the model weights changes the card's rows
+     — the surface genuinely says something else and rebuilding it is right.
+     A rebuild while THIS is unchanged is a repaint driven by nothing but the
+     percentage, which is the flicker. The two are counted apart so the
+     check can name the one it is about. */
   const shapeOf = () => app.eval('(() => { const d = window.__dl() || {};'
     + ' return [d.label, d.kind, d.queued, d.measured].join("|"); })()');
   let lastShape = await shapeOf();
@@ -102,15 +106,14 @@ async function watch(app, sel, drive) {
         const t = under && under.closest(${JSON.stringify(sel)});
         return t ? { hovered: t.matches(':hover'), bg: getComputedStyle(t).backgroundColor } : null;
       })()`);
-      /* What a person reads while they wait: the strip's line, and the two
-         phase rows and the rate line on the wizard's own progress block. If
-         none of it changes, the download did not report during this watch
-         and the watch proves nothing — see `judge`. */
+      /* What a person reads while they wait: the card's lines (the badge's
+         count when it is folded). If none of it changes, the download did not
+         report during this watch and the watch proves nothing — see `judge`.
+         Folded, the card shows no figures at all, so the percentage the
+         download slice holds is what proves the samples arrived. */
       const p = await app.eval(`(() => {
-        const strip = (window.__dl() || {}).text || '';
-        const rows = [...document.querySelectorAll('#onboarding .ob-phase .pt, #onboarding .ob-rate')]
-          .map((n) => n.innerText).join('|');
-        return strip + ' || ' + rows;
+        const card = (window.__dl() || {}).text || '';
+        return card + ' || ' + ((window.__dl() || {}).percent ?? '');
       })()`);
       seen.samples += 1;
       if (id && lastId && id !== lastId) {
@@ -141,7 +144,7 @@ function judge(where, seen, { needMoves = 2 } = {}) {
   const moves = seen.progress.length - 1;
   R.say(`${where}: pointer on "${seen.label}", ${seen.samples} looks, `
     + `${moves} progress changes, node replaced ${seen.replaced}× by a sample`
-    + ` (${seen.reshaped}× when the strip itself changed what it says), `
+    + ` (${seen.reshaped}× when the card itself changed what it says), `
     + `hover lost on ${seen.hoverOff} looks, backgrounds ${JSON.stringify(seen.backgrounds)}`);
   if (moves < needMoves) {
     /* Too few repaints to conclude anything — a download that finished
@@ -171,13 +174,13 @@ function judge(where, seen, { needMoves = 2 } = {}) {
  */
 async function burst(app, n = 14) {
   const d = await dl(app);
-  if (!d || !d.running) return 0;   // Calm (S1): the strip is not drawn during setup
+  if (!d || !d.running) return 0;   // nothing running: nothing to burst
   const kind = d.kind || 'weights';
   const id = d.label || SMALL_MODEL;
   const total = d.total || 2_700_000_000;
   const from = Math.max(1, d.percent || 1);
-  /* How many of the frames the strip actually took. `__dlFeed` answers with
-     the strip's own state, so this counts what MOVED rather than what was
+  /* How many of the frames the download actually took. `__dlFeed` answers
+     with the slice's own state, so this counts what MOVED rather than what was
      sent — a burst that a finished pull swallowed reports 0 and the watch
      around it says it timed out instead of passing on silence. */
   const moved = new Set();
@@ -202,100 +205,48 @@ async function bothWays(app, where, sel, { realMs = 40000 } = {}) {
   judge(`${where} · a dense burst of the same frames`, dense, { needMoves: 6 });
 }
 
-/* ----------------------------------------------------------------- A B --- */
-async function lanesAB() {
-  const dirs = freshRun(join(ROOT, 'dl-hover-ab'), SEED);
+/* ------------------------------------------------------------ the run --- */
+/** One real pull, handed over to the agent window, watched from the card. */
+async function lanes(only) {
+  const dirs = freshRun(join(ROOT, 'dl-hover'), SEED);
   const app = await launch({ port: PORT, stateDir: dirs.stateDir, workspace: dirs.workspace });
   try {
     await passIntro(app);
     await pickLocalModel(app, SMALL_MODEL);
-    const measured = await waitForRealSamples(app, { timeout: 240000 });
-    R.check('a real download is running and reporting', !!measured,
-      measured ? `${measured.label} at ${measured.percent}%` : 'no sample in four minutes');
-    if (!measured) return;
-    await shot(app, 'a0-download-screen.png');
-
-    // A: the download screen's own offer cards.
-    await bothWays(app, 'the download screen’s offer card', '#onboarding .ob-offer.cloud');
-
-    // B: the wait-or-jump rows — the same screen with a list on it.
-    await app.clickSel('#onboarding .ob-offer.cloud', { scroll: false });
-    const after = await configureCloud(app, SEED);
-    if (after.step !== 'wait_or_jump') {
-      R.check('lane B reached the wait-or-jump screen', false, `step ${after.step}`);
-      return;
-    }
-    await shot(app, 'b0-wait-or-jump.png');
-    await bothWays(app, 'the wait-or-jump row', '#onboarding .ob-row[data-obrow="0"]');
-  } finally {
-    await cancelPull(app);
-    await app.close();
-  }
-}
-
-/* ------------------------------------------------------------------- C --- */
-/** The strip's Cancel button, in the agent window, with the pull still live. */
-async function laneC() {
-  const dirs = freshRun(join(ROOT, 'dl-hover-c'), SEED);
-  const app = await launch({ port: PORT, stateDir: dirs.stateDir, workspace: dirs.workspace });
-  try {
-    await passIntro(app);
-    await pickLocalModel(app, SMALL_MODEL);
-    const measured = await waitForRealSamples(app, { timeout: 240000 });
-    R.check('lane C: a real download is running and reporting', !!measured,
-      measured ? `${measured.label} at ${measured.percent}%` : 'no sample in four minutes');
-    if (!measured) return;
-
-    // "Or skip the wait — start using the agent now": the second offer card.
-    await app.clickSel('#onboarding .ob-offer:not(.cloud)', { scroll: false });
-    /* Whatever the flow raises after that — the second-backend pitch, the
-       import step — the way past it is its own skip row, and this lane only
-       wants to be standing in the agent window with the pull still running.
-       The wait matters: `obSettle` reads readiness and scans the machine for
-       other agents over IPC first, so for a second or two after the click the
-       flow is on `finished` with no rows on it at all. A loop that looked
-       once and gave up read exactly that gap. */
-    const until = Date.now() + 120000;
-    while (Date.now() < until) {
-      if (!(await app.eval('!!document.querySelector("#onboarding")'))) break;
-      // The import step's skip is an action-bar button, not a row (B.5).
-      if (await app.eval(`!!document.querySelector('#onboarding [data-obact="import:skip"]')`)) {
-        try { await app.clickSel('#onboarding [data-obact="import:skip"]', { scroll: false }); }
-        catch (e) { app.log(`the import skip click did not come back (${e.message})`); }
-        await sleep(1200);
-        continue;
-      }
-      const skip = await app.eval(`(() => {
-        const n = [...document.querySelectorAll('#onboarding .ob-row')]
-          .find((r) => /^Skip/i.test(((r.querySelector('.t')||{innerText:''}).innerText || '').trim()));
-        return n ? n.getAttribute('data-obrow') : null;
-      })()`);
-      if (skip === null) { await sleep(1000); continue; }
-      const sel = `#onboarding .ob-row[data-obrow="${skip}"]`;
-      try {
-        await scrollTo(app, sel);
-        // Calm (S6): a click selects the skip row; Continue takes it.
-        await app.clickSel(sel, { scroll: false });
-        await app.clickSel('#onboarding .ob-foot .btn-p', { scroll: false });
-      } catch (e) { app.log(`the skip click did not come back (${e.message})`); }
-      await sleep(1200);
-    }
     const gone = await app.waitFor('!document.querySelector("#onboarding")', 'the agent window',
       { timeout: 60000 }).then(() => true, () => false);
-    R.check('lane C: the wizard handed over the agent with the pull still running', gone);
-    if (!gone) return;
-    const strip = await dl(app);
-    R.check('lane C: the strip is reporting in the agent window', !!(strip && strip.visible),
-      strip ? strip.text.slice(0, 70) : '');
-    await shot(app, 'c0-agent-with-strip.png');
-    await bothWays(app, 'the strip’s Cancel button', '#dlbar .dl-x');
+    R.check('Download handed over the agent with the pull running', gone);
+    const measured = await waitForRealSamples(app, { timeout: 240000 });
+    R.check('a real download is running and reporting in the card', !!measured,
+      measured ? `${measured.label} at ${measured.percent}%` : 'no sample in four minutes');
+    if (!gone || !measured) return;
+    /* A fresh Mac fetches the llama.cpp runtime first, and when it lands the
+       card loses that row and the one under the pointer moves up. That is the
+       card changing what it says, not a sample repainting it — so the watches
+       start once the model's own weights are the row being reported. */
+    const onWeights = await app.waitFor(`(() => { const d = window.__dl(); return !!d && d.kind === 'weights' && d.measured; })()`,
+      'the model’s own weights reporting', { timeout: 240000 }).then(() => true, () => false);
+    if (!onWeights) { R.check('the weights started reporting', false, 'no weights sample in four minutes'); return; }
+    await shot(app, 'a0-agent-with-card.png');
+
+    // A: the running row's Cancel (×).
+    if (!only || only === 'a') await bothWays(app, 'the card’s Cancel (×)', CARD_CANCEL);
+    // B: the cloud offer under the rows.
+    if (!only || only === 'b') await bothWays(app, 'the card’s "Set up a cloud model meanwhile"', '#dlcard .dlc-cloud');
+    // C: folded, the round badge — clicked into place the way a person folds it.
+    if (!only || only === 'c') {
+      await app.clickSel('#dlcard .dlc-fold', { scroll: false });
+      await sleep(300);
+      await shot(app, 'c0-card-folded.png');
+      await bothWays(app, 'the folded card’s badge', '#dlcard .dlc-badge');
+      await app.clickSel('#dlcard .dlc-badge', { scroll: false });
+      await sleep(300);
+    }
   } finally {
     await cancelPull(app);
     await app.close();
   }
 }
 
-const only = arg('lane', null);
-if (!only || only === 'a' || only === 'b') await lanesAB();
-if (!only || only === 'c') await laneC();
+await lanes(arg('lane', null));
 process.exit(R.done() ? 1 : 0);

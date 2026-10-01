@@ -7,6 +7,10 @@
  * walked as far as a REAL `atag models pull` running, and a way to look at
  * what is under the pointer while that pull reports.
  *
+ * Backlog 18: Download in the wizard hands over the agent at once — there
+ * is no "Downloading your model" screen to stand on any more — and the pull
+ * reports in the download card in the window's bottom-right corner.
+ *
  * Every step here is a click or a keystroke through `drive.mjs`, i.e.
  * through CDP's Input domain. `app.eval` and `DOM.getNodeForLocation` are
  * used to LOOK — never to make something happen — and no `window.__*` hook
@@ -86,6 +90,8 @@ export const WIZ_TEXT = `((document.querySelector('#onboarding')||{innerText:''}
 export const ob = (app) => app.eval('window.__ob ? window.__ob() : null');
 /** What the download slice says about itself. Reading only. */
 export const dl = (app) => app.eval('window.__dl ? window.__dl() : null');
+/** The download card as a person reads it (backlog 18). Reading only. */
+export const dlcard = (app) => app.eval('window.__dlcard ? window.__dlcard() : null');
 
 /** Dismiss the two-stage splash by clicking its sky, as a mouse-only person does. */
 export async function passIntro(app) {
@@ -105,7 +111,9 @@ export async function passIntro(app) {
 }
 
 /**
- * Click one curated model in the picker and land on the download screen.
+ * Click one curated model in the picker and press Download — which, since
+ * backlog 18, closes setup on the agent window with the pull running in
+ * the download card.
  *
  * The list scrolls, and a wheel notch before the press can move the row out
  * from under it — which is how a first pass clicked "Add a model from
@@ -143,7 +151,17 @@ export async function pickLocalModel(app, id) {
     }
     await sleep(500);
     const s = (await ob(app)) || {};
-    if (s.step === 'local_download') { app.log(`downloading ${s.localModelId}`); return; }
+    /* Backlog 18: the hand-over — the flow is on its closing step or already
+       shut. The pick is checked too: a press that landed on the wrong row has
+       started the wrong pull, and nothing downstream would notice. */
+    if (!s.open || s.step === 'finished') {
+      if (s.localModelId !== id) {
+        await cancelPull(app);
+        throw new Error(`the press downloaded ${s.localModelId}, not ${id}`);
+      }
+      app.log(`downloading ${s.localModelId}`);
+      return;
+    }
     app.log(`the click landed on "${s.step}" (model ${s.localModelId}), not the download — walking back`);
     if (s.step !== 'local_pick') { await app.press('Escape'); await sleep(600); }
     if ((((await ob(app)) || {}).step) === 'choose') { await app.clickText('Local models'); await app.clickText('Continue'); }
@@ -194,34 +212,59 @@ export async function configureCloud(app, seedEnv, { timeout = 180000 } = {}) {
 }
 
 /**
- * Wait until the strip is reporting REAL bytes — `sawProgress` is set by
- * the first parsed `cli:pull` sample, so this is the point from which the
- * screen redraws on the CLI's own schedule.
+ * Wait until the download card is reporting REAL bytes — `sawProgress` is
+ * set by the first parsed `cli:pull` sample, so this is the point from which
+ * the card redraws on the CLI's own schedule.
  */
 export async function waitForRealSamples(app, { timeout = 240000 } = {}) {
   const until = Date.now() + timeout;
   for (;;) {
     const d = await dl(app);
-    // Calm (S1, U5): during setup the strip is not drawn and the wizard
-    // reports the pull, so "running" is the test, not "visible".
+    // "running" is the test, not "visible": the card is not drawn while a
+    // setup screen is up (Calm S1, U5).
     if (d && d.running && d.measured) return d;
     if (Date.now() > until) return null;
     await sleep(1000);
   }
 }
 
-/** Stop the pull the way a person does: the strip's own Cancel button, or —
-    during setup, where the strip is not drawn (Calm S1, U5) — the wizard's
-    "Cancel download" under its progress card. Same `dl:cancel` verb. */
+/** Stop the pull the way a person does: the Cancel (×) on the download
+    card's running row, or — on a setup screen, where the card is not drawn
+    (Calm S1, U5) — the wizard's "Cancel download". Both are the setup
+    download's one cancel path (dlCancel). */
+export const CARD_CANCEL = '#dlcard .dlc-row .dlc-x[data-act="dlc:cancel"]';
 export async function cancelPull(app) {
   try {
     const sel = await app.eval(`(() => {
-      const strip = document.querySelector('#dlbar:not([hidden]) .dl-x');
-      if (strip) return '#dlbar .dl-x';
+      if (document.querySelector(${JSON.stringify(CARD_CANCEL)})) return ${JSON.stringify(CARD_CANCEL)};
       return document.querySelector('#onboarding .ob-dlcancel .dl-x') ? '#onboarding .ob-dlcancel .dl-x' : null;
     })()`);
     if (sel) await app.clickSel(sel, { scroll: false });
-  } catch { /* the strip may already be gone */ }
+  } catch { /* the card may already be gone */ }
+}
+
+/**
+ * Configure a real cloud provider in the composer's add-provider popover —
+ * the one the download card's "Set up a cloud model meanwhile" opens — by
+ * clicking and typing. Resolves once the popover has closed (the provider
+ * saved, verified and selected) or the key field has said no.
+ */
+export async function configureCloudPopover(app, seedEnv, { timeout = 180000 } = {}) {
+  await app.waitFor(`!!document.querySelector('#overlays .selpop [data-wiz-kind]')`, 'the provider list', { timeout: 30000 });
+  await app.clickText(PROVIDER.row, { scope: '.popover' });
+  await app.waitFor('!!document.querySelector("#wiz-key")', 'the key field', { timeout: 30000 });
+  await app.clickSel('#wiz-key');
+  await app.typeSecret(keyFor(seedEnv, PROVIDER.envKey), `the ${PROVIDER.row} key`);
+  await app.clickText('Next', { scope: '.popover' });
+  await app.waitFor(`!document.querySelector('#wiz-key') || !!document.querySelector('.popover .ob-err')`,
+    'the key to be answered', { timeout });
+  // A verified key lands on the model step: take the default, as configureCloud does.
+  if (await app.eval(`!!document.querySelector('.popover [data-act="wiz:useDefault"]')`)) {
+    await app.clickSel('.popover [data-act="wiz:useDefault"]', { scroll: false });
+  }
+  await app.waitFor(`!document.querySelector('#overlays .selpop')`, 'the popover closing', { timeout }).catch(() => {});
+  return app.eval(`({open: !!document.querySelector('#overlays .selpop'), wizard: WIZ.phase,
+    provider: (LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider) || null})`);
 }
 
 /* ------------------------------------------------------- looking closely -- */
