@@ -2580,7 +2580,7 @@ function composer() {
          chip stands for is its `data-id`, which is what the drivers and the
          smoke compare. */
       + '<div class="cfoot' + (selHasKind('workers') ? ' is-fusion' : '') + '">'
-        + (composerNeedsSetup() ? setupChipHtml() : routeChipsHtml(backend))
+        + (composerNeedsSetup() ? (dlBusy() ? downloadingChipHtml() : setupChipHtml()) : routeChipsHtml(backend))
         + '<span class="cgrow"></span>'
         + contextChip()
         + codingModeChip()
@@ -2603,6 +2603,17 @@ function composerNeedsSetup() {
   const url = lm.url || DEFAULT_LLAMA_URL;
   if (url !== DEFAULT_LLAMA_URL) return false;
   return !(EXT.url === url && EXT.model);
+}
+/* The first-run wizard's pull runs in DL, which the composer never read: it
+   offered "Set up a model" (and on the local route "download model") over a
+   download that was already running. While that pull runs, the chip says so;
+   its progress stays in the strip at the top, which repaints on every sample. */
+function dlBusy() { return DL.job !== null || DL.queue.length > 0; }
+function downloadingChipHtml() {
+  const j = DL.job || DL.queue[0] || null;
+  const what = j && j.kind !== 'runtime' && j.label ? j.label : 'your model';
+  return '<span class="cchip setupchip pullchip" title="Downloading ' + esc(what) + '. Progress is at the top of the window."'
+    + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
   return '<button class="cchip setupchip" data-act="onboarding:choose" title="No model is set up yet. Open setup"'
@@ -6763,7 +6774,7 @@ function activeModel() {
     // regardless of managed.modelId, and ComposerMetaControls renders the
     // DownloadModelControl in preference to the model label — an id that
     // names a file which is not there is not a model to show.
-    if (BSW.localLoaded && !SEL.pulling && !SEL.local.some((m) => m.downloaded)) return DOWNLOAD_MODEL_LABEL;
+    if (BSW.localLoaded && !SEL.pulling && !dlBusy() && !SEL.local.some((m) => m.downloaded)) return DOWNLOAD_MODEL_LABEL;
     const managed = (LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed) || {};
     if (managed.modelId) return managed.modelId;
     return '';
@@ -9775,11 +9786,20 @@ async function obSettle() {
   /* A skipped setup is not a completed one: saying "Setup complete" to
      someone who chose nothing sent them to a composer with no working model
      and the word that it was done. */
-  if (outcome === 'skipped') toast('Setup skipped', 'Set up a model from the composer when you are ready.');
-  else toast('Setup complete', 'Restarting the agent…');
+  const [toastTitle, toastLine] = obClosingToast(outcome);
+  toast(toastTitle, toastLine);
   render();
   if (OB.restarted) { refreshLiveConfig(); return; }
   BR.restart().then(applyStatus);
+}
+
+/** The toast a closing setup leaves behind. */
+function obClosingToast(outcome) {
+  if (outcome === 'skipped') return ['Setup skipped', 'Set up a model from the composer when you are ready.'];
+  /* "Setup complete" over a download strip at 10% told two stories at once:
+     the person who jumped ahead is waiting on the model, so say that. */
+  if (dlStatus() === 'running') return ['Your model is downloading', 'Look around meanwhile. Progress is at the top of the window.'];
+  return ['Setup complete', 'Restarting the agent…'];
 }
 
 /* ---- opening ---- */
@@ -10617,6 +10637,8 @@ function swxFailLine(label, res) {
  * replacing three different existing refusals with one toast would be a
  * copy change nobody asked for.
  */
+/** What the 45 s watchdog says about a switch that is still out. */
+function swxSlowLine(label) { return label + ' has not finished — the agent may still be restarting'; }
 async function swxRun(label, want, run, refuse) {
   // Every switch below writes config and restarts `atag serve`, which
   // would abort a running turn. Same guard, same words, as before.
@@ -10665,7 +10687,7 @@ async function swxRun(label, want, run, refuse) {
     if (SWX.paint) { clearTimeout(SWX.paint); SWX.paint = null; }
     SWX.pending = 0;
     SWX.want = null;
-    SWX.err = label + ' has not finished — the agent may still be restarting';
+    SWX.err = swxSlowLine(label);
     render();
   }, SWX_MAX_MS);
   if (SWX.paint) clearTimeout(SWX.paint);
@@ -10677,6 +10699,10 @@ async function swxRun(label, want, run, refuse) {
     // The IPC has resolved. That is one of three things, not the end.
     await swxSettle(res, gen0);
     if (res && res.ok === false) SWX.err = swxFailLine(label, res);
+    /* The watchdog's line is a wait, not a verdict. A first local model
+       load runs past 45 s, and the line stayed up for minutes after the
+       switch had landed and Models said Ready. Landing clears it. */
+    else if (SWX.err === swxSlowLine(label)) SWX.err = null;
     return res;
   } catch (err) {
     SWX.err = swxFailLine(label, {error: err && err.message ? err.message : String(err)});
@@ -11588,14 +11614,17 @@ function contextChip() {
      ("7.5k of 131k", projected "~7.4k of 256k · projected") and the exact
      numbers stay in the popover. The ring fills to the same percentage:
      amber above 70%, red above 85%. With no known window it is the empty
-     track — the tooltip says the window is unknown. r = 7.5, so the
-     circumference is 47.1. */
+     disc — the tooltip says the window is unknown. */
   const tone = pct > 85 ? ' crit' : pct > 70 ? ' warn' : '';
   const tip = (proj ? '~' : '') + tokensWord(CTX.tokens)
     + (CTX.window ? ' of ' + tokensWord(CTX.window) : ' used · window size unknown')
     + (proj ? ' · projected' : '');
+  /* A filled pie on a disc, not an arc on a track: a thin blue arc at 10-25%
+     (where an empty chat sits, the system prompt alone) read as a loading
+     spinner that never stopped. The wedge is a circle of r 3.75 stroked 7.5
+     wide, so its dash (circumference 23.56) paints a slice of the disc. */
   const ring = '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
-    + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.1 * pct / 100).toFixed(1) + ' 47.1" transform="rotate(-90 10 10)"/>' : '')
+    + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="3.75" stroke-dasharray="' + (23.56 * pct / 100).toFixed(2) + ' 23.56" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
   return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + tone + cchipOpen('context') + '" data-act="context"'
     + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + '</button>';
@@ -16461,6 +16490,16 @@ function llmFormatDaemon() {
   if (health === 'ok') return 'running pid ' + st.daemonPid + ' on 127.0.0.1:' + llmDaemonPort();
   return 'pid ' + st.daemonPid + ' health unreachable';
 }
+/* A llama-server that was just spawned has no port open yet, and `models
+   status` calls that `down`, the same word it uses for a hung one; right
+   after a download that read "Not answering" for half a minute. The first
+   90 s after this window first sees a pid unhealthy read as starting. */
+function llmNoteDaemonHealth(st) {
+  const h = st ? String(st.health || '').toLowerCase() : '';
+  if (!st || !st.daemonRunning || h === 'ok' || /loading/.test(h)) { LLMP.downSince = null; return; }
+  if (!LLMP.downSince || LLMP.downSince.pid !== st.daemonPid) LLMP.downSince = {pid: st.daemonPid, at: Date.now()};
+}
+function llmJustSpawned() { return !!LLMP.downSince && Date.now() - LLMP.downSince.at < 90_000; }
 function llmDaemonUp() { const st = LLMP.status; return LLMP.daemonPhase === 'starting' || !!(st && st.daemonRunning); }
 function llmDaemonHealthy() { const st = LLMP.status; return !!(st && st.daemonRunning && String(st.health || '').toLowerCase() === 'ok'); }
 function llmEmbDaemonHealthy() { const d = LLMP.embDaemon; return !!(d && d.running && String(d.health || '').toLowerCase() === 'ok'); }
@@ -16907,7 +16946,8 @@ function llmNowHTML() {
   const route = llmRouteMode();
   const where = route === 'external' ? 'a custom server' : local ? 'this Mac' : active ? providerWord(active.id) : 'no provider';
   const d = llmFormatDaemon();
-  const word = !local || route === 'external' ? '' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting' : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? 'Not answering' : '';
+  const word = !local || route === 'external' ? '' : /^running/.test(d) ? (tpLlmFault() ? 'Not working' : 'Ready') : /^(loading|starting)/.test(d) ? 'Starting'
+    : d === 'stopped' ? 'Stopped' : /unreachable$/.test(d) ? (llmJustSpawned() ? 'Starting' : 'Not answering') : '';
   const dot = word === 'Ready' ? 'tk-dot--green' : word === 'Starting' ? 'tk-dot--brand tk-dot--pulse' : word ? 'tk-dot--amber' : '';
   return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
     + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '') + '</p>';

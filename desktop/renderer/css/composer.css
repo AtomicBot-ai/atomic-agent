@@ -235,6 +235,8 @@
 .cfoot .cchip.setupchip{background:var(--brand-wash);color:var(--blue)}
 .cfoot .cchip.setupchip:hover{background:color-mix(in srgb, var(--brand) 18%, transparent)}
 .cfoot .cchip.setupchip > svg{color:var(--blue)}
+/* The wizard's download running: a status, not a control, so no hover. */
+.cfoot .cchip.pullchip,.cfoot .cchip.pullchip:hover{background:var(--brand-wash);cursor:default}
 
 /* Fusion: the ⇄ between the two seats and the fourth control, `workers`
    (composer-meta-controls.tsx). Neutral like the rest of the row — the
@@ -270,11 +272,10 @@
    numbers live in its popover. */
 .cfoot .ctxbtn{width:30px;padding:0;justify-content:center;color:var(--ink-2)}
 .ctxring{width:20px;height:20px;flex:none}
-.ctxring circle{fill:none;stroke-width:3}
-.ctxring .bg{stroke:color-mix(in srgb, var(--ink) 17%, transparent)}
-/* Butt caps: a near-empty window reads as an empty track, never as a
-   spinner beside the send button's real one. */
-.ctxring .fg{stroke:var(--brand);stroke-linecap:butt}
+.ctxring circle{fill:none}
+.ctxring .bg{fill:color-mix(in srgb, var(--ink) 8%, transparent);stroke:color-mix(in srgb, var(--ink) 22%, transparent);stroke-width:1.5}
+/* A pie, never an arc: an arc beside the send button read as a spinner. */
+.ctxring .fg{stroke:var(--brand);stroke-width:7.5;stroke-linecap:butt}
 .ctxring.warn .fg{stroke:var(--amber)}
 .ctxring.crit .fg{stroke:var(--critical)}
 
