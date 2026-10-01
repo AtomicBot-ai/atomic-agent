@@ -1282,7 +1282,7 @@ const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="current
    the server icon for a provider and the CPU icon for a model instead — never
    a monogram. */
 const LOGO_FILES = {
-  qwen:'qwen-color.svg', gemma:'gemma.svg', openai:'openai.svg', claude:'claude-color.svg', anthropic:'anthropic.svg',
+  qwen:'qwen-color.svg', google:'google.svg', openai:'openai.svg', claude:'claude-color.svg', anthropic:'anthropic.svg',
   openrouter:'openrouter.svg', aimlapi:'aimlapi.png', gemini:'gemini-color.svg', groq:'groq.svg', deepseek:'deepseek-color.svg',
   mistral:'mistral-color.svg', cerebras:'cerebras-color.svg', together:'together-color.svg', fireworks:'fireworks-color.svg',
   xai:'xai.svg', moonshot:'moonshot.svg', perplexity:'perplexity-color.svg', nous:'nousresearch.svg', novita:'novita-color.svg',
@@ -1297,7 +1297,8 @@ function modelLogoKey(id) {
   if (s.includes('claude')) return 'claude';
   if (s.includes('gpt') || s.startsWith('openai/') || /(^|\/)o[134](-|$)/.test(s)) return 'openai';
   if (s.includes('qwen') || s.includes('qwq')) return 'qwen';
-  if (s.includes('gemma')) return 'gemma';
+  // Gemma wears Google's mark (Danya, 30.09: nobody knows the Gemma star).
+  if (s.includes('gemma')) return 'google';
   if (s.includes('gemini')) return 'gemini';
   if (s.includes('deepseek')) return 'deepseek';
   if (s.includes('nemotron')) return 'nvidia';
