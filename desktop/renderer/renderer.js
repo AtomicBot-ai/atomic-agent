@@ -8954,7 +8954,8 @@ function dlRetry(n) {
      that model (obActivateHeld) — the start that failed without it. Not one the
      person already answered on its ready row (S4: Switch or dismiss clears
      DL.landed), and not one still asking there: its Switch works once the
-     runtime is in. */
+     runtime is in. A vision model has landed only once its projector has
+     (obFetchProjector): before that, this start was a text-only one (D2). */
   if (f.kind === 'runtime' && DL.landed && !DL.activateAfter && !DL.switchAfter
       && !(DL.ready && DL.ready.id === DL.landed)) DL.activateAfter = DL.landed;
   f.retry();
@@ -10444,18 +10445,20 @@ function obPullFinished(job, ev) {
      projector's Cancel is honoured. */
   if (!ok || job.cancelled) { render(); return; }
   if (DL.dry) { render(); return; }
-  DL.landed = job.id;
   /* A vision model's projector is next — setup's pick in this launch, or the
      one the reminder kept across a quit (obSetupPullMmproj): `atag models
      pull` brought the weights alone. It comes down once nothing else does
      (F8: a llama.cpp runtime retried behind these weights came down beside
-     it), and the model starts when it lands. */
+     it), and the model starts when it lands. Until then the model has not
+     landed (D2): a runtime Retry must not start it text-only (dlRetry). */
   const pending = obSetupPullMmproj(job.id);
   if (pending && BR && BR.hfProjector) {
+    DL.landed = null;
     obSetupPullWeightsLanded(job.id, pending);
     dlProjectorPark(job.id, pending);
     return;
   }
+  DL.landed = job.id;
   /* Backlog 18: a re-queued runtime is still to come behind these weights,
      and the model cannot start without it, so the start waits for it. Only
      for that (R4): another model queued behind this one is no reason to hold
@@ -10724,6 +10727,8 @@ function obFetchProjector(id, pending) {
       dlProjectorNext();
       return;
     }
+    // D2: the model is whole now, and a runtime Retry may start it (dlRetry).
+    DL.landed = id;
     render();
     dlProjectorNext();
     obModelLanded(id);
