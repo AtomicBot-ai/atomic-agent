@@ -211,7 +211,10 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
 
   // Another model: a background start for the old one is moot (item 11); the same one is waited for.
   if (changed) supersedeBringUp();
+  const asked = startsMark;
   const { daemon, daemonLine, error } = await withDaemonLock(async (): Promise<BringUp> => {
+    // Backlog 18: a stop or a route change came while this waited for its turn.
+    if (startsMark !== asked) return SUPERSEDED;
     const running = await localDaemonRunning();
     if (running && changed) {
       const s = await modelsStop();
@@ -349,12 +352,23 @@ export function closeDaemonTurns(): () => void {
   turnsClosed = true;
   return () => { turnsClosed = false; };
 }
+/* Backlog 18 (its review): a start waiting for its turn can wait out a whole
+   llama.cpp update, minutes, and the window lets go of its switch after 45 s —
+   the operator may pick the cloud, another model or Settings › Stop by the
+   time the turn comes. Every stop and route change that ends a background
+   bring-up (supersedeBringUp) moves this mark too, and a start asked for
+   before it moved starts nothing in its turn: a server nobody asks for any
+   more would hold the model's memory, on a route that has moved on. */
+let startsMark = 0;
 
 /** Start the managed daemon when it is down (restart it when the model moved), in its turn. */
 async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
   // Another model: a background start for the old one is moot.
   if (modelChanged) supersedeBringUp();
+  const asked = startsMark;
   return withDaemonLock(async (): Promise<BringUp> => {
+    // Backlog 18: a stop or a route change came while this waited for its turn.
+    if (startsMark !== asked) return SUPERSEDED;
     const running = await localDaemonRunning();
     if (running && !modelChanged) return { daemon: "untouched" };
     if (running) {
@@ -415,8 +429,10 @@ function startInBackground(task: (s: BringUpSteps) => Promise<BringUp>): { done:
  * End the background bring-up, if one is on its way: its `models start` is
  * killed, and it reports nothing and does nothing more. Answers whether it had
  * got as far as starting — what it spawned is then the caller's to stop.
+ * Backlog 18: a start still waiting for its turn is ended too (startsMark).
  */
 export function supersedeBringUp(): boolean {
+  startsMark++;
   const b = background;
   if (!b) return false;
   background = null;
@@ -458,7 +474,10 @@ export function bringUpAtLaunch(modelId: string): Promise<BringUp> {
 }
 /** Settings › Models › Start: in its turn, and no second `models start` for a daemon that is already up. */
 export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean }> {
+  const asked = startsMark;
   return withDaemonLock(async () => {
+    // Backlog 18: a stop or a route change came while this waited for its turn.
+    if (startsMark !== asked) return { ok: false, stdout: "", stderr: "", error: "a stop or a switch came first — the model server was not started" };
     if (await localDaemonRunning()) return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
     return modelsStart();
   }, () => ({ ok: false, stdout: "", stderr: "", error: "the app is quitting — the model server was not started" }));

@@ -353,6 +353,11 @@ function downloadRunning(): { kind: string; id: string; last: Record<string, unk
   return settingsUpdate ? { kind: "update", id: "llama.cpp", last: null } : null;
 }
 const DOWNLOAD_BUSY = "a download is already running";
+/* Backlog 18 (its review): set by stopForQuit. A switch that waited its turn
+   behind the llama.cpp update is answered as the quit closes the turns, and
+   its restart of the agent (applySwitch) then left a fresh `atag serve` behind
+   the app; nothing restarts the agent once the app is quitting. */
+let quitting = false;
 /* Backlog 18 (R1): a download stops with the app rather than writing on
    after it — the next launch resumes the setup download from its partial
    file, and two writers on one partial file is how a resume goes wrong.
@@ -363,11 +368,13 @@ const DOWNLOAD_BUSY = "a download is already running";
    exitAfterAgentStop). A smoke check runs it too (smokeDownloads.quit) and
    carries on with the undo it hands back. */
 function stopForQuit(): () => void {
+  quitting = true;
   pull?.cancel();
   pullUpdate?.cancel();
   hfProjector?.controller.abort();
   settingsUpdate?.abort();
-  return closeDaemonTurns();
+  const reopen = closeDaemonTurns();
+  return () => { quitting = false; reopen(); };
 }
 /* Backlog 18: the llama.cpp update — Settings' (cli:modelsUpdate) and the
    setup's runtime download (cli:modelsUpdateStream), both `models update` —
@@ -1297,7 +1304,8 @@ function wireIpc(client: AgentClient): void {
     const behind = !!res.ok && !!res.providerId && !!boot
       && (boot.provider !== res.providerId
         || (res.transport === "native_tools" && (boot.model ?? null) !== (res.model ?? null)));
-    const restart = !!res.ok && (!!res.restart || behind);
+    // Backlog 18: never once the app is quitting (stopForQuit).
+    const restart = !!res.ok && (!!res.restart || behind) && !quitting;
     if (restart) {
       await client.stop();
       await client.start();
