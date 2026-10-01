@@ -30,7 +30,7 @@ const STREAM_PROBE = String.raw`(async () => {
     setTimeout(fin, 1200);
   });
   const saved = {log: S.log, historyLen: S.history.length, room: S.room, inspector: S.inspector, inspTab: S.inspTab,
-    stick: S.stick, streamId: S.streamId, reasonId: S.reasonId, queued: S.queued, agentSession: S.agentSession,
+    stick: S.stick, streamId: S.streamId, reasonId: S.reasonId, queued: S.queued, agentSession: S.agentSession, draft: S.draft,
     plan: {startedMode: PLAN.startedMode, on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId},
     unverified: UNVERIFIED, deferred: DL.deferred, steerAhead: STEER.ahead, steerMine: STEER.mine.slice(), fz: FZ.live};
   const realRender = render;
@@ -97,6 +97,17 @@ const STREAM_PROBE = String.raw`(async () => {
     const inPlace = well().textContent;
     renderInspector();
     out.sameAsRebuilt = well().textContent === inPlace;
+    // Left at the end, the panel shown again — or showing another chat — starts at the top.
+    body().scrollTop = body().scrollHeight;
+    S.inspector = false; realRender(); S.inspector = true; realRender();
+    out.reshownTop = body().scrollTop;
+    const staged = S.log;
+    body().scrollTop = body().scrollHeight;
+    S.log = [{id: nid(), k: 'user', text: 'another chat'}, {id: nid(), k: 'reason', steps: 1, open: false, text: want}];
+    realRender();
+    out.otherChatTop = body().scrollTop;
+    out.otherChatScrollable = body().scrollHeight - body().clientHeight;
+    S.log = staged; realRender();
 
     // An open reasoning row grows in place, through the real click path.
     const rendersBeforeRow = renders;
@@ -123,6 +134,18 @@ const STREAM_PROBE = String.raw`(async () => {
     out.replyComplete = prose() === said.trim();
     out.composerKept2 = document.getElementById('composer') === comp1;
 
+    // A steer typed while the reply streams: once Enter empties the box, the button beside it is Stop.
+    const entry = document.getElementById('entry');
+    entry.value = 'smoke t13 steer'; entry.dispatchEvent(new Event('input', {bubbles: true}));
+    const btn = () => { const b = document.querySelector('#composer .sendbtn'); return b ? b.dataset.act + (b.classList.contains('steer') ? ':steer' : '') : null; };
+    out.typedButton = btn();
+    submit();
+    out.sentButton = btn();
+    await STEER.chain;
+    // No session to ask, so it was parked as the next turn; the staged turn's end must not send it.
+    out.parked = S.queued.slice();
+    S.queued.length = 0; STEER.ahead = 0;
+
     // (c) The turn's end paints the final text at once, with a frame still waiting.
     say(200, 230);
     out.pendingBeforeEnd = typeof STREAM_PAINT === 'undefined' ? null : STREAM_PAINT.raf !== 0;
@@ -139,7 +162,7 @@ const STREAM_PROBE = String.raw`(async () => {
     S.log = saved.log; S.history.length = saved.historyLen; S.room = saved.room;
     S.inspector = saved.inspector; S.inspTab = saved.inspTab; S.stick = saved.stick;
     S.streamId = saved.streamId; S.reasonId = saved.reasonId; S.queued = saved.queued; S.agentSession = saved.agentSession;
-    S.turnId = null; S.busy = false; S.pending = null;
+    S.draft = saved.draft; S.turnId = null; S.busy = false; S.pending = null;
     Object.assign(PLAN, saved.plan); UNVERIFIED = saved.unverified; DL.deferred = saved.deferred;
     STEER.ahead = saved.steerAhead; STEER.mine.length = 0; STEER.mine.push(...saved.steerMine); FZ.live = saved.fz;
     realRender();
@@ -206,6 +229,17 @@ export async function checks13(js: Js, check: Check): Promise<void> {
       "T14: reasoning painted in place reads exactly as a rebuilt panel (CRLF, a leading newline)",
       ran && r.sameAsRebuilt === true && r.wellComplete === true,
       JSON.stringify({ sameAsRebuilt: r.sameAsRebuilt, wellComplete: r.wellComplete }),
+    );
+    check(
+      "T14: the inspector shown again, or showing another chat, starts at the top",
+      ran && r.reshownTop === 0 && r.otherChatTop === 0 && (r.otherChatScrollable as number) > 600,
+      JSON.stringify({ reshownTop: r.reshownTop, otherChatTop: r.otherChatTop, otherChatScrollable: r.otherChatScrollable }),
+    );
+    check(
+      "T13: a steer sent while the reply streams puts Stop beside the emptied box at once",
+      ran && r.typedButton === "send:steer" && r.sentButton === "stop"
+        && JSON.stringify(r.parked) === JSON.stringify(["smoke t13 steer"]),
+      JSON.stringify({ typedButton: r.typedButton, sentButton: r.sentButton, parked: r.parked }),
     );
 
     // 14 — not rebuilt while the window is too narrow to show it; repainted when it widens.
