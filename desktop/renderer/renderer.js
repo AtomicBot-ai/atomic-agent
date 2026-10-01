@@ -3382,6 +3382,28 @@ function overlayMotionExit(was) {
   setTimeout(done, OVM.OUT_MS + 200);
 }
 
+/* The lists a person scrolls on this layer: the provider's model list (in the
+   first-run flow and in the popover from Settings or the composer) and the
+   flow's own scrolling steps. Picking a model repaints the layer, and the
+   rebuilt list came back at the top: after scrolling to the twentieth model
+   and clicking it, the row was out of sight and the next one had to be found
+   again. Each list is put back where it was — but only the SAME list, keyed
+   by its first row, so a new step or a new search still starts at the top. */
+function overlayScrollKey(el) {
+  const rows = el.querySelectorAll('[data-wizmodel], [data-obrow], [data-obwiz], [data-sel-row]');
+  const d = rows.length ? rows[0].dataset : {};
+  return el.className + '|' + (d.wizmodel || d.obrow || d.obwiz || d.selRow || '') + '|' + rows.length;
+}
+function overlayScrollsBefore(o) {
+  return Array.from(o.querySelectorAll('.selbody, .ob-wizlist, .ob-scroll')).map((el) => ({key: overlayScrollKey(el), top: el.scrollTop}));
+}
+function overlayScrollsAfter(o, before) {
+  if (!before.some((b) => b.top > 0)) return;
+  Array.from(o.querySelectorAll('.selbody, .ob-wizlist, .ob-scroll')).forEach((el, i) => {
+    const b = before[i];
+    if (b && b.top > 0 && b.key === overlayScrollKey(el)) el.scrollTop = b.top;
+  });
+}
 function renderOverlays() {
   const o = $('#overlays');
   const html = overlaysHTML();
@@ -3433,7 +3455,9 @@ function renderOverlays() {
   const keep = af && af.id && o.contains(af) && (af.tagName === 'INPUT' || af.tagName === 'TEXTAREA')
     ? {id: af.id, start: af.selectionStart, end: af.selectionEnd, value: af.value} : null;
   const wasPop = overlayMotionBefore(o);
+  const scrolled = overlayScrollsBefore(o);
   o.innerHTML = html;
+  overlayScrollsAfter(o, scrolled);
   overlayMotionAfter(o, wasPop);
   if (keep) {
     const again = o.querySelector('#' + CSS.escape(keep.id));
