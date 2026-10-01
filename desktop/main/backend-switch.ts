@@ -146,6 +146,7 @@ export async function activateProvider(id: string, opts: { leaveFusion?: boolean
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
+  if (cloud && !keepFusion) await afterBackgroundBringUp();
   if (cloud && !keepFusion && (await localDaemonRunning())) {
     const s = await modelsStop();
     if (s.ok) {
@@ -191,6 +192,7 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
   if (!w.ok) return { ok: false, error: w.error };
   if (w.changed) restart = true;
 
+  await afterBackgroundBringUp();
   const running = await localDaemonRunning();
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
@@ -306,8 +308,14 @@ function keyed(): (p: RunModeProvider) => boolean {
   return (p) => providerHasKey(p as ProviderEntry, names);
 }
 
+export type BringUp = { daemon: DaemonEffect; daemonLine?: string; error?: string };
+
 /** Start the managed daemon when it is down (restart it when the model moved). */
-async function bringUpLocalDaemon(modelChanged: boolean): Promise<{ daemon: DaemonEffect; daemonLine?: string; error?: string }> {
+async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
+  await afterBackgroundBringUp();
+  return bringUpLocalDaemonNow(modelChanged);
+}
+async function bringUpLocalDaemonNow(modelChanged: boolean): Promise<BringUp> {
   const running = await localDaemonRunning();
   if (running && !modelChanged) return { daemon: "untouched" };
   if (running) {
@@ -319,24 +327,75 @@ async function bringUpLocalDaemon(modelChanged: boolean): Promise<{ daemon: Daem
   const st = await modelsStart();
   return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
 }
+/** The same, only for a model that is on disk: a start for a file that is not there is a failure about nothing the operator chose. */
+async function bringUpIfOnDisk(modelId: string, bringUp: () => Promise<BringUp>): Promise<BringUp> {
+  const list = await chatModelsList();
+  return list.ok && (list.models ?? []).some((m) => m.id === modelId && m.downloaded) ? bringUp() : { daemon: "untouched" };
+}
 
+/* ---- the daemon a ⇄ does not wait for (item 11) ----
+   A swap moves no model, so it never waits on the daemon: that wait — a
+   `models status`, and with the daemon down a whole `models start` — is the
+   swap the operator saw stick. But a daemon that is down (stopped in
+   Settings › Models, crashed) would leave the local seat with nothing
+   serving it, and every turn would fail. So the swap starts it in the
+   background, as the TUI's setMode does (`void localModels.startDaemon()`).
+   One at a time — the launch start (main.ts) runs as one too — and every
+   path that checks, starts or stops the daemon waits for it first: a second
+   `models start` beside a starting daemon is the agent-side duplicate
+   localDaemonRunning describes. */
+let inBackground: Promise<BringUp> | null = null;
+let reportBringUp: (r: BringUp & { modelId: string }) => void = () => {};
+
+function tracked(task: () => Promise<BringUp>): Promise<BringUp> {
+  const p: Promise<BringUp> = task()
+    .catch((err): BringUp => ({ daemon: "start-failed", error: err instanceof Error ? err.message : String(err) }))
+    .finally(() => { if (inBackground === p) inBackground = null; });
+  inBackground = p;
+  return p;
+}
+/** A bring-up that is not a switch's own — the launch start — run as the one in flight (or that one, if one already is). */
+export function trackBringUp(task: () => Promise<BringUp>): Promise<BringUp> {
+  return inBackground ?? tracked(task);
+}
+
+/** main.ts: where a background bring-up says how it ended (the agent log and the window). */
+export function onBackgroundBringUp(report: (r: BringUp & { modelId: string }) => void): void {
+  reportBringUp = report;
+}
+/** The bring-up a swap started and did not wait for, while it runs. */
+export function backgroundBringUp(): Promise<BringUp> | null {
+  return inBackground;
+}
+/** Wait for a background bring-up, if one is running, so nothing starts or stops the daemon under it; how it ended, or null. */
+export async function afterBackgroundBringUp(): Promise<BringUp | null> {
+  return inBackground ? inBackground : null;
+}
+function bringUpInBackground(modelId: string): void {
+  if (inBackground) return;   // the one in flight serves the same model
+  void tracked(() => bringUpIfOnDisk(modelId, () => bringUpLocalDaemonNow(false))).then((r) => {
+    if (r.daemon === "untouched") return;
+    try { reportBringUp({ ...r, modelId }); } catch { /* a report never fails the bring-up */ }
+  });
+}
+
+/** Whether the seats need the managed daemon: Fusion in force with a local seat on a managed model. */
+export function runModeWantsDaemon(now: ResolvedRunMode, lm: { mode?: string; managed?: { modelId?: string | null } }): boolean {
+  const localLeg = now.effective === "fusion" && (now.workerProviderId === LOCAL_ID || now.orchestratorProviderId === LOCAL_ID);
+  return localLeg && lm.mode === "managed" && !!lm.managed?.modelId;
+}
 /**
- * Whether a run-mode write has to look at the managed daemon at all: Fusion
- * in force with a local seat on a managed model — unless the write only
- * traded the seats (RunModeVerdict.seatsOnly). A ⇄ moves no model, so the
- * daemon is already doing what the new seats need: serving it, or still
- * loading it for the switch before. Looking cost a `models list`, a
- * `models status` (up to 20 s) and, with the daemon down, a `models start`
- * (up to 90 s) — the swap the operator saw stick (backlog item 11).
+ * What a run-mode write does about the daemon its seats need: `wait` for it
+ * (entering Fusion, a worker pin), start it in the `background` (a
+ * seats-only ⇄, RunModeVerdict.seatsOnly), or nothing (`none`).
  */
-export function runModeWantsDaemon(
+export function runModeDaemonPlan(
   now: ResolvedRunMode,
   lm: { mode?: string; managed?: { modelId?: string | null } },
   v?: RunModeVerdict,
-): boolean {
-  if (v?.seatsOnly) return false;
-  const localLeg = now.effective === "fusion" && (now.workerProviderId === LOCAL_ID || now.orchestratorProviderId === LOCAL_ID);
-  return localLeg && lm.mode === "managed" && !!lm.managed?.modelId;
+): "wait" | "background" | "none" {
+  if (!runModeWantsDaemon(now, lm)) return "none";
+  return v?.seatsOnly ? "background" : "wait";
 }
 
 async function afterRunModeWrite(res: {
@@ -353,19 +412,18 @@ async function afterRunModeWrite(res: {
   const now = resolveRunMode(read.config);
   const leg = v?.leg ?? now.primaryProviderId;
   const entry = (read.config.llm?.providers ?? []).find((p) => p.id === leg);
-  /* The worker daemon. autoStartIfReady keys on local-llama being the ACTIVE
-     provider, and under Fusion the active provider is the orchestrator — so
-     nothing else would bring a local leg up. Only for a model that is on
-     disk: a start for a file that is not there is a failure line about
-     nothing the operator chose. */
-  let up: { daemon: DaemonEffect; daemonLine?: string; error?: string } = { daemon: "untouched" };
+  /* The local seat's daemon. autoStartIfReady keys on local-llama being the
+     ACTIVE provider, and under Fusion the active provider is the orchestrator
+     — so nothing else would bring a local leg up. Entering Fusion or pinning
+     a seat waits for it (started when down, only for a model on disk); a
+     seats-only ⇄ starts it in the background and does not wait (see
+     bringUpInBackground). */
+  let up: BringUp = { daemon: "untouched" };
   const lm = read.config.localModels ?? {};
-  if (runModeWantsDaemon(now, lm, v)) {
-    const list = await chatModelsList();
-    if (list.ok && (list.models ?? []).some((m) => m.id === lm.managed?.modelId && m.downloaded)) {
-      up = await bringUpLocalDaemon(false);
-    }
-  }
+  const modelId = lm.managed?.modelId ?? "";
+  const plan = runModeDaemonPlan(now, lm, v);
+  if (plan === "wait") up = await bringUpIfOnDisk(modelId, () => bringUpLocalDaemon(false));
+  else if (plan === "background") bringUpInBackground(modelId);
   return {
     ok: true,
     providerId: leg,
@@ -395,8 +453,8 @@ export async function enterFusion(pins: { orchestratorProvider?: string; workerP
 /**
  * swapLegs — the composer's ⇄ and `/runmode swap`. On a Fusion in force it
  * is one write and the agent restart: planSwapLegs marks the verdict
- * seats-only and the daemon is left as it is, so a swap costs what a
- * provider switch costs.
+ * seats-only, so a swap costs what a provider switch costs, and a daemon the
+ * local seat needs is brought up in the background if it is down.
  */
 export async function swapFusionLegs(): Promise<SwitchResult> {
   const isKeyed = keyed();

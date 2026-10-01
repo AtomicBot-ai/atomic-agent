@@ -76,7 +76,9 @@ import {
 } from "./huggingface.js";
 import {
   activateProvider,
+  afterBackgroundBringUp,
   enterFusion,
+  onBackgroundBringUp,
   selectCloudModel,
   selectFusionWorkerModel,
   selectLocalModel,
@@ -84,6 +86,8 @@ import {
   runModeWantsDaemon,
   swapFusionLegs,
   switchBackend,
+  trackBringUp,
+  type BringUp,
   type SwitchResult,
 } from "./backend-switch.js";
 import { resolveRunMode, type RunModeConfig } from "./run-mode.js";
@@ -1024,7 +1028,14 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     return removeProvider(id);
   });
-  ipcMain.handle("cli:modelsStart", () => modelsStart());
+  /* Item 11: never beside the start a ⇄ left running in the background — and
+     not again after it when it brought the daemon up (or found it up): a
+     second `models start` against a running daemon is the agent-side duplicate. */
+  ipcMain.handle("cli:modelsStart", async () => {
+    const bg = await afterBackgroundBringUp();
+    if (bg && (bg.daemon === "started" || bg.daemon === "untouched")) return { ok: true, stdout: "", stderr: "" };
+    return modelsStart();
+  });
   ipcMain.handle("cli:traceUsage", (_event, payload: unknown) => {
     const { stateDir, sessionId } = (payload ?? {}) as { stateDir?: unknown; sessionId?: unknown };
     if (!ownDir(stateDir) || typeof sessionId !== "string") {
@@ -1371,7 +1382,7 @@ function wireIpc(client: AgentClient): void {
   // --- Item 7 part C (LLM / Telegram / Import tabs) ---
   ipcMain.handle("cli:modelsStatus", () => modelsStatus());
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
-  ipcMain.handle("cli:modelsStop", () => modelsStop());
+  ipcMain.handle("cli:modelsStop", async () => { await afterBackgroundBringUp(); return modelsStop(); });
   ipcMain.handle("cli:modelsRemove", (_event, id: unknown) =>
     typeof id === "string" ? modelsRemove(id) : { ok: false, error: "model id required" },
   );
@@ -1497,6 +1508,17 @@ function wireIpc(client: AgentClient): void {
     }));
   });
   ipcMain.handle("cli:swapFusionLegs", async () => applySwitch(await swapFusionLegs()));
+  /* Item 11: a ⇄ brings a daemon that is down up in the background and does
+     not wait for it. How that ended goes where the launch start says it (the
+     agent log) and to the window, which tells it as it tells a switch's own. */
+  onBackgroundBringUp((r) => {
+    const line = r.daemon === "start-failed"
+      ? `[desktop] could not start the local model daemon (${r.modelId}): ${r.error ?? "unknown error"}`
+      : `[desktop] started the local model daemon (${r.modelId})`;
+    console.error(line);
+    send("agent:log", { stream: "stderr", line });
+    send("cli:daemon", r);
+  });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
     return applySwitch(await setFusionWorkers(workers));
@@ -7984,16 +8006,22 @@ async function startLocalDaemonAtBoot(): Promise<void> {
     /* Fusion with a local seat needs the daemon as much as the local route:
        its active provider is the cloud orchestrator, so the check above let
        it through to nothing, and the only thing that used to start it was a
-       ⇄ swap, as a side effect — which a swap no longer does (item 11). */
+       ⇄ swap, as a side effect that made the swap stick (item 11). */
     const fusionLocalSeat = runModeWantsDaemon(resolveRunMode(cfg as RunModeConfig), cfg.localModels ?? {});
     if (!localRoute && !fusionLocalSeat) return;
     const st = await modelsStatus();
     if (!st.ok || !st.status || !st.status.activeModel || st.status.activeDownloaded !== true) return;
-    if (await localDaemonRunning()) return;
-    const res = await modelsStart();
-    const line = res.ok
+    // Item 11: as the bring-up in flight, so a ⇄ or a switch made while the
+    // model loads waits for it rather than starting a second daemon beside it.
+    const r = await trackBringUp(async (): Promise<BringUp> => {
+      if (await localDaemonRunning()) return { daemon: "untouched" };
+      const res = await modelsStart();
+      return res.ok ? { daemon: "started" } : { daemon: "start-failed", error: res.error };
+    });
+    if (r.daemon === "untouched") return;
+    const line = r.daemon === "started"
       ? `[desktop] started the local model daemon (${st.status.activeModel})`
-      : `[desktop] could not start the local model daemon: ${res.error ?? "unknown error"}`;
+      : `[desktop] could not start the local model daemon: ${r.error ?? "unknown error"}`;
     console.error(line);
     send("agent:log", { stream: "stderr", line });
   } catch (err) {

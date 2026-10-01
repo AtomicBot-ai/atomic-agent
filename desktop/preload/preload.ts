@@ -213,6 +213,8 @@ contextBridge.exposeInMainWorld("atomic", {
   enterFusion: (pins?: { orchestratorProvider?: string; workerProvider?: string }) =>
     ipcRenderer.invoke("cli:enterFusion", pins ?? {}),
   swapFusionLegs: () => ipcRenderer.invoke("cli:swapFusionLegs"),
+  /** How a daemon a swap started in the background, without waiting, came up (item 11). */
+  onDaemon: (cb: (payload: unknown) => void) => on("cli:daemon", cb),
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
   useManagedMode: () => ipcRenderer.invoke("cli:useManagedMode"),
