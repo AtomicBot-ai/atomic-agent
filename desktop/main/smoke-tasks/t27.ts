@@ -39,7 +39,7 @@ type Check = (name: string, ok: boolean, detail?: string) => void;
 type Row = { id: string; name: string; dot: string };
 type View = {
   sessionId: string; agentSession: string | null; busy: boolean; turnId: string | null;
-  rows: Row[]; on: string[]; drawn: string[];
+  rows: Row[]; on: string[]; drawn: string[]; title: string;
 };
 type Payload = { sessionId?: unknown; messages?: Array<{ content?: unknown }> };
 type Listed = { id: string; turnCount: number; title: string | null; updatedAt: number };
@@ -123,18 +123,23 @@ const H = String.raw`
   const view = () => ({sessionId: S.sessionId, agentSession: S.agentSession, busy: !!S.busy, turnId: S.turnId,
     rows: window.__sidebar().chats.filter((c) => mine(c.id)).map((c) => ({id: c.id, name: c.name, dot: c.dot})),
     on: [...document.querySelectorAll('#sidebar .sesrow.on')].map((n) => n.dataset.ses),
-    drawn: [...document.querySelectorAll('#sidebar [data-ses]')].map((n) => n.dataset.ses).filter(mine)});
+    drawn: [...document.querySelectorAll('#sidebar [data-ses]')].map((n) => n.dataset.ses).filter(mine),
+    title: (document.querySelector('.tb-title b') || {}).textContent || ''});
 `;
 const VIEW = `(() => { ${H} return view(); })()`;
 
 /* The window as the check found it; RESTORE puts it back. */
 const KEEP = `(() => {
+  // The staged turns end through the real end-of-turn branch: not over a turn of the window's own.
+  if (S.busy || S.turnId || S.pending || WAIT) return {skipped: 'a turn is live'};
   window.__t27keep = {log: S.log, sessionId: S.sessionId, agentSession: S.agentSession, busy: S.busy, pending: S.pending,
     history: S.history, room: S.room, streamId: S.streamId, turnId: S.turnId, reasonId: S.reasonId, stick: S.stick,
     settings: S.settings, toasts: S.toasts.slice(), queued: S.queued.slice(), had: 'turnStartedAt' in S, started: S.turnStartedAt,
     fz: FZ.live, stamp: CTX055.stamp, plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode},
-    wait: WAIT};
-  return true;
+    wait: WAIT, unverified: UNVERIFIED, deferred: DL.deferred};
+  // A staged turn's end must not activate a parked download or clear a key's badge (as t13).
+  UNVERIFIED = []; DL.deferred = null;
+  return {kept: true};
 })()`;
 const RESTORE = `(async () => { ${H}
   await tick(150);   // the answers let go just before this are dealt with first
@@ -145,6 +150,7 @@ const RESTORE = `(async () => { ${H}
     S.stick = k.stick; S.settings = k.settings; S.toasts = k.toasts; S.queued = k.queued;
     if (k.had) S.turnStartedAt = k.started; else delete S.turnStartedAt;
     FZ.live = k.fz; CTX055.stamp = k.stamp; Object.assign(PLAN, k.plan);
+    UNVERIFIED = k.unverified; DL.deferred = k.deferred;
   }
   // A wait a staged turn was left in (the check stopped between its frames) goes; the window's own comes back.
   WAIT = k ? k.wait : null;
@@ -181,15 +187,17 @@ async function settle(js: Js): Promise<void> {
   await js<unknown>(`BR.session(${q(PROBE)}).then(() => new Promise((res) => setTimeout(res, 150)))`);
 }
 
-/** Until `expr` (renderer code) is true, at most three seconds. */
-async function until(js: Js, expr: string): Promise<boolean> {
+/** Until `expr` (renderer code) is true, at most `ms`. */
+async function untilFor(js: Js, expr: string, ms: number): Promise<boolean> {
   const t0 = Date.now();
-  while (Date.now() - t0 < 3000) {
+  while (Date.now() - t0 < ms) {
     if ((await js<boolean>(`!!(${expr})`)) === true) return true;
     await wait(25);
   }
   return false;
 }
+/** The same, at most three seconds. */
+const until = (js: Js, expr: string) => untilFor(js, expr, 3000);
 /** BR.chat answered `turnId` and the window took it. */
 const turnTaken = (js: Js, turnId: string) => until(js, `S.turnId === ${q(turnId)}`);
 /** The window handled the turn's session_id frame (its running-dot bookkeeping names the session). */
@@ -222,8 +230,14 @@ export async function checks27(js: Js, check: Check): Promise<void> {
         `${JSON.stringify(probe)}; nothing was staged`);
       return;
     }
-    kept = await js<boolean>(KEEP);
+    const keep = await js<{ kept?: boolean; skipped?: string }>(KEEP);
+    kept = keep.kept === true;
+    if (!kept) {
+      check("T27: the staged turns run with no turn of the window's own live", false, `${JSON.stringify(keep)}; nothing was staged`);
+      return;
+    }
     await firstMessage(js, check, agent, w);
+    await firstTurnStopped(js, check, agent, w);
     await firstTurnLostByTheAgent(js, check, agent, w);
     await chatAlreadyListed(js, check, agent, w);
     await waitNamesItsProvider(js, check, agent, w);
@@ -262,10 +276,11 @@ async function firstMessage(js: Js, check: Check, agent: StandIns, w: BrowserWin
   const during = await js<View>(VIEW);
   const row = only(during, sid);
   check(
-    "T27: New chat, then a message: the chat is on the sidebar while its first turn runs, named by that message, running and current",
+    "T27: New chat, then a message: the chat is on the sidebar while its first turn runs, named by that message, running and current, and the toolbar names it too",
     pressed && taken && handled && agent.sent.length === 1 && !agent.sent[0]!.sessionId
       && row.length === 1 && row[0]!.name === said && row[0]!.dot === "running"
-      && during.drawn.includes(sid) && during.on.length === 1 && during.on[0] === sid && during.sessionId === sid,
+      && during.drawn.includes(sid) && during.on.length === 1 && during.on[0] === sid && during.sessionId === sid
+      && during.title === said,
     `pressed=${pressed} taken=${taken} frame handled=${handled} sent=${JSON.stringify(agent.sent.map((p) => p.sessionId ?? null))} → ${JSON.stringify(during)}`,
   );
 
@@ -304,9 +319,47 @@ async function firstMessage(js: Js, check: Check, agent: StandIns, w: BrowserWin
   await settle(js);
 }
 
+const listedRow = (sid: string) => `window.__sidebar().chats.some((c) => c.id === ${q(sid)})`;
+
+/* (a2) Stop on a new chat's first turn. The aborted frame is the window's own
+   (agent-client.ts cancel), and the agent stores the stopped turn only when
+   its loop has wound down, so the list read at the frame still has the chat
+   with no turn. The row stays, and the stored row takes its place once the
+   agent has written the turn. */
+async function firstTurnStopped(js: Js, check: Check, agent: StandIns, w: BrowserWindow): Promise<void> {
+  const sid = `${PREFIX}stopped`;
+  const turn = `${PREFIX}turn-stopped`;
+  const said = "smoke t27: a first message that is stopped";
+  agent.turns.push(turn);
+  const pressed = await js<boolean>(`(() => { ${H} return newChat(); })()`);
+  await js<boolean>(`(() => { ${H} return send(${q(said)}); })()`);
+  const taken = await turnTaken(js, turn);
+  named(w, turn, sid);
+  const handled = await frameNamed(js, turn, sid);
+  agent.rows = [listed(sid, 0)];   // the agent saved the session at the request, with no turn yet
+  frame(w, turn, "aborted", { error: null });
+  const ended = await frameEnded(js, turn);
+  await settle(js);
+  const stopped = await js<View>(VIEW);
+  const kept = only(stopped, sid);
+  // The agent's loop winds down and writes the stopped turn.
+  agent.rows = [listed(sid, 1)];
+  const stored = await untilFor(js, `SESSIONS.some((x) => x.id === ${q(sid)})`, 8000);
+  await settle(js);
+  const after = await js<View>(VIEW);
+  const landed = only(after, sid);
+  check(
+    "T27: Stop on a new chat's first turn keeps the chat on the sidebar until the agent has stored the stopped turn",
+    pressed && taken && handled && ended && kept.length === 1 && kept[0]!.name === said && kept[0]!.dot !== "running"
+      && stored && landed.length === 1 && landed[0]!.name === said,
+    `frames handled=${handled},${ended} stopped=${JSON.stringify(stopped)} stored=${stored} → ${JSON.stringify(after)}`,
+  );
+}
+
 /* (b) A first turn the agent loses: the stream ends in an error (the agent
-   went away under it) and the list read after it does not have the chat.
-   No row may stay behind for a chat that does not exist. */
+   went away under it) and the list keeps the chat with no turn, as a real
+   agent does (it saves the session at the request). Once the stand-in's wait
+   for the stored turn is over, no row may stay behind for that chat. */
 async function firstTurnLostByTheAgent(js: Js, check: Check, agent: StandIns, w: BrowserWindow): Promise<void> {
   const sid = `${PREFIX}lost`;
   const turn = `${PREFIX}turn-lost`;
@@ -316,15 +369,17 @@ async function firstTurnLostByTheAgent(js: Js, check: Check, agent: StandIns, w:
   const taken = await turnTaken(js, turn);
   named(w, turn, sid);
   const handled = await frameNamed(js, turn, sid);
+  agent.rows = [listed(sid, 0)];
   const reads = agent.listReads;
   frame(w, turn, "error", { error: "smoke t27: the agent went away" });
   const ended = await frameEnded(js, turn);
+  const gone = await untilFor(js, `!${listedRow(sid)}`, 12_000);
   await settle(js);
   const after = await js<View>(VIEW);
   check(
     "T27: a first turn that ends with nothing stored leaves no row behind",
-    pressed && taken && handled && ended && agent.listReads > reads && only(after, sid).length === 0 && !after.drawn.includes(sid),
-    `pressed=${pressed} taken=${taken} frames handled=${handled},${ended} list reads=${agent.listReads - reads} → ${JSON.stringify(after)}`,
+    pressed && taken && handled && ended && gone && agent.listReads > reads && only(after, sid).length === 0 && !after.drawn.includes(sid),
+    `pressed=${pressed} taken=${taken} frames handled=${handled},${ended} gone=${gone} list reads=${agent.listReads - reads} → ${JSON.stringify(after)}`,
   );
 }
 
@@ -356,6 +411,7 @@ async function chatAlreadyListed(js: Js, check: Check, agent: StandIns, w: Brows
   const handled = await frameNamed(js, turn, sid);
   await settle(js);
   const during = await js<View>(VIEW);
+  const noStandIn = await js<boolean>(`typeof PENDING_CHATS === 'undefined' || !PENDING_CHATS.has(${q(sid)})`);
   agent.rows = [listed(sid, 3, title)];
   frame(w, turn, "done");
   const ended = await frameEnded(js, turn);
@@ -364,10 +420,10 @@ async function chatAlreadyListed(js: Js, check: Check, agent: StandIns, w: Brows
   const payload = agent.sent[sentBefore];
   check(
     "T27: a message in a chat already on the list keeps it one row, during the turn and after it",
-    opened && taken && handled && ended && payload?.sessionId === sid
+    opened && taken && handled && ended && payload?.sessionId === sid && noStandIn
       && only(during, sid).length === 1 && only(during, sid)[0]!.dot === "running"
       && only(after, sid).length === 1 && only(after, sid)[0]!.name === title,
-    `opened=${opened} taken=${taken} frames handled=${handled},${ended} session=${JSON.stringify(payload?.sessionId ?? null)} during=${JSON.stringify(during)} → after=${JSON.stringify(after)}`,
+    `opened=${opened} taken=${taken} frames handled=${handled},${ended} no stand-in=${noStandIn} session=${JSON.stringify(payload?.sessionId ?? null)} during=${JSON.stringify(during)} → after=${JSON.stringify(after)}`,
   );
 }
 
