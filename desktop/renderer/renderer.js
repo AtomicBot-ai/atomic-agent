@@ -1650,6 +1650,20 @@ const STREAM_PAINT = {raf:0, timer:0, chat:false, reason:false};
    top. */
 const INSP_VIEW = {tab:null, log:null};
 const RUNNING = new Map();
+/* Backlog 24: the open in flight for a chat, `{id, failed}`. openSession
+   points the window at the chat (S.sessionId, the "loading session…" line)
+   at once, but takes its session (S.agentSession) only when the transcript is
+   back, so in between nothing sent here has a session of its own to go with.
+   `failed` once that open's answer was an error, which leaves the window just
+   as far from the chat. Read through openHoldsComposer(); declared up here
+   because sendButton() reads it in the first render. */
+let OPENING = null;
+/* Backlog 24: `{sid, text}`, a turn of chat `sid` that ended while the chat
+   on screen was still loading (or had failed to), with `text` queued behind
+   it. It runs when that chat is next on screen and idle, if it is still the
+   next message in the queue (openSession). The chat being loaded has nothing
+   to do with it: the message was queued for the turn that ended. */
+let DRAIN_OWED = null;
 const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
@@ -2930,7 +2944,37 @@ function swxHoldsComposer() {
   return !(SWX.want && SWX.want.route === false);
 }
 
+/**
+ * Backlog 24 — is the chat on screen still opening, or did it fail to open?
+ * ONE answer for the send button and `submit()`, as swxHoldsComposer is.
+ *
+ * Until openSession's answer lands, S.agentSession is still the PREVIOUS
+ * chat's (or null), so a message sent from the "loading session…" view went
+ * out with that session: into the chat the person had just left, or into a
+ * fresh one. And openSession leaves S.busy up for a chat whose turn is live,
+ * so the same Enter could steer the previous chat's running turn instead, or
+ * deny its open approval in the words typed here. A failed open leaves the
+ * same gap for as long as it is on screen. Both hold the message in the box.
+ * (A failed reload of the chat the next message already goes with holds
+ * nothing: see openSession.)
+ */
+function openHoldsComposer() {
+  return !!OPENING && OPENING.id === S.sessionId;
+}
+
 function sendButton() {
+  /* Backlog 24 — the open hold, drawn like the switch lock below. It comes
+     before the busy branch: while a chat opens, S.busy and S.pending can
+     still be the previous chat's, and the Stop or steer arrow they draw
+     would act on a turn that is not on screen. No spinner: the transcript's
+     "loading session…" row already has one. */
+  if (openHoldsComposer()) {
+    const say = OPENING.failed
+      ? 'This chat did not open. Open it again, or start a new chat'
+      : 'This chat is still loading. Send your message once it has loaded';
+    return '<button class="sendbtn locked" data-act="send" disabled aria-busy="' + (OPENING.failed ? 'false' : 'true')
+      + '" title="' + esc(say) + '" aria-label="' + esc(say) + '">' + ic('up') + '</button>';
+  }
   /* r5 item 10 — the switch lock. The chip has already painted the
      operator's choice; the send button says, in the one place they are
      about to click, that the choice is not live yet.
@@ -5093,6 +5137,19 @@ function submit() {
      whose words are about a message staying in the box) was wrong copy for
      the wrong thing. They go through untouched. */
   if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
+  /* Backlog 24 — Enter while the chat on screen is still opening, or after
+     it failed to. The draft STAYS in the box, as it does for a switch below:
+     nothing here knows yet which session the message would go with, and
+     guessing sent it to the chat the person had just left. Above the
+     approval and steer branches too, which read the same stale state. It is
+     not sent by itself when the chat lands: the person sees the transcript
+     first and presses Enter again. The toast is the refusal kind, as "A turn
+     is already running" is: nothing went out. */
+  if (openHoldsComposer()) {
+    if (OPENING.failed) toast('This chat did not open', 'Your message is still in the box. Open the chat again, or start a new one', 'bad');
+    else toast('This chat is still loading', 'Your message is still in the box. Send it once the chat has loaded', 'bad');
+    return;
+  }
   /* r5 item 10 — Enter while a switch is landing. The draft STAYS in the
      box: the two lines that clear it are below this guard, and steering or
      queueing is not offered either, because the message would run against
@@ -5164,10 +5221,36 @@ function submit() {
     // (before the catalogue snapshot has landed) that call is made now,
     // so no turn ever bypasses the gate.
     BSW.gating = true; render();
-    bswSnapshot().then(() => { BSW.gating = false; bswGatedTurn(text); });
+    /* Backlog 24: the chat this was typed into. The snapshot is a CLI round
+       trip, and the person can open another chat (or start a new one) inside
+       it; startLiveTurn would then send the message with THAT chat's
+       session, or with the last one's while the new chat still loads. */
+    const typedIn = {sid:S.sessionId, agent:S.agentSession, log:S.log};
+    bswSnapshot().then(() => {
+      BSW.gating = false;
+      if (S.sessionId !== typedIn.sid || S.agentSession !== typedIn.agent || openHoldsComposer()) { gatedTurnLeft(text); return; }
+      // The same chat, its transcript redrawn meanwhile (Clear Transcript):
+      // the message goes back in above its turn.
+      if (S.log !== typedIn.log) S.log.push({id:nid(), k:'user', text});
+      bswGatedTurn(text);
+    });
     return;
   }
   bswGatedTurn(text);
+}
+/** Backlog 24: a message held at the local gate whose chat changed before
+    the gate answered (another chat, a new one, or this one still loading).
+    It was never sent, so it goes back to the editor. If the person has typed
+    there since, it goes above what they typed: nothing is lost and nothing
+    is written over. */
+function gatedTurnLeft(text) {
+  const e = $('#entry');
+  const typed = String((e ? e.value : S.draft) || '');
+  S.draft = typed.trim() ? text + '\n\n' + typed : text;
+  if (e) { e.value = S.draft; autosize(e); }
+  ctxDraftChanged();
+  toast('Not sent', 'The chat changed before the local model check finished. Your message is back in the box', 'bad');
+  render();
 }
 /** The gate's verdict, then the turn. */
 function bswGatedTurn(text) {
@@ -6454,6 +6537,8 @@ function startLiveTurn(text) {
   S.history.push({role:'user', content:text});
   S.reasonId = null;
   FZ.live = [];
+  // Backlog 24: the queue has a turn to drain after again.
+  DRAIN_OWED = null;
   S.busy = true; S.stick = true;
   /* When the turn started, so a failure can say how long it waited
      rather than only that it gave up. A turn could spend 95 seconds
@@ -6568,6 +6653,8 @@ function onChatEvent(ev) {
     if (!held || held.after) STREAM_ERR.set(ev.turnId, {ev, after:false});
     return;
   }
+  // Backlog 24: whose turn this frame is, read before the bookkeeping below forgets it.
+  const turnSid = ev && RUNNING.has(ev.turnId) ? RUNNING.get(ev.turnId) : null;
   /* item 6 — the running dot, bookkept BEFORE the turnId guard below.
      A turn keeps streaming after the user opens another chat, and its
      done/aborted/error is the only truthful end-of-run signal there is:
@@ -6624,10 +6711,17 @@ function onChatEvent(ev) {
   }
 
   if (ev.kind === 'session_id') {
-    S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id');
     // item 6: the streaming item being in the visible log is the proof that
     // this is the chat the user is looking at — so its row is the current one.
-    if (S.log.some((m) => m.id === S.streamId)) S.sessionId = S.agentSession;
+    /* Backlog 24: and only then is the session the one the next message goes
+       with. A chat's first turn reports its id after the person may have
+       opened another chat; taking it there sent that chat's next message into
+       the chat that was left. RUNNING has it either way (above), which is all
+       the sidebar needs, and reopening that chat reads it from its row. */
+    if (S.log.some((m) => m.id === S.streamId)) {
+      S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id');
+      S.sessionId = S.agentSession;
+    }
     renderSidebar();
     return;
   }
@@ -6836,22 +6930,42 @@ function onChatEvent(ev) {
     STEER.ahead = 0;
     STEER.mine.length = 0;
     if (S.queued.length) {
-      const q = S.queued.shift();
-      // Lane B — backend switch: the gate is judged at turn START, so a
-      // message parked behind a running turn is re-checked here. A drained
-      // message has no editor to go back to (the operator may be
-      // mid-draft), so the TUI drops it — announced with a preview, never
-      // silently — and stops draining (chat-orchestrator.ts fromQueue).
-      const gate = localTurnGate();
-      if (gate.kind === 'block') {
-        S.log.push({id:nid(), k:'system', text: esc(gate.text + '\n  dropped: ' + droppedPreview(q))});
+      /* Backlog 24: not from under a loading line (or a failed open's
+         error). That transcript is replaced when the answer lands, so the
+         turn drew nowhere, and while another chat loads S.agentSession is
+         still the last one's. The message was queued behind the turn that
+         just ended: it waits for that turn's chat to be on screen and idle
+         again, and openSession runs it there. A turn that never reported
+         its session leaves it in the queue, as the queue always has. */
+      if (openHoldsComposer()) {
+        DRAIN_OWED = turnSid ? {sid:turnSid, text:S.queued[0]} : null;
         render(); return;
       }
-      if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
-      S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q); return;
+      drainQueued();
+      return;
     }
     render();
   }
+}
+
+/** The next queued message, as the next turn of the chat on screen (the
+    queue is window-global). */
+function drainQueued() {
+  DRAIN_OWED = null;
+  if (!S.queued.length) return;
+  const q = S.queued.shift();
+  // Lane B — backend switch: the gate is judged at turn START, so a
+  // message parked behind a running turn is re-checked here. A drained
+  // message has no editor to go back to (the operator may be
+  // mid-draft), so the TUI drops it — announced with a preview, never
+  // silently — and stops draining (chat-orchestrator.ts fromQueue).
+  const gate = localTurnGate();
+  if (gate.kind === 'block') {
+    S.log.push({id:nid(), k:'system', text: esc(gate.text + '\n  dropped: ' + droppedPreview(q))});
+    render(); return;
+  }
+  if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
+  S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q);
 }
 
 /** B1: `body` with a trailing streamed copy of `note` taken off. The agent's
@@ -14404,7 +14518,9 @@ async function openSession(id) {
   // session whose turn is running (chat-orchestrator.ts:505-515) — and here
   // reloading would throw away the streaming item the deltas land in, so the
   // reply would vanish mid-sentence.
-  if (live && S.sessionId === id) { S.room = 'chat'; markSeen(id); render(); return; }
+  // Backlog 24: except after this chat failed to open. Clicking it again is
+  // how that is retried, and its log is only the error line.
+  if (live && S.sessionId === id && !(OPENING && OPENING.id === id && OPENING.failed)) { S.room = 'chat'; markSeen(id); render(); return; }
   /* Item 1 (plan hand-off): a DELIBERATE divergence from the TUI. Its
      `session_switched` reducer resets messages, feed, pendingApproval,
      runHistory, queuedMessages and contextUsage but not `planHandoff`, so its
@@ -14420,6 +14536,9 @@ async function openSession(id) {
   // orphan one already on its way for this chat.
   const seq = ++OPEN_SEQ;
   S.sessionId = id;
+  // Backlog 24: and until the answer lands, the composer holds what is sent here.
+  const opening = {id, failed:false};
+  OPENING = opening;
   S.room = 'chat';
   S.log = [{id:nid(), k:'system', text:'loading session…'}];
   // A live turn belonging to another session keeps its own state; only the
@@ -14434,6 +14553,15 @@ async function openSession(id) {
   render();
 
   const res = await BR.session(id);
+  /* Backlog 24: this open is over, landed or not. A newer open (another chat,
+     or this one again) owns OPENING by now and is left alone. A failed
+     reload of the chat whose session the next message already goes with
+     holds nothing: the message would go to the right place, only the
+     transcript is missing. */
+  if (OPENING === opening) {
+    if ((res && res.ok && res.data) || S.agentSession === id) OPENING = null;
+    else opening.failed = true;
+  }
   /* Backlog 22: the person may have moved on while this was loading. New
      chat, another chat or a delete moved S.sessionId (set above, before the
      await). A newer load of this same chat (the reload a turn's end starts in
@@ -14469,6 +14597,13 @@ async function openSession(id) {
   noteSessionModelStamp(data);
   render();
   refreshContext();
+  /* Backlog 24: a turn of this chat ended while a chat was loading, with a
+     message queued behind it. It runs now, here, as long as it is still the
+     next one in the queue. Not over a turn this chat is still running
+     (live): that turn's end reloads the chat, and it runs then. */
+  if (DRAIN_OWED && DRAIN_OWED.sid === id && !S.busy && !S.pending) {
+    if (S.queued[0] === DRAIN_OWED.text) drainQueued(); else DRAIN_OWED = null;
+  }
   // Item 7C review fix: the GET leg of the steer route. The
   // `steer_undelivered` SSE frame only reaches a window that was attached
   // to the turn; a reconnect, an agent restart or a session opened after
