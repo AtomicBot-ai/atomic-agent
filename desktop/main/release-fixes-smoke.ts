@@ -16,6 +16,7 @@ import { checks18 } from "./smoke-tasks/t18.js";
 import { checks18b } from "./smoke-tasks/t18b.js";
 import { checks18c } from "./smoke-tasks/t18c.js";
 import { checks18d } from "./smoke-tasks/t18d.js";
+import { checks22 } from "./smoke-tasks/t22.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -30,7 +31,7 @@ import { checks18d } from "./smoke-tasks/t18d.js";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -444,6 +445,8 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       wins.forEach((x, i) => { if (!x.isDestroyed()) x.webContents.setBackgroundThrottling(throttled[i]!); });
     }
   }
+  // 22 — a chat still loading when New chat was pressed came back over the new one.
+  if (want.has("22")) await guarded("22", check, () => checks22(js, check));
 
   if (want.has("19")) {
     // 19 — "What never leaves this Mac" read as a privacy promise the app does not make.
