@@ -10402,9 +10402,11 @@ function obPullFinished(job, ev) {
   if (!ok) { render(); return; }
   if (DL.dry) { render(); return; }
   DL.landed = job.id;
-  const pending = OB.pendingMmproj;
-  OB.pendingMmproj = null;
-  if (pending && BR && BR.hfProjector) { obFetchProjector(job.id, pending); return; }
+  /* A vision model's projector is next — setup's pick in this launch, or the
+     one the reminder kept across a quit (obSetupPullMmproj): `atag models
+     pull` brought the weights alone. */
+  const pending = obSetupPullMmproj(job.id);
+  if (pending && BR && BR.hfProjector) { obSetupPullWeightsLanded(job.id, pending); obFetchProjector(job.id, pending); return; }
   /* Backlog 18: a re-queued runtime is still to come behind these weights,
      and the model cannot start without it, so the start waits for it. Only
      for that (R4): another model queued behind this one is no reason to hold
@@ -10486,6 +10488,8 @@ function obSetupPullRemember(id) {
   try {
     localStorage.setItem(OB_SETUP_PULL_KEY, JSON.stringify({id, stateDir: (FIRSTRUN && FIRSTRUN.stateDir) || null, at: Date.now()}));
   } catch (e) { /* no storage: the next launch falls back to setup, which is not stamped complete */ }
+  // A Hugging Face vision model's projector goes in it too: a resume fetches it after the weights.
+  if (obMmprojFor(id, OB.pendingMmproj)) obSetupPullNote({mmproj: OB.pendingMmproj});
 }
 function obSetupPullForget() {
   try { localStorage.removeItem(OB_SETUP_PULL_KEY); } catch (e) { /* nothing was stored */ }
@@ -10525,8 +10529,52 @@ function obSetupPullResume(cfg) {
   const managed = ((cfg && cfg.localModels) || {}).managed || {};
   if (managed.modelId === m.id) { obSetupPullForget(); return false; }
   if (dlBusy() || DL.projector) return true;
-  obStartLocalPull(m.id, false);
+  obSetupPullRestart(m);
   return true;
+}
+
+/* ---- 18c (review S2): a vision model's projector across a quit ----
+   `atag models pull` brings the weights alone, and the projector step lived
+   in memory only (OB.pendingMmproj), so a resumed Hugging Face vision model
+   was started text-only — the start obFetchProjector's failure path refuses.
+   The reminder also keeps what that step needs (`mmproj`) and, once the
+   weights are on disk, says so (`weightsLanded`). */
+
+/** Fields added to the reminder, keeping whatever else it holds. */
+function obSetupPullNote(fields) {
+  const m = obSetupPullGet();
+  if (!m) return;
+  try { localStorage.setItem(OB_SETUP_PULL_KEY, JSON.stringify(Object.assign({}, m, fields))); } catch (e) { /* kept as it was */ }
+}
+/** `p` when it is a projector step for model `id` that obFetchProjector can run, else null. */
+function obMmprojFor(id, p) {
+  return p && p.id === id && typeof p.mmprojUrl === 'string' && p.mmprojUrl
+    && typeof p.mmprojFilename === 'string' && p.mmprojFilename ? p : null;
+}
+/** The projector the weights of `id` still need: setup's pick in this launch (taken once), else the reminder's. */
+function obSetupPullMmproj(id) {
+  const p = obMmprojFor(id, OB.pendingMmproj);
+  if (p) { OB.pendingMmproj = null; return p; }
+  const m = obSetupPullGet();
+  return m && m.id === id ? obMmprojFor(id, m.mmproj) : null;
+}
+/** Its weights are on disk and the projector is next: a quit from here resumes the projector alone. */
+function obSetupPullWeightsLanded(id, mmproj) {
+  const m = obSetupPullGet();
+  if (m && m.id === id) obSetupPullNote({mmproj, weightsLanded: true});
+}
+/**
+ * The remembered download, started again with its projector step. Weights
+ * still to come resume, and obPullFinished fetches the projector after them,
+ * from the reminder. Weights already on disk (a quit during the projector, or
+ * after it failed): only the projector is fetched. Either way the model starts
+ * once its projector has landed and never without it — a projector that fails
+ * is a failed row with Retry (obFetchProjector).
+ */
+function obSetupPullRestart(m) {
+  const mmproj = obMmprojFor(m.id, m.mmproj);
+  if (mmproj && m.weightsLanded === true) { obFetchProjector(m.id, mmproj); return; }
+  obStartLocalPull(m.id, false);
 }
 
 /**
