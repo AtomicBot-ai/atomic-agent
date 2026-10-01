@@ -82,6 +82,27 @@ describe("provider_waiting over SSE", () => {
     expect(http.written[0]!.payload).not.toHaveProperty("provider_id");
   });
 
+  it("always carries cause as {kind, status?}: a status the provider never sent is left out", () => {
+    const sse = makeSse();
+    buildStreamEventHook(sse.writer as never, env(true))({
+      ...waiting,
+      cause: { kind: "stream_error", status: null },
+      providerId: "openrouter",
+    } as never);
+    const payload = sse.written[0]!.payload as Record<string, unknown>;
+    expect(payload.cause).toEqual({ kind: "stream_error" });
+    expect(payload.provider_id).toBe("openrouter");
+
+    const refused = makeSse();
+    buildStreamEventHook(refused.writer as never, env(true))({
+      ...waiting,
+      cause: { kind: "refused" },
+    } as never);
+    expect(
+      (refused.written[0]!.payload as Record<string, unknown>).cause,
+    ).toEqual({ kind: "refused" });
+  });
+
   it("leaves both out when the event has neither, as older hosts saw it", () => {
     const sse = makeSse();
     buildStreamEventHook(sse.writer as never, env(true))(waiting as never);

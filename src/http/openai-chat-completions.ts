@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
+import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { classifyFailure } from "../llm/reliability/index.js";
 import {
   readFailedAttempts,
@@ -463,8 +464,8 @@ export function buildStreamEventHook(
     if (event.type === "provider_waiting") {
       if (env.request.extensionsEnabled) {
         /* `reason` is the raw failure line and stays what older hosts
-           read. `cause` is the same failure as data (`{kind}`, plus
-           `status` when a response had one), and `provider_id` the link
+           read. `cause` is the same failure as data, always
+           `{kind, status?}` (`waitCauseFrame`), and `provider_id` the link
            the turn is waiting on: with a fallback chain often not the
            provider the operator picked. Both optional, both absent when
            the loop does not know. */
@@ -476,7 +477,9 @@ export function buildStreamEventHook(
           max_wait_ms: event.maxWaitMs,
           next_retry_ms: event.nextRetryMs,
           reason: event.reason,
-          ...(event.cause !== undefined ? { cause: event.cause } : {}),
+          ...(event.cause !== undefined
+            ? { cause: waitCauseFrame(event.cause) }
+            : {}),
           ...(event.providerId !== undefined
             ? { provider_id: event.providerId }
             : {}),
@@ -544,6 +547,21 @@ export function buildStreamEventHook(
       emitStreamError(sse, env, event.error.message, event.category);
     }
   };
+}
+
+/**
+ * A wait cause as the `provider_waiting` frame carries it: `{kind}`, plus
+ * `status` only when it is a number. The event's `stream_error` may hold
+ * `status: null` (the provider reported no status); the frame leaves it
+ * out, so a host reads exactly one shape.
+ */
+function waitCauseFrame(cause: ProviderWaitCause): {
+  kind: ProviderWaitCause["kind"];
+  status?: number;
+} {
+  return "status" in cause && typeof cause.status === "number"
+    ? { kind: cause.kind, status: cause.status }
+    : { kind: cause.kind };
 }
 
 /**
