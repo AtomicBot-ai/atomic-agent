@@ -43,6 +43,8 @@ export type SmokeDownloads = {
   hold: (kind: "runtime" | "projector", id: string) => () => void;
   /** The projector download's `models status` read, stood in. Returns the undo. */
   projectorStatus: (read: () => Promise<ProjectorStatusAnswer>) => () => void;
+  /** Every download handler refuses before it spawns or fetches anything, whatever it is asked. Returns the undo. */
+  offline: () => () => void;
 };
 
 export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21"];

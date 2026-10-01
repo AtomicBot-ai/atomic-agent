@@ -344,6 +344,11 @@ const DOWNLOAD_BUSY = "a download is already running";
 /* What the projector download reads `models status` with (cli:hfProjector).
    Only the item-18 smoke stands in for it (smokeDownloads below). */
 let projectorStatusRead: () => Promise<ProjectorStatusAnswer> = modelsStatus;
+/* Smoke only: while a check runs offline (smokeDownloads.offline), every
+   download handler refuses before anything is spawned or fetched, whatever it
+   was asked — the last line under "a check never downloads". */
+let smokeOffline = false;
+const SMOKE_OFFLINE = "smoke: offline, nothing is downloaded";
 
 /* Smoke only (backlog 18, the deferred cases): what the item-18 checks put in
    main's place. A download held in a slot with no child behind it, and the
@@ -353,11 +358,13 @@ let projectorStatusRead: () => Promise<ProjectorStatusAnswer> = modelsStatus;
 const smokeDownloads: SmokeDownloads = {
   hold(kind, id) {
     if (kind === "projector") {
+      if (hfProjector) throw new Error(`smoke: the projector slot is taken (${hfProjector.id})`);
       // No url or file: no projector call ever follows it (cli:hfProjector).
       const held = { controller: new AbortController(), id, url: "", file: "", done: new Promise<never>(() => {}) };
       hfProjector = held;
       return () => { if (hfProjector === held) hfProjector = null; };
     }
+    if (pullUpdate) throw new Error(`smoke: the runtime slot is taken (${pullUpdate.id})`);
     const held: DownloadSlot = { done: new Promise<never>(() => {}), cancel: () => {}, kind, id, last: null };
     pullUpdate = held;
     return () => { if (pullUpdate === held) pullUpdate = null; };
@@ -365,6 +372,10 @@ const smokeDownloads: SmokeDownloads = {
   projectorStatus(read) {
     projectorStatusRead = read;
     return () => { if (projectorStatusRead === read) projectorStatusRead = modelsStatus; };
+  },
+  offline() {
+    smokeOffline = true;
+    return () => { smokeOffline = false; };
   },
 };
 
@@ -898,6 +909,7 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     const started = modelsPull(id, (line) =>
       pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
@@ -918,6 +930,7 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsUpdateStream", () => {
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     const id = "llama.cpp";
     let slot: DownloadSlot | null = null;
     const started = modelsUpdateStream((line) =>
@@ -1077,6 +1090,7 @@ function wireIpc(client: AgentClient): void {
           send("cli:pull", { id, line: `${label} already on disk` });
           return { ok: true, alreadyPresent: true };
         }
+        if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
         send("cli:pull", { id, line: `${label} 0%` });
         try {
           mkdirSync(dir, { recursive: true });
@@ -1523,6 +1537,7 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     const started = modelsPullEmbedding(id, (line) =>
       pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
@@ -1537,7 +1552,10 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsUseEmbedding", (_event, id: unknown) =>
     typeof id === "string" ? modelsUseEmbedding(id) : { ok: false, error: "embedding model id required" },
   );
-  ipcMain.handle("cli:modelsUpdate", () => modelsUpdate());
+  ipcMain.handle("cli:modelsUpdate", () => {
+    if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
+    return modelsUpdate();
+  });
   ipcMain.handle("cli:modelsDevices", () => modelsDevices());
   ipcMain.handle("cli:modelsUseDevice", (_event, id: unknown) =>
     typeof id === "string" ? modelsUseDevice(id) : { ok: false, error: "device id required" },
