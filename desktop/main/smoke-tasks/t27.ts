@@ -387,17 +387,17 @@ const WAIT_VIEW = `(() => {
     before: 'Waiting for ' + (providerWord(selActiveProviderId()) || 'the provider')};
 })()`;
 
-/* The picked provider becomes a cloud one for the cases below (the window's
-   copy of the config only; nothing is written), and comes back after. */
-const PICK_CLOUD = `(() => {
-  window.__t27pick = {cfg: LIVE_CONFIG, want: SWX.want};
+/* The picked provider for the cases below (the window's copy of the config
+   only; nothing is written). UNPICK puts the window's own back. */
+const PICK = (id: string, kind: string) => `(() => {
+  if (!window.__t27pick) window.__t27pick = {cfg: LIVE_CONFIG, want: SWX.want};
   const llm = (LIVE_CONFIG && LIVE_CONFIG.llm) || {};
-  const providers = (Array.isArray(llm.providers) ? llm.providers : []).filter((p) => p && p.id !== 'aimlapi');
+  const providers = (Array.isArray(llm.providers) ? llm.providers : []).filter((p) => p && p.id !== ${q(id)});
   LIVE_CONFIG = Object.assign({}, LIVE_CONFIG || {}, {llm: Object.assign({}, llm,
-    {activeTextProvider: 'aimlapi', providers: providers.concat([{id: 'aimlapi', kind: 'aimlapi'}])})});
+    {activeTextProvider: ${q(id)}, providers: providers.concat([{id: ${q(id)}, kind: ${q(kind)}}])})});
   SWX.want = null;
   render();
-  return {picked: selActiveProviderId(), name: providerWord('aimlapi')};
+  return {picked: selActiveProviderId(), name: providerWord(${q(id)})};
 })()`;
 const UNPICK = `(() => {
   const k = window.__t27pick; delete window.__t27pick;
@@ -405,6 +405,24 @@ const UNPICK = `(() => {
   render();
   return true;
 })()`;
+
+/* What `atag models status` has the window add under a wait on the local
+   server, read here the way the window reads it: `line` under a wait the
+   transcript has not yet said anything about, `after` under one whose line
+   already said the server is not running. '' when the server is fine. */
+type Due = { line: string; after: string; status: unknown };
+const PROBE_DUE = `(async () => {
+  const res = await BR.modelsStatus();
+  const st = res && res.ok ? res.status : null;
+  if (!st) return {line: '', after: '', status: res && res.error};
+  const off = st.mode === 'managed' && !st.daemonRunning;
+  const fault = st.fault ? 'Local model server: ' + st.fault : '';
+  return {line: esc(fault || (off ? 'The local model server isn’t running. Start it in Settings › Models.' : '')),
+    after: esc(fault || (off ? 'Start it in Settings › Models.' : '')),
+    status: {mode: st.mode, running: st.daemonRunning, fault: st.fault}};
+})()`;
+/** Every note a wait has added from the local server's status (the newest last). */
+const WARNED = "S.log.filter((m) => m.k === 'system' && m.sev === 'warn' && m.note).map((m) => String(m.text || ''))";
 
 /** A provider_waiting frame as the agent writes it; `extra` adds the newer agent's fields. */
 const waiting = (sid: string, extra: Record<string, unknown> = {}) => ({
@@ -415,20 +433,34 @@ const waiting = (sid: string, extra: Record<string, unknown> = {}) => ({
 });
 const TAIL = ". The turn is paused and retries on its own for up to 5 min. Stop ends it.";
 
-/** One wait, from its frame to its end: what it showed while it lasted. */
-async function oneWait(js: Js, w: BrowserWindow, turn: string, sid: string, extra?: Record<string, unknown>): Promise<Wait & { started: boolean }> {
+type Waited = Wait & { started: boolean; added: string | null };
+/** One wait, from its frame to its end: what it showed while it lasted, and
+    the local server's line it added, when `due` says one is due ('' none). */
+async function oneWait(js: Js, w: BrowserWindow, turn: string, sid: string, extra?: Record<string, unknown>, due?: string): Promise<Waited> {
+  const before = (await js<string[]>(WARNED)).length;
   frame(w, turn, "provider_waiting", waiting(sid, extra));
   const started = await until(js, "!!WAIT");
   await settle(js);
   const seen = await js<Wait>(WAIT_VIEW);
+  let added: string | null = null;
+  if (due !== undefined) {
+    // It lands when `atag models status` answers; with none due, a few seconds show none came.
+    const t0 = Date.now();
+    while (Date.now() - t0 < (due ? 20_000 : 4000)) {
+      const notes = await js<string[]>(WARNED);
+      if (notes.length > before) { added = notes[notes.length - 1]!; break; }
+      await wait(100);
+    }
+  }
   frame(w, turn, "provider_recovered", { payload: { object: "atomic.provider_recovered", session_id: sid, waited_ms: 1000 } });
   await until(js, "!WAIT");
-  return { ...seen, started };
+  return { ...seen, started, added };
 }
+const addedAsDue = (added: string | null, due: string) => (due ? added === due : added === null);
 
-/* (d) A turn on screen parks three times: on a frame with no provider or
-   cause (an older agent); on one naming the local server, refused, while
-   the picked provider is a cloud one; and on one naming that cloud provider,
+/* (d) A turn on screen parks three times. On the local route: a frame with no
+   provider or cause (an older agent). With a cloud provider picked: one
+   naming the local server, refused, and one naming that cloud provider,
    unreachable. Each wait ends before the next (provider_recovered), so each
    draws its own transcript line. */
 async function waitNamesItsProvider(js: Js, check: Check, agent: StandIns, w: BrowserWindow): Promise<void> {
@@ -440,33 +472,40 @@ async function waitNamesItsProvider(js: Js, check: Check, agent: StandIns, w: Br
   const ready = pressed && (await turnTaken(js, turn));
   named(w, turn, sid);
   const handled = ready && (await frameNamed(js, turn, sid));
+  const due = await js<Due>(PROBE_DUE);
 
-  const old = await oneWait(js, w, turn, sid);
-  check(
-    "T29: a wait frame with no provider or cause (an older agent) reads exactly as before",
-    handled && old.started && old.shown && old.ann === old.before && old.why === "no connection"
-      && old.note === `The model isn’t answering (no connection)${TAIL}`,
-    JSON.stringify(old),
-  );
-
-  const pick = await js<{ picked: string; name: string }>(PICK_CLOUD);
   try {
-    const local = await oneWait(js, w, turn, sid, { provider_id: "local-llama", cause: { kind: "refused" } });
+    const onLocal = await js<{ picked: string; name: string }>(PICK("local-llama", "llama-server"));
+    const old = await oneWait(js, w, turn, sid, undefined, due.line);
+    check(
+      "T29: a wait frame with no provider or cause (an older agent) reads exactly as before",
+      handled && old.started && old.shown && old.ann === old.before && old.why === "no connection"
+        && old.note === `The model isn’t answering (no connection)${TAIL}`,
+      JSON.stringify(old),
+    );
+    check(
+      "T29: on the local route such a wait also says what the local server's status shows",
+      onLocal.picked === "local-llama" && addedAsDue(old.added, due.line),
+      `due=${JSON.stringify(due)} added=${JSON.stringify(old.added)}`,
+    );
+
+    const pick = await js<{ picked: string; name: string }>(PICK("aimlapi", "aimlapi"));
+    const local = await oneWait(js, w, turn, sid, { provider_id: "local-llama", cause: { kind: "refused" } }, due.after);
     const said = `${local.ann} ${local.why} ${local.note}`;
     check(
       "T29: a wait on the local server while a cloud provider is picked names Local models and says its server isn't running",
       pick.picked === "aimlapi" && local.started && local.shown
         && local.ann === "Waiting for Local models" && local.why === "the local model server isn’t running"
         && local.note === `No answer from Local models (the local model server isn’t running)${TAIL}`
-        && !said.includes("no connection") && !said.includes(pick.name),
-      `picked=${pick.picked} → ${JSON.stringify(local)}`,
+        && !said.includes("no connection") && !said.includes(pick.name) && addedAsDue(local.added, due.after),
+      `picked=${pick.picked} due=${JSON.stringify(due.after)} → ${JSON.stringify(local)}`,
     );
 
-    const cloud = await oneWait(js, w, turn, sid, { provider_id: "aimlapi", cause: { kind: "unreachable" } });
+    const cloud = await oneWait(js, w, turn, sid, { provider_id: "aimlapi", cause: { kind: "unreachable" } }, "");
     check(
       "T29: a connection failure to the provider the agent names reads \"no connection\", with that provider named in the strip and the transcript",
       cloud.started && cloud.shown && cloud.ann === `Waiting for ${pick.name}` && cloud.why === "no connection"
-        && cloud.note === `No answer from ${pick.name} (no connection)${TAIL}`,
+        && cloud.note === `No answer from ${pick.name} (no connection)${TAIL}` && cloud.added === null,
       JSON.stringify(cloud),
     );
   } finally {
