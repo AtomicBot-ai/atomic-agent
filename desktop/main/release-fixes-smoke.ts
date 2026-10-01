@@ -13,6 +13,7 @@ import { checks10 } from "./smoke-tasks/t10.js";
 import { checks11 } from "./smoke-tasks/t11.js";
 import { checks13 } from "./smoke-tasks/t13.js";
 import { checks18 } from "./smoke-tasks/t18.js";
+import { checks18b } from "./smoke-tasks/t18b.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -413,7 +414,23 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("10")) await guarded("10", check, () => checks10(js, check));
   if (want.has("11")) await guarded("11", check, () => checks11(js, check));
   if (want.has("13") || want.has("14")) await guarded("13", check, () => checks13(js, check));
-  if (want.has("18")) await guarded("18", check, () => checks18(js, check));
+  if (want.has("18")) {
+    /* The card's checks wait on timers and on the window's own layout. With
+       several smokes side by side another window covers this one, and an
+       occluded page's chained timers end up a minute apart: a run overran its
+       180 s that way. As the screenshot lane does, throttling is off while
+       they run, and put back as it was. */
+    const wins = BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed());
+    const throttled = wins.map((x) => x.webContents.getBackgroundThrottling());
+    wins.forEach((x) => x.webContents.setBackgroundThrottling(false));
+    try {
+      await guarded("18", check, () => checks18(js, check));
+      // Its review follow-ups, in their own file (smoke-tasks/t18b.ts).
+      await guarded("18", check, () => checks18b(js, check));
+    } finally {
+      wins.forEach((x, i) => { if (!x.isDestroyed()) x.webContents.setBackgroundThrottling(throttled[i]!); });
+    }
+  }
 
   if (want.has("19")) {
     // 19 — "What never leaves this Mac" read as a privacy promise the app does not make.
