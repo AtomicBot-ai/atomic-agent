@@ -80,9 +80,9 @@ export async function fetchGeminiModels(
 /**
  * The id as chat requests and saved configs spell it. Google's
  * OpenAI-compatible list can name a model by its resource path,
- * `models/gemini-3.8-flash`, while the provider default
+ * `models/gemini-2.5-flash`, while the provider default
  * (`GEMINI_DEFAULT_CHAT_MODEL`), Google's own chat examples and every
- * entry the wizards save say `gemini-3.8-flash`; a long-form id matches
+ * entry the wizards save say `gemini-2.5-flash`; a long-form id matches
  * none of them.
  */
 function chatModelId(id: string): string {
