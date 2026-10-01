@@ -7,6 +7,11 @@ import { BrowserWindow, Menu } from "electron";
 
 import { plainCliError } from "./agent-cli.js";
 import { resolveBinary } from "./agent-client.js";
+import { checks03 } from "./smoke-tasks/t03.js";
+import { checks09 } from "./smoke-tasks/t09.js";
+import { checks10 } from "./smoke-tasks/t10.js";
+import { checks11 } from "./smoke-tasks/t11.js";
+import { checks13 } from "./smoke-tasks/t13.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -21,7 +26,7 @@ import { resolveBinary } from "./agent-client.js";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-export const RELEASE_FIX_TASKS = ["04", "05", "06", "07", "08", "12", "15", "16", "17"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -382,6 +387,14 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       JSON.stringify(r),
     );
   }
+
+  // The remaining items keep their checks in their own files (main/smoke-tasks/),
+  // so they can be built in parallel without touching this one. 13 also covers 14.
+  if (want.has("03")) await checks03(js, check);
+  if (want.has("09")) await checks09(js, check);
+  if (want.has("10")) await checks10(js, check);
+  if (want.has("11")) await checks11(js, check);
+  if (want.has("13") || want.has("14")) await checks13(js, check);
 
   await wait(100);
 }
