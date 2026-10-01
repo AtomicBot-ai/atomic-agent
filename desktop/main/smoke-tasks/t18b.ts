@@ -305,7 +305,12 @@ async function projector(js: Js, check: Check): Promise<void> {
   const ID = "custom-smoke-t18b";
   const FILE = "smoke-t18b-mmproj.gguf";
   const URL = `https://huggingface.co/smoke/t18b/resolve/main/${FILE}`;
-  const st = await js<{ ok?: boolean; status?: { dataDir?: string | null } } | null>("window.atomic.modelsStatus()");
+  // Where main looks: `models status`'s data dir (read again if a loaded machine lets the CLI time out).
+  type St = { ok?: boolean; status?: { dataDir?: string | null }; error?: string } | null;
+  let st: St = null;
+  for (let i = 0; i < 3 && !(st && st.ok && st.status && st.status.dataDir); i++) {
+    st = await js<St>("window.atomic.modelsStatus()");
+  }
   const dataDir = st && st.ok && st.status ? st.status.dataDir ?? null : null;
   const dir = dataDir ? join(dataDir, "models", ID) : null;
   /* The one real projector call below must never fetch anything: the file is
@@ -327,7 +332,7 @@ async function projector(js: Js, check: Check): Promise<void> {
       "T18-F5: a projector Cancel pressed while main still reads models status reaches it — the download stops there, nothing is fetched",
       !!early && early.cancel === true && !!early.res && early.res.ok === false && /cancelled/.test(early.res.error ?? "")
         && !early.res.alreadyPresent,
-      JSON.stringify({ dataDir, onDisk, early }),
+      JSON.stringify({ dataDir, onDisk, early, status: dataDir ? undefined : st }),
     );
 
     // F5 (renderer): the Cancel came too late — the projector landed anyway.
@@ -556,7 +561,8 @@ async function shots(js: Js, w: BrowserWindow, dir: string): Promise<void> {
      the main suite's screenshot does, it is brought up and repainted first. */
   const throttled = w.webContents.getBackgroundThrottling();
   w.webContents.setBackgroundThrottling(false);
-  w.show();
+  // Brought up without taking the keyboard from whatever the person is typing into.
+  w.showInactive();
   w.moveTop();
   try {
     for (const [file, theme, inspector] of cases) {
