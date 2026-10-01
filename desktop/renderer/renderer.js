@@ -636,9 +636,12 @@ const DLC = {
   /** The composer wrap the card is kept clear of, and the observer on it. */
   anchor: null,
   ro: null,
-  /** The height the card takes from the window's bottom edge, published as
-      --dlcard-offset (0 while it is away). */
+  /** The height the card takes from the window's bottom edge (0 while it is
+      away); the toast column is re-checked against it when it changes. */
   offset: 0,
+  /** How far the card reaches up over the conversation's bottom edge,
+      published as --dlcard-chat (0 while it is away or beside the column). */
+  chat: 0,
 };
 /* The card's distance from the window's edges, and from whatever it keeps clear of. */
 const DLC_EDGE = 16, DLC_GAP = 8;
@@ -8440,10 +8443,13 @@ function dlEtaFrom(done, total, rate, samples) {
    nothing under it moves.
 
    It stands above the composer whenever the two share a column, so the send
-   button and the chips are never under it, and above the console drawer
-   when that is open. The height it takes from the window's bottom edge is
-   published as --dlcard-offset for anything else that lives in that
-   corner, and the toast column stops above it (toastsClearCard).
+   button and the chips are never under it, above the console drawer when
+   that is open, and to the left of the inspector panel when that is open.
+   How far it reaches up over the transcript is published as --dlcard-chat:
+   a conversation takes that as room under its last message, so its end —
+   the newest reply, an approval's buttons — scrolls clear of the card (the
+   empty chat's greeting is left as it is). The toast column stops above it
+   (toastsClearCard).
 
    Rows: the setup queue (DL — the llama.cpp runtime and the weights, and the
    moment between Download and the queue starting), the one other pull
@@ -8664,18 +8670,24 @@ function renderDlcard() {
 }
 
 /**
- * Where the card stands: the window's right edge, and above whatever it
- * would otherwise cover in that column — the composer (from the top of its
- * dock, so the status line and the queue above the card stay clear too)
- * and the console drawer. The list gets what is left under the toolbar and
- * scrolls rather than pushing the card over it.
+ * Where the card stands: the window's right edge — or the inspector's left
+ * edge while that panel is open, so it covers none of it — and above
+ * whatever it would otherwise cover in that column: the composer (from the
+ * top of its dock, so the status line and the queue above the card stay
+ * clear too) and the console drawer. The list gets what is left under the
+ * toolbar and scrolls rather than pushing the card over it.
  */
 function dlCardPlace(el) {
   const win = document.getElementById('window');
   if (!win || el.hidden) return;
   const w = win.getBoundingClientRect();
+  let right = DLC_EDGE;
+  const insp = document.getElementById('inspector');
+  const ir = insp ? insp.getBoundingClientRect() : null;
+  if (ir && ir.width > 0 && ir.height > 0) right = Math.max(right, Math.round(w.right - ir.left + DLC_GAP));
+  if (el.style.right !== right + 'px') el.style.right = right + 'px';
   const width = el.getBoundingClientRect().width;
-  const from = w.right - DLC_EDGE - width, to = w.right - DLC_EDGE;
+  const from = w.right - right - width, to = w.right - right;
   let bottom = DLC_EDGE;
   const clear = (across, top) => {
     if (!across || !(across.width > 0) || across.right <= from || across.left >= to) return;
@@ -8691,8 +8703,27 @@ function dlCardPlace(el) {
   const top = tb ? tb.getBoundingClientRect().bottom : w.top;
   const room = Math.max(120, Math.round(w.bottom - bottom - top - DLC_GAP)) + 'px';
   if (el.style.getPropertyValue('--dlc-room') !== room) el.style.setProperty('--dlc-room', room);
-  dlCardPublish(bottom + el.offsetHeight + DLC_GAP);
+  dlCardPublish(bottom + el.offsetHeight + DLC_GAP, dlCardOverChat(el));
   dlCardFollow(wrap);
+}
+
+/**
+ * Backlog 18 review: how far the card reaches up over the conversation —
+ * from the transcript's bottom edge to the card's top, and a gap — when it
+ * crosses the column the messages are drawn in. Under it sat the newest reply
+ * and an approval's right-aligned "Abort run". The empty chat has no column
+ * and keeps the overlap it has.
+ */
+function dlCardOverChat(el) {
+  const sc = document.getElementById('scroller');
+  const col = sc && sc.querySelector(':scope > .col720');
+  const face = el.firstElementChild;
+  if (!col || !face) return 0;
+  const s = sc.getBoundingClientRect(), c = col.getBoundingClientRect(), f = face.getBoundingClientRect();
+  const cs = getComputedStyle(col);
+  const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
+  if (!(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom) return 0;
+  return Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
 }
 
 /** The composer grows as it is typed into without a render: follow it. */
@@ -8709,12 +8740,24 @@ function dlCardFollow(wrap) {
   if (wrap) DLC.ro.observe(wrap);
 }
 
-/** --dlcard-offset: how far up from the window's bottom edge the card reaches (0 while it is away). */
-function dlCardPublish(px) {
+/**
+ * What the card takes from the rest of the window: `px` up from its bottom
+ * edge (DLC.offset — the toast column is re-checked against it), and `chat`
+ * over the conversation, published as --dlcard-chat for its column's bottom
+ * room (chat.css). Both 0 while it is away.
+ */
+function dlCardPublish(px, chat) {
+  const c = Math.max(0, Math.round(chat || 0));
+  if (c !== DLC.chat) {
+    DLC.chat = c;
+    document.documentElement.style.setProperty('--dlcard-chat', c + 'px');
+    // A conversation held at its newest message stays there, now clear of the card.
+    const sc = document.getElementById('scroller');
+    if (sc && S.stick) sc.scrollTop = sc.scrollHeight;
+  }
   const v = Math.max(0, Math.round(px));
   if (v === DLC.offset) return;
   DLC.offset = v;
-  document.documentElement.style.setProperty('--dlcard-offset', v + 'px');
   toastsClearCard();
 }
 

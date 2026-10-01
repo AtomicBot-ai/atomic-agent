@@ -24,6 +24,12 @@
 #scroller{-webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
   mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
 #scroller > .col720{max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
+/* Backlog 18 review: the download card floats over the bottom-right of the
+   transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
+   over this column, so the column's end — the newest reply, an approval's
+   buttons — scrolls clear of it. 0 while the card is away or beside the
+   column. The empty chat has no column: its greeting stays as it is. */
+#scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}
 
 /* Rows. `.turn` keeps its two-track grid with an EMPTY first cell (r4-ui
