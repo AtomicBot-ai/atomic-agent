@@ -16644,9 +16644,16 @@ function llmApplyStatus(status) {
    active model is on disk and the list says it is not, the list is the stale
    one. */
 function llmListIsStale(st) {
-  if (!st || !st.activeModel || st.activeDownloaded !== true || !Array.isArray(LLMP.local)) return false;
+  if (!st || !st.activeModel || !Array.isArray(LLMP.local)) return false;
   const row = LLMP.local.find((m) => m && m.id === st.activeModel);
-  return !!row && !row.downloaded;
+  if (!row) return false;
+  if (st.activeDownloaded === true && !row.downloaded) return true;
+  /* Both answers read managed.modelId, so they cannot disagree about which
+     model is active unless the list is the older one: the first-run flow
+     marks the model active a moment AFTER its pull lands, and the list read
+     at that moment showed it downloaded but unchosen ("Use", radio empty,
+     under a header that said Ready). */
+  return st.mode === 'managed' && !row.active;
 }
 async function llmRefreshStatus(quiet) {
   if (!BR || LLMP.statusBusy) return;

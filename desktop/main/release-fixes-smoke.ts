@@ -124,27 +124,30 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
       const saved = {local: LLMP.local, heal: LLMP.staleHealAt, refresh: window.llmRefresh, status: LLMP.status, err: LLMP.statusErr, down: LLMP.downSince};
       let refreshed = 0;
       try {
-        LLMP.local = [{id:'qwen-3.5-9b', downloaded:false}, {id:'gemma-4-12b', downloaded:false}];
+        LLMP.local = [{id:'qwen-3.5-9b', downloaded:false, active:true}, {id:'gemma-4-12b', downloaded:false}];
         const st = {mode:'managed', activeModel:'qwen-3.5-9b', activeDownloaded:true, daemonRunning:true, daemonPid:1, health:'ok'};
         const staleWhenListLags = llmListIsStale(st);
         const notStaleWhenNotOnDisk = !llmListIsStale(Object.assign({}, st, {activeDownloaded:false}));
-        LLMP.local = [{id:'qwen-3.5-9b', downloaded:true}];
+        LLMP.local = [{id:'qwen-3.5-9b', downloaded:true, active:true}];
         const notStaleWhenAgreeing = !llmListIsStale(st);
+        LLMP.local = [{id:'qwen-3.5-9b', downloaded:true, active:false}];
+        const staleWhenNotMarkedActive = llmListIsStale(st);
         LLMP.local = [{id:'qwen-3.5-9b', downloaded:false}];
         LLMP.staleHealAt = 0; LLMP.inflight = null;
         window.llmRefresh = () => { refreshed++; return Promise.resolve(); };
         llmApplyStatus({ok:true, status:st});
         llmApplyStatus({ok:true, status:st});
         await new Promise((res) => setTimeout(res, 50));
-        return {staleWhenListLags, notStaleWhenNotOnDisk, notStaleWhenAgreeing, refreshed};
+        return {staleWhenListLags, notStaleWhenNotOnDisk, notStaleWhenAgreeing, staleWhenNotMarkedActive, refreshed};
       } finally {
         window.llmRefresh = saved.refresh; LLMP.local = saved.local; LLMP.staleHealAt = saved.heal;
         LLMP.status = saved.status; LLMP.statusErr = saved.err; LLMP.downSince = saved.down;
       }
     })()`);
     check(
-      "T05: a status that says the active model is on disk re-reads a list that says it is not, once",
-      r.staleWhenListLags === true && r.notStaleWhenNotOnDisk === true && r.notStaleWhenAgreeing === true && r.refreshed === 1,
+      "T05: a list that disagrees with the status about the active model (not on disk, or not chosen) is re-read, once",
+      r.staleWhenListLags === true && r.notStaleWhenNotOnDisk === true && r.notStaleWhenAgreeing === true
+        && r.staleWhenNotMarkedActive === true && r.refreshed === 1,
       JSON.stringify(r),
     );
     // A finished pull through the real IPC channel the downloads use. Every
