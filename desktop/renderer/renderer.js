@@ -8464,8 +8464,9 @@ function obLocalPickHTML() {
     : OB.busy
       ? '<div class="ob-loading" role="status" aria-label="Loading models"><span class="tk-spin" aria-hidden="true"></span></div>'
       : '<div class="ob-explain">' + obNothingFitsLine() + '</div>';
-  const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL),
-    esc('paste an owner/repo id or a huggingface.co URL'), 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
+  /* No grey "paste an owner/repo id…" line beside it (Danya, 30.09: the
+     button says what it does; the field it opens asks for the id). */
+  const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL), '', 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
   return '<div class="ob-explain">'
       + esc(OB.ram ? 'Runs offline after one download. Ordered for this Mac’s ' + OB.ram + ' GB of memory.'
                    : 'Runs offline after one download.') + '</div>'
