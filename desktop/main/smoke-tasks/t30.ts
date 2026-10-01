@@ -62,7 +62,7 @@ const srv = http.createServer((req, res) => {
 const listen = () => srv.listen(port, "127.0.0.1");
 if (mode === "late") setTimeout(listen, 800); else listen();
 let terms = 0;
-process.on("SIGTERM", () => { terms += 1; if (terms === 1) srv.close(); else process.exit(130); });
+process.on("SIGTERM", () => { terms += 1; if (terms === 1) { srv.close(); srv.closeAllConnections(); } else process.exit(130); });
 setInterval(() => {}, 1 << 30);
 `;
 
@@ -77,7 +77,24 @@ function freePort(): Promise<number> {
     });
   });
 }
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const portFree = (port: number) => new Promise<boolean>((resolve) => {
+  const srv = createServer();
+  srv.once("error", () => resolve(false));
+  srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(true)));
+});
+/* A stand-in's port, below the ephemeral range: once a stand-in closes its port
+   the check reads it as refused, and a port the system hands out to any bind(0)
+   (another run's `atag serve`) could answer there instead. */
+async function standInPort(): Promise<number> {
+  for (let i = 0; i < 200; i++) {
+    const port = 20_000 + Math.floor(Math.random() * 10_000);
+    if (await portFree(port)) return port;
+  }
+  throw new Error("no free port for the stand-in");
+}
+const alive = (pid: number) => { if (pid <= 1) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
+/** A signal to a stand-in — never to pid 0 or 1, which would reach this app's own process group, or launchd. */
+const signal = (pid: number, sig: NodeJS.Signals) => { if (pid > 1) { try { process.kill(pid, sig); } catch { /* gone */ } } };
 async function health(port: number): Promise<number | "refused" | "silent"> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1_000) });
@@ -138,7 +155,7 @@ async function quitChecks(check: Check, standInScript: string, dir: string, real
   const state = join(dir, "quit-state");
   const data = join(state, "models");
   mkdirSync(data, { recursive: true });
-  const port = await freePort();
+  const port = await standInPort();
   writeFileSync(join(state, "config.json"), JSON.stringify({
     localModels: { mode: "managed", managed: { modelId: MODEL, port, stopOnExit: true } },
     tui: { onboarding: { completedAt: "2026-09-23T00:00:00.000Z" } },
@@ -209,7 +226,7 @@ async function quitChecks(check: Check, standInScript: string, dir: string, real
     );
   } finally {
     if (second && second.exitCode === null && second.signalCode === null) second.kill("SIGKILL");
-    if (alive(server)) process.kill(server, "SIGKILL");
+    signal(server, "SIGKILL");
   }
 }
 
@@ -219,7 +236,7 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
   const state = join(dir, "revive-state");
   const data = join(state, "models");
   mkdirSync(data, { recursive: true });
-  const port = await freePort();
+  const port = await standInPort();
   writeFileSync(join(state, "config.json"), JSON.stringify({
     localModels: { mode: "managed", managed: { modelId: MODEL, port } },
   }, null, 2));
@@ -232,7 +249,7 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
     `case "$1 $2" in`,
     `  "models start") echo "models start begin" >> ${q(log)}`,
     `    ELECTRON_RUN_AS_NODE=1 ${q(process.execPath)} ${q(standInScript)} ${port} ok </dev/null >/dev/null 2>&1 &`,
-    `    echo $! > ${q(pidFile)}`,
+    `    echo $! > ${q(pidFile)}; echo "models start spawned" >> ${q(log)}`,
     // "hang": the speed probe that never comes back.
     `    if [ "$(cat ${q(startMode)} 2>/dev/null)" = "hang" ]; then exec sleep 60; fi`,
     `    sleep 1; echo "chat: started pid $(cat ${q(pidFile)}), healthy on port ${port}"`,
@@ -256,14 +273,14 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
     return pid;
   };
   const clear = async () => {
-    for (const pid of [...spawned, pidNamed()]) if (pid && alive(pid)) process.kill(pid, "SIGKILL");
+    for (const pid of [...spawned, pidNamed()]) signal(pid, "SIGKILL");
     rmSync(pidFile, { force: true });
     await until(async () => (await health(port)) === "refused", 5_000);
   };
-  /** Killed by hand with a request open: the port closes, the pid lives on. */
+  /** Killed by hand with a request open: the port closes, the pid lives on. Answers whether it did. */
   const killByHand = async (pid: number) => {
-    process.kill(pid, "SIGTERM");
-    await until(async () => (await health(port)) === "refused", 5_000);
+    signal(pid, "SIGTERM");
+    return (await until(async () => (await health(port)) === "refused", 5_000)) && alive(pid);
   };
 
   const live = (await configGet()).config as UserConfigShape | undefined;
@@ -298,15 +315,15 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
     // 2. Killed by hand mid-request: the pid lives on with its port closed.
     const wedged = await serve("ok");
     const before = await localDaemonRunning();
-    await killByHand(wedged);
+    const lingers = await killByHand(wedged);
     const t2 = Date.now();
     const after = await localDaemonRunning();
     const ms2 = Date.now() - t2;
     await until(() => !alive(wedged), 6_000);
     check(
       "T31: a model server alive with its port closed (killed by hand mid-request) counts as down, and is stopped",
-      before === true && after === false && !alive(wedged),
-      `healthy: ${before}; after the kill: ${after} in ${ms2} ms; pid ${wedged} ${alive(wedged) ? "still alive" : "gone"}; verbs ${JSON.stringify(verbs())}`,
+      before === true && lingers && after === false && !alive(wedged),
+      `healthy: ${before}; port closed with the pid alive: ${lingers}; after the kill: ${after} in ${ms2} ms; pid ${wedged} ${alive(wedged) ? "still alive" : "gone"}; verbs ${JSON.stringify(verbs())}`,
     );
     await clear();
 
@@ -314,28 +331,28 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
     writeFileSync(log, "");
     writeFileSync(startMode, "ok");
     const wedged3 = await serve("ok");
-    await killByHand(wedged3);
+    const lingers3 = await killByHand(wedged3);
     const started = await js<{ ok?: boolean; alreadyRunning?: boolean; error?: string }>("window.atomic.modelsStart()");
     const fresh = pidNamed();
     const answers = await health(port);
     check(
       "T31: Settings' Start brings the model server back after it was killed by hand mid-request",
-      started?.ok === true && !started.alreadyRunning && verbs().includes("models start begin")
+      lingers3 && started?.ok === true && !started.alreadyRunning && verbs().includes("models start begin")
         && !alive(wedged3) && fresh !== wedged3 && alive(fresh) && answers === 200,
-      `start ${JSON.stringify(started)}; old pid ${wedged3} ${alive(wedged3) ? "alive" : "gone"}; new pid ${fresh}; port ${answers}; verbs ${JSON.stringify(verbs())}`,
+      `port closed with the pid alive: ${lingers3}; start ${JSON.stringify(started)}; old pid ${wedged3} ${alive(wedged3) ? "alive" : "gone"}; new pid ${fresh}; port ${answers}; verbs ${JSON.stringify(verbs())}`,
     );
     await clear();
 
     // 4. The launch start (a relaunch, a ⇄'s background start) after such a kill brings it back too.
     writeFileSync(log, "");
     const wedged4 = await serve("ok");
-    await killByHand(wedged4);
+    const lingers4 = await killByHand(wedged4);
     const launch = await bringUpAtLaunch(MODEL);
     const fresh4 = pidNamed();
     check(
       "T31: the launch start brings the model server back after it was killed by hand mid-request",
-      launch.daemon === "started" && !alive(wedged4) && fresh4 !== wedged4 && alive(fresh4) && (await health(port)) === 200,
-      `launch ${JSON.stringify(launch)}; old pid ${wedged4} ${alive(wedged4) ? "alive" : "gone"}; new pid ${fresh4}; verbs ${JSON.stringify(verbs())}`,
+      lingers4 && launch.daemon === "started" && !alive(wedged4) && fresh4 !== wedged4 && alive(fresh4) && (await health(port)) === 200,
+      `port closed with the pid alive: ${lingers4}; launch ${JSON.stringify(launch)}; old pid ${wedged4} ${alive(wedged4) ? "alive" : "gone"}; new pid ${fresh4}; verbs ${JSON.stringify(verbs())}`,
     );
     await clear();
 
@@ -345,7 +362,7 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
     writeFileSync(startMode, "hang");
     const hung = bringUpAtLaunch(MODEL);
     pending.push(hung);
-    await until(() => verbs().includes("models start begin"), 10_000);
+    await until(() => verbs().includes("models start spawned") && alive(pidNamed()), 10_000);
     const probed = pidNamed();
     spawned.push(probed);
     await until(async () => (await health(port)) === 200, 10_000);
@@ -353,7 +370,7 @@ async function reviveChecks(js: Js, check: Check, standInScript: string, dir: st
     writeFileSync(startMode, "ok");
     const queued = startDaemonNow();
     pending.push(queued);
-    process.kill(probed, "SIGTERM");   // by hand, mid-probe
+    signal(probed, "SIGTERM");   // by hand, mid-probe
     const t5 = Date.now();
     const settled = await Promise.race([hung.then((r) => ({ r, ms: Date.now() - t5 })), wait(15_000).then(() => null)]);
     const next = settled ? await Promise.race([queued, wait(20_000).then(() => null)]) : null;
