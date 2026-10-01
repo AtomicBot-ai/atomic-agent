@@ -1,7 +1,7 @@
 /* ============================================================
    Window shell — Soft Tactile.
    Toolbar, floating sidebar (workspace chip, Tasks, Chats, Settings), content
-   column, floating inspector, console drawer, download strip, the rail and the
+   column, floating inspector, console drawer, download card, the rail and the
    narrow layouts. Screens SH-01…09, SH-17, SH-23, CH-23.
    Loaded after styles.css (tokens + kit). Colours come from tokens only.
 
@@ -290,24 +290,64 @@
 .conbody > .tk-empty h4{font-size:13.5px}
 .conbody > .tk-empty p{font-size:12.5px}
 
-/* ---------------- download strip (CH-23) ---------------- */
-/* A flex child of #window between #toolbar and #main, so it is chrome and not
-   an overlay. Calm (S1, U5): it is not drawn while first-run setup is open —
-   the wizard covers the whole window and carries the progress itself. */
-#dlbar{
-  flex:none;display:flex;align-items:center;gap:10px;height:38px;margin:0 8px 8px;padding:0 6px 0 14px;
-  border-radius:var(--r-pill);background:var(--lift);box-shadow:var(--sh-card);
-  font-size:12.5px;line-height:16px;color:var(--ink-2);min-width:0;-webkit-app-region:no-drag;
-}
-#dlbar[hidden]{display:none}
-#dlbar .dl-g{display:flex;flex:none;color:var(--ink-2)}
-#dlbar .dl-g svg{width:14px;height:14px}
-#dlbar .dl-l{font:500 12px/16px var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32ch;min-width:0}
-#dlbar .dl-bar{flex:0 1 140px;min-width:48px}
-#dlbar .dl-pct{flex:none;min-width:4ch;font:400 12px/16px var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
-#dlbar .dl-eta,#dlbar .dl-q{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-#dlbar .dl-q{flex:none}
-#dlbar .dl-x{margin-left:auto}
+/* ---------------- download card (backlog 18) ---------------- */
+/* Atomic Chat's DownloadPanel: a lifted card floating in the bottom-right
+   corner over the window, so nothing under it moves (the #dlbar strip it
+   replaced was a flex child and pushed the chat down). The renderer sets
+   `bottom` (dlCardPlace) so it stands above the composer and the console,
+   and --dlc-room to what is left under the toolbar; the list scrolls inside
+   that. z 15: under #overlays (20), the voice language menu (16) and the
+   slash list (40), so everything that opens over the composer opens over
+   the card too, and the toasts (29) stay on top. */
+#dlcard{position:absolute;right:16px;bottom:16px;z-index:15;width:min(352px,calc(100% - 32px));
+  display:flex;flex-direction:column;align-items:flex-end;pointer-events:none;-webkit-app-region:no-drag}
+#dlcard[hidden]{display:none}
+#dlcard > *{pointer-events:auto}
+.dlc{align-self:stretch;display:flex;flex-direction:column;min-height:0;max-height:var(--dlc-room,60vh);
+  background:var(--lift);border-radius:var(--r-pop);box-shadow:var(--sh-pop);overflow:hidden;
+  color:var(--ink);user-select:none}
+.dlc-head{flex:none;display:flex;align-items:center;gap:8px;padding:8px 8px 4px 14px}
+.dlc-ttl{flex:1;min-width:0;display:flex;align-items:center;gap:7px;font:600 13px/18px var(--font-ui);color:var(--ink)}
+.dlc-ttl > svg{width:14px;height:14px;flex:none;color:var(--blue)}
+.dlc-ttl.is-failed > svg{color:var(--critical)}
+.dlc-ttl > span:first-of-type{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dlc-count{flex:none;min-width:20px;height:18px;padding:0 6px;border-radius:var(--r-pill);background:var(--hover);
+  font:600 11px/18px var(--font-ui);text-align:center;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.dlc-fold svg,.dlc-x svg{width:14px;height:14px}
+.dlc-list{list-style:none;margin:0;padding:2px 8px 8px;display:flex;flex-direction:column;gap:6px;
+  overflow-y:auto;min-height:0}
+/* One download: a well inside the card — name and its controls, a 6px bar,
+   one line of figures that never wraps (an overlong one loses its end). */
+.dlc-row{flex:none;display:grid;gap:7px;padding:8px 6px 9px 12px;border-radius:var(--r-well);background:var(--well)}
+.dlc-top{display:flex;align-items:center;gap:4px;min-width:0;min-height:26px}
+.dlc-name{flex:1;min-width:0;font:600 13px/18px var(--font-ui);color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dlc-bar{flex:none;height:6px;margin-right:6px}
+.dlc-line{margin:0 6px 0 0;font-size:12px;line-height:16px;color:var(--ink-2);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dlc-row.is-failed{background:color-mix(in srgb, var(--critical) 8%, var(--well))}
+.dlc-row.is-failed .dlc-line{color:var(--critical);white-space:normal;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.dlc-retry{height:24px;padding:0 9px}
+.dlc-retry svg{width:12px;height:12px}
+.dlc-x:focus-visible,.dlc-fold:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+/* The setup screen's cloud offer, now a quiet link under the rows. */
+.dlc-cloud{flex:none;align-self:flex-start;margin:0 8px 10px;padding:4px 6px;border-radius:var(--r-pill);
+  font:500 12.5px/16px var(--font-ui);color:var(--blue);text-align:left;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.dlc-cloud:hover{background:var(--brand-wash);color:var(--blue-deep)}
+.dlc-cloud:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+/* Folded: a 44px round button that is still a live count — brand, or red
+   once a download in it has failed. */
+.dlc-badge{position:relative;width:44px;height:44px;flex:none;border-radius:50%;display:grid;place-items:center;
+  background:var(--lift);box-shadow:var(--sh-pop);color:var(--ink-2)}
+.dlc-badge:hover{color:var(--ink)}
+.dlc-badge:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.dlc-badge > svg{width:17px;height:17px}
+.dlc-n{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:var(--r-pill);
+  background:var(--brand);color:var(--on-strong);font:700 11px/20px var(--font-ui);text-align:center;
+  font-variant-numeric:tabular-nums}
+.dlc-badge.has-failed .dlc-n{background:var(--critical);color:var(--on-fill)}
 
 /* ---------------- responsive ---------------- */
 @media (max-width:1180px){#inspector{display:none!important}}

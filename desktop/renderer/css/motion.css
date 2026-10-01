@@ -18,7 +18,7 @@
 
 :is(#motion-root, .btn, .b, .iconbtn, .cchip, .sendbtn, .micbtn, .searchbtn, .sb-new, .ghostchip, .msgact,
     button.tk-chip, .seg button, .tk-seg button, .wschip, .filechip, .vschip, .loadmore, .llm-rm, .llmmode,
-    .set-rowbtn, .ob-offer, .prow, .sesrow,
+    .set-rowbtn, .ob-offer, .prow, .sesrow, .dlc-badge, .dlc-cloud,
     #onboarding .ob-row, .selpop .modelrow, .selpop .prows [data-wizmodel], .poprow, .palrow, .cardhead,
     .slashrow, button.menurow, button.tk-li, .tuirow){
   transition-property:background-color, color, border-color, box-shadow, opacity, transform;
@@ -31,7 +31,7 @@
 /* Compact controls. */
 :is(#motion-root, .btn, .b, .iconbtn, .cchip, .searchbtn, .sb-new, .ghostchip, .msgact, button.tk-chip,
     .seg button, .tk-seg button, .wschip, .filechip, .vschip, .loadmore, .llm-rm, .llmmode, .set-rowbtn,
-    .micbtn):active:not([disabled]):not([aria-disabled="true"]):not(.is-disabled){transform:scale(0.97)}
+    .micbtn, .dlc-badge, .dlc-cloud):active:not([disabled]):not([aria-disabled="true"]):not(.is-disabled){transform:scale(0.97)}
 /* The send button keeps its deeper press — it is the one primary verb. */
 :is(#motion-root, .sendbtn):active:not([disabled]):not(.mute){transform:scale(0.95)}
 /* Rows and cards that span a list: the same press, scaled to their width. */
@@ -41,7 +41,7 @@
 @media (prefers-reduced-motion: reduce){
   :is(#motion-root, .btn, .b, .iconbtn, .cchip, .sendbtn, .micbtn, .searchbtn, .sb-new, .ghostchip, .msgact,
       button.tk-chip, .seg button, .tk-seg button, .wschip, .filechip, .vschip, .loadmore, .llm-rm, .llmmode,
-      .set-rowbtn, .ob-offer, .prow, .sesrow,
+      .set-rowbtn, .ob-offer, .prow, .sesrow, .dlc-badge, .dlc-cloud,
       #onboarding .ob-row, .selpop .modelrow, .selpop .prows [data-wizmodel], .poprow, .palrow, .cardhead,
       .slashrow, button.menurow, button.tk-li, .tuirow):active{transform:none}
 }

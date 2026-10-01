@@ -149,7 +149,11 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
   models:[], modelPick:null, defaultModel:null, modelChosen:false, savedId:null,
   savedLabel:'', modelFilter:'', unverifiedNote:null,
   /* Calm (S6): the provider's raw words behind a plain error, {for, text}. */
-  errorDetail:null };
+  errorDetail:null,
+  /* Backlog 18: opened on its own — by the download card's "Set up a cloud
+     model meanwhile" — rather than from the composer's own panes, so its
+     Cancel closes the popover instead of falling back to the backend list. */
+  alone:false };
 /* Kind rows in the TUI's KIND_ROW_ORDER, minus the two subscription-CLI
    kinds, whose config shape the desktop does not write. */
 const KIND_ROWS = [
@@ -264,17 +268,18 @@ const OB = {
   outcome: null,
   skipSecondOffer: false,
   /* r8: the operator asked, in so many words, to be put in the agent NOW.
-     Two rows say exactly that, and only those two: the wait-or-jump
-     screen's "Start using the agent now — the download keeps running;
-     progress shows in the top bar", and the download screen's "Or skip the
-     wait — start using the agent now. The download keeps running; progress
-     shows in the top bar." Both were answered with another setup screen
+     Two rows say exactly that: the wait-or-jump screen's "Start using the
+     agent now — the download keeps running", and the download screen's "Or
+     skip the wait — start using the agent now. The download keeps running."
+     Both were answered with another setup screen
      (the second-backend pitch, then the import offer), which is the
      operator's own report: "when I have chosen to proceed to the agent, I
      should have proceeded to the agent, not to the setup again." A flow
      that ends this way stamps itself complete and closes; nothing is
      stamped as OFFERED that the operator never saw, so `/import` and the
      menu's `onboarding` still have those steps to give later.
+     Backlog 18 adds a third: Download itself hands over the same way
+     (obDownloadAndHandOver), and the download card carries the pull.
      Nothing else sets it: `esc`, the propose screen's skip and the import
      screen's own skip row all end the flow without being asked for the
      agent by name, and they keep the closing screens they always had. */
@@ -448,7 +453,7 @@ const OB_COPY = {
   cloudOffer: ['Set up a cloud model meanwhile. It takes about a minute, and the download keeps going.'],
   cloudOfferFailed: 'Set up a cloud model instead. It takes about a minute.',
   cloudOfferKey: 'press c',
-  skipOffer: ['Start using the agent now. The download keeps going, with its progress at the top of the window.'],
+  skipOffer: ['Start using the agent now. The download keeps going, with its progress in the corner of the window.'],
   skipOfferFailed: 'Start using the agent without a local model.',
   skipOfferKey: 'press s',
   // onboarding-download-progress.tsx:63-79
@@ -552,12 +557,13 @@ const OBSKY = {
   override:null,
 };
 
-/* ---- the persistent download strip (#dlbar) -------------------------
+/* ---- the setup download (DL) -----------------------------------------
    The TUI's DownloadChip (download-chip.tsx) lives in the status bar and
    its doc says the download "survives the screen that started it"; the
-   onboarding copy promises the same thing twice in words.  So the
-   desktop's download lives here, in the window chrome, and BOTH the
-   strip and the wizard's own download screen render from this one slice.
+   onboarding copy promises the same thing in words.  So the desktop's
+   download lives here, outside the wizard, and BOTH the download card in
+   the window's corner (backlog 18, renderDlcard) and the wizard's own
+   download screen render from this one slice.
 
    `job` is the head of the queue; `queue` the rest.  Main single-flights
    downloads, so a runtime phase and a weights phase are two jobs run in
@@ -590,7 +596,46 @@ const DL = {
       `atag serve`, which would kill that turn. Held here until
       obFlushDeferredActivate finds the turn over. */
   deferred: null,
+  /** Backlog 18: the pick between Download and the queue starting —
+      obStartLocalPull reads `models status` first. The card shows it at
+      once ("Starting…"), and a Cancel in that window drops it. */
+  preparing: null,  // {kind:'weights', id}
+  /** Backlog 18: a vision model's projector, fetched after its weights
+      (obFetchProjector) — its own row in the card. */
+  projector: null,  // {id, cancelled}
+  /** Backlog 18: downloads that failed, each a row in the card with Retry
+      until it is retried or dismissed — a failure never just vanishes. */
+  failed: [],       // [{n, kind, id, error, retry}]
+  failSeq: 0,
+  /** Backlog 18: the last model whose weights landed, and a start held back
+      until the queue has drained — a Retry can put the llama.cpp runtime
+      behind a model's weights, and the model must not start while
+      `models update` is replacing the binary under it (obActivateHeld). */
+  landed: null,
+  activateAfter: null,
 };
+/* Backlog 18 — the download card's own state (renderDlcard). Declared up
+   here for the same reason as DL: the first top-level render() reads it. */
+const DLC = {
+  /** Folded to the round badge. A fold lasts one run of downloads: the next
+      run, after the card has been empty, starts open (DownloadPanel). */
+  collapsed: false,
+  had: false,
+  shape: null,
+  /** The composer wrap the card is kept clear of, and the observer on it. */
+  anchor: null,
+  ro: null,
+  /** The height the card takes from the window's bottom edge, published as
+      --dlcard-offset (0 while it is away). */
+  offset: 0,
+};
+/* The card's distance from the window's edges, and from whatever it keeps clear of. */
+const DLC_EDGE = 16, DLC_GAP = 8;
+/* Backlog 18 — progress for the one pull DL does not run: the composer
+   picker's (SEL.pulling), Settings › Models' (LLMP.pulling) or a setup
+   model's vision projector (DL.projector). Main runs one pull at a time,
+   so one slot follows whichever of them owns the `cli:pull` stream. */
+const XPULL = {key:null, percent:0, transferredBytes:0, totalBytes:0, sawProgress:false, rate:null, last:null, samples:0};
 /* r5 item 7 review fix (hoisting): every const the render path reads has
    to be declared above the first top-level render(). These five sat next
    to the functions that use them, several hundred lines below it — safe
@@ -1632,10 +1677,11 @@ function render() {
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
-  // r5 item 7: the download strip is chrome, painted before the overlay
-  // layer so renderOverlays can measure it and sit under it.
-  renderDlbar();
-  renderInspector(); renderConsole(); renderOverlays(); renderSettings(); renderToasts();
+  renderInspector(); renderConsole();
+  // Backlog 18: the download card measures the composer and the console it
+  // keeps clear of, so it is painted once both are in place.
+  renderDlcard();
+  renderOverlays(); renderSettings(); renderToasts();
   /* Item 11: a queued ⇄ runs on the paint after the last thing holding it
      goes — a switch, a turn, an approval — whichever path cleared it. */
   fzFlushSoon();
@@ -2739,11 +2785,12 @@ function composerNeedsSetup() {
 /* The first-run wizard's pull runs in DL, which the composer never read: it
    offered "Set up a model" (and on the local route "download model") over a
    download that was already running. While that pull runs, the chip says so;
-   its progress stays in the strip at the top, which repaints on every sample. */
-function dlBusy() { return DL.job !== null || DL.queue.length > 0; }
+   its progress is in the download card in the corner, which repaints on
+   every sample. */
+function dlBusy() { return DL.job !== null || DL.queue.length > 0 || DL.preparing !== null; }
 /** The model the wizard's pull is fetching: its weights job, even while the runtime goes first. */
 function dlModelName() {
-  const j = [DL.job].concat(DL.queue).find((x) => x && x.kind === 'weights');
+  const j = [DL.job].concat(DL.queue, [DL.preparing]).find((x) => x && x.kind === 'weights');
   if (!j || !j.id) return 'your model';
   const known = (OB.models || []).find((m) => m && m.id === j.id && m.name);
   return known ? obModelName(known) : modelWord(j.id);
@@ -2753,7 +2800,7 @@ function dlModelName() {
    written, which otherwise offered "download model" for the same pull. */
 function downloadingChipHtml(slot) {
   const what = dlModelName();
-  return '<span class="cchip ' + (slot || 'setupchip') + ' pullchip" title="Downloading ' + esc(what) + '. Progress is at the top of the window."'
+  return '<span class="cchip ' + (slot || 'setupchip') + ' pullchip" title="Downloading ' + esc(what) + '. Progress is in the corner of the window."'
     + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
@@ -3737,13 +3784,12 @@ function renderOverlays() {
     }
   }
   o.style.pointerEvents = html ? 'auto' : 'none';
-  /* r5 item 7: NOT `inset: 0` any more. An inline inset beats any
-     stylesheet rule, so the overlay layer covered the download strip —
-     and the strip is the surface the wizard's own copy promises the
-     download keeps reporting on. `--dlbar-h` is 0 while nothing is
-     downloading, so the wizard still covers the toolbar as it did. */
+  /* The whole window, toolbar included. r5 item 7 started this layer below
+     the #dlbar strip so the strip kept reporting over a wizard; backlog 18
+     retired the strip — the download card sits under this layer and is not
+     drawn while setup is open — so the layer is back to inset 0. */
   o.style.position = 'absolute';
-  o.style.top = 'var(--dlbar-h, 0px)';
+  o.style.top = '0';
   o.style.left = '0'; o.style.right = '0'; o.style.bottom = '0';
   o.style.zIndex = '20';
   const pq = $('#palq');
@@ -4542,6 +4588,24 @@ function renderToasts() {
       : [{opacity: 0, transform: 'translateX(24px)'}, {opacity: 1, transform: 'translateX(0)'}],
       {duration: TOAST_IN_MS, easing: OVM.EASE_OUT});
   });
+  toastsClearCard();
+}
+/* Backlog 18: the toasts stack down from under the toolbar and the download
+   card stands up from the composer, so the two meet only when a short window
+   holds several toasts at once. Then the column stops above the card: the
+   oldest toasts step aside (each still expires on its own timer) and the
+   newest stays readable, rather than either sliding under the other. */
+function toastsClearCard() {
+  const box = $('#toasts');
+  if (!box) return;
+  const live = [...box.children].filter((n) => !n.classList.contains('out'));
+  live.forEach((n) => { if (n.hidden) n.hidden = false; });
+  const card = document.getElementById('dlcard');
+  if (!card || card.hidden || live.length < 2) return;
+  const limit = card.getBoundingClientRect().top - DLC_GAP;
+  for (let i = 0; i < live.length - 1 && live[live.length - 1].getBoundingClientRect().bottom > limit; i++) {
+    live[i].hidden = true;
+  }
 }
 function toast(t, s, kind) {
   const id = ++S.toastId;
@@ -4582,18 +4646,20 @@ function act(a) {
   const colon = a.indexOf(':');
   const k = colon < 0 ? a : a.slice(0, colon);
   const v = colon < 0 ? undefined : a.slice(colon + 1);
-  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; wizDropUnfinished(); };
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; SEL.open = false; SEL.addOpen = false; WIZ.phase = null; WIZ.alone = false; wizDropUnfinished(); };
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   if (a === 'close') { close(); render(); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
+  // Backlog 18: the download card's verbs (dlCardAct).
+  if (k === 'dlc') { dlCardAct(v); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
-  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
+  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -4653,7 +4719,11 @@ function act(a) {
     if (BR && BR.openExternal) BR.openExternal('https://github.com/AtomicBot-ai/atomic-agent/releases');
     return;
   }
-  if (a === 'wiz:cancel') { WIZ.phase = null; wizDropUnfinished(); render(); return; }
+  if (a === 'wiz:cancel') {
+    WIZ.phase = null; wizDropUnfinished();
+    if (WIZ.alone) { WIZ.alone = false; SEL.open = false; SEL.addOpen = false; }
+    render(); return;
+  }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
   if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
   if (a === 'sel:savePreset') { selSavePreset(); return; }
@@ -8105,10 +8175,11 @@ function obIntroHTML() {
 
 
 /* ============================================================
-   The download.  It does NOT live in the wizard: the strip under the
-   toolbar owns it, and the wizard's own download screen renders the same
-   slice.  That is the literal reading of the copy this screen already
-   carries — "the download keeps running; progress shows in the top bar".
+   The download.  It does NOT live in the wizard: the download card in the
+   window's corner owns it (backlog 18 — it was a strip under the toolbar),
+   and the wizard's own download screen renders the same slice.  That is
+   the literal reading of the copy the setup screens carry — "the download
+   keeps running".
    ============================================================ */
 
 /**
@@ -8164,16 +8235,9 @@ function dlJobLabel(job) {
   return dlCapLabel(job.kind === 'runtime' ? 'llama.cpp' : job.id);
 }
 
-/** A bar of `n` segments, filled to `percent`. */
-function dlBarHTML(percent, width) {
-  const p = Math.min(100, Math.max(0, percent || 0));
-  const filled = Math.round((p / 100) * width);
-  return '<b>' + '█'.repeat(filled) + '</b><i>' + '░'.repeat(width - filled) + '</i>';
-}
-
 /** waitOrJumpPullStatus (onboarding-wait-or-jump-step.tsx:25-31). */
 function dlStatus() {
-  if (DL.job !== null) return 'running';
+  if (DL.job !== null || DL.preparing !== null) return 'running';
   return DL.error !== null ? 'failed' : 'ready';
 }
 
@@ -8189,7 +8253,7 @@ function dlResetPhases(withRuntime) {
 /**
  * Queue one or more downloads. Main single-flights them (one child, one
  * data dir), so a runtime phase and a weights phase are two jobs in
- * order — the strip shows the head and says how many are behind it.
+ * order — the card draws the head and a row for each job behind it.
  */
 function dlStart(jobs) {
   DL.queue = jobs.slice();
@@ -8203,6 +8267,9 @@ function dlNext() {
   const job = DL.queue.shift();
   if (!job) { DL.job = null; render(); return; }
   DL.job = Object.assign({percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false}, job);
+  const mine = DL.job;
+  // A job that starts again is no longer a failure: its old row goes.
+  dlFailClear(job.kind, job.id);
   DL.rate = null; DL.last = null; DL.samples = 0;
   /* r5 item 7 review fix: a phase becomes `active` when its FIRST real
      sample lands, not when the child is spawned. `models update` spends
@@ -8215,17 +8282,21 @@ function dlNext() {
   if (!BR || DL.dry) return;
   const started = job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
   started.then((res) => {
-    if (res && res.ok === false) {
+    // Only this job's refusal: a cancel and a new pick may have moved on.
+    if (res && res.ok === false && DL.job === mine) {
       DL.job = null;
+      if (mine.cancelled) { dlNext(); return; }   // nothing ran, and the cancel stands
       if (job.kind === 'runtime') {
         // A runtime step that would not even start is still not the model
         // download failing: say so, and run the weights job behind it.
         DL.runtimeError = res.error || 'could not start the llama.cpp runtime download';
+        dlFail(job, DL.runtimeError);
         dlNext();
         return;
       }
       DL.error = res.error || 'could not start the download';
       DL.weights.state = 'waiting';
+      dlFail(job, DL.error);
       render();
     }
   });
@@ -8241,6 +8312,10 @@ function dlOnPull(ev) {
   if (ev.done) {
     const finished = DL.job;
     DL.job = null;
+    /* Backlog 18: a Cancel ends in the same `done` frame a failure does —
+       the child is killed and exits non-zero. It is not a failure: no row
+       with Retry is left behind, and the setup screen says it was cancelled. */
+    const cancelled = finished.cancelled === true;
     if (finished.kind === 'runtime') {
       /* r5 item 7 review fix: `sawProgress` and `upToDate` are READ here,
          which is what main computes them for. `models update` exits 0
@@ -8253,7 +8328,9 @@ function dlOnPull(ev) {
          the phase stays `waiting`, which is the truth about the bytes. */
       DL.runtime.drove = ev.sawProgress === true || DL.runtime.drove;
       if (ev.ok === false) {
-        DL.runtimeError = ev.error || 'the llama.cpp runtime download failed';
+        DL.runtimeError = cancelled ? 'the llama.cpp runtime download was cancelled'
+          : (ev.error || 'the llama.cpp runtime download failed');
+        if (!cancelled) dlFail(finished, DL.runtimeError);
       } else {
         DL.runtime.state = 'done';
         if (ev.upToDate === true) DL.runtime.drove = false;
@@ -8261,7 +8338,10 @@ function dlOnPull(ev) {
     } else {
       DL.weights.state = 'done';
       if (ev.ok) DL.error = null;
-      else DL.error = ev.error || 'the download failed';
+      else {
+        DL.error = cancelled ? 'the download was cancelled' : (ev.error || 'the download failed');
+        if (!cancelled) dlFail(finished, DL.error);
+      }
     }
     obPullFinished(finished, ev);
     return true;
@@ -8272,18 +8352,7 @@ function dlOnPull(ev) {
   if (typeof ev.totalBytes === 'number' && ev.totalBytes > 0) {
     job.totalBytes = ev.totalBytes;
     job.transferredBytes = ev.transferredBytes || 0;
-    // The rate is the slope between two REAL samples, smoothed the way
-    // useTransferRate smooths it (SMOOTHING 0.3) — nothing else.
-    const now = Date.now();
-    if (DL.last && job.transferredBytes >= DL.last.bytes) {
-      const seconds = (now - DL.last.at) / 1000;
-      if (seconds > 0) {
-        const sample = (job.transferredBytes - DL.last.bytes) / seconds;
-        DL.rate = DL.rate === null ? sample : DL.rate + 0.3 * (sample - DL.rate);
-        DL.samples = (DL.samples || 0) + 1;   // how many rate samples are behind the estimate
-      }
-    }
-    DL.last = {bytes: job.transferredBytes, at: now};
+    dlRateStep(DL, job.transferredBytes);
   }
   job.sawProgress = true;
   const phase = job.kind === 'runtime' ? DL.runtime : DL.weights;
@@ -8292,7 +8361,7 @@ function dlOnPull(ev) {
   phase.percent = job.percent;
   phase.transferredBytes = job.transferredBytes;
   phase.totalBytes = job.totalBytes;
-  renderDlbar();
+  renderDlcard();
   /* r8: the two download screens repaint their PROGRESS BLOCK and nothing
      else. This used to be `renderOverlays()`, which rebuilt the whole layer
      three or four times a second and took the hovered row or offer card
@@ -8301,96 +8370,433 @@ function dlOnPull(ev) {
   return true;
 }
 
+/**
+ * The rate is the slope between two REAL samples, smoothed the way
+ * useTransferRate smooths it (SMOOTHING 0.3) — nothing else. `holder` keeps
+ * {rate, last, samples}: DL for the setup queue, XPULL for the other pulls.
+ */
+function dlRateStep(holder, bytes) {
+  const now = Date.now();
+  if (holder.last && bytes >= holder.last.bytes) {
+    const seconds = (now - holder.last.at) / 1000;
+    if (seconds > 0) {
+      const sample = (bytes - holder.last.bytes) / seconds;
+      holder.rate = holder.rate === null ? sample : holder.rate + 0.3 * (sample - holder.rate);
+      holder.samples = (holder.samples || 0) + 1;   // how many rate samples are behind the estimate
+    }
+  }
+  holder.last = {bytes, at: now};
+}
+
 function dlEtaSeconds() {
   const job = DL.job;
-  if (!job || !DL.rate || DL.rate <= 0 || !job.totalBytes) return null;
+  return job ? dlEtaFrom(job.transferredBytes, job.totalBytes, DL.rate, DL.samples) : null;
+}
+function dlEtaFrom(done, total, rate, samples) {
+  if (!rate || rate <= 0 || !total) return null;
   /* Do not guess from a cold start. The CLI reports one sample per 5% of a
      multi-gigabyte file, so the FIRST sample's rate is whatever the opening
      seconds of the connection happened to be — the operator watched the
      strip say `about 17100053h 3m left`, which is nineteen centuries, and
      capping that at "more than two days" only made the nonsense shorter.
      An estimate is worth showing once the transfer has actually revealed
-     its rate: two samples in, and 2% of the way down. Until then the strip
+     its rate: two samples in, and 2% of the way down. Until then the card
      says it is estimating, which is true and is what every download UI a
      person has ever trusted does. */
-  if ((DL.samples || 0) < 2) return null;
-  const done = job.transferredBytes / job.totalBytes;
-  if (done < 0.02) return null;
-  return Math.round(Math.max(0, job.totalBytes - job.transferredBytes) / DL.rate);
+  if ((samples || 0) < 2) return null;
+  if (done / total < 0.02) return null;
+  return Math.round(Math.max(0, total - done) / rate);
+}
+
+/* ====================================================================
+   Backlog 18 — the download card.
+
+   Atomic Chat's DownloadPanel, in this window: a card floating in the
+   bottom-right corner of the agent window, one row per download — the
+   model's own name, a 6px bar, "2.5 of 6.2 GB · 41% · 3 min left" and a
+   Cancel (×). It replaced the #dlbar strip, a flex child between the
+   toolbar and the chat that pushed the whole chat down ~46px when a
+   download started and let it jump back up when it ended. The card floats:
+   nothing under it moves.
+
+   It stands above the composer whenever the two share a column, so the send
+   button and the chips are never under it, and above the console drawer
+   when that is open. The height it takes from the window's bottom edge is
+   published as --dlcard-offset for anything else that lives in that
+   corner, and the toast column stops above it (toastsClearCard).
+
+   Rows: the setup queue (DL — the llama.cpp runtime and the weights, and the
+   moment between Download and the queue starting), the one other pull
+   (XPULL — the composer picker's, Settings › Models', a setup model's vision
+   projector), then DL.failed: a download that failed stays as a row with
+   Retry until it is retried or dismissed.
+
+   Between samples only the bars and the lines under them are written. The
+   card is rebuilt only when what it SAYS changes — a row comes or goes,
+   starts moving, fails — so a pointer resting on a Cancel keeps its hover
+   for the whole download (r8's fix for the strip, kept).
+   ==================================================================== */
+
+/** The rows the card draws, from state, in order. */
+function dlCardRows() {
+  const rows = [];
+  if (DL.preparing) rows.push({src:'dl', kind: DL.preparing.kind, id: DL.preparing.id, state:'starting', cancel:'dlc:cancel'});
+  const job = DL.job;
+  if (job) {
+    rows.push({src:'dl', kind: job.kind, id: job.id, cancel:'dlc:cancel',
+      state: job.cancelled ? 'cancelling' : job.sawProgress ? 'active' : 'starting',
+      track: job, rate: DL.rate, samples: DL.samples});
+  }
+  DL.queue.forEach((q) => rows.push({src:'dl', kind: q.kind, id: q.id, state:'queued', cancel:'dlc:drop:' + q.kind + ':' + q.id}));
+  const x = xpullOwner();
+  if (x) {
+    rows.push({src: x.src, kind: x.kind, id: x.id, cancel: x.cancel,
+      state: x.cancelled ? 'cancelling' : XPULL.key === x.key && XPULL.sawProgress ? 'active' : 'starting',
+      track: XPULL, rate: XPULL.rate, samples: XPULL.samples});
+  }
+  // A failure whose model is downloading again is that download's row now.
+  DL.failed.forEach((f) => {
+    if (rows.some((r) => r.kind === f.kind && r.id === f.id)) return;
+    rows.push({src:'failed', kind: f.kind, id: f.id, state:'failed', error: f.error, n: f.n});
+  });
+  return rows;
+}
+
+/** Whose pull the XPULL slot follows — never the setup queue's own. */
+function xpullOwner() {
+  if (DL.projector) {
+    return {key:'proj:' + DL.projector.id, src:'proj', kind:'projector', id: DL.projector.id,
+      cancel:'dlc:cancel', cancelled: DL.projector.cancelled === true};
+  }
+  if (SEL.pulling) return {key:'sel:' + SEL.pulling, src:'sel', kind:'weights', id: SEL.pulling, cancel:'sel:cancelPull'};
+  const p = LLMP.pulling;
+  if (p) {
+    return {key:'llm:' + p.kind + ':' + p.id + (p.phase ? ':' + p.phase : ''), src:'llm', id: p.id, llmKind: p.kind,
+      kind: p.phase === 'mmproj' ? 'projector' : p.kind === 'embedding' ? 'embedding' : 'weights', cancel:'llm:cancelPull'};
+  }
+  return null;
+}
+
+/** A row's name: the catalogue's own ("Qwen 3.5 9B") wherever one is known. */
+function dlCardName(r) {
+  if (r.kind === 'runtime') return OB_COPY.phaseRuntime;
+  const id = String(r.id || '');
+  for (const list of [OB.models, SEL.local, LLMP.local, LLMP.emb]) {
+    const m = (list || []).find((x) => x && x.id === id && x.name);
+    if (m) return llmModelName(m);
+  }
+  return id.indexOf('custom-') === 0 ? id.slice(7) : shortModel(id);
+}
+
+/** "2.5 of 6.2 GB" — one unit where both sides share it, in dlBytes' own base. */
+function dlBytesPair(done, total) {
+  const a = dlBytes(done), b = dlBytes(total);
+  const unit = (s) => s.slice(s.lastIndexOf(' ') + 1);
+  return (unit(a) === unit(b) ? a.slice(0, a.lastIndexOf(' ')) : a) + ' of ' + b;
+}
+
+/** dlEta, said shorter: the card is 22rem wide. The same cap and the same cold start. */
+function dlEtaShort(seconds) {
+  if (seconds === null || seconds === undefined) return 'estimating…';
+  if (seconds > DL_ETA_CAP_SECONDS) return 'more than two days left';
+  if (seconds < 60) return 'under a minute left';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes + ' min left';
+  const hours = Math.floor(minutes / 60);
+  return hours + ' h' + (minutes % 60 ? ' ' + (minutes % 60) + ' min' : '') + ' left';
+}
+
+function dlCardPercent(r) {
+  return r.track ? Math.round(Math.min(100, Math.max(0, r.track.percent || 0))) : 0;
+}
+
+/** The line under a row's bar. No bar figures before the first real sample. */
+function dlCardLine(r) {
+  if (r.state === 'failed') return r.error;
+  if (r.state === 'queued') return 'Queued';
+  if (r.state === 'cancelling') return 'Cancelling…';
+  const lead = r.kind === 'projector' ? 'Vision projector · ' : '';
+  if (r.state === 'starting') return lead + 'Starting…';
+  const t = r.track;
+  const parts = [];
+  if (t.totalBytes > 0) parts.push(dlBytesPair(t.transferredBytes, t.totalBytes));
+  parts.push(dlCardPercent(r) + '%');
+  if (t.totalBytes > 0) parts.push(dlEtaShort(dlEtaFrom(t.transferredBytes, t.totalBytes, r.rate, r.samples)));
+  return lead + parts.join(' · ');
+}
+
+function dlCardRowHTML(r, i) {
+  const name = dlCardName(r);
+  const failed = r.state === 'failed';
+  const ctl = failed
+    ? '<button class="btn btn-t xs dlc-retry" data-act="dlc:retry:' + r.n + '">' + ic('retry') + 'Retry</button>'
+      + '<button class="iconbtn sm dlc-x" data-act="dlc:dismiss:' + r.n + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button>'
+    : r.state === 'cancelling' ? ''
+    : '<button class="iconbtn sm dlc-x" data-act="' + esc(r.cancel) + '" aria-label="Cancel the download of ' + esc(name) + '"'
+      + ' title="Cancel download">' + ic('x') + '</button>';
+  const line = dlCardLine(r);
+  return '<li class="dlc-row is-' + r.state + '" data-dlc-row="' + i + '">'
+    + '<div class="dlc-top"><span class="dlc-name" title="' + esc(r.id) + '">' + esc(name) + '</span>' + ctl + '</div>'
+    + (failed ? '' : '<span class="dlc-bar tk-prog" aria-hidden="true"><i style="width:' + dlCardPercent(r) + '%"></i></span>')
+    + '<p class="dlc-line"' + (failed ? ' title="' + esc(line) + '"' : '') + '>' + esc(failed ? 'Failed · ' + line : line) + '</p>'
+    + '</li>';
+}
+
+/** Open: a header with the count and the fold, the rows, the cloud offer. */
+function dlCardHTML(rows) {
+  const moving = rows.some((r) => r.state !== 'failed');
+  const n = rows.length;
+  /* The setup screen's "set up a cloud model meanwhile" offer moved here with
+     the download it was about. Not for an embedding model: nothing waits on it. */
+  const offer = rows.some((r) => r.kind !== 'embedding');
+  return '<section class="dlc" role="region" aria-label="Downloads">'
+    + '<div class="dlc-head"><span class="dlc-ttl' + (moving ? '' : ' is-failed') + '">' + ic(moving ? 'download' : 'alert')
+      + '<span>' + (moving ? 'Downloading' : 'Download failed') + '</span>'
+      // A pill, not part of the sentence — the DownloadPanel's own choice.
+      + (n > 1 ? '<span class="dlc-count">' + n + '</span>' : '') + '</span>'
+      + '<button class="iconbtn sm dlc-fold" data-act="dlc:fold" aria-label="Collapse downloads" aria-expanded="true"'
+      + ' title="Collapse">' + ic('chevD') + '</button></div>'
+    + '<ul class="dlc-list">' + rows.map(dlCardRowHTML).join('') + '</ul>'
+    + (offer ? '<button class="dlc-cloud" data-act="dlc:cloud">'
+      + (moving ? 'Set up a cloud model meanwhile' : 'Set up a cloud model instead') + '</button>' : '')
+    + '</section>';
+}
+
+/** Folded: a round button that is still a live count. Red when one failed. */
+function dlCardBadgeHTML(rows) {
+  const failed = rows.some((r) => r.state === 'failed');
+  return '<button class="dlc-badge' + (failed ? ' has-failed' : '') + '" data-act="dlc:unfold" aria-expanded="false"'
+    + ' aria-label="Show downloads (' + rows.length + ')" title="' + (failed ? 'A download failed' : 'Downloading') + '">'
+    + ic('download') + '<span class="dlc-n">' + rows.length + '</span></button>';
+}
+
+function renderDlcard() {
+  const el = document.getElementById('dlcard');
+  if (!el) return;
+  /* Calm (S1, U5): nothing of the agent window's own is drawn over first-run
+     setup — the wizard covers the whole window, toolbar included, and its
+     own download screen carries the progress — so the card comes up when
+     the wizard hands over the agent. */
+  const rows = OB.open ? [] : dlCardRows();
+  if (!rows.length) {
+    if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
+    DLC.shape = null;
+    DLC.had = false;
+    dlCardFollow(null);
+    dlCardPublish(0);
+    return;
+  }
+  // A fold is for one run of downloads; the next run starts open.
+  if (!DLC.had) DLC.collapsed = false;
+  DLC.had = true;
+  const shape = (DLC.collapsed ? 'c|' : 'o|') + rows.map((r) =>
+    [r.src, r.kind, r.id, r.state, r.n || '', r.error || '', r.cancel || '', dlCardName(r)].join('~')).join('|');
+  const appearing = el.hidden;
+  if (DLC.shape !== shape) {
+    DLC.shape = shape;
+    el.innerHTML = DLC.collapsed ? dlCardBadgeHTML(rows) : dlCardHTML(rows);
+  } else if (!DLC.collapsed) {
+    const nodes = el.querySelectorAll('.dlc-row');
+    rows.forEach((r, i) => {
+      if (r.state !== 'active' || !nodes[i]) return;
+      const fill = nodes[i].querySelector('.dlc-bar > i');
+      const width = dlCardPercent(r) + '%';
+      if (fill && fill.style.width !== width) fill.style.width = width;
+      const line = nodes[i].querySelector('.dlc-line');
+      const text = dlCardLine(r);
+      if (line && line.textContent !== text) line.textContent = text;
+    });
+  }
+  el.hidden = false;
+  dlCardPlace(el);
+  if (appearing && typeof el.animate === 'function') {
+    el.animate(reducedMotion() ? [{opacity: 0}, {opacity: 1}]
+      : [{opacity: 0, transform: 'translateY(8px)'}, {opacity: 1, transform: 'translateY(0)'}],
+      {duration: OVM.IN_MS, easing: OVM.EASE_OUT});
+  }
 }
 
 /**
- * The strip.  download-chip.tsx's own shape: `⇣`, the label, a
- * ten-segment bar, the percent, the ETA — plus the queue depth, which
- * the chip never needed because the TUI's orchestrator runs one pull.
+ * Where the card stands: the window's right edge, and above whatever it
+ * would otherwise cover in that column — the composer (from the top of its
+ * dock, so the status line and the queue above the card stay clear too)
+ * and the console drawer. The list gets what is left under the toolbar and
+ * scrolls rather than pushing the card over it.
  */
-function renderDlbar() {
-  const el = document.getElementById('dlbar');
-  if (!el) return;
-  const job = DL.job;
-  /* Calm (S1, U5): while first-run setup is open the strip is not drawn at
-     all, and --dlbar-h stays 0 so the wizard covers the whole window —
-     toolbar included. The wizard's own download screen carries the
-     progress and its Cancel; the strip comes back the moment the wizard
-     hands over the agent (render() repaints it from scratch). */
-  if (!job || OB.open) {
-    el.hidden = true;
-    el.innerHTML = '';
-    el.__dlShape = null;
-    document.documentElement.style.setProperty('--dlbar-h', '0px');
-    return;
-  }
-  const percent = Math.min(100, Math.max(0, Math.round(job.percent || 0)));
-  const eta = dlEtaSeconds();
-  /* r5 item 7 review fix: no bar and no percent before the first REAL
-     sample. The CLI emits one line per 5%, and `models update` can spend
-     its whole run deciding there is nothing to fetch — a 0% bar for that
-     stretch is a bar nothing is driving. The TUI's own word for the
-     no-pull-reporting-yet state is `starting…`. */
-  const measured = job.sawProgress === true;
-  /* r8: the strip is in the window chrome, so it is on screen for the WHOLE
-     download wherever the operator is — and rewriting its innerHTML on every
-     sample destroyed and rebuilt its Cancel button three or four times a
-     second. A pointer resting there watched `#dlbar .dl-x:hover` blink out
-     and back on each one; that is the same flicker the wizard's rows had,
-     and this one follows the operator into the agent window.
-     Nothing about the strip's SHAPE changes between samples — same label,
-     same queue depth, same three cells once bytes are moving — so the shape
-     is built once and only the bar, the percent and the ETA are written
-     after that. `refreshSend` and `refreshSlash` are the same idea. */
-  const shape = [job.kind, job.id, dlJobLabel(job), measured ? 'bar' : 'starting', DL.queue.length].join(' ');
-  if (el.__dlShape === shape) {
-    if (measured) {
-      // Soft Tactile (CH-23): the strip's bar is a `.tk-prog` fill, so only
-      // its width moves between samples. dlBarHTML stays the wizard's.
-      const fill = el.querySelector('.dl-bar > i');
-      if (fill && fill.style.width !== percent + '%') fill.style.width = percent + '%';
-      const pct = el.querySelector('.dl-pct');
-      if (pct) pct.textContent = percent + '%';
-      const left = el.querySelector('.dl-eta');
-      if (left) left.textContent = dlEta(eta);
-    }
-    return;
-  }
-  el.__dlShape = shape;
-  // Soft Tactile (CH-23): a lifted pill — download icon · mono id · progress
-  // fill · % · ETA · queue · ghost Cancel. Same cells, same classes, same text.
-  el.innerHTML = '<span class="dl-g">' + ic('download') + '</span>'
-    + '<span class="dl-l">' + esc(dlJobLabel(job)) + '</span>'
-    + (measured
-        ? '<span class="dl-bar tk-prog" aria-hidden="true"><i style="width:' + percent + '%"></i></span>'
-          + '<span class="dl-pct">' + percent + '%</span>'
-          + '<span class="dl-eta">' + esc(dlEta(eta)) + '</span>'
-        : '<span class="dl-eta">' + esc(OB_COPY.starting) + '</span>')
-    + (DL.queue.length ? '<span class="dl-q">· ' + DL.queue.length + ' more queued</span>' : '')
-    + '<button class="btn btn-g xs dl-x" data-act="dl:cancel">Cancel</button>';
-  el.hidden = false;
-  /* The overlay layer's top inset, so the wizard starts BELOW the strip.
-     Measured rather than assumed: it is the strip's bottom edge inside
-     #window, which is the toolbar's height plus the strip's own. */
+function dlCardPlace(el) {
   const win = document.getElementById('window');
-  const inset = win ? Math.round(el.getBoundingClientRect().bottom - win.getBoundingClientRect().top) : 30;
-  document.documentElement.style.setProperty('--dlbar-h', Math.max(0, inset) + 'px');
+  if (!win || el.hidden) return;
+  const w = win.getBoundingClientRect();
+  const width = el.getBoundingClientRect().width;
+  const from = w.right - DLC_EDGE - width, to = w.right - DLC_EDGE;
+  let bottom = DLC_EDGE;
+  const clear = (across, top) => {
+    if (!across || !(across.width > 0) || across.right <= from || across.left >= to) return;
+    bottom = Math.max(bottom, Math.round(w.bottom - top + DLC_GAP));
+  };
+  const wrap = document.querySelector('#content .composerwrap');
+  const comp = wrap && wrap.querySelector('#composer');
+  if (comp) clear(comp.getBoundingClientRect(), wrap.getBoundingClientRect().top);
+  const con = document.getElementById('console');
+  if (con && !con.classList.contains('hide')) { const r = con.getBoundingClientRect(); clear(r, r.top); }
+  if (el.style.bottom !== bottom + 'px') el.style.bottom = bottom + 'px';
+  const tb = document.getElementById('toolbar');
+  const top = tb ? tb.getBoundingClientRect().bottom : w.top;
+  const room = Math.max(120, Math.round(w.bottom - bottom - top - DLC_GAP)) + 'px';
+  if (el.style.getPropertyValue('--dlc-room') !== room) el.style.setProperty('--dlc-room', room);
+  dlCardPublish(bottom + el.offsetHeight + DLC_GAP);
+  dlCardFollow(wrap);
+}
+
+/** The composer grows as it is typed into without a render: follow it. */
+function dlCardFollow(wrap) {
+  if (DLC.anchor === wrap || typeof ResizeObserver === 'undefined') return;
+  if (!DLC.ro) {
+    DLC.ro = new ResizeObserver(() => {
+      const el = document.getElementById('dlcard');
+      if (el && !el.hidden) dlCardPlace(el);
+    });
+  }
+  if (DLC.anchor) DLC.ro.unobserve(DLC.anchor);
+  DLC.anchor = wrap || null;
+  if (wrap) DLC.ro.observe(wrap);
+}
+
+/** --dlcard-offset: how far up from the window's bottom edge the card reaches (0 while it is away). */
+function dlCardPublish(px) {
+  const v = Math.max(0, Math.round(px));
+  if (v === DLC.offset) return;
+  DLC.offset = v;
+  document.documentElement.style.setProperty('--dlcard-offset', v + 'px');
+  toastsClearCard();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => {
+    const el = document.getElementById('dlcard');
+    if (el && !el.hidden) dlCardPlace(el);
+    toastsClearCard();
+  });
+}
+
+/** The card's verbs (data-act `dlc:<verb>`). */
+function dlCardAct(verb) {
+  const v = String(verb || '');
+  if (v === 'fold' || v === 'unfold') {
+    const el = document.getElementById('dlcard');
+    const hadFocus = !!(el && el.contains(document.activeElement));
+    DLC.collapsed = v === 'fold';
+    renderDlcard();
+    // The control that was pressed is gone with the face it was on; the other face's takes the focus.
+    const next = hadFocus && el ? el.querySelector(DLC.collapsed ? '.dlc-badge' : '.dlc-fold') : null;
+    if (next) next.focus();
+    return;
+  }
+  if (v === 'cancel') { dlCancel(); return; }
+  if (v.indexOf('drop:') === 0) {
+    // A queued job has no child yet: it simply leaves the queue.
+    const rest = v.slice(5);
+    const kind = rest.slice(0, rest.indexOf(':')), id = rest.slice(rest.indexOf(':') + 1);
+    DL.queue = DL.queue.filter((q) => !(q.kind === kind && q.id === id));
+    render();
+    return;
+  }
+  if (v === 'cloud') { llmOpenWizard(); WIZ.alone = true; return; }
+  if (v.indexOf('retry:') === 0) { dlRetry(Number(v.slice(6))); return; }
+  if (v.indexOf('dismiss:') === 0) {
+    const n = Number(v.slice(8));
+    DL.failed = DL.failed.filter((f) => f.n !== n);
+    render();
+  }
+}
+
+/**
+ * The setup download's Cancel, from the card and from the setup screen alike
+ * (`dl:cancel`): stop the running child and drop the jobs queued behind it —
+ * the runtime is only ever queued for the model after it. The job is marked
+ * first, so the `done` frame its exit sends is read as the cancel it is.
+ */
+function dlCancel() {
+  DL.preparing = null;
+  DL.activateAfter = null;
+  if (DL.job) DL.job.cancelled = true;
+  if (DL.projector) DL.projector.cancelled = true;
+  DL.queue.length = 0;
+  if (BR && BR.cancelPull) BR.cancelPull();
+  render();
+}
+
+/** A download that failed becomes a row in the card, with Retry and dismiss. */
+function dlFail(job, error, retry) {
+  dlFailClear(job.kind, job.id);
+  DL.failed.push({n: ++DL.failSeq, kind: job.kind, id: job.id, error: String(error || 'the download failed'),
+    // The setup queue's own jobs go back in its queue; the rest need the one pull slot free.
+    queueable: !retry, retry: retry || (() => dlRequeue(job))});
+}
+function dlFailClear(kind, id) {
+  DL.failed = DL.failed.filter((f) => !(f.kind === kind && f.id === id));
+}
+function dlRequeue(job) {
+  const j = {kind: job.kind, id: job.id};
+  if (DL.job || DL.preparing) { DL.queue.push(j); render(); return; }
+  dlStart([j]);
+}
+function dlRetry(n) {
+  const f = DL.failed.find((x) => x.n === n);
+  if (!f) return;
+  // Main runs one pull at a time: say so rather than queue behind another tab's back.
+  if (xpullOwner() || (!f.queueable && dlBusy())) {
+    toast('One download at a time', 'Retry it once the download that is running has finished.', 'bad');
+    return;
+  }
+  DL.failed = DL.failed.filter((x) => x !== f);
+  /* The runtime is what a landed model was missing: once it is in place, start
+     that model (obActivateHeld) — the start that failed without it. */
+  if (f.kind === 'runtime' && DL.landed && !DL.activateAfter) DL.activateAfter = DL.landed;
+  f.retry();
+  render();
+}
+
+function xpullReset(owner) {
+  Object.assign(XPULL, {key: owner.key, percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false,
+    rate: null, last: null, samples: 0});
+  dlFailClear(owner.kind, owner.id);
+}
+
+if (BR) {
+  /* The XPULL slot's subscriber. Registered before the composer's and
+     Settings' own `cli:pull` subscribers further down this file, so a `done`
+     frame is read here while its owner still holds the pull — unless a
+     Cancel let go of it first, which is how a cancel is told from a failure.
+     The setup queue's frames are DL's (dlOnPull), never this slot's. */
+  BR.onPull((ev) => {
+    if (!ev || DL.job) return;
+    const owner = xpullOwner();
+    if (!owner) { XPULL.key = null; return; }
+    if (XPULL.key !== owner.key) xpullReset(owner);
+    if (ev.done) {
+      // The projector sends no `done` of its own: obFetchProjector's promise ends it.
+      if (owner.src === 'proj') return;
+      if (ev.ok === false) {
+        dlFail(owner, ev.error || 'the download failed',
+          owner.src === 'sel' ? () => selPull(owner.id) : () => llmPull(owner.llmKind, owner.id));
+      }
+      XPULL.key = null;
+      // Once the owner's own subscriber has let go of the pull.
+      setTimeout(renderDlcard, 0);
+      return;
+    }
+    if ((ev.kind === 'projector') !== (owner.kind === 'projector')) return;
+    if (typeof ev.percent !== 'number') return;
+    XPULL.percent = ev.percent;
+    if (typeof ev.totalBytes === 'number' && ev.totalBytes > 0) {
+      XPULL.totalBytes = ev.totalBytes;
+      XPULL.transferredBytes = ev.transferredBytes || 0;
+      dlRateStep(XPULL, XPULL.transferredBytes);
+    }
+    XPULL.sawProgress = true;
+    renderDlcard();
+  });
 }
 
 /** OnboardingDownloadProgress (onboarding-download-progress.tsx:63-99). */
@@ -8399,8 +8805,7 @@ function obProgressHTML() {
     return '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.error) + '</span></div>';
   }
   /* Soft Tactile: each phase is an icon, its name, a real progress bar and
-     a fixed-width trailing figure. The bar is `.tk-prog` here rather than the
-     strip's glyph bar (dlBarHTML, which #dlbar keeps). `.pb i` keeps its
+     a fixed-width trailing figure. `.pb i` keeps its
      colour contract: a waiting phase's fill is dimmer than a live one's, and
      the smoke compares the two. */
   const row = (label, phase) => {
@@ -8748,9 +9153,10 @@ function obDownloadHTML() {
     failed ? [OB_COPY.cloudOfferFailed] : OB_COPY.cloudOffer, OB_COPY.cloudOfferKey);
   const skip = obOfferHTML('', 'key:s', '<span class="tk-ico">' + ic('arrowR') + '</span>',
     failed ? [OB_COPY.skipOfferFailed] : OB_COPY.skipOffer, OB_COPY.skipOfferKey);
-  /* Calm (S1, U5): the strip is not drawn during setup, so its Cancel moves
-     here — the same verb (`dl:cancel`), outside the progress block so the
-     per-sample repaint (refreshDlProgress) never rebuilds it under a hand. */
+  /* Calm (S1, U5): the download card is not drawn during setup, so its
+     Cancel is here too — the same verb (`dl:cancel`, dlCancel), outside the
+     progress block so the per-sample repaint (refreshDlProgress) never
+     rebuilds it under a hand. */
   const cancel = DL.job
     ? '<div class="ob-dlcancel"><button class="btn btn-g xs dl-x" data-act="dl:cancel">Cancel download</button></div>'
     : '';
@@ -8788,7 +9194,7 @@ function obWaitOrJumpHTML() {
   const label = obModelLabel();
   const rows = [
     {label:'Start using the agent now', detail: status === 'running'
-      ? 'the download keeps running; progress shows in the top bar'
+      ? 'the download keeps running; progress shows in the corner'
       : status === 'ready' ? 'local and cloud are both set up' : 'the cloud model is ready to use'},
     {label:'Add another cloud provider', detail:'one more key or endpoint, then straight back to this screen'},
   ];
@@ -9420,11 +9826,44 @@ function obLocalPickKey(input, key) {
     const row = rows[OB.cursor % Math.max(1, rows.length)];
     if (!row) return true;
     if (row.kind === 'hugging_face') { obDispatch({type:'onboarding_step_set', step:'local_hf_ref'}); return true; }
+    if (!row.model.downloaded) { obDownloadAndHandOver(row.model.id); return true; }
+    // On disk already: no download to wait for, only the start, on the download screen.
     obDispatch({type:'onboarding_local_model_picked', modelId: row.model.id});
-    obStartLocalPull(row.model.id, row.model.downloaded);
+    obStartLocalPull(row.model.id, true);
     return true;
   }
   return false;
+}
+
+/**
+ * Backlog 18 — "why am I sitting here". Download hands over the agent at
+ * once, as "Start using the agent now" does (obHandOver: no second-backend
+ * pitch, no import step, both still owed), and the download card in the
+ * corner carries the pull. The queue is started first, so the card has the
+ * model to show the moment setup closes; obActivateLocal still starts the
+ * model when its weights land (obPullFinished).
+ *
+ * Main runs one pull at a time. A second Download while one runs would only
+ * be refused there, so it is refused here, on the screen that asked.
+ */
+function obDownloadAndHandOver(id) {
+  if (dlBusy() || DL.projector || SEL.pulling || LLMP.pulling) {
+    obDispatch({type:'onboarding_error_set', error:'a download is already running'});
+    return;
+  }
+  obDispatch({type:'onboarding_local_model_picked', modelId: id});
+  obStartLocalPull(id, false);
+  obHandOver();
+}
+
+/**
+ * "Start using the agent now": setup closes on the agent with the download
+ * still running. Outcome "local" because local is the backend they
+ * committed to; skipSecondOffer because the setup screens already pitched
+ * cloud, and the card offers it again; handOver because the row says so.
+ */
+function obHandOver() {
+  obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true, handOver:true});
 }
 
 /** handleHfPickKey (onboarding-hf-keys.ts) — the file list. */
@@ -9453,7 +9892,7 @@ function obDownloadKey(input, key) {
   }
   if (input === 's' && !key.ctrl) {
     // Outcome "local" because local is the backend they committed to;
-    // the pull survives this screen and reports in the top strip.
+    // the pull survives this screen and reports in the download card.
     /* skipSecondOffer because this screen already pitched cloud, and
        `handOver` because this row makes the same promise as the
        wait-or-jump row above, in nearly the same words: "Or skip the wait
@@ -9476,8 +9915,8 @@ function obDownloadKey(input, key) {
        on the home screen with the download chip in the top bar" — is what
        it now does. Nothing is stamped on the way out, so the import step
        is still owed and still offered by `/import` and a later
-       `onboarding` run. */
-    obDispatch({type:'onboarding_finished', outcome:'local', skipSecondOffer:true, handOver:true});
+       `onboarding` run. Backlog 18: Download itself now does this too. */
+    obHandOver();
     return true;
   }
   return false;
@@ -9492,11 +9931,11 @@ function obWaitOrJumpKey(input, key) {
   }
   if (key.return) {
     const row = OB.cursor % rows;
-    /* r8 handOver: "Start using the agent now — the download keeps running;
-       progress shows in the top bar". Driven on 02053695 this landed on the
+    /* r8 handOver: "Start using the agent now — the download keeps running".
+       Driven on 02053695 this landed on the
        import step with the wizard still up, which is the operator's report
        word for word. The pull is untouched by the close: it lives in DL and
-       reports from #dlbar, which is the promise the row makes. */
+       reports in the download card, which is the promise the row makes. */
     if (row === 0) { obDispatch({type:'onboarding_finished', outcome: OB.outcome || 'cloud', handOver:true}); return true; }
     if (row === 1) { obOpenCloudWizard(); obDispatch({type:'onboarding_cloud_meanwhile_opened'}); return true; }
     if (OB.localModelId) obStartLocalPull(OB.localModelId, false);
@@ -9691,11 +10130,19 @@ async function obStartLocalPull(id, alreadyDownloaded) {
     await obActivateLocal(id);
     return;
   }
+  /* Backlog 18: the pick is on the card from this moment ("Starting…"),
+     while the two reads below decide what the queue holds. A Cancel in that
+     window clears it, and nothing is started after them. */
+  const token = {kind:'weights', id};
+  DL.preparing = token;
+  render();
   // The managed-mode write has to have landed before `models status` is
   // read and `models update` is spawned — both answer differently while
   // the file still says something else (review fix).
   if (OB.managedWrite) { try { await OB.managedWrite; } catch (e) { /* the status read below is the real gate */ } OB.managedWrite = null; }
   const needsRuntime = obBackendMissing(await obBackendStatusText());
+  if (DL.preparing !== token) return;
+  DL.preparing = null;
   const jobs = [];
   if (needsRuntime) jobs.push({kind:'runtime', id:'llama.cpp'});
   jobs.push({kind:'weights', id});
@@ -9707,8 +10154,9 @@ async function obActivateLocal(id) {
   if (!BR) return;
   /* r5 item 7 review fix: this is reached by a pull that finished in the
      BACKGROUND. `s` on the download screen drops the operator into the
-     agent with the pull still in flight — that is the strip's whole
-     promise — so completion routinely lands in the middle of a turn, and
+     agent with the pull still in flight — that is the download card's
+     whole promise (and since backlog 18 Download itself does the same) —
+     so completion routinely lands in the middle of a turn, and
      `selectLocalModel` makes main stop and restart `atag serve`
      (applySwitch), which would kill it. Every other restarting path in
      this file refuses while `S.busy`; this one DEFERS rather than
@@ -9768,42 +10216,64 @@ function obPullFinished(job, ev) {
        The failure is reported on its own line instead (DL.runtimeError),
        and the model download the operator actually asked for runs. */
     dlNext();
+    // A model held back for this runtime starts once it is in place.
+    if (ok) obActivateHeld();
     return;
   }
-  renderDlbar();
   /* r5 review fix (item 7) — drain the queue on THIS leg too. dlNext() used to
      be called only on the runtime branch above, while dlOnPull's `done` handler
      had already cleared DL.job — so a weights job finishing with anything
-     behind it would have hidden the strip with work still queued. Latent
+     behind it would have hidden the download with work still queued. Latent
      today (dlStart's one caller, obStartLocalPull, always builds
      [runtime?, weights] with weights last, so the queue is provably empty
-     here), but DL is written as a general FIFO — the `· N more queued` suffix,
-     DL.queue, dlNext — and the next entry must not be stranded. On an empty
-     queue this is exactly what the `done` handler already did: DL.job = null
-     and a repaint. The activation below is unaffected; it does not read
-     DL.job. */
+     here), but DL is written as a general FIFO — a Retry re-queues behind a
+     running job (dlRequeue) — and the next entry must not be stranded. On an
+     empty queue this is exactly what the `done` handler already did:
+     DL.job = null and a repaint. The activation below is unaffected; it does
+     not read DL.job. */
   dlNext();
   if (!ok) { render(); return; }
   if (DL.dry) { render(); return; }
+  DL.landed = job.id;
   const pending = OB.pendingMmproj;
   OB.pendingMmproj = null;
-  const after = () => obActivateLocal(job.id);
-  if (pending && BR && BR.hfProjector) {
-    BR.hfProjector(pending.id, pending.mmprojUrl, pending.mmprojFilename, pending.name)
-      .then((res) => {
-        if (!res || res.ok !== true) {
-          // The daemon would serve a vision model text-only; say so and
-          // do not activate behind the operator's back.
-          DL.error = ((res && res.error) || 'the vision projector did not download')
-            + ' — the model was not started: it would serve text only';
-          render();
-          return;
-        }
-        after();
-      });
-    return;
-  }
-  after();
+  if (pending && BR && BR.hfProjector) { obFetchProjector(job.id, pending); return; }
+  // Backlog 18: a re-queued runtime is now running behind these weights; the start waits for it.
+  if (dlBusy()) { DL.activateAfter = job.id; return; }
+  obActivateLocal(job.id);
+}
+
+/** The start held back while the queue drained (DL.activateAfter). */
+function obActivateHeld() {
+  const id = DL.activateAfter;
+  if (!id || dlBusy() || DL.dry) return;
+  DL.activateAfter = null;
+  obActivateLocal(id);
+}
+
+/**
+ * A vision model's projector, after its weights: `atag models pull` fetches
+ * the weights and stops. Its own row in the download card while it comes
+ * down, and the model is started only once it has landed.
+ */
+function obFetchProjector(id, pending) {
+  DL.projector = {id, cancelled: false};
+  render();
+  BR.hfProjector(pending.id, pending.mmprojUrl, pending.mmprojFilename, pending.name).then((res) => {
+    const was = DL.projector;
+    DL.projector = null;
+    if (!res || res.ok !== true) {
+      // The daemon would serve a vision model text-only; say so and
+      // do not activate behind the operator's back.
+      DL.error = ((res && res.error) || 'the vision projector did not download')
+        + ' — the model was not started: it would serve text only';
+      if (!(was && was.cancelled)) dlFail({kind:'projector', id}, DL.error, () => obFetchProjector(id, pending));
+      render();
+      return;
+    }
+    render();
+    obActivateLocal(id);
+  });
 }
 
 /* ---- the Hugging Face branch, as its own two steps ---- */
@@ -9831,7 +10301,10 @@ async function obHfLook() {
 
 async function obHfAdd() {
   if (!BR || !BR.hfAdd || !OB.hfRepo) return;
-  if (DL.job) { obDispatch({type:'onboarding_error_set', error:'a download is already running'}); return; }
+  if (dlBusy() || DL.projector || SEL.pulling || LLMP.pulling) {
+    obDispatch({type:'onboarding_error_set', error:'a download is already running'});
+    return;
+  }
   const res = await BR.hfAdd(OB.hfRepo, OB.cursor);
   if (!res || res.ok !== true) {
     obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'could not add the model'});
@@ -9840,8 +10313,8 @@ async function obHfAdd() {
   const def = res.def || {};
   OB.pendingMmproj = def.supportsVision && def.mmprojUrl && def.mmprojFilename
     ? {id: res.id, mmprojUrl: def.mmprojUrl, mmprojFilename: def.mmprojFilename, name: def.name} : null;
-  obDispatch({type:'onboarding_local_model_picked', modelId: res.id});
-  obStartLocalPull(res.id, false);
+  // Backlog 18: the same hand-over as a curated pick's Download.
+  obDownloadAndHandOver(res.id);
 }
 
 /* ---- the custom-endpoint branch ---- */
@@ -10200,12 +10673,20 @@ async function obSettle() {
   obSkyStop();
   /* A skipped setup is not a completed one: saying "Setup complete" to
      someone who chose nothing sent them to a composer with no working model
-     and the word that it was done. */
+     and the word that it was done.
+     Backlog 18: and "Your model is downloading" is what the download card
+     in the corner already says, with how far along it is — so while it is
+     up, setup closes without a toast. */
   const [toastTitle, toastLine] = obClosingToast(outcome);
-  toast(toastTitle, toastLine);
+  if (!obClosingToastCarried(outcome)) toast(toastTitle, toastLine);
   render();
   if (OB.restarted) { refreshLiveConfig(); return; }
   BR.restart().then(applyStatus);
+}
+
+/** Backlog 18: whether the download card already says what the closing toast would. */
+function obClosingToastCarried(outcome) {
+  return outcome !== 'skipped' && dlStatus() === 'running' && dlCardRows().length > 0;
 }
 
 /** The toast a closing setup leaves behind. */
@@ -10213,7 +10694,7 @@ function obClosingToast(outcome) {
   if (outcome === 'skipped') return ['Setup skipped', 'Set up a model from the composer when you are ready.'];
   /* "Setup complete" over a download strip at 10% told two stories at once:
      the person who jumped ahead is waiting on the model, so say that. */
-  if (dlStatus() === 'running') return ['Your model is downloading', 'Look around meanwhile. Progress is at the top of the window.'];
+  if (dlStatus() === 'running') return ['Your model is downloading', 'Look around meanwhile. Progress is in the corner of the window.'];
   return ['Setup complete', 'Restarting the agent…'];
 }
 
@@ -10651,7 +11132,7 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
     if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
-    if (a === 'dl:cancel') { if (BR.cancelPull) BR.cancelPull(); DL.queue.length = 0; return; }
+    if (a === 'dl:cancel') { dlCancel(); return; }
     /* r6 — three lanes found this one independently, and the operator
        named it himself: "when I click on next, nothing happens. But when I
        click on enter, it works."  `wiz:next` was not in the pair below, so
@@ -10692,14 +11173,13 @@ if (BR) {
       return;
     }
     /* r5 integration (seam d): the wizard is modal on the keyboard
-       (obKeydown captures) but the overlay layer no longer starts at
-       inset 0 — it starts below the download strip so the strip keeps
-       reporting (item 7). While a pull is in flight that leaves the
-       toolbar's own `data-act` buttons uncovered, and a click on
-       Settings or New chat would open the app's chrome UNDER a first-run
-       wizard nobody has finished. Nothing but the wizard's own verbs
-       (handled above) and the strip's Cancel gets through while it is
-       open. This is a guard, not a repaint: the toolbar still draws. */
+       (obKeydown captures), and while it is open nothing but the wizard's
+       own verbs (handled above) and the download's Cancel gets through —
+       a click on Settings or New chat would open the app's chrome UNDER a
+       first-run wizard nobody has finished. The overlay layer started below
+       the download strip when this was written (item 7), uncovering the
+       toolbar; it covers the whole window again since backlog 18, and this
+       guard stays as the rule rather than the geometry. */
     if (OB.open) return;
     return prevAct(a);
   };
@@ -11266,7 +11746,7 @@ function openSelector(kind) {
   // last read (a terminal export, the .env) is what unblocks Fusion's row.
   bswRefreshFacts();
 }
-function closeSelector() { SEL.open = false; SEL.addOpen = false; render(); }
+function closeSelector() { SEL.open = false; SEL.addOpen = false; WIZ.alone = false; render(); }
 
 async function selLoadLocal() {
   SEL.localBusy = true; render();
@@ -11589,6 +12069,13 @@ function selectorHTML() {
   const rows = selRows();
   SEL.rows = rows;
 
+  // Adding a provider is its own screen: the presets you have NOT
+  // configured yet. Mixing it into the provider list is what made
+  // "add" feel like another row that led nowhere.
+  /* Backlog 18: and it is checked before the pull's own screen below — the
+     download card's "Set up a cloud model meanwhile" opens it while this
+     popover's pull may still be running. */
+  if (WIZ.phase) return wizardHTML();
   if (SEL.pulling) {
     /* The first `.popover .cap` is the line the pull's progress events patch
        in place (selPull's listener) — keep it first. */
@@ -11599,10 +12086,6 @@ function selectorHTML() {
       '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>');
   }
 
-  // Adding a provider is its own screen: the presets you have NOT
-  // configured yet. Mixing it into the provider list is what made
-  // "add" feel like another row that led nowhere.
-  if (WIZ.phase) return wizardHTML();
   if (SEL.addOpen) {
     const taken = new Set(selProviders().map((p) => p.id));
     const free = PRESETS.filter((p) => !taken.has(p.id));
@@ -14717,7 +15200,8 @@ function bswDownloadProgress(modelId) {
   if (SEL.pulling === modelId) line = SEL.pullLine || '';
   if (line === null) {
     /* r5 item 7: the setup wizard's download is no longer a log tail on a
-       wizard screen — it is the #dlbar strip, driven by parsed samples. So
+       wizard screen — it is the DL slice the download card draws, driven by
+       parsed samples. So
        the figures come off that slice rather than off a line, and they are
        the same numbers for the same reason. */
     const job = DL.job;
@@ -17330,7 +17814,12 @@ async function llmEnsureModels() {
   llmClampCursors();
   llmRepaint();
 }
-function llmRepaint() { if (llmVisible()) paneRepaintKeepFocus(llmTab()); }
+function llmRepaint() {
+  if (llmVisible()) paneRepaintKeepFocus(llmTab());
+  // Backlog 18: LLMP.pulling moves without a render (a pull starting, ending,
+  // its projector phase); the download card shows it.
+  renderDlcard();
+}
 /* Only the model list repaints on a filter keystroke (the input keeps its caret). */
 function llmRepaintList() {
   const box = document.getElementById('llm-cloud-models');
@@ -18494,7 +18983,7 @@ async function llmPrimary(row) {
    for that provider (the wizard's kind row by id, then by kind, else the
    custom row). */
 function llmOpenWizard(provider, baseUrl) {
-  SEL.open = true; SEL.addOpen = false; SEL.err = null;
+  SEL.open = true; SEL.addOpen = false; SEL.err = null; WIZ.alone = false;
   WIZ.error = null; WIZ.busy = false; WIZ.apiKey = '';
   if (provider) {
     const row = KIND_ROWS.find((k) => k.id === provider.id) || KIND_ROWS.find((k) => k.kind === provider.kind && !k.custom) || KIND_ROWS.find((k) => k.custom);
@@ -20773,12 +21262,13 @@ if (typeof window !== 'undefined') {
     return window.__obSky();
   };
   window.__dl = () => {
-    const el = document.getElementById('dlbar');
+    const el = document.getElementById('dlcard');
     const job = DL.job;
     return {
-      // `visible` is the strip on screen; `running` is a pull in flight,
-      // wherever it is reported (the strip, or the wizard during setup).
-      visible: !!(el && !el.hidden),
+      // `visible` is the setup download on screen in the download card
+      // (backlog 18; it was the #dlbar strip); `running` is a pull in
+      // flight, wherever it is reported (the card, or the wizard during setup).
+      visible: !!(el && !el.hidden) && (!!job || !!DL.preparing),
       running: !!job,
       label: job ? dlJobLabel(job) : null,
       kind: job ? job.kind : null,
@@ -20787,7 +21277,7 @@ if (typeof window !== 'undefined') {
       total: job ? job.totalBytes : null,
       eta: dlEta(dlEtaSeconds()),
       queued: DL.queue.length,
-      text: el ? el.innerText.replace(/\s+/g, ' ').trim() : '',
+      text: el && !el.hidden ? el.innerText.replace(/\s+/g, ' ').trim() : '',
       phases: {runtime: DL.runtime.state, weights: DL.weights.state},
       drove: {runtime: DL.runtime.drove, weights: DL.weights.drove},
       error: DL.error,
@@ -20795,13 +21285,39 @@ if (typeof window !== 'undefined') {
       measured: !!(job && job.sawProgress),
     };
   };
-  /** Feed the strip one real `cli:pull` frame, as main would send it. */
+  /** Feed the setup download one real `cli:pull` frame, as main would send it. */
   window.__dlFeed = (ev) => { dlOnPull(ev); return window.__dl(); };
+  /** Backlog 18: the download card as a person sees it. Reading only. */
+  window.__dlcard = () => {
+    const el = document.getElementById('dlcard');
+    const on = !!(el && !el.hidden);
+    const r = on ? el.getBoundingClientRect() : null;
+    const t = (n) => (n ? (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim() : '');
+    return {
+      visible: on, collapsed: on && !!el.querySelector('.dlc-badge'),
+      rect: r ? {top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right),
+        width: Math.round(r.width), height: Math.round(r.height)} : null,
+      title: t(on && el.querySelector('.dlc-ttl > span')),
+      count: on ? (el.querySelector('.dlc-n, .dlc-count') ? Number(t(el.querySelector('.dlc-n, .dlc-count'))) : el.querySelectorAll('.dlc-row').length) : 0,
+      rows: on ? [...el.querySelectorAll('.dlc-row')].map((row) => ({
+        name: t(row.querySelector('.dlc-name')), line: t(row.querySelector('.dlc-line')),
+        state: (/\bis-(\w+)/.exec(row.className) || [])[1] || '',
+        bar: row.querySelector('.dlc-bar > i') ? row.querySelector('.dlc-bar > i').style.width : null,
+        cancel: row.querySelector('.dlc-x') ? row.querySelector('.dlc-x').getAttribute('data-act') : null,
+        retry: !!row.querySelector('.dlc-retry'),
+      })) : [],
+      cloud: t(on && el.querySelector('.dlc-cloud')),
+      offset: DLC.offset,
+      text: on ? t(el) : '',
+    };
+  };
   /** Seed a queue without spawning anything, to assert the queue text. */
   window.__dlSeed = (jobs) => {
     DL.dry = true;
     DL.queue = jobs.slice(1);
     DL.error = null; DL.rate = null; DL.last = null; DL.samples = 0;
+    // A fresh run: nothing from an earlier seed is left on the card.
+    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null;
     dlResetPhases(jobs.some((j) => j.kind === 'runtime'));
     const head = jobs[0];
     // The same shape dlNext builds — including `sawProgress:false`, so a
@@ -20810,7 +21326,11 @@ if (typeof window !== 'undefined') {
     render();
     return window.__dl();
   };
-  window.__dlClear = () => { DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null; dlResetPhases(false); render(); return window.__dl(); };
+  window.__dlClear = () => {
+    DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null;
+    DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null;
+    dlResetPhases(false); render(); return window.__dl();
+  };
   window.__obImport = () => ({
     agents: OB.importAgents.map((a) => ({id: a.id, dir: a.dir, enabled: a.enabled})),
     rows: obImportRows().map((r) => r.kind),
@@ -21663,14 +22183,14 @@ if (typeof window !== 'undefined') {
       if (typeof during === 'function') { try { during(); } catch (e) { /* the caller reports */ } }
       resolve({ok:true});
     }, ms)));
-  /** What the send button and the strip are BOTH doing, in one sample. */
+  /** What the send button and the download card are BOTH doing, in one sample. */
   window.__seamSample = () => {
     const b = document.querySelector('.sendbtn');
-    const bar = document.getElementById('dlbar');
+    const card = document.getElementById('dlcard');
     return {disabled: !!(b && b.disabled), aria: b ? b.getAttribute('aria-busy') : null,
             spins: document.querySelectorAll('.sspin').length,
-            dlVisible: !!(bar && !bar.hidden),
-            dlText: bar ? bar.innerText.replace(/\s+/g, ' ').trim() : ''};
+            dlVisible: !!(card && !card.hidden),
+            dlText: card && !card.hidden ? card.innerText.replace(/\s+/g, ' ').trim() : ''};
   };
 }
 

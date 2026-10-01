@@ -25,17 +25,16 @@
   <div id="stage">
     <div id="window">
       <div id="toolbar"></div>
-      <!-- r5 item 7: the download strip. A flex child between the toolbar and
-           the main area, NOT an overlay — the wizard's own copy promises
-           twice that "progress shows in the top bar", and a strip inside
-           #overlays would be the thing the wizard covers. -->
-      <div id="dlbar" hidden></div>
       <div id="main">
         <aside id="sidebar"></aside>
         <section id="content"></section>
         <aside id="inspector"></aside>
       </div>
       <div id="console" class="hide"></div>
+      <!-- Backlog 18: the download card. It floats in the bottom-right corner,
+           over the window and under #overlays, so it never moves the chat the
+           way the #dlbar strip it replaced did. -->
+      <div id="dlcard" hidden></div>
       <div id="overlays"></div>
       <div id="toasts"></div>
     </div>
