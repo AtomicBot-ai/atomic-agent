@@ -14,7 +14,7 @@ import { setCustomLocalModels } from "../local-llm/models-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/huggingface-endpoint.js";
 import { setConfiguredBackendVariant } from "../local-llm/windows-backend-variant.js";
-import { ensureManagedApiKey } from "../local-llm/managed-api-key.js";
+import { resolveLocalLlamaApiKey } from "../local-llm/managed-api-key.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
@@ -153,15 +153,20 @@ export function loadConfig(): AtomicAgentConfig {
     dotenv,
     localModels: {
       url: resolvedLocalLlmUrl,
-      // The operator's key wins. In managed mode, without one, the key the
-      // managed daemon is launched with (persisted next to its pid file,
-      // generated on first use) — so every client of the daemon, in this
-      // process or the next, sends what the server requires (#582).
-      apiKey:
-        readEnv("ATOMIC_AGENT_LLAMA_API_KEY") ??
-        (user.localModels.mode === "managed"
-          ? ensureManagedApiKey(localModelsDataDir)
-          : null),
+      // The operator's key, else the managed daemons' key (persisted next
+      // to their pid file) whenever the agent talks to them — so every
+      // client, in this process or the next, sends what the server
+      // requires (#582). See `resolveLocalLlamaApiKey`.
+      apiKey: resolveLocalLlamaApiKey({
+        envKey: readEnv("ATOMIC_AGENT_LLAMA_API_KEY"),
+        mode: user.localModels.mode,
+        chatUrl: resolvedLocalLlmUrl,
+        managedPorts: [
+          user.localModels.managed.port,
+          user.localModels.embeddings.port,
+        ],
+        dataDir: localModelsDataDir,
+      }),
       healthPath: "/health",
       completionPath: "/completion",
       completionMaxTokens: readBoundedPositiveInt(

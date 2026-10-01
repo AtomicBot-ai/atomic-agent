@@ -211,6 +211,24 @@ describe("loadConfig", () => {
       expect(loadConfig().localModels.apiKey).toBe("operator-key");
     });
 
+    it("external mode pointed at the managed daemon keeps the daemon's key (switch from managed)", () => {
+      writeMode("managed");
+      const managedKey = loadConfig().localModels.apiKey;
+      // What the TUI persists when the operator moves to external mode
+      // on a daemon they started with `atomic-agent models start`.
+      writeUserConfigFileSync(getUserConfigPath(stateDir), {
+        ...USER_CONFIG_DEFAULTS,
+        localModels: {
+          ...USER_CONFIG_DEFAULTS.localModels,
+          mode: "external",
+          url: "http://127.0.0.1:19091",
+        },
+      });
+      resetConfigCache();
+      expect(managedKey).toMatch(/^[0-9a-f]{64}$/);
+      expect(loadConfig().localModels.apiKey).toBe(managedKey);
+    });
+
     it("external mode: no key is invented for someone else's server", () => {
       writeMode("external");
       const config = loadConfig();

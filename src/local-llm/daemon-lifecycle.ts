@@ -51,9 +51,8 @@ import {
 import { resolvePlatformAsset } from "./platform-assets.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
 import {
-  buildApiKeyArgs,
-  resolveManagedServerAuth,
-  type ManagedServerAuth,
+  buildDaemonEnv,
+  resolveManagedServerApiKey,
 } from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
@@ -145,13 +144,12 @@ export interface DaemonStartOptions {
    */
   throughputProbe?: boolean;
   /**
-   * The key the server requires (`--api-key-file` / `--api-key`, issue
-   * #582). `startDaemon` resolves it from `localModels.apiKey`, falling
-   * back to the key persisted in `dataDir`, so a caller passes it only
-   * to force one. Undefined in `buildLlamaServerArgs` leaves the server
-   * open, the historical argv.
+   * The key the server requires (issue #582), handed to the child as
+   * `LLAMA_API_KEY` — never argv. `startDaemon` resolves it from
+   * `localModels.apiKey`, falling back to the key persisted in `dataDir`,
+   * so a caller passes it only to force one.
    */
-  serverAuth?: ManagedServerAuth;
+  apiKey?: string;
 }
 
 /** What `probeThroughput` measured on one short completion. */
@@ -460,7 +458,6 @@ export function buildLlamaServerArgs(
       "2048",
     );
   }
-  args.push(...buildApiKeyArgs(opts.serverAuth));
   return args;
 }
 
@@ -756,14 +753,13 @@ export async function startDaemon(
         : prefixReuse.prefixReuse;
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
-  const serverAuth =
-    opts.serverAuth ??
-    resolveManagedServerAuth(opts.dataDir, readConfiguredApiKey());
+  const apiKey =
+    opts.apiKey ??
+    resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
   const args = buildLlamaServerArgs(
     {
       ...opts,
       device,
-      serverAuth,
       swaFullFlag: swaFull.enabled,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
     },
@@ -801,7 +797,7 @@ export async function startDaemon(
       stdio: ["ignore", logFd, logFd],
       detached: true,
       ...(process.platform === "win32" ? { windowsHide: true } : {}),
-      env: { ...process.env },
+      env: buildDaemonEnv(apiKey),
     });
     child.unref();
     if (child.pid == null) {
@@ -836,7 +832,7 @@ export async function startDaemon(
     if (opts.throughputProbe !== false) {
       const sample = await probeThroughput({
         port: opts.port,
-        apiKey: serverAuth.apiKey,
+        apiKey,
       });
       if (sample) {
         tokensPerSecond = sample.tokensPerSecond;
@@ -995,8 +991,8 @@ export interface EmbeddingDaemonStartOptions {
    * daemons land on the same chosen GPU.
    */
   device?: string;
-  /** Same as `DaemonStartOptions.serverAuth`; both daemons share one key. */
-  serverAuth?: ManagedServerAuth;
+  /** Same as `DaemonStartOptions.apiKey`; both daemons share one key. */
+  apiKey?: string;
 }
 
 /**
@@ -1033,7 +1029,6 @@ export function buildEmbeddingServerArgs(
   if (opts.device && opts.device !== "cpu") {
     args.push("--device", opts.device);
   }
-  args.push(...buildApiKeyArgs(opts.serverAuth));
   return args;
 }
 
@@ -1066,13 +1061,10 @@ export async function startEmbeddingDaemon(
   }
 
   const device = await resolveManagedDevice(binPath, opts.device);
-  const serverAuth =
-    opts.serverAuth ??
-    resolveManagedServerAuth(opts.dataDir, readConfiguredApiKey());
-  const args = buildEmbeddingServerArgs(
-    { ...opts, device, serverAuth },
-    modelPath,
-  );
+  const apiKey =
+    opts.apiKey ??
+    resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
+  const args = buildEmbeddingServerArgs({ ...opts, device }, modelPath);
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
   try {
@@ -1080,7 +1072,7 @@ export async function startEmbeddingDaemon(
       stdio: ["ignore", logFd, logFd],
       detached: true,
       ...(process.platform === "win32" ? { windowsHide: true } : {}),
-      env: { ...process.env },
+      env: buildDaemonEnv(apiKey),
     });
     child.unref();
     if (child.pid == null) {

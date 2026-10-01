@@ -676,7 +676,7 @@ User-facing configuration lives in `<stateDir>/config.json`.
 
 Useful environment variables:
 - `ATOMIC_AGENT_STATE_DIR`: state, config, skills, browser profile, memory, tasks, traces. Default: `~/.atomic-agent`.
-- `ATOMIC_AGENT_LLAMA_API_KEY`: optional bearer token for `llama-server`. In managed mode the daemon is launched with this key; when it is unset, a key is generated once and kept in `<models dir>/llama-server.key` (mode 0600), so a web page in a local browser cannot call the daemon.
+- `ATOMIC_AGENT_LLAMA_API_KEY`: optional bearer token for `llama-server`. In managed mode the daemon is launched with this key; when it is unset, a key is generated once and kept in `<models dir>/llama-server.key` (mode 0600), so a web page in a local browser cannot call the daemon. The same key is used in external mode when `localModels.url` points at the managed port. Anything else that calls the managed daemon directly (scripts, other apps) must send `Authorization: Bearer <key>` with that key.
 - `ATOMIC_AGENT_LLAMA_MAX_TOKENS`: completion cap, clamped to 64-131072.
 - `ATOMIC_AGENT_BROWSER_CHANNEL`: `chrome`, `msedge`, or `chromium`.
 - `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH`: explicit Chromium-family executable path.

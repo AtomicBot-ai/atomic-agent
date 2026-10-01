@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   linkSync,
   mkdirSync,
   readFileSync,
@@ -15,8 +16,8 @@ import { resolveApiKeyFilePath } from "./backend-paths.js";
 /**
  * The bearer key a managed `llama-server` is launched with (issue #582).
  *
- * Without `--api-key` llama-server answers every origin (`CORS: *`), so
- * any web page open in a local browser could drive the model through
+ * Without a key llama-server answers every origin (`CORS: *`), so any web
+ * page open in a local browser could drive the model through
  * `fetch("http://127.0.0.1:19091/…")`. A page cannot know a key that
  * lives only in a 0600 file, so the key alone closes that door.
  *
@@ -25,9 +26,18 @@ import { resolveApiKeyFilePath } from "./backend-paths.js";
  * by every later one (the TUI after `models start`, a restarted TUI, the
  * sidecar), and each of them has to send the same key. Generated once,
  * then reused for as long as the file exists.
+ *
+ * It reaches the server through the `LLAMA_API_KEY` environment variable
+ * of the spawned process (`--api-key`'s env binding), never argv: argv is
+ * visible in `ps` and in a spawn error's `spawnargs`, and `--api-key-file`
+ * is opened by llama.cpp with a plain `std::ifstream`, which a Windows
+ * profile path outside the ANSI code page would fail to open.
  */
 
 const SECRET_FILE_MODE = 0o600;
+
+/** The env var llama-server reads `--api-key` from. */
+export const LLAMA_API_KEY_ENV = "LLAMA_API_KEY";
 
 /** A key llama-server accepts verbatim: `--api-key` splits on commas. */
 function isUsableKey(key: string): boolean {
@@ -42,6 +52,25 @@ export function readManagedApiKey(dataDir: string): string | null {
   } catch {
     return null;
   }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Read a key another process is creating: on a filesystem without hard
+ * links the file exists (exclusive create) a moment before its bytes do,
+ * so an empty read means "not written yet", not "no key".
+ */
+function readWrittenKey(dataDir: string): string | null {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const key = readManagedApiKey(dataDir);
+    if (key) return key;
+    if (!existsSync(resolveApiKeyFilePath(dataDir))) return null;
+    sleepSync(10);
+  }
+  return null;
 }
 
 /**
@@ -82,7 +111,7 @@ export function ensureManagedApiKey(dataDir: string): string | null {
   } catch {
     // Lost an exclusive-create race, or the directory is not writable:
     // whatever is on disk now is the answer.
-    return readManagedApiKey(dataDir);
+    return readWrittenKey(dataDir);
   }
   try {
     chmodSync(path, SECRET_FILE_MODE);
@@ -90,47 +119,99 @@ export function ensureManagedApiKey(dataDir: string): string | null {
     /* best-effort on Windows */
   }
   restrictWindowsAcl(path);
-  return readManagedApiKey(dataDir);
-}
-
-/** How a managed launch authenticates its clients. */
-export interface ManagedServerAuth {
-  /** The key clients must send; `null` leaves the server open. */
-  apiKey: string | null;
-  /**
-   * The 0600 file holding exactly `apiKey`, passed as `--api-key-file`
-   * so the key does not show up in the process list. Absent for a key
-   * the operator set (`ATOMIC_AGENT_LLAMA_API_KEY`), which goes on
-   * `--api-key`.
-   */
-  apiKeyFile?: string;
+  return readWrittenKey(dataDir);
 }
 
 /**
- * The auth a daemon in `dataDir` is launched with. `configuredKey` is
+ * The key a daemon in `dataDir` is launched with. `configuredKey` is
  * `localModels.apiKey` — the key every client of the daemon sends — so
  * the server is started with exactly that key. With none configured the
  * persisted key is used (generated on first launch).
  */
-export function resolveManagedServerAuth(
+export function resolveManagedServerApiKey(
   dataDir: string,
   configuredKey: string | null,
-): ManagedServerAuth {
-  if (configuredKey) {
-    return readManagedApiKey(dataDir) === configuredKey
-      ? { apiKey: configuredKey, apiKeyFile: resolveApiKeyFilePath(dataDir) }
-      : { apiKey: configuredKey };
-  }
-  const key = ensureManagedApiKey(dataDir);
-  return key
-    ? { apiKey: key, apiKeyFile: resolveApiKeyFilePath(dataDir) }
-    : { apiKey: null };
+): string | null {
+  return configuredKey || ensureManagedApiKey(dataDir);
 }
 
-/** The argv tail for `auth`; empty when the server stays open. */
-export function buildApiKeyArgs(auth: ManagedServerAuth | undefined): string[] {
-  if (!auth?.apiKey) return [];
-  return auth.apiKeyFile
-    ? ["--api-key-file", auth.apiKeyFile]
-    : ["--api-key", auth.apiKey];
+/**
+ * The environment a managed daemon is spawned with: the parent's, with
+ * `LLAMA_API_KEY` set to `apiKey`. The variable is set on the child's
+ * copy only, never on `process.env`, so nothing else the agent spawns
+ * inherits it. With no key the parent's environment passes unchanged.
+ */
+export function buildDaemonEnv(
+  apiKey: string | null,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return apiKey ? { ...base, [LLAMA_API_KEY_ENV]: apiKey } : { ...base };
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** True when `url` is a loopback address on one of `ports`. */
+export function isLoopbackUrlOnPort(
+  url: string | null | undefined,
+  ports: readonly number[],
+): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const loopback = LOOPBACK_HOSTS.has(host) || /^127(\.\d{1,3}){3}$/.test(host);
+    return loopback && ports.map(String).includes(parsed.port);
+  } catch {
+    return false;
+  }
+}
+
+export interface LocalLlamaApiKeyInputs {
+  /** `ATOMIC_AGENT_LLAMA_API_KEY`, when set. */
+  envKey: string | undefined;
+  mode: "managed" | "external";
+  /** `localModels.url` — the server this key is sent to. */
+  chatUrl: string;
+  /** `localModels.managed.port` and `localModels.embeddings.port`. */
+  managedPorts: readonly number[];
+  /** Where the managed daemons keep their pid files (and the key). */
+  dataDir: string;
+}
+
+/**
+ * `localModels.apiKey`: the key every client of the local llama-server
+ * sends. The operator's key wins. Otherwise the managed daemons' key
+ * whenever the agent talks to them: in managed mode, and in external mode
+ * when the chat URL is a managed port on loopback — the documented way to
+ * drive a daemon started with `atomic-agent models start`, which launches with
+ * the same key whatever the mode. The key is generated there too rather
+ * than only read, so a process that loads its config before the daemon's
+ * first launch (in another process) already holds the key that launch
+ * will use. Any other external server gets no key it was not given.
+ */
+export function resolveLocalLlamaApiKey(inputs: LocalLlamaApiKeyInputs): string | null {
+  if (inputs.envKey) return inputs.envKey;
+  const talksToManagedDaemon =
+    inputs.mode === "managed" ||
+    isLoopbackUrlOnPort(inputs.chatUrl, inputs.managedPorts);
+  return talksToManagedDaemon ? ensureManagedApiKey(inputs.dataDir) : null;
+}
+
+/**
+ * The key the embedding client sends to `embeddingsUrl`. `localModels.apiKey`
+ * is resolved for the chat URL; an external-mode chat server elsewhere
+ * leaves it `null` while the embeddings may still go to the managed
+ * embedding daemon, which requires the persisted key. Read, not created:
+ * a daemon that was launched has already written it.
+ */
+export function resolveEmbeddingApiKey(inputs: {
+  configuredKey: string | null;
+  embeddingsUrl: string;
+  managedPorts: readonly number[];
+  dataDir: string;
+}): string | null {
+  if (inputs.configuredKey) return inputs.configuredKey;
+  return isLoopbackUrlOnPort(inputs.embeddingsUrl, inputs.managedPorts)
+    ? readManagedApiKey(inputs.dataDir)
+    : null;
 }
