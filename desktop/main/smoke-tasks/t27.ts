@@ -23,6 +23,15 @@ import { BrowserWindow } from "electron";
  * sidebar's own button; a message goes through startLiveTurn as submit()
  * hands it over. What the check staged comes back out, and the window is put
  * back as it was.
+ *
+ * 29 (its desktop half, checked here with the same staged turn) — a turn
+ * parked on a provider that is not answering said "Waiting for <the picked
+ * provider>" and turned every `fetch failed` into "no connection", although
+ * the provider waited on can be another one: with a fallback chain it is the
+ * last link, and the local server the chain appends may be one the person
+ * never chose. A newer agent names the provider waited on and the cause on
+ * its provider_waiting frame (`provider_id`, `cause`); the strip and the
+ * transcript line say those, and without them every word is as before.
  */
 
 type Js = <T>(code: string) => Promise<T>;
@@ -123,7 +132,8 @@ const KEEP = `(() => {
   window.__t27keep = {log: S.log, sessionId: S.sessionId, agentSession: S.agentSession, busy: S.busy, pending: S.pending,
     history: S.history, room: S.room, streamId: S.streamId, turnId: S.turnId, reasonId: S.reasonId, stick: S.stick,
     settings: S.settings, toasts: S.toasts.slice(), queued: S.queued.slice(), had: 'turnStartedAt' in S, started: S.turnStartedAt,
-    fz: FZ.live, stamp: CTX055.stamp, plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode}};
+    fz: FZ.live, stamp: CTX055.stamp, plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode},
+    wait: WAIT};
   return true;
 })()`;
 const RESTORE = `(async () => { ${H}
@@ -136,6 +146,9 @@ const RESTORE = `(async () => { ${H}
     if (k.had) S.turnStartedAt = k.started; else delete S.turnStartedAt;
     FZ.live = k.fz; CTX055.stamp = k.stamp; Object.assign(PLAN, k.plan);
   }
+  // A wait a staged turn was left in (the check stopped between its frames) goes; the window's own comes back.
+  WAIT = k ? k.wait : null;
+  if (!WAIT && WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
   for (const [turn, sid] of [...RUNNING]) if (mine(turn) || mine(sid)) RUNNING.delete(turn);
   for (const sid of [...PENDING_APPROVALS.keys()]) if (mine(sid)) PENDING_APPROVALS.delete(sid);
   for (const sid of [...ATTN]) if (mine(sid)) ATTN.delete(sid);
@@ -213,6 +226,7 @@ export async function checks27(js: Js, check: Check): Promise<void> {
     await firstMessage(js, check, agent, w);
     await firstTurnLostByTheAgent(js, check, agent, w);
     await chatAlreadyListed(js, check, agent, w);
+    await waitNamesItsProvider(js, check, agent, w);
   } finally {
     /* The held answers are let go and the stand-ins come off before anything
        else is awaited, so a renderer call that never settles cannot leave
@@ -355,4 +369,110 @@ async function chatAlreadyListed(js: Js, check: Check, agent: StandIns, w: Brows
       && only(after, sid).length === 1 && only(after, sid)[0]!.name === title,
     `opened=${opened} taken=${taken} frames handled=${handled},${ended} session=${JSON.stringify(payload?.sessionId ?? null)} during=${JSON.stringify(during)} → after=${JSON.stringify(after)}`,
   );
+}
+
+/* ---- 29: what a parked turn says it is waiting for ---- */
+
+type Wait = { shown: boolean; ann: string; why: string; note: string; picked: string; before: string };
+
+/** The strip and the newest wait line in the transcript, as a person reads them. */
+const WAIT_VIEW = `(() => {
+  const strip = document.querySelector('.statusstrip.waiting');
+  const notes = S.log.filter((m) => m.k === 'system' && m.sev === 'pause' && m.note);
+  const last = notes[notes.length - 1];
+  return {shown: !!strip, ann: strip ? (strip.querySelector('.ann') || {}).textContent || '' : '',
+    why: strip ? (strip.querySelector('.ss-why') || {}).textContent || '' : '',
+    note: last ? String(last.text || '') : '', picked: String(selActiveProviderId() || ''),
+    // What the strip said before item 29, for the provider picked now.
+    before: 'Waiting for ' + (providerWord(selActiveProviderId()) || 'the provider')};
+})()`;
+
+/* The picked provider becomes a cloud one for the cases below (the window's
+   copy of the config only; nothing is written), and comes back after. */
+const PICK_CLOUD = `(() => {
+  window.__t27pick = {cfg: LIVE_CONFIG, want: SWX.want};
+  const llm = (LIVE_CONFIG && LIVE_CONFIG.llm) || {};
+  const providers = (Array.isArray(llm.providers) ? llm.providers : []).filter((p) => p && p.id !== 'aimlapi');
+  LIVE_CONFIG = Object.assign({}, LIVE_CONFIG || {}, {llm: Object.assign({}, llm,
+    {activeTextProvider: 'aimlapi', providers: providers.concat([{id: 'aimlapi', kind: 'aimlapi'}])})});
+  SWX.want = null;
+  render();
+  return {picked: selActiveProviderId(), name: providerWord('aimlapi')};
+})()`;
+const UNPICK = `(() => {
+  const k = window.__t27pick; delete window.__t27pick;
+  if (k) { LIVE_CONFIG = k.cfg; SWX.want = k.want; }
+  render();
+  return true;
+})()`;
+
+/** A provider_waiting frame as the agent writes it; `extra` adds the newer agent's fields. */
+const waiting = (sid: string, extra: Record<string, unknown> = {}) => ({
+  payload: {
+    object: "atomic.provider_waiting", session_id: sid, attempt: 1, waited_ms: 0,
+    max_wait_ms: 300_000, next_retry_ms: 30_000, reason: "fetch failed", ...extra,
+  },
+});
+const TAIL = ". The turn is paused and retries on its own for up to 5 min. Stop ends it.";
+
+/** One wait, from its frame to its end: what it showed while it lasted. */
+async function oneWait(js: Js, w: BrowserWindow, turn: string, sid: string, extra?: Record<string, unknown>): Promise<Wait & { started: boolean }> {
+  frame(w, turn, "provider_waiting", waiting(sid, extra));
+  const started = await until(js, "!!WAIT");
+  await settle(js);
+  const seen = await js<Wait>(WAIT_VIEW);
+  frame(w, turn, "provider_recovered", { payload: { object: "atomic.provider_recovered", session_id: sid, waited_ms: 1000 } });
+  await until(js, "!WAIT");
+  return { ...seen, started };
+}
+
+/* (d) A turn on screen parks three times: on a frame with no provider or
+   cause (an older agent); on one naming the local server, refused, while
+   the picked provider is a cloud one; and on one naming that cloud provider,
+   unreachable. Each wait ends before the next (provider_recovered), so each
+   draws its own transcript line. */
+async function waitNamesItsProvider(js: Js, check: Check, agent: StandIns, w: BrowserWindow): Promise<void> {
+  const sid = `${PREFIX}wait`;
+  const turn = `${PREFIX}turn-wait`;
+  agent.turns.push(turn);
+  const pressed = await js<boolean>(`(() => { ${H} return newChat(); })()`);
+  await js<boolean>(`(() => { ${H} return send('smoke t27: a message whose turn waits on a provider'); })()`);
+  const ready = pressed && (await turnTaken(js, turn));
+  named(w, turn, sid);
+  const handled = ready && (await frameNamed(js, turn, sid));
+
+  const old = await oneWait(js, w, turn, sid);
+  check(
+    "T29: a wait frame with no provider or cause (an older agent) reads exactly as before",
+    handled && old.started && old.shown && old.ann === old.before && old.why === "no connection"
+      && old.note === `The model isn’t answering (no connection)${TAIL}`,
+    JSON.stringify(old),
+  );
+
+  const pick = await js<{ picked: string; name: string }>(PICK_CLOUD);
+  try {
+    const local = await oneWait(js, w, turn, sid, { provider_id: "local-llama", cause: { kind: "refused" } });
+    const said = `${local.ann} ${local.why} ${local.note}`;
+    check(
+      "T29: a wait on the local server while a cloud provider is picked names Local models and says its server isn't running",
+      pick.picked === "aimlapi" && local.started && local.shown
+        && local.ann === "Waiting for Local models" && local.why === "the local model server isn’t running"
+        && local.note === `No answer from Local models (the local model server isn’t running)${TAIL}`
+        && !said.includes("no connection") && !said.includes(pick.name),
+      `picked=${pick.picked} → ${JSON.stringify(local)}`,
+    );
+
+    const cloud = await oneWait(js, w, turn, sid, { provider_id: "aimlapi", cause: { kind: "unreachable" } });
+    check(
+      "T29: \"no connection\" is said when the agent reports a connection failure to the provider it names",
+      cloud.started && cloud.shown && cloud.ann === `Waiting for ${pick.name}` && cloud.why === "no connection"
+        && cloud.note === `No answer from ${pick.name} (no connection)${TAIL}`,
+      JSON.stringify(cloud),
+    );
+  } finally {
+    await js<boolean>(UNPICK);
+  }
+  frame(w, turn, "done");
+  await frameEnded(js, turn);
+  await settle(js);
 }
