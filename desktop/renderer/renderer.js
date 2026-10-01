@@ -15600,6 +15600,16 @@ async function wizNextStep() {
   if (WIZ.apiKey) entry.apiKey = WIZ.apiKey;
   if (k.apiKeyHeader) entry.apiKeyHeader = k.apiKeyHeader;
   if (k.headers) entry.headers = k.headers;
+  /* Backlog 32: a blank field keeps the saved key, and the agent sends the
+     saved key before any variable — so on a provider whose saved key is one
+     it will not send, blank changes nothing. Say that here, rather than let
+     the check end on "didn't accept this key" for a key nobody typed. */
+  const savedEntry = selProviders().find((p) => p.id === id);
+  if (!WIZ.apiKey && savedEntry && savedEntry.apiKey && savedKeyInvalid(savedEntry)) {
+    WIZ.phase = 'configure'; WIZ.error = savedKeyLine(id); WIZ.errorDetail = null;
+    WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
+    render(); return;
+  }
 
   // U29: an entry this wizard wrote on an earlier pass (Back from the model
   // step, then Next again) is still this wizard's, not a pre-existing one.
