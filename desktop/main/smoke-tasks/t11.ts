@@ -10,21 +10,27 @@
  * ahead has landed and nothing else holds the agent, and goes with that
  * switch's failure or its watchdog; and a swap of a Fusion in force does not
  * wait on the daemon — it brings a daemon that is down up in the background.
+ * Starts take turns (never two `models start` at once); a stop — a cloud
+ * switch, Settings › Stop — never waits out a load: it ends it at once.
  */
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { BrowserWindow } from "electron";
+
 import { configGet, configSetWhole, type UserConfigShape } from "../agent-cli.js";
 import { resolveBinary } from "../agent-client.js";
 import {
-  afterBackgroundBringUp,
-  backgroundBringUp,
+  activateProvider,
+  bringUpAtLaunch,
+  bringUpInFlight,
+  enterFusion,
+  onBackgroundBringUp,
   runModeDaemonPlan,
   runModeWantsDaemon,
+  supersedeBringUp,
   swapFusionLegs,
-  trackBringUp,
-  type BringUp,
 } from "../backend-switch.js";
 import { planEnterFusion, planSwapLegs, resolveRunMode, type RunModeConfig } from "../run-mode.js";
 
@@ -229,6 +235,63 @@ export async function checks11(js: Js, check: Check): Promise<void> {
   }
 
   try {
+    const sf = await js<{ queued: Seats; calls: number; after: Seats }>(scenario(`
+      const {p, land} = startAhead({backend: 'fusion'});
+      await tick(30);
+      const queued = press('click');
+      land({ok: true, daemon: 'stop-failed', daemonLine: 'local-llm: stop failed — smoke t11'});
+      await p;
+      await tick(400);
+      return {queued, calls: calls.length, after: seats()};
+    `));
+    check(
+      "T11: a switch whose daemon stop failed takes the queued swap with it as well",
+      traded(sf.queued) && sf.calls === 0 && asIs(sf.after) && !sf.after.queued,
+      JSON.stringify(sf),
+    );
+  } catch (err) {
+    check("T11: a switch whose daemon stop failed takes the queued swap with it as well", false, threw(err));
+  }
+
+  try {
+    const ap = await js<{ pressed: Seats; held: { queued: boolean; calls: number }; ran: { queued: boolean; calls: number } }>(scenario(`
+      S.pending = {id: 't11', k: 'approval', approvalId: 't11'};   // a turn waits on the gate; no switch is landing
+      render();
+      const pressed = press('click');
+      await tick(250);
+      const held = {queued: FZ.swapQueued, calls: calls.length};
+      S.pending = null; render();   // answered, and that turn is over
+      await tick(400);
+      return {pressed, held, ran: {queued: FZ.swapQueued, calls: calls.length}};
+    `));
+    check(
+      "T11: ⇄ pressed under an open approval queues the swap instead of restarting the agent under the gate",
+      traded(ap.pressed) && ap.pressed.queued && /approval is answered/.test(ap.pressed.tip)
+        && ap.held.queued && ap.held.calls === 0 && !ap.ran.queued && ap.ran.calls === 1,
+      JSON.stringify(ap),
+    );
+  } catch (err) {
+    check("T11: ⇄ pressed under an open approval queues the swap", false, threw(err));
+  }
+
+  // A ⇄'s background start can end 90 s later, in whatever chat is open: a toast and the app line, never a row there.
+  try {
+    const keep = await js<{ log: number; toasts: number }>("({log: S.log.length, toasts: S.toasts.length})");
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send("cli:daemon", { daemon: "start-failed", error: "smoke t11: the model did not start", modelId: "qwen-3.5-4b", via: "swap" });
+    }
+    await wait(300);
+    const seen = await js<{ log: number; toast: { t: string; s: string } | null }>("({log: S.log.length, toast: window.__lastToast()})");
+    check(
+      "T11: a background start that failed is a toast, not a row in the chat that happens to be open",
+      seen.log === keep.log && seen.toast?.t === "The local model did not start" && /smoke t11/.test(seen.toast?.s ?? ""),
+      JSON.stringify({ keep, seen }),
+    );
+  } catch (err) {
+    check("T11: a background start that failed is a toast, not a row in the chat", false, threw(err));
+  }
+
+  try {
     const w = await js<{ queued: Seats; fired: Seats & { pending: number; err: string | null }; calls: number; after: Seats }>(scenario(`
       const {p, land} = startAhead({backend: 'fusion'});
       await tick(30);
@@ -384,126 +447,211 @@ export async function checks11(js: Js, check: Check): Promise<void> {
     JSON.stringify(d),
   );
 
-  /* One bring-up at a time: the launch start and a swap's background start
-     share one slot, and a path that touches the daemon waits for it. */
-  {
-    const ran: string[] = [];
-    let release: () => void = () => {};
-    const first = trackBringUp(() => new Promise<BringUp>((res) => { ran.push("first"); release = () => res({ daemon: "started" }); }));
-    const second = trackBringUp(async () => { ran.push("second"); return { daemon: "started" }; });
-    let waited = false;
-    const waiter = afterBackgroundBringUp().then((r) => { waited = true; return r; });
-    await wait(50);
-    const early = { waited, inFlight: backgroundBringUp() === first };
-    release();
-    const r = await waiter;
-    await wait(0);
-    check(
-      "T11: one daemon bring-up at a time — a second asked for while one runs gets that one, and the daemon's other paths wait for it",
-      second === first && JSON.stringify(ran) === '["first"]' && early.inFlight && !early.waited && r?.daemon === "started"
-        && backgroundBringUp() === null,
-      JSON.stringify({ ran, early, r, after: backgroundBringUp() }),
-    );
-  }
-
-  /* The real swapFusionLegs against this state dir, the local model on disk
-     and its daemon down — the case that stuck. Every CLI call goes through a
-     guard that writes its verb down. `models start` and `models stop` never
-     reach the agent: the start is a two-second sleep that answers ok, so no
-     llama-server can come up here whatever the code does; and `models status`
-     says `running` while the guard's flag file is there. */
+  /* The real daemon paths, against this state dir with the local model on
+     disk, through a guard in front of the agent binary. The guard writes
+     every verb down and never lets `models start`, `models stop` or `models
+     status` reach the agent: the start is a sleep of `slow` seconds that
+     marks the daemon up as it begins (the pid file is written at the spawn)
+     and again when it ends; the stop clears the mark; the status reads it. So
+     no llama-server can come up here whatever the code does — and a start
+     that was killed never writes its end. */
   const live = (await configGet()).config as UserConfigShape | undefined;
   const bin = resolveBinary();
   if (!live || !bin) {
-    check("T11: a swap does not wait for the daemon, and brings one that is down up behind it", false, !live ? "config not read" : "no agent binary");
+    check("T11: the daemon paths ran against a guarded agent", false, !live ? "config not read" : "no agent binary");
     return;
   }
   const dir = mkdtempSync(join(tmpdir(), "aa-t11-"));
   const log = join(dir, "verbs.log");
   const up = join(dir, "daemon-up");
+  const slow = join(dir, "slow");
   const guard = join(dir, "atag-guard.sh");
   const q = (p: string) => `'${p.replace(/'/g, `'\\''`)}'`;
   writeFileSync(guard, [
     "#!/bin/sh",
     `case "$1 $2" in`,
-    `  "models start") echo "models start begin" >> ${q(log)}; sleep 2; echo "models start end" >> ${q(log)}; exit 0;;`,
-    `  "models stop") echo "models stop" >> ${q(log)}; exit 0;;`,
+    `  "models start") echo "models start begin" >> ${q(log)}; : > ${q(up)}`,
+    `    sleep "$(cat ${q(slow)} 2>/dev/null || echo 2)"`,
+    `    echo "models start end" >> ${q(log)}; : > ${q(up)}; exit 0;;`,
+    `  "models stop") echo "models stop" >> ${q(log)}; rm -f ${q(up)}; exit 0;;`,
     `  "models status") echo "models status" >> ${q(log)}`,
-    `    if [ -f ${q(up)} ]; then printf 'mode:           managed\\ndaemon:         running (pid 1)\\nhealth:         ok\\n'; exit 0; fi;;`,
+    `    if [ -f ${q(up)} ]; then printf 'mode:           managed\\ndaemon:         running (pid 1)\\nhealth:         ok\\n'`,
+    `    else printf 'mode:           managed\\ndaemon:         stopped\\nhealth:         down\\n'; fi; exit 0;;`,
     `  *) printf '%s %s\\n' "$1" "$2" >> ${q(log)};;`,
     "esac",
     `exec ${q(bin)} "$@"`,
     "",
   ].join("\n"));
   chmodSync(guard, 0o755);
-  writeFileSync(log, "");
-  const keepBin = process.env.ATOMIC_AGENT_BIN;
   const verbs = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
-  // Never let the real binary back in while a background start could still reach it.
-  const settle = async () => { const bg = backgroundBringUp(); if (bg) await Promise.race([bg, wait(60_000)]); return !backgroundBringUp(); };
-  try {
-    const staged = clone(live);
-    const llm = staged.llm ?? {};
-    staged.llm = {
+  const count = (x: string) => verbs().filter((v) => v === x).length;
+  const reset = (seconds: number, daemonUp = false) => {
+    writeFileSync(log, "");
+    writeFileSync(slow, String(seconds));
+    if (daemonUp) writeFileSync(up, ""); else rmSync(up, { force: true });
+  };
+  const until = async (pred: () => boolean, ms: number) => { const end = Date.now() + ms; while (!pred() && Date.now() < end) await wait(50); return pred(); };
+  const settle = async () => {
+    const bg = bringUpInFlight();
+    if (bg) await Promise.race([bg, wait(30_000)]);
+    if (bringUpInFlight()) { supersedeBringUp(); await wait(500); }
+    return !bringUpInFlight();
+  };
+  // Every report a background bring-up makes, on its way to main's own (the agent log and the window).
+  const reports: Array<{ daemon: string; via: string }> = [];
+  const mainReport = onBackgroundBringUp((r) => { reports.push({ daemon: r.daemon, via: r.via }); mainReport(r); });
+  const withProviders = (cfg: UserConfigShape, active: string, runMode: NonNullable<UserConfigShape["llm"]>["runMode"]): UserConfigShape => {
+    const c = clone(cfg);
+    const llm = c.llm ?? {};
+    c.llm = {
       ...llm,
-      activeTextProvider: "aimlapi",
-      providers: [...(llm.providers ?? []).filter((p) => p.id !== "aimlapi"), { id: "aimlapi", kind: "aimlapi", defaultChatModel: "x-ai/grok-4-6" }],
-      runMode: { ...llm.runMode, mode: "fusion", fusion: { orchestratorProvider: "aimlapi", workerProvider: "local-llama" } },
+      activeTextProvider: active,
+      providers: [...(llm.providers ?? []).filter((p) => p.id !== "aimlapi" && p.id !== "openrouter"),
+        // Inline keys so the cloud rows are usable; nothing is ever sent with them.
+        { id: "aimlapi", kind: "aimlapi", defaultChatModel: "x-ai/grok-4-6", apiKey: "t11-not-a-key" },
+        { id: "openrouter", kind: "openrouter", defaultChatModel: "qwen/qwen3.7-flash", apiKey: "t11-not-a-key" }],
+      runMode,
     };
-    const w = await configSetWhole(staged);
+    return c;
+  };
+  const fusionCfg = withProviders(live, "aimlapi", { mode: "fusion", fusion: { orchestratorProvider: "aimlapi", workerProvider: "local-llama" } });
+  const localCfg = withProviders(live, "local-llama", { mode: "local" });
+  const keepBin = process.env.ATOMIC_AGENT_BIN;
+  try {
     process.env.ATOMIC_AGENT_BIN = guard;
 
-    // 1. The daemon is down.
+    // 1. A ⇄ with the daemon down: back after the config, the daemon coming up behind it.
+    await configSetWhole(fusionCfg);
+    reset(2);
     const t0 = Date.now();
     const res = await swapFusionLegs();
     const ms = Date.now() - t0;
     const atReturn = verbs();
-    const bg = backgroundBringUp();
-    // Settings › Models › Start pressed while that start is still running: it waits for it, and starts nothing twice.
-    const settings = await js<{ ok: boolean }>("window.atomic.modelsStart()");
+    const bg = bringUpInFlight();
+    // Settings › Models › Start pressed while that start is on its way: it waits its turn and starts nothing twice.
+    const settings = await js<{ ok: boolean; alreadyRunning?: boolean }>("window.atomic.modelsStart()");
     const r = bg ? await bg : null;
-    const all = verbs();
     await wait(300);
     const told = await js<string[]>("LOGS.slice(-6).map((l) => l[2])");
     const now = (await configGet()).config as UserConfigShape | undefined;
     check(
       "T11: a swap does not wait for the daemon, and brings one that is down up behind it",
-      w.ok && res.ok && res.restart === true && res.runMode?.after === "fusion" && !res.error
-        && now?.llm?.activeTextProvider === "local-llama" && now.llm.runMode?.fusion?.orchestratorProvider === "local-llama"
-        && now.llm.runMode?.fusion?.workerProvider === "aimlapi"
-        // the swap was back before the start it set off had finished
-        && !atReturn.includes("models start end")
-        && r?.daemon === "started" && ["models list", "models status", "models start begin", "models start end"].every((x) => all.includes(x))
+      res.ok && res.restart === true && res.runMode?.after === "fusion" && !res.error
+        && now?.llm?.activeTextProvider === "local-llama" && now.llm.runMode?.fusion?.workerProvider === "aimlapi"
+        && !atReturn.some((v) => /^models (start|status)/.test(v))
+        && r?.daemon === "started" && ["models list", "models status", "models start begin", "models start end"].every((x) => verbs().includes(x))
+        && reports.length === 1 && reports[0]!.via === "swap" && reports[0]!.daemon === "started"
         && told.some((l) => /started the local model daemon \(qwen-3\.5-4b\)/.test(l)),
-      `swap ${ms} ms; at return ${JSON.stringify(atReturn)}; background ${JSON.stringify(r)}; all ${JSON.stringify(all)}; window ${JSON.stringify(told.slice(-2))}`,
+      `swap ${ms} ms; at return ${JSON.stringify(atReturn)}; background ${JSON.stringify(r)}; reports ${JSON.stringify(reports)}; verbs ${JSON.stringify(verbs())}`,
     );
     check(
-      "T11: Settings' Start pressed during that background start waits for it and does not start the daemon twice",
-      settings?.ok === true && all.filter((x) => x === "models start begin").length === 1,
-      `settings ${JSON.stringify(settings)}; starts ${all.filter((x) => x === "models start begin").length}`,
+      "T11: Settings' Start during that start waits its turn, starts nothing twice, and says the daemon is already running",
+      settings?.ok === true && settings.alreadyRunning === true && count("models start begin") === 1,
+      `settings ${JSON.stringify(settings)}; starts ${count("models start begin")}`,
+    );
+    const msg = await js<string>(`(async () => {
+      const keep = {msg: LLMP.msg, status: LLMP.status, err: LLMP.statusErr};
+      try { await llmDaemon('start'); return (LLMP.msg && LLMP.msg.text) || ''; }
+      finally { LLMP.msg = keep.msg; LLMP.status = keep.status; LLMP.statusErr = keep.err; }
+    })()`);
+    check(
+      "T11: Settings' Start on a daemon that is already up does not say it started one",
+      msg === "local-llm: daemon already running" && count("models start begin") === 1,
+      JSON.stringify(msg),
     );
 
-    // 2. The daemon is up: the swap back starts nothing.
-    writeFileSync(up, "");
-    writeFileSync(log, "");
+    // 2. The daemon up: the swap back's background check starts nothing and reports nothing.
+    reports.length = 0;
+    reset(2, true);
     const res2 = await swapFusionLegs();
-    const bg2 = backgroundBringUp();
-    const r2 = bg2 ? await bg2 : null;
-    const all2 = verbs();
+    const r2 = await (bringUpInFlight() ?? Promise.resolve(null));
     check(
       "T11: with the daemon up, a swap's background check starts nothing",
-      res2.ok && r2?.daemon === "untouched" && all2.includes("models status") && !all2.some((x) => /^models (start|stop)/.test(x)),
-      `background ${JSON.stringify(r2)}; verbs ${JSON.stringify(all2)}`,
+      res2.ok && r2?.daemon === "untouched" && verbs().includes("models status") && count("models start begin") === 0 && reports.length === 0,
+      `background ${JSON.stringify(r2)}; verbs ${JSON.stringify(verbs())}; reports ${JSON.stringify(reports)}`,
+    );
+
+    // 3. The launch start loading on the local route, and the operator picks a cloud provider: the stop does not wait for the load.
+    await configSetWhole(localCfg);
+    reports.length = 0;
+    reset(10);
+    const launch = bringUpAtLaunch("qwen-3.5-4b");
+    await until(() => verbs().includes("models start begin"), 10_000);
+    const t3 = Date.now();
+    const cloud = await activateProvider("aimlapi");
+    const ms3 = Date.now() - t3;
+    const atReturn3 = verbs();
+    const r3 = await launch;
+    await until(() => false, Math.max(0, 11_000 - (Date.now() - t3)));   // past the end the killed start would have had
+    check(
+      "T11: a cloud switch while the local model loads stops it at once, without waiting for the load",
+      cloud.ok && cloud.daemon === "stopped" && ms3 < 8_000 && !atReturn3.includes("models start end") && atReturn3.includes("models stop"),
+      `cloud switch ${ms3} ms (the load is 10 s); daemon ${cloud.daemon}; verbs at return ${JSON.stringify(atReturn3)}`,
+    );
+    check(
+      "T11: the load that cloud switch superseded reports nothing and brings no daemon up after the stop",
+      r3.daemon === "superseded" && reports.length === 0 && count("models start begin") === 1
+        && !verbs().includes("models start end") && !existsSync(up),
+      `launch ${JSON.stringify(r3)}; reports ${JSON.stringify(reports)}; verbs ${JSON.stringify(verbs())}; daemon up ${existsSync(up)}`,
+    );
+
+    // 4. Settings › Stop while a start is on its way: at once.
+    reports.length = 0;
+    reset(10);
+    const launch4 = bringUpAtLaunch("qwen-3.5-4b");
+    await until(() => verbs().includes("models start begin"), 10_000);
+    const t4 = Date.now();
+    const stop = await js<{ ok: boolean }>("window.atomic.modelsStop()");
+    const ms4 = Date.now() - t4;
+    const r4 = await launch4;
+    await until(() => false, Math.max(0, 11_000 - (Date.now() - t4)));
+    check(
+      "T11: Settings' Stop while the local model loads stops it at once, and the load it ended reports nothing and comes back up never",
+      stop?.ok === true && ms4 < 3_000 && r4.daemon === "superseded" && reports.length === 0
+        && count("models start begin") === 1 && !verbs().includes("models start end") && !existsSync(up),
+      `stop ${ms4} ms (the load is 10 s); launch ${JSON.stringify(r4)}; verbs ${JSON.stringify(verbs())}; daemon up ${existsSync(up)}`,
+    );
+
+    // 5. The launch start finds a ⇄'s bring-up on its way: one start, logged once.
+    await configSetWhole(fusionCfg);
+    reports.length = 0;
+    reset(2);
+    await swapFusionLegs();
+    const adopted = bringUpAtLaunch("qwen-3.5-4b");
+    const r5 = await adopted;
+    await wait(200);
+    check(
+      "T11: the launch start that finds a swap's start on its way adopts it — one start, one log line",
+      r5.daemon === "started" && count("models start begin") === 1 && reports.length === 1 && reports[0]!.via === "swap",
+      `launch ${JSON.stringify(r5)}; reports ${JSON.stringify(reports)}; verbs ${JSON.stringify(verbs())}`,
+    );
+
+    // 6. A route change that makes the start moot — both seats to the cloud — ends it, and what it spawned goes.
+    await configSetWhole(fusionCfg);
+    reports.length = 0;
+    reset(10);
+    await swapFusionLegs();
+    const bg6 = bringUpInFlight();
+    await until(() => verbs().includes("models start begin"), 10_000);
+    const both = await enterFusion({ orchestratorProvider: "openrouter", workerProvider: "aimlapi" });
+    const r6 = bg6 ? await bg6 : null;
+    await wait(300);
+    check(
+      "T11: moving the seats to the cloud ends a start on its way — no report, and the half-started daemon is stopped",
+      both.ok && r6?.daemon === "superseded" && reports.length === 0 && verbs().includes("models stop")
+        && !verbs().includes("models start end") && !existsSync(up),
+      `enterFusion ${JSON.stringify({ ok: both.ok, error: both.error })}; background ${JSON.stringify(r6)}; verbs ${JSON.stringify(verbs())}`,
     );
   } catch (err) {
-    check("T11: a swap does not wait for the daemon, and brings one that is down up behind it", false, threw(err));
+    check("T11: the daemon paths ran against a guarded agent", false, threw(err));
   } finally {
+    onBackgroundBringUp(mainReport);
+    // Never let the real binary back in while a start could still reach it.
     if (await settle()) {
       if (keepBin === undefined) delete process.env.ATOMIC_AGENT_BIN; else process.env.ATOMIC_AGENT_BIN = keepBin;
       rmSync(dir, { recursive: true, force: true });
     } else {
-      check("T11: the background bring-up settled before the guard was taken away", false, "still running after 60 s — the guard stays in place");
-      if (existsSync(up)) rmSync(up, { force: true });
+      check("T11: no bring-up was left running before the guard was taken away", false, "still running — the guard stays in place");
     }
     await configSetWhole(live);
   }
