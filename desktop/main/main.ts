@@ -327,7 +327,11 @@ let pullUpdate: DownloadSlot | null = null;
    download and the running pull's `done` frame reached nobody: the model was
    never started. Every refusal now says which download the slot is running,
    with its last progress frame, so the window can follow its own model's
-   pull instead (renderer dlAdopt); any other download stays a refusal. */
+   pull instead (renderer dlAdopt); any other download stays a refusal.
+   Deferred F8: it is also the one test every download handler refuses on,
+   whichever download runs. The projector's own guard missed `models update`
+   and the embedding pull's missed the projector, so two ran at once, and the
+   one Cancel (cli:cancelPull) stopped only one of them. */
 function downloadRunning(): { kind: string; id: string; last: Record<string, unknown> | null } | null {
   if (hfProjector) return { kind: "projector", id: hfProjector.id, last: null };
   const slot = pullUpdate ?? pull;
@@ -888,7 +892,8 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || pullUpdate || hfProjector) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     let slot: DownloadSlot | null = null;
     const started = modelsPull(id, (line) =>
       pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
@@ -907,7 +912,8 @@ function wireIpc(client: AgentClient): void {
      slot, because the CLI stops the daemon to install the zip and two
      concurrent downloads into one data dir is not a thing to allow. */
   ipcMain.handle("cli:modelsUpdateStream", () => {
-    if (pull || pullUpdate || hfProjector) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     const id = "llama.cpp";
     let slot: DownloadSlot | null = null;
     const started = modelsUpdateStream((line) =>
@@ -1024,7 +1030,8 @@ function wireIpc(client: AgentClient): void {
     if (typeof mmprojFilename !== "string" || !isSafeModelFilename(mmprojFilename)) {
       return { ok: false, error: "unsafe projector filename" };
     }
-    if (pull || hfProjector) return { ok: false, error: "a download is already running" };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     /* Backlog 18 review: the slot is taken BEFORE `models status` is read. A
        Cancel pressed during that read found nothing to abort (cli:cancelPull
        answered false), and the projector then came down in full under a row
@@ -1488,7 +1495,8 @@ function wireIpc(client: AgentClient): void {
   // Shares the one `pull` slot and the `cli:pull` stream with `cli:modelsPull`.
   ipcMain.handle("cli:modelsPullEmbedding", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    if (pull || pullUpdate) return { ok: false, error: DOWNLOAD_BUSY, running: downloadRunning() };
+    const running = downloadRunning();
+    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     let slot: DownloadSlot | null = null;
     const started = modelsPullEmbedding(id, (line) =>
       pullFrame(slot, { id, line, ...parsePullProgress(line, "weights") }),
