@@ -15,9 +15,8 @@ function http(
 }
 
 describe("isCredentialRejection", () => {
-  it("is a cloud 401 or 403: the key is wrong, missing, or could not be sent", () => {
+  it("is a cloud 401: the key is wrong, missing, or could not be sent", () => {
     expect(isCredentialRejection(http(401))).toBe(true);
-    expect(isCredentialRejection(http(403))).toBe(true);
     expect(
       isCredentialRejection(
         new OpenAiHttpError(
@@ -34,10 +33,36 @@ describe("isCredentialRejection", () => {
     ).toBe(true);
   });
 
+  it("is a 403 only when it is about the key", () => {
+    expect(
+      isCredentialRejection(
+        http(403, 'openai provider 403: {"error":{"message":"Invalid API key provided"}}'),
+      ),
+    ).toBe(true);
+    expect(
+      isCredentialRejection(
+        new OpenAiHttpError("openai provider 403: forbidden", 403, "http://x/y", false, null, "p", undefined, {
+          keyProblem: "missing",
+        }),
+      ),
+    ).toBe(true);
+    // OpenRouter's moderation refusal is a 403 about the input, not the key.
+    expect(
+      isCredentialRejection(
+        http(
+          403,
+          'openai provider 403: {"error":{"message":"Your chosen model requires moderation and your input was flagged"}}',
+        ),
+      ),
+    ).toBe(false);
+    expect(isCredentialRejection(http(403))).toBe(false);
+  });
+
   it("is nothing else", () => {
     for (const status of [null, 400, 402, 404, 429, 500, 503]) {
       expect(isCredentialRejection(http(status))).toBe(false);
     }
+    expect(isCredentialRejection(http(401, "boom", true))).toBe(false);
     expect(isCredentialRejection(new TypeError("fetch failed"))).toBe(false);
     expect(
       isCredentialRejection(new LlamaServerError("nope", 401, "http://l")),

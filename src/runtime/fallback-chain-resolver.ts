@@ -1,5 +1,5 @@
 import {
-  lacksRequiredApiKey,
+  lacksRequiredApiKeyIn,
   resolveFallbackChain,
   withoutKeylessLinks,
   withoutUnbuiltLinks,
@@ -56,14 +56,10 @@ export function createFallbackChainResolver(
         },
       );
     }
-    const entries = new Map(llm.providers.map((p) => [p.id, p]));
     const keylessNow = new Set<string>();
     resolved = withoutKeylessLinks(
       resolved,
-      (id) => {
-        const entry = entries.get(id);
-        return entry !== undefined && lacksRequiredApiKey(entry);
-      },
+      lacksRequiredApiKeyIn(llm),
       (id) => {
         keylessNow.add(id);
         if (keylessLinks.has(id)) return;

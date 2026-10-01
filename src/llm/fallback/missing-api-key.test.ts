@@ -52,6 +52,18 @@ describe("lacksRequiredApiKey", () => {
         headers: { "X-Api-Key": "sk-ant-test" },
       }),
     ).toBe(false);
+    // Any header named like a credential: a vendor's own scheme counts.
+    expect(
+      lacksRequiredApiKey({
+        id: "gemini",
+        kind: "gemini",
+        headers: { "x-goog-api-key": "AIza-test" },
+      }),
+    ).toBe(false);
+    // An empty one does not.
+    expect(
+      lacksRequiredApiKey({ ...DASHSCOPE, headers: { Authorization: " " } }),
+    ).toBe(true);
   });
 
   it("is never a server that may need no key", () => {

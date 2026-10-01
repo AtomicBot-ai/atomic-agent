@@ -1,5 +1,8 @@
 import { presetForEntryId } from "../../tui/providers/provider-presets.js";
-import type { LlmProviderConfigEntry } from "../provider/registry/provider-types.js";
+import type {
+  LlmProviderConfigEntry,
+  ResolvedLlmConfig,
+} from "../provider/registry/provider-types.js";
 
 /**
  * Kinds that only ever talk to the vendor's own cloud API, which answers
@@ -7,8 +10,12 @@ import type { LlmProviderConfigEntry } from "../provider/registry/provider-types
  */
 const KEYED_CLOUD_KINDS = new Set(["openrouter", "aimlapi", "gemini"]);
 
-/** Header names that carry a credential when an entry sets one by hand. */
-const CREDENTIAL_HEADERS = new Set(["authorization", "x-api-key", "api-key"]);
+/**
+ * A header name that may carry a credential an entry sets by hand
+ * (`authorization`, `x-api-key`, `x-goog-api-key`, `x-auth-token`, ...).
+ * Broad on purpose: a false match only means a link is tried as before.
+ */
+const CREDENTIAL_HEADER = /key|auth|token/i;
 
 /**
  * Is this a link that cannot authenticate: one that talks to a service
@@ -43,12 +50,31 @@ export function lacksRequiredApiKey(entry: LlmProviderConfigEntry): boolean {
   return host !== null && host === hostOf(preset.baseUrl);
 }
 
+/** `lacksRequiredApiKey` by chain id, over the providers of `llm`. */
+export function lacksRequiredApiKeyIn(
+  llm: Pick<ResolvedLlmConfig, "providers">,
+): (id: string) => boolean {
+  const entries = new Map(llm.providers.map((p) => [p.id, p]));
+  return (id) => {
+    const entry = entries.get(id);
+    return entry !== undefined && lacksRequiredApiKey(entry);
+  };
+}
+
 function hasCredential(entry: LlmProviderConfigEntry): boolean {
-  if (entry.apiKey && entry.apiKey.trim().length > 0) return true;
+  if (typeof entry.apiKey === "string" && entry.apiKey.trim().length > 0) {
+    return true;
+  }
   const named = entry.apiKeyHeader?.trim().toLowerCase();
-  return Object.keys(entry.headers ?? {}).some((name) => {
+  // Read defensively: this runs on every pick, and a hand-edited config
+  // with a non-string header value must not stop every turn.
+  return Object.entries(entry.headers ?? {}).some(([name, value]) => {
     const lower = name.trim().toLowerCase();
-    return CREDENTIAL_HEADERS.has(lower) || lower === named;
+    return (
+      typeof value === "string" &&
+      value.trim().length > 0 &&
+      (CREDENTIAL_HEADER.test(lower) || lower === named)
+    );
   });
 }
 

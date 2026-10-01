@@ -11,21 +11,29 @@ import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.
  * from one that refused what it was sent; these two can.
  */
 
+/** A provider's words for a credential problem, in a 403's message. */
+const KEY_WORDING =
+  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
+
 /**
  * Did the link refuse its credentials?
  *
- * A 401 or 403 from a cloud link: the key is wrong, dead, missing, or
- * could not be sent at all (`openAiFetch` types a key that cannot form a
- * header as a 401 without sending anything). Nothing about it changes
- * until someone edits the key, so it is the one failure that outranks
- * whatever the rest of the chain said: see `runWithFallback`.
+ * A 401 from a cloud link: the key is wrong, dead, missing, or could not
+ * be sent at all (`openAiFetch` types a key that cannot form a header as
+ * a 401 without sending anything). Nothing about it changes until
+ * someone edits the key, so it is the one failure that outranks whatever
+ * the rest of the chain said: see `runWithFallback`.
+ *
+ * A 403 counts only when it is about the key: no key was sent, or the
+ * provider's words say so. A 403 is also a provider's "no" to the
+ * request itself (OpenRouter answers one for input its moderation
+ * flagged), and that one must not be read out as a key problem.
  */
 export function isCredentialRejection(err: unknown): boolean {
-  return (
-    err instanceof OpenAiHttpError &&
-    !err.timedOut &&
-    (err.status === 401 || err.status === 403)
-  );
+  if (!(err instanceof OpenAiHttpError) || err.timedOut) return false;
+  if (err.status === 401) return true;
+  if (err.status !== 403) return false;
+  return err.keyProblem !== undefined || KEY_WORDING.test(err.message);
 }
 
 /**
