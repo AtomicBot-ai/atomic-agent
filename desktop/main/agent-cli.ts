@@ -41,6 +41,20 @@ export interface CliResult {
   error?: string;
 }
 
+/**
+ * What a failed `atag` run said, as a line a person can read: the agent's
+ * own message without the stack frames under it. A thrown error prints
+ * `Error: ENOENT … at statSync (node:fs…) at readLogTail (file:///…)`, and
+ * the Models pane put all of it in a red banner on a fresh install. The
+ * full stderr still travels in `CliResult.stderr` for the logs.
+ */
+export function plainCliError(stderr: string): string {
+  const frame = /^\s*at\s.*(?:file:\/\/|node:|\/|\\).*:\d+(?::\d+)?\)?\s*$/;
+  return stderr.split("\n")
+    .filter((l) => !frame.test(l) && !/^\s*Node\.js v\d+\.\d+/.test(l))
+    .join("\n").trim();
+}
+
 async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliResult> {
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
@@ -81,7 +95,7 @@ async function cli(args: string[], timeout = 30_000, cwd?: string): Promise<CliR
           + ` — it may be busy or starting up. Try again.${detail ? ` (${detail.slice(0, 200)})` : ""}`,
       };
     }
-    const said = e.stderr?.trim();
+    const said = plainCliError(e.stderr ?? "");
     return {
       ok: false,
       stdout: e.stdout ?? "",
@@ -1922,7 +1936,10 @@ export interface ModelsStatus {
  */
 export async function modelsStatus(): Promise<{ ok: boolean; status?: ModelsStatus; error?: string }> {
   const res = await cli(["models", "status"], 30_000);
-  if (!res.ok) return { ok: false, error: res.error };
+  /* An agent that printed the whole status and then failed on an extra
+     (0.6.6 throws reading a log that does not exist yet) still told us the
+     status. Use it rather than turning a complete answer into an error. */
+  if (!res.ok && !/^mode:/m.test(res.stdout)) return { ok: false, error: res.error };
   const fields: Record<string, string> = {};
   for (const line of res.stdout.split("\n")) {
     const m = line.match(/^([a-z ]+):\s*(.*)$/);

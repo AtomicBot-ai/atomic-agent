@@ -419,9 +419,16 @@ export async function runLocalModelsStatus(): Promise<number> {
   // `health: ok` is a socket answering, not a model working. A server
   // that cannot allocate keeps its socket and fails every decode, so
   // the one place that knows is its own log.
-  const fault = describeServerFault(
-    readLogTail(resolveLogFilePath(dataDir), 256 * 1024).text,
-  );
+  // No log is the normal state before the server has ever started (a fresh
+  // install), not a failure: the status above is complete and nothing has
+  // faulted. An unreadable log is no reason to fail a status read either.
+  let logText = "";
+  try {
+    logText = readLogTail(resolveLogFilePath(dataDir), 256 * 1024).text;
+  } catch {
+    logText = "";
+  }
+  const fault = describeServerFault(logText);
   if (fault) {
     process.stdout.write(`fault:          ${fault.summary}\n`);
   }
