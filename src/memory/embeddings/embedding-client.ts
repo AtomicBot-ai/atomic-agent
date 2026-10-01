@@ -90,6 +90,12 @@ export interface LlamaEmbeddingClientOptions {
   timeoutMs?: number;
   /** Injectable fetch for tests. Defaults to `globalThis.fetch`. */
   fetch?: typeof fetch;
+  /**
+   * The bearer key the daemon requires, read per request (a managed
+   * daemon runs with `--api-key-file`, #582). Unset or `null`: no
+   * `authorization` header.
+   */
+  getApiKey?: () => string | null | undefined;
 }
 
 /**
@@ -102,6 +108,7 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
   private readonly url: string;
   private readonly timeoutMs: number;
   private readonly fetchFn: typeof fetch;
+  private readonly getApiKey: () => string | null | undefined;
 
   constructor(opts: LlamaEmbeddingClientOptions) {
     if (!Number.isInteger(opts.dim) || opts.dim <= 0) {
@@ -114,6 +121,7 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
     this.url = opts.url.replace(/\/+$/, "");
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.fetchFn = opts.fetch ?? globalThis.fetch;
+    this.getApiKey = opts.getApiKey ?? (() => null);
   }
 
   async embed(req: EmbedRequest): Promise<EmbedResult> {
@@ -121,9 +129,14 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
     const signal = mergeSignals(req.signal, ctrl.signal);
     try {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+      const apiKey = this.getApiKey();
+      if (apiKey) headers.authorization = `Bearer ${apiKey}`;
       const res = await this.fetchFn(`${this.url}/embedding`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({ content: req.text }),
         signal,
       });

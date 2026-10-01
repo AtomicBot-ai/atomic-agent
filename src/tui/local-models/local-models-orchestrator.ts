@@ -279,10 +279,11 @@ export class LocalModelsOrchestrator {
       }
     },
     checkWedge: async () => {
-      const base = `http://127.0.0.1:${getConfig().localModels.managed.port}`;
+      const cfg = getConfig();
+      const base = `http://127.0.0.1:${cfg.localModels.managed.port}`;
       const [health, slots] = await Promise.all([
         probeEndpoint(`${base}/health`, 2_000),
-        probeEndpoint(`${base}/slots`, 5_000),
+        probeEndpoint(`${base}/slots`, 5_000, fetch, cfg.localModels.apiKey),
       ]);
       return this.wedgeWatch.observe({ at: Date.now(), health, slots });
     },

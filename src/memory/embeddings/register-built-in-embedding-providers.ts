@@ -1,3 +1,4 @@
+import { getConfig } from "../../config/index.js";
 import { LlamaEmbeddingClient } from "./embedding-client.js";
 import {
   OpenAiEmbeddingProvider,
@@ -28,6 +29,10 @@ export function registerBuiltInEmbeddingProviderKinds(): void {
       url: entry.baseUrl ?? `http://127.0.0.1:${port}`,
       dim: def.dim,
       model: def.id,
+      // Same key as the chat daemon: both managed daemons are launched
+      // with `localModels.apiKey` (#582). Read per request so a mode
+      // switch mid-session is picked up.
+      getApiKey: () => entry.apiKey || getConfig().localModels.apiKey,
     });
   });
 

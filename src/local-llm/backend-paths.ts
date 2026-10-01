@@ -53,6 +53,15 @@ export function resolveLogFilePath(dataDir: string): string {
 }
 
 /**
+ * The bearer key both managed daemons are launched with (`--api-key-file`,
+ * see `managed-api-key.ts`), next to the pid file so every process that
+ * attaches to the daemon finds the same key. Mode 0600.
+ */
+export function resolveApiKeyFilePath(dataDir: string): string {
+  return join(dataDir, "llama-server.key");
+}
+
+/**
  * The throughput the chat daemon measured at start (`probeThroughput`
  * in `daemon-lifecycle.ts`), next to its pid file so the runtime that
  * connects later — the TUI after `models start`, a resumed session —

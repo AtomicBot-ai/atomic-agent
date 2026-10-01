@@ -48,6 +48,7 @@ import {
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
 import { getLocalModelDef } from "./models-catalog.js";
+import { resetConfigCache } from "../config/config-cache.js";
 import { encodeSyntheticGguf, gemma4Pairs } from "./gguf-metadata.fixtures.js";
 import { EventEmitter } from "node:events";
 
@@ -990,6 +991,121 @@ describe("--swa-full (F12)", () => {
       expect(readLaunchRecord(dataDir, 7)?.swaFull).toBe(true);
       expect(readLaunchRecord(dataDir, 8)).toBeNull();
       expect(readLaunchRecord(dataDir, null)).toBeNull();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("managed launch requires an api key (#582)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+    delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
+    resetConfigCache();
+  });
+
+  function stageBackend(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    const model = getLocalModelDef("qwen-3.5-4b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, "gguf", "utf-8");
+  }
+
+  /** A healthy server that records the auth header of the probe POST. */
+  function stubServer(probeAuth: Array<string | null>): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(afterSpawn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith("/health")) {
+          return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+        }
+        if (String(url).endsWith("/v1/models")) {
+          return new Response(JSON.stringify({ data: [{ id: "qwen-3.5-4b" }] }), { status: 200 });
+        }
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        probeAuth.push(headers.authorization ?? null);
+        return new Response(
+          JSON.stringify({ timings: { predicted_n: 64, predicted_per_second: 10 } }),
+          { status: 200 },
+        );
+      })),
+    );
+  }
+
+  function spawnedArgs(call: number): string[] {
+    return spawnMock.mock.calls[call]![1] as string[];
+  }
+
+  it("buildLlamaServerArgs appends --api-key-file for a persisted key", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, serverAuth: { apiKey: "k", apiKeyFile: "/tmp/data/llama-server.key" } },
+      "/tmp/m.gguf",
+      "qwen-3.5-4b",
+    );
+    expect(args.slice(-2)).toEqual(["--api-key-file", "/tmp/data/llama-server.key"]);
+    expect(args).not.toContain("k");
+  });
+
+  it("buildEmbeddingServerArgs appends --api-key for an operator key", () => {
+    const args = buildEmbeddingServerArgs(
+      {
+        dataDir: "/tmp/data",
+        modelId: "nomic-embed-text-v1.5",
+        port: 19092,
+        serverAuth: { apiKey: "user-key" },
+      },
+      "/tmp/e.gguf",
+    );
+    expect(args.slice(-2)).toEqual(["--api-key", "user-key"]);
+  });
+
+  it("startDaemon launches with the persisted key, probes with it, and reuses it on the next start", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-key-`);
+    try {
+      stageBackend(dataDir);
+      const probeAuth: Array<string | null> = [];
+      stubServer(probeAuth);
+      spawnMock.mockReturnValue(fakeChild(4251));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19095, device: "cpu" });
+
+      const keyFile = join(dataDir, "llama-server.key");
+      const key = readFileSync(keyFile, "utf-8").trim();
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+      const args = spawnedArgs(0);
+      expect(args.slice(-2)).toEqual(["--api-key-file", keyFile]);
+      expect(args.join(" ")).not.toContain(key);
+      expect(probeAuth).toEqual([`Bearer ${key}`]);
+
+      // The daemon is gone; the next launch (another process, a restart)
+      // must come up with the same key its clients already hold.
+      rmSync(resolvePidFilePath(dataDir), { force: true });
+      spawnMock.mockClear(); // the port is free again until the next spawn
+      spawnMock.mockReturnValue(fakeChild(4252));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19095, device: "cpu" });
+      expect(readFileSync(keyFile, "utf-8").trim()).toBe(key);
+      expect(spawnedArgs(0).slice(-2)).toEqual(["--api-key-file", keyFile]);
+      expect(probeAuth).toEqual([`Bearer ${key}`, `Bearer ${key}`]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("startDaemon uses ATOMIC_AGENT_LLAMA_API_KEY as the server key when set", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-userkey-`);
+    try {
+      process.env.ATOMIC_AGENT_LLAMA_API_KEY = "operator-key";
+      resetConfigCache();
+      stageBackend(dataDir);
+      const probeAuth: Array<string | null> = [];
+      stubServer(probeAuth);
+      spawnMock.mockReturnValue(fakeChild(4253));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19094, device: "cpu" });
+      expect(spawnedArgs(0).slice(-2)).toEqual(["--api-key", "operator-key"]);
+      expect(probeAuth).toEqual(["Bearer operator-key"]);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

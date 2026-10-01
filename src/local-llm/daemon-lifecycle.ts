@@ -50,6 +50,11 @@ import {
 } from "./models-catalog.js";
 import { resolvePlatformAsset } from "./platform-assets.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import {
+  buildApiKeyArgs,
+  resolveManagedServerAuth,
+  type ManagedServerAuth,
+} from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
   dataDir: string;
@@ -139,6 +144,14 @@ export interface DaemonStartOptions {
    * 31B model at 3 tok/s spends ~20 s on it. `false` skips it.
    */
   throughputProbe?: boolean;
+  /**
+   * The key the server requires (`--api-key-file` / `--api-key`, issue
+   * #582). `startDaemon` resolves it from `localModels.apiKey`, falling
+   * back to the key persisted in `dataDir`, so a caller passes it only
+   * to force one. Undefined in `buildLlamaServerArgs` leaves the server
+   * open, the historical argv.
+   */
+  serverAuth?: ManagedServerAuth;
 }
 
 /** What `probeThroughput` measured on one short completion. */
@@ -447,6 +460,7 @@ export function buildLlamaServerArgs(
       "2048",
     );
   }
+  args.push(...buildApiKeyArgs(opts.serverAuth));
   return args;
 }
 
@@ -742,10 +756,14 @@ export async function startDaemon(
         : prefixReuse.prefixReuse;
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
+  const serverAuth =
+    opts.serverAuth ??
+    resolveManagedServerAuth(opts.dataDir, readConfiguredApiKey());
   const args = buildLlamaServerArgs(
     {
       ...opts,
       device,
+      serverAuth,
       swaFullFlag: swaFull.enabled,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
     },
@@ -818,7 +836,7 @@ export async function startDaemon(
     if (opts.throughputProbe !== false) {
       const sample = await probeThroughput({
         port: opts.port,
-        apiKey: readConfiguredApiKey(),
+        apiKey: serverAuth.apiKey,
       });
       if (sample) {
         tokensPerSecond = sample.tokensPerSecond;
@@ -850,7 +868,11 @@ export async function startDaemon(
   }
 }
 
-/** `localModels.apiKey` for the probe; a config that cannot be read sends none. */
+/**
+ * `localModels.apiKey` — the key the agent's clients send. A config that
+ * cannot be read yields none, and the launch falls back to the key
+ * persisted in the data dir.
+ */
 function readConfiguredApiKey(): string | null {
   try {
     return getConfig().localModels.apiKey ?? null;
@@ -973,6 +995,8 @@ export interface EmbeddingDaemonStartOptions {
    * daemons land on the same chosen GPU.
    */
   device?: string;
+  /** Same as `DaemonStartOptions.serverAuth`; both daemons share one key. */
+  serverAuth?: ManagedServerAuth;
 }
 
 /**
@@ -1009,6 +1033,7 @@ export function buildEmbeddingServerArgs(
   if (opts.device && opts.device !== "cpu") {
     args.push("--device", opts.device);
   }
+  args.push(...buildApiKeyArgs(opts.serverAuth));
   return args;
 }
 
@@ -1041,7 +1066,13 @@ export async function startEmbeddingDaemon(
   }
 
   const device = await resolveManagedDevice(binPath, opts.device);
-  const args = buildEmbeddingServerArgs({ ...opts, device }, modelPath);
+  const serverAuth =
+    opts.serverAuth ??
+    resolveManagedServerAuth(opts.dataDir, readConfiguredApiKey());
+  const args = buildEmbeddingServerArgs(
+    { ...opts, device, serverAuth },
+    modelPath,
+  );
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
   try {
