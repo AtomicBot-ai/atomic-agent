@@ -26,7 +26,7 @@ import { checks13 } from "./smoke-tasks/t13.js";
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "19", "20"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -412,6 +412,60 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("10")) await guarded("10", check, () => checks10(js, check));
   if (want.has("11")) await guarded("11", check, () => checks11(js, check));
   if (want.has("13") || want.has("14")) await guarded("13", check, () => checks13(js, check));
+
+  if (want.has("19")) {
+    // 19 — "What never leaves this Mac" read as a privacy promise the app does not make.
+    const r = await js<Record<string, unknown>>(`(() => {
+      const html = privacyPane();
+      return {sent: /Sent with analytics/.test(html), never: /Never sent with analytics/.test(html),
+        cloud: /With a cloud model, your messages go to that provider\\./.test(html), old: /never leaves this Mac/i.test(html)};
+    })()`);
+    check(
+      "T19: Privacy says what analytics send and never send, and that a cloud model gets the messages",
+      r.sent === true && r.never === true && r.cloud === true && r.old === false,
+      JSON.stringify(r),
+    );
+  }
+
+  if (want.has("20")) {
+    // 20 — Add MCP server: other products named, sideways scroll, two technical lines.
+    const r = await js<Record<string, unknown>>(`(async () => {
+      const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+      const savedSubmit = window.mcpAddSubmit; let submitted = 0;
+      try {
+        window.__settingsOpen('mcp'); await tick(200);
+        MCP.addModal = {json:'', error:null, submitting:false}; render(); await tick(100);
+        const box = document.getElementById('mcp-json');
+        const modal = document.querySelector('.sd-modal');
+        const text = modal ? modal.textContent : '';
+        const out = {open: !!box, plain: /usually in the server.s README/.test(text),
+          others: /Claude Desktop|Cursor|auto-promoted|Shift\\/Alt/.test(text),
+          lines: box ? (box.getAttribute('placeholder') || '').split('\\n').length : 0,
+          wrap: box ? getComputedStyle(box).whiteSpace : null, sideways: box ? getComputedStyle(box).overflowX : null};
+        window.mcpAddSubmit = () => { submitted++; };
+        box.focus();
+        box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+        await tick(50);
+        out.enterSubmits = submitted; out.stillOpen = !!MCP.addModal;
+        box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', metaKey:true, bubbles:true, cancelable:true}));
+        await tick(50);
+        out.cmdEnterSubmits = submitted;
+        return out;
+      } finally {
+        window.mcpAddSubmit = savedSubmit; MCP.addModal = null; window.__settingsClose(); render();
+      }
+    })()`);
+    check(
+      "T20: Add MCP server speaks plainly, wraps the JSON and shows the example on lines",
+      r.open === true && r.plain === true && r.others === false && (r.lines as number) >= 5 && r.wrap === "pre-wrap" && r.sideways === "hidden",
+      JSON.stringify(r),
+    );
+    check(
+      "T20: Enter starts a new line in the box; Add or Cmd+Enter adds the server",
+      r.enterSubmits === 0 && r.stillOpen === true && r.cmdEnterSubmits === 1,
+      JSON.stringify(r),
+    );
+  }
 
   await wait(100);
 }
