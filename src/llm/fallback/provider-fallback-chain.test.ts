@@ -420,12 +420,30 @@ describe("ProviderFallbackChain", () => {
       expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
     });
 
+    it("is not named as the route until it serves, and then it is", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+        now: makeClock().now,
+      });
+      chain.advanceFrom("primary", http(401));
+      expect(chain.activeOverrideFor("")).toBe("backup");
+      expect(chain.standingOverrideFor("")).toBeNull();
+      expect(chain.hasFallbackServed()).toBe(false);
+      chain.recordSuccess("backup", false);
+      expect(chain.standingOverrideFor("")).toBe("backup");
+      expect(chain.hasFallbackServed()).toBe(true);
+      // A fallback that served stays on record when it fails later.
+      chain.advanceFrom("backup", new TypeError("fetch failed"));
+      expect(chain.hasFallbackServed()).toBe(true);
+    });
+
     it("does not apply to a primary that is down: its cooldown holds as before", () => {
       const chain = new ProviderFallbackChain({
         resolve: () => chainOf(["primary", "backup"]),
         now: makeClock().now,
       });
       expect(chain.advanceFrom("primary", http(503))).toBe("backup");
+      expect(chain.standingOverrideFor("")).toBe("backup");
       expect(chain.pickProvider()).toEqual({ providerId: "backup", isProbe: false });
       expect(chain.advanceFrom("backup", new TypeError("fetch failed"))).toBeNull();
       expect(chain.pickProvider()).toEqual({ providerId: "backup", isProbe: false });

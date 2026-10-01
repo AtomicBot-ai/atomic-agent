@@ -35,16 +35,19 @@ import { shouldAdvance } from "./should-advance.js";
  * one sentence per failed turn (the HTTP stream the desktop reads) names
  * the first recorded link instead: see `buildStreamEventHook`.
  *
- * **Except when the primary refused its key.** A 401/403 from the primary
- * in this very call (`isCredentialRejection`: a wrong, dead or missing
- * key, or one that could not even be sent) outranks whatever the links
- * after it said, and its error is the one thrown. The last link's error
- * would otherwise decide the turn, and a stopped local server's `fetch
- * failed` parks it for the whole outage wait, telling the user the model
- * is not answering while the fix is the key (item 29). The primary's own
- * error classifies as a refusal, so the turn ends at once with its
- * sentence. Nothing failed before it, so nothing is recorded beside it;
- * each later link's failure is in the advance log.
+ * **Except when the primary refused its key and nothing stood in for
+ * it.** A refusal of the key by the primary in this very call
+ * (`isCredentialRejection`: a wrong, dead or missing key, or one that
+ * could not even be sent) outranks whatever the links after it said,
+ * unless a fallback has served this partition since the chain left the
+ * primary. The last link's error would otherwise decide the turn, and a
+ * stopped local server's `fetch failed` parks it for the whole outage
+ * wait, telling the user the model is not answering while the fix is the
+ * key (item 29). The primary's own error classifies as a refusal, so the
+ * turn ends at once with its sentence. Nothing failed before it, so
+ * nothing is recorded beside it; each later link's failure is in the
+ * advance log. A fallback that has been serving is the route the user
+ * is actually on, so its outage still gets the outage wait, as before.
  *
  * Every thrown error also carries the id of the link that threw it
  * (`attachFailingLink`), for the hosts that say which link a parked turn
@@ -90,7 +93,11 @@ export async function runWithFallback<T>(
         // `null` is also the answer for an error that must not fall over
         // (a cancellation, a request-shape error): that one is thrown as
         // is. Only a chain that ran out of links defers to the primary.
-        if (primaryRefusal !== null && shouldAdvance(err).advance) {
+        if (
+          primaryRefusal !== null &&
+          shouldAdvance(err).advance &&
+          !chain.hasFallbackServed(partitionKey)
+        ) {
           attachFailingLink(primaryRefusal.error, primaryRefusal.providerId);
           throw primaryRefusal.error;
         }

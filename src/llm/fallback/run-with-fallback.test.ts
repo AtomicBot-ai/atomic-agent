@@ -276,7 +276,7 @@ describe("runWithFallback", () => {
       expect(readFailingLink(refusal)).toBe("aimlapi");
     });
 
-    it("is the same on a probe of the primary", async () => {
+    it("leaves the outage path to a fallback that has been serving", async () => {
       let now = 1_000;
       const chain = new ProviderFallbackChain({
         resolve: () => ({
@@ -291,12 +291,59 @@ describe("runWithFallback", () => {
         return id;
       });
       now += DEFAULT_FALLBACK_TIMING.probeThrottleMs;
-      const refusal = http(403);
+      // A probe finds the primary's key refused while the backup is down
+      // for a moment: the backup is the route in use, so its outage is
+      // the error, and the loop waits for it as before.
+      const outage = new TypeError("fetch failed");
       await expect(
         runWithFallback(chain, async (id) => {
-          throw id === "primary" ? refusal : new TypeError("fetch failed");
+          throw id === "primary" ? http(401) : outage;
         }),
-      ).rejects.toBe(refusal);
+      ).rejects.toBe(outage);
+      expect(readFailedAttempts(outage).map((a) => a.providerId)).toEqual([
+        "primary",
+      ]);
+    });
+
+    it("lets a parked turn wait for a fallback that served, asking the primary on every retry", async () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => ({
+          chain: ["primary", "cloud2", "local"],
+          timing: DEFAULT_FALLBACK_TIMING,
+        }),
+        now: () => 1_000,
+      });
+      // The primary's key is refused and cloud2 serves.
+      await runWithFallback(chain, async (id) => {
+        if (id === "primary") throw http(401);
+        return id;
+      });
+      // cloud2 drops for a moment; the local link is stopped.
+      const down = new TypeError("fetch failed");
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "primary") throw http(401);
+          throw down;
+        }),
+      ).rejects.toBe(down);
+      // The retry: local only stood in, so the walk starts at the primary
+      // again, and still ends on the outage rather than the old refusal.
+      const seen: string[] = [];
+      await expect(
+        runWithFallback(chain, async (id) => {
+          seen.push(id);
+          if (id === "primary") throw http(401);
+          throw down;
+        }),
+      ).rejects.toBe(down);
+      expect(seen).toEqual(["primary", "cloud2", "local"]);
+      // cloud2 is back: the next retry is served.
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "primary") throw http(401);
+          return id;
+        }),
+      ).resolves.toBe("cloud2");
     });
 
     it("leaves a refusal further down the chain to the last link, as before", async () => {
