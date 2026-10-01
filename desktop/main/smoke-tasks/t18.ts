@@ -75,6 +75,7 @@ export async function checks18(js: Js, check: Check): Promise<void> {
   const size = w ? (w.getContentSize() as [number, number]) : null;
   try {
     await handOver(js, check);
+    await resumeAfterQuit(js, check);
     await geometry(js, check, w);
     await controls(js, check);
     if (w) await otherPulls(js, check, w);
@@ -199,6 +200,127 @@ async function handOverRun(js: Js, check: Check): Promise<void> {
     r["toastCarried"] === true && r["toastCarriedIdle"] === false && r["closedForReal"] === true
       && !(r["toasts"] as string[]).some((t) => t === "Your model is downloading" || t === "Setup complete"),
     JSON.stringify({ carried: r["toastCarried"], idle: r["toastCarriedIdle"], closedForReal: r["closedForReal"], toasts: r["toasts"] }),
+  );
+}
+
+/* R1 (review): Download hands over at once, so it must not stamp setup
+   complete while the model is still coming down — a quit at 30% then left
+   the next launch with no wizard, no download and no model. Now the stamp
+   waits for the weights, the download is remembered, and the next launch
+   resumes it in the card (`atag models pull` resumes a partial file). The
+   relaunch is the boot gate itself (obBootGate) run on a cleared download,
+   the state a quit leaves; the stamps are this lane's real config file. */
+async function resumeAfterQuit(js: Js, check: Check): Promise<void> {
+  const stampsBefore = await readStamps();
+  try {
+    if (stampsBefore) await writeStamps({ ...stampsBefore, completedAt: null, skippedAt: null });
+    await resumeAfterQuitRun(js, check);
+  } finally {
+    if (stampsBefore) await writeStamps(stampsBefore);
+  }
+}
+
+async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(async () => {
+    ${HELPERS}
+    const keep = {ob: Object.assign({}, OB), stamped: Object.assign({}, OB_STAMPED), log: OB_STAMP_LOG.slice(),
+      status: window.obBackendStatusText, activate: window.obActivateLocal, open: window.openOnboarding,
+      dry: DL.dry, room: S.room, toasts: S.toasts.slice()};
+    const KEY = 'atag.setupDownload';
+    const marker = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return 'unreadable'; } };
+    const stamp = async () => { const c = await window.atomic.configGet();
+      return ((((c && c.config) || {}).tui || {}).onboarding || {}).completedAt || null; };
+    const queue = () => [DL.preparing, DL.job].concat(DL.queue).filter(Boolean).map((j) => j.kind + ':' + j.id);
+    const calls = [];
+    const out = {};
+    try {
+      window.__dlClear();
+      try { localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
+      S.toasts = []; S.room = 'chat'; render();
+      DL.dry = true;
+      window.obBackendStatusText = () => { calls.push('status'); return Promise.resolve('backend: binary missing'); };
+      window.obActivateLocal = async (id) => { calls.push('activate:' + id); };
+      OB.models = [{id:'smoke-t18-9b', name:'Smoke Model 9B GGUF', size:'6.2 GB', sizeGb:6.2, context:'32k',
+        minRamGb:4, recommendedRamGb:8, downloaded:false}];
+      OB.ram = 64;
+      window.__obOpen('local_pick', {stamped:['localSetupSeenAt']});
+      OB.testClose = false; OB.restarted = true;
+      await tick(150);
+      const go = document.querySelector('#onboarding .ob-foot [data-obact="nav:go"]');
+      if (go) go.click();
+      for (let i = 0; i < 60 && OB.open; i++) await tick(100);
+      await tick(150);
+      out.handedOver = {open: OB.open, stamp: await stamp(), marker: marker(), queue: queue()};
+      // Quit here. The next launch: the download in memory is gone, the file and the reminder are not.
+      const kept = localStorage.getItem(KEY);
+      window.__dlClear();
+      if (kept !== null) localStorage.setItem(KEY, kept);
+      // __dlClear lets the queue spawn again: the resumed one stays dry, nothing is downloaded.
+      DL.dry = true;
+      calls.length = 0;
+      let opened = 0;
+      window.openOnboarding = function () { opened++; };
+      out.gate = typeof obBootGate === 'function';
+      if (out.gate) await obBootGate(FIRSTRUN);
+      for (let i = 0; i < 40 && !DL.job; i++) await tick(50);
+      window.openOnboarding = keep.open;
+      out.relaunch = {opened, calls: calls.slice(), queue: queue(), card: card()};
+      // The download finishes in the relaunched app: now setup is complete.
+      window.__dlFeed({id:'llama.cpp', kind:'runtime', done:true, ok:true, sawProgress:true, upToDate:false});
+      out.beforeLand = await stamp();
+      DL.dry = false;
+      window.__dlFeed({id:'smoke-t18-9b', done:true, ok:true});
+      await tick(100);
+      let landed = await stamp();
+      for (let i = 0; i < 40 && !landed; i++) { await tick(150); landed = await stamp(); }
+      out.landed = {stamp: landed, marker: marker(), calls: calls.slice(), card: card()};
+      // And a setup download that is cancelled is not resumed next time.
+      window.__dlSeed([{kind:'weights', id:'smoke-t18-9b'}]);
+      if (typeof obSetupPullRemember === 'function') obSetupPullRemember('smoke-t18-9b');
+      const remembered = marker();
+      const x = document.querySelector('#dlcard .dlc-row .dlc-x[data-act="dlc:cancel"]');
+      if (x) x.click();
+      await tick(80);
+      out.cancelled = {before: remembered, after: marker()};
+      return out;
+    } finally {
+      window.obBackendStatusText = keep.status; window.obActivateLocal = keep.activate; window.openOnboarding = keep.open;
+      window.__dlClear(); DL.dry = keep.dry;
+      try { localStorage.removeItem(KEY); } catch (e) { /* no storage */ }
+      if (OB.open) window.__obClose();
+      const gen = OB.openGen;
+      Object.assign(OB, keep.ob, {open: false, settling: false, openGen: gen});
+      for (const k of Object.keys(OB_STAMPED)) delete OB_STAMPED[k];
+      Object.assign(OB_STAMPED, keep.stamped);
+      OB_STAMP_LOG.length = 0; keep.log.forEach((e) => OB_STAMP_LOG.push(e));
+      S.room = keep.room; S.toasts = keep.toasts; render();
+    }
+  })()`);
+  const h = r["handedOver"] as { open: boolean; stamp: string | null; marker: { id?: string } | null; queue: string[] };
+  check(
+    "T18 R1: Download hands over without stamping setup complete — the model is not on disk yet — and remembers the download",
+    h.open === false && h.stamp === null && !!h.marker && h.marker.id === "smoke-t18-9b"
+      && h.queue.includes("weights:smoke-t18-9b"),
+    JSON.stringify(h),
+  );
+  const re = r["relaunch"] as { opened: number; calls: string[]; queue: string[]; card: { rows: { name: string }[] } | null };
+  check(
+    "T18 R1: after a quit mid-download the next launch resumes it in the card, rather than leaving no model and no download",
+    r["gate"] === true && re.opened === 0 && re.calls.includes("status")
+      && re.queue.includes("weights:smoke-t18-9b") && !!re.card && re.card.rows.some((x) => x.name === "Smoke Model 9B"),
+    JSON.stringify({ gate: r["gate"], ...re }),
+  );
+  const l = r["landed"] as { stamp: string | null; marker: unknown; calls: string[] };
+  check(
+    "T18 R1: when the weights land setup is stamped complete, the reminder goes, and the model starts",
+    r["beforeLand"] === null && typeof l.stamp === "string" && l.marker === null && l.calls.includes("activate:smoke-t18-9b"),
+    JSON.stringify({ beforeLand: r["beforeLand"], ...l }),
+  );
+  const cx = r["cancelled"] as { before: { id?: string } | null; after: unknown };
+  check(
+    "T18 R1: a setup download that is cancelled is not resumed on the next launch",
+    !!cx.before && cx.before.id === "smoke-t18-9b" && cx.after === null,
+    JSON.stringify(cx),
   );
 }
 

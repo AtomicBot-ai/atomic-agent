@@ -8226,6 +8226,12 @@ app.on("before-quit", (event) => {
   // the degraded state in which someone is most likely to be poking at the
   // microphone button.
   voice.kill();
+  /* Backlog 18 (R1): a download stops with the app rather than writing on
+     after it — the next launch resumes the setup download from its partial
+     file, and two writers on one partial file is how a resume goes wrong. */
+  pull?.cancel();
+  pullUpdate?.cancel();
+  hfProjector?.controller.abort();
   if (!agent) return;
   event.preventDefault();
   const client = agent;

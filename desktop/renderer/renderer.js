@@ -636,6 +636,9 @@ const DLC = {
 };
 /* The card's distance from the window's edges, and from whatever it keeps clear of. */
 const DLC_EDGE = 16, DLC_GAP = 8;
+/* R1 (review): where the setup download is remembered across a quit
+   (obSetupPullRemember). Per-profile localStorage, so it names its state dir. */
+const OB_SETUP_PULL_KEY = 'atag.setupDownload';
 /* Backlog 18 — progress for the one pull DL does not run: the composer
    picker's (SEL.pulling), Settings › Models' (LLMP.pulling) or a setup
    model's vision projector (DL.projector). Main runs one pull at a time,
@@ -8749,7 +8752,11 @@ function dlCardAct(verb) {
   if (v.indexOf('retry:') === 0) { dlRetry(Number(v.slice(6))); return; }
   if (v.indexOf('dismiss:') === 0) {
     const n = Number(v.slice(8));
-    DL.failed = DL.failed.filter((f) => f.n !== n);
+    const f = DL.failed.find((x) => x.n === n);
+    // A failed setup download put aside is not retried behind the person's back on the next launch.
+    const m = obSetupPullGet();
+    if (f && m && f.kind === 'weights' && f.id === m.id) obSetupPullForget();
+    DL.failed = DL.failed.filter((x) => x.n !== n);
     render();
   }
 }
@@ -8761,6 +8768,8 @@ function dlCardAct(verb) {
  * first, so the `done` frame its exit sends is read as the cancel it is.
  */
 function dlCancel() {
+  // A setup download the person stopped is not picked up again on the next launch.
+  obSetupPullForget();
   DL.preparing = null;
   DL.activateAfter = null;
   if (DL.job) DL.job.cancelled = true;
@@ -10303,6 +10312,7 @@ function obActivateHeld() {
  * The picker's list is re-read either way, so the model reads as on disk there.
  */
 function obModelLanded(id) {
+  obSetupPullLanded(id);
   if (!obRunsOnAnotherModel()) { obActivateLocal(id); return; }
   DL.ready = {id};
   bswSnapshot();
@@ -10326,6 +10336,61 @@ function obRunsOnAnotherModel() {
   const id = selActiveProviderId();
   const p = ((LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === id) || activeProvider();
   return !!(p && p.kind !== 'llama-server' && ((SWX.want && SWX.want.model) || p.defaultChatModel || p.model));
+}
+
+/* ---- R1 (review): the setup download across a quit ----
+   `atag models pull` resumes a partial file, so a setup download a quit
+   interrupted is picked up again on the next launch, in the card
+   (obSetupPullResume, from the boot gate). It is remembered from the moment
+   setup closes on it until its weights land, it is cancelled, or a failed one
+   is dismissed. Losing the reminder (another profile, cleared storage) falls
+   back to setup itself: it was never stamped complete. */
+function obSetupPullGet() {
+  try {
+    const m = JSON.parse(localStorage.getItem(OB_SETUP_PULL_KEY) || 'null');
+    return m && typeof m.id === 'string' && m.id ? m : null;
+  } catch (e) { return null; }
+}
+function obSetupPullRemember(id) {
+  try {
+    localStorage.setItem(OB_SETUP_PULL_KEY, JSON.stringify({id, stateDir: (FIRSTRUN && FIRSTRUN.stateDir) || null, at: Date.now()}));
+  } catch (e) { /* no storage: the next launch falls back to setup, which is not stamped complete */ }
+}
+function obSetupPullForget() {
+  try { localStorage.removeItem(OB_SETUP_PULL_KEY); } catch (e) { /* nothing was stored */ }
+}
+/** The model the setup download is for: coming down, or failed and still offered for a Retry. */
+function obSetupPullId() {
+  const j = [DL.preparing, DL.job].concat(DL.queue).find((x) => x && x.kind === 'weights');
+  if (j) return j.id;
+  const f = DL.failed.find((x) => x.kind === 'weights' && x.id === OB.localModelId);
+  return f ? f.id : null;
+}
+/** Its weights are on disk: the stamp setup owed is written, and nothing is left to resume. */
+function obSetupPullLanded(id) {
+  const m = obSetupPullGet();
+  if (!m || m.id !== id) return;
+  obSetupPullForget();
+  const at = new Date().toISOString();
+  OB_STAMP_LOG.push({leaf: 'completedAt', at, step: 'landed', written: !OB.testClose});
+  if (!OB.testClose && BR) BR.configSet('tui.onboarding.completedAt', at);
+}
+/**
+ * At launch: a remembered setup download for this state dir starts again,
+ * the card showing it from "Starting…". Not when its model is already the
+ * one the agent runs (it landed and started before the quit), and never
+ * twice. True when it started, so the boot gate does not open setup over it.
+ */
+function obSetupPullResume(cfg) {
+  const m = obSetupPullGet();
+  if (!m) return false;
+  const here = FIRSTRUN && FIRSTRUN.stateDir;
+  if (m.stateDir && here && m.stateDir !== here) return false;
+  const managed = ((cfg && cfg.localModels) || {}).managed || {};
+  if (managed.modelId === m.id) { obSetupPullForget(); return false; }
+  if (dlBusy() || DL.projector) return true;
+  obStartLocalPull(m.id, false);
+  return true;
 }
 
 /**
@@ -10736,9 +10801,18 @@ async function obSettle() {
      so `esc` from `choose` can still be asserted to end as `skipped`. */
   const closing = outcome === 'skipped' ? 'skippedAt' : 'completedAt';
   const stamp = new Date().toISOString();
-  OB_STAMP_LOG.push({leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
+  /* R1 (review): a hand-over with the model still coming down is not a
+     finished setup yet. Stamped now, a quit at 30% left the next launch with
+     no wizard, no download and no model. The stamp is owed instead, the
+     download remembered (obSetupPullRemember), and both are settled when its
+     weights land (obSetupPullLanded) — or the next launch resumes it. */
+  const owedFor = closing === 'completedAt' && OB.handOver ? obSetupPullId() : null;
+  OB_STAMP_LOG.push(owedFor
+    ? {leaf: closing, at: stamp, step: 'finished', written: false, owed: true}
+    : {leaf: closing, at: stamp, step: 'finished', written: !OB.testClose});
+  if (owedFor) obSetupPullRemember(owedFor);
   if (OB.testClose) { OB.open = false; OB.settling = false; obSkyStop(); render(); return; }
-  const res = await BR.configSet('tui.onboarding.' + closing, stamp);
+  const res = owedFor ? {ok: true} : await BR.configSet('tui.onboarding.' + closing, stamp);
   if (stale()) return;
   if (res && res.ok === false) {
     OB.settling = false;
@@ -10776,6 +10850,24 @@ function obClosingToast(outcome) {
 }
 
 /* ---- opening ---- */
+
+/**
+ * The first-run gate, once per launch (the boot block below calls it). R1:
+ * a setup download a quit cut short resumes before anything is decided about
+ * setup — its card is the way on, so setup does not open over it.
+ */
+async function obBootGate(fr, freshAtBoot) {
+  FIRSTRUN = fr;
+  // A fresh state dir has no partial file to resume.
+  if (freshAtBoot || (fr && fr.fresh)) obSetupPullForget();
+  if (freshAtBoot) return;
+  if (fr && fr.fresh) { openOnboarding(); return; }
+  const res = await BR.configGet();
+  let ids = null;
+  try { const ready = await BR.providersReady(); if (ready && ready.ok) ids = ready.ids || []; } catch (e) { ids = null; }
+  if (res && res.ok && obSetupPullResume(res.config)) return;
+  if (res && res.ok && needsOnboarding(res.config, ids)) openOnboarding();
+}
 
 async function openOnboarding(at) {
   const first = at === 'choose' ? 'choose' : 'intro';
@@ -11194,15 +11286,7 @@ if (BR) {
      every row said "no RAM guidance"). */
   loadHostRamGb().then((n) => { if (n) render(); }).catch(() => {});
   if (BR && BR.unverified) BR.unverified().then((ids) => { UNVERIFIED = ids || []; render(); }).catch(() => {});
-  (BR.firstRun ? BR.firstRun() : Promise.resolve(null)).then(async (fr) => {
-    FIRSTRUN = fr;
-    if (freshAtBoot) return;
-    if (fr && fr.fresh) { openOnboarding(); return; }
-    const res = await BR.configGet();
-    let ids = null;
-    try { const ready = await BR.providersReady(); if (ready && ready.ok) ids = ready.ids || []; } catch (e) { ids = null; }
-    if (res && res.ok && needsOnboarding(res.config, ids)) openOnboarding();
-  });
+  (BR.firstRun ? BR.firstRun() : Promise.resolve(null)).then((fr) => obBootGate(fr, freshAtBoot));
 
   const prevAct = act;
   act = function (a) {
@@ -21406,6 +21490,7 @@ if (typeof window !== 'undefined') {
   window.__dlClear = () => {
     DL.dry = false; DL.job = null; DL.queue.length = 0; DL.error = null; DL.runtimeError = null;
     DL.preparing = null; DL.projector = null; DL.failed = []; DL.landed = null; DL.activateAfter = null; DL.ready = null;
+    obSetupPullForget();
     dlResetPhases(false); render(); return window.__dl();
   };
   window.__obImport = () => ({
