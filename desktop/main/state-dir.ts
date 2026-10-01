@@ -40,10 +40,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { isAbsoluteOn, isUnder, trimTrailingSep } from "./platform.js";
+
 function absoluteEnv(name: string): string | null {
   const raw = process.env[name];
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
+  // Windows: `C:\...` is absolute and `/` is not the separator.
+  if (process.platform === "win32") {
+    return isAbsoluteOn("win32", trimmed) ? trimTrailingSep("win32", trimmed) : null;
+  }
   if (!trimmed.startsWith("/")) return null;
   // A trailing slash would make every `startsWith(DESKTOP_STATE_DIR + "/")`
   // containment test below disagree with the string the agent reports back
@@ -127,6 +133,9 @@ export function agentEnv(): NodeJS.ProcessEnv {
 
 /** Is `p` the desktop's state directory, or inside it? */
 export function underDesktopState(p: string): boolean {
-  if (typeof p !== "string" || !p.startsWith("/")) return false;
+  if (typeof p !== "string") return false;
+  // Windows: drive paths, `\\` separators, case-insensitive (platform.ts).
+  if (process.platform === "win32") return isUnder("win32", DESKTOP_STATE_DIR, p);
+  if (!p.startsWith("/")) return false;
   return p === DESKTOP_STATE_DIR || p.startsWith(DESKTOP_STATE_DIR + "/");
 }

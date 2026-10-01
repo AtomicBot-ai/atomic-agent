@@ -52,6 +52,24 @@ if (process.argv.includes("--atomic-boot-probe")) {
   }
 }
 
+/* The platform as a class on <body> (`platform-darwin`, `platform-win32`,
+   `platform-linux`), so the stylesheet can give the window chrome of each
+   its room: macOS insets traffic lights at the left of the toolbar, Windows
+   overlays its controls at the right, Linux draws a normal frame. Set before
+   the first paint the renderer makes. */
+window.addEventListener("DOMContentLoaded", () => {
+  document.body.classList.add(`platform-${process.platform}`);
+});
+
+/** Main's answer (platform.ts voiceSupported); macOS-only if it cannot say. */
+function voiceSupportedNow(): boolean {
+  try {
+    return ipcRenderer.sendSync("app:voiceSupported") === true;
+  } catch {
+    return process.platform === "darwin";
+  }
+}
+
 contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
@@ -185,6 +203,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:dotenvSet", { stateDir, key, value }),
 
   platform: process.platform,
+  /** Windows: repaint the overlaid window controls for the page's theme. */
+  setChromeTheme: (dark: boolean) => ipcRenderer.invoke("app:chromeTheme", dark),
   build: () => ipcRenderer.invoke("app:build"),
   debugBundle: () => ipcRenderer.invoke("app:debugBundle"),
   unverified: () => ipcRenderer.invoke("app:unverified"),
@@ -195,6 +215,9 @@ contextBridge.exposeInMainWorld("atomic", {
    *  binary payload — it fires ten times a second while recording and there
    *  is nothing to answer. The chunk crosses as a Uint8Array (main checks
    *  for exactly that; it is NOT a Buffer on the other side). */
+  /** False where there is no speech helper (Windows, Linux): the composer
+   *  then draws no microphone at all rather than a disabled one. */
+  voiceSupported: voiceSupportedNow(),
   voiceProbe: () => ipcRenderer.invoke("voice:probe"),
   voiceStart: (locales: string[]) => ipcRenderer.invoke("voice:start", locales),
   voiceAudio: (chunk: Uint8Array) => ipcRenderer.send("voice:audio", chunk),

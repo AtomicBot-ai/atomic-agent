@@ -62,6 +62,8 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
     const { stdout, stderr } = await run(binary, args, {
       timeout,
       maxBuffer: 8 * 1024 * 1024,
+      // Windows: no console window flashing up for every config read.
+      windowsHide: true,
       // r5 item 9: named rather than inherited. Inheritance is already
       // correct (state-dir-boot.ts), but one careless `env: {}` here would
       // put every config write back on the operator's ~/.atomic-agent.
@@ -294,7 +296,7 @@ export function modelsPull(
       cancel: () => {},
     };
   }
-  const child = spawn(binary, ["models", "pull", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, ["models", "pull", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
   const relay = (chunk: Buffer, sink: "out" | "err") => {
@@ -2073,7 +2075,7 @@ export function modelsPullEmbedding(
   if (!binary || !MODEL_ID_RE.test(id)) {
     return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
   }
-  const child = spawn(binary, ["models", "pull-embedding", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, ["models", "pull-embedding", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
   const relay = (chunk: Buffer, sink: "out" | "err") => {
@@ -2559,7 +2561,7 @@ export function modelsUpdateStream(
      OPERATOR's ~/.atomic-agent — it writes the llama.cpp backend into whatever
      state dir the child resolves, which is exactly what item 9 exists to stop.
      The isolation lane's source scan is what caught it. */
-  const child = spawn(binary, ["models", "update"], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, ["models", "update"], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
   let sawProgress = false;
