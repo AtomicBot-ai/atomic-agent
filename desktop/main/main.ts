@@ -46,6 +46,7 @@ import {
   chatModelsList,
   configSetWhole,
   explainConfigWriteFailure,
+  managedDataDir,
   readWholeConfig,
   rewriteWholeConfig,
   withConfigLock,
@@ -88,6 +89,7 @@ import {
   setFusionWorkers,
   runModeWantsDaemon,
   startDaemonNow,
+  stopDaemonForQuit,
   stopDaemonNow,
   supersedeBringUp,
   swapFusionLegs,
@@ -8452,6 +8454,14 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
+/* Item 30: the quit's own shutdown — the agent's stop, then the model
+   server's — while it runs. A second Quit in that time (Cmd+Q again, the
+   Dock's Quit while the window is still up) found `agent` already null and let
+   Electron exit there and then, before `models stop` had run: the model server
+   kept serving after the app was gone. Every Quit now waits for the shutdown,
+   and only its own app.quit() at the end goes through. */
+let quitShutdown: { done: boolean } | null = null;
+
 // Never leave the agent running after the app is gone.
 app.on("before-quit", (event) => {
   // Item 2 (voice input): BEFORE the guard below. `if (!agent) return` skips
@@ -8460,11 +8470,21 @@ app.on("before-quit", (event) => {
   // microphone button.
   voice.kill();
   stopForQuit();
+  // Item 30: a Quit while the quit's shutdown runs waits for it (quitShutdown).
+  if (quitShutdown) {
+    if (!quitShutdown.done) event.preventDefault();
+    return;
+  }
   if (!agent) return;
   event.preventDefault();
   const client = agent;
   agent = null;
-  void client.stop().then(stopLocalDaemonOnQuit).finally(() => app.quit());
+  const shutdown = { done: false };
+  quitShutdown = shutdown;
+  void client.stop().catch(() => undefined).then(stopLocalDaemonOnQuit).finally(() => {
+    shutdown.done = true;
+    app.quit();
+  });
 });
 
 /**
@@ -8478,15 +8498,17 @@ app.on("before-quit", (event) => {
 async function stopLocalDaemonOnQuit(): Promise<void> {
   if (SMOKE) return;
   try {
-    const read = await readWholeConfig();
-    const lm = read.ok ? read.config?.localModels : undefined;
-    const managed = lm?.managed as { stopOnExit?: boolean } | undefined;
-    if (lm?.mode !== "managed" || managed?.stopOnExit === false) return;
-    await Promise.race([
-      // Item 11: a start still on its way is killed rather than left to finish after the app is gone.
-      stopDaemonNow(),
-      new Promise((resolve) => setTimeout(resolve, 5_000)),
-    ]);
+    /* Item 30: bounded, and a config that cannot be read in time is no reason
+       to leave the model server up — the defaults (managed, stopOnExit) stop it. */
+    const read = await Promise.race([readWholeConfig(), new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000))]);
+    const lm = read?.ok ? read.config?.localModels : undefined;
+    const managed = lm?.managed as { stopOnExit?: boolean; dataDirOverride?: string | null } | undefined;
+    if (read?.ok && (lm?.mode !== "managed" || managed?.stopOnExit === false)) return;
+    /* Item 11: a start still on its way is killed rather than left to finish
+       after the app is gone. Item 30: and a server that outlives the stop — it
+       ignored SIGTERM, or the stop ran out of time — is killed by this process. */
+    const killed = await stopDaemonForQuit(managedDataDir(managed?.dataDirOverride));
+    if (killed.length) console.error(`[desktop] killed the model server that outlived its stop (pid ${killed.join(", ")})`);
   } catch {
     // Quitting wins over tidying up.
   }

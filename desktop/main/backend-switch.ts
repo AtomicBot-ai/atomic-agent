@@ -1,6 +1,9 @@
 import {
+  abortStarts,
   chatModelsList,
+  daemonPidsIn,
   keyNamesAvailable,
+  killDaemonLeftovers,
   localDaemonRunning,
   modelsList,
   modelsStart,
@@ -486,6 +489,21 @@ export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean
 export function stopDaemonNow(): Promise<CliResult> {
   supersedeBringUp();
   return modelsStop();
+}
+
+/**
+ * Quitting (item 30): every start on its way is killed first — the launch's,
+ * a switch's, Settings' — so none brings a server up after the stop; then the
+ * stop, bounded; then whatever the daemons' pid files still name is killed by
+ * this process outright: a llama-server that ignored SIGTERM, or a stop that did
+ * not finish in time. Answers the pids that last step had to kill.
+ */
+export async function stopDaemonForQuit(dataDir: string): Promise<number[]> {
+  supersedeBringUp();
+  await abortStarts(1_500);
+  const named = daemonPidsIn(dataDir);
+  await Promise.race([modelsStop(), new Promise((r) => setTimeout(r, 5_000))]);
+  return killDaemonLeftovers([...named, ...daemonPidsIn(dataDir)]);
 }
 
 /** Whether the seats need the managed daemon: Fusion in force with a local seat on a managed model. */

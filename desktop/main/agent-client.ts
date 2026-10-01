@@ -184,7 +184,7 @@ function serveRecordPath(): string {
 }
 
 /** The command line of a live pid, or null if it is not running. */
-function commandOf(pid: number): string | null {
+export function commandOf(pid: number): string | null {
   try {
     // The command line is the one thing that answers "is this the same
     // process, or a pid that got reused since we wrote it down". macOS asks

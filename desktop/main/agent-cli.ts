@@ -5,13 +5,13 @@ import { execFile, spawn } from "node:child_process";
 import { homedir, totalmem } from "node:os";
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 // Item 7 part C (LLM / Telegram / Import tabs): the .env writer and llama log tail.
 import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
-import { resolveBinary } from "./agent-client.js";
+import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
@@ -663,14 +663,42 @@ export function parseChatStartSpeed(stdout: string): { pid: number; tokensPerSec
    modelsStart, so this is the one place to catch it. */
 let lastChatSpeed: { pid: number; tokensPerSecond: number } | null = null;
 
+/* Every `models start` on its way, so quitting can end them all (item 30): one
+   that outlives the app brings a model server up after the app's stop ran. */
+const startsOnTheirWay = new Set<{ abort: AbortController; done: Promise<unknown> }>();
+
 /** Start the managed llama daemon after switching to a local model. `signal` kills the start (item 11: a stop that supersedes it). */
 export async function modelsStart(opts: { signal?: AbortSignal } = {}): Promise<CliResult> {
-  const res = await cli(["models", "start"], 90_000, undefined, opts.signal);
-  if (res.ok) {
-    const speed = parseChatStartSpeed(res.stdout);
-    if (speed) lastChatSpeed = speed;
+  const abort = new AbortController();
+  const forward = () => abort.abort();
+  if (opts.signal?.aborted) abort.abort();
+  else opts.signal?.addEventListener("abort", forward, { once: true });
+  const run = cli(["models", "start"], 90_000, undefined, abort.signal);
+  const entry = { abort, done: run };
+  startsOnTheirWay.add(entry);
+  try {
+    const res = await run;
+    if (res.ok) {
+      const speed = parseChatStartSpeed(res.stdout);
+      if (speed) lastChatSpeed = speed;
+    }
+    return res;
+  } finally {
+    opts.signal?.removeEventListener("abort", forward);
+    startsOnTheirWay.delete(entry);
   }
-  return res;
+}
+
+/**
+ * Item 30: kill every `models start` on its way, and wait (up to `ms`) for
+ * them to be gone, so what one already spawned is in its pid file for the
+ * `models stop` that follows.
+ */
+export async function abortStarts(ms: number): Promise<number> {
+  const starts = [...startsOnTheirWay];
+  for (const s of starts) s.abort.abort();
+  if (starts.length) await Promise.race([Promise.allSettled(starts.map((s) => s.done)), new Promise((r) => setTimeout(r, ms))]);
+  return starts.length;
 }
 
 /**
@@ -1451,6 +1479,58 @@ export async function localDaemonRunning(): Promise<boolean> {
 /** LocalModelsOrchestrator.stopDaemon's process half: stops chat + embedding daemons. */
 export async function modelsStop(): Promise<CliResult> {
   return cli(["models", "stop"], 30_000);
+}
+
+/**
+ * The managed daemons' data dir as the CLI resolves it (src/config/load-config.ts:
+ * `localModels.managed.dataDirOverride`, else `<stateDir>/models`; `~` is the
+ * home directory, a relative path is taken from this process's directory, which
+ * the CLI children inherit).
+ */
+export function managedDataDir(override: string | null | undefined): string {
+  const raw = typeof override === "string" ? override.trim() : "";
+  if (!raw) return join(DESKTOP_STATE_DIR, "models");
+  if (raw.startsWith("~")) return resolvePath(homedir(), raw.slice(2));
+  return resolvePath(raw);
+}
+
+/** The pids the daemons' pid files name (`llama-server.pid`, `llama-embed.pid`, src/local-llm/backend-paths.ts). */
+export function daemonPidsIn(dataDir: string): number[] {
+  const pids: number[] = [];
+  for (const file of ["llama-server.pid", "llama-embed.pid"]) {
+    try {
+      const pid = Number(readFileSync(join(dataDir, file), "utf8").trim());
+      if (Number.isInteger(pid) && pid > 1) pids.push(pid);
+    } catch {
+      // no such daemon
+    }
+  }
+  return pids;
+}
+
+/**
+ * Item 30: SIGKILL, from this process, each of `pids` that is still alive and
+ * still a llama-server (a pid reused by anything else is never touched).
+ * Answers the pids it killed.
+ */
+export function killDaemonLeftovers(pids: number[]): number[] {
+  const killed: number[] = [];
+  for (const pid of new Set(pids)) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      continue;   // gone already
+    }
+    const command = commandOf(pid);
+    if (!command || !/llama-server/i.test(command)) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+      killed.push(pid);
+    } catch {
+      // went in between
+    }
+  }
+  return killed;
 }
 
 /**
