@@ -334,6 +334,8 @@ export async function checks26(js: Js, check: Check): Promise<void> {
     await newChatSessionLate(js, check, agent, w);
     await newChatNeverStarted(js, check, agent, w);
     await deletedWhileWaiting(js, check, agent, w);
+    await underAnotherChatsCard(js, check, agent, w);
+    await backWhileRunning(js, check, agent, w);
   } finally {
     /* The held answers are let go and the stand-ins come off before anything
        else is awaited (see t24). */
@@ -627,3 +629,72 @@ async function deletedWhileWaiting(js: Js, check: Check, agent: StandIn, w: Brow
   );
 }
 
+/* (i) Chat A's turn runs while the person is in chat B, where nothing runs,
+   and A's turn asks for an approval: its card comes up in B, so Enter there
+   takes the steer path, and B, which runs no turn, refuses the steer. The
+   message is B's and waited on A's turn: it runs in B when that turn ends,
+   as it did before the queue was per chat. */
+async function underAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-i`;
+  const b = `${PREFIX}b-i`;
+  const first = "smoke t26: the question that starts chat A's turn (i)";
+  const typed = "smoke t26: typed in B under chat A's approval card";
+  agent.ready(a, loaded(a, turns("A", 1)));
+  agent.ready(b, loaded(b, turns("B", 1)));
+  await js<boolean>(RESET);
+  const mark = agent.sent.length;
+  const onA = await land(js, a, "smoke t26: chat A (i)");
+  const turn = await startTurn(js, agent, first);
+  const onB = await land(js, b, "smoke t26: chat B (i)");
+  const asked = await js<boolean>(`(() => {
+    onApprovalEvent({approvalId: ${q(`${PREFIX}approval-i`)}, tool: 'os.shell.run', category: 'shell', reason: 'smoke t26',
+      preview: 'echo smoke t26', sessionId: ${q(a)}});
+    return !!S.pending && S.pending.sessionId === ${q(a)};
+  })()`);
+  agent.steer = "refuse";
+  const parked = await typeAndEnter(js, typed);
+  if (turn) await frame(js, w, { turnId: turn, kind: "done" });
+  const after = await js<View>(VIEW);
+  const all = agent.chats(mark);
+  const steers = agent.since(mark).filter((s) => s.channel === "steer");
+  check(
+    "T26: a message typed in a chat that runs no turn, under another chat's approval card, runs in that chat when the other turn ends",
+    onA && !!turn && onB && asked && steers.length === 1 && steers[0]!.sessionId === b && queuedFollowUp(parked, typed)
+      && all.length === 2 && all[1]!.text === typed && all[1]!.sessionId === b && after.rows.includes(`user:${typed}`),
+    `turn=${turn} asked=${asked} steers=${show(steers)} parked=${show(parked)} chats=${show(all)} after=${show(after)}`,
+  );
+}
+
+/* (j) The person leaves chat A while its turn runs, with a follow-up queued,
+   runs a turn in chat B, and comes back to A before A's turn ends. A's tray
+   has the follow-up again. A's turn, no longer the window's last one, ends,
+   and the follow-up runs in A once the chat has reloaded. */
+async function backWhileRunning(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-j`;
+  const b = `${PREFIX}b-j`;
+  const first = "smoke t26: the question that starts chat A's turn (j)";
+  const follow = "smoke t26: a follow-up typed in chat A, which the person came back to";
+  const inB = "smoke t26: the question that starts chat B's turn (j)";
+  agent.ready(a, loaded(a, turns("A", 1)));
+  agent.ready(b, loaded(b, turns("B", 1)));
+  await js<boolean>(RESET);
+  const mark = agent.sent.length;
+  const onA = await land(js, a, "smoke t26: chat A (j)");
+  const turnA = await startTurn(js, agent, first);
+  agent.steer = "refuse";
+  const typed = await typeAndEnter(js, follow);
+  const onB = await land(js, b, "smoke t26: chat B (j)");
+  const turnB = await startTurn(js, agent, inB);
+  const back = await land(js, a, "smoke t26: chat A (j)");
+  const inA = await js<View>(VIEW);
+  if (turnA) await frame(js, w, { turnId: turnA, kind: "done" });
+  await settle(js);
+  const after = await js<View>(VIEW);
+  const all = agent.chats(mark);
+  check(
+    "T26: back in a chat whose turn still runs, its queued message is in its tray, and runs there when that turn ends",
+    onA && !!turnA && queuedFollowUp(typed, follow) && onB && !!turnB && back && inA.busy && inA.tray.includes(follow)
+      && all.length === 3 && all[2]!.text === follow && all[2]!.sessionId === a && after.rows.includes(`user:${follow}`),
+    `turnA=${turnA} turnB=${turnB} inA=${show(inA)} chats=${show(all)} after=${show(after)}`,
+  );
+}

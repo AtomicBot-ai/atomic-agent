@@ -5084,13 +5084,14 @@ let timer = null, step = 0, ticker = null;
  * POST /v1/chat/completions, which is advice for an API client and not
  * for someone typing here, so it is translated, never printed.
  */
-function steerOrQueue(text) {
+function steerOrQueue(text, typed) {
   // Sequenced: submit() clears the editor optimistically and returns, so
   // two Enters in quick succession would otherwise interleave.
-  /* Backlog 26: which chat the message is for is read here, at Enter. The
-     chain can run it after the person has opened another chat, and it still
-     goes to the turn, or the queue, of the chat it was typed in. */
-  const typedIn = {sid:S.agentSession, key:queueKey()};
+  /* Backlog 26: which chat the message is for is read here, at Enter (or by
+     denyByProse, before its round trip). The chain can run it after the
+     person has opened another chat, and it still goes to the turn, or the
+     queue, of the chat it was typed in. */
+  const typedIn = typed || {sid:S.agentSession, key:queueKey()};
   STEER.chain = STEER.chain.then(() => steerOrQueueRun(text, null, typedIn)).catch(() => {});
   return STEER.chain;
 }
@@ -6467,6 +6468,7 @@ function applyStatus(st) {
     AGENT_GEN++;
     appSay('Connected · ' + S.live.workingDir);
     loadResources();
+    drainOwed();   // Backlog 26: a queue owed while the agent was down
   }
   if (S.live.state === 'missing-binary' || S.live.state === 'error') {
     S.log.push({id:nid(), k:'system', text: esc(S.live.error || 'the agent stopped')});
@@ -7077,19 +7079,23 @@ function onChatEvent(ev) {
         if (BR && BR.unverifiedSet) BR.unverifiedSet(on, false).catch(() => {});
       }
     }
-    // Backlog 26: the queue on screen's, if it is this turn's chat's (queueTurnEnded does a left chat's).
-    if (ownQueue) STEER.ahead = 0;
+    /* Backlog 26: the queue on screen drains behind this turn when it is this
+       turn's chat's, or when the chat on screen runs no turn of its own: what
+       is parked there then waited on another chat's turn (Enter under that
+       chat's approval card takes the steer path), or came back refused after
+       its own turn had ended. A chat on screen with a turn of its own keeps
+       its queue for that turn's end; a left chat's waits in QUEUES until the
+       person is back there (openSession). The watermark goes with the turn
+       its queue waited on (queueTurnEnded does a left chat's). */
+    const idle = !ownQueue && !S.busy && !queueChatRunning(queueKey());
+    if (ownQueue || idle) STEER.ahead = 0;
     STEER.mine.length = 0;
-    /* Backlog 26: and only this turn's own chat's queue drains behind it.
-       When another chat's turn ends, the queue on screen waits for its own
-       chat's turn, and the other chat's waits in QUEUES until the person is
-       back there (openSession). */
-    if (ownQueue && S.queued.length) {
+    if ((ownQueue || idle) && S.queued.length) {
       /* Backlog 24: not from under a loading line (or a failed open's
          error). That transcript is replaced when the answer lands, and until
          then S.agentSession can still be the chat that was left. The chat
          lands first, and openSession runs the message there. */
-      if (openHoldsComposer()) { DRAIN_OWED = true; render(); return; }
+      if (openHoldsComposer()) { if (ownQueue) DRAIN_OWED = true; render(); return; }
       drainQueued();
       return;
     }
@@ -7126,11 +7132,11 @@ function drainQueued() {
    Now S.queued, STEER.ahead and DRAIN_OWED are the queue of the chat on
    screen and of no other. The chat being left takes its queue into QUEUES
    (stashQueue) and the chat being opened takes its own back (restoreQueue);
-   a turn's end drains the queue on screen only when the turn is that chat's
-   (onChatEvent), and marks a left chat's as owed (queueTurnEnded); a chat
-   opened with an owed queue runs the next message once it has loaded
-   (openSession). The TUI drops the queue on a switch (leaveCurrentSession):
-   here it waits, so nothing typed is lost. */
+   a turn's end drains the queue on screen only when the turn is that chat's,
+   or when that chat runs no turn of its own (onChatEvent), and marks a left
+   chat's as owed (queueTurnEnded); a chat opened with an owed queue runs the
+   next message once it can (drainOwed). The TUI drops the queue on a switch
+   (leaveCurrentSession): here it waits, so nothing typed is lost. */
 
 /** The chat S.queued is the queue of: the chat on screen's session id. A new
     chat has none until its first turn reports it (`session_id`, the first
@@ -7141,6 +7147,12 @@ function queueKey() {
   if (S.sessionId) return S.sessionId;
   const streaming = !!S.streamId && S.log.some((m) => m.id === S.streamId);
   return streaming && RUNNING.get(S.turnId) === null ? 'turn:' + S.turnId : null;
+}
+/** Whether chat `key` (as queueKey names it) runs a turn here. */
+function queueChatRunning(key) {
+  if (!key) return false;
+  if (key.startsWith('turn:')) return RUNNING.has(key.slice(5));
+  return [...RUNNING.values()].includes(key);
 }
 /** `turn:<id>` is that turn's chat's session once the turn has reported it. */
 function queueOwner(key) {
@@ -7165,11 +7177,16 @@ function parkIn(key, texts, front) {
     STEER.ahead += texts.length;
     return;
   }
+  // A new chat's first turn that is over without reporting a session: no chat to wait for.
+  if (owner.startsWith('turn:') && !RUNNING.has(owner.slice(5))) { notSent(texts); return; }
   let q = QUEUES.get(owner);
   if (!q) QUEUES.set(owner, q = {queued:[], ahead:0, owed:false});
   q.queued.splice(front ? 0 : q.ahead, 0, ...texts);
   q.ahead += texts.length;
+  // Refused after that chat's turn was over: no turn end is left to mark it, so it is owed now.
+  if (!queueChatRunning(owner)) q.owed = true;
 }
+/** `q` joins chat `key`'s waiting queue, behind it: its watermark stands. */
 function mergeQueue(key, q) {
   const into = QUEUES.get(key);
   if (!into) { QUEUES.set(key, q); return; }
@@ -7183,7 +7200,9 @@ function stashQueue() {
   STEER.ahead = 0; DRAIN_OWED = false;
   if (!q.queued.length) return;
   const key = queueKey();
-  // A new chat left before its first turn was even sent: nothing to wait for.
+  /* A new chat whose first turn this window cannot name (none sent, its
+     stream cleared, or the turn's id not back yet): no chat will come back
+     for these. */
   if (!key) { notSent(q.queued); return; }
   mergeQueue(key, q);
 }
@@ -7200,6 +7219,8 @@ function moveQueue(from, to) {
   const q = QUEUES.get(from);
   if (!q || !to) return;
   QUEUES.delete(from);
+  // The person opened it from its row before the frame came: it is the queue on screen.
+  if (to === queueKey()) { S.queued.push(...q.queued); DRAIN_OWED = DRAIN_OWED || q.owed; render(); return; }
   mergeQueue(to, q);
 }
 /** Turn `turnId` of chat `sid` is over. The queue of a chat the person left
@@ -7222,6 +7243,15 @@ function queueTurnEnded(sid, turnId) {
   q.ahead = 0;
   q.owed = q.queued.length > 0;
 }
+/** The chat on screen's owed queue runs its next message once the chat can
+    take it: loaded, idle, the agent up, no switch landing (a turn started
+    under a switch runs on the configuration being left, and the restart ends
+    it). Asked when the chat lands (openSession), when the agent is back
+    (applyStatus) and when a switch is over (swxRun). */
+function drainOwed() {
+  if (DRAIN_OWED && S.queued.length && !S.busy && !S.pending && !openHoldsComposer()
+      && S.live.state === 'connected' && !swxHoldsComposer()) drainQueued();
+}
 /** A deleted chat's queue goes with it, sent nowhere. */
 function forgetQueue(sid) {
   QUEUES.delete(sid);
@@ -7231,7 +7261,7 @@ function forgetQueue(sid) {
 function notSent(texts) {
   const n = texts.length;
   toast(n === 1 ? 'Queued message not sent' : n + ' queued messages not sent',
-    (n === 1 ? 'It was' : 'They were') + ' queued in a new chat that had not started yet: “' + droppedPreview(texts[0]) + '”', 'bad');
+    (n === 1 ? 'It was' : 'They were') + ' queued in a new chat that was never saved: “' + droppedPreview(texts[0]) + '”', 'bad');
 }
 
 /** B1: `body` with a trailing streamed copy of `note` taken off. The agent's
@@ -7460,6 +7490,7 @@ function answerLive(req, key) {
  * running turn" before asking would be inventing the second half.
  */
 async function denyByProse(req, text, post) {
+  const typedIn = {sid:S.agentSession, key:queueKey()};   // Backlog 26: read at Enter, as steerOrQueue does
   S.pending = null;
   if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
   req.at = new Date().toTimeString().slice(0, 8);
@@ -7504,7 +7535,7 @@ async function denyByProse(req, text, post) {
   render();
   // Then the text itself. steerOrQueue prints its own honest line about where
   // it landed — folded into the running turn, or parked as the next one.
-  await steerOrQueue(text);
+  await steerOrQueue(text, typedIn);
 }
 
 /* Windows: the minimise / maximise / close buttons are overlaid on the
@@ -12634,6 +12665,8 @@ async function swxRun(label, want, run, refuse) {
        with it. Otherwise the render below lets it run, on the next tick so
        the caller is done with this result first (fzFlushSoon). */
     if (SWX.pending === 0 && FZ.swapQueued && !swxLanded(res)) FZ.swapQueued = false;
+    // Backlog 26: a queue owed while the switch landed, once the caller is done with this result.
+    if (SWX.pending === 0 && DRAIN_OWED) setTimeout(drainOwed, 0);
     render();
   }
 }
@@ -14920,9 +14953,9 @@ async function openSession(id) {
   /* Backlog 24, 26: a turn of this chat ended while it was loading, or while
      the person was in another chat, with messages queued behind it. The next
      one runs now, here. Not over a turn this chat is still running (live):
-     that turn's end drains it. Not while the agent is not up either: the
-     queue stays owed, and runs at the next open or the next turn's end. */
-  if (DRAIN_OWED && S.queued.length && !S.busy && !S.pending && S.live.state === 'connected') drainQueued();
+     that turn's end drains it. Not while the agent is down or a switch is
+     landing either: the queue stays owed, and drainOwed runs it after. */
+  drainOwed();
   // Item 7C review fix: the GET leg of the steer route. The
   // `steer_undelivered` SSE frame only reaches a window that was attached
   // to the turn; a reconnect, an agent restart or a session opened after
@@ -14960,7 +14993,9 @@ async function recoverParkedSteers(id, probe) {
   if (!fetchParked || !id) return;
   const res = await fetchParked(id);
   if (!res || !res.ok || !res.data) return;
-  if (S.agentSession !== id) return;   // the user moved on while this was in flight
+  // The user moved on while this was in flight. Backlog 26: while another chat
+  // loads, S.agentSession is still this one, but the queue on screen is not.
+  if (S.agentSession !== id || openHoldsComposer()) return;
   const list = Array.isArray(res.data.undelivered) ? res.data.undelivered : [];
   const discarded = Number(res.data.discarded) || 0;
   STEER.recovery = {id, parked:list.length, discarded};
