@@ -2193,9 +2193,9 @@ export async function modelsUseEmbedding(idOrDisable: string): Promise<CliResult
   return cli(["models", "use-embedding", idOrDisable], 60_000);
 }
 
-/** `atag models update` — downloads the latest backend; stops the daemon first. */
-export async function modelsUpdate(): Promise<CliResult> {
-  return cli(["models", "update"], 300_000);
+/** `atag models update` — downloads the latest backend; stops the daemon first. `signal` kills it (backlog 18: quitting). */
+export async function modelsUpdate(opts: { signal?: AbortSignal } = {}): Promise<CliResult> {
+  return cli(["models", "update"], 300_000, undefined, opts.signal);
 }
 
 export interface GpuDevice { id: string; vram: string; name: string; active: boolean }

@@ -62,7 +62,7 @@ export type DaemonEffect =
   | "start-failed"
   /** A bring-up that started nothing because the model is not on disk (or the list could not be read) — not "already running". */
   | "skipped"
-  /** A background bring-up that a stop or a route change ended (item 11): it reports nothing and does nothing more. */
+  /** A background bring-up that a stop or a route change ended (item 11), or any start whose turn came after the quit closed the turns (backlog 18): it reports nothing and does nothing more. */
   | "superseded";
 
 export interface SwitchResult {
@@ -222,7 +222,7 @@ async function routeToLocal(modelId: string): Promise<SwitchResult> {
     if (running) return { daemon: "untouched" };
     const st = await modelsStart();
     return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
-  });
+  }, () => SUPERSEDED);
   return {
     ok: true,
     providerId: LOCAL_ID,
@@ -324,12 +324,30 @@ export type BringUp = { daemon: DaemonEffect; daemonLine?: string; error?: strin
    side — a second one beside a starting daemon is the agent-side duplicate
    localDaemonRunning describes — and when a long one ends, the sequences
    queued behind it go one by one, not all at once. A stop never takes it: a
-   stop must not wait out a load of up to 90 s (supersedeBringUp). */
+   stop must not wait out a load of up to 90 s (supersedeBringUp).
+   Backlog 18: the llama.cpp update takes a turn as well (inDaemonTurn, from
+   main.ts). It stops the daemon and replaces its binary, and `models start`
+   fetches a newer binary itself (managed.autoUpdate), so a start beside it
+   came up on a binary being replaced, or downloaded a second one into the
+   same data dir. Quitting closes the turns (closeDaemonTurns): one that has
+   not begun by then gets `whenClosed` instead — a start that waited out an
+   update the quit stopped does not bring a model server up as the app goes. */
 let daemonChain: Promise<void> = Promise.resolve();
-function withDaemonLock<T>(run: () => Promise<T>): Promise<T> {
-  const next = daemonChain.then(run, run);
+let turnsClosed = false;
+function withDaemonLock<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
+  const turn = () => (turnsClosed ? Promise.resolve(whenClosed()) : run());
+  const next = daemonChain.then(turn, turn);
   daemonChain = next.then(() => undefined, () => undefined);
   return next;
+}
+/** Backlog 18: `run` in the daemon's turn, as a start takes it — the llama.cpp update's. `whenClosed` is its answer if the app quits first. */
+export function inDaemonTurn<T>(run: () => Promise<T>, whenClosed: () => T): Promise<T> {
+  return withDaemonLock(run, whenClosed);
+}
+/** Quitting (main.ts stopForQuit): no turn begins after this. The undo is for a smoke check, which carries on after it. */
+export function closeDaemonTurns(): () => void {
+  turnsClosed = true;
+  return () => { turnsClosed = false; };
 }
 
 /** Start the managed daemon when it is down (restart it when the model moved), in its turn. */
@@ -347,7 +365,7 @@ async function bringUpLocalDaemon(modelChanged: boolean): Promise<BringUp> {
     }
     const st = await modelsStart();
     return st.ok ? { daemon: "started", daemonLine: readyLine(st.stdout) } : { daemon: "start-failed", error: st.error };
-  });
+  }, () => SUPERSEDED);
 }
 /** Only a model that is on disk is started: a start for a file that is not there is a failure about nothing the operator chose. */
 async function onDisk(modelId: string): Promise<boolean> {
@@ -386,7 +404,7 @@ function startInBackground(task: (s: BringUpSteps) => Promise<BringUp>): { done:
   if (background) return { done: background.done, adopted: true };
   const b = { superseded: false, starting: false, abort: new AbortController() } as Background;
   const steps: BringUpSteps = { signal: b.abort.signal, superseded: () => b.superseded, starting: () => { b.starting = true; } };
-  b.done = withDaemonLock(() => (b.superseded ? Promise.resolve(SUPERSEDED) : task(steps)))
+  b.done = withDaemonLock(() => (b.superseded ? Promise.resolve(SUPERSEDED) : task(steps)), () => SUPERSEDED)
     .catch((err): BringUp => ({ daemon: "start-failed", error: err instanceof Error ? err.message : String(err) }))
     .then((r) => (b.superseded ? SUPERSEDED : r))
     .finally(() => { if (background === b) background = null; });
@@ -443,7 +461,7 @@ export function startDaemonNow(): Promise<CliResult & { alreadyRunning?: boolean
   return withDaemonLock(async () => {
     if (await localDaemonRunning()) return { ok: true, stdout: "", stderr: "", alreadyRunning: true };
     return modelsStart();
-  });
+  }, () => ({ ok: false, stdout: "", stderr: "", error: "the app is quitting — the model server was not started" }));
 }
 /** Settings › Models › Stop, and quitting: at once — a bring-up on its way is ended, not waited for. */
 export function stopDaemonNow(): Promise<CliResult> {

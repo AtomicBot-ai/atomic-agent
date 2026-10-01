@@ -56,6 +56,7 @@ import {
   setActiveTextProvider,
   setExternalLlamaUrl,
   useManagedMode,
+  type CliResult,
   type UserConfigShape,
   // Lane B — context before the first message (item 3)
   modelWindow,
@@ -77,7 +78,9 @@ import {
 import {
   activateProvider,
   bringUpAtLaunch,
+  closeDaemonTurns,
   enterFusion,
+  inDaemonTurn,
   onBackgroundBringUp,
   selectCloudModel,
   selectFusionWorkerModel,
@@ -325,9 +328,11 @@ let hfProjector: { controller: AbortController; id: string; url: string; file: s
 let pullUpdate: DownloadSlot | null = null;
 /* Deferred F8: Settings › Models' own llama.cpp update (cli:modelsUpdate), the
    same `models update` without a stream. No window can follow it (it sends no
-   frames) and cli:cancelPull has no child to stop, so it is not a slot — but
-   every other download refuses while it runs (downloadRunning). */
-let settingsUpdate = false;
+   frames) and the card's × (cli:cancelPull) is not its Cancel, so it is not a
+   slot — but every other download refuses while it runs (downloadRunning).
+   Backlog 18: its stop, which quitting pulls (stopForQuit). Held as a flag, it
+   wrote on after the app was gone. */
+let settingsUpdate: AbortController | null = null;
 
 /* Backlog 18 (review S5): on macOS closing the window is not quitting, so a
    pull runs on in main, and the window reopened from the dock resumes the
@@ -351,13 +356,42 @@ const DOWNLOAD_BUSY = "a download is already running";
 /* Backlog 18 (R1): a download stops with the app rather than writing on
    after it — the next launch resumes the setup download from its partial
    file, and two writers on one partial file is how a resume goes wrong.
-   What quitting does before the agent stops (before-quit). A smoke check runs
-   it too (smokeDownloads.quit) and carries on with the undo it hands back. */
+   Settings' llama.cpp update stops too, and no daemon turn begins after this
+   (closeDaemonTurns): a model start that waited behind that update would
+   otherwise bring a model server up as the app goes.
+   What quitting does before the agent stops (before-quit, and the smoke's
+   exitAfterAgentStop). A smoke check runs it too (smokeDownloads.quit) and
+   carries on with the undo it hands back. */
 function stopForQuit(): () => void {
   pull?.cancel();
   pullUpdate?.cancel();
   hfProjector?.controller.abort();
-  return () => {};
+  settingsUpdate?.abort();
+  return closeDaemonTurns();
+}
+/* Backlog 18: the llama.cpp update — Settings' (cli:modelsUpdate) and the
+   setup's runtime download (cli:modelsUpdateStream), both `models update` —
+   takes the daemon's turn (backend-switch inDaemonTurn). It stops the daemon
+   and replaces its binary, and `models start` fetches a newer binary itself
+   (managed.autoUpdate): a start beside it came up on a binary being replaced,
+   or downloaded a second one into the same data dir. So no start runs while
+   it does, and it does not begin under a start on its way. `stop` ends it:
+   while it waits for its turn the wait ends at once and the turn does
+   nothing; once it runs, `run` stops its child on the same signal. */
+const UPDATE_STOPPED = "the llama.cpp update was stopped before it began";
+function updateInTurn<T>(stop: AbortSignal, ended: (error: string) => T, run: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let begun = false;
+    const early = () => { if (!begun) resolve(ended(UPDATE_STOPPED)); };
+    stop.addEventListener("abort", early, { once: true });
+    inDaemonTurn(async () => {
+      if (stop.aborted) return;   // answered as it was stopped
+      begun = true;
+      stop.removeEventListener("abort", early);
+      resolve(await run());
+    }, () => resolve(ended(UPDATE_STOPPED)))
+      .catch((err: unknown) => resolve(ended(err instanceof Error ? err.message : String(err))));
+  });
 }
 /* What the projector download reads `models status` with (cli:hfProjector).
    Only the item-18 smoke stands in for it (smokeDownloads below). */
@@ -951,18 +985,30 @@ function wireIpc(client: AgentClient): void {
      phase row can only be driven by `models update`. It rides the same
      `cli:pull` stream under `kind:'runtime'` and the same single-flight
      slot, because the CLI stops the daemon to install the zip and two
-     concurrent downloads into one data dir is not a thing to allow. */
+     concurrent downloads into one data dir is not a thing to allow.
+     Backlog 18: in the daemon's turn, as Settings' update (updateInTurn).
+     The slot is taken at once, and its × (cli:cancelPull) ends it even while
+     it waits for that turn: it never begins, and the window is told now. */
   ipcMain.handle("cli:modelsUpdateStream", () => {
     const running = downloadRunning();
     if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     const id = "llama.cpp";
+    const own = new AbortController();
     let slot: DownloadSlot | null = null;
-    const started = modelsUpdateStream((line) =>
-      pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
+    const done = updateInTurn<CliResult & { sawProgress: boolean; upToDate: boolean }>(
+      own.signal,
+      (error) => ({ ok: false, stdout: "", stderr: "", error, sawProgress: false, upToDate: false }),
+      () => {
+        const started = modelsUpdateStream((line) =>
+          pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
+        );
+        own.signal.addEventListener("abort", () => started.cancel(), { once: true });
+        return started.done;
+      },
     );
-    pullUpdate = slot = { ...started, kind: "runtime", id, last: null };
-    void started.done.then((res) => {
+    pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
+    void done.then((res) => {
       pullUpdate = null;
       send("cli:pull", {
         id,
@@ -1580,16 +1626,23 @@ function wireIpc(client: AgentClient): void {
   /* Deferred F8: Settings' llama.cpp update is a download as well — it fetches
      the runtime and replaces the binary — and it ran beside a setup download,
      where a model landing meanwhile started on a binary being replaced. It
-     refuses while any download runs, and they refuse while it does. */
+     refuses while any download runs, and they refuse while it does.
+     Backlog 18: and a model start waits for it, as it waits for a start on
+     its way (updateInTurn); quitting stops it (stopForQuit). */
   ipcMain.handle("cli:modelsUpdate", async () => {
     const running = downloadRunning();
     if (running) return { ok: false, stdout: "", stderr: "", error: DOWNLOAD_BUSY, running };
     if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
-    settingsUpdate = true;
+    const own = new AbortController();
+    settingsUpdate = own;
     try {
-      return await modelsUpdate();
+      return await updateInTurn<CliResult>(
+        own.signal,
+        (error) => ({ ok: false, stdout: "", stderr: "", error }),
+        () => modelsUpdate({ signal: own.signal }),
+      );
     } finally {
-      settingsUpdate = false;
+      if (settingsUpdate === own) settingsUpdate = null;
     }
   });
   ipcMain.handle("cli:modelsDevices", () => modelsDevices());
@@ -3036,6 +3089,7 @@ async function smokeTest(): Promise<void> {
 function exitAfterAgentStop(code: number): void {
   // The same steps as before-quit, in its order, bounded as a whole.
   voice.kill();
+  stopForQuit();
   const client = agent;
   agent = null;
   const shutdown = (client ? client.stop() : Promise.resolve()).then(stopLocalDaemonOnQuit);
