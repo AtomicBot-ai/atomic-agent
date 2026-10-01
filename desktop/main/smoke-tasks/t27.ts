@@ -464,7 +464,7 @@ async function waitNamesItsProvider(js: Js, check: Check, agent: StandIns, w: Br
 
     const cloud = await oneWait(js, w, turn, sid, { provider_id: "aimlapi", cause: { kind: "unreachable" } });
     check(
-      "T29: \"no connection\" is said when the agent reports a connection failure to the provider it names",
+      "T29: a connection failure to the provider the agent names reads \"no connection\", with that provider named in the strip and the transcript",
       cloud.started && cloud.shown && cloud.ann === `Waiting for ${pick.name}` && cloud.why === "no connection"
         && cloud.note === `No answer from ${pick.name} (no connection)${TAIL}`,
       JSON.stringify(cloud),
