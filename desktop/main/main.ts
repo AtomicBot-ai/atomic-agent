@@ -6312,22 +6312,24 @@ async function settingsTestPartC(
         : `${vendored.length} curated ids, all with a description and both RAM figures`,
     );
   }
-  /* What the pane draws (Calm S5): the pane switch's three words (Local
-     pressed), the route card's label · value rows inside Advanced (opened
-     here to read them), and each local model row's action pill in words —
-     "Download 5.3 GB" for a remote model, "Use" / "In use" / "Start" for a
-     downloaded one — with the TUI's sentence as the pill's tooltip. */
+  /* What the pane draws (Calm S5): the setup tabs' three words (Local
+     models pressed — Д30 renamed them and put where chats run above them),
+     the route card's label · value rows inside Advanced › Details (opened
+     here to read them; Д35 folded them under Details), and each local model
+     row's action pill in words — "Download 5.3 GB" for a remote model,
+     "Use" / "In use" / "Start" for a downloaded one — with the TUI's sentence
+     as the pill's tooltip. */
   const localView = await js<{ modes: string[]; on: string[]; kv: Array<[string, string]>; effects: Array<[string, string, boolean]> }>(
     "(() => { const box = document.querySelector('#settings .setbody'); if (!box) return {modes: [], on: [], kv: [], effects: []};"
-    + " const adv = box.querySelector('.llm-adv'); if (adv) adv.open = true;"
+    + " for (const d of box.querySelectorAll('.llm-adv, .llm-details')) d.open = true;"
     + " const kv = [...box.querySelectorAll('.llm-route .llm-kv')].map((row) => { const k = ((row.querySelector('.llm-k') || {}).innerText || '').trim();"
     + " const all = (row.innerText || '').replace(/\\s+/g, ' ').trim(); return [k, all.startsWith(k) ? all.slice(k.length).trim() : all]; });"
     + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
     + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Chats run on", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
+  const localCopy = ["Where chats run", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Local", "Cloud", "Custom server"]) || !same(localView.on, ["Local"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom server"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
   // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
   const badPills = localView.effects.filter(([label, title, remote]) => remote

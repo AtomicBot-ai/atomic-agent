@@ -27,6 +27,8 @@ import { checks28 } from "./smoke-tasks/t28.js";
 import { checks32 } from "./smoke-tasks/t32.js";
 import { checks30 } from "./smoke-tasks/t30.js";
 import { checks34 } from "./smoke-tasks/t34.js";
+import { checks37 } from "./smoke-tasks/t37.js";
+import { checks48 } from "./smoke-tasks/t48.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -63,7 +65,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "37", "48"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -494,6 +496,10 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("30") || want.has("31")) await guarded("30", check, () => checks30(js, check));
   // 34 — backlog 18's second review: a switch's restart under a running turn, and a start spawned after the quit.
   if (want.has("34")) await guarded("34", check, () => checks34(js, check, downloads));
+  // 37 — Settings › Models: the green "In use" sat in a dark pill on the selected row.
+  if (want.has("37")) await guarded("37", check, () => checks37(js, check));
+  // 48 — Settings › Models: where chats run first, fit badges, Advanced regrouped, Remove for every model on disk (Д30–Д35, ATO-119).
+  if (want.has("48")) await guarded("48", check, () => checks48(js, check));
 
   if (want.has("23")) {
     // 23 — "This Mac" named the local route on every platform, Windows and Linux included.
