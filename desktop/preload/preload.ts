@@ -175,6 +175,8 @@ contextBridge.exposeInMainWorld("atomic", {
   skillShow: (name: string) => ipcRenderer.invoke("cli:skillShow", name),
   skillSetDisabled: (name: string, disabled: boolean) => ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled }),
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
+  /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
+  skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
   skillInstall: (identifier: string, acknowledgeRisk?: boolean) =>
     ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk }),
   clawhubSkillDetail: (apiBase: string, slug: string, owner?: string | null) =>

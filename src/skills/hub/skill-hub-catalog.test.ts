@@ -177,3 +177,73 @@ describe("browseTap lazy branch resolution", () => {
     expect(resolveDefaultCalls).toBe(1);
   });
 });
+
+describe("browseHub / browseTap fan-out", () => {
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it("reads the taps side by side, not one after the other", async () => {
+    const events: string[] = [];
+    const client: SkillHubClient = {
+      resolveDefaultBranch: async () => "main",
+      listSkillManifests: async (owner) => {
+        events.push(`list ${owner}`);
+        await delay(20);
+        events.push(`listed ${owner}`);
+        return [{ dir: "s", manifestPath: "s/SKILL.md" }];
+      },
+      fetchTextFile: async (owner) => manifest(`${owner}-s`, "x"),
+      downloadSkillDir: async () => [],
+    };
+    const { entries } = await browseHub(client, [
+      { repo: "a/r", path: "" },
+      { repo: "b/r", path: "" },
+    ]);
+    expect(entries.map((e) => e.name)).toEqual(["a-s", "b-s"]);
+    expect(events.indexOf("list b")).toBeLessThan(events.indexOf("listed a"));
+  });
+
+  it("merges in the configured order whichever tap answers first", async () => {
+    const client: SkillHubClient = {
+      resolveDefaultBranch: async () => "main",
+      listSkillManifests: async (owner) => {
+        await delay(owner === "slow" ? 30 : 1);
+        throw new GithubSkillError(`${owner} down`, "rate_limited", 403);
+      },
+      fetchTextFile: async () => "",
+      downloadSkillDir: async () => [],
+    };
+    const { errors } = await browseHub(client, [
+      { repo: "slow/r", path: "" },
+      { repo: "fast/r", path: "" },
+    ]);
+    expect(errors.map((e) => e.repo)).toEqual(["slow/r", "fast/r"]);
+  });
+
+  it("keeps six SKILL.md reads in flight and refills a slot as soon as it frees", async () => {
+    let inFlight = 0;
+    let most = 0;
+    const done: string[] = [];
+    const dirs = Array.from({ length: 13 }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    const client: SkillHubClient = {
+      resolveDefaultBranch: async () => "main",
+      listSkillManifests: async () =>
+        dirs.map((dir) => ({ dir, manifestPath: `${dir}/SKILL.md` })),
+      fetchTextFile: async (_o, _r, _ref, path) => {
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        const dir = path.split("/")[0]!;
+        // The first file is slow; the rest are quick.
+        await delay(dir === "s00" ? 80 : 5);
+        inFlight -= 1;
+        done.push(dir);
+        return manifest(dir, "x");
+      },
+      downloadSkillDir: async () => [],
+    };
+    const entries = await browseTap(client, { repo: "o/r", path: "" });
+    expect(entries.map((e) => e.name)).toEqual(dirs);
+    expect(most).toBe(6);
+    // Fixed batches of six would hold s06…s12 behind the slow s00.
+    expect(done.indexOf("s00")).toBe(dirs.length - 1);
+  });
+});

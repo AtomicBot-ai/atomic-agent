@@ -28,6 +28,7 @@ import { checks32 } from "./smoke-tasks/t32.js";
 import { checks30 } from "./smoke-tasks/t30.js";
 import { checks34 } from "./smoke-tasks/t34.js";
 import { checks49 } from "./smoke-tasks/t49.js";
+import { checks50 } from "./smoke-tasks/t50.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -64,7 +65,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "49"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "49", "50"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -634,6 +635,10 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 49 — Danya's Settings items (Д36, Д39, Д40, Д47–Д59): Telegram, Memory, Tasks, Privacy, Import, Diagnostics.
   if (want.has("49")) await guarded("49", check, () => checks49(js, check));
+
+  // 50 — Danya's Settings › Skills items Д41–Д46: the list's columns and tabs, one hub button, no auto readout,
+  // the Skills Hub opening on its kept answer with one loader, and the skill page.
+  if (want.has("50")) await guarded("50", check, () => checks50(js, check));
 
   await wait(100);
 }

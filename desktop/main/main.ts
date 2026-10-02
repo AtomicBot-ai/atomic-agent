@@ -159,6 +159,7 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
+import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMetaIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
@@ -1689,9 +1690,14 @@ function wireIpc(client: AgentClient): void {
     if (!clean) return { ok: false, error: "skill name required" };
     return skillSetDisabled(clean, disabled === true);
   });
-  ipcMain.handle("cli:skillBrowse", (_event, query: unknown) =>
-    skillBrowse(typeof query === "string" ? query.slice(0, 200) : "", client.status.workingDir),
+  // Д45: the hub opens on its last answer (main/skills-hub-cache.ts); a browse keeps what it brings back.
+  ipcMain.handle("cli:skillBrowseCached", (_event, query: unknown) =>
+    hubCache.peek(typeof query === "string" ? query.slice(0, 200) : "", hubConfigKey(DESKTOP_STATE_DIR)) ?? { ok: false },
   );
+  ipcMain.handle("cli:skillBrowse", (_event, query: unknown) => {
+    const q = typeof query === "string" ? query.slice(0, 200) : "";
+    return hubCache.refresh(q, hubConfigKey(DESKTOP_STATE_DIR), () => skillBrowse(q, client.status.workingDir));
+  });
   ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
     const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
     if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
@@ -4529,7 +4535,7 @@ async function settingsTest(
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
   const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
-  // The nav row a person reads: the label alone (Calm S5: no count badge; the pane itself says "N shown").
+  // The nav row a person reads: the label alone (Calm S5: no count badge; the pane's own tabs carry the counts, Д43).
   const skillsLabel = await js<{ act: string; label: string; count: string | null }>(
     "(() => { window.__settingsOpen('skills'); const b = document.querySelector('#settings .settab.on'); if (!b) return {act: '', label: '', count: null};"
     + " const c = b.querySelector('.setcount');"
@@ -4549,7 +4555,7 @@ async function settingsTest(
   // with the `↓ N below` line; the loaded rows are every CLI row.
   const skl = await js<{ header: boolean; rows: number; loaded: number; cli: number | null; win: { painted: number; visible: number; max: number; above: string; below: string } }>(
     "(() => { window.__settingsOpen('skills'); const cols = document.querySelector('#settings .setbody .set-skcols');"
-    + " return {header: !!cols && cols.getClientRects().length > 0 && [...cols.children].map((s) => s.textContent.trim()).join('|') === 'Enabled|Name|Source|Version|Description', rows: document.querySelectorAll('#settings .setbody [data-skill-row]').length, loaded: window.__skillsRows(), cli: window.__skillCount(), win: window.__skillsWindow()}; })()",
+    + " return {header: !!cols && cols.getClientRects().length > 0 && [...cols.children].map((s) => s.textContent.trim()).join('|') === 'Enabled|Name|Source|Description', rows: document.querySelectorAll('#settings .setbody [data-skill-row]').length, loaded: window.__skillsRows(), cli: window.__skillCount(), win: window.__skillsWindow()}; })()",
   );
   const sklHidden = typeof skl.cli === "number" ? Math.max(0, skl.cli - skl.win.max) : 0;
   check(
@@ -4848,17 +4854,21 @@ async function settingsTestPartB(
   const cliRows = cli.rows ?? [];
   check("skills tab: loaded rows equal `atag skill list`", cli.ok && loaded === cliRows.length, `${loaded} vs ${cli.ok ? cliRows.length : cli.error}`);
   const body = await js<string>("window.__settingsBody()");
-  // The filter is a segmented control (all · enabled · disabled, `all` pressed on entry), not a `filter:` label.
+  // The filter is a segmented control of tabs, each with its count from `atag skill list` (Д43: All N · Enabled E ·
+  // Disabled D, `All` pressed on entry), not a `filter:` label or an `N shown · …` line.
   const filterSeg = await js<string[]>(
     "[...document.querySelectorAll('#settings .setbody .set-seg button[data-act^=\"skills:filter:\"]')].map((b) => b.textContent.trim() + (b.classList.contains('on') ? '*' : ''))",
   );
-  // Calm (S5): the key-hint row is gone; its actions are the row switch, the detail's Remove, the auto readout, the filter and a Refresh button.
-  const copy = ["Built-in tools", " shown · ", " enabled · ", " disabled", "Skills Hub", "Browse and install skills from ClawHub"];
+  const enabledN = cliRows.filter((r) => r.enabled).length;
+  // Calm (S5): the key-hint row is gone; its actions are the row switch, the detail's Remove, the filter and a Refresh
+  // button. Д44: no auto / manual readout. Д42: one Browse Skills Hub button, no second hub card under the list.
+  const copy = ["Built-in tools", "Browse Skills Hub"];
   const missing: string[] = copy.filter((s) => !body.includes(s));
   if (/j\/k move|e toggle|d remove/.test(body)) missing.push("a key-hint row");
-  if (!(await js<boolean>("!!document.querySelector('#settings .setbody .set-toolbar [data-act=\"skills:refresh\"]')"))) missing.push("the Refresh button");
-  if (!same(filterSeg, ["all*", "enabled", "disabled"])) missing.push(`filter segment ${JSON.stringify(filterSeg)}`);
-  check("skills tab: filter bar, Refresh and the hub CTA carry the copy, no key-hint row", missing.length === 0, missing.length ? `missing ${JSON.stringify(missing)}` : "");
+  if (/ shown · /.test(body)) missing.push("no `N shown · …` line");
+  if (!(await js<boolean>("!!document.querySelector('#settings .setbody .set-toolbar [data-act=\"skills:refresh\"]') && !document.querySelector('#settings .setbody [data-act=\"skills:auto\"]') && document.querySelectorAll('#settings .setbody [data-act=\"skills:hub\"]').length === 1"))) missing.push("the Refresh button, no auto readout, one hub button");
+  if (!same(filterSeg, [`All ${cliRows.length}*`, `Enabled ${enabledN}`, `Disabled ${cliRows.length - enabledN}`])) missing.push(`filter tabs ${JSON.stringify(filterSeg)}`);
+  check("skills tab: filter tabs with counts, Refresh and Browse Skills Hub carry the copy, no key-hint row", missing.length === 0, missing.length ? `missing ${JSON.stringify(missing)}` : "");
 
   // Enter on the first row: GET /api/skills/{name} body, skills-detail.tsx header + hints.
   const opened = await until(async () => { await js<void>("window.__skillsAct('detail')"); return skills(); }, (s) => s.mode === "detail", 2_000);
@@ -4941,11 +4951,13 @@ async function settingsTestPartB(
     hub.hubRows.length > 0 && hubSearch.placeholder && hubSearch.text === "Search ClawHub and GitHub taps" && hubBody.includes("Browse again"),
     `${hub.hubRows.length} rows, search ${JSON.stringify(hubSearch)}${hub.hubError ? " hubError=" + hub.hubError : ""}`,
   );
-  // A hub card's source badge and its Install / back buttons, as drawn (Calm S5: the "i install · n cancel" hint row left; the bar's buttons are the way).
-  const cardChrome = () => js<{ badge: string; install: string[]; cancel: string[] }>(
-    "(() => { const box = document.querySelector('#settings .setbody'); const chip = box && box.querySelector('.set-titlerow .tk-chip');"
-    + " const hint = (act) => [...(box ? box.querySelectorAll('.tk-bar button') : [])].filter((b) => b.dataset.act === act).map((b) => b.innerText.replace(/\\s+/g, ' ').trim());"
-    + " return {badge: chip ? chip.textContent.trim() : '', install: hint('skills:install'), cancel: hint('skills:back')}; })()",
+  // A hub card's Install / back buttons and its meta line, as drawn (Calm S5: the "i install · n cancel" hint row left; the
+  // buttons are the way). Д46: no source badge — the meta line says where the skill comes from.
+  const cardChrome = () => js<{ badge: string; install: string[]; cancel: string[]; meta: string; source: string[]; sourceShown: boolean }>(
+    "(() => { const box = document.querySelector('#settings .setbody'); const chip = box && box.querySelector('.set-titlerow .tk-chip, .set-cardhead .tk-chip');"
+    + " const hint = (act) => [...(box ? box.querySelectorAll('button') : [])].filter((b) => b.dataset.act === act).map((b) => b.innerText.replace(/\\s+/g, ' ').trim());"
+    + " return {badge: chip ? chip.textContent.trim() : '', install: hint('skills:install'), cancel: hint('skills:back'), meta: ((box && box.querySelector('.set-cardmeta')) || {}).textContent || '',"
+    + " source: hint('skills:source'), sourceShown: !!(box && box.querySelector('.set-srcbody'))}; })()",
   );
   // A `[gh]` row (skills.taps): the card carries the TUI's no-preview copy, no download count and installs by identifier.
   const ghIdx = hub.hubRows.findIndex((r) => r.source === "github");
@@ -4958,7 +4970,7 @@ async function settingsTestPartB(
     check(
       "skills hub: a GitHub-tap card says SKILL.md is pulled at install",
       !!gc && gc.identifier === hub.hubRows[ghIdx]!.identifier && gc.bodyLines === 0 && gc.bodyError === "preview unavailable for GitHub taps (SKILL.md is pulled at install)" && gc.installId === gc.identifier
-        && ghChrome.badge === "gh" && ghBody.includes("↓—") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && same(ghChrome.install, ["Install"]),
+        && ghChrome.badge === "" && ghChrome.meta.startsWith("From GitHub") && ghBody.includes("preview unavailable for GitHub taps (SKILL.md is pulled at install)") && same(ghChrome.install, ["Install"]),
       gc ? `${gc.identifier}: ${gc.bodyError ?? gc.bodyLines + " lines"} · ${JSON.stringify(ghChrome)}` : "no card",
     );
     await js<void>("window.__skillsAct('back')");
@@ -5012,11 +5024,12 @@ async function settingsTestPartB(
     for (let i = 0; i < Math.min(5, found.hubRows.length) && !resolved; i++) {
       await js<void>(`window.__skillsAct(${JSON.stringify("card:" + i)})`);
       const card = await until(skills, (s) => !!s.hubCard && !s.hubCardLoading, 40_000);
-      const cardBody = await js<string>("window.__settingsBody()");
       const chrome = await cardChrome();
       const c = card.hubCard;
+      // Д46: no badge, the downloads in words, and a SKILL.md that came back folded under Show source.
       chromeOk = chromeOk && !!c && c.identifier === found.hubRows[i]!.identifier && !!c.installId
-        && chrome.badge === "claw" && cardBody.includes("owner ") && same(chrome.install, ["Install"]) && same(chrome.cancel, ["Results"]);
+        && chrome.badge === "" && /\d(?:\.\d)?[kM]? downloads?\b/.test(chrome.meta) && same(chrome.install, ["Install"]) && same(chrome.cancel, ["Results"])
+        && (c.bodyLines > 0 ? same(chrome.source, ["Show source"]) && !chrome.sourceShown : true);
       outcomes.push(c ? `${c.identifier}: ${c.bodyLines > 0 ? c.bodyLines + " lines" : c.bodyError ?? "no body"}` : "no card");
       if (c && c.bodyLines > 0) resolved = c;
       else if (!c || !clientTexts(c.bodyError)) chromeOk = false;

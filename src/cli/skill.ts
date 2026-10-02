@@ -348,9 +348,13 @@ async function handleBrowse(args: string[]): Promise<number> {
   }
   // ClawHub is the primary catalog; `--source owner/repo` narrows to a
   // single GitHub tap and skips ClawHub (the operator asked for a repo).
-  const clawEntries = source ? [] : await browseClawHubSafe(null);
+  // The two are fetched side by side; ClawHub's rows still print first.
+  const taps = configuredTaps(source);
   const client = new GithubSkillClient();
-  const { entries, errors } = await browseHub(client, configuredTaps(source));
+  const [clawEntries, { entries, errors }] = await Promise.all([
+    source ? Promise.resolve<HubSkillEntry[]>([]) : browseClawHubSafe(null),
+    browseHub(client, taps),
+  ]);
   return printHubEntries([...clawEntries, ...entries], errors);
 }
 
@@ -363,9 +367,13 @@ async function handleSearch(args: string[]): Promise<number> {
     process.stderr.write("usage: atomic-agent skill search <query>\n");
     return 2;
   }
-  const clawEntries = await browseClawHubSafe(query);
+  // ClawHub's search and the taps side by side, as in browse.
+  const taps = configuredTaps();
   const client = new GithubSkillClient();
-  const { entries, errors } = await searchHub(client, configuredTaps(), query);
+  const [clawEntries, { entries, errors }] = await Promise.all([
+    browseClawHubSafe(query),
+    searchHub(client, taps, query),
+  ]);
   return printHubEntries([...clawEntries, ...entries], errors);
 }
 
