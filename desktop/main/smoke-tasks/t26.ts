@@ -201,6 +201,7 @@ const KEEP = `(() => {
 const FORGET = String.raw`
   for (const [turn, sid] of [...RUNNING]) if (mine(turn) || mine(sid)) RUNNING.delete(turn);
   for (const sid of [...PENDING_APPROVALS.keys()]) if (mine(sid)) PENDING_APPROVALS.delete(sid);
+  if (typeof APPROVAL_CARDS !== 'undefined') for (const sid of [...APPROVAL_CARDS.keys()]) if (mine(sid)) APPROVAL_CARDS.delete(sid);
   for (const sid of [...ATTN]) if (mine(sid)) ATTN.delete(sid);
   if (typeof QUEUES !== 'undefined') for (const key of [...QUEUES.keys()]) if (mine(key)) QUEUES.delete(key);
 `;
@@ -630,10 +631,10 @@ async function deletedWhileWaiting(js: Js, check: Check, agent: StandIn, w: Brow
 }
 
 /* (i) Chat A's turn runs while the person is in chat B, where nothing runs,
-   and A's turn asks for an approval: its card comes up in B, so Enter there
-   takes the steer path, and B, which runs no turn, refuses the steer. The
-   message is B's and waited on A's turn: it runs in B when that turn ends,
-   as it did before the queue was per chat. */
+   and A's turn asks for an approval. Its card used to come up in B, so Enter
+   there took the steer path and the message waited on A's turn. Q60: A's
+   card is A's, B shows none, so a message typed in B is B's own and runs in
+   B at once: no steer, nothing queued behind another chat's turn. */
 async function underAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
   const a = `${PREFIX}a-i`;
   const b = `${PREFIX}b-i`;
@@ -649,19 +650,18 @@ async function underAnotherChatsCard(js: Js, check: Check, agent: StandIn, w: Br
   const asked = await js<boolean>(`(() => {
     onApprovalEvent({approvalId: ${q(`${PREFIX}approval-i`)}, tool: 'os.shell.run', category: 'shell', reason: 'smoke t26',
       preview: 'echo smoke t26', sessionId: ${q(a)}});
-    return !!S.pending && S.pending.sessionId === ${q(a)};
+    return !S.pending && PENDING_APPROVALS.get(${q(a)}) === ${q(`${PREFIX}approval-i`)} && !document.getElementById('apprcard');
   })()`);
   agent.steer = "refuse";
-  const parked = await typeAndEnter(js, typed);
-  if (turn) await frame(js, w, { turnId: turn, kind: "done" });
-  const after = await js<View>(VIEW);
+  const sentNow = await typeAndEnter(js, typed);
   const all = agent.chats(mark);
   const steers = agent.since(mark).filter((s) => s.channel === "steer");
+  if (turn) await frame(js, w, { turnId: turn, kind: "done" });
   check(
-    "T26: a message typed in a chat that runs no turn, under another chat's approval card, runs in that chat when the other turn ends",
-    onA && !!turn && onB && asked && steers.length === 1 && steers[0]!.sessionId === b && queuedFollowUp(parked, typed)
-      && all.length === 2 && all[1]!.text === typed && all[1]!.sessionId === b && after.rows.includes(`user:${typed}`),
-    `turn=${turn} asked=${asked} steers=${show(steers)} parked=${show(parked)} chats=${show(all)} after=${show(after)}`,
+    "T26: another chat's approval is not drawn in a chat that runs no turn, and a message typed there runs in that chat at once",
+    onA && !!turn && onB && asked && steers.length === 0 && !queuedFollowUp(sentNow, typed)
+      && all.length === 2 && all[1]!.text === typed && all[1]!.sessionId === b && sentNow.rows.includes(`user:${typed}`),
+    `turn=${turn} asked=${asked} steers=${show(steers)} sent=${show(sentNow)} chats=${show(all)}`,
   );
 }
 

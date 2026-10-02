@@ -8467,12 +8467,46 @@ function placeAfterRow(row, entry) {
   S.log.splice(i, 0, entry);
 }
 
+/* Q60 (QA items 20/21): which chat a request for approval belongs to is
+   the chat on screen or not. Two chats, the same prompt in each, Ask first:
+   chat 2's request was drawn in chat 1 as well, so chat 1 showed "Allow
+   Atomic Agent to write test.txt?" twice, and y/n there (S.pending) answered
+   chat 2's. A request now goes on screen only in its own chat; another
+   chat's is kept for that chat (APPROVAL_CARDS, PENDING_APPROVALS: its
+   sidebar dot says it waits) and drawn when it is opened (openSession).
+
+   The chat on screen is its row (S.sessionId), or the session the next
+   message goes with. While that chat is still loading nothing is drawn: the
+   transcript is about to be replaced, and openSession draws the chat's own
+   card when it lands. A new chat whose first turn has not said its session
+   yet (the request comes on /api/events, which can overtake the turn's own
+   session_id frame) takes a request no other running turn is known to own.
+   A request that names no session is drawn where the person is, as before. */
+function approvalOnScreen(sid) {
+  if (!sid) return true;
+  if (OPENING && OPENING.id === S.sessionId) return false;
+  const here = S.sessionId || S.agentSession || null;
+  if (here) return sid === here;
+  const turn = S.turnId && S.streamId && S.log.some((m) => m.id === S.streamId) ? S.turnId : null;
+  if (!turn || !RUNNING.has(turn) || RUNNING.get(turn)) return false;
+  return ![...RUNNING].some(([t, s]) => t !== turn && s === sid);
+}
+
 function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
+  const sid = payload.sessionId || null;
+  /* Q60: one request is one card. The same approvalId again (the events
+     stream reconnecting, a replay) finds the card already drawn here or
+     kept for its chat, and draws no second one. Once answered or stopped,
+     a late copy changes nothing: the request is not open again. */
+  const drawn = S.log.find((m) => m.k === 'approval' && m.approvalId === payload.approvalId) || null;
+  const kept = sid ? APPROVAL_CARDS.get(sid) : null;
+  const again = drawn || (kept && kept.approvalId === payload.approvalId ? kept : null);
+  if (again && again.state) return;
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
   const first = affects[0] || S.live.workingDir || '';
   const cut = lastSepIndex(first);
-  const req = {
+  const req = again || {
     id:nid(), k:'approval',
     approvalId: payload.approvalId,
     tool: payload.tool || 'unknown tool',
@@ -8492,17 +8526,19 @@ function onApprovalEvent(payload) {
     // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
     // and it is the one attention signal that works for a turn this window did
     // not start (a scheduled task's, say).
-    sessionId: payload.sessionId || null,
+    sessionId: sid,
   };
-  if (req.sessionId) { PENDING_APPROVALS.set(req.sessionId, req.approvalId); APPROVAL_CARDS.set(req.sessionId, req); }
+  if (sid) { PENDING_APPROVALS.set(sid, req.approvalId); APPROVAL_CARDS.set(sid, req); }
+  // Q60: another chat's request: its dot, not a card in this chat, and not this chat's y/n.
+  if (!approvalOnScreen(sid)) { render(); return; }
+  if (!drawn) {
+    if (!req.drawn) { req.drawn = true; ANX.apprShown(req); }   // analytics: ms_to_answer starts when the card is drawn
+    placeInLiveTurn(req, {afterTool: req.tool});
+    S.apprFocused = false;
+  }
   S.pending = req;
-  ANX.apprShown(req);   // analytics: ms_to_answer starts when the card is drawn
-  placeInLiveTurn(req, {afterTool: req.tool, sessionId: req.sessionId});
-  S.apprFocused = false;
-  // Backlog 25: waiting is not "busy" for the chat that asked. A request
-  // another chat's turn raised is drawn here too, and leaves this chat's own
-  // turn running, with its Stop.
-  if (!req.sessionId || !S.agentSession || req.sessionId === S.agentSession) S.busy = false;
+  // Backlog 25: waiting is not "busy" for the chat that asked, which is the one on screen.
+  S.busy = false;
   render();
 }
 
@@ -16290,13 +16326,20 @@ async function openSession(id) {
      Waiting is not "busy", as when the card first came. The focus is left
      where it is: the box takes typing while a chat loads, and a card taking
      the focus mid-word would let the y in "why" allow the call. */
-  const asked = live ? APPROVAL_CARDS.get(id) : null;
+  /* Q60: not only for a turn this window streams. A request is drawn only in
+     its own chat now, so a chat whose turn runs elsewhere (a scheduled task's)
+     shows its card here or nowhere. Never twice: a card with that approvalId
+     already in the rebuilt rows is the one. */
+  const asked = APPROVAL_CARDS.get(id) || null;
   if (asked && !asked.state && PENDING_APPROVALS.get(id) === asked.approvalId) {
     /* Item 38: with the turn's rows back, a card it raised while they were on
        screen is among them already; one raised while the chat was not on
        screen goes into the turn, under the call that asked, as it would have. */
-    if (!rebuilt) S.log.push(asked);
-    else if (!S.log.includes(asked)) placeInLiveTurn(asked, {afterTool: asked.tool, sessionId: id});
+    const there = S.log.find((m) => m.k === 'approval' && m.approvalId === asked.approvalId) || null;
+    if (there && there !== asked) S.log.splice(S.log.indexOf(there), 1, asked);
+    else if (!there && !rebuilt) S.log.push(asked);
+    else if (!there) placeInLiveTurn(asked, {afterTool: asked.tool, sessionId: id});
+    if (!asked.drawn) { asked.drawn = true; ANX.apprShown(asked); }
     S.pending = asked; S.apprFocused = true; S.busy = false;
   }
   render();
@@ -23973,7 +24016,7 @@ if (typeof window !== 'undefined') {
      the approval under the reply), and removes every trace of itself. */
   window.__turnOrderLive = () => {
     const at = S.log.length;
-    const sid = S.agentSession || null;
+    const sid = S.sessionId || S.agentSession || null;   // Q60: the chat on screen, whose request is drawn here
     const turnId = window.__fakeTurn();
     onChatEvent({turnId, kind:'tool_progress', payload:{tool:'os.fs.write', label:'{"path":"a.txt"}'}});
     onChatEvent({turnId, kind:'tool_progress', payload:{tool:'os.shell.run', label:'{"cmd":"ls"}'}});
