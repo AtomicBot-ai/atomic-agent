@@ -16144,8 +16144,15 @@ function renderProse(text) {
   // Windows: not the tail of `C:/dir/file` either — that whole path is the
   // drive-letter chip below.
   const FILE_RE_HERE = IS_WIN ? /(?<![\p{L}\p{N}_\/:])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu : FILE_RE;
-  const md = renderMarkdown(esc(text));
+  // \u0000 marks held code and \u0001 a chip below, so neither may come from the text itself.
+  const md = renderMarkdown(esc(text).replace(/[\u0000\u0001]/g, ''));
   let html = md.html;
+  /* Chat review (Д23): a chip's markup carries its path in two attributes,
+     and the drive-letter pass below would find a Windows path there and wrap
+     it again. So every chip (or the span it waits in) goes in as a \u0001N\u0001
+     placeholder, and the markup is put in only once no pass is left to scan. */
+  const chips = [];
+  const chip = (raw, shown) => '\u0001' + (chips.push(replyPathChip(raw, shown)) - 1) + '\u0001';
   html = html.replace(URL_RE, (u) => {
     const trail = (u.match(/[.,;:!?)\]}>"'\u00bb]+$/) || [''])[0];
     const core = u.slice(0, u.length - trail.length);
@@ -16153,23 +16160,24 @@ function renderProse(text) {
     return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
   });
   // Chat review (Д23): a chip only for a file main found in the home folder; text until then.
-  html = html.replace(FILE_RE_HERE, (p) => replyPathChip(p, p));
+  html = html.replace(FILE_RE_HERE, (p) => chip(p, p));
   if (IS_WIN) {
     // Windows: `C:\dir\file.ext` (either separator), the same chip.
     const WIN_FILE_RE = /(?<![\w\\/])([A-Za-z]:[\\/](?:[\w.@+-]+[\\/])*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\\/])/g;
-    html = html.replace(WIN_FILE_RE, (p) => replyPathChip(p, p));
+    html = html.replace(WIN_FILE_RE, (p) => chip(p, p));
   }
   /* Chat review (Д23): most models write a path in a code span
      (`~/Desktop/report.docx`), which this pass used to leave as code. A code
      span holding nothing but a path (spaces and all) is that path too, on the
      same terms; a fence stays code, and so does a span with anything else in
      it. */
-  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
+  html = html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
     const h = md.held[+i];
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
-    return raw && codeSpanIsPath(raw) ? replyPathChip(raw, h) : h;
+    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h;
   });
+  return html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]);
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
