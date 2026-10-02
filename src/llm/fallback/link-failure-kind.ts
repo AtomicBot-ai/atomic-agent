@@ -3,6 +3,7 @@ import {
   isCreditExhausted,
   OpenAiHttpError,
 } from "../provider/openai/openai-http.js";
+import { CREDENTIAL_WORDING } from "../provider/openai/parse-provider-error-body.js";
 import { TransportError } from "../reliability/llm-failures.js";
 import { isNetworkError } from "../reliability/network-error.js";
 import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.js";
@@ -13,10 +14,6 @@ import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.
  * advances, so the advance decision cannot tell a service that is down
  * from one that refused what it was sent; these can.
  */
-
-/** A provider's words for a credential problem, in a 403's message. */
-const KEY_WORDING =
-  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
 
 /**
  * Did the link refuse its credentials?
@@ -40,7 +37,8 @@ export function isCredentialRejection(err: unknown): boolean {
   // "Please top up your balance or update your payment method": the
   // account, not the key (item 40), whatever else the body mentions.
   if (isCreditExhausted(err)) return false;
-  return KEY_WORDING.test(err.message);
+  // The same words the billing reading defers to (one rule for both).
+  return CREDENTIAL_WORDING.test(err.message);
 }
 
 /**

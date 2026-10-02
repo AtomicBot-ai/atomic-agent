@@ -53,6 +53,25 @@ describe("isBillingRefusal", () => {
     ).toBe(true);
   });
 
+  it("is not a 429 in a rate limit's words, nor a 403 about authentication that mentions billing", () => {
+    for (const message of [
+      "Too many requests. Please top up your account to increase your rate limits.",
+      "Out of credits for this minute",
+    ]) {
+      const limited = withBody(429, JSON.stringify({ error: { message } }));
+      expect(isBillingRefusal(limited), message).toBe(false);
+      expect(isOutageFailure(limited), message).toBe(true);
+    }
+    for (const message of [
+      "Authentication failed. Please check your billing details.",
+      "Invalid token. Check billing.",
+    ]) {
+      const refused = withBody(403, JSON.stringify({ error: { message } }));
+      expect(isBillingRefusal(refused), message).toBe(false);
+      expect(isCredentialRejection(refused), message).toBe(true);
+    }
+  });
+
   it("is not a refused key, a rate limit, a cooldown or an outage", () => {
     expect(isBillingRefusal(withBody(403, '{"error":{"message":"Invalid API key"}}'))).toBe(false);
     expect(isBillingRefusal(http(401))).toBe(false);

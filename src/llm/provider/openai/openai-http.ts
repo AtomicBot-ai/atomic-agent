@@ -1,6 +1,7 @@
 import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
+import { providerServiceName } from "../provider-service-name.js";
 import {
   creditLimitRetryContext,
   creditLimitRetryMessage,
@@ -197,7 +198,7 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     return `${who} needs an API key and none is set. Add the key in the Providers panel.`;
   }
   if ((err.status === 403 || err.status === 429) && isCreditExhausted(err)) {
-    return billingRefusalSentence(who, err);
+    return billingRefusalSentence(err);
   }
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
@@ -246,21 +247,36 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
 
 /**
  * A 403 or 429 that refused because the account cannot pay
- * (`isCreditExhausted`): the provider, its own first sentence, and what
- * helps. Item 40: AI/ML API's 403 "You've run out of funds" read "rejected
- * the API key (403)", and OpenAI's 429 `insufficient_quota` read as rate
- * limiting ("Tried 3 times") for a request that was never retried. A 402
- * keeps its own wording below, which also explains the reservation.
+ * (`isCreditExhausted`): the provider by its name, its own first
+ * sentence, and what helps. Item 40: AI/ML API's 403 "You've run out of
+ * funds" read "rejected the API key (403)", and OpenAI's 429
+ * `insufficient_quota` read as rate limiting ("Tried 3 times") for a
+ * request that was never retried. A 402 keeps its own wording below,
+ * which also explains the reservation.
+ *
+ * OpenRouter relays an upstream vendor's refusal (a key of your own at
+ * Anthropic, say) as "Provider returned error", with the vendor's body in
+ * `metadata.raw`: the vendor's words are the ones quoted, and the
+ * account to top up is the vendor's.
  */
-function billingRefusalSentence(who: string, err: OpenAiHttpError): string {
+function billingRefusalSentence(err: OpenAiHttpError): string {
+  const who = err.providerLabel
+    ? providerServiceName(err.providerLabel)
+    : `"${hostOf(err.url)}"`;
+  const relayed = err.body?.upstreamMessage;
+  const vendor = relayed !== undefined ? err.body?.upstream : undefined;
   // The parsed body first: it was read whole, the message keeps only its head.
-  const own = shortProviderSentence(err.body?.message ?? providerReason(err));
+  const own = shortProviderSentence(
+    relayed ?? err.body?.message ?? providerReason(err),
+  );
   const said = own
     ? `${lowerFirst(own)}${own.endsWith("…") ? "" : "."}`
     : `the account has no funds or credit left (${err.status}).`;
+  const payer =
+    vendor ?? (relayed !== undefined ? `the provider behind ${who}` : who);
   return (
-    `${who} refused the request: ${said} ` +
-    `Top up your balance with ${who} or pick another provider in the Providers panel.`
+    `${who} refused the request: ${vendor !== undefined ? `${vendor} says ` : ""}${said} ` +
+    `Top up your balance with ${payer} or pick another provider in the Providers panel.`
   );
 }
 

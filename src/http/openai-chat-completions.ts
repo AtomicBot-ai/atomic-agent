@@ -556,8 +556,18 @@ export function buildStreamEventHook(
          shows one sentence per failed turn is told about the FIRST recorded
          link instead — the provider the operator picked, its refusal in its
          own words and its own category — with every earlier link listed
-         beside it. A single-link failure is reported exactly as before. */
-      const first = readFailedAttempts(event.error)[0];
+         beside it. A single-link failure is reported exactly as before.
+
+         Except a refusal for money (item 40): when that is the error that
+         ended the turn (the fallback the turn was running on said the
+         account is empty, runWithFallback's route refusal), it is the
+         story, told as the failed step's frame tells it, with the links
+         before it listed beside it. */
+      const ended = billingCauseFrame(event.error);
+      const first =
+        ended.cause === undefined
+          ? readFailedAttempts(event.error)[0]
+          : undefined;
       if (first) {
         const primary = first.error;
         const message = primary instanceof Error && primary.message.trim()
@@ -569,13 +579,13 @@ export function buildStreamEventHook(
         });
         return;
       }
-      emitStreamError(
-        sse,
-        env,
-        event.error.message,
-        event.category,
-        billingCauseFrame(event.error),
-      );
+      const failedBefore = describeFailedLinks(event.error);
+      emitStreamError(sse, env, event.error.message, event.category, {
+        ...ended,
+        ...(failedBefore.length > 0
+          ? { fallback_failures: failedLinksFrame(failedBefore) }
+          : {}),
+      });
     }
   };
 }

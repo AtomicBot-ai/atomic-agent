@@ -85,7 +85,7 @@ const OUT_OF_FUNDS = JSON.stringify({
 });
 
 const SENTENCE =
-  '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.';
+  "AI/ML API refused the request: you've run out of funds. Top up your balance with AI/ML API or pick another provider in the Providers panel.";
 
 function tracked(provider: LlmProvider, calls: string[]): LlmProvider {
   return {

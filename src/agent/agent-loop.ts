@@ -1185,6 +1185,13 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     let state = session;
+    /**
+     * This turn picks up a task an earlier turn stopped at a ceiling or
+     * for credit (`continue` after "(paused: …)"): its first request is
+     * not the task's first, and a billing refusal pauses it again rather
+     * than failing it (item 40).
+     */
+    const resumesStoppedTask = session.status === "stalled";
 
     // NOTE: previously called `reflectionRunner.abortPending({ sessionId })`
     // here on every turn to "free the reflection slot quickly". That
@@ -2487,15 +2494,19 @@ export class AgentLoop {
         // chain has one, has already been tried by the time the error
         // reaches here.)
         //
-        // Paused, that is, once the task has done something to keep.
-        // Refused on its very first request, there is nothing to resume:
-        // the turn fails at once with the provider's own sentence ("…
-        // refused the request: you've run out of funds. Top up …"), the
-        // way a refused key does, instead of a "(paused …) after 0 steps"
-        // reply standing in for an answer (item 40).
+        // Paused, that is, once the task has done something to keep: a
+        // step of this turn, or an earlier turn's that this one resumes.
+        // Refused on the task's very first request, there is nothing to
+        // resume: the turn fails at once with the provider's own sentence
+        // ("… refused the request: you've run out of funds. Top up …"),
+        // the way a refused key does, instead of a "(paused …) after 0
+        // steps" reply standing in for an answer (item 40).
         const verdict = cancelled ? null : readProviderErrorVerdict(err);
         const creditRefused = verdict?.kind === "credit_exhausted";
-        if (verdict?.kind === "credit_exhausted" && stepsTaken > 0) {
+        if (
+          verdict?.kind === "credit_exhausted" &&
+          (stepsTaken > 0 || resumesStoppedTask)
+        ) {
           stopCause = "credit_exhausted";
           creditStop = { provider: verdict.provider, detail: verdict.detail };
           reason = "max_steps";
@@ -2695,8 +2706,10 @@ export class AgentLoop {
         // Phase 6 — bump failure_count for every surfaced lesson.
         // `cancelled` is intentionally NOT routed here; that branch
         // returned earlier without calling the hook (cancellation
-        // carries neither success nor failure signal).
-        if (!options.ephemeral) {
+        // carries neither success nor failure signal). Nor is an account
+        // that cannot pay (item 40): it says nothing about the lessons
+        // recalled at turn start, as the paused path for it says nothing.
+        if (!options.ephemeral && !creditRefused) {
           invokeLessonLifecycle(
             this.deps,
             state.id,

@@ -165,7 +165,7 @@ describe("a billing refusal over SSE", () => {
         },
       },
     ]);
-    expect(failure.message).toMatch(/^"aimlapi" refused the request: you've run out of funds\./);
+    expect(failure.message).toMatch(/^AI\/ML API refused the request: you've run out of funds\./);
   });
 
   it("marks the failed step's frame the same way", () => {
@@ -202,6 +202,42 @@ describe("a billing refusal over SSE", () => {
         providerId: "aimlapi",
         reason: expect.stringContaining("run out of funds"),
         cause: { kind: "billing", status: 403 },
+      },
+    ]);
+  });
+
+  it("tells the turn's failure as the fallback's billing refusal that ended it, the links before it beside it", () => {
+    // runWithFallback's route refusal: the fallback the turn was running on
+    // said the account is empty, after the primary (down) was probed.
+    const sse = makeSse();
+    const fallback = outOfFunds();
+    attachFailedAttempts(fallback, [
+      {
+        providerId: "primary",
+        error: new OpenAiHttpError("openai provider 503: upstream down", 503, "https://primary.example/v1/chat/completions"),
+      },
+    ]);
+    const failure = stepFailure(fallback);
+    buildStreamEventHook(sse.writer as never, env)({
+      type: "loop_failed",
+      error: failure,
+      category: "transport",
+    } as never);
+    expect(sse.written).toEqual([
+      {
+        name: "error",
+        payload: {
+          error: failure.message,
+          category: "transport",
+          cause: { kind: "billing", status: 403 },
+          fallback_failures: [
+            {
+              providerId: "primary",
+              reason: "openai provider 503: upstream down",
+              cause: { kind: "http", status: 503 },
+            },
+          ],
+        },
       },
     ]);
   });

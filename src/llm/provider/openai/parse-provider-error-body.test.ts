@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CREDENTIAL_WORDING,
   IN_FLIGHT_BUDGET_DEFAULT_WAIT_MS,
   parseProviderErrorBody,
   readProviderErrorReason,
@@ -22,6 +23,23 @@ describe("parseProviderErrorBody", () => {
       code: "insufficient_quota",
     });
     expect(body.retryHintMs).toBeUndefined();
+  });
+
+  it("reads the upstream vendor's own message out of OpenRouter's raw body", () => {
+    const relayed = (raw: unknown) =>
+      parseProviderErrorBody(
+        JSON.stringify({
+          error: { message: "Provider returned error", code: 429, metadata: { provider_name: "Anthropic", raw } },
+        }),
+      );
+    expect(
+      relayed('{"type":"error","error":{"type":"credit_balance_exhausted","message":"Your credit balance is too low"}}')
+        .upstreamMessage,
+    ).toBe("Your credit balance is too low");
+    expect(relayed({ message: "Out of credit" }).upstreamMessage).toBe("Out of credit");
+    expect(relayed("upstream said no").upstreamMessage).toBe("upstream said no");
+    expect(relayed("<html>502</html>").upstreamMessage).toBeUndefined();
+    expect(parseProviderErrorBody(JSON.stringify({ error: { message: "x" } })).upstreamMessage).toBeUndefined();
   });
 
   it("reads the OpenRouter shape, including the upstream raw body", () => {
@@ -220,6 +238,13 @@ describe("readProviderErrorReason", () => {
       expect(
         read(
           403,
+          JSON.stringify({ error: { message: "Authentication failed. Please check your billing details." } }),
+        ),
+      ).toBeNull();
+      expect(read(403, JSON.stringify({ error: { message: "Invalid token. Check billing." } }))).toBeNull();
+      expect(
+        read(
+          403,
           JSON.stringify({
             error: { message: "Your chosen model requires moderation and your input was flagged" },
           }),
@@ -290,6 +315,24 @@ describe("readProviderErrorReason", () => {
         read(429, JSON.stringify({ error: { message: "Out of credits for this minute" } }), 7_000),
       ).toEqual({ kind: "retry_after", delayMs: 7_000, code: null });
     });
+
+    it("keeps a 429 that talks money in a rate limit's words a wait, cooldown or not", () => {
+      for (const message of [
+        "Too many requests. Please top up your account to increase your rate limits.",
+        "Out of credits for this minute",
+        "Insufficient balance for 60 requests per minute; slow down",
+        "You have run out of credits for the current RPM window",
+      ]) {
+        expect(read(429, JSON.stringify({ error: { message } })), message).toBeNull();
+      }
+      // An explicit billing code outweighs the rate limit's words.
+      expect(
+        read(
+          429,
+          JSON.stringify({ error: { message: "Rate limit reached for requests", code: "insufficient_quota" } }),
+        ),
+      ).toEqual({ kind: "credit_exhausted", code: "insufficient_quota" });
+    });
   });
 
   it("falls back to the error's own message when no body was kept", () => {
@@ -302,5 +345,23 @@ describe("readProviderErrorReason", () => {
         retryAfterMs: null,
       }),
     ).toEqual({ kind: "credit_exhausted", code: "credit_balance_exhausted" });
+  });
+});
+
+describe("CREDENTIAL_WORDING", () => {
+  it("is a provider's words for the key or its authentication", () => {
+    for (const text of [
+      "Invalid API key provided",
+      "Authentication failed",
+      "unauthenticated",
+      "Unauthorized",
+      "Invalid token",
+      "access token expired",
+      "bad credentials",
+    ]) {
+      expect(CREDENTIAL_WORDING.test(text), text).toBe(true);
+    }
+    expect(CREDENTIAL_WORDING.test("You've run out of funds")).toBe(false);
+    expect(CREDENTIAL_WORDING.test("Your input was flagged")).toBe(false);
   });
 });

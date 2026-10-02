@@ -17,6 +17,7 @@ import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-er
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
+import type { SessionState } from "../session/session-state.js";
 import type {
   CompletionResult,
   LlamaServerClient,
@@ -1583,7 +1584,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       });
     };
 
-    async function runRefused(err: TransportError) {
+    async function runRefused(
+      err: TransportError,
+      session: SessionState = createEmptySessionState({ id: "s-billing", workingDir }),
+    ) {
       const events: AgentLoopEvent[] = [];
       let calls = 0;
       const loop = new AgentLoop({
@@ -1601,7 +1605,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       });
       const started = Date.now();
       const result = await loop.runTurn(
-        createEmptySessionState({ id: "s-billing", workingDir }),
+        session,
         {
           userMessage: "hello",
           maxSteps: 5,
@@ -1613,13 +1617,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       return { result, events, calls, elapsedMs: Date.now() - started };
     }
 
+    const AIML_403 =
+      '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing"}';
+    const SENTENCE =
+      "AI/ML API refused the request: you've run out of funds. Top up your balance with AI/ML API or pick another provider in the Providers panel.";
+
     it("fails the turn on AI/ML API's 403 with its sentence, without a wait or a pause", async () => {
       const { result, events, calls, elapsedMs } = await runRefused(
-        refusedBy(
-          403,
-          '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance or update your payment method to continue: https://aimlapi.com/app/billing"}',
-          "aimlapi",
-        ),
+        refusedBy(403, AIML_403, "aimlapi"),
       );
       expect(calls).toBe(1);
       expect(elapsedMs).toBeLessThan(1_000);
@@ -1629,11 +1634,34 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       expect(types).not.toContain("provider_waiting");
       expect(types).not.toContain("credit_exhausted");
       const failed = events.find((e) => e.type === "loop_failed");
-      expect(failed?.type === "loop_failed" && failed.error.message).toBe(
-        '"aimlapi" refused the request: you\'ve run out of funds. Top up your balance with "aimlapi" or pick another provider in the Providers panel.',
+      expect(failed?.type === "loop_failed" && failed.error.message).toBe(SENTENCE);
+      // No synthetic "(paused …)" reply: the transcript keeps the failed
+      // turn's own record, and that names the provider and its reason.
+      const replies = result.session.turns
+        .filter((t) => t.kind === "assistant_reply")
+        .map((t) => (t as { text: string }).text);
+      expect(replies.some((text) => text.includes("(paused"))).toBe(false);
+      expect(replies.at(-1)).toContain("AI/ML API refused the request: you've run out of funds");
+      expect(result.session.status).toBe("failed");
+    });
+
+    it("pauses again when the turn resumes a task an earlier turn stopped: the task has work to keep", async () => {
+      // `continue` after "(paused: … out of credit …)", the account still empty.
+      const stopped: SessionState = {
+        ...createEmptySessionState({ id: "s-billing-resumed", workingDir }),
+        status: "stalled",
+      };
+      const { result, events, calls } = await runRefused(
+        refusedBy(403, AIML_403, "aimlapi"),
+        stopped,
       );
-      // Nothing the model said: no synthetic "(paused …)" reply was stored.
-      expect(result.session.turns.some((t) => t.kind === "assistant_reply")).toBe(false);
+      expect(calls).toBe(1);
+      expect(result.reason).toBe("max_steps");
+      expect(result.stopCause).toBe("credit_exhausted");
+      const types = events.map((e) => e.type);
+      expect(types).toContain("credit_exhausted");
+      expect(types).not.toContain("loop_failed");
+      expect(types).not.toContain("provider_waiting");
     });
 
     it("does not park on a 429 that says the account is empty, though a 429 is otherwise a wait", async () => {
