@@ -13939,8 +13939,10 @@ function modeSettled(gen0) {
 async function swxSettle(res, gen0) {
   if (!res || res.ok === false) return;
   if (!('restart' in res)) return;
-  await refreshLiveConfig();
-  if (res.restart) await modeSettled(gen0);
+  /* ATO-157: both, side by side. The re-read is an `atag config get` of its
+     own and the mode's re-assert waits on the restarted agent; neither needs
+     the other, and the lock clears only once both are done. */
+  await Promise.all([refreshLiveConfig(), res.restart ? modeSettled(gen0) : null]);
 }
 
 /** The sentence the composer prints where the lock was. Never invented: it
