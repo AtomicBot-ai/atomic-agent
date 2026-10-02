@@ -3,10 +3,11 @@ import { uptime } from "node:os";
 
 import {
   currentTurnOwnerProbe,
+  hostIdentity,
   hostUptime,
   isTurnOwnerGone,
   parseTurnOwner,
-  readStartTicks,
+  processStartOf,
   serializeTurnOwner,
   turnOwnerFor,
   type TurnOwner,
@@ -20,36 +21,40 @@ import {
  * still running is the worse mistake.
  */
 
+const DB = "/state/sessions.sqlite";
+
 function probe(overrides: Partial<TurnOwnerProbe> = {}): TurnOwnerProbe {
   return {
     pid: 100,
+    host: "darwin",
     hostUptime: () => 50_000,
     isAlive: () => true,
-    startTicksOf: () => null,
+    processStartOf: () => null,
     ...overrides,
   };
 }
 
 function mark(owner: Partial<TurnOwner> & { pid: number }): string {
-  return serializeTurnOwner({ at: 1_790_000_123_456, ...owner });
+  return serializeTurnOwner({ host: "darwin", at: 1_790_000_123_456, ...owner });
 }
 
 describe("serializeTurnOwner / parseTurnOwner", () => {
   it("reads back what was written", () => {
     const owner: TurnOwner = {
       pid: 4242,
+      host: "linux:pid:[4026531836]",
+      db: DB,
       hostUptime: 40_000,
-      startTicks: "123456",
+      processStart: "ticks:123456",
       at: 1_790_000_123_456,
     };
     expect(parseTurnOwner(serializeTurnOwner(owner))).toEqual(owner);
   });
 
   it("leaves out what the platform could not say", () => {
-    expect(parseTurnOwner(mark({ pid: 9 }))).toEqual({
-      pid: 9,
-      at: 1_790_000_123_456,
-    });
+    expect(
+      parseTurnOwner(serializeTurnOwner({ pid: 9, at: 1_790_000_123_456 })),
+    ).toEqual({ pid: 9, at: 1_790_000_123_456 });
   });
 
   it("is null for no mark, a mark that is not JSON, or one without a usable pid", () => {
@@ -66,24 +71,39 @@ describe("serializeTurnOwner / parseTurnOwner", () => {
   it("drops fields of the wrong shape and keeps the pid", () => {
     expect(
       parseTurnOwner(
-        JSON.stringify({ pid: 9, hostUptime: "soon", startTicks: 12, at: "x" }),
+        JSON.stringify({
+          pid: 9,
+          host: 3,
+          db: "",
+          hostUptime: "soon",
+          processStart: 12,
+          at: "x",
+        }),
       ),
     ).toEqual({ pid: 9, at: 0 });
   });
 });
 
 describe("turnOwnerFor", () => {
-  it("records the probe's process, the host's uptime now and the start ticks", () => {
+  it("records the probe's process and host, the database, the uptime now and the start", () => {
     let up = 1_000;
     const owner = turnOwnerFor(
       probe({
         pid: 77,
         hostUptime: () => up,
-        startTicksOf: (pid) => (pid === 77 ? "555" : null),
+        processStartOf: (pid) => (pid === 77 ? "lstart:Fri Oct 2 12:10:29 2026" : null),
       }),
       123,
+      DB,
     );
-    expect(owner).toEqual({ pid: 77, hostUptime: 1_000, startTicks: "555", at: 123 });
+    expect(owner).toEqual({
+      pid: 77,
+      host: "darwin",
+      db: DB,
+      hostUptime: 1_000,
+      processStart: "lstart:Fri Oct 2 12:10:29 2026",
+      at: 123,
+    });
     // Read at the moment of the mark, not when the probe was built.
     up = 2_000;
     expect(turnOwnerFor(probe({ hostUptime: () => up }), 1).hostUptime).toBe(
@@ -94,9 +114,9 @@ describe("turnOwnerFor", () => {
 
 describe("isTurnOwnerGone", () => {
   it("keeps a turn whose process is alive", () => {
-    expect(isTurnOwnerGone(mark({ pid: 200, hostUptime: 40_000 }), probe())).toBe(
-      false,
-    );
+    expect(
+      isTurnOwnerGone(mark({ pid: 200, db: DB, hostUptime: 40_000 }), probe(), DB),
+    ).toBe(false);
   });
 
   it("ends a turn whose process has exited", () => {
@@ -120,6 +140,32 @@ describe("isTurnOwnerGone", () => {
     );
     expect(gone).toBe(true);
     expect(asked).toBe(false);
+  });
+
+  it("never judges a mark from another pid namespace, dead pid or not", () => {
+    // A container sharing the state dir numbers its processes on its own.
+    const foreign = mark({ pid: 7, host: "linux:pid:[4026532415]" });
+    const here = probe({
+      host: "linux:pid:[4026531836]",
+      isAlive: () => false,
+    });
+    expect(isTurnOwnerGone(foreign, here)).toBe(false);
+    // Nor one from another platform sharing the directory.
+    expect(isTurnOwnerGone(mark({ pid: 7, host: "win32" }), here)).toBe(false);
+  });
+
+  it("ends a turn whose mark was written into another database file — a copy", () => {
+    // The desktop's import copies the terminal agent's sessions.sqlite
+    // while a turn may be running there; that turn runs on the original.
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, db: "/home/u/.atomic-agent/sessions.sqlite" }),
+        probe(),
+        "/home/u/.atomic-agent-desktop/sessions.sqlite",
+      ),
+    ).toBe(true);
+    // The same file is the same turn.
+    expect(isTurnOwnerGone(mark({ pid: 200, db: DB }), probe(), DB)).toBe(false);
   });
 
   it("ends a turn from before a reboot even when its pid is alive now", () => {
@@ -152,10 +198,7 @@ describe("isTurnOwnerGone", () => {
 
   it("keeps a live pid when either side does not know the uptime", () => {
     expect(
-      isTurnOwnerGone(
-        mark({ pid: 200 }),
-        probe({ hostUptime: () => 1 }),
-      ),
+      isTurnOwnerGone(mark({ pid: 200 }), probe({ hostUptime: () => 1 })),
     ).toBe(false);
     expect(
       isTurnOwnerGone(
@@ -166,24 +209,28 @@ describe("isTurnOwnerGone", () => {
   });
 
   it("ends a turn whose pid now belongs to a process that started at another moment", () => {
-    const startTicksOf = (pid: number) => (pid === 200 ? "999" : null);
+    const processStartOf = (pid: number) =>
+      pid === 200 ? "lstart:Fri Oct 2 12:10:29 2026" : null;
     expect(
       isTurnOwnerGone(
-        mark({ pid: 200, startTicks: "555" }),
-        probe({ startTicksOf }),
+        mark({ pid: 200, processStart: "lstart:Thu Oct 1 09:00:00 2026" }),
+        probe({ processStartOf }),
       ),
     ).toBe(true);
     expect(
       isTurnOwnerGone(
-        mark({ pid: 200, startTicks: "999" }),
-        probe({ startTicksOf }),
+        mark({ pid: 200, processStart: "lstart:Fri Oct 2 12:10:29 2026" }),
+        probe({ processStartOf }),
       ),
     ).toBe(false);
   });
 
-  it("keeps a live pid whose start time cannot be read", () => {
+  it("keeps a live pid whose start cannot be read", () => {
     expect(
-      isTurnOwnerGone(mark({ pid: 200, startTicks: "555" }), probe()),
+      isTurnOwnerGone(
+        mark({ pid: 200, processStart: "lstart:Thu Oct 1 09:00:00 2026" }),
+        probe(),
+      ),
     ).toBe(false);
   });
 
@@ -194,9 +241,10 @@ describe("isTurnOwnerGone", () => {
 });
 
 describe("the live probe", () => {
-  it("reports this process, a positive uptime and itself as alive", () => {
+  it("reports this process, its host, a positive uptime and itself as alive", () => {
     const live = currentTurnOwnerProbe();
     expect(live.pid).toBe(process.pid);
+    expect(live.host).toBe(hostIdentity());
     expect(live.isAlive(process.pid)).toBe(true);
     const up = live.hostUptime();
     expect(up).toBeGreaterThan(0);
@@ -204,14 +252,26 @@ describe("the live probe", () => {
     expect(hostUptime()).toBeGreaterThan(0);
   });
 
-  it("reads start ticks only where the kernel offers them", () => {
-    const own = readStartTicks(process.pid);
+  it("names the host by platform, and the pid namespace on Linux", () => {
+    const host = hostIdentity();
     if (process.platform === "linux") {
-      expect(own).toMatch(/^\d+$/);
-      // The same process reads the same start twice.
-      expect(readStartTicks(process.pid)).toBe(own);
+      expect(host).toMatch(/^linux(:pid:\[\d+\])?$/);
+    } else {
+      expect(host).toBe(process.platform);
+    }
+  });
+
+  it("reads a process's start where the platform offers it, the same on every read", () => {
+    const own = processStartOf(process.pid);
+    if (process.platform === "linux") {
+      expect(own).toMatch(/^ticks:\d+$/);
+    } else if (process.platform === "darwin") {
+      expect(own).toMatch(/^lstart:\S/);
     } else {
       expect(own).toBeNull();
     }
+    expect(processStartOf(process.pid)).toBe(own);
+    // A pid with no process behind it is unknown, never a value.
+    expect(processStartOf(2_147_483_646)).toBeNull();
   });
 });

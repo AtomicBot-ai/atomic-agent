@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import type Database from "better-sqlite3";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,9 +38,10 @@ function probe(
 ): TurnOwnerProbe {
   return {
     pid,
+    host: "darwin",
     hostUptime: () => UPTIME,
     isAlive,
-    startTicksOf: () => null,
+    processStartOf: () => null,
   };
 }
 
@@ -117,6 +125,8 @@ describe("SessionStore turn marks", () => {
     );
     expect(JSON.parse(row?.turnOwner ?? "null")).toEqual({
       pid: 100,
+      host: "darwin",
+      db: realpathSync.native(file),
       hostUptime: UPTIME,
       at: 7_000,
     });
@@ -478,6 +488,39 @@ describe("SessionStore turn marks", () => {
       expect(store.load("custom")?.status).toBe("failed");
       expect(store.load("custom")?.lastError).toBe("custom");
     });
+
+    it("ends the turns a copied database carries, even while their owner lives", () => {
+      // The desktop's "bring your terminal setup over" import copies the
+      // terminal agent's sessions.sqlite, perhaps mid-turn there. That
+      // turn runs on the original; in the copy it would say `running` for
+      // as long as the terminal agent lived.
+      markedBy(400, "mid-turn");
+      store.close();
+      const copy = join(tmp, "copy.sqlite");
+      copyFileSync(file, copy);
+      store = new SessionStore({ dbFile: file, turnOwnerProbe: probe(100) });
+      const copied = new SessionStore({
+        dbFile: copy,
+        turnOwnerProbe: probe(500, (pid) => pid === 400),
+      });
+      try {
+        expect(copied.recoverInterruptedTurns()).toEqual(["mid-turn"]);
+        expect(copied.load("mid-turn")?.status).toBe("cancelled");
+      } finally {
+        copied.close();
+      }
+      // The original, whose owner is alive, is left alone.
+      const sweeper = new SessionStore({
+        dbFile: file,
+        turnOwnerProbe: probe(500, (pid) => pid === 400),
+      });
+      try {
+        expect(sweeper.recoverInterruptedTurns()).toEqual([]);
+        expect(sweeper.load("mid-turn")?.status).toBe("running");
+      } finally {
+        sweeper.close();
+      }
+    });
   });
 });
 
@@ -529,4 +572,112 @@ describe("SessionStore on a database from before turn marks", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("runs without turn marks when the column cannot be added, and adds it on a later open", () => {
+    // The first open after an upgrade needs the write lock; another
+    // process holding it past the busy timeout (a long VACUUM) must not
+    // keep the agent from starting.
+    const tmp = mkdtempSync(join(tmpdir(), "atomic-agent-turns-locked-"));
+    const file = join(tmp, "sessions.sqlite");
+    const holder = new DatabaseCtor(file);
+    try {
+      const old = createPreMarksDatabase(holder);
+      holder.exec("BEGIN IMMEDIATE");
+
+      const store = new SessionStore({
+        dbFile: file,
+        turnOwnerProbe: probe(100),
+        busyTimeoutMs: 50,
+      });
+      try {
+        expect(store.turnMarksUnavailable).toMatch(/locked|busy/i);
+        expect(store.load("old")?.status).toBe("pending");
+        expect(store.beginTurn("old")).toBe(false);
+        expect(store.recoverInterruptedTurns()).toEqual([]);
+        expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(0);
+        holder.exec("ROLLBACK");
+        // Everything else works as it did before marks existed.
+        store.finishTurn({ ...old, status: "cancelled", stepCount: 2 });
+        expect(store.load("old")?.status).toBe("cancelled");
+        store.save({ ...old, status: "running" });
+        expect(store.load("old")?.status).toBe("cancelled");
+      } finally {
+        store.close();
+      }
+
+      // With the lock free, the next open adds the column.
+      const later = new SessionStore({ dbFile: file, turnOwnerProbe: probe(100) });
+      try {
+        expect(later.turnMarksUnavailable).toBeNull();
+        expect(later.beginTurn("old")).toBe(true);
+        expect(later.load("old")?.status).toBe("running");
+      } finally {
+        later.close();
+      }
+    } finally {
+      holder.close();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Root writes a read-only file anyway, and Windows locks files its own
+  // way: the refusal this needs is POSIX file modes for a normal user.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "runs without turn marks on a database file it may only read",
+    () => {
+      // Such a file opens, reads, and passes the schema check; only
+      // adding the column is refused.
+      const tmp = mkdtempSync(join(tmpdir(), "atomic-agent-turns-readonly-"));
+      const file = join(tmp, "sessions.sqlite");
+      try {
+        const seed = new DatabaseCtor(file);
+        try {
+          createPreMarksDatabase(seed);
+        } finally {
+          seed.close();
+        }
+        chmodSync(file, 0o444);
+
+        const store = new SessionStore({ dbFile: file, turnOwnerProbe: probe(100) });
+        try {
+          expect(store.turnMarksUnavailable).toMatch(/readonly|read-only/i);
+          expect(store.load("old")?.status).toBe("pending");
+          expect(store.beginTurn("old")).toBe(false);
+          expect(store.recoverInterruptedTurns()).toEqual([]);
+          expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(0);
+        } finally {
+          store.close();
+        }
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });
+
+/**
+ * The `sessions` table as the release before turn marks created it,
+ * indexes included, in WAL mode, holding one session: `old`.
+ */
+function createPreMarksDatabase(db: Database.Database): SessionState {
+  db.pragma("journal_mode = WAL");
+  db.exec(`
+    CREATE TABLE sessions (
+      id           TEXT PRIMARY KEY,
+      working_dir  TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      payload      TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      updated_at   INTEGER NOT NULL
+    );
+    CREATE INDEX idx_sessions_status ON sessions(status);
+    CREATE INDEX idx_sessions_working_dir ON sessions(working_dir);
+    CREATE INDEX idx_sessions_updated_id ON sessions(updated_at DESC, id DESC);
+  `);
+  const old = createEmptySessionState({ id: "old", workingDir: "/w" });
+  db.prepare(
+    `INSERT INTO sessions (id, working_dir, status, payload, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run("old", "/w", "pending", JSON.stringify(old), 1, 1);
+  return old;
+}

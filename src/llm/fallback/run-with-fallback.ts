@@ -53,6 +53,14 @@ import { shouldAdvance } from "./should-advance.js";
  * (`attachFailingLink`), for the hosts that say which link a parked turn
  * is waiting on.
  *
+ * **A call its caller stopped never falls over.** Once `signal` has
+ * aborted, whatever the attempt threw is the stop's doing — a stop that
+ * lands as a stream ends can come back as `terminated` or `fetch failed`
+ * — and says nothing about the link. Advancing on it armed that link's
+ * breaker and flipped the sticky override, so the next turn ran on the
+ * fallback for nothing; recording it beside the error made a cancelled
+ * turn report the primary's transport failure. It is rethrown as it is.
+ *
  * Shared by both the non-stream (`llmComplete`) and stream-opening
  * (`llmCompleteStream`) seams. For streaming, `attempt` must resolve only
  * once the stream has successfully OPENED — a stream already emitting
@@ -63,6 +71,7 @@ export async function runWithFallback<T>(
   chain: ProviderFallbackChain,
   attempt: (providerId: string) => Promise<T>,
   partitionKey?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const pick = chain.pickProvider(partitionKey);
   let currentId = pick.providerId;
@@ -94,6 +103,10 @@ export async function runWithFallback<T>(
       chain.recordSuccess(currentId, wasProbe, partitionKey);
       return result;
     } catch (err) {
+      if (signal?.aborted) {
+        attachFailingLink(err, currentId);
+        throw err;
+      }
       // Read before `advanceFrom` moves the override past this link.
       const serving = chain.isServingFallback(currentId, partitionKey);
       const nextId = chain.advanceFrom(currentId, err, partitionKey);

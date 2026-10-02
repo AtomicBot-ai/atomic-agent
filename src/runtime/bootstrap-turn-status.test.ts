@@ -10,6 +10,7 @@ import {
   INTERRUPTED_TURN_ENDING,
   SessionStore,
   createEmptySessionState,
+  hostIdentity,
   hostUptime,
   type ConversationTurn,
 } from "../session/index.js";
@@ -377,9 +378,10 @@ describe("a turn's status in the session store", () => {
         dbFile,
         turnOwnerProbe: {
           pid,
+          host: hostIdentity(),
           hostUptime,
           isAlive: () => true,
-          startTicksOf: () => null,
+          processStartOf: () => null,
         },
       });
       try {

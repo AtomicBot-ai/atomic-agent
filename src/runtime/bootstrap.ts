@@ -1553,6 +1553,14 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
+  if (sessionStore.turnMarksUnavailable !== null) {
+    // The first open after an upgrade adds the `turn_owner` column, and
+    // could not this time. The runtime runs without turn marks — as it
+    // did before they existed — and the next start tries again.
+    logger.warn("session turn marks unavailable for this run", {
+      error: sessionStore.turnMarksUnavailable,
+    });
+  }
   // A row still marked `running` by a process that is gone is a turn that
   // will never write its end — the app was killed or crashed mid-turn —
   // and every list would show it running for ever. End those before

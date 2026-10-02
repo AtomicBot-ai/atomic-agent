@@ -562,12 +562,14 @@ export function buildStreamEventHook(
          ended the turn (the fallback the turn was running on said the
          account is empty, runWithFallback's route refusal), it is the
          story, told as the failed step's frame tells it, with the links
-         before it listed beside it. */
+         before it listed beside it. And a cancelled turn is reported as
+         cancelled: whatever the chain went through before the stop is not
+         why the turn ended (ATO-137). */
       const ended = billingCauseFrame(event.error);
       const first =
-        ended.cause === undefined
-          ? readFailedAttempts(event.error)[0]
-          : undefined;
+        event.category === "cancelled" || ended.cause !== undefined
+          ? undefined
+          : readFailedAttempts(event.error)[0];
       if (first) {
         const primary = first.error;
         const message = primary instanceof Error && primary.message.trim()
@@ -579,7 +581,7 @@ export function buildStreamEventHook(
         });
         return;
       }
-      const failedBefore = describeFailedLinks(event.error);
+      const failedBefore = event.category === "cancelled" ? [] : describeFailedLinks(event.error);
       emitStreamError(sse, env, event.error.message, event.category, {
         ...ended,
         ...(failedBefore.length > 0
