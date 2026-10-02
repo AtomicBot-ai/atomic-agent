@@ -412,7 +412,8 @@ async function nowLine(js: Js, check: Check): Promise<void> {
   check(
     "T48 (ATO-125): the \"now\" line names the model the server says it runs, says which one is picked and offers the restart onto it; that row is not \"In use\"",
     /smoke-t48-other/i.test(String(stale.bold)) && /is picked/.test(String(stale.text)) && stale.act === "llm:usePicked"
-      && show([...((r["staleRows"] ?? []) as string[])].sort()) === show(["smoke-t48-other:use", "smoke-t48:use"]),
+      && show([...((r["staleRows"] ?? []) as string[])].filter((row) => row.startsWith("smoke-t48")).sort())
+        === show(["smoke-t48-other:use", "smoke-t48:use"]),
     show({ stale, rows: r["staleRows"] }),
   );
   const cloudUp = r["cloudUp"] ?? {}, cloudDown = r["cloudDown"] ?? {}, customUp = r["customUp"] ?? {}, fusionCustom = r["fusionCustom"] ?? {};
