@@ -206,6 +206,18 @@ describe("unsourcedLinks", () => {
     expect(unsourcedLinks(mangled, linkSources(turns))).toEqual([{ url: mangled }]);
   });
 
+  it("counts links on the open page's snapshot as known, without arming on them", () => {
+    const pageLink = "https://www.tomshardware.com/pc-components/gpus/rtx-5090-deals";
+    const snapshot = `- link "RTX 5090 deals":\n  - /url: ${pageLink}`;
+    const armed = linkSources(turnWith(`hit: ${RESULT_URL}`), [snapshot]);
+    expect(unsourcedLinks(`Deals: ${pageLink}`, armed)).toEqual([]);
+    expect(
+      unsourcedLinks("https://www.tomshardware.com/made-up", armed),
+    ).toHaveLength(1);
+    const unarmed = linkSources(turnWith("no links in this output"), [snapshot]);
+    expect(unarmed.turnResultHosts.size).toBe(0);
+  });
+
   it("arms only on this turn's results, not an earlier turn's", () => {
     const turns: ConversationTurn[] = [
       ...turnWith(`hit: ${RESULT_URL}`),

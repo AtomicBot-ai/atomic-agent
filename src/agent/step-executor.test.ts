@@ -5290,6 +5290,7 @@ describe("links need a source (#581)", () => {
       terminalOnly?: boolean;
       linkEvidence?: false;
       claimEvidence?: boolean;
+      worldText?: string;
     } = {},
   ) {
     const registry = new ToolRegistry();
@@ -5310,6 +5311,14 @@ describe("links need a source (#581)", () => {
       summary: `1. Nvidia RTX 5090 review\n   ${RESULT_URL}`,
       at: 3,
     });
+    if (options.worldText !== undefined) {
+      session.worldSnapshot = {
+        kind: "browser",
+        digest: "d-581",
+        text: options.worldText,
+        capturedAt: 4,
+      };
+    }
     let noticed = options.noticed ?? false;
     let marks = 0;
     let claimMarks = 0;
@@ -5397,6 +5406,26 @@ describe("links need a source (#581)", () => {
     expect(outcome.toolResults[0]!.status).toBe("ok");
     expect(outcome.toolResults[0]!.details).not.toHaveProperty("unsourcedLinks");
     expect(outcome.trimmedBatchNotice).toBeUndefined();
+    expect(marks()).toBe(0);
+  });
+
+  it("delivers a reply whose link is only on the open page's snapshot", async () => {
+    const pageLink =
+      "https://www.tomshardware.com/pc-components/gpus/rtx-5090-deals";
+    const { outcome, marks } = await run(`Deals: ${pageLink}`, {
+      worldText: `- link "RTX 5090 deals":\n  - /url: ${pageLink}`,
+    });
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unsourcedLinks");
+    expect(outcome.trimmedBatchNotice).toBeUndefined();
+    expect(marks()).toBe(0);
+  });
+
+  it("delivers a reply with no link untouched", async () => {
+    const { outcome, marks } = await run("No review link this time.");
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolResults[0]!.details).not.toHaveProperty("unsourcedLinks");
     expect(marks()).toBe(0);
   });
 

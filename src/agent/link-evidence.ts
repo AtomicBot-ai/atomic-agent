@@ -176,8 +176,16 @@ function argsText(args: Record<string, unknown>): string {
  * links come from the whole transcript; the hosts that arm the check
  * come only from this turn's tool results (everything after the last
  * `user` turn, as `turnToolCalls` reads a turn).
+ *
+ * `observed` is other text the model was shown alongside the transcript
+ * (the browser page's ARIA snapshot, whose `/url:` lines are the page's
+ * links). Its links count as known, so a reply that quotes a link off
+ * the open page is not held; they do not arm the check.
  */
-export function linkSources(turns: readonly ConversationTurn[]): LinkSources {
+export function linkSources(
+  turns: readonly ConversationTurn[],
+  observed: readonly string[] = [],
+): LinkSources {
   let start = 0;
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     if (turns[i]?.kind === "user") {
@@ -198,6 +206,7 @@ export function linkSources(turns: readonly ConversationTurn[]): LinkSources {
       }
     }
   };
+  for (const text of observed) add(text, false);
   turns.forEach((turn, i) => {
     switch (turn.kind) {
       case "user":

@@ -31,6 +31,7 @@ import {
   type CheckClaim,
 } from "./claim-evidence.js";
 import {
+  extractLinks,
   formatUnsourcedLinkNotice,
   formatUnsourcedLinkRefusal,
   linkSources,
@@ -1568,11 +1569,21 @@ async function executeStepInner(
         .map((call) => ({ tool: call.tool, args: call.args ?? {} })),
     ]);
   }
-  if (replyText !== null && deps.linkEvidence !== undefined) {
+  if (
+    replyText !== null &&
+    deps.linkEvidence !== undefined &&
+    extractLinks(replyText).length > 0
+  ) {
     // The reply's own batch can only hold bookkeeping here (a reply
     // batched with work became a progress note above), so the
-    // transcript's results are every result the reply could quote.
-    unsourced = unsourcedLinks(replyText, linkSources(ctx.session.turns));
+    // transcript's results are every result the reply could quote. The
+    // open page's snapshot is shown to the model too, so its links count
+    // as known. A reply with no link skips the transcript scan.
+    const world = ctx.session.worldSnapshot?.text;
+    unsourced = unsourcedLinks(
+      replyText,
+      linkSources(ctx.session.turns, world ? [world] : []),
+    );
   }
   if (tail !== undefined && ctx.terminalOnly !== true) {
     const notices: string[] = [];
