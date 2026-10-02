@@ -88,6 +88,29 @@ describe("formatFusionWorkerLine", () => {
     ).toBe("» worker A — os.fs.read");
   });
 
+  it("prints a usage count only when one was measured", () => {
+    const usage = {
+      type: "fusion_worker",
+      taskId: "t1",
+      title: "A",
+      phase: "usage",
+      role: "worker",
+      model: "qwen-3.5-4b",
+    } as const;
+    expect(formatFusionWorkerLine({ ...usage, contextTokens: 12_300 })).toBe(
+      "» worker A · qwen-3.5-4b: 12.3k ctx",
+    );
+    // Zero means "not measured": a "0 ctx" line would be a reading the
+    // runtime never took, so the line drops the counter instead.
+    expect(formatFusionWorkerLine(usage)).toBe("» worker A · qwen-3.5-4b");
+    expect(formatFusionWorkerLine({ ...usage, contextTokens: 0 })).toBe(
+      "» worker A · qwen-3.5-4b",
+    );
+    expect(formatFusionWorkerLine({ ...usage, contextTokens: -1 })).toBe(
+      "» worker A · qwen-3.5-4b",
+    );
+  });
+
   it("keeps the original colour semantics", () => {
     const base = { type: "fusion_worker", taskId: "t", title: "A" } as const;
     expect(fusionWorkerLineColor({ ...base, phase: "started" })).toBe("gray");

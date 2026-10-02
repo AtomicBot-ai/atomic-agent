@@ -41,7 +41,11 @@ export function formatFusionWorkerLine(event: FusionWorkerEvent): string {
     case "usage":
       // The reducer keeps this off the feed; rendered only so a caller
       // that does print it gets something true rather than "started".
-      return `» ${who}: ${formatTokens(event.contextTokens ?? 0)} ctx`;
+      // Zero is "not measured", never a reading, so without a positive
+      // count the line names the leg and claims no size at all.
+      return event.contextTokens !== undefined && event.contextTokens > 0
+        ? `» ${who}: ${formatTokens(event.contextTokens)} ctx`
+        : `» ${who}`;
     case "cancelled":
       return `» ${who}: cancelled`;
     case "failed":
