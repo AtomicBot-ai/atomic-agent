@@ -130,7 +130,14 @@ describe("resolveFusionMachineFacts", () => {
       resolveFusionMachineFacts(
         config({ parallel: "auto", contextSize: 131_072, completionMaxTokens: 32_768 }),
       ).workerSlots,
-    ).toBe(2);
+    ).toBe(4);
+    // A benchmark's 96k reply cap: still four, the workers' replies are
+    // held to the allowance the pool is divided by.
+    expect(
+      resolveFusionMachineFacts(
+        config({ parallel: "auto", contextSize: 131_072, completionMaxTokens: 96_000 }),
+      ).workerSlots,
+    ).toBe(4);
     expect(
       resolveFusionMachineFacts(
         config({ parallel: "auto", contextSize: 131_072, device: "cpu" }),
@@ -228,6 +235,12 @@ describe("resolveFusionMachineFacts", () => {
       resolveFusionMachineFacts(config({ completionMaxTokens: 16_384 }))
         .workerTokenBudget,
     ).toBe(workerSlotFootprint(16_384));
+    // Not ~112k for a 96k cap: the orchestrator is told the share a worker
+    // really gets, which is the share its replies are capped to.
+    expect(
+      resolveFusionMachineFacts(config({ completionMaxTokens: 96_000 }))
+        .workerTokenBudget,
+    ).toBe(32_384);
   });
 
   it("describes cloud workers without slots or a shared context", () => {

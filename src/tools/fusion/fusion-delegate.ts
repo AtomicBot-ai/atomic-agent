@@ -8,6 +8,8 @@ import type { SlotManager } from "../../llm/slot-manager.js";
 import type { StructuredLogger } from "../../tracing/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
 import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
+import { getConfig } from "../../config/index.js";
+import { workerReplyAllowance } from "../../local-llm/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
 import {
@@ -325,6 +327,20 @@ export function buildFusionDelegateTool(
       const localTokensPerSecond = Number.isFinite(poolSize)
         ? (deps.localTokensPerSecond?.() ?? null)
         : null;
+      // The reply cap the local pool was divided by (`workerSlotFootprint`
+      // sizes each worker's reply at `workerReplyAllowance`, not at the raw
+      // `completionMaxTokens`). A cap above that allowance is sent as the
+      // workers' own, so no worker can write past its share of the shared
+      // context; an operator's `workerMaxOutputTokens` still wins, a cap
+      // at or below the allowance changes nothing, and a cloud leg (no
+      // pool, `poolSize` infinite) is never capped here.
+      const localReplyCap = getConfig().localModels.completionMaxTokens;
+      const workerMaxOutputTokens =
+        mode.workerMaxOutputTokens ??
+        (Number.isFinite(poolSize) &&
+        localReplyCap > workerReplyAllowance(localReplyCap)
+          ? workerReplyAllowance(localReplyCap)
+          : undefined);
 
       // The order the contract imposes (F45): a task that requires what
       // a sibling provides runs in a later wave than that sibling, so it
@@ -371,9 +387,9 @@ export function buildFusionDelegateTool(
             ...(mode.workerReasoning === undefined
               ? {}
               : { workerReasoning: mode.workerReasoning }),
-            ...(mode.workerMaxOutputTokens === undefined
+            ...(workerMaxOutputTokens === undefined
               ? {}
-              : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
+              : { workerMaxOutputTokens }),
             writeScope,
             signal: ctx.signal,
           });
