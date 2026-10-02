@@ -51,6 +51,7 @@ import { writeBackendVersion } from "./backend-version.js";
 import {
   AUTO_UPDATE_RECHECK_MS,
   AUTO_UPDATE_RETRY_MS,
+  checkForBackendUpdateForPanel,
   maybeAutoUpdateBackend,
 } from "./ensure-latest-backend.js";
 import { hasOtherLiveSessions } from "./session-registry.js";
@@ -346,6 +347,32 @@ describe("maybeAutoUpdateBackend with recheckAfterMs (backlog 39)", () => {
     await start();
     clock -= 60_000;
     await start();
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the record when the Models panel finds an update, so the next start asks and installs it", async () => {
+    nothingNewer();
+    await start();
+    expect(existsSync(resolveBackendCheckFilePath(dataDir))).toBe(true);
+    vi.mocked(checkForBackendUpdate).mockResolvedValueOnce({
+      updateAvailable: true,
+      latestTag: "turboquant-7a1c0de",
+      currentTag: INSTALLED,
+    });
+    expect((await checkForBackendUpdateForPanel(dataDir)).updateAvailable).toBe(true);
+    expect(existsSync(resolveBackendCheckFilePath(dataDir))).toBe(false);
+    clock += 60_000;
+    await start();
+    // The first start, the panel, and this start: it did not answer `recent`.
+    expect(checkForBackendUpdate).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the record when the Models panel finds nothing newer", async () => {
+    nothingNewer();
+    await start();
+    expect((await checkForBackendUpdateForPanel(dataDir)).updateAvailable).toBe(false);
+    clock += 60_000;
+    expect((await start()).action).toBe("recent");
     expect(checkForBackendUpdate).toHaveBeenCalledTimes(2);
   });
 });
