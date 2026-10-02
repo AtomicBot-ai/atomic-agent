@@ -92,6 +92,7 @@ describe("formatFallbackStatusLine", () => {
     expect(line).toContain("failed over openrouter -> local-llama");
     expect(line).toContain("openrouter is out of credit or quota");
     expect(line).toContain("maxOutputTokens");
+    expect(line).toContain("(402)");
     expect(line).not.toContain("96000");
   });
 
@@ -99,14 +100,32 @@ describe("formatFallbackStatusLine", () => {
     const line = away("provider rejected the request (401).");
     expect(line).toContain("openrouter refused the API key");
     expect(line).toContain(".env");
-    expect(line).not.toContain("(401)");
+    expect(line).toContain("config.json");
+    expect(line).toContain("(401)");
+    expect(line).not.toContain("provider rejected");
   });
 
   it("keeps a transient reason and says the chain retries by itself", () => {
     const line = away("503 Service Unavailable");
     expect(line).toBe(
-      "status: failed over openrouter -> local-llama (503 Service Unavailable) · retrying openrouter automatically",
+      "status: failed over openrouter -> local-llama (503 Service Unavailable) · retrying the primary automatically",
     );
+    expect(away("request timed out after 120000ms")).toContain(
+      "retrying the primary automatically",
+    );
+  });
+
+  it("promises no retry for a failure that will not clear by itself", () => {
+    for (const reason of [
+      "model not found (404)",
+      "No endpoints found for this model (404)",
+      "context length exceeded (400)",
+    ]) {
+      const line = away(reason);
+      expect(line).toBe(
+        `status: failed over openrouter -> local-llama (${reason})`,
+      );
+    }
   });
 
   it("reports a recovery without a reason", () => {

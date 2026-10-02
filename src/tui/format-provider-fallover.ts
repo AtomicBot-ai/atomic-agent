@@ -58,11 +58,14 @@ export function classifyFalloverReason(reason: string): FalloverCause {
  * The pane is where an operator goes to act on a fallover, so the line
  * says which kind of failure happened and the one thing to do about it,
  * not the provider's raw refusal text: that full reason is already in
- * the chat notice and the Observe feed. A credit or key refusal names
- * the fix, because the recovery probe will keep failing until someone
- * applies it. A transient failure keeps its short reason (a status code,
- * a timeout) and says the chain retries on its own, because there is
- * nothing to do but wait.
+ * the chat notice and the Observe feed. The classifier reads free text
+ * and can misread it (a per-minute "quota" is a rate limit), so a
+ * credit or key line keeps the HTTP status as evidence. Only a failure
+ * that clears by itself (5xx, 408, 429, a timeout, a dropped
+ * connection) promises a retry; anything else — a 404 model, a context
+ * overflow — keeps its reason and promises nothing. The retry names the
+ * primary, not `from`: the chain can fall over from a non-primary link,
+ * and the recovery probe only ever checks the primary.
  */
 export function formatFallbackStatusLine(
   lastSwitch: FallbackLastSwitch,
@@ -70,12 +73,23 @@ export function formatFallbackStatusLine(
   const { direction, from, to, reason } = lastSwitch;
   if (direction === "back") return `status: recovered primary ${to}`;
   const head = `status: failed over ${from} -> ${to}`;
+  const status = /\b[45]\d\d\b/.exec(reason)?.[0];
+  const evidence = status ? ` (${status})` : "";
   switch (classifyFalloverReason(reason)) {
     case "billing":
-      return `${head} · ${from} is out of credit or quota: top it up or lower its maxOutputTokens`;
+      return `${head}${evidence} · ${from} is out of credit or quota: top it up or lower its maxOutputTokens`;
     case "auth":
-      return `${head} · ${from} refused the API key: check it in <stateDir>/.env`;
+      return `${head}${evidence} · ${from} refused the API key: check it in <stateDir>/.env or its apiKey in config.json`;
     default:
-      return `${head} (${reason}) · retrying ${from} automatically`;
+      return isSelfClearingFailure(reason)
+        ? `${head} (${reason}) · retrying the primary automatically`
+        : `${head} (${reason})`;
   }
+}
+
+/** A failure the chain's recovery probe can be expected to outlast. */
+function isSelfClearingFailure(reason: string): boolean {
+  return /\b5\d\d\b|\b408\b|\b429\b|timeout|timed out|econnreset|econnrefused|fetch failed|network|unavailable|overloaded|rate limit/i.test(
+    reason,
+  );
 }
