@@ -4585,47 +4585,58 @@ function diagnosticsPane() {
    allow-once/deny, so the runtime never accumulates grants and the TUI's
    "none active" line is the truth here. The toggle is `atag config set
    analytics.enabled`; the running agent keeps its boot-time client, so
-   the note and the Restart button say so. */
+   the note and the Restart button say so.
+   Д47–Д50 (Danya, 30.09): a read-scope change the agent takes at once is a
+   toast, and what still needs a restart is said under the rows, never above
+   them (a blue line on top pushed the page down ~50 px); Session grants, a
+   row with nothing to set, is one line under the switch it is about; the
+   analytics switch is here as well as in General — the same value and the
+   same write, so the two always agree; what analytics send is a quiet
+   disclosure instead of two loud cards. */
 function privacyPane() {
   const eff = privacyEffective();
   const known = typeof eff === 'boolean';
-  // What is and is not sent — both lists are the analytics sentence, split into its parts.
-  const sentList = (title, items, icon, tone) => '<div class="set-privcol"><div class="tk-sh">' + esc(title) + '</div><ul class="set-privul">'
-    + items.map((t) => '<li><span class="tk-ico tk-ico--xs ' + tone + '">' + ic(icon) + '</span>' + esc(t) + '</li>').join('') + '</ul></div>';
+  const on = known && eff;
+  const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
+  const scope = readScopeValue();
+  // What is and is not sent: the analytics sentence, split into its parts.
+  const sentLine = (label, items) => '<p class="set-privline"><b>' + esc(label) + ':</b> ' + esc(items.join(', ')) + '.</p>';
   return '<div class="set-pane set-privacy">'
-    + privacyNoticesHTML()
     + '<div class="tk-list set-setlist">'
       /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
          config cache, which a CLI write does not reset in a running
          `atag serve` (checked live: a write with the chat open still asked),
-         so the change takes the restart notice above. */
+         so on an agent without PATCH the change takes the restart notice below. */
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Reading outside the working folder</div>'
-          + '<div class="d">' + esc(READ_SCOPES.find((r) => r[0] === readScopeValue())[2]) + '. The agent can always read the working folder and any path you name in the chat.</div></div>'
+          + '<div class="d">' + esc(READ_SCOPES.find((r) => r[0] === scope)[2]) + '. The agent can always read the working folder and any path you name in the chat.</div>'
+          + '<div class="tk-help set-privgrant">Allowing one read outside it lets the agent read that folder for the rest of the chat.</div></div>'
         + '<div class="tk-seg set-seg" role="group" aria-label="Reading outside the working folder">'
-          + READ_SCOPES.map(([v, label, long]) => '<button class="' + (v === readScopeValue() ? 'on' : '') + '" aria-pressed="' + (v === readScopeValue())
+          + READ_SCOPES.map(([v, label, long]) => '<button class="' + (v === scope ? 'on' : '') + '" aria-pressed="' + (v === scope)
             + '" title="' + esc(long) + '" data-act="privacy:readscope:' + v + '"' + (PRIV.busy || !LIVE_CONFIG ? ' disabled' : '') + '>' + esc(label) + '</button>').join('')
         + '</div>'
       + '</div>'
-      + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t">Session grants</div>'
-          + '<div class="d">Each approval is answered once, allow or deny. One exception: approving a read outside the working folder lets the agent read that folder for the rest of that chat.</div></div>'
-      + '</div>'
-      // Calm (S5): the analytics switch lives in General; this row says where it stands and links there.
-      + '<div class="tk-setrow">'
+      // The same switch as General's (privacy:analytics → privacyToggle), drawn from the same value.
+      + '<div class="tk-setrow set-privan">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">' + (known ? (eff ? 'On.' : 'Off.') : PRIV.effectiveBusy ? 'Checking…' : 'Unknown.') + ' You can turn it on or off in General.</div></div>'
-        + '<button class="btn btn-s sm" data-act="settings:general">Open General</button>'
+          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id.</div>'
+          + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
+          /* Said about analytics, not about the Mac: "never leaves this Mac" read as
+             a promise the app does not make (a cloud model is sent the messages).
+             The agent swaps the IP for 0.0.0.0 before an event goes out. */
+          + '<details class="set-privdet"' + (SETDET['priv-sent'] ? ' open' : '') + '><summary data-setdet="priv-sent">' + ic('chevR') + 'What analytics send</summary>'
+            + sentLine('Sent with analytics', ['an install id', 'coarse counters', 'crash reports'])
+            + sentLine('Never sent with analytics', ['message content', 'paths', 'tool arguments', 'IP address'])
+          + '</details>'
+        + '</div>'
+        // A spinner only while the value is still being read; PRIV.busy is shared with the read-scope write.
+        + (pending ? '<span class="set-state" aria-hidden="true"><span class="tk-spin"></span></span>' : '')
+        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
+          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
-    + '</div>'
-    /* Said about analytics, not about the Mac: "never leaves this Mac" read as
-       a promise the app does not make (a cloud model is sent the messages).
-       The agent swaps the IP for 0.0.0.0 before an event goes out. */
-    + '<div class="set-privgrid">'
-      + sentList('Sent with analytics', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
-      + sentList('Never sent with analytics', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
     + '</div>'
     + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
+    + privacyNoticesHTML()
     + '</div>';
 }
 /* B3: `agent.readScope` — the user file's value, else the schema default. */
@@ -4641,7 +4652,9 @@ async function readScopeSet(value) {
     // agent's cached config: PATCH (0.6.6) refreshes that cache, a CLI write does not.
     const res = await configPatchOr({agent:{readScope:value}}, () => BR.configSet('agent.readScope', value));
     if (!res.ok) PRIV.lastError = 'could not change where the agent reads: ' + (res.error || 'unknown error');
-    else { PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder'; PRIV.messageLive = !!res.live; }
+    // Д47: taken at once (PATCH, 0.6.6) it is a toast over the pane; only a change waiting for a restart stays on it.
+    else if (res.live) toast(value === 'unrestricted' ? 'The agent will read anywhere without asking' : 'The agent will ask before reading outside the working folder');
+    else { PRIV.message = value === 'unrestricted' ? 'the agent will read anywhere without asking' : 'the agent will ask before reading outside the working folder'; PRIV.messageLive = false; }
     await refreshLiveConfig();
     PRIV.busy = false; render();
   };

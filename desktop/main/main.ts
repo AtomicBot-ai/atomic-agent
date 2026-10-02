@@ -4728,19 +4728,21 @@ async function settingsTest(
   }
 
   // Privacy: the TUI's post-#303 copy, and no ladder anywhere in it. Calm
-  // (S5): the analytics switch moved to General; Privacy names its state and
-  // links there, so there is exactly one switch.
+  // (S5) moved the analytics switch to General and left Privacy a link
+  // there; release fix 49 (Д48/Д49) puts the same switch back in Privacy —
+  // one value, one write, a switch in each pane — and Session grants, a row
+  // with nothing to set, is a line under the read-scope switch.
   await js<void>("window.__settingsOpen('privacy')");
   const priv = await js<string>("window.__settingsBody()");
   const privSwitches = await js<number>("document.querySelectorAll('#settings .setbody [data-act=\"privacy:analytics\"]').length");
   await js<void>("window.__settingsOpen('general')");
   const gen = await js<string>("window.__settingsBody()");
   const genSwitches = await js<number>("document.querySelectorAll('#settings .setbody .tk-switch[data-act=\"privacy:analytics\"]').length");
-  const privacyCopy = ["Session grants", "Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Open General"]
-    .every((s) => priv.includes(s))
+  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "What analytics send"]
+    .every((s) => priv.includes(s)) && !priv.includes("Session grants") && !priv.includes("Open General")
     && ["Appearance", "Working folder", "Anonymous usage analytics", "Crash reports and coarse usage counts"].every((s) => gen.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
-  check("privacy tab: TUI copy, no approval ladder; the analytics switch is in General only", privacyCopy && noLadder && privSwitches === 0 && genSwitches === 1,
+  check("privacy tab: TUI copy, no approval ladder; one analytics switch in General and one in Privacy", privacyCopy && noLadder && privSwitches === 1 && genSwitches === 1,
     privacyCopy ? (noLadder ? `switches privacy=${privSwitches} general=${genSwitches}` : "ladder text present") : "copy missing");
   // The TUI's tab strip is one line; with the count suffixes the eight
   // labels used to wrap onto a second row inside the 900px window.
