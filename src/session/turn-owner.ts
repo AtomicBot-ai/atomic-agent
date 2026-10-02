@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readlinkSync } from "node:fs";
 import { uptime } from "node:os";
 
 /**
@@ -24,6 +25,24 @@ export interface TurnOwner {
   /** The process running the turn. */
   readonly pid: number;
   /**
+   * What the pid is a pid of: the platform, and on Linux the pid
+   * namespace (`/proc/self/ns/pid`). A container sharing the state dir
+   * with its host — or with another container — numbers its processes
+   * on its own; a mark from another namespace says nothing about the pid
+   * of the same number here, so it is never judged from here. The
+   * hostname is deliberately not part of it: on a Mac it follows the
+   * network, and a mark that looked foreign after a network change would
+   * never be cleared.
+   */
+  readonly host?: string;
+  /**
+   * The database file the mark was written into (its real path). A mark
+   * found in another file came with a copy — the desktop's "bring your
+   * terminal setup over" import, a restored backup — and whatever turn it
+   * names runs on the original, never on the copy.
+   */
+  readonly db?: string;
+  /**
    * The host's uptime, in seconds, when the mark was written. A host
    * whose uptime is now lower has rebooted since, so the pid names
    * nobody, however alive the process holding that number now is. The
@@ -34,12 +53,12 @@ export interface TurnOwner {
    */
   readonly hostUptime?: number;
   /**
-   * When the owning process started, in the kernel's own units, where
-   * that can be read cheaply (Linux: `/proc/<pid>/stat`). Together with
-   * the pid it names exactly one process for as long as the host is up,
-   * so a pid reused by another process is caught. Absent elsewhere.
+   * When the owning process started, as the kernel recorded it
+   * (`processStartOf`). With the pid it names exactly one process for as
+   * long as the host is up, so a pid since reused by another process is
+   * caught. Absent where it cannot be read cheaply (Windows).
    */
-  readonly startTicks?: string;
+  readonly processStart?: string;
   /** When the turn started, ms since the epoch. For diagnostics. */
   readonly at: number;
 }
@@ -47,15 +66,18 @@ export interface TurnOwner {
 /**
  * This process and host: what a mark records about the turn's owner, and
  * what `isTurnOwnerGone` compares a mark against. Functions, not values,
- * so each mark and each sweep reads the host as it is at that moment.
+ * where the answer moves, so each mark and each sweep reads the host as
+ * it is at that moment.
  */
 export interface TurnOwnerProbe {
   readonly pid: number;
+  /** `TurnOwner.host` for this process; `undefined` when unknown. */
+  readonly host: string | undefined;
   /** The host's uptime now, in seconds; `undefined` when unknown. */
   readonly hostUptime: () => number | undefined;
   readonly isAlive: (pid: number) => boolean;
-  /** The start of process `pid` as `TurnOwner.startTicks` records it, or `null`. */
-  readonly startTicksOf: (pid: number) => string | null;
+  /** `TurnOwner.processStart` of process `pid`, or `null` when it cannot be read. */
+  readonly processStartOf: (pid: number) => string | null;
 }
 
 /**
@@ -74,14 +96,38 @@ export function hostUptime(): number | undefined {
   }
 }
 
+/** `TurnOwner.host` for this process (see there). */
+export function hostIdentity(): string {
+  if (process.platform !== "linux") return process.platform;
+  try {
+    return `linux:${readlinkSync("/proc/self/ns/pid")}`;
+  } catch {
+    return "linux";
+  }
+}
+
 /**
- * The start of process `pid` in clock ticks since boot, from
- * `/proc/<pid>/stat` — Linux only; `null` anywhere else, or when the file
- * cannot be read. Kept as the raw string: it is only ever compared with
- * another reading of the same field.
+ * The start of process `pid` as the kernel recorded it, as an opaque
+ * string only ever compared with another reading on the same host:
+ *
+ *  - Linux: `starttime` from `/proc/<pid>/stat`, in clock ticks since
+ *    boot — a file read;
+ *  - macOS: `ps -o lstart=`, the start the kernel stored when the process
+ *    was created, printed in UTC with the C locale so neither a time-zone
+ *    change nor the wall clock moving since alters it — one short `ps`;
+ *  - anywhere else (Windows): `null`. Asking costs a PowerShell start of
+ *    several hundred milliseconds, too much for the turn path.
+ *
+ * `null` too when the process cannot be read, which callers must treat
+ * as "unknown", never as "gone".
  */
-export function readStartTicks(pid: number): string | null {
-  if (process.platform !== "linux") return null;
+export function processStartOf(pid: number): string | null {
+  if (process.platform === "linux") return linuxStartTicks(pid);
+  if (process.platform === "darwin") return darwinStart(pid);
+  return null;
+}
+
+function linuxStartTicks(pid: number): string | null {
   let stat: string;
   try {
     stat = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -93,38 +139,63 @@ export function readStartTicks(pid: number): string | null {
   // `starttime` is field 22; the first field after `)` is field 3.
   const close = stat.lastIndexOf(")");
   if (close < 0) return null;
-  const fields = stat.slice(close + 1).trim().split(/\s+/);
-  const start = fields[19];
-  return start !== undefined && /^\d+$/.test(start) ? start : null;
+  const start = stat.slice(close + 1).trim().split(/\s+/)[19];
+  return start !== undefined && /^\d+$/.test(start) ? `ticks:${start}` : null;
 }
 
-let ownStartTicks: string | null | undefined;
+function darwinStart(pid: number): string | null {
+  try {
+    const out = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      // Nothing of this process's environment (keys included) goes to
+      // `ps`; it needs only the locale and the zone to print in.
+      env: { LC_ALL: "C", TZ: "UTC" },
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2_000,
+    }).trim();
+    return out.length > 0 ? `lstart:${out.replace(/\s+/g, " ")}` : null;
+  } catch {
+    return null;
+  }
+}
 
-/** This process's own `startTicks`, read once. */
-function ownStart(): string | null {
-  if (ownStartTicks === undefined) ownStartTicks = readStartTicks(process.pid);
-  return ownStartTicks;
+let ownStart: string | null | undefined;
+
+/** This process's own start, read once. */
+function ownProcessStart(): string | null {
+  if (ownStart === undefined) ownStart = processStartOf(process.pid);
+  return ownStart;
 }
 
 /** This process and host, right now. */
 export function currentTurnOwnerProbe(): TurnOwnerProbe {
   return {
     pid: process.pid,
+    host: hostIdentity(),
     hostUptime,
     isAlive: isProcessAlive,
-    startTicksOf: (pid) =>
-      pid === process.pid ? ownStart() : readStartTicks(pid),
+    processStartOf: (pid) =>
+      pid === process.pid ? ownProcessStart() : processStartOf(pid),
   };
 }
 
-/** The mark `probe`'s process writes for a turn starting at `at`. */
-export function turnOwnerFor(probe: TurnOwnerProbe, at: number): TurnOwner {
+/**
+ * The mark `probe`'s process writes into the database at `db` for a turn
+ * starting at `at`.
+ */
+export function turnOwnerFor(
+  probe: TurnOwnerProbe,
+  at: number,
+  db?: string,
+): TurnOwner {
   const up = probe.hostUptime();
-  const startTicks = probe.startTicksOf(probe.pid);
+  const start = probe.processStartOf(probe.pid);
   return {
     pid: probe.pid,
+    ...(probe.host !== undefined ? { host: probe.host } : {}),
+    ...(db !== undefined ? { db } : {}),
     ...(up !== undefined ? { hostUptime: up } : {}),
-    ...(startTicks !== null ? { startTicks } : {}),
+    ...(start !== null ? { processStart: start } : {}),
     at,
   };
 }
@@ -133,8 +204,12 @@ export function turnOwnerFor(probe: TurnOwnerProbe, at: number): TurnOwner {
 export function serializeTurnOwner(owner: TurnOwner): string {
   return JSON.stringify({
     pid: owner.pid,
+    ...(owner.host !== undefined ? { host: owner.host } : {}),
+    ...(owner.db !== undefined ? { db: owner.db } : {}),
     ...(owner.hostUptime !== undefined ? { hostUptime: owner.hostUptime } : {}),
-    ...(owner.startTicks !== undefined ? { startTicks: owner.startTicks } : {}),
+    ...(owner.processStart !== undefined
+      ? { processStart: owner.processStart }
+      : {}),
     at: owner.at,
   });
 }
@@ -149,21 +224,22 @@ export function parseTurnOwner(raw: string | null): TurnOwner | null {
     return null;
   }
   if (typeof value !== "object" || value === null) return null;
-  const { pid, hostUptime: up, startTicks, at } = value as Record<
-    string,
-    unknown
-  >;
+  const fields = value as Record<string, unknown>;
+  const { pid, host, db, processStart, at } = fields;
+  const up = fields.hostUptime;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) {
     return null;
   }
+  const text = (v: unknown): v is string =>
+    typeof v === "string" && v.length > 0;
   return {
     pid,
+    ...(text(host) ? { host } : {}),
+    ...(text(db) ? { db } : {}),
     ...(typeof up === "number" && Number.isFinite(up) && up > 0
       ? { hostUptime: up }
       : {}),
-    ...(typeof startTicks === "string" && /^\d+$/.test(startTicks)
-      ? { startTicks }
-      : {}),
+    ...(text(processStart) ? { processStart } : {}),
     at: typeof at === "number" && Number.isFinite(at) ? at : 0,
   };
 }
@@ -171,12 +247,14 @@ export function parseTurnOwner(raw: string | null): TurnOwner | null {
 /**
  * Whether the process a `running` row names can no longer be running
  * that turn — so the row is a turn that will never write its end.
+ * `db` is the real path of the database the row was read from.
  *
  * Meant for the boot sweep, before this process has started a turn of
  * its own: a mark carrying this process's pid then belongs to an earlier
  * process that had the same number (or to an earlier runtime in this one
  * that never got to release it), never to a live turn.
  *
+ * A mark from another pid namespace is never judged at all (`host`).
  * Once the pid is alive, only certain evidence counts: the host's uptime
  * has gone backwards since the mark (it rebooted), or the process now
  * holding the pid started at another moment than the one that wrote the
@@ -187,6 +265,7 @@ export function parseTurnOwner(raw: string | null): TurnOwner | null {
  *  - no mark, or one that does not parse — a live status no turn claims
  *    (`beginTurn` never writes `running` without a mark, and `save` never
  *    writes a live status at all);
+ *  - a mark written into another database file — this row is a copy;
  *  - this process's pid (see above);
  *  - a pid with no process behind it;
  *  - a host that has rebooted since the mark;
@@ -195,9 +274,20 @@ export function parseTurnOwner(raw: string | null): TurnOwner | null {
 export function isTurnOwnerGone(
   raw: string | null,
   probe: TurnOwnerProbe,
+  db?: string,
 ): boolean {
   const owner = parseTurnOwner(raw);
   if (owner === null) return true;
+  if (
+    owner.host !== undefined &&
+    probe.host !== undefined &&
+    owner.host !== probe.host
+  ) {
+    return false;
+  }
+  if (owner.db !== undefined && db !== undefined && owner.db !== db) {
+    return true;
+  }
   if (owner.pid === probe.pid) return true;
   if (!probe.isAlive(owner.pid)) return true;
   const up = probe.hostUptime();
@@ -208,9 +298,9 @@ export function isTurnOwnerGone(
   ) {
     return true;
   }
-  if (owner.startTicks !== undefined) {
-    const now = probe.startTicksOf(owner.pid);
-    if (now !== null && now !== owner.startTicks) return true;
+  if (owner.processStart !== undefined) {
+    const now = probe.processStartOf(owner.pid);
+    if (now !== null && now !== owner.processStart) return true;
   }
   return false;
 }

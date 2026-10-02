@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { getConfig } from "../config/index.js";
 import {
   stripEphemeral,
@@ -148,6 +148,20 @@ export interface SessionStoreOptions {
    * Tests pin it; production reads it off the process and the host.
    */
   turnOwnerProbe?: TurnOwnerProbe;
+  /**
+   * How long a statement waits on another connection's lock before it
+   * fails (better-sqlite3's `timeout`, 5 s by default). Tests shorten it.
+   */
+  busyTimeoutMs?: number;
+}
+
+/** The statements that read and write turn marks (`beginTurn` and on). */
+interface TurnMarkStatements {
+  begin: Database.Statement;
+  release: Database.Statement;
+  standIn: Database.Statement;
+  listLive: Database.Statement;
+  recover: Database.Statement;
 }
 
 /** A row as the readers select it: the status column and the payload. */
@@ -181,12 +195,17 @@ export class SessionStore {
   private readonly summaryNextPageStmt: Database.Statement;
   private readonly countUnreadableStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
-  private readonly beginTurnStmt: Database.Statement;
   private readonly finishTurnStmt: Database.Statement;
-  private readonly releaseTurnStmt: Database.Statement;
-  private readonly standInTurnStmt: Database.Statement;
-  private readonly listLiveTurnsStmt: Database.Statement;
-  private readonly recoverTurnStmt: Database.Statement;
+  /**
+   * `null` while this database has no `turn_owner` column — the open that
+   * should have added it could not (`turnMarksUnavailable`). Every turn
+   * mark method is then a no-op, and the store works as it did before
+   * marks existed.
+   */
+  private readonly marks: TurnMarkStatements | null;
+  private readonly marksUnavailable: string | null;
+  /** The database file's real path, as marks record it; `undefined` in memory. */
+  private readonly dbIdentity: string | undefined;
   /**
    * How many rows `load` / `listRecent` / `listByWorkingDir` have skipped
    * because their payload would not parse. Counts every skip, so the
@@ -206,12 +225,17 @@ export class SessionStore {
     const config = getConfig();
     const file = options.dbFile ?? config.paths.sessionsDbFile;
     mkdirSync(dirname(file), { recursive: true });
-    this.db = new DatabaseCtor(file);
+    this.db =
+      options.busyTimeoutMs === undefined
+        ? new DatabaseCtor(file)
+        : new DatabaseCtor(file, { timeout: options.busyTimeoutMs });
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
-    ensureTurnOwnerColumn(this.db);
+    this.marksUnavailable = ensureTurnOwnerColumn(this.db);
+    const withMarks = this.marksUnavailable === null;
     this.turnOwnerProbe = options.turnOwnerProbe ?? currentTurnOwnerProbe();
+    this.dbIdentity = databaseIdentity(file);
     this.insertStmt = this.db.prepare(
       `INSERT INTO sessions (id, working_dir, status, payload, created_at, updated_at)
        VALUES (@id, @working_dir, @status, @payload, @created_at, @updated_at)`,
@@ -232,13 +256,14 @@ export class SessionStore {
     // Projected in SQL rather than parsed in JS: `save` runs this on
     // every write, and a transcript payload is the one thing in this
     // row worth not re-parsing.
+    const turnOwnerColumn = withMarks ? "turn_owner" : "NULL";
     this.selectStoredStmt = this.db.prepare(
-      `SELECT status, turn_owner AS turnOwner,
+      `SELECT status, ${turnOwnerColumn} AS turnOwner,
               json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title
        FROM sessions WHERE id = ?`,
     );
     this.selectStoredBareStmt = this.db.prepare(
-      `SELECT status, turn_owner AS turnOwner FROM sessions WHERE id = ?`,
+      `SELECT status, ${turnOwnerColumn} AS turnOwner FROM sessions WHERE id = ?`,
     );
     this.listByWorkingDirStmt = this.db.prepare(
       `SELECT status, payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
@@ -258,51 +283,71 @@ export class SessionStore {
     this.summaryNextPageStmt = this.db.prepare(SUMMARY_NEXT_PAGE_SQL);
     this.countUnreadableStmt = this.db.prepare(COUNT_UNREADABLE_SQL);
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
-    // Two columns and nothing else, at every turn start: the payload is
-    // not rewritten (readers take the status from the column), and
-    // `updated_at` is left alone — the row's content has not changed,
-    // and it is what every list orders by and the desktop reads "unread"
-    // from.
-    this.beginTurnStmt = this.db.prepare(
-      `UPDATE sessions SET status = 'running', turn_owner = @owner WHERE id = @id`,
-    );
-    this.finishTurnStmt = this.db.prepare(
-      `UPDATE sessions
-       SET working_dir = @working_dir,
-           status = @status,
-           payload = @payload,
-           updated_at = @updated_at,
-           turn_owner = NULL
-       WHERE id = @id`,
-    );
-    this.releaseTurnStmt = this.db.prepare(
-      `UPDATE sessions
-       SET ${END_TURN_SQL},
-           turn_owner = NULL
-       WHERE id = @id AND turn_owner IS @owner`,
-    );
-    // The same, keeping the mark: a stand-in the turn's own end can
-    // still replace (`releaseOwnTurns` with `keepMarks`).
-    this.standInTurnStmt = this.db.prepare(
-      `UPDATE sessions
-       SET ${END_TURN_SQL}
-       WHERE id = @id AND turn_owner IS @owner`,
-    );
-    // By status, not by mark: `idx_sessions_status` keeps this to the
-    // few rows that claim a live turn, and reading `turn_owner` — stored
-    // after the payload — on every row would read every transcript.
-    this.listLiveTurnsStmt = this.db.prepare(
-      `SELECT id, status, turn_owner AS turnOwner
-       FROM sessions WHERE status IN (${LIVE_STATUS_SQL_LIST})`,
-    );
-    // Guarded on what the sweep read, so a turn another process started
-    // on the row in between keeps its mark.
-    this.recoverTurnStmt = this.db.prepare(
-      `UPDATE sessions
-       SET ${END_TURN_SQL},
-           turn_owner = NULL
-       WHERE id = @id AND status = @read_status AND turn_owner IS @owner`,
-    );
+    this.finishTurnStmt = withMarks
+      ? this.db.prepare(
+          `UPDATE sessions
+           SET working_dir = @working_dir,
+               status = @status,
+               payload = @payload,
+               updated_at = @updated_at,
+               turn_owner = NULL
+           WHERE id = @id`,
+        )
+      : this.updateStmt;
+    this.marks = withMarks ? this.prepareMarkStatements() : null;
+  }
+
+  /**
+   * Why this store runs without turn marks, or `null` when it has them:
+   * the open that should have added the `turn_owner` column to an older
+   * database could not (another process held the write lock past the
+   * busy timeout, a file this process may only read). Sessions are
+   * stored as before, no turn is marked, and the next open tries the
+   * column again. Bootstrap logs it.
+   */
+  get turnMarksUnavailable(): string | null {
+    return this.marksUnavailable;
+  }
+
+  private prepareMarkStatements(): TurnMarkStatements {
+    return {
+      // Two columns and nothing else, at every turn start: the payload is
+      // not rewritten (readers take the status from the column), and
+      // `updated_at` is left alone — the row's content has not changed,
+      // and it is what every list orders by and the desktop reads
+      // "unread" from.
+      begin: this.db.prepare(
+        `UPDATE sessions SET status = 'running', turn_owner = @owner WHERE id = @id`,
+      ),
+      release: this.db.prepare(
+        `UPDATE sessions
+         SET ${END_TURN_SQL},
+             turn_owner = NULL
+         WHERE id = @id AND turn_owner IS @owner`,
+      ),
+      // The same, keeping the mark: a stand-in the turn's own end can
+      // still replace (`releaseOwnTurns` with `keepMarks`).
+      standIn: this.db.prepare(
+        `UPDATE sessions
+         SET ${END_TURN_SQL}
+         WHERE id = @id AND turn_owner IS @owner`,
+      ),
+      // By status, not by mark: `idx_sessions_status` keeps this to the
+      // few rows that claim a live turn, and reading `turn_owner` — stored
+      // after the payload — on every row would read every transcript.
+      listLive: this.db.prepare(
+        `SELECT id, status, turn_owner AS turnOwner
+         FROM sessions WHERE status IN (${LIVE_STATUS_SQL_LIST})`,
+      ),
+      // Guarded on what the sweep read, so a turn another process started
+      // on the row in between keeps its mark.
+      recover: this.db.prepare(
+        `UPDATE sessions
+         SET ${END_TURN_SQL},
+             turn_owner = NULL
+         WHERE id = @id AND status = @read_status AND turn_owner IS @owner`,
+      ),
+    };
   }
 
   /**
@@ -351,8 +396,11 @@ export class SessionStore {
    * Returns whether a row was marked.
    */
   beginTurn(id: string, now: number = Date.now()): boolean {
-    const owner = serializeTurnOwner(turnOwnerFor(this.turnOwnerProbe, now));
-    const result = this.beginTurnStmt.run({ id, owner }) as {
+    if (this.marks === null) return false;
+    const owner = serializeTurnOwner(
+      turnOwnerFor(this.turnOwnerProbe, now, this.dbIdentity),
+    );
+    const result = this.marks.begin.run({ id, owner }) as {
       changes: number;
     };
     if (result.changes === 0) return false;
@@ -387,8 +435,8 @@ export class SessionStore {
    */
   releaseTurn(id: string, ending: TurnEnding): boolean {
     const owner = this.ownTurns.get(id);
-    if (owner === undefined) return false;
-    const result = this.releaseTurnStmt.run({
+    if (owner === undefined || this.marks === null) return false;
+    const result = this.marks.release.run({
       id,
       owner,
       ...endingParams(ending),
@@ -417,8 +465,9 @@ export class SessionStore {
     ending: TurnEnding,
     options: { keepMarks?: boolean } = {},
   ): number {
+    if (this.marks === null) return 0;
     const keepMarks = options.keepMarks === true;
-    const statement = keepMarks ? this.standInTurnStmt : this.releaseTurnStmt;
+    const statement = keepMarks ? this.marks.standIn : this.marks.release;
     let changed = 0;
     let failure: { error: unknown } | undefined;
     for (const [id, owner] of [...this.ownTurns]) {
@@ -460,12 +509,15 @@ export class SessionStore {
       ending?: TurnEnding;
     } = {},
   ): string[] {
+    const marks = this.marks;
+    if (marks === null) return [];
     const probe = this.turnOwnerProbe;
+    const db = this.dbIdentity;
     const isOwnerGone: (owner: string | null) => boolean =
-      options.isOwnerGone ?? ((owner) => isTurnOwnerGone(owner, probe));
+      options.isOwnerGone ?? ((owner) => isTurnOwnerGone(owner, probe, db));
     const ending = endingParams(options.ending ?? INTERRUPTED_TURN_ENDING);
     const sweep = this.db.transaction((): string[] => {
-      const rows = this.listLiveTurnsStmt.all() as Array<{
+      const rows = marks.listLive.all() as Array<{
         id: string;
         status: string;
         turnOwner: string | null;
@@ -474,7 +526,7 @@ export class SessionStore {
       for (const row of rows) {
         if (this.ownTurns.has(row.id)) continue;
         if (!isOwnerGone(row.turnOwner)) continue;
-        const result = this.recoverTurnStmt.run({
+        const result = marks.recover.run({
           id: row.id,
           read_status: row.status,
           owner: row.turnOwner,
@@ -690,16 +742,39 @@ export class SessionStore {
  * reads as "no turn running" and an older binary sharing the file is
  * unaffected. Two processes can open an old file at once; the one that
  * loses the race to add the column finds it there.
+ *
+ * Adding it takes the write lock, which the first open after an upgrade
+ * may not get — another process mid-`VACUUM` past the busy timeout — or
+ * the write can fail: a database file this process may only read opens,
+ * reads and passes the schema check above, and refuses only this. That
+ * must not keep the runtime from starting: the store runs without turn
+ * marks (`turnMarksUnavailable`) and the next open tries again. Returns
+ * why the column is missing, or `null`.
  */
-function ensureTurnOwnerColumn(db: Database.Database): void {
-  const columns = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{
-    name: string;
-  }>;
-  if (columns.some((column) => column.name === "turn_owner")) return;
+function ensureTurnOwnerColumn(db: Database.Database): string | null {
   try {
+    const columns = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{
+      name: string;
+    }>;
+    if (columns.some((column) => column.name === "turn_owner")) return null;
     db.exec(`ALTER TABLE sessions ADD COLUMN turn_owner TEXT`);
+    return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (!/duplicate column/i.test(message)) throw err;
+    return /duplicate column/i.test(message) ? null : message;
+  }
+}
+
+/**
+ * The real path of the database file, which every mark written into it
+ * carries: a mark found in another file came with a copy. `undefined`
+ * for an in-memory database, which nothing else can open.
+ */
+function databaseIdentity(file: string): string | undefined {
+  if (file === ":memory:" || file.length === 0) return undefined;
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return resolve(file);
   }
 }
