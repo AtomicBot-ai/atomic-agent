@@ -7,7 +7,7 @@ import {
   USER_CONFIG_VERSION,
   writeUserConfigFileSync,
 } from "../config/index.js";
-import { reportAnalyticsOptOut } from "../analytics/index.js";
+import { reportAnalyticsOptOut, resolveSurface } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
 import { HELP } from "./config-help.js";
 import {
@@ -241,10 +241,13 @@ function handleList(): number {
 /**
  * Send `analytics_disabled` (via `config`) when this write turns analytics
  * off, BEFORE the file changes — the last event, under the old consent.
+ * Skipped when the desktop app runs this command (`ATOMIC_AGENT_SURFACE=
+ * desktop`): its main process sends its own `analytics_disabled`.
  */
 async function reportIfOptingOut(nextEnabled: boolean): Promise<void> {
   const config = getConfig();
   if (!config.analytics.enabled || nextEnabled) return;
+  if (resolveSurface() === "desktop") return;
   await reportAnalyticsOptOut({
     stateDir: config.paths.stateDir,
     version: getAppVersion(),
