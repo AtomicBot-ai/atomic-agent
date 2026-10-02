@@ -21,19 +21,6 @@ export { managedDataDir } from "./local-llama-key.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
 import { curatedMeta } from "./model-catalog.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
-// ATO-132 — provider keys live in <stateDir>/.env: which variable, and what the agent reads back.
-import {
-  agentKeyFor,
-  applyDotenvMutation,
-  chooseKeyVar,
-  keyChanges,
-  keyVarsReadBy,
-  kindKeyVar,
-  parseDotenvAsAgent,
-  planKeyMoves,
-  redactKeys,
-  type KeyEnv,
-} from "./provider-keys.js";
 
 const run = promisify(execFile);
 
@@ -72,11 +59,11 @@ export function plainCliError(stderr: string): string {
     .join("\n").trim();
 }
 
-async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal): Promise<CliResult> {
+async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
-    const { stdout, stderr } = await run(binary, args, {
+    const pending = run(binary, args, {
       timeout,
       maxBuffer: 8 * 1024 * 1024,
       // Windows: no console window flashing up for every config read.
@@ -88,6 +75,14 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
       ...(cwd ? { cwd } : {}),
       ...(signal ? { signal } : {}),
     });
+    /* ATO-132: what the command reads on stdin (`config set -`). An agent
+       that exits without reading it closes the pipe under the write; that
+       error belongs to no one here — the exit code says what happened. */
+    if (input !== undefined) {
+      pending.child.stdin?.on("error", () => {});
+      pending.child.stdin?.end(input);
+    }
+    const { stdout, stderr } = await pending;
     return { ok: true, stdout, stderr };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message?: string; killed?: boolean; code?: string | number };
@@ -486,8 +481,30 @@ export function configSetWhole(config: unknown): Promise<CliResult> {
 /** The write itself, for the helpers below, which already hold the lock. */
 async function writeWholeConfig(config: unknown): Promise<CliResult> {
   normaliseLlmBlock(config);
-  const res = await cli(["config", "set", JSON.stringify(config)], 30_000);
+  const json = JSON.stringify(config);
+  /* ATO-132: the file goes in on stdin (`config set -`), never as an
+     argument. It carries the providers' API keys, and any process on the
+     machine can read another's command line for as long as it runs. */
+  const res = await cli(["config", "set", "-"], 30_000, undefined, undefined, json);
+  if (!res.ok && /no value given for -/.test(res.stderr)) {
+    // An agent older than `config set -`: only a file holding no API key goes the old way.
+    if (holdsProviderKey(config)) return { ...res, error: AGENT_TOO_OLD_FOR_KEYS };
+    const old = await cli(["config", "set", json], 30_000);
+    return old.ok ? old : { ...old, error: explainConfigWriteFailure(old.error) };
+  }
   return res.ok ? res : { ...res, error: explainConfigWriteFailure(res.error) };
+}
+
+/** Said when the agent cannot take the config on stdin and the config holds a key. */
+export const AGENT_TOO_OLD_FOR_KEYS =
+  "The agent this app runs is too old to save settings safely: it would put your API keys "
+  + "where other programs can read them. Update the agent and try again.";
+
+/** Does this config hold a provider's API key of its own? */
+function holdsProviderKey(config: unknown): boolean {
+  const providers = (config as { llm?: { providers?: unknown } } | null)?.llm?.providers;
+  return Array.isArray(providers)
+    && providers.some((p) => !!p && typeof (p as { apiKey?: unknown }).apiKey === "string" && (p as { apiKey: string }).apiKey.length > 0);
 }
 
 /**
@@ -559,148 +576,39 @@ export function apiKeyCharsOk(key: string): boolean {
 /** Said wherever a key that still has such a character is refused. */
 export const API_KEY_CHAR_ERROR = "That key has a character keys don’t have; paste it again.";
 
-/* ---------------------------------------------------------------
-   ATO-132 — a provider key lives in <stateDir>/.env, not in config.json.
-
-   The key field promised "Saved to .env as AIMLAPI_API_KEY (mode 0600)",
-   which is what the terminal agent does, while every save here wrote the
-   key into the provider's entry in config.json: a file other accounts
-   could read, and one each whole-file write handed to `atag config set` on
-   its command line. A key typed in the window now goes into the state
-   dir's .env, written atomically at 0600, and the entry names the variable
-   (`apiKeyEnvVar`), which the agent reads first
-   (src/config/resolve-llm-api-key.ts). provider-keys.ts picks the
-   variable; keys an earlier version saved in config.json move at launch
-   (moveProviderKeysToDotenv). Values never leave main and are never
-   logged; an error that might quote one has it redacted.
-   --------------------------------------------------------------- */
-
-/** Where the keys and the config live, and how the config is read and written: the desktop's own, or a throwaway one (the suite). */
-export interface KeyStore {
-  stateDir: string;
-  read: () => Promise<{ ok: boolean; config?: UserConfigShape; error?: string }>;
-  write: (config: unknown) => Promise<CliResult>;
-  /** The environment `atag` inherits: a name set there wins over .env. */
-  env: KeyEnv;
-}
-
-function desktopKeyStore(): KeyStore {
-  return { stateDir: DESKTOP_STATE_DIR, read: readWholeConfig, write: writeWholeConfig, env: process.env };
-}
-
-const refused = (error: string): CliResult => ({ ok: false, stdout: "", stderr: "", error });
-
-/** Add a provider, or replace the entry that already carries its id. A key it carries goes into .env (ATO-132). */
+/** Add a provider, or replace the entry that already carries its id. */
 export function upsertProvider(entry: ProviderEntry): Promise<CliResult> {
-  return withConfigLock(() => upsertProviderIn(desktopKeyStore(), entry));
+  return withConfigLock(() => upsertProviderNow(entry));
 }
 
-/** upsertProvider against any key store, without taking the lock (the caller holds it, or owns the directory). */
-export async function upsertProviderIn(store: KeyStore, entry: ProviderEntry): Promise<CliResult> {
-  if (!/^[\w.-]{1,48}$/.test(entry.id)) return refused(`not a provider id: ${entry.id}`);
-  // Backlog 32: every window path that saves a key comes through here.
-  let key = "";
-  if (typeof entry.apiKey === "string" && entry.apiKey.length > 0) {
-    key = cleanApiKey(entry.apiKey);
-    // ATO-132: nor a line break — .env holds one value per line, and no header can carry one.
-    if (!apiKeyCharsOk(key) || /[\r\n]/.test(key)) return refused(API_KEY_CHAR_ERROR);
+async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
+  if (!/^[\w.-]{1,48}$/.test(entry.id)) {
+    return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${entry.id}` };
   }
-  const current = await store.read();
-  if (!current.ok || !current.config) return refused(current.error ?? "could not read the config");
+  // Backlog 32: every window path that saves a key comes through here.
+  if (typeof entry.apiKey === "string" && entry.apiKey.length > 0) {
+    const key = cleanApiKey(entry.apiKey);
+    if (!apiKeyCharsOk(key)) return { ok: false, stdout: "", stderr: "", error: API_KEY_CHAR_ERROR };
+    entry = { ...entry, apiKey: key };
+  }
+  const current = await configGet();
+  if (!current.ok || !current.config) {
+    return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+  }
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
   const llm = (config.llm ??= {});
   const providers = (llm.providers ??= []);
   const at = providers.findIndex((p) => p.id === entry.id);
-  const existing = at >= 0 ? providers[at] : undefined;
-  const { apiKey: _typed, ...fields } = entry;
   const clean = Object.fromEntries(
-    Object.entries(fields).filter(([, v]) => v !== undefined && v !== ""),
+    Object.entries(entry).filter(([, v]) => v !== undefined && v !== ""),
   ) as ProviderEntry;
-  if (!key) {
-    /* A blank field keeps the saved key, so the entry keeps reading the
-       variable it reads now. The window sends its row's variable, and a key
-       moved under another name (provider-keys.ts chooseKeyVar) is not there. */
-    if (existing?.apiKeyEnvVar) delete clean.apiKeyEnvVar;
-    if (at >= 0) providers[at] = { ...existing, ...clean };
-    else providers.push(clean);
-    return store.write(config);
-  }
-  const before = readDotenvText(store.stateDir);
-  if (!before.ok) return refused(`could not read ${join(store.stateDir, ".env")} (${before.error}), so the key was not saved`);
-  const dotenvBefore = parseDotenvAsAgent(before.text ?? "");
-  const name = chooseKeyVar({
-    id: entry.id,
-    key,
-    preferred: [existing?.apiKeyEnvVar, entry.apiKeyEnvVar, kindKeyVar(entry.kind || existing?.kind)],
-    others: providers.filter((p) => p.id !== entry.id),
-    env: store.env,
-    dotenv: dotenvBefore,
-  });
-  if (!name) return refused(`no free name in ${join(store.stateDir, ".env")} for the key of ${entry.id}, so it was not saved`);
-  const saved = { ...existing, ...clean, apiKeyEnvVar: name } as ProviderEntry;
-  delete saved.apiKey;
-  // The check before the write: this entry sends the key just typed, and every other provider the key it sends now.
-  const planned = applyDotenvMutation(before.text ?? "", name, key) ?? (before.text ?? "");
-  const dotenvAfter = parseDotenvAsAgent(planned);
-  const after = at >= 0 ? providers.map((p, i) => (i === at ? saved : p)) : [...providers, saved];
-  if (agentKeyFor(saved, store.env, dotenvAfter) !== key
-    || keyChanges(providers, after, store.env, dotenvBefore, dotenvAfter, new Set([entry.id])).length > 0) {
-    return refused(`the key of ${entry.id} could not go into .env without changing another provider's, so it was not saved`);
-  }
-  const stored = storeKeys(store.stateDir, [[name, key]], before.text);
-  if (!stored.ok) return refused(`${stored.error}, so the key was not saved`);
-  if (at >= 0) providers[at] = saved;
-  else providers.push(saved);
-  const w = await store.write(config);
-  if (!w.ok) {
-    restoreDotenv(store.stateDir, before.text);
-    return { ...w, error: redactKeys(w.error ?? "could not write the config", [key]) };
-  }
-  noteKeyWrite(store.stateDir, entry.id, at < 0, name, dotenvBefore.get(name) ?? null, key);
-  return w;
-}
-
-/* The undo for a key typed for a provider this same setup created. The
-   setup removes such an entry when its key is turned down, or when it is
-   left before a model is chosen (removeProvider), and the key typed for it
-   goes with it — as it did when it lived in the entry. Held in memory per
-   state dir and id, until that removal or the next launch. */
-const keyWrites = new Map<string, Map<string, { previous: string | null; written: string }>>();
-
-function noteKeyWrite(stateDir: string, id: string, created: boolean, name: string, previous: string | null, written: string): void {
-  const at = `${stateDir}\0${id}`;
-  if (created) {
-    keyWrites.set(at, new Map([[name, { previous, written }]]));
-    return;
-  }
-  // A provider that was already there: only a write in the setup that created it is undone.
-  const rec = keyWrites.get(at);
-  if (!rec) return;
-  const had = rec.get(name);
-  rec.set(name, { previous: had ? had.previous : previous, written });
-}
-
-function undoKeyWrites(stateDir: string, id: string, remaining: ReadonlyArray<ProviderEntry>): void {
-  const at = `${stateDir}\0${id}`;
-  const rec = keyWrites.get(at);
-  keyWrites.delete(at);
-  if (!rec) return;
-  const read = readDotenvText(stateDir);
-  if (!read.ok || read.text === null) return;
-  const now = parseDotenvAsAgent(read.text);
-  const stillRead = new Set(remaining.flatMap((p) => keyVarsReadBy(p)));
-  let text = read.text;
-  for (const [name, { previous, written }] of rec) {
-    // Only what this setup wrote, still as it wrote it, under a name no remaining provider reads.
-    if (now.get(name) !== written || stillRead.has(name)) continue;
-    text = applyDotenvMutation(text, name, previous) ?? text;
-  }
-  if (text === read.text) return;
-  try {
-    writeSecretFileAtomic(join(stateDir, ".env"), text);
-  } catch {
-    // The entry is gone either way; a key left in the owner-only .env is the lesser miss.
-  }
+  /* ATO-132: a blank key field keeps the saved key, and with it the variable
+     the entry reads. The window sends its row's variable, which an entry set
+     up elsewhere (the terminal, a hand edit) may not be reading. */
+  if (!clean.apiKey && at >= 0 && providers[at]!.apiKeyEnvVar) delete clean.apiKeyEnvVar;
+  if (at >= 0) providers[at] = { ...providers[at], ...clean };
+  else providers.push(clean);
+  return writeWholeConfig(config);
 }
 
 /**
@@ -1045,17 +953,39 @@ function chatPathPrefix(root: string): string {
 }
 
 /**
- * The VALUE of the key the agent would use, by the agent's own precedence
- * (provider-keys.ts agentKeyFor): an explicit `apiKey` on the entry, else
- * its `apiKeyEnvVar` — authoritative, no fallback — else its kind's
- * variable, each read from the environment, or from <stateDir>/.env where
- * the environment holds no value (load-dotenv.ts). Never logged, never
- * returned to the renderer — it leaves this function only inside an
- * Authorization header.
+ * The VALUE of the key the agent would use, by the agent's own
+ * precedence: an explicit `apiKey` on the entry, else the environment,
+ * else <stateDir>/.env (which load-dotenv.ts applies only where the
+ * environment is silent). Never logged, never returned to the renderer —
+ * it leaves this function only inside an Authorization header.
  */
 function resolveKeyValue(entry: ProviderEntry): string | null {
   if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
-  return agentKeyFor(entry, process.env, dotenvValues(stateDirPath())) ?? null;
+  const names: string[] = [];
+  if (entry.apiKeyEnvVar) names.push(entry.apiKeyEnvVar);
+  if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
+  if (entry.kind === "aimlapi") names.push("AIMLAPI_API_KEY");
+  if (entry.kind === "gemini") names.push("GEMINI_API_KEY");
+  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+    names.push("OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY");
+  }
+  for (const name of names) {
+    const v = process.env[name];
+    if (v !== undefined) return v.length > 0 ? v : null; // set-but-empty wins, as for the agent
+  }
+  let text: string;
+  try {
+    text = readFileSync(join(stateDirPath(), ".env"), "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
+    if (!m || !names.includes(m[1]!)) continue;
+    const v = m[2]!.trim().replace(/^["']|["']$/g, "");
+    return v.length > 0 ? v : null;
+  }
+  return null;
 }
 
 export interface ProviderVerification {
@@ -1249,25 +1179,40 @@ export async function verifyProviderKey(
   return { ok: false, checked: false, status: res.status, error: say(`the provider answered HTTP ${res.status}`) };
 }
 
-/** Drop a provider entry by id — the rollback for a key that did not verify. A key the same setup put in .env for it goes too (ATO-132). */
-export function removeProvider(id: string): Promise<CliResult> {
-  return withConfigLock(() => removeProviderIn(desktopKeyStore(), id));
+/**
+ * ATO-132 review (N9): the key check the window asks for. A key typed in the
+ * window is checked on the endpoint the window sends with it. With no key
+ * typed, the check is the saved provider's as saved — its own key, on its
+ * own endpoint — never a saved key or a variable sent to a URL the window
+ * names.
+ */
+export async function checkProviderKey(entry: ProviderEntry, model: string): Promise<ProviderVerification> {
+  if (typeof entry.apiKey === "string" && entry.apiKey.length > 0) return verifyProviderKey(entry, model);
+  const read = await readWholeConfig();
+  if (!read.ok || !read.config) return { ok: false, checked: false, error: read.error ?? "could not read the config" };
+  const saved = (read.config.llm?.providers ?? []).find((p) => p.id === entry.id);
+  if (!saved) return { ok: false, checked: true, error: "no API key — type one above" };
+  return verifyProviderKey(saved, model);
 }
 
-/** removeProvider against any key store, without taking the lock. */
-export async function removeProviderIn(store: KeyStore, id: string): Promise<CliResult> {
-  if (!/^[\w.-]{1,48}$/.test(id)) return refused(`not a provider id: ${id}`);
-  const current = await store.read();
-  if (!current.ok || !current.config) return refused(current.error ?? "could not read the config");
+/** Drop a provider entry by id — the rollback for a key that did not verify. */
+export function removeProvider(id: string): Promise<CliResult> {
+  return withConfigLock(() => removeProviderNow(id));
+}
+
+async function removeProviderNow(id: string): Promise<CliResult> {
+  if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${id}` };
+  const current = await configGet();
+  if (!current.ok || !current.config) {
+    return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
+  }
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
   const providers = config.llm?.providers;
   if (!providers) return { ok: true, stdout: "", stderr: "" };
   const kept = providers.filter((p) => p.id !== id);
   if (kept.length === providers.length) return { ok: true, stdout: "", stderr: "" };
   config.llm!.providers = kept;
-  const w = await store.write(config);
-  if (w.ok) undoKeyWrites(store.stateDir, id, kept);
-  return w;
+  return writeWholeConfig(config);
 }
 
 /* ---------------------------------------------------------------
@@ -1982,26 +1927,30 @@ export interface KeyEnvNames {
 // r5 review fix — exported for tui-import.ts, which has to answer
 // "will this provider have a key HERE?" for names the import is about to
 // write into the desktop's own .env, not just the ones already resolvable.
-export function keyNamesAvailable(stateDir: string = stateDirPath(), env: KeyEnv = process.env): KeyEnvNames {
+export function keyNamesAvailable(): KeyEnvNames {
   const present = new Set<string>();
   const nonEmpty = new Set<string>();
   const badChars = new Set<string>();
-  for (const [k, v] of Object.entries(env)) {
+  for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     present.add(k);
     if (v.length > 0) nonEmpty.add(k);
     if (v.length > 0 && !apiKeyCharsOk(v)) badChars.add(k);
   }
-  /* <stateDir>/.env as the agent reads it (parseDotenvAsAgent). The
-     environment wins only with a value: load-dotenv.ts overwrites a name the
-     environment sets empty, and so does this (ATO-132 — the window's keys are
-     in .env now, so this view has to be the agent's to the letter). No .env:
-     the environment alone decides. */
-  for (const [name, value] of dotenvValues(stateDir)) {
-    if (nonEmpty.has(name)) continue;
-    present.add(name);
-    if (value.length > 0) nonEmpty.add(name);
-    if (value.length > 0 && !apiKeyCharsOk(value)) badChars.add(name);
+  try {
+    const text = readFileSync(join(stateDirPath(), ".env"), "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
+      if (!m) continue;
+      const name = m[1]!;
+      if (present.has(name)) continue; // the environment wins, as in load-dotenv.ts
+      present.add(name);
+      const value = m[2]!.trim().replace(/^["']|["']$/g, "");
+      if (value.length > 0) nonEmpty.add(name);
+      if (value.length > 0 && !apiKeyCharsOk(value)) badChars.add(name);
+    }
+  } catch {
+    // no .env — the environment alone decides
   }
   return { present, nonEmpty, badChars };
 }
@@ -2975,6 +2924,84 @@ export function llamaLogTail(dataDir: string): { ok: boolean; path: string | nul
   }
 }
 
+/* ---------------------------------------------------------------
+   ATO-132 — config.json holds the providers' API keys (saved inline, as the
+   key field says), so it and .env are kept to their owner. The agent writes
+   both at 0600 now; a file written before that, or by an older agent, keeps
+   its mode until something saves it, and a write that died half way leaves
+   its tmp file — the whole config, keys and all, at whatever mode it had.
+   The launch tightens the one and removes the other.
+   --------------------------------------------------------------- */
+
+const STATE_FILES = ["config.json", ".env"] as const;
+
+/**
+ * config.json and .env readable by their owner only: owner bits kept, group
+ * and other bits dropped. A symlink, or anything that is not a plain file,
+ * is left alone; Windows has no POSIX modes. Returns the names tightened.
+ */
+export function secureStateFiles(stateDir: string, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform === "win32") return [];
+  const tightened: string[] = [];
+  for (const name of STATE_FILES) {
+    const path = join(stateDir, name);
+    try {
+      const st = lstatSync(path);
+      if (!st.isFile() || (st.mode & 0o077) === 0) continue;
+      chmodSync(path, st.mode & 0o700);
+      tightened.push(name);
+    } catch {
+      // Absent, or not this user's to change.
+    }
+  }
+  return tightened;
+}
+
+/** Is the process that named a tmp file after itself still running? */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** A tmp file younger than this, of a process still running, is a write on its way, not a leftover. */
+const TMP_IN_FLIGHT_MS = 10 * 60_000;
+
+/**
+ * The tmp files a config or .env write leaves when it dies between writing
+ * and renaming — `config.json.tmp-<pid>`, `.env.tmp-<pid>`, the names both the
+ * agent's writers and the desktop's give them. Each can hold every key. One
+ * whose process still runs and that is younger than ten minutes is a write
+ * on its way and stays. Returns the names removed; contents are never read.
+ */
+export function removeStaleTmpFiles(stateDir: string, now: number = Date.now(), alive: (pid: number) => boolean = pidAlive): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(stateDir);
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const name of names) {
+    const m = /^(?:config\.json|\.env)\.tmp-(\d+)(?:-[\w-]+)?$/.exec(name);
+    if (!m) continue;
+    const path = join(stateDir, name);
+    try {
+      const st = lstatSync(path);
+      if (!st.isFile()) continue;
+      if (alive(Number(m[1])) && now - st.mtimeMs < TMP_IN_FLIGHT_MS) continue;
+      unlinkSync(path);
+      removed.push(name);
+    } catch {
+      // Gone already, or not ours to remove.
+    }
+  }
+  return removed;
+}
+
 /* .env — the same conventions as src/config/load-dotenv.ts and
    src/config/dotenv-writer.ts. Only key NAMES ever cross to the renderer. */
 
@@ -3009,12 +3036,11 @@ export function envPresent(names: string[]): string[] {
 }
 
 /**
- * src/config/dotenv-writer.ts setDotenvKey, ported: atomic `tmp` +
- * `rename`, mode 0600, comments/blank lines/ordering preserved, quoting for
- * values with whitespace or shell-special characters so
- * `loadDotenvFromStateDir` reads the same string back
- * (provider-keys.ts applyDotenvMutation), `null` removes the key (and
- * unlinks a file that becomes empty). Never logs the value.
+ * src/config/dotenv-writer.ts setDotenvKey, ported verbatim: atomic
+ * `tmp` + `rename`, mode 0600, comments/blank lines/ordering preserved,
+ * quoting for values with whitespace or shell-special characters so
+ * `loadDotenvFromStateDir` reads the same string back, `null` removes the
+ * key (and unlinks a file that becomes empty). Never logs the value.
  */
 export function dotenvSet(stateDir: string, key: string, value: string | null): { ok: boolean; path: string; preexisting: boolean; changed: boolean; error?: string } {
   const path = join(stateDir, ".env");
@@ -3029,202 +3055,61 @@ export function dotenvSet(stateDir: string, key: string, value: string | null): 
       if (existed) unlinkSync(path);
       return { ok: true, path, preexisting: existed, changed: existed };
     }
-    writeSecretFileAtomic(path, updated);
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, updated, { encoding: "utf8", mode: SECRET_FILE_MODE });
+    try {
+      renameSync(tmp, path);
+    } catch (err) {
+      try { unlinkSync(tmp); } catch { /* best effort */ }
+      throw err;
+    }
+    try { chmodSync(path, SECRET_FILE_MODE); } catch { /* best effort on platforms without chmod */ }
     return { ok: true, path, preexisting: existed, changed: true };
   } catch (err) {
     return { ok: false, path, preexisting: false, changed: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-/**
- * `text` into `path`, atomically and owner read/write only: a tmp file
- * created exclusively at 0600 (one a crash left is removed first — it would
- * keep its own mode), renamed over the target. An empty text removes the
- * file, as setDotenvKey does.
- */
-function writeSecretFileAtomic(path: string, text: string): void {
-  if (text.length === 0) {
-    if (existsSync(path)) unlinkSync(path);
-    return;
+function applyDotenvMutation(original: string, key: string, value: string | null): string | null {
+  const lines = original.length === 0 ? [] : original.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  let foundIndex = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (dotenvLineMatchesKey(lines[i] ?? "", key)) { foundIndex = i; break; }
   }
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  try { unlinkSync(tmp); } catch { /* none left behind */ }
-  writeFileSync(tmp, text, { encoding: "utf8", mode: SECRET_FILE_MODE, flag: "wx" });
-  try {
-    renameSync(tmp, path);
-  } catch (err) {
-    try { unlinkSync(tmp); } catch { /* best effort */ }
-    throw err;
+  if (value === null) {
+    if (foundIndex === -1) return null;
+    lines.splice(foundIndex, 1);
+    return joinDotenvLines(lines);
   }
-  try { chmodSync(path, SECRET_FILE_MODE); } catch { /* best effort on platforms without chmod */ }
+  const formatted = `${key}=${formatDotenvValue(value)}`;
+  if (foundIndex === -1) lines.push(formatted);
+  else lines[foundIndex] = formatted;
+  return joinDotenvLines(lines);
 }
 
-/** <stateDir>/.env as text: null when there is none, an errno code when it cannot be read. */
-function readDotenvText(stateDir: string): { ok: true; text: string | null } | { ok: false; error: string } {
-  try {
-    return { ok: true, text: readFileSync(join(stateDir, ".env"), "utf8") };
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return code === "ENOENT" ? { ok: true, text: null } : { ok: false, error: code ?? "unreadable" };
+function dotenvLineMatchesKey(line: string, key: string): boolean {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("#")) return false;
+  const eq = trimmed.indexOf("=");
+  if (eq === -1) return false;
+  return trimmed.slice(0, eq).trim() === key;
+}
+
+function formatDotenvValue(value: string): string {
+  if (value.length === 0) return "";
+  if (/[\s"'#\\]/.test(value)) {
+    if (value.includes('"') && !value.includes("'")) return `'${value}'`;
+    const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `"${escaped}"`;
   }
+  return value;
 }
 
-/** <stateDir>/.env as the agent reads it; empty when there is none or it cannot be read. The values stay in main. */
-function dotenvValues(stateDir: string): Map<string, string> {
-  const read = readDotenvText(stateDir);
-  return read.ok && read.text !== null ? parseDotenvAsAgent(read.text) : new Map();
-}
-
-/** Put .env back as it was before a write that has to be undone: its old text, or no file. */
-function restoreDotenv(stateDir: string, original: string | null): void {
-  const path = join(stateDir, ".env");
-  try {
-    if (original === null) { if (existsSync(path)) unlinkSync(path); }
-    else writeSecretFileAtomic(path, original);
-  } catch {
-    // The failure the caller reports is the one that matters.
-  }
-}
-
-/**
- * ATO-132: `pairs` into <stateDir>/.env in one atomic write (0600), then
- * read back as the agent will read it — every name must come back as the
- * value given (a line break cannot, for one). On any failure .env is put
- * back as `original` and the error names the variables, never a value.
- */
-function storeKeys(stateDir: string, pairs: ReadonlyArray<readonly [string, string]>, original: string | null): { ok: true } | { ok: false; error: string } {
-  const path = join(stateDir, ".env");
-  let text = original ?? "";
-  for (const [name, value] of pairs) text = applyDotenvMutation(text, name, value) ?? text;
-  try {
-    if (original === null || text !== original) writeSecretFileAtomic(path, text);
-    const back = parseDotenvAsAgent(readFileSync(path, "utf8"));
-    const wrong = pairs.filter(([name, value]) => back.get(name) !== value).map(([name]) => name);
-    if (wrong.length > 0) {
-      restoreDotenv(stateDir, original);
-      return { ok: false, error: `${wrong.join(", ")} did not read back from ${path} as written` };
-    }
-    return { ok: true };
-  } catch (err) {
-    restoreDotenv(stateDir, original);
-    const code = (err as NodeJS.ErrnoException).code;
-    return { ok: false, error: `could not write ${path}${code ? ` (${code})` : ""}` };
-  }
-}
-
-/** What the launch migration did (moveProviderKeysToDotenv). Ids, variable names and reasons only. */
-export interface KeyMoveResult {
-  ok: boolean;
-  /** Providers whose key moved from config.json to .env. */
-  moved: string[];
-  /** Providers whose key is still in config.json. */
-  left: string[];
-  error?: string;
-}
-
-/**
- * The keys config.json holds on its provider entries, from a raw look: so a
- * launch with nothing to move costs no `atag` run, and so whatever the move
- * says can be cleared of every one of them. A file that cannot be read or
- * parsed holds none here; the agent's own read reports it. Never logged.
- */
-function inlineProviderKeys(stateDir: string): string[] {
-  try {
-    const parsed = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as { llm?: { providers?: unknown } } | null;
-    const providers = parsed?.llm?.providers;
-    if (!Array.isArray(providers)) return [];
-    return providers
-      .map((p) => (p && typeof p === "object" ? (p as { apiKey?: unknown }).apiKey : undefined))
-      .filter((k): k is string => typeof k === "string" && k.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-/** Does config.json carry a provider key of its own? (inlineProviderKeys) */
-export function configHoldsProviderKeys(stateDir: string): boolean {
-  return inlineProviderKeys(stateDir).length > 0;
-}
-
-/**
- * ATO-132, at launch, before `atag serve` reads the file: keys an earlier
- * version saved in config.json move to .env, and each entry names its
- * variable instead. Idempotent (a second run finds nothing to move) and all
- * or nothing: .env is written and read back first, then config.json; if
- * either fails, .env is put back and config.json is left as it was. Every
- * provider must send the same key afterwards as before (keyChanges), or
- * nothing moves.
- */
-export function moveProviderKeysToDotenv(): Promise<KeyMoveResult> {
-  const inline = inlineProviderKeys(DESKTOP_STATE_DIR);
-  if (inline.length === 0) return Promise.resolve({ ok: true, moved: [], left: [] });
-  // What it says goes to the log: not one of the keys, whichever step failed.
-  return withConfigLock(() => moveProviderKeysIn(desktopKeyStore()))
-    .then((r) => (r.error ? { ...r, error: redactKeys(r.error, inline) } : r));
-}
-
-/** moveProviderKeysToDotenv against any key store, without taking the lock. */
-export async function moveProviderKeysIn(store: KeyStore): Promise<KeyMoveResult> {
-  const current = await store.read();
-  if (!current.ok || !current.config) return { ok: false, moved: [], left: [], error: `could not read the config (${current.error ?? "no answer"})` };
-  const config = current.config;
-  const providers = config.llm?.providers ?? [];
-  const holding = providers.filter((p) => typeof p.apiKey === "string" && p.apiKey.length > 0).map((p) => p.id);
-  if (holding.length === 0) return { ok: true, moved: [], left: [] };
-  const before = readDotenvText(store.stateDir);
-  if (!before.ok) return { ok: false, moved: [], left: holding, error: `could not read ${join(store.stateDir, ".env")} (${before.error}); config.json was left as it was` };
-  const dotenvBefore = parseDotenvAsAgent(before.text ?? "");
-  const plan = planKeyMoves(providers, store.env, dotenvBefore);
-  const stuckLine = plan.stuck.length ? `no free name in .env for the key of ${plan.stuck.join(", ")}; it stays in config.json` : undefined;
-  if (plan.moves.length === 0) return { ok: false, moved: [], left: holding, error: stuckLine };
-  const keys = plan.moves.map((m) => m.key);
-  const after: ProviderEntry[] = providers.map((p, i) => {
-    const m = plan.moves.find((x) => x.index === i);
-    if (!m) return p;
-    const { apiKey: _moved, ...rest } = p;
-    return { ...rest, apiKeyEnvVar: m.name };
-  });
-  let planned = before.text ?? "";
-  for (const m of plan.moves) planned = applyDotenvMutation(planned, m.name, m.key) ?? planned;
-  const changed = keyChanges(providers, after, store.env, dotenvBefore, parseDotenvAsAgent(planned));
-  if (changed.length > 0) {
-    return { ok: false, moved: [], left: holding, error: `moving the keys would change what ${changed.join(", ")} send(s); nothing was moved` };
-  }
-  const stored = storeKeys(store.stateDir, plan.moves.map((m) => [m.name, m.key] as const), before.text);
-  if (!stored.ok) return { ok: false, moved: [], left: holding, error: `${redactKeys(stored.error, keys)}; config.json was left as it was` };
-  config.llm!.providers = after;
-  const w = await store.write(config);
-  if (!w.ok) {
-    restoreDotenv(store.stateDir, before.text);
-    return { ok: false, moved: [], left: holding, error: `config.json could not be written (${redactKeys(w.error ?? "no answer", keys)}); it was left as it was` };
-  }
-  return { ok: plan.stuck.length === 0, moved: plan.moves.map((m) => m.id), left: plan.stuck, ...(stuckLine ? { error: stuckLine } : {}) };
-}
-
-/**
- * ATO-132: config.json and .env readable by their owner only. The agent
- * writes both at 0600 now, but a file written before that, or by an older
- * agent, keeps its mode until something saves it, so the launch tightens
- * it: owner bits kept, group and other bits dropped. A symlink, or anything
- * that is not a plain file, is left alone; Windows has no POSIX modes.
- * Returns the names it tightened.
- */
-export function secureStateFiles(stateDir: string, platform: NodeJS.Platform = process.platform): string[] {
-  if (platform === "win32") return [];
-  const tightened: string[] = [];
-  for (const name of ["config.json", ".env"]) {
-    const path = join(stateDir, name);
-    try {
-      const st = lstatSync(path);
-      if (!st.isFile() || (st.mode & 0o077) === 0) continue;
-      chmodSync(path, st.mode & 0o700);
-      tightened.push(name);
-    } catch {
-      // Absent, or not this user's to change.
-    }
-  }
-  return tightened;
+function joinDotenvLines(lines: string[]): string {
+  if (lines.length === 0) return "";
+  return `${lines.join("\n")}\n`;
 }
 
 /* External llama.cpp probe — src/llm/llama-server-health.ts checkLlamaServer

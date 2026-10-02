@@ -38,11 +38,11 @@ import {
   setProviderModel,
   type ProviderEntry,
   providerModels,
-  verifyProviderKey,
+  checkProviderKey,
   removeProvider,
   pruneIncompleteProvidersInFile,
-  // ATO-132: provider keys in .env, config.json and .env owner-only
-  moveProviderKeysToDotenv,
+  // ATO-132: config.json (it holds the keys) and .env owner-only, no tmp file of them left behind
+  removeStaleTmpFiles,
   secureStateFiles,
   modelsStart,
   traceUsage,
@@ -1323,7 +1323,9 @@ function wireIpc(client: AgentClient): void {
     if (typeof model !== "string" || !model) {
       return { ok: false, checked: false, error: "model is required" };
     }
-    return verifyProviderKey(e as ProviderEntry, model);
+    /* ATO-132 review (N9): with no key typed, the saved provider is checked
+       as saved, on its own endpoint — not on a URL this message names. */
+    return checkProviderKey(e as ProviderEntry, model);
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
@@ -8538,21 +8540,15 @@ async function pruneIncompleteProvidersAtBoot(): Promise<void> {
   }
 }
 
-/**
- * ATO-132: before `atag serve` first reads them, config.json and .env are
- * made readable by this user only, and the provider keys an earlier version
- * saved in config.json move to .env (agent-cli.ts moveProviderKeysToDotenv).
- * Never fatal, and never says a key: ids, variable names and reasons only.
- */
-async function secureProviderKeysAtBoot(): Promise<void> {
+/** See its call in app.whenReady. Never fatal. */
+function secureStateFilesAtBoot(): void {
   try {
     const tightened = secureStateFiles(DESKTOP_STATE_DIR);
-    if (tightened.length) console.log(`[keys] ${tightened.join(" and ")} made readable by this user only`);
-    const r = await moveProviderKeysToDotenv();
-    if (r.moved.length) console.log(`[keys] moved the API keys of ${r.moved.join(", ")} from config.json to .env`);
-    if (r.error) console.warn(`[keys] ${r.error}`);
-  } catch (err) {
-    console.warn(`[keys] could not check where provider keys are kept (${err instanceof Error ? err.name : "error"})`);
+    if (tightened.length) console.log(`[state] ${tightened.join(" and ")} made readable by this user only`);
+    const removed = removeStaleTmpFiles(DESKTOP_STATE_DIR);
+    if (removed.length) console.log(`[state] removed ${removed.length} leftover tmp file(s) of config.json / .env: ${removed.join(", ")}`);
+  } catch {
+    // A mode or a leftover this launch cannot fix is not a reason to stop it.
   }
 }
 
@@ -8659,6 +8655,11 @@ void app.whenReady().then(async () => {
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
   if (SMOKE) TUI_BASELINE = snapshotTuiState();
+  /* ATO-132: before any config read or write of this launch, config.json —
+     which holds the providers' API keys — and .env are made readable by this
+     user only, and the tmp files a write that died half way left beside
+     them are removed. Names only in the log, never contents. */
+  secureStateFilesAtBoot();
   // Windows attributes notifications to the AppUserModelID; without one set a
   // dev or unpackaged run shows none. Same id as the bundle id on macOS.
   if (process.platform === "win32") app.setAppUserModelId("io.atomicagent.desktop");
@@ -8687,7 +8688,7 @@ void app.whenReady().then(async () => {
        schema defaults to 19091/19092, which is what the operator's terminal
        agent also holds; two daemons cannot share a port. On every later
        launch this is skipped entirely, so it costs nothing. */
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(secureProviderKeysAtBoot).then(() => {
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(() => {
       void agent?.start();
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();
@@ -9983,7 +9984,8 @@ async function onboardingTest(
         wizCopy.includes("API key") && wizCopy.includes("Gemini") &&
         wizCopy.filter((l) => /API key/i.test(l)).length === 1 &&
         wizCopy.includes("Your key stays on this Mac.") &&
-        wizKeyTip === "Saved to .env as GEMINI_API_KEY (mode 0600).",
+        // ATO-132: the key is kept in config.json, readable only by this user.
+        wizKeyTip === "Saved in Atomic Agent\u2019s settings file on this Mac, readable only by your user account.",
       `list=${JSON.stringify(listCopy)} key=${JSON.stringify(wizCopy)} tip=${JSON.stringify(wizKeyTip)}`,
     );
     await js<ObState>("window.__obKey('esc')");

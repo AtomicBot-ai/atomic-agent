@@ -22,7 +22,14 @@ import {
   writeRawUserConfigFileSync,
 } from "../config/config-paths.js";
 
-export async function configCommand(args: string[]): Promise<number> {
+/**
+ * `stdin` is where `config set -` reads its payload; the CLI passes
+ * `process.stdin`, a test hands in a stream of its own.
+ */
+export async function configCommand(
+  args: string[],
+  stdin: NodeJS.ReadableStream = process.stdin,
+): Promise<number> {
   const sub = args[0];
   if (!sub || sub === "-h" || sub === "--help") {
     process.stdout.write(HELP);
@@ -33,7 +40,7 @@ export async function configCommand(args: string[]): Promise<number> {
       case "get":
         return handleGet(args.slice(1));
       case "set":
-        return handleSet(args.slice(1));
+        return await handleSet(args.slice(1), stdin);
       case "unset":
         return handleUnset(args.slice(1));
       case "list":
@@ -80,13 +87,25 @@ function handleGet(args: string[]): number {
   return 0;
 }
 
-function handleSet(args: string[]): number {
+async function handleSet(
+  args: string[],
+  stdin: NodeJS.ReadableStream,
+): Promise<number> {
   if (args.length === 0) {
     process.stderr.write(
       "usage: atomic-agent config set <key> <value>\n" +
-        "   or: atomic-agent config set '<json>'\n",
+        "   or: atomic-agent config set '<json>'\n" +
+        "   or: atomic-agent config set - < config.json\n",
     );
     return 1;
+  }
+  // The whole-file payload from stdin. A file that carries API keys,
+  // MCP env blocks or auth headers must not travel as an argument: any
+  // process on the machine can read another's command line (`ps`), for
+  // as long as the write runs. The desktop app writes every config
+  // change this way.
+  if (args.length === 1 && args[0] === "-") {
+    return setWholeFile(await readAllText(stdin));
   }
   // Form discrimination. A leading `{` means the whole-file JSON payload,
   // including the case where the shell split one JSON argument across
@@ -106,6 +125,15 @@ function handleSet(args: string[]): number {
     return 1;
   }
   return setWholeFile(args.join(" "));
+}
+
+/** Everything `stream` delivers until it ends, as UTF-8. */
+async function readAllText(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function setWholeFile(raw: string): number {

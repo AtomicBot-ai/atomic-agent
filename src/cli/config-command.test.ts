@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { configCommand } from "./config-command.js";
 import {
@@ -139,6 +140,72 @@ describe("configCommand", () => {
       readFileSync(join(stateDir, "config.json"), "utf8"),
     );
     expect(onDisk.localModels.url).toBe("http://x:1");
+  });
+
+  describe("set - (the whole-file payload on stdin)", () => {
+    const stdinOf = (...chunks: string[]) => Readable.from(chunks);
+
+    it("replaces the whole file with the JSON read from stdin", async () => {
+      const code = await configCommand(
+        ["set", "-"],
+        stdinOf(
+          `{"version":${USER_CONFIG_VERSION},`,
+          '"localModels":{"url":"http://x:2"}}',
+        ),
+      );
+      expect(code).toBe(0);
+      const onDisk = JSON.parse(
+        readFileSync(join(stateDir, "config.json"), "utf8"),
+      );
+      expect(onDisk.localModels.url).toBe("http://x:2");
+    });
+
+    it("keeps a provider's inline key exactly as given", async () => {
+      // The desktop saves keys inline and writes every change this way, so
+      // the key never rides on a command line.
+      const key = "sk-dummy-stdin-0123456789";
+      const code = await configCommand(
+        ["set", "-"],
+        stdinOf(
+          JSON.stringify({
+            version: USER_CONFIG_VERSION,
+            llm: {
+              activeTextProvider: "local-llama",
+              providers: [
+                { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+                { id: "aimlapi", kind: "aimlapi", apiKey: key, defaultChatModel: "m" },
+              ],
+            },
+          }),
+        ),
+      );
+      expect(code).toBe(0);
+      const onDisk = JSON.parse(
+        readFileSync(join(stateDir, "config.json"), "utf8"),
+      );
+      const entry = onDisk.llm.providers.find(
+        (p: { id: string }) => p.id === "aimlapi",
+      );
+      expect(entry.apiKey).toBe(key);
+    });
+
+    it("rejects malformed JSON from stdin without touching the file", async () => {
+      await configCommand(["get"]);
+      const before = readFileSync(join(stateDir, "config.json"), "utf8");
+      const code = await configCommand(["set", "-"], stdinOf("{not json"));
+      expect(code).toBe(1);
+      expect(stderr).toContain("invalid JSON");
+      expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
+    });
+
+    it("rejects an empty stdin as no JSON at all", async () => {
+      await configCommand(["get"]);
+      const before = readFileSync(join(stateDir, "config.json"), "utf8");
+      const code = await configCommand(["set", "-"], stdinOf());
+      expect(code).toBe(1);
+      expect(stderr).toContain("invalid JSON");
+      expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
+    });
   });
 
   it("set without a payload prints usage and returns non-zero", async () => {
