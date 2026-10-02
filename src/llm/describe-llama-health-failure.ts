@@ -2,7 +2,7 @@ import type { HealthResult } from "./llama-server-health.js";
 // A leaf predicate with no imports of its own — the one home of the
 // loopback host spellings, shared here so the steer text and the
 // provider wizard agree on what "local" means.
-import { isLocalProviderUrl } from "../tui/providers/is-local-provider-url.js";
+import { isLocalProviderUrl } from "./provider/presets/is-local-provider-url.js";
 
 /**
  * True when `url` points at Ollama's default port. Ollama is the server
@@ -88,10 +88,14 @@ export function describeLlamaHealthFailure(
     case "llama-auth":
       // /health is exempt from --api-key, so this is the first moment
       // the key problem is even visible. Name the env var: there is no
-      // UI field for it.
+      // UI field for it. A daemon started by atomic-agent (managed mode,
+      // `models start`) keeps its key in the models dir (#582), which is
+      // where an operator pointing another client at it finds the value.
       return (
         `${url}: ${health.error ?? "http 401 — API key required"}. ` +
-        `Set ATOMIC_AGENT_LLAMA_API_KEY in the state dir's .env and retry.`
+        `Set ATOMIC_AGENT_LLAMA_API_KEY in the state dir's .env and retry. ` +
+        `For a server started by atomic-agent, the key is in ` +
+        `<models dir>/llama-server.key.`
       );
     default:
       return `local-llm /health failed at ${url}: ${health.error ?? "unknown"}`;

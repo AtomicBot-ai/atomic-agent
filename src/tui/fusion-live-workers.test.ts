@@ -61,6 +61,42 @@ describe("the live fan-out readout", () => {
     ).toHaveLength(0);
   });
 
+  it("carries the context size a worker's completions report, and keeps it once done", () => {
+    let s = reduceFusionLiveWorkers([], ev(), 1_000);
+    expect(s[0]?.contextTokens).toBeNull();
+    s = reduceFusionLiveWorkers(s, ev({ phase: "usage", contextTokens: 6_400 }));
+    s = reduceFusionLiveWorkers(s, ev({ phase: "tool", tool: "os.fs.read" }));
+    // A tool line does not repeat the count; the last measurement stands.
+    expect(s[0]?.contextTokens).toBe(6_400);
+    expect(s[0]?.tool).toBe("os.fs.read");
+    // A usage update is not a phase change: the leg is still running.
+    s = reduceFusionLiveWorkers(s, ev({ phase: "usage", contextTokens: 12_345 }));
+    expect(s[0]).toMatchObject({ done: false, tool: "os.fs.read", contextTokens: 12_345 });
+    s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }));
+    expect(s[0]).toMatchObject({ done: true, contextTokens: 12_345 });
+  });
+
+  it("shows the context size last on the row, in the context chip's units", () => {
+    let s = reduceFusionLiveWorkers([], ev({ etaSeconds: 120 }), 1_000);
+    s = reduceFusionLiveWorkers(
+      s,
+      ev({ phase: "tool", tool: "os.fs.read" }),
+      2_000,
+    );
+    s = reduceFusionLiveWorkers(
+      s,
+      ev({ phase: "usage", contextTokens: 12_345 }),
+      3_000,
+    );
+    expect(formatFusionLiveWorker(s[0]!, 43_000)).toBe(
+      "worker 1 · qwen-3.5-4b — os.fs.read · 42s (~2m00s expected) · 12.3k ctx",
+    );
+    s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }), 61_000);
+    expect(formatFusionLiveWorker(s[0]!, 99_000)).toBe(
+      "worker 1 · qwen-3.5-4b — done · 1m00s · 12.3k ctx",
+    );
+  });
+
   it("names the model and what the leg is doing", () => {
     expect(
       formatFusionLiveWorker(
@@ -73,6 +109,7 @@ describe("the live fan-out readout", () => {
           startedAt: 1_000,
           finishedAt: null,
           etaSeconds: null,
+          contextTokens: null,
         },
         43_000,
       ),
@@ -91,6 +128,7 @@ describe("the live fan-out readout", () => {
           startedAt: 1_000,
           finishedAt: null,
           etaSeconds: null,
+          contextTokens: null,
         },
         1_000,
       ),
@@ -158,6 +196,7 @@ describe("the estimate is corrected by what this fan-out actually did", () => {
     startedAt: 0,
     finishedAt: 600_000,
     etaSeconds: 120,
+    contextTokens: null,
     ...over,
   });
 
@@ -192,6 +231,7 @@ describe("the estimate is corrected by what this fan-out actually did", () => {
       startedAt: 0,
       finishedAt: null,
       etaSeconds: 120,
+      contextTokens: null,
     } as const;
     expect(formatFusionLiveWorker(running, 60_000, 5)).toContain(
       "(~10m00s expected)",
@@ -208,6 +248,7 @@ describe("the estimate is corrected by what this fan-out actually did", () => {
       startedAt: 0,
       finishedAt: null,
       etaSeconds: 120,
+      contextTokens: null,
     } as const;
     expect(formatFusionLiveWorker(running, 19 * 60_000)).toContain(
       "past the ~2m00s expected",
@@ -225,6 +266,7 @@ describe("a leg the orchestrator never estimated", () => {
     startedAt: 0,
     finishedAt: 840_000,
     etaSeconds: null,
+    contextTokens: null,
   } as const;
   const running = {
     taskId: "t2",
@@ -235,6 +277,7 @@ describe("a leg the orchestrator never estimated", () => {
     startedAt: 0,
     finishedAt: null,
     etaSeconds: null,
+    contextTokens: null,
   } as const;
 
   it("is given the wave's own median instead of nothing", () => {

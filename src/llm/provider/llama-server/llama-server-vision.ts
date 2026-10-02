@@ -1,5 +1,6 @@
 import { getConfig } from "../../../config/index.js";
 import { llamaEndpointUrl } from "../../llama-endpoint-url.js";
+import { apiKeyForUrl } from "../../../local-llm/managed-api-key.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import type { VisionRequest, VisionResult } from "../llm-provider.js";
@@ -138,8 +139,11 @@ export async function describeImageViaLlamaServer(opts: {
     "content-type": "application/json",
     accept: "application/json",
   };
-  if (config.localModels.apiKey) {
-    headers.authorization = `Bearer ${config.localModels.apiKey}`;
+  // The key for this base, not `localModels.apiKey`: an overridden base
+  // may be another host, which must not get the managed daemons' key.
+  const apiKey = apiKeyForUrl(opts.baseUrl, config);
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`;
   }
 
   const controller = new AbortController();

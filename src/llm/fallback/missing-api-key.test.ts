@@ -108,4 +108,26 @@ describe("lacksRequiredApiKey", () => {
       }),
     ).toBe(false);
   });
+
+  it("reads the same key rule as /model and the TUI (provider-key.ts)", () => {
+    // An entry that declares where its key lives has said it needs one,
+    // whether or not its id is a preset's.
+    expect(
+      lacksRequiredApiKey({
+        id: "my-llm",
+        kind: "openai-compatible",
+        baseUrl: "https://llm.example.com",
+        apiKeyEnvVar: "MY_LLM_KEY",
+      } as LlmProviderConfigEntry),
+    ).toBe(true);
+    // A local server never does, even saved with an env var by the wizard.
+    expect(
+      lacksRequiredApiKey({
+        id: "lmstudio",
+        kind: "openai-compatible",
+        baseUrl: "http://localhost:1234",
+        apiKeyEnvVar: "LMSTUDIO_API_KEY",
+      } as LlmProviderConfigEntry),
+    ).toBe(false);
+  });
 });

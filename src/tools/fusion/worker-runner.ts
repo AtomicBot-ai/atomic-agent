@@ -479,6 +479,25 @@ async function runOneTask(
       ...(task.etaSeconds === undefined ? {} : { etaSeconds: task.etaSeconds }),
     });
   };
+  // How full this worker's context is, for the live row beside it.
+  // The same number the composer's context chip reads off
+  // `llm_completed`, so the two readouts can never disagree about what
+  // a token is. One event per completion that moved it, and no feed
+  // line — it would be one per step, per worker.
+  let lastContextTokens = 0;
+  const announceUsage = (contextTokens: number): void => {
+    if (contextTokens <= 0 || contextTokens === lastContextTokens) return;
+    lastContextTokens = contextTokens;
+    deps.emitEvent(options.parentSessionId, {
+      type: "fusion_worker",
+      taskId: task.id,
+      title: task.title,
+      phase: "usage",
+      role: "worker",
+      model: options.workerModel,
+      contextTokens,
+    });
+  };
   // A worker has no operator: an approval prompt would park the turn
   // until process exit. Refuse instead, with the reason the brief told
   // the model to hand back up.
@@ -697,6 +716,12 @@ async function runOneTask(
           // a batched step, so the dedupe above earns its keep.
           announceStart();
           announceTool(event.event.call.tool);
+        }
+        if (
+          event.type === "llm_event" &&
+          event.event.type === "llm_completed"
+        ) {
+          announceUsage(event.event.completion.timing?.promptTokens ?? 0);
         }
         if (
           event.type === "llm_event" &&

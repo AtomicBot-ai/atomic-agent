@@ -121,6 +121,24 @@ describe("probeEndpoint", () => {
     expect(await probeEndpoint(`http://127.0.0.1:${hung}/health`, 200)).toEqual({ answered: false });
   });
 
+  it("sends the managed daemon's key, so a guarded /slots still yields slots (#582)", async () => {
+    const port = await serve((q, res) => {
+      if (q.headers.authorization !== "Bearer daemon-key") {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify([{ id: 0, is_processing: false }]));
+    });
+    const url = `http://127.0.0.1:${port}/slots`;
+    expect(await probeEndpoint(url, 500)).toEqual({ answered: true, slots: undefined });
+    expect(await probeEndpoint(url, 500, fetch, "daemon-key")).toEqual({
+      answered: true,
+      slots: [{ id: 0, is_processing: false }],
+    });
+  });
+
   it("reads the slots body", async () => {
     const port = await serve((_q, res) => {
       res.writeHead(200, { "content-type": "application/json" });

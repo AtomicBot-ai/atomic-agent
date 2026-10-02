@@ -148,6 +148,34 @@ describe("reduceTuiState fusion worker progress", () => {
     ]);
   });
 
+  it("moves the live worker row on a usage update without a feed line", () => {
+    // One completion per step per worker: as feed lines these would bury
+    // the lines that say what happened. They only move the live row.
+    const started = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "A",
+          phase: "started",
+        },
+      },
+    ]);
+    const after = reduceTuiState(started, {
+      type: "agent_event",
+      event: {
+        type: "fusion_worker",
+        taskId: "t1",
+        title: "A",
+        phase: "usage",
+        contextTokens: 9_000,
+      },
+    });
+    expect(after.feed).toEqual(started.feed);
+    expect(after.fusionLiveWorkers[0]?.contextTokens).toBe(9_000);
+  });
+
   it("does not disturb the turn's own status or step counter", () => {
     // These events belong to the parent turn as a whole, not to any one
     // of its steps — they must not read as a step boundary.

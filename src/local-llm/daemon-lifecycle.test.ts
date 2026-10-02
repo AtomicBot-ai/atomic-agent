@@ -39,6 +39,7 @@ import {
   readRunningPid,
   readThroughputRecord,
   startDaemon,
+  startEmbeddingDaemon,
   THROUGHPUT_PROBE_TOKENS,
   writeLaunchRecord,
   writeThroughputRecord,
@@ -47,7 +48,8 @@ import {
   type DaemonStartOptions,
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
-import { getLocalModelDef } from "./models-catalog.js";
+import { getEmbeddingModelDef, getLocalModelDef } from "./models-catalog.js";
+import { resetConfigCache } from "../config/config-cache.js";
 import { encodeSyntheticGguf, gemma4Pairs } from "./gguf-metadata.fixtures.js";
 import { EventEmitter } from "node:events";
 
@@ -990,6 +992,137 @@ describe("--swa-full (F12)", () => {
       expect(readLaunchRecord(dataDir, 7)?.swaFull).toBe(true);
       expect(readLaunchRecord(dataDir, 8)).toBeNull();
       expect(readLaunchRecord(dataDir, null)).toBeNull();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("managed launch requires an api key (#582)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+    delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
+    resetConfigCache();
+  });
+
+  function stageBackend(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    const model = getLocalModelDef("qwen-3.5-4b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, "gguf", "utf-8");
+    const emb = getEmbeddingModelDef("nomic-embed-text-v1.5");
+    const embPath = resolveModelFilePath(dataDir, emb.id, emb.filename);
+    mkdirSync(dirname(embPath), { recursive: true });
+    writeFileSync(embPath, "gguf", "utf-8");
+  }
+
+  /** A healthy server that records the auth header of the probe POST. */
+  function stubServer(probeAuth: Array<string | null>, alias = "qwen-3.5-4b"): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(afterSpawn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith("/health")) {
+          return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+        }
+        if (String(url).endsWith("/v1/models")) {
+          return new Response(JSON.stringify({ data: [{ id: alias }] }), { status: 200 });
+        }
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        probeAuth.push(headers.authorization ?? null);
+        return new Response(
+          JSON.stringify({ timings: { predicted_n: 64, predicted_per_second: 10 } }),
+          { status: 200 },
+        );
+      })),
+    );
+  }
+
+  function spawned(call: number): { args: string[]; env: NodeJS.ProcessEnv } {
+    const [, args, options] = spawnMock.mock.calls[call]! as [
+      string,
+      string[],
+      { env: NodeJS.ProcessEnv },
+    ];
+    return { args, env: options.env };
+  }
+
+  it("startDaemon hands the persisted key to the child as LLAMA_API_KEY, never argv, and reuses it", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-key-`);
+    try {
+      stageBackend(dataDir);
+      const probeAuth: Array<string | null> = [];
+      stubServer(probeAuth);
+      spawnMock.mockReturnValue(fakeChild(4251));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19095, device: "cpu" });
+
+      const keyFile = join(dataDir, "llama-server.key");
+      const key = readFileSync(keyFile, "utf-8").trim();
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+      const first = spawned(0);
+      expect(first.env.LLAMA_API_KEY).toBe(key);
+      expect(first.args.join(" ")).not.toContain(key);
+      expect(first.args).not.toContain("--api-key");
+      expect(first.args).not.toContain("--api-key-file");
+      // The variable is the child's alone.
+      expect(process.env.LLAMA_API_KEY).toBeUndefined();
+      expect(probeAuth).toEqual([`Bearer ${key}`]);
+      // Nothing the daemon leaves on disk besides the key file names it.
+      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).not.toContain(key);
+      expect(JSON.stringify(readLaunchRecord(dataDir, 4251))).not.toContain(key);
+
+      // The daemon is gone; the next launch (another process, a restart)
+      // must come up with the same key its clients already hold.
+      rmSync(resolvePidFilePath(dataDir), { force: true });
+      spawnMock.mockClear(); // the port is free again until the next spawn
+      spawnMock.mockReturnValue(fakeChild(4252));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19095, device: "cpu" });
+      expect(readFileSync(keyFile, "utf-8").trim()).toBe(key);
+      expect(spawned(0).env.LLAMA_API_KEY).toBe(key);
+      expect(probeAuth).toEqual([`Bearer ${key}`, `Bearer ${key}`]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("startDaemon uses ATOMIC_AGENT_LLAMA_API_KEY as the server key when set", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-userkey-`);
+    try {
+      process.env.ATOMIC_AGENT_LLAMA_API_KEY = "operator-key";
+      resetConfigCache();
+      stageBackend(dataDir);
+      const probeAuth: Array<string | null> = [];
+      stubServer(probeAuth);
+      spawnMock.mockReturnValue(fakeChild(4253));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19094, device: "cpu" });
+      const { args, env } = spawned(0);
+      expect(env.LLAMA_API_KEY).toBe("operator-key");
+      expect(args).not.toContain("operator-key");
+      expect(probeAuth).toEqual(["Bearer operator-key"]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("startEmbeddingDaemon launches with the same persisted key", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-embed-key-`);
+    try {
+      stageBackend(dataDir);
+      stubServer([], "nomic-embed-text-v1.5");
+      spawnMock.mockReturnValue(fakeChild(4254));
+      await startEmbeddingDaemon({
+        dataDir,
+        modelId: "nomic-embed-text-v1.5",
+        port: 19093,
+        device: "cpu",
+      });
+      const key = readFileSync(join(dataDir, "llama-server.key"), "utf-8").trim();
+      const { args, env } = spawned(0);
+      expect(env.LLAMA_API_KEY).toBe(key);
+      expect(args.join(" ")).not.toContain(key);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

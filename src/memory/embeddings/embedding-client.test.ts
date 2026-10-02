@@ -201,4 +201,28 @@ describe("LlamaEmbeddingClient", () => {
     });
     await expect(c.embed({ text: "x" })).rejects.toThrow(/shape unrecognised/);
   });
+
+  it("sends the daemon's bearer key, read per request (#582)", async () => {
+    const seen: Array<string | null> = [];
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      seen.push(headers.authorization ?? null);
+      return new Response(JSON.stringify({ embedding: [0.1, 0.2, 0.3] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    let key: string | null = null;
+    const c = new LlamaEmbeddingClient({
+      url: "http://127.0.0.1:9999",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+      getApiKey: () => key,
+    });
+    await c.embed({ text: "a" });
+    key = "daemon-key";
+    await c.embed({ text: "b" });
+    expect(seen).toEqual([null, "Bearer daemon-key"]);
+  });
 });

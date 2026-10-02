@@ -53,6 +53,24 @@ import { shouldAdvance } from "./should-advance.js";
  * (`attachFailingLink`), for the hosts that say which link a parked turn
  * is waiting on.
  *
+ * **Except when the primary refused its key and nothing stood in for
+ * it.** A refusal of the key by the primary in this very call
+ * (`isCredentialRejection`: a wrong, dead or missing key, or one that
+ * could not even be sent) outranks whatever the links after it said,
+ * unless a fallback has served this partition since the chain left the
+ * primary. The last link's error would otherwise decide the turn, and a
+ * stopped local server's `fetch failed` parks it for the whole outage
+ * wait, telling the user the model is not answering while the fix is the
+ * key (item 29). The primary's own error classifies as a refusal, so the
+ * turn ends at once with its sentence. Nothing failed before it, so
+ * nothing is recorded beside it; each later link's failure is in the
+ * advance log. A fallback that has been serving is the route the user
+ * is actually on, so its outage still gets the outage wait, as before.
+ *
+ * Every thrown error also carries the id of the link that threw it
+ * (`attachFailingLink`), for the hosts that say which link a parked turn
+ * is waiting on.
+ *
  * Shared by both the non-stream (`llmComplete`) and stream-opening
  * (`llmCompleteStream`) seams. For streaming, `attempt` must resolve only
  * once the stream has successfully OPENED — a stream already emitting

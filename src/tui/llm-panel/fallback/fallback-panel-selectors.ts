@@ -1,4 +1,7 @@
-import { resolveFallbackChain } from "../../../llm/fallback/index.js";
+import {
+  lacksRequiredApiKeyIn,
+  resolveFallbackChain,
+} from "../../../llm/fallback/index.js";
 import type { ResolvedLlmConfig } from "../../../llm/provider/registry/provider-types.js";
 import type { FallbackLinkRow } from "./fallback-panel-state.js";
 
@@ -20,7 +23,10 @@ export interface FallbackChainView {
  * annotated per link:
  *  - `isActive` on the head (the active text provider / primary),
  *  - `isAppendedLocal` on a local link that `appendLocal` synthesised
- *    rather than the operator listing it in `chain`.
+ *    rather than the operator listing it in `chain`,
+ *  - `skippedNoKey` on a fallback link the runtime skips for having no
+ *    key, by the same rule (`lacksRequiredApiKeyIn`). The pane still
+ *    lists it, as the config does, but says it will not be tried.
  *
  * `addableProviderIds` is every configured provider not already a link,
  * in config order — the menu of links the operator can still add.
@@ -34,6 +40,7 @@ export function buildFallbackChainView(
   const localId = resolved.providers.find((p) => p.kind === LOCAL_KIND)?.id;
 
   const { chain } = resolveFallbackChain(resolved);
+  const lacksKey = lacksRequiredApiKeyIn(resolved);
   const links: FallbackLinkRow[] = chain.map((id, index) => {
     const provider = resolved.providers.find((p) => p.id === id);
     // A local link counts as auto-appended only when appendLocal put it
@@ -51,6 +58,7 @@ export function buildFallbackChainView(
       kind: provider?.kind ?? "unknown",
       isActive: index === 0,
       isAppendedLocal,
+      skippedNoKey: index !== 0 && lacksKey(id),
     };
   });
 
