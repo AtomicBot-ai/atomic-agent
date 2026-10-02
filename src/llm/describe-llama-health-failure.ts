@@ -2,7 +2,7 @@ import type { HealthResult } from "./llama-server-health.js";
 // A leaf predicate with no imports of its own — the one home of the
 // loopback host spellings, shared here so the steer text and the
 // provider wizard agree on what "local" means.
-import { isLocalProviderUrl } from "../tui/providers/is-local-provider-url.js";
+import { isLocalProviderUrl } from "./provider/presets/is-local-provider-url.js";
 
 /**
  * True when `url` points at Ollama's default port. Ollama is the server

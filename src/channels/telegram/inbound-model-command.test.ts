@@ -54,6 +54,8 @@ const API_KEY_ENV = [
   "ATOMIC_AGENT_OPENAI_API_KEY",
   // The preset entry below declares this one; see the `groq` fixture.
   "GROQ_API_KEY",
+  // Declared by the LM Studio entry in the local-server case.
+  "LMSTUDIO_API_KEY",
 ] as const;
 
 /**
@@ -501,6 +503,30 @@ describe("/model over Telegram", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("groq");
   });
 
+  it("accepts a local server saved with an env var it never needs", async () => {
+    // The wizard saves LM Studio, Ollama and Atomic Chat with their own
+    // `apiKeyEnvVar` like every preset. They are servers on this machine
+    // with no key at all, so the unset variable must not refuse the
+    // switch: the fallback chain and the TUI never asked for one either.
+    writeLlmConfig(stateDir, {
+      extraProviders: [
+        {
+          id: "lmstudio",
+          kind: "openai-compatible",
+          baseUrl: "http://localhost:1234",
+          defaultChatModel: "qwen3-8b",
+          apiKeyEnvVar: "LMSTUDIO_API_KEY",
+        },
+      ],
+    });
+    expect(process.env.LMSTUDIO_API_KEY).toBeUndefined();
+    await say("/model lmstudio");
+    expect(sent[0]).toBe(
+      "Now on lmstudio · qwen3-8b. Takes effect on the next message.",
+    );
+    expect(getConfig().llm?.activeTextProvider).toBe("lmstudio");
+  });
+
   it("reports the run mode, including a fusion deployment", async () => {
     writeLlmConfig(stateDir, {
       activeTextProvider: "openrouter",
@@ -741,7 +767,9 @@ describe("/model over Telegram", () => {
         {
           id: "long-env",
           kind: "openai-compatible",
-          baseUrl: "http://127.0.0.1:1298/v1",
+          // Not on this machine: a local server never needs a key, so a
+          // loopback entry is switched to whatever env var it declares.
+          baseUrl: "https://llm.example.com/v1",
           defaultChatModel: "gpt-x",
           apiKeyEnvVar: long,
         },

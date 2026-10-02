@@ -662,7 +662,9 @@ describe("/model over Discord", () => {
         {
           id: "long-env",
           kind: "openai-compatible",
-          baseUrl: "http://127.0.0.1:1298/v1",
+          // Not on this machine: a local server never needs a key, so a
+          // loopback entry is switched to whatever env var it declares.
+          baseUrl: "https://llm.example.com/v1",
           defaultChatModel: "gpt-x",
           apiKeyEnvVar: long,
         },
