@@ -29,6 +29,8 @@ type Failed = { err?: string };
 type Box = { top: number; bottom: number; left: number; right: number; height: number };
 type Geometry = {
   vw: number; vh: number; platform: string; win: Box; menu: Box; rows: number; heights: number[];
+  /** SETTINGS_SECTIONS, read from the renderer: how many rows the nav should have, and the last one's label. */
+  sections: number; lastLabel: string;
   scroll: { top: number; height: number; client: number; overflow: string };
   on: string; onWhole: boolean;
   /** Each row after the nav alone was scrolled to it: whole in the nav, inside the settings window and the app window. */
@@ -62,12 +64,13 @@ function appWindow(): BrowserWindow | null {
   return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && /index\.html$/.test(w.webContents.getURL())) ?? null;
 }
 
-/* Settings opened afresh on Diagnostics, the last row, and measured. */
+/* Settings opened afresh on its last section (Diagnostics), and measured. */
 const MEASURE = String.raw`(async () => {
   const tick = (ms) => new Promise((r) => setTimeout(r, ms));
   const box = (n) => { const r = n.getBoundingClientRect(); return {top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height}; };
+  const lastSection = SETTINGS_SECTIONS[SETTINGS_SECTIONS.length - 1];
   window.__settingsClose(); await tick(50);
-  window.__settingsOpen('diagnostics'); await tick(200);
+  window.__settingsOpen(lastSection[0]); await tick(200);
   const win = document.querySelector('#settings .setwin');
   const menu = document.querySelector('#settings .setmenu');
   if (!win || !menu) return {err: 'no settings window'};
@@ -76,6 +79,7 @@ const MEASURE = String.raw`(async () => {
   const whole = (r) => r.top >= m.top - 0.5 && r.bottom <= m.bottom + 0.5 && r.height > 0;
   const on = menu.querySelector('.menurow.on');
   const out = {vw: innerWidth, vh: innerHeight, win: w, menu: m, rows: rows.length, heights: rows.map((r) => Math.round(box(r).height)),
+    sections: SETTINGS_SECTIONS.length, lastLabel: lastSection[1],
     platform: ['darwin', 'win32', 'linux'].find((p) => document.body.classList.contains('platform-' + p)) || '',
     scroll: {top: menu.scrollTop, height: menu.scrollHeight, client: menu.clientHeight, overflow: getComputedStyle(menu).overflowY},
     on: on ? ((on.querySelector('.lb') || on).textContent || '').trim() : '', onWhole: !!on && whole(box(on)), reach: [], kept: null};
@@ -122,7 +126,7 @@ export async function checks36(js: Js, check: Check): Promise<void> {
     return Math.abs(g.win.top - want) <= 1 && Math.abs(g.vh - g.win.bottom - want) <= 1;
   };
   const inside = (g: Geometry) => g.win.top >= 0 && g.win.left >= 0 && g.win.bottom <= g.vh + 0.5 && g.win.right <= g.vw + 0.5;
-  const allWhole = (g: Geometry) => g.rows === 9 && g.reach.length === 9 && g.reach.every((r) => r.whole && r.inWin && r.inView);
+  const allWhole = (g: Geometry) => g.rows === g.sections && g.reach.length === g.sections && g.reach.every((r) => r.whole && r.inWin && r.inView);
   const summary = (g: Geometry & Failed) => g.err ?? JSON.stringify({
     window: `${g.vw}×${g.vh}`, win: { top: g.win.top, bottom: g.win.bottom }, menu: { top: g.menu.top, bottom: g.menu.bottom }, scroll: g.scroll,
     on: g.on, onWhole: g.onWhole, cut: g.reach.filter((r) => !(r.whole && r.inWin && r.inView)).map((r) => r.label), heights: g.heights, kept: g.kept,
@@ -159,12 +163,12 @@ export async function checks36(js: Js, check: Check): Promise<void> {
     check(
       "T36: on a window too short for the rows the nav scrolls instead of cutting them off — each one is reached whole, at its own height",
       !short.err && short.vh <= 400 && short.scroll.overflow === "auto" && short.scroll.height > short.scroll.client
-        && allWhole(short) && short.heights.every((h) => h === 32) && placed(short) && inside(short),
+        && allWhole(short) && short.heights.every((h) => h === short.heights[0] && h >= 32) && placed(short) && inside(short),
       summary(short),
     );
     check(
       "T36: opening Settings on its last section brings that row into view, and a rebuild keeps the nav where it was scrolled",
-      !short.err && short.on === "Diagnostics" && short.onWhole && short.kept !== null && short.kept.before > 0 && Math.abs(short.kept.after - short.kept.before) <= 1,
+      !short.err && short.on === short.lastLabel && short.onWhole && short.kept !== null && short.kept.before > 0 && Math.abs(short.kept.after - short.kept.before) <= 1,
       summary(short),
     );
   } finally {

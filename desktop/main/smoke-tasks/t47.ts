@@ -76,9 +76,9 @@ const DONE = String.raw`(async () => {
   await tick(50);
   const byEsc = !S.settings;
   window.__settingsClose();
-  return {seen, byDone, byEsc};
+  return {panes: SETTINGS_TABS.length, seen, byDone, byEsc};
 })()`;
-type Done = { seen: Array<{ pane: string; tag: string; text: string; bareX: boolean; all: number }>; byDone: boolean; byEsc: boolean };
+type Done = { panes: number; seen: Array<{ pane: string; tag: string; text: string; bareX: boolean; all: number }>; byDone: boolean; byEsc: boolean };
 
 /* Д26: each pane that polls, with its poll state staged three ways — fresh,
    paused, refreshing — and read in the same synchronous block; then a pane
@@ -93,10 +93,16 @@ const STATUS = String.raw`(async () => {
     const line = st && st.querySelector('.set-statusin');
     const done = document.querySelector('#settings .settb [data-act="settings:close"]');
     const rs = line ? line.getBoundingClientRect() : null, rd = done ? done.getBoundingClientRect() : null;
+    const resume = st && st.querySelector('button.set-resume');
+    // The right edge of what the line ends in — Resume when paused — against Done.
+    const end = resume ? resume.getBoundingClientRect() : rs;
     return {text: line ? line.textContent.trim() : '', shown: !!st && getComputedStyle(st).display !== 'none',
-      gap: rs && rd ? Math.round(rd.left - rs.right) : null, right: rs ? Math.round(rs.right) : null,
+      gap: end && rd ? Math.round(rd.left - end.right) : null, right: end ? Math.round(end.right) : null,
       lines: document.querySelectorAll('#settings .set-statusin').length,
-      inPane: document.querySelectorAll('#settings .setbody .set-readout, #settings .setbody .sd-status, #settings [data-act$=":auto"]').length,
+      inPane: document.querySelectorAll(['.set-readout', '.sd-status', ...['tasks', 'skills', 'memory', 'mcp'].map((p) => '[data-act="' + p + ':auto"]')]
+        .map((sel) => '#settings .setbody ' + sel).join(', ')).length,
+      resume: resume ? {text: resume.textContent.trim(), act: resume.dataset.act} : null,
+      dot: line && line.querySelector('.tk-dot') ? (line.querySelector('.tk-dot--green') ? 'green' : 'hollow') : null,
       counts: ((document.querySelector('#settings .setbody .set-counts') || {}).textContent || '').trim()};
   };
   const loading = {tasks: () => TK.loading, skills: () => SK.busy, memory: () => MEM.loading, mcp: () => MCP.loading};
@@ -119,7 +125,15 @@ const STATUS = String.raw`(async () => {
     try {
       stage(true, false, T0); render(); r.fresh = read();
       stage(false, false, T0); render(); r.paused = read();
+      // Resume turns the pane's refreshing back on (Skills has no switch of its own to turn).
+      if (pane !== 'skills') {
+        const b = document.querySelector('#settings .settb .set-resume');
+        if (b) b.click();
+        r.resumed = {auto: {tasks: TK.auto, memory: MEM.auto, mcp: MCP.auto}[pane], text: read().text};
+      }
       stage(true, true, T0); render(); r.busy = read();
+      // A view that stops the poll: the time stays, the dot is not the live green.
+      if (pane === 'mcp') { stage(true, false, T0); MCP.addModal = {json: '', error: null}; r.held = settingsStatusHTML('mcp'); MCP.addModal = null; }
       // A quiet poll that changed nothing repaints the line in place: no rebuilt window.
       stage(true, false, T0); render();
       const win = document.querySelector('#settings .setwin');
@@ -140,10 +154,16 @@ const STATUS = String.raw`(async () => {
   window.__settingsClose();
   return out;
 })()`;
-type Line = { text: string; shown: boolean; gap: number | null; right: number | null; lines: number; inPane: number; counts: string };
+type Line = {
+  text: string; shown: boolean; gap: number | null; right: number | null; lines: number; inPane: number;
+  resume: { text: string; act: string } | null; dot: string | null; counts: string;
+};
 type Status = {
   want: { fresh: string; paused: string; busy: string; repainted: string };
-  panes: Record<string, { fresh: Line; paused: Line; busy: Line; repainted: Line & { sameWindow: boolean } }>;
+  panes: Record<string, {
+    fresh: Line; paused: Line; busy: Line; repainted: Line & { sameWindow: boolean };
+    resumed?: { auto: boolean; text: string }; held?: string;
+  }>;
   general: Line;
 };
 
@@ -169,11 +189,18 @@ const TOASTS = String.raw`(async () => {
     const over = {n: t.length, inCard: t.every((r) => within(r, card)), inWin: t.every((r) => within(r, win)),
       clearOfHeader: t.every((r) => !meets(r, head)), clearOfDone: t.every((r) => !meets(r, done)),
       inView: t.every((r) => r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5), toasts: t, card};
+    // Seven at once: the oldest step aside before the column reaches the header; the newest always shows.
+    for (let i = 3; i <= 7; i++) toast('Smoke t47 toast ' + i, 'A second line, so it is as tall as most toasts are.');
+    await tick(450);
+    const shown = live();
+    const all = [...document.querySelectorAll('#toasts > .toast')].filter((n) => !n.classList.contains('out') && mine({t: (n.querySelector('.toast-t') || {}).textContent || ''}));
+    const many = {n: shown.length, newest: shown.length > 0 && shown[shown.length - 1] === all[all.length - 1],
+      clearOfHeader: shown.map(box).every((r) => r.top >= head.bottom - 0.5 && !meets(r, done)), inCard: shown.map(box).every((r) => within(r, card))};
     window.__settingsClose(); await tick(100);
     const bar = box(document.getElementById('toolbar'));
-    const u = live().map(box);
+    const u = live().slice(-2).map(box);
     const chat = {n: u.length, corner: u.every((r) => Math.abs(r.right - (innerWidth - 16)) <= 1 && r.top >= bar.bottom - 0.5)};
-    return {width: innerWidth, height: innerHeight, over, chat};
+    return {width: innerWidth, height: innerHeight, over, many, chat};
   } finally {
     window.__settingsClose();
     S.toasts = S.toasts.filter((x) => !mine(x)); renderToasts();
@@ -183,6 +210,7 @@ type Rect = { top: number; bottom: number; left: number; right: number };
 type Toasts = {
   width: number; height: number;
   over: { n: number; inCard: boolean; inWin: boolean; clearOfHeader: boolean; clearOfDone: boolean; inView: boolean; toasts: Rect[]; card: Rect | null };
+  many: { n: number; newest: boolean; clearOfHeader: boolean; inCard: boolean };
   chat: { n: number; corner: boolean };
 };
 
@@ -226,7 +254,7 @@ async function run(js: Js, check: Check): Promise<void> {
   const d = await safe<Done>(js, DONE);
   check(
     "T47 Д25: every section's header closes Settings with a Done button, not a bare ×",
-    !d.err && d.seen.length === 10 && d.seen.every((s) => s.tag === "BUTTON" && s.text === "Done" && !s.bareX && s.all === 1),
+    !d.err && d.panes > 0 && d.seen.length === d.panes && d.seen.every((s) => s.tag === "BUTTON" && s.text === "Done" && !s.bareX && s.all === 1),
     d.err ?? JSON.stringify(d.seen.filter((s) => !(s.tag === "BUTTON" && s.text === "Done" && !s.bareX && s.all === 1))),
   );
   check(
@@ -245,8 +273,24 @@ async function run(js: Js, check: Check): Promise<void> {
   );
   check(
     "T47 Д26: the line says the same things in the same words in each — updated at, paused, updating",
-    !s.err && lines.every((r) => r.fresh.text === s.want.fresh && r.paused.text === s.want.paused && r.busy.text === s.want.busy),
-    s.err ?? JSON.stringify({ want: s.want, got: Object.fromEntries(PANES.map((p) => [p, [s.panes[p]!.fresh.text, s.panes[p]!.paused.text, s.panes[p]!.busy.text]])) }),
+    !s.err && lines.every((r) => r.fresh.text === s.want.fresh && r.fresh.dot === "green" && r.paused.text === s.want.paused && r.busy.text === s.want.busy),
+    s.err ?? JSON.stringify({ want: s.want, got: Object.fromEntries(PANES.map((p) => [p, [s.panes[p]!.fresh.text, s.panes[p]!.fresh.dot, s.panes[p]!.paused.text, s.panes[p]!.busy.text]])) }),
+  );
+  const switched = PANES.filter((p) => p !== "skills");
+  check(
+    "T47 Д26: paused, the line carries a Resume that turns the pane's refreshing back on",
+    !s.err && switched.every((p) => {
+      const r = s.panes[p]!;
+      return !!r.paused.resume && r.paused.resume.text === "Resume" && r.paused.resume.act === `${p}:auto`
+        && !!r.resumed && r.resumed.auto === true && r.resumed.text === s.want.fresh && !r.fresh.resume;
+    }),
+    s.err ?? JSON.stringify(Object.fromEntries(switched.map((p) => [p, { resume: s.panes[p]!.paused.resume, resumed: s.panes[p]!.resumed }]))),
+  );
+  const held = s.err ? "" : s.panes["mcp"]!.held ?? "";
+  check(
+    "T47 Д26: while a view stops the pane's poll (MCP's add-server box) the line keeps its time without the live dot",
+    !s.err && held.includes(s.want.fresh) && held.includes("tk-dot--hollow") && !held.includes("tk-dot--green"),
+    s.err ?? held,
   );
   const rights = lines.map((r) => r.fresh.right), gaps = lines.map((r) => r.fresh.gap);
   check(
@@ -283,6 +327,11 @@ async function run(js: Js, check: Check): Promise<void> {
           `T47 Д27: at ${cw}×${ch} toasts over Settings stand inside its body card, clear of its header and Done, and nothing is cut off`,
           !!o && o.n === 2 && o.inCard && o.inWin && o.clearOfHeader && o.clearOfDone && o.inView,
           t.err ?? JSON.stringify({ window: `${t.width}×${t.height}`, over: t.over }),
+        );
+        check(
+          `T47 Д27: at ${cw}×${ch} seven toasts at once stop short of the header — the oldest step aside, the newest shows`,
+          !t.err && t.many.n >= 1 && t.many.newest && t.many.clearOfHeader && t.many.inCard,
+          t.err ?? JSON.stringify(t.many),
         );
         check(
           `T47 Д27: at ${cw}×${ch} with Settings closed they are back at the top right, under the toolbar`,
