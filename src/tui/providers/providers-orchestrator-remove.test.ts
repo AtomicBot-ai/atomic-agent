@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,15 +9,17 @@ import {
   writeUserConfigFileSync,
 } from "../../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../../config/config-schema.js";
+import { getConfig } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import { ProvidersOrchestrator } from "./providers-orchestrator.js";
 
 /**
  * `removeProviderById` against a real config file. The panel's
- * `isActiveText` is a snapshot from the last refresh, so the
- * orchestrator must re-check the live active provider itself and write
- * NOTHING when it refuses — the registry's own guard only runs after
- * `removeLlmProvider` has already rewritten the file.
+ * `isActiveText` is a snapshot from the last refresh and the config
+ * cache can lag another process, so the active provider is re-checked
+ * (early in the orchestrator, authoritatively in `removeLlmProvider` on
+ * the file it reads) and NOTHING is written when it refuses. The
+ * registry's own guard only runs after the file is rewritten.
  */
 describe("ProvidersOrchestrator.removeProviderById", () => {
   let stateDir: string;
@@ -111,6 +113,30 @@ describe("ProvidersOrchestrator.removeProviderById", () => {
 
     expect(rawFile()).toBe(before);
     expect(removeProvider).not.toHaveBeenCalled();
+  });
+
+  it("refuses when only the file on disk knows the provider is active", async () => {
+    // Registry and cached config both say local-llama; another process
+    // switched chat to openrouter on disk without this one noticing.
+    // The early check passes, so the refusal has to come from
+    // `removeLlmProvider` reading the file itself.
+    write("local-llama");
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    const path = getUserConfigPath(stateDir);
+    const live = JSON.parse(rawFile()) as { llm: Record<string, unknown> };
+    live.llm.activeTextProvider = "openrouter";
+    writeFileSync(path, JSON.stringify(live, null, 2) + "\n", "utf8");
+    const before = rawFile();
+    const { orchestrator, removeProvider, runtime, emitted } =
+      setup("local-llama");
+
+    await orchestrator.removeProviderById("openrouter");
+
+    expect(rawFile()).toBe(before);
+    expect(removeProvider).not.toHaveBeenCalled();
+    expect(runtime.reloadLlmProviders).not.toHaveBeenCalled();
+    const failed = emitted().find((a) => a.type === "providers_remove_failed");
+    expect(failed?.error).toMatch(/openrouter is the active provider; switch/);
   });
 
   it("removes an inactive provider from the file and the registry", async () => {

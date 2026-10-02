@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
   dotenvKeyForProviderKind,
+  LlmRemoveActiveProviderError,
   parseAddProviderJson,
   removeLlmProvider,
   restoreProviderDefaultChatModelInConfig,
@@ -181,12 +182,15 @@ describe("restoreProviderDefaultChatModelInConfig", () => {
 describe("removeLlmProvider", () => {
   let stateDir: string;
 
-  function write(fallback?: Record<string, unknown>): void {
+  function write(
+    fallback?: Record<string, unknown>,
+    active: { text?: string; embedding?: string } = {},
+  ): void {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
       llm: {
-        activeTextProvider: "openrouter",
-        activeEmbeddingProvider: "local-llama",
+        activeTextProvider: active.text ?? "openrouter",
+        activeEmbeddingProvider: active.embedding ?? "local-llama",
         toolTransport: "auto",
         providers: [
           { id: "local-llama", kind: "llama-server" },
@@ -268,6 +272,38 @@ describe("removeLlmProvider", () => {
     removeLlmProvider("groq");
     expect(rawLlm()).not.toHaveProperty("fallback");
     expect(() => getConfig()).not.toThrow();
+  });
+
+  it("refuses the active text provider by the file it reads, not the cache", () => {
+    // Prime the cache with local-llama as the chat provider, then switch
+    // to openrouter on disk without resetting it, the way another
+    // process (Telegram `/model`, a second TUI) would. Before: the
+    // removal went through and silently re-pointed chat at local-llama.
+    write(undefined, { text: "local-llama" });
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    const path = getUserConfigPath(stateDir);
+    const live = JSON.parse(readFileSync(path, "utf8")) as {
+      llm: Record<string, unknown>;
+    };
+    live.llm.activeTextProvider = "openrouter";
+    writeFileSync(path, JSON.stringify(live, null, 2) + "\n", "utf8");
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    const before = readFileSync(path);
+
+    expect(() => removeLlmProvider("openrouter")).toThrow(
+      LlmRemoveActiveProviderError,
+    );
+    expect(() => removeLlmProvider("openrouter")).toThrow(
+      /openrouter is the active provider; switch/,
+    );
+    expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it("moves the embedding provider back to local-llama when it is removed", () => {
+    write(undefined, { embedding: "groq" });
+    removeLlmProvider("groq");
+    expect(rawLlm().activeEmbeddingProvider).toBe("local-llama");
+    expect(rawLlm().activeTextProvider).toBe("openrouter");
   });
 
   it("refuses the built-in local provider", () => {

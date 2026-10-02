@@ -5,10 +5,8 @@ import type {
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import {
-  activeProviderRemovalMessage,
-  configureWizardKindForRow,
-} from "../providers/providers-orchestrator.js";
+import { activeProviderRemovalMessage } from "../persist-llm-provider.js";
+import { configureWizardKindForRow } from "../providers/providers-orchestrator.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
@@ -261,9 +259,9 @@ export function stopLocalDaemonsForCloudSelection(
  * the Fallback pane.
  *
  * The active text provider is refused with a status line instead of a
- * confirm. `removeLlmProvider` would otherwise silently re-point chat at
- * `local-llama`, which may have no model downloaded — the next turn
- * would fail somewhere the operator is not looking. Same rule as the
+ * confirm, before the operator is asked anything. `removeLlmProvider`
+ * refuses it too, on the file it reads, so a stale row cannot get
+ * through and silently re-point chat at `local-llama`. Same rule as the
  * Fallback pane, where the active head cannot be removed either: switch
  * first, then remove.
  */

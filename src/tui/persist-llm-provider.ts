@@ -29,6 +29,23 @@ export class LlmRemoveProviderError extends Error {
   }
 }
 
+/**
+ * Why removing `id` is refused: it is the provider serving chat. Shared
+ * by the Cloud pane's snapshot guard, the orchestrator's early check and
+ * {@link removeLlmProvider} itself, so all three read the same.
+ */
+export function activeProviderRemovalMessage(id: string): string {
+  return `${id} is the active provider; switch to another provider or a local model before removing it`;
+}
+
+/** {@link removeLlmProvider} refused `id` because it is the active text provider. */
+export class LlmRemoveActiveProviderError extends LlmRemoveProviderError {
+  constructor(public readonly providerId: string) {
+    super(activeProviderRemovalMessage(providerId));
+    this.name = "LlmRemoveActiveProviderError";
+  }
+}
+
 export function parseAddProviderJson(raw: string): UserLlmProviderEntry {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
@@ -188,11 +205,16 @@ export function removeLlmProvider(id: string): void {
   if (remaining.length === file.llm.providers.length) {
     throw new LlmRemoveProviderError(`provider "${id}" is not configured`);
   }
+  // Decide on the file just read, not on `getConfig()`: the cache can
+  // lag a switch made by another process (Telegram `/model`, a second
+  // TUI), and re-pointing chat at `local-llama` here would be silent,
+  // with possibly no local model to serve the next turn. Refuse and
+  // write nothing; the operator switches first, then removes.
+  if (file.llm.activeTextProvider === id) {
+    throw new LlmRemoveActiveProviderError(id);
+  }
   let activeTextProvider = file.llm.activeTextProvider;
   let activeEmbeddingProvider = file.llm.activeEmbeddingProvider;
-  if (activeTextProvider === id) {
-    activeTextProvider = "local-llama";
-  }
   if (activeEmbeddingProvider === id) {
     activeEmbeddingProvider = "local-llama";
   }
