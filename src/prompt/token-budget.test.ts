@@ -4,7 +4,9 @@ import {
   CONVERSATION_CAP_SAFETY_MARGIN,
   computeEffectiveConversationCap,
   defaultBudget,
+  effectiveReplyReserve,
   estimateTokens,
+  minUsableContextWindow,
   SESSION_SECTIONS_BUDGET_SHARE,
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
@@ -203,6 +205,63 @@ describe("computeEffectiveConversationCap", () => {
       contextWindow: 131_072,
     });
     expect(cap).toBe(4_000);
+  });
+});
+
+describe("effectiveReplyReserve", () => {
+  it("keeps a configured cap that fits in half the window", () => {
+    expect(effectiveReplyReserve(4096, 32_768)).toBe(4096);
+    // The default on a 32k window is exactly half: untouched.
+    expect(effectiveReplyReserve(16_384, 32_768)).toBe(16_384);
+  });
+
+  it("holds a cap bigger than the window to half of it", () => {
+    // completionMaxTokens raised to 96k for long runs, on a 32k model.
+    expect(effectiveReplyReserve(96_000, 32_768)).toBe(16_384);
+  });
+
+  it("keeps the configured figure when the window is unknown", () => {
+    expect(effectiveReplyReserve(96_000, null)).toBe(96_000);
+    expect(effectiveReplyReserve(96_000, undefined)).toBe(96_000);
+  });
+
+  it("reserves nothing for the no-cap sentinel", () => {
+    expect(effectiveReplyReserve(0, 32_768)).toBe(0);
+  });
+});
+
+describe("computeEffectiveConversationCap with a reply cap past the window", () => {
+  /**
+   * The QA report behind this: `completionMaxTokens: 96000` on a 32.8k
+   * window. Subtracting the whole cap left a negative remainder and the
+   * transcript sat on the 512-token floor every step.
+   */
+  it("budgets half the window for the reply instead of the floor", () => {
+    const cap = computeEffectiveConversationCap({
+      configuredCap: 32_000,
+      stablePrefixTokens: 2000,
+      sessionTokens: 400,
+      worldSnapshotTokens: 2000,
+      completionMaxTokens: 96_000,
+      contextWindow: 32_768,
+    });
+    // 32768 - 2000 - 400 - 2000 - 16384 - 512
+    expect(cap).toBe(11_472);
+    expect(cap).toBeGreaterThan(CONVERSATION_CAP_FLOOR);
+  });
+});
+
+describe("minUsableContextWindow", () => {
+  it("counts the full cap when no window is being judged", () => {
+    expect(minUsableContextWindow(16_384)).toBe(6000 + 16_384 + 512);
+  });
+
+  it("judges a window by the reserve the budget holds on it", () => {
+    // 96k on a 32k window reserves 16 384, so 32k is usable: no warning.
+    expect(minUsableContextWindow(96_000, 32_768)).toBe(6000 + 16_384 + 512);
+    expect(32_768).toBeGreaterThanOrEqual(minUsableContextWindow(96_000, 32_768));
+    // A window too small for the scaffolding plus half of itself still is.
+    expect(12_000).toBeLessThan(minUsableContextWindow(96_000, 12_000));
   });
 });
 
