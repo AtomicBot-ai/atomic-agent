@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { resolveApiKeyFilePath } from "./backend-paths.js";
 import {
+  apiKeyForUrl,
   buildDaemonEnv,
   ensureManagedApiKey,
   isLoopbackUrlOnPort,
@@ -169,6 +170,55 @@ describe("managed llama-server api key (#582)", () => {
           dataDir,
         }),
       ).toBe("operator-key");
+    });
+  });
+
+  describe("apiKeyForUrl", () => {
+    function config(apiKey: string | null, url = "http://127.0.0.1:19091") {
+      return {
+        localModels: {
+          url,
+          apiKey,
+          managed: { port: 19091 },
+          embeddings: { port: 19092 },
+        },
+        paths: { localModelsDataDir: dataDir },
+      };
+    }
+
+    it("never sends the managed daemons' key to another host", () => {
+      const key = ensureManagedApiKey(dataDir);
+      expect(apiKeyForUrl("http://192.168.1.5:8080", config(key), {})).toBeNull();
+      expect(apiKeyForUrl("http://192.168.1.5:19091", config(key), {})).toBeNull();
+      expect(apiKeyForUrl("http://127.0.0.1:8080", config(key), {})).toBeNull();
+    });
+
+    it("sends the managed key to a managed port on loopback", () => {
+      const key = ensureManagedApiKey(dataDir);
+      expect(apiKeyForUrl("http://127.0.0.1:19091", config(key), {})).toBe(key);
+      expect(apiKeyForUrl("http://localhost:19092/", config(key), {})).toBe(key);
+      // External mode elsewhere: no configured key, the file still answers.
+      expect(
+        apiKeyForUrl("http://127.0.0.1:19091", config(null, "http://lan:8080"), {}),
+      ).toBe(key);
+    });
+
+    it("keeps the operator's env key for any URL, as before", () => {
+      ensureManagedApiKey(dataDir);
+      const env = { ATOMIC_AGENT_LLAMA_API_KEY: "operator-key" };
+      expect(apiKeyForUrl("http://192.168.1.5:8080", config("operator-key"), env)).toBe(
+        "operator-key",
+      );
+      expect(apiKeyForUrl("http://127.0.0.1:19091", config("operator-key"), env)).toBe(
+        "operator-key",
+      );
+    });
+
+    it("uses the configured key for the configured URL", () => {
+      expect(
+        apiKeyForUrl("http://lan:8080/", config(null, "http://lan:8080"), {}),
+      ).toBeNull();
+      expect(apiKeyForUrl("http://127.0.0.1:19091", config("k"), {})).toBe("k");
     });
   });
 });

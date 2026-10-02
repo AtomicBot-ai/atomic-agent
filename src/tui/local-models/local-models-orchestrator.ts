@@ -6,6 +6,7 @@ import {
   removeCustomModel,
 } from "../../config/custom-models-store.js";
 import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
+import { apiKeyForUrl } from "../../local-llm/managed-api-key.js";
 import {
   checkForBackendUpdate,
   DEFAULT_EMBEDDING_MODEL_ID,
@@ -283,7 +284,7 @@ export class LocalModelsOrchestrator {
       const base = `http://127.0.0.1:${cfg.localModels.managed.port}`;
       const [health, slots] = await Promise.all([
         probeEndpoint(`${base}/health`, 2_000),
-        probeEndpoint(`${base}/slots`, 5_000, fetch, cfg.localModels.apiKey),
+        probeEndpoint(`${base}/slots`, 5_000, fetch, apiKeyForUrl(base, cfg)),
       ]);
       return this.wedgeWatch.observe({ at: Date.now(), health, slots });
     },

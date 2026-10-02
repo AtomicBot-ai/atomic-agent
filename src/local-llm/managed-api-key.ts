@@ -215,3 +215,54 @@ export function resolveEmbeddingApiKey(inputs: {
     ? readManagedApiKey(inputs.dataDir)
     : null;
 }
+
+/** The env var an operator sets to give every local llama-server client a key. */
+export const OPERATOR_LLAMA_API_KEY_ENV = "ATOMIC_AGENT_LLAMA_API_KEY";
+
+/** The parts of the live config `apiKeyForUrl` reads. */
+export interface ApiKeyForUrlConfig {
+  localModels: {
+    url: string;
+    apiKey: string | null;
+    managed?: { port: number };
+    embeddings?: { port: number };
+  };
+  paths?: { localModelsDataDir: string };
+}
+
+function stripTrailingSlashes(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+/**
+ * The key to send to `url`, which may not be `localModels.url`: an
+ * onboarding probe, a URL the operator is about to switch to, a provider
+ * pinned to its own base. `localModels.apiKey` was resolved for the
+ * configured URL only, and in managed mode it is the managed daemons' key,
+ * which must never reach another host.
+ *
+ * - The operator's `ATOMIC_AGENT_LLAMA_API_KEY` goes wherever they point
+ *   the agent, as it always has.
+ * - For the configured URL itself, `localModels.apiKey` (resolved for it).
+ * - The managed daemons' key only for a managed port on loopback.
+ * - Anything else gets no key.
+ */
+export function apiKeyForUrl(
+  url: string,
+  config: ApiKeyForUrlConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const envKey = env[OPERATOR_LLAMA_API_KEY_ENV];
+  if (envKey) return envKey;
+  if (stripTrailingSlashes(url) === stripTrailingSlashes(config.localModels.url)) {
+    return config.localModels.apiKey;
+  }
+  const managedPorts = [
+    config.localModels.managed?.port,
+    config.localModels.embeddings?.port,
+  ].filter((port): port is number => typeof port === "number");
+  if (!isLoopbackUrlOnPort(url, managedPorts)) return null;
+  if (config.localModels.apiKey) return config.localModels.apiKey;
+  const dataDir = config.paths?.localModelsDataDir;
+  return dataDir ? readManagedApiKey(dataDir) : null;
+}

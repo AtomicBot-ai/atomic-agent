@@ -1,5 +1,6 @@
 import { getConfig } from "../../../config/index.js";
 import { checkLlamaServer } from "../../llama-server-health.js";
+import { apiKeyForUrl } from "../../../local-llm/managed-api-key.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type {
@@ -139,7 +140,9 @@ export class LlamaServerProvider implements LlmProvider {
     const base = this.baseUrlOverride ?? config.localModels.url;
     const result = await checkLlamaServer({
       url: base,
-      apiKey: config.localModels.apiKey,
+      // Not `localModels.apiKey`: with a pinned base it may be another
+      // host, which must not get the managed daemons' key (#582).
+      apiKey: apiKeyForUrl(base, config),
     });
     return {
       reachable: result.reachable,
