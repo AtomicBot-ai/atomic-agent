@@ -4860,7 +4860,7 @@ function act(a) {
       + '?title=' + encodeURIComponent('[desktop] ')
       + '&body=' + encodeURIComponent(body);
     if (BR && BR.debugBundle) {
-      BR.debugBundle().then((res) => {
+      BR.debugBundle('report').then((res) => {
         if (res && res.ok) toast('Debug bundle written', res.path + ' — attach it if you want to');
       }).catch(() => {});
     }
@@ -4964,7 +4964,7 @@ function act(a) {
   if (a === 'dump') {
     close(); render();
     if (!BR || !BR.debugBundle) { toast('Write debug bundle', 'not available in this build', 'bad'); return; }
-    BR.debugBundle().then((res) => {
+    BR.debugBundle('dump').then((res) => {
       if (res && res.ok) { toast('Debug bundle written', res.path); if (BR.openPath) BR.openPath(res.path); }
       else toast('Could not write the bundle', (res && res.error) || '', 'bad');
     });
@@ -9036,7 +9036,7 @@ function dlSpawn(job) {
  * this is where a check stands in for it.
  */
 function dlPullStart(job) {
-  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
+  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
 }
 
 /**
@@ -13354,7 +13354,7 @@ async function selActivate(row) {
 
 function selPull(id) {
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null; render();
-  BR.modelsPull(id).then((res) => {
+  BR.modelsPull(id, {trigger: 'selector'}).then((res) => {
     if (res && res.ok === false) { SEL.pulling = null; SEL.err = res.error || 'could not start the download'; render(); }
   });
 }
@@ -20431,7 +20431,7 @@ async function llmRemoveLocalConfirm() {
 function llmPull(kind, id) {
   if (!BR || LLMP.pulling) return;
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
-  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id);
+  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
 /* llm-panel-primary-actions.ts triggerLocalChatModel / triggerLocalEmbeddingModel / triggerCloud*, ported. */
