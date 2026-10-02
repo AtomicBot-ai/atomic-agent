@@ -5411,29 +5411,63 @@ async function hfAndDeltaTest(
   const rowLive = await js<boolean>(
     "[...document.querySelectorAll('#settings button[data-act=\"llm:hf\"]')].some((b) => b.textContent.trim() === 'Add from Hugging Face' && !b.disabled)",
   );
+  /* Item 48 (Д34): the Ollama signpost under the lists ("Using Ollama? Add it
+     under Cloud…") read as an ad. One "Add Ollama" button in the Local models
+     header took its place, the sentence went to its tooltip, and it is drawn
+     only while no `ollama` provider is configured. */
+  const ollamaBtn = await js<{ text: string; title: string; disabled: boolean } | null>(
+    "(() => { const b = document.querySelector('#settings .setbody button[data-act=\"llm:ollama\"]');"
+    + " return b ? {text: b.textContent.trim(), title: b.title, disabled: b.disabled} : null; })()",
+  );
+  const ollamaAdded = await js<boolean>("!!llmProvider('ollama')");
   // Calm (S5): the hint row's "a add from hugging face" left; the section's own button is the mouse route (the `a` key still works).
   check(
-    "llm tab: the Hugging Face button is live and the Local pane signposts Ollama",
-    rowLive && localBody0.includes("Add from Hugging Face")
-      && localBody0.includes("Nothing here downloads from Ollama")
-      && localBody0.includes("Ollama (local)") && localBody0.includes("http://localhost:11434"),
-    `row enabled=${rowLive}`,
+    "llm tab: the Hugging Face button is live and the Local pane offers Add Ollama",
+    rowLive && localBody0.includes("Add from Hugging Face") && !localBody0.includes("Using Ollama?")
+      && (ollamaAdded
+        ? ollamaBtn === null
+        : !!ollamaBtn && ollamaBtn.text === "Add Ollama" && !ollamaBtn.disabled && ollamaBtn.title.includes("Nothing here downloads from Ollama")),
+    `row enabled=${rowLive} · ollama ${ollamaAdded ? "is a provider already" : "is not a provider"} · button ${JSON.stringify(ollamaBtn)}`,
   );
   /* Review fix: the check above only proved the signpost's own text
      exists. The path it points at is a different object — the Cloud
      wizard's preset array — so it is asserted separately, off the array
      the wizard renders from. Renaming or deleting the preset now fails
-     here, which the copy check alone could never notice. */
+     here, which the copy check alone could never notice.
+     Item 48 (Д34): the path is a button now, so it is walked. A click on the
+     drawn button (act('llm:ollama') itself when this config already has
+     Ollama and draws none) opens the provider setup on that preset with its
+     address filled in, over the Cloud pane; and the Local pane drawn over
+     this config without and with an `ollama` provider has the button only
+     without one. The config object, the wizard and the pane are put back. */
   const ollamaPreset = await js<{ id: string; label: string; baseUrl: string; kind: string; local: boolean } | null>(
     "window.__preset('ollama')",
   );
+  type OllamaPath = { clicked: boolean; open: boolean; phase: string | null; row: string | null; baseUrl: string; mode: string; drawnWithout: boolean; drawnWith: boolean };
+  const ollamaPath = await js<OllamaPath>(
+    "(() => { const keep = LIVE_CONFIG; const block = llmBlock(); const others = llmProviders().filter((p) => p.id !== 'ollama');"
+    + " const drawn = (providers) => { LIVE_CONFIG = Object.assign({}, keep || {}, {llm: Object.assign({}, block, {providers})});"
+    + " const box = document.createElement('div'); box.innerHTML = llmLocalHTML(); return !!box.querySelector('[data-act=\"llm:ollama\"]'); };"
+    + " try {"
+    + " const drawnWithout = drawn(others);"
+    + " const drawnWith = drawn(others.concat([{id: 'ollama', kind: 'openai-compatible', baseUrl: 'http://localhost:11434'}]));"
+    + " LIVE_CONFIG = keep;"
+    + " const b = document.querySelector('#settings .setbody button[data-act=\"llm:ollama\"]');"
+    + " if (b) b.click(); else act('llm:ollama');"
+    + " return {clicked: !!b, open: SEL.open, phase: WIZ.phase, row: WIZ.row ? WIZ.row.id : null, baseUrl: WIZ.baseUrl, mode: LLMP.mode, drawnWithout, drawnWith};"
+    + " } finally { LIVE_CONFIG = keep; act('close'); } })()",
+  );
+  await js<Hf>("window.__llmOpen('local')");
   check(
-    "llm tab: the Ollama signpost points at a preset that is really there",
+    "llm tab: Add Ollama opens the provider setup on a preset that is really there, and goes once Ollama is added",
     !!ollamaPreset && ollamaPreset.label === "Ollama (local)"
       && ollamaPreset.baseUrl === "http://localhost:11434"
       && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
-      && localBody0.includes(ollamaPreset.label) && localBody0.includes(ollamaPreset.baseUrl),
-    JSON.stringify(ollamaPreset),
+      && (ollamaAdded || (!!ollamaBtn && ollamaBtn.title.includes(ollamaPreset.baseUrl) && ollamaPath.clicked))
+      && ollamaPath.open && ollamaPath.phase === "configure" && ollamaPath.row === ollamaPreset.id
+      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "cloud"
+      && ollamaPath.drawnWithout && !ollamaPath.drawnWith,
+    `${JSON.stringify(ollamaPreset)} · ${JSON.stringify(ollamaPath)}`,
   );
   /* And the other half of the promise: this window never reads Ollama's
      own model store. Asserted over the BUILT bundle, anchored to a PATH
