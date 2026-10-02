@@ -266,17 +266,9 @@ button.set-search:hover{border-color:var(--bd)}
 .set-privnote{margin:0 22px}
 /* Д48: what Session grants said, as one line under the switch it is about. */
 .set-setlist .tk-help.set-privgrant{margin-top:4px;max-width:62ch}
-/* Д50: what analytics send — a quiet disclosure under the switch, not two cards. */
-.set-privdet{margin-top:6px}
-.set-privdet > summary{display:inline-flex;align-items:center;gap:4px;height:26px;margin-left:-6px;padding:0 9px 0 5px;border-radius:var(--r-pill);
-  list-style:none;cursor:pointer;font-size:12.5px;font-weight:500;color:var(--blue);transition:background var(--t-state) var(--ease)}
-.set-privdet > summary::-webkit-details-marker{display:none}
-.set-privdet > summary:hover{background:var(--hover)}
-.set-privdet > summary:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
-.set-privdet > summary > svg{width:13px;height:13px;transition:transform var(--t-state) var(--ease)}
-.set-privdet[open] > summary > svg{transform:rotate(90deg)}
-.set-privline{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:var(--ink-2);max-width:62ch}
-.set-privline b{font-weight:600;color:var(--ink)}
+/* Д50: what analytics send — two plain lines under the switch, not two cards. */
+.set-privline{margin:2px 0 0;font-size:12.5px;line-height:1.5;color:var(--ink-2);max-width:62ch}
+.set-privline b{font-weight:500;color:var(--ink)}
 .set-privacy > .tk-notice{margin-top:2px}
 
 /* ---------------- 0.5.5 text-tab fallbacks ----------------

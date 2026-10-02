@@ -4728,7 +4728,7 @@ async function settingsTest(
   await js<void>("window.__settingsOpen('general')");
   const gen = await js<string>("window.__settingsBody()");
   const genSwitches = await js<number>("document.querySelectorAll('#settings .setbody .tk-switch[data-act=\"privacy:analytics\"]').length");
-  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "What analytics send"]
+  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Never sent with analytics"]
     .every((s) => priv.includes(s)) && !priv.includes("Session grants") && !priv.includes("Open General")
     && ["Appearance", "Working folder", "Anonymous usage analytics", "Crash reports and coarse usage counts"].every((s) => gen.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);

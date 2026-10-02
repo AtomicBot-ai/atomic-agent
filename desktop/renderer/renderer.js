@@ -4704,8 +4704,8 @@ function diagAct(what) {
    them (a blue line on top pushed the page down ~50 px); Session grants, a
    row with nothing to set, is one line under the switch it is about; the
    analytics switch is here as well as in General — the same value and the
-   same write, so the two always agree; what analytics send is a quiet
-   disclosure instead of two loud cards. */
+   same write, so the two always agree; what analytics send is two plain
+   lines under that switch instead of two loud cards. */
 function privacyPane() {
   const eff = privacyEffective();
   const known = typeof eff === 'boolean';
@@ -4732,15 +4732,12 @@ function privacyPane() {
       // The same switch as General's (privacy:analytics → privacyToggle), drawn from the same value.
       + '<div class="tk-setrow set-privan">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id.</div>'
-          + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
           /* Said about analytics, not about the Mac: "never leaves this Mac" read as
              a promise the app does not make (a cloud model is sent the messages).
              The agent swaps the IP for 0.0.0.0 before an event goes out. */
-          + '<details class="set-privdet"' + (SETDET['priv-sent'] ? ' open' : '') + '><summary data-setdet="priv-sent">' + ic('chevR') + 'What analytics send</summary>'
-            + sentLine('Sent with analytics', ['an install id', 'coarse counters', 'crash reports'])
-            + sentLine('Never sent with analytics', ['message content', 'paths', 'tool arguments', 'IP address'])
-          + '</details>'
+          + sentLine('Sent with analytics', ['an install id', 'coarse counters', 'crash reports'])
+          + sentLine('Never sent with analytics', ['message content', 'paths', 'tool arguments', 'IP address'])
+          + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
         // A spinner only while the value is still being read; PRIV.busy is shared with the read-scope write.
         + (pending ? '<span class="set-state" aria-hidden="true"><span class="tk-spin"></span></span>' : '')

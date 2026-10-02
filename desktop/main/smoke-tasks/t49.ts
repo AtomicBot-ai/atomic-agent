@@ -19,7 +19,7 @@ import { redactSecrets } from "../report-redact.js";
  * them down; it is a toast. Д48 Session grants was a row with nothing to set;
  * it is a line under the switch. Д49 Analytics sent you to General; the switch
  * is in Privacy too, drawn from the same value. Д50 The two cards of what
- * analytics send are a quiet disclosure, worded as before.
+ * analytics send are two plain lines under that switch, worded as before.
  * Д51 Import's Run preview moved with each source and went past the window's
  * edge; it stays in the pane's header. Д52 it is Preview import, and Limit
  * says what it limits. Д53 the report is in words, Apply is off when there is
@@ -190,15 +190,15 @@ async function tasks(js: Js, check: Check): Promise<void> {
 
 /* Д47–Д50. */
 async function privacy(js: Js, check: Check): Promise<void> {
-  const pane = await safe<{ switches: number; toGeneral: boolean; grants: boolean; grantLine: boolean; cards: number;
-    det: { open: boolean; summary: string; text: string } | null; leaves: boolean }>(js, `(() => {
+  const pane = await safe<{ switches: number; toGeneral: boolean; grants: boolean; grantLine: boolean; cards: number; icons: number;
+    lines: string[]; leaves: boolean }>(js, `(() => {
     const box = document.createElement('div'); box.innerHTML = privacyPane();
-    const det = box.querySelector('details');
+    const sw = box.querySelector('.tk-switch[data-act="privacy:analytics"]'), row = sw && sw.closest('.tk-setrow');
     return {switches: box.querySelectorAll('.tk-switch[data-act="privacy:analytics"]').length,
       toGeneral: !!box.querySelector('[data-act="settings:general"]') || /Open General|on or off in General/.test(box.textContent),
       grants: /Session grants/.test(box.textContent), grantLine: /read that folder for the rest of the chat/.test(box.textContent),
-      cards: box.querySelectorAll('.set-privgrid, .set-privcol').length,
-      det: det ? {open: det.open, summary: det.querySelector('summary').textContent.trim(), text: det.textContent} : null,
+      cards: box.querySelectorAll('.set-privgrid, .set-privcol').length, icons: row ? row.querySelectorAll('.tk-ico').length : -1,
+      lines: row ? [...row.querySelectorAll('.set-privline')].map((p) => p.textContent.trim()) : [],
       leaves: /never leaves/i.test(box.textContent)};
   })()`);
   check(
@@ -207,11 +207,11 @@ async function privacy(js: Js, check: Check): Promise<void> {
     pane.err ?? show(pane),
   );
   check(
-    "T49 (Д50): what analytics send is a closed disclosure, not two cards, worded Sent / Never sent with analytics",
-    !pane.err && pane.cards === 0 && !!pane.det && !pane.det.open && pane.det.summary === "What analytics send"
-      && /Sent with analytics: an install id, coarse counters, crash reports\./.test(pane.det.text)
-      && /Never sent with analytics: message content, paths, tool arguments, IP address\./.test(pane.det.text) && !pane.leaves,
-    pane.err ?? show(pane.det),
+    "T49 (Д50): what analytics send is two plain lines under the analytics switch, not two cards, worded Sent / Never sent with analytics",
+    !pane.err && pane.cards === 0 && pane.icons === 0 && pane.lines.length === 2
+      && pane.lines[0] === "Sent with analytics: an install id, coarse counters, crash reports."
+      && pane.lines[1] === "Never sent with analytics: message content, paths, tool arguments, IP address." && !pane.leaves,
+    pane.err ?? show({ cards: pane.cards, icons: pane.icons, lines: pane.lines }),
   );
 
   // Д49: the switch is here, the same one as General's, and both show the same value.
