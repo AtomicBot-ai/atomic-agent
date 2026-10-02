@@ -715,6 +715,9 @@ const DLC = {
   /** How far the card reaches up over the conversation's bottom edge,
       published as --dlcard-chat (0 while it is away or beside the column). */
   chat: 0,
+  /** Chat review (Д19): that reach as the open card took it, which the
+      folded badge keeps (null while the card is away). */
+  openRoom: null,
 };
 /* The card's distance from the window's edges, and from whatever it keeps clear of. */
 const DLC_EDGE = 16, DLC_GAP = 8;
@@ -9409,6 +9412,7 @@ function renderDlcard() {
     if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
     DLC.shape = null;
     DLC.had = false;
+    DLC.openRoom = null;
     dlCardFollow(null);
     dlCardPublish(0);
     return;
@@ -9493,18 +9497,20 @@ function dlCardOverChat(el) {
   const col = sc && sc.querySelector(':scope > .col720');
   const face = el.firstElementChild;
   if (!col || !face) return 0;
+  /* Chat review (Д19): the transcript sits on the composer now, so even a
+     chat too short to scroll has its newest reply, or an approval's buttons,
+     where the card stands, and it takes the room too: it lifts clear of the
+     card when the card comes and settles back when it goes. Folded to its
+     badge, the card keeps the room it took open, so folding and opening
+     move nothing (T18c). */
+  if (DLC.collapsed && DLC.openRoom !== null) return DLC.openRoom;
   const s = sc.getBoundingClientRect(), c = col.getBoundingClientRect(), f = face.getBoundingClientRect();
   const cs = getComputedStyle(col);
   const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
-  if (!(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom) return 0;
-  /* Chat review (Д19): the transcript sits on the composer now, so room made
-     under one too short to scroll would lift the whole chat each time the
-     card came, folded or went — the move this card exists not to make
-     (T18c). Such a chat keeps its place and the card floats over its end;
-     one that scrolls still ends clear of it. Judged without the room the
-     card already holds, so the answer does not feed on itself. */
-  if (sc.scrollHeight - Math.max(0, (DLC.chat || 0) - 16) <= sc.clientHeight) return 0;
-  return Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
+  const room = !(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom ? 0
+    : Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
+  if (!DLC.collapsed) DLC.openRoom = room;
+  return room;
 }
 
 /** The composer grows as it is typed into without a render: follow it. */

@@ -16,7 +16,10 @@ import { join } from "node:path";
  *   Д17 Copy and retry stand 6–8 px clear of the message they belong to.
  *   Д18 No end mark (the small glyph) under a finished reply.
  *   Д19 A short conversation sits on the composer, a long one still scrolls
- *       from its first line, and a bubble never runs past the column.
+ *       from its first line, and a bubble never runs past the column. The
+ *       download card does not cover a short chat's end: a one-turn chat
+ *       ending on an approval keeps its buttons within reach above the card,
+ *       and folding or opening the card moves nothing.
  *   Д20 The composer's running line is 1px and slower.
  *   Д21 Where it runs: a row with nothing to run on carries Add provider and
  *       leads to Settings › Models; no red refusal grows the menu.
@@ -56,6 +59,7 @@ export async function checks46(js: Js, check: Check): Promise<void> {
   await section("start screen", check, () => startScreen(js, check));
   await section("working folder", check, () => workingFolder(js, check));
   await section("transcript", check, () => transcript(js, check));
+  await section("download card", check, () => downloadCard(js, check));
   await section("composer", check, () => composer(js, check));
   await section("where it runs", check, () => whereItRuns(js, check));
   await section("panels", check, () => panels(js, check));
@@ -194,6 +198,73 @@ async function transcript(js: Js, check: Check): Promise<void> {
     "T46 Д19: a message with nothing to break on stays inside the column, the side panel open",
     w.sw === w.cw && Number(w.bubbleRight) <= Number(w.colRight) + 1,
     q(w),
+  );
+}
+
+/* Д19, its review — the download card over a one-turn chat ending on an
+   approval, as T18-F6 stages a long one: the transcript sits on the composer
+   now, right where the card stands. Staged rows and a seeded download (no
+   download runs); both are taken back out. */
+async function downloadCard(js: Js, check: Check): Promise<void> {
+  type Box = { top: number; bottom: number; left: number; right: number } | null;
+  type Shot = { appr: Box; card: Box; first: Box; abort: boolean; allow: boolean; deny: boolean };
+  const r = await js<{ skipped?: string; plain?: Shot; open?: Shot; folded?: Shot; reopened?: Shot; gone?: Shot }>(`(async () => {
+    const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    if (DL.job || DL.queue.length) return {skipped: 'a download is running'};
+    const box = (n) => { if (!n) return null; const b = n.getBoundingClientRect();
+      return {top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left), right: Math.round(b.right)}; };
+    // A press at the button's centre reaches the button, not the card over it.
+    const reach = (sel) => { const appr = document.getElementById('apprcard'); const n = appr && appr.querySelector(sel);
+      const b = n && n.getBoundingClientRect(); const at = b ? document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) : null;
+      return !!(at && (at === n || n.contains(at))); };
+    const shot = () => ({appr: box(document.getElementById('apprcard')), card: box(document.querySelector('#dlcard:not([hidden]) > *')),
+      first: box(document.querySelector('#scroller .turn')), abort: reach('.apprabort'), allow: reach('[data-appr="y"]'), deny: reach('#denybtn')});
+    const keep = {log: S.log, pending: S.pending, focused: S.apprFocused, stick: S.stick, room: S.room, toasts: S.toasts.slice()};
+    try {
+      window.__dlClear(); S.toasts = []; renderToasts(); S.room = 'chat';
+      const req = {id: nid(), k: 'approval', approvalId: 'smoke-t46-appr', tool: 'os.fs.write', cat: 'fs_write_workspace',
+        kind: CATEGORY_LABEL.fs_write_workspace, lvl: 2, reason: 'smoke t46 fixture', preview: '(no preview)', shape: '',
+        affectsBase: 'notes.md', affectsDir: '', sessionGrants: false, sessionId: S.agentSession};
+      S.log = [{id: nid(), k: 'user', text: 'smoke t46: add a line to the notes file'}, req];
+      S.pending = req; S.apprFocused = true; S.stick = true;
+      render(); await tick(150);
+      const plain = shot();
+      window.__dlSeed([{kind: 'runtime', id: 'llama.cpp'}, {kind: 'weights', id: 'qwen-3.5-9b'}]);
+      window.__dlFeed({id: 'llama.cpp', kind: 'runtime', percent: 40, transferredBytes: 30000000, totalBytes: 75000000});
+      await tick(300);
+      const open = shot();
+      const fold = document.querySelector('#dlcard .dlc-fold'); if (fold) fold.click();
+      await tick(150);
+      const folded = shot();
+      const badge = document.querySelector('#dlcard .dlc-badge'); if (badge) badge.click();
+      await tick(150);
+      const reopened = shot();
+      window.__dlClear(); await tick(200);
+      const gone = shot();
+      return {plain, open, folded, reopened, gone};
+    } finally {
+      window.__dlClear();
+      S.log = keep.log; S.pending = keep.pending; S.apprFocused = keep.focused; S.stick = keep.stick; S.room = keep.room; S.toasts = keep.toasts;
+      render();
+    }
+  })()`);
+  if (r.skipped) {
+    check("T46 Д19: the download card over a one-turn chat (not staged)", true, r.skipped);
+    return;
+  }
+  const { plain, open, folded, reopened, gone } = r;
+  const within = (s: Shot | undefined) => !!s && !!s.appr && !!s.card && s.appr.bottom <= s.card.top && s.abort && s.allow && s.deny;
+  check(
+    "T46 Д19: with the download card open, a one-turn chat ending on an approval sits above it — Abort run, Allow once and Deny all within reach",
+    !!plain && plain.abort && within(open),
+    q({ plain, open }),
+  );
+  check(
+    "T46 Д19: folding and opening the card move nothing, and the chat settles back when the card goes",
+    !!open && !!folded && !!reopened && !!gone && !!plain && !!folded.first && !!open.first
+      && folded.first.top === open.first.top && reopened.first?.top === open.first.top
+      && gone.first?.top === plain.first?.top && folded.abort && folded.allow && folded.deny && within(reopened),
+    q({ open: open?.first, folded: folded?.first, reopened: reopened?.first, gone: gone?.first, plain: plain?.first }),
   );
 }
 

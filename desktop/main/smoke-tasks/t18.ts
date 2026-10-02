@@ -341,8 +341,9 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
 }
 
 /* (b)(c)(d) Where the card stands, at the smallest window and at the
-   default one; that the chat does not move when it comes and goes; that
-   there is no strip; that toasts stay readable above it. */
+   default one; that the chat does not move when it comes and goes (a
+   conversation it would cover only lifts clear of it); that there is no
+   strip; that toasts stay readable above it. */
 async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<void> {
   type Geo = {
     width: number; height: number; card: { box: Box } | null; folded: { box: Box } | null; strip: boolean;
@@ -456,13 +457,22 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
       !!f && f.width === 44 && f.height === 44 && Math.abs(f.right - (g.width - 16)) <= 1 && !!g.dock && f.bottom <= g.dock.top,
       JSON.stringify({ badge: f, dock: g.dock?.top }),
     );
-    const steady = (s: Record<string, number | null>[]) => s.length === 5
-      && ["main", "scroller", "composer", "greeting", "first"].every((k) => s.every((m) => m[k] === s[0]![k]));
+    const steady = (s: Record<string, number | null>[], keys = ["main", "scroller", "composer", "greeting", "first"]) => s.length === 5
+      && keys.every((k) => s.every((m) => m[k] === s[0]![k]));
+    /* Chat review Д19: the transcript sits on the composer now, so a
+       conversation the card would cover lifts clear of it when the card comes
+       and settles back when it goes (marks 1–3 with the card, 0 and 4
+       without); folding and opening the card move nothing, and the empty chat
+       does not move at all. */
+    const chat = g.stillChat;
+    const first = (i: number) => chat[i]?.["first"] ?? null;
+    const lifted = chat.length === 5 && first(0) !== null && first(1) === first(2) && first(2) === first(3)
+      && first(4) === first(0) && (first(1) ?? 0) <= (first(0) ?? 0);
     check(
-      `T18c: at ${tag} the chat does not move when the card comes, folds, opens and goes — on the empty chat and in a conversation`,
-      steady(g.still) && g.still[0]!["greeting"] !== null && steady(g.stillChat) && g.stillChat[0]!["first"] !== null
+      `T18c: at ${tag} the empty chat does not move when the card comes, folds, opens and goes; a conversation only lifts clear of it, and folding or opening moves nothing`,
+      steady(g.still) && g.still[0]!["greeting"] !== null && steady(chat, ["main", "scroller", "composer"]) && lifted
         && g.still[0]!["composer"] !== null,
-      JSON.stringify({ empty: g.still[0], chat: g.stillChat[0], moved: [...g.still, ...g.stillChat].filter((m, i, a) =>
+      JSON.stringify({ empty: g.still[0], chat: g.stillChat[0], firsts: [0, 1, 2, 3, 4].map(first), moved: [...g.still, ...g.stillChat].filter((m, i, a) =>
         JSON.stringify(m) !== JSON.stringify(i < g.still.length ? g.still[0] : g.stillChat[0])) }),
     );
     check(
