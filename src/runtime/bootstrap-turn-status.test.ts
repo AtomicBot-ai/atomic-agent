@@ -10,7 +10,8 @@ import {
   INTERRUPTED_TURN_ENDING,
   SessionStore,
   createEmptySessionState,
-  hostBootAt,
+  hostUptime,
+  type ConversationTurn,
 } from "../session/index.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
@@ -95,10 +96,8 @@ async function waitFor(check: () => boolean, ms = 5_000): Promise<boolean> {
   return true;
 }
 
-function userTexts(turns: readonly { kind: string }[]): string[] {
-  return turns
-    .filter((turn) => turn.kind === "user")
-    .map((turn) => (turn as { text: string }).text);
+function userTexts(turns: readonly ConversationTurn[]): string[] {
+  return turns.flatMap((turn) => (turn.kind === "user" ? [turn.text] : []));
 }
 
 describe("a turn's status in the session store", () => {
@@ -305,6 +304,41 @@ describe("a turn's status in the session store", () => {
     expect(stored?.lastError).toBeNull();
   });
 
+  it("lets a stopped turn that throws during shutdown replace the interrupted stand-in", async () => {
+    // Shutdown writes "interrupted" first thing, as a stand-in. The turn
+    // then ends by throwing (here: a host hook failing as the loop closes
+    // it), so it has no state to save — but it was stopped, and that is
+    // what its row says, not the stand-in.
+    let armed = false;
+    const model = heldModel(50);
+    const runtime = await boot(model.llamaComplete, {
+      onAgentEvent: (event) => {
+        if (armed && event.type === "loop_completed") {
+          throw new Error("hook failed as the turn closed");
+        }
+      },
+    });
+    const session = runtime.createSession();
+    model.state.target = session.id;
+    const controller = new AbortController();
+    armed = true;
+    const turn = runtime
+      .runTurn(session, "quit mid-turn", {
+        origin: "tui",
+        maxSteps: 4,
+        signal: controller.signal,
+      })
+      .catch((err: unknown) => err);
+    expect(await waitFor(() => model.state.entered === 1)).toBe(true);
+    controller.abort();
+    await runtime.shutdown();
+    expect(await turn).toBeInstanceOf(Error);
+
+    const stored = readBack((store) => store.load(session.id));
+    expect(stored?.status).toBe("cancelled");
+    expect(stored?.lastError).toBeNull();
+  });
+
   it("records a turn nobody stopped as interrupted at shutdown", async () => {
     // Nothing stops a scheduled task's turn when the app quits, and
     // shutdown does not wait for it: its model never answers here.
@@ -341,7 +375,12 @@ describe("a turn's status in the session store", () => {
     const seedRunning = (id: string, pid: number): void => {
       const store = new SessionStore({
         dbFile,
-        turnOwnerProbe: { pid, bootAt: hostBootAt(), isAlive: () => true },
+        turnOwnerProbe: {
+          pid,
+          hostUptime,
+          isAlive: () => true,
+          startTicksOf: () => null,
+        },
       });
       try {
         store.save(createEmptySessionState({ id, workingDir }));

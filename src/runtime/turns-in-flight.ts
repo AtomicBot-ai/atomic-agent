@@ -20,9 +20,11 @@ interface InFlightTurn {
  * on before it closes the session store.
  *
  * Every host stops its own turns before it shuts the runtime down —
- * `serve` drops the connections, the TUI and the sidecar abort their
- * controllers, the channels abort theirs as they stop — but shutdown
- * then closed the store at once, while those turns were still unwinding.
+ * `serve` drops the connections (and its server's `close()` resolves
+ * only once every request has seen that), the TUI and the sidecar abort
+ * their controllers, the channels abort theirs as they stop — but
+ * shutdown then closed the store at once, while those turns were still
+ * unwinding.
  * A turn that lost that race could not write its end: its row kept
  * whatever it held before the turn, so a chat cancelled by quitting the
  * app looked like one where nothing had happened. Seen in a user's
