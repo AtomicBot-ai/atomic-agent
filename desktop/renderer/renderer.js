@@ -6866,7 +6866,10 @@ function startLiveTurn(text) {
       render();
       return;
     }
-    S.turnId = res.turnId;
+    // Item 38: unless the person has opened, meanwhile, a chat whose running
+    // turn is on screen again: that one stays the window's, or its frames
+    // would stop being drawn there. This one's are kept for its chat.
+    if (S.log.includes(streaming) || !liveShowsTurn()) S.turnId = res.turnId;
     // Backlog 25: the streaming row knows its own turn, which Stop reads
     // (screenTurnId): S.turnId moves on with the next turn in any chat.
     streaming.turn = res.turnId;
@@ -6989,6 +6992,11 @@ function liveTurnFrame(ev) {
 /** The turn's rows are on screen, and it is the window's turn, whose frames onChatEvent draws. */
 function liveOnScreen(turnId, rec) {
   return turnId === S.turnId && S.log.includes(rec.item);
+}
+/** The window's turn (S.turnId) is a running one whose rows are on screen. */
+function liveShowsTurn() {
+  const rec = S.turnId ? LIVE_TURNS.get(S.turnId) : null;
+  return !!rec && !rec.ended && liveOnScreen(S.turnId, rec);
 }
 /** Kept, dated when it came. A run of reply or reasoning text is kept as one frame. */
 function liveKeep(rec, ev) {
