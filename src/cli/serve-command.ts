@@ -2,6 +2,7 @@ import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { stderrSink } from "../tracing/structured-logger.js";
+import type { LogSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { HELP, parseArgs } from "./serve-args.js";
@@ -68,7 +69,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       ),
       traceDefault: true,
       handlers: {
-        logSinks: [stderrSink],
+        logSinks: serveLogSinks(),
         onApprovalRequest: (request) => approvalBus.publish(request),
       },
     });
@@ -133,6 +134,25 @@ export async function serveCommand(args: string[]): Promise<number> {
     // invisible stray this module exists to prevent.
     releaseRecord?.();
   }
+}
+
+/**
+ * Where `serve` sends its structured log: stderr, which a host running
+ * it relays into its own log (the desktop app's agent.log and
+ * Diagnostics pane). `config.log.level` still decides what is written —
+ * the logger drops a record below it before any sink sees it.
+ *
+ * Built by a call, and exported for its test, because of how this went
+ * wrong: serve used to hand the runtime `stderrSink` itself, the factory
+ * rather than the sink it returns. That type-checks — a sink's return
+ * value is ignored, so a function that takes no record and returns a
+ * sink passes for one — and every record "written" to it built a sink
+ * and threw it away. No structured line from `serve` ever reached
+ * stderr: under the desktop, the log said nothing about why a turn
+ * parked or failed.
+ */
+export function serveLogSinks(): LogSink[] {
+  return [stderrSink()];
 }
 
 interface OrphanWatch {
