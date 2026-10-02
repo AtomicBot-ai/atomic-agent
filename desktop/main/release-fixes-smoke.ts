@@ -27,6 +27,8 @@ import { checks28 } from "./smoke-tasks/t28.js";
 import { checks32 } from "./smoke-tasks/t32.js";
 import { checks30 } from "./smoke-tasks/t30.js";
 import { checks34 } from "./smoke-tasks/t34.js";
+import { checks36 } from "./smoke-tasks/t36.js";
+import { checks47 } from "./smoke-tasks/t47.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -63,7 +65,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "47"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -630,6 +632,13 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
 
   // 26 — a message queued in one chat ran in whatever chat was on screen when its turn ended.
   if (want.has("26")) await guarded("26", check, () => checks26(js, check));
+
+  // 36 — the Settings nav could cut its last rows off on a window too short for them; and the
+  // settings window sat under the system's window controls on a small window.
+  if (want.has("36")) await guarded("36", check, () => checks36(js, check));
+
+  // 47 — Danya's Settings items (Д25–Д28): Done, one status line, toasts inside Settings, no On / Off words.
+  if (want.has("47")) await guarded("47", check, () => checks47(js, check));
 
   await wait(100);
 }
