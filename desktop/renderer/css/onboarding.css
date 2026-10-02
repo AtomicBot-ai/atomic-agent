@@ -176,8 +176,9 @@
 #onboarding .ob-tick svg{width:15px;height:15px;stroke-width:2.2}
 #onboarding .ob-models .ob-row > .ob-tick{align-self:center}
 #onboarding .ob-row > .tk-ico,#onboarding .ob-row > .logo{flex:none}
-/* A model with no brand mark wears the CPU badge at the logo's size, so
-   every row's text starts on the same line. */
+/* A source with no brand mark wears its icon badge at the logo's size, so
+   every row's text starts on the same line (a model's fallback mark is that
+   size already: markFallbackHTML). */
 #onboarding .ob-row > .tk-ico--sm{width:30px;height:30px}
 
 /* Route cards (ON-02): three lifted cards, the one under the cursor ringed. */

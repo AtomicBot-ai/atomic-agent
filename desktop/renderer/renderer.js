@@ -1493,18 +1493,43 @@ function providerLogoKey(p) {
   const s = String(p || '').toLowerCase().trim();
   return PROVIDER_LOGO_KEYS[s] || PROVIDER_LOGO_KEYS[s.split(' (')[0]] || PROVIDER_LOGO_KEYS[s.split(/[\s(]/)[0]] || '';
 }
-/** The badge for a mark key; size is '', 'sm', 'xs' or 'lg'. '' when the key has no file. */
-function logoHTML(key, size) {
+/** The badge for a mark key; size is '', 'sm', 'xs' or 'lg'. '' when the key has no file.
+ *  `fb` names the icon the badge falls back to if its file does not load. */
+function logoHTML(key, size, fb) {
   const f = LOGO_FILES[key];
-  return f ? '<span class="logo' + (size ? ' logo--' + size : '') + '"><img src="logos/' + f + '" alt=""></span>' : '';
+  return f ? '<span class="logo' + (size ? ' logo--' + size : '') + '"' + (fb ? ' data-fb="' + fb + '"' : '') + '>'
+    + '<img src="logos/' + f + '" alt=""></span>' : '';
 }
-/** A model's mark, or the CPU icon on a neutral badge. */
+/**
+ * The badge a model wears when it has no mark of its own, or when its file
+ * did not load: the icon on the same light disc and at the same size as a
+ * logo. A small grey glyph beside the logo discs read as an image that
+ * failed to load ("Meta Muse Glimmer 30B", Danya, 30.09).
+ */
+function markFallbackHTML(icon, size) {
+  const sz = size === 'lg' || size === 'sm' || size === 'xs' ? ' tk-ico--' + size : '';
+  return '<span class="tk-ico tk-ico--mark' + sz + '">' + ic(icon) + '</span>';
+}
+/** A model's mark, or the CPU icon on the logo's badge. */
 function modelMark(id, size) {
-  return logoHTML(modelLogoKey(id), size) || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('cpu') + '</span>';
+  return logoHTML(modelLogoKey(id), size, 'cpu') || markFallbackHTML('cpu', size);
 }
 /** A provider's mark, or the server icon on a neutral badge. */
 function providerMark(idOrLabel, size) {
-  return logoHTML(providerLogoKey(idOrLabel), size) || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('server') + '</span>';
+  return logoHTML(providerLogoKey(idOrLabel), size, 'server') || '<span class="tk-ico tk-ico--' + (size === 'lg' ? 'lg' : size === 'xs' ? 'xs' : 'sm') + '">' + ic('server') + '</span>';
+}
+/* A mark whose file does not load (one missing from a build) swaps itself
+   for the fallback badge instead of drawing a broken image. `error` does not
+   bubble, so this listens in the capture phase; a later repaint that draws
+   the same broken mark is swapped the same way. */
+if (typeof document !== 'undefined') {
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    const badge = img && img.tagName === 'IMG' ? img.parentElement : null;
+    if (!badge || !badge.classList.contains('logo') || !badge.isConnected) return;
+    const size = ['xs', 'sm', 'lg'].find((s) => badge.classList.contains('logo--' + s)) || '';
+    badge.outerHTML = markFallbackHTML(badge.dataset.fb || 'cpu', size);
+  }, true);
 }
 
 const dur = (ms) => ms == null ? '…' : ms + 'ms';   // item 4: as the TUI prints it (tool-card.tsx), never X.Xs
