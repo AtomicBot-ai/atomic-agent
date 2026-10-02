@@ -1506,7 +1506,9 @@ export interface UserManagedLocalLlmConfig {
    * llama-server context window (`--ctx-size`) for the managed chat
    * daemon.
    *   - `0` (default) — auto: fit the context to the target device's
-   *     free VRAM at start (see `estimateContextSize`).
+   *     free VRAM at start (see `estimateContextSize`); on a device that
+   *     shares the system's RAM (Apple silicon, an integrated GPU) also
+   *     within a share of physical memory (`resolveUnifiedMemoryKvCapMiB`).
    *   - a positive value — pin `--ctx-size` exactly, clamped only to the
    *     model's trained context ceiling.
    */

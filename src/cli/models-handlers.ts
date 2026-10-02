@@ -35,6 +35,8 @@ import {
   isModelDownloaded,
   listLocalModels,
   listVulkanDevices,
+  AUTO_UPDATE_RECHECK_MS,
+  deviceTableOnce,
   maybeAutoUpdateBackend,
   readBackendVersion,
   readDownloadJob,
@@ -457,6 +459,11 @@ export async function runLocalModelsStart(): Promise<number> {
       // for. It still needs a deadline — a stalled-open connection would
       // otherwise pin the command forever with a progress bar at 12%.
       signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+      // Each `models start` is a fresh process (the desktop runs one on
+      // every switch to the local model), so the release cache never
+      // survives from one to the next: a check from the last few hours,
+      // recorded in the data dir, stands instead of a GitHub round trip.
+      recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
       onProgress: (p: number, t: number, tot: number) => {
         const line = renderPullProgress("backend zip", p, t, tot);
         if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
@@ -536,11 +543,15 @@ export async function runLocalModelsStart(): Promise<number> {
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(dataDir, binaryName);
+  // One `--list-devices` for the launch: the context fit reads the same
+  // table for the free memory (`deviceTableOnce`).
+  const listDevices = deviceTableOnce(binPath);
   const device = await resolveManagedDevice(
     binPath,
     cfg.localModels.managed.device,
     {
       multiGpu,
+      listDevices,
     },
   );
   process.stdout.write(
@@ -573,6 +584,9 @@ export async function runLocalModelsStart(): Promise<number> {
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),
+        // The table `dev` was picked from; the CPU rescue below swaps
+        // the binary and reads no device memory, so it gets none.
+        ...(dev !== "cpu" ? { listDevices } : {}),
         // A configured tensor split only applies while a GPU build
         // serves — the forced-CPU rescue retry (`startWithDevice("cpu")`)
         // must not hand multi-GPU split args to the CPU backend.

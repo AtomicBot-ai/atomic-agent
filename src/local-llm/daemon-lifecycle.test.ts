@@ -19,6 +19,12 @@ vi.mock("node:child_process", () => ({
   execSync: execSyncMock,
   execFile: execFileMock,
 }));
+/** Physical RAM as the launch reads it (`os.totalmem`); 16 GB unless a test says otherwise. */
+const totalmemMock = vi.hoisted(() => vi.fn(() => 16 * 1024 ** 3));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, totalmem: totalmemMock };
+});
 
 import {
   resolveEmbeddingPidFilePath,
@@ -36,11 +42,15 @@ import {
   getDaemonStatus,
   probeThroughput,
   readLaunchRecord,
+  readReusableThroughput,
   readRunningPid,
   readThroughputRecord,
+  slotsAllIdle,
   startDaemon,
   startEmbeddingDaemon,
   THROUGHPUT_PROBE_TOKENS,
+  THROUGHPUT_REUSE_MAX_AGE_MS,
+  throughputBasis,
   writeLaunchRecord,
   writeThroughputRecord,
   stopDaemon,
@@ -48,9 +58,14 @@ import {
   type DaemonStartOptions,
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
+import { writeBackendVersion } from "./backend-version.js";
 import { getEmbeddingModelDef, getLocalModelDef } from "./models-catalog.js";
 import { resetConfigCache } from "../config/config-cache.js";
-import { encodeSyntheticGguf, gemma4Pairs } from "./gguf-metadata.fixtures.js";
+import {
+  encodeSyntheticGguf,
+  gemma4Pairs,
+  qwen35Pairs,
+} from "./gguf-metadata.fixtures.js";
 import { EventEmitter } from "node:events";
 
 /** A spawned llama-server that stays up until `exit` is emitted. */
@@ -783,6 +798,12 @@ describe("startDaemon throughput probe (F16)", () => {
           if (String(url).endsWith("/v1/models")) {
             return new Response(JSON.stringify({ data: [{ id: "qwen-3.5-4b" }] }), { status: 200 });
           }
+          if (String(url).endsWith("/slots")) {
+            return new Response(
+              JSON.stringify([{ id: 0, is_processing: false }, { id: 1, is_processing: false }]),
+              { status: 200 },
+            );
+          }
           posts.push(String(url));
           void init;
           return new Response(
@@ -1031,6 +1052,11 @@ describe("managed launch requires an api key (#582)", () => {
         if (String(url).endsWith("/v1/models")) {
           return new Response(JSON.stringify({ data: [{ id: alias }] }), { status: 200 });
         }
+        // A build without the endpoint: the probe's figure is not carried
+        // over, so each launch below probes and shows its key.
+        if (String(url).endsWith("/slots")) {
+          return new Response("Not Found", { status: 404 });
+        }
         const headers = (init?.headers ?? {}) as Record<string, string>;
         probeAuth.push(headers.authorization ?? null);
         return new Response(
@@ -1126,5 +1152,284 @@ describe("managed launch requires an api key (#582)", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * Backlog 39 and 42, on the managed start: one `--list-devices` per
+ * launch, the auto context held to a unified-memory Mac's RAM, and the
+ * decode speed carried over instead of measured on every start.
+ */
+describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    spawnMock.mockReset();
+    execFileMock.mockReset();
+    totalmemMock.mockReset();
+    totalmemMock.mockReturnValue(16 * 1024 ** 3);
+  });
+
+  const BUILD = {
+    tag: "turboquant-6df272c",
+    downloadedAt: "2026-10-01T21:39:24.093Z",
+    asset: "llama-turboquant-macos-arm64.zip",
+  };
+
+  /** Backend, its version record and Qwen 3.5 4B's real header on disk. */
+  function stageQwen35(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    writeBackendVersion(dataDir, BUILD);
+    const model = getLocalModelDef("qwen-3.5-4b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, encodeSyntheticGguf(qwen35Pairs()));
+  }
+
+  /** `llama-server --list-devices` answers with `rows`. */
+  function listDevicesAnswers(...rows: string[]): void {
+    execFileMock.mockImplementation(
+      (
+        _file: string,
+        _args: string[],
+        _opts: unknown,
+        done: (err: Error | null, out: { stdout: string; stderr: string }) => void,
+      ) => {
+        done(null, { stdout: ["Available devices:", ...rows.map((r) => `  ${r}`)].join("\n"), stderr: "" });
+      },
+    );
+  }
+
+  /** A healthy server; returns the probe POSTs. `busySlot`: one slot still decoding as the probe ends. */
+  function healthyServer(opts: { speed?: number; busySlot?: boolean } = {}): string[] {
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(afterSpawn(async (url: string) => {
+        const at = String(url);
+        const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+        if (at.endsWith("/health")) return json({ status: "ok" });
+        if (at.endsWith("/v1/models")) return json({ data: [{ id: "qwen-3.5-4b" }] });
+        if (at.endsWith("/slots")) {
+          return json([
+            { id: 0, is_processing: false },
+            { id: 1, is_processing: opts.busySlot === true },
+          ]);
+        }
+        posts.push(at);
+        return json({ timings: { predicted_n: 64, predicted_per_second: opts.speed ?? 19.45 } });
+      })),
+    );
+    return posts;
+  }
+
+  /** The server stopped (its pid file gone) and the port free again before the next start. */
+  function stopped(dataDir: string): void {
+    rmSync(resolvePidFilePath(dataDir), { force: true });
+    spawnMock.mockClear();
+  }
+
+  function spawnedArg(flag: string): string | undefined {
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    const at = args.indexOf(flag);
+    return at < 0 ? undefined : args[at + 1];
+  }
+
+  it("asks --list-devices once, and holds Qwen 3.5 4B to the Mac's memory: 149,504 tokens, not 262,144", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-mac16-`);
+    try {
+      stageQwen35(dataDir);
+      listDevicesAnswers("MTL0: Apple M4 (10922 MiB, 10922 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6001));
+      healthyServer();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19089,
+        parallel: 1,
+        throughputProbe: false,
+      });
+      // The device pick and the context fit read one table.
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+      expect(execFileMock.mock.calls[0]![1]).toEqual(["--list-devices"]);
+      expect(spawnedArg("--device")).toBe("MTL0");
+      expect(result.contextSize).toBe(149_504);
+      expect(spawnedArg("--ctx-size")).toBe("149504");
+      const log = readFileSync(resolveLogFilePath(dataDir), "utf-8");
+      expect(log).toContain(
+        "[atomic-agent] launch: --ctx-size 149504 fitted from the model's KV layout, held to 16 GB of unified memory",
+      );
+      expect(log).toContain("(262144 would fit the GPU's free figure)");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives an 8 GB Mac 74,752 tokens and leaves a card with memory of its own at the fit", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-mac8-`);
+    try {
+      stageQwen35(dataDir);
+      totalmemMock.mockReturnValue(8 * 1024 ** 3);
+      listDevicesAnswers("MTL0: Apple M2 (5461 MiB, 5461 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6002));
+      healthyServer();
+      const mac = await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19088, parallel: 1, throughputProbe: false });
+      expect(mac.contextSize).toBe(74_752);
+
+      stopped(dataDir);
+      totalmemMock.mockReturnValue(16 * 1024 ** 3);
+      listDevicesAnswers("CUDA0: NVIDIA GeForce RTX 4090 (24564 MiB, 10922 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6003));
+      const card = await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19088, parallel: 1, throughputProbe: false });
+      expect(card.contextSize).toBe(262_144);
+      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).not.toMatch(
+        /--ctx-size 262144 fitted from the model's KV layout, held to/,
+      );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a contextSize the operator set, on the same Mac", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-mac-pinned-`);
+    try {
+      stageQwen35(dataDir);
+      listDevicesAnswers("MTL0: Apple M4 (10922 MiB, 10922 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6004));
+      healthyServer();
+      const result = await startDaemon({
+        dataDir,
+        modelId: "qwen-3.5-4b",
+        port: 19087,
+        parallel: 1,
+        contextSize: 262_144,
+        throughputProbe: false,
+      });
+      expect(result.contextSize).toBe(262_144);
+      expect(spawnedArg("--ctx-size")).toBe("262144");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("measures the speed once, then carries it over: the next start of the same model does not probe", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-speed-`);
+    try {
+      stageQwen35(dataDir);
+      const posts = healthyServer({ speed: 19.45 });
+      spawnMock.mockReturnValue(fakeChild(6101));
+      const first = await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19086, device: "cpu", parallel: 1 });
+      expect(first.tokensPerSecond).toBe(19.45);
+      expect(posts).toEqual(["http://127.0.0.1:19086/completion"]);
+      const measured = readThroughputRecord(dataDir, 6101);
+      expect(measured).toMatchObject({
+        tokensPerSecond: 19.45,
+        alone: true,
+        measuredOn: throughputBasis(dataDir, "qwen-3.5-4b", "cpu"),
+      });
+
+      stopped(dataDir);
+      spawnMock.mockReturnValue(fakeChild(6102));
+      const second = await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19086, device: "cpu", parallel: 1 });
+      expect(second.tokensPerSecond).toBe(19.45);
+      expect(posts).toHaveLength(1);
+      // Stamped for the daemon now running, with the time it was measured.
+      expect(readThroughputRecord(dataDir, 6102)).toMatchObject({
+        tokensPerSecond: 19.45,
+        measuredAt: measured!.measuredAt,
+      });
+      expect(readThroughputRecord(dataDir, 6101)).toBeNull();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("measures again after a llama.cpp update, on another device, and once the figure is a week old", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-speed-again-`);
+    try {
+      stageQwen35(dataDir);
+      const posts = healthyServer();
+      let pid = 6200;
+      const start = async (device: string) => {
+        stopped(dataDir);
+        spawnMock.mockReturnValue(fakeChild(++pid));
+        listDevicesAnswers("MTL0: Apple M4 (10922 MiB, 10922 MiB free)");
+        return startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19085, device, parallel: 1 });
+      };
+      await start("cpu");
+      expect(posts).toHaveLength(1);
+      writeBackendVersion(dataDir, { ...BUILD, tag: "turboquant-7a1c0de", downloadedAt: "2026-10-03T08:00:00.000Z" });
+      await start("cpu");
+      expect(posts).toHaveLength(2);
+      await start("MTL0");
+      expect(posts).toHaveLength(3);
+      await start("MTL0");
+      expect(posts).toHaveLength(3);
+      // The same record, a week and a minute old.
+      const record = readThroughputRecord(dataDir, pid)!;
+      writeThroughputRecord(dataDir, {
+        ...record,
+        measuredAt: Date.now() - THROUGHPUT_REUSE_MAX_AGE_MS - 60_000,
+      });
+      await start("MTL0");
+      expect(posts).toHaveLength(4);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not carry over a speed measured while another slot was decoding", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-speed-busy-`);
+    try {
+      stageQwen35(dataDir);
+      let posts = healthyServer({ speed: 1.14, busySlot: true });
+      spawnMock.mockReturnValue(fakeChild(6301));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19084, device: "cpu", parallel: 8 });
+      expect(posts).toHaveLength(1);
+      expect(readThroughputRecord(dataDir, 6301)).toMatchObject({ tokensPerSecond: 1.14, alone: false });
+
+      // Measured again — this time with every slot idle, which stands.
+      stopped(dataDir);
+      posts = healthyServer({ speed: 13.66 });
+      spawnMock.mockReturnValue(fakeChild(6302));
+      const again = await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19084, device: "cpu", parallel: 8 });
+      expect(posts).toHaveLength(1);
+      expect(again.tokensPerSecond).toBe(13.66);
+      expect(
+        readReusableThroughput(dataDir, throughputBasis(dataDir, "qwen-3.5-4b", "cpu")),
+      ).toMatchObject({ tokensPerSecond: 13.66 });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("slotsAllIdle", () => {
+  const answering = (status: number, body: unknown) =>
+    (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+
+  it("is true only when /slots answers and no slot is processing", async () => {
+    const idle = [{ id: 0, is_processing: false }, { id: 1, is_processing: false }];
+    expect(await slotsAllIdle({ port: 1, fetchImpl: answering(200, idle) })).toBe(true);
+    const busy = [{ id: 0, is_processing: false }, { id: 1, is_processing: true }];
+    expect(await slotsAllIdle({ port: 1, fetchImpl: answering(200, busy) })).toBe(false);
+    expect(await slotsAllIdle({ port: 1, fetchImpl: answering(200, []) })).toBe(false);
+    expect(await slotsAllIdle({ port: 1, fetchImpl: answering(200, { slots: idle }) })).toBe(false);
+    expect(await slotsAllIdle({ port: 1, fetchImpl: answering(404, "Not Found") })).toBe(false);
+    const hung = (async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }) as unknown as typeof fetch;
+    expect(await slotsAllIdle({ port: 1, fetchImpl: hung })).toBe(false);
+  });
+
+  it("sends the server's key", async () => {
+    let auth: string | null = null;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      auth = ((init?.headers ?? {}) as Record<string, string>).authorization ?? null;
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+    await slotsAllIdle({ port: 1, apiKey: "k", fetchImpl });
+    expect(auth).toBe("Bearer k");
   });
 });

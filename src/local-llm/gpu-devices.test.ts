@@ -1,13 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
+  deviceTableOnce,
   parseListDevices,
   pickBestDevice,
   resolveManagedDevice,
+  sharesSystemMemory,
   type GpuDevice,
 } from "./gpu-devices.js";
 
@@ -312,4 +314,60 @@ describe("resolveManagedDevice", () => {
       },
     );
   });
+});
+
+describe("sharesSystemMemory", () => {
+  const device = (id: string, description: string): GpuDevice => ({
+    id,
+    description,
+    totalMemMiB: 10_922,
+    freeMemMiB: 10_922,
+  });
+
+  it("is true for Apple silicon's Metal device and for an integrated GPU", () => {
+    expect(sharesSystemMemory(device("MTL0", "Apple M4"))).toBe(true);
+    expect(sharesSystemMemory(device("Metal0", "Apple M1 Max"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan1", "Intel(R) Graphics (RPL-S)"))).toBe(true);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon(TM) Graphics"))).toBe(true);
+  });
+
+  it("is false for a card with memory of its own", () => {
+    expect(sharesSystemMemory(device("CUDA0", "NVIDIA GeForce RTX 4090"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "AMD Radeon RX 7900 XTX"))).toBe(false);
+    expect(sharesSystemMemory(device("Vulkan0", "Intel(R) Arc(TM) A770 Graphics"))).toBe(false);
+  });
+});
+
+describe("deviceTableOnce (backlog 39)", () => {
+  it.skipIf(process.platform === "win32")(
+    "runs --list-devices once for a launch: the device pick and the context fit share the answer",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-once-"));
+      const bin = join(dir, "llama-server");
+      const runs = join(dir, "runs");
+      writeFileSync(runs, "");
+      writeFileSync(
+        bin,
+        [
+          "#!/bin/sh",
+          `echo run >> '${runs}'`,
+          'echo "Available devices:"',
+          'echo "  MTL0: Apple M4 (10922 MiB, 10922 MiB free)"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      try {
+        const table = deviceTableOnce(bin);
+        expect(await resolveManagedDevice(bin, "auto", { listDevices: table })).toBe("MTL0");
+        const again = await table();
+        expect(again[0]).toMatchObject({ id: "MTL0", freeMemMiB: 10_922 });
+        expect(readFileSync(runs, "utf-8").split("\n").filter(Boolean)).toHaveLength(1);
+        // A table nobody asks never runs the binary.
+        deviceTableOnce(bin);
+        expect(readFileSync(runs, "utf-8").split("\n").filter(Boolean)).toHaveLength(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -47,6 +47,7 @@ import {
   buildCustomModelDef,
   listLocalModels,
   listVulkanDevices,
+  AUTO_UPDATE_RECHECK_MS,
   maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
   readBackendVersion,
@@ -2587,6 +2588,9 @@ export class LocalModelsOrchestrator {
       const result = await maybeAutoUpdateBackend(dataDir, {
         enabled: getConfig().localModels.managed.autoUpdate,
         keepDaemonRunning: opts?.keepDaemonRunning,
+        // A check from the last few hours stands, whichever process made
+        // it (the desktop's `models start`, another TUI).
+        recheckAfterMs: AUTO_UPDATE_RECHECK_MS,
         // The zip is small (27-39 MB) but the link may not be. Without a
         // deadline a stalled-open connection pins the download for the
         // life of the process; the next start retries from scratch.

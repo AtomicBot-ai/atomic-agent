@@ -23,6 +23,59 @@ const VRAM_SAFETY_FRACTION = 0.92;
 const COMPUTE_OVERHEAD_MIB = 768;
 
 // ---------------------------------------------------------------------
+// Unified memory: the GPU has no memory of its own.
+//
+// On Apple silicon (and an integrated GPU) the "free VRAM" a device
+// reports is not free memory: Metal answers with its working-set ceiling,
+// about two thirds to three quarters of RAM, whatever else is running. A
+// fit against that figure alone hands the model server memory the OS,
+// the browser and the editor are using. So on such a machine the auto
+// size is also held to two shares of physical RAM.
+// ---------------------------------------------------------------------
+
+/**
+ * Share of physical RAM left to the OS and the person's other apps on a
+ * unified-memory machine: weights, projector, compute buffers and the KV
+ * cache of an auto-sized context stay within the other half.
+ */
+export const UNIFIED_MEMORY_RESERVE_SHARE = 0.5;
+
+/**
+ * Most of physical RAM an auto-sized context's KV cache may take on a
+ * unified-memory machine: 1 GiB on 16 GB, 2 GiB on 32 GB, 4 GiB on 64 GB.
+ *
+ * Without it a small model's cache is cheap enough that "what fits" is
+ * the model's whole trained context. Qwen 3.5 4B attends on 8 of its 32
+ * layers (4 KV heads × 256 dims), 7 KiB per token at turbo3, so 262,144
+ * tokens is 1.75 GiB of cache — two thirds of its 2.7 GB of weights — and
+ * that is what a 16 GB Mac 13.5 GB into swap launched it with, for
+ * prompts that measured 6-8k tokens. This share gives it 149,504 tokens
+ * there (1 GiB): at the 90-400 tokens a second that Mac read prompts at,
+ * a prompt that long already takes six minutes or more.
+ */
+export const UNIFIED_MEMORY_KV_SHARE = 1 / 16;
+
+/**
+ * The KV budget (MiB) a unified-memory machine allows an auto-sized
+ * context: the smaller of the RAM share the model server may use after
+ * weights, projector and compute buffers, and `UNIFIED_MEMORY_KV_SHARE`
+ * of RAM. Negative when the weights alone take more than the server's
+ * share — the fit then lands on `MIN_AUTO_CONTEXT`.
+ */
+export function resolveUnifiedMemoryKvCapMiB(input: {
+  systemMemoryMiB: number;
+  modelSizeGb: number;
+  mmprojSizeGb: number;
+}): number {
+  const weightsMiB = (input.modelSizeGb + input.mmprojSizeGb) * MIB_PER_GB;
+  const serverShareMiB =
+    input.systemMemoryMiB * (1 - UNIFIED_MEMORY_RESERVE_SHARE) -
+    weightsMiB -
+    COMPUTE_OVERHEAD_MIB;
+  return Math.min(serverShareMiB, input.systemMemoryMiB * UNIFIED_MEMORY_KV_SHARE);
+}
+
+// ---------------------------------------------------------------------
 // KV cost from the model's own layout.
 //
 // The cache is one K and one V vector per token per attention layer,
@@ -332,6 +385,13 @@ export interface EstimateContextSizeInput {
   cacheType?: KvCacheType | string;
   /** Whether the launch carries `--swa-full` (sliding layers at full size). */
   swaFull?: boolean;
+  /**
+   * Physical RAM (binary MiB) when the target device shares it with the
+   * system — Apple silicon, an integrated GPU — so the fit also leaves
+   * the OS and other apps their share (`resolveUnifiedMemoryKvCapMiB`).
+   * `null` / absent for a GPU with memory of its own.
+   */
+  systemMemoryMiB?: number | null;
 }
 
 function roundDownTo(value: number, step: number): number {
@@ -341,16 +401,30 @@ function roundDownTo(value: number, step: number): number {
 /**
  * The KV budget (MiB) a launch has after weights, projector and compute
  * buffers — the memory the context is fitted into. Negative when the
- * weights alone do not fit.
+ * weights alone do not fit. With `systemMemoryMiB` (a unified-memory
+ * device) it is also held to `resolveUnifiedMemoryKvCapMiB`.
  */
 export function resolveKvBudgetMiB(input: {
   freeVramMiB: number;
   modelSizeGb: number;
   mmprojSizeGb: number;
+  systemMemoryMiB?: number | null;
 }): number {
   const usableMiB = input.freeVramMiB * VRAM_SAFETY_FRACTION;
   const weightsMiB = (input.modelSizeGb + input.mmprojSizeGb) * MIB_PER_GB;
-  return usableMiB - weightsMiB - COMPUTE_OVERHEAD_MIB;
+  const fitMiB = usableMiB - weightsMiB - COMPUTE_OVERHEAD_MIB;
+  const systemMemoryMiB = input.systemMemoryMiB;
+  if (typeof systemMemoryMiB !== "number" || !(systemMemoryMiB > 0)) {
+    return fitMiB;
+  }
+  return Math.min(
+    fitMiB,
+    resolveUnifiedMemoryKvCapMiB({
+      systemMemoryMiB,
+      modelSizeGb: input.modelSizeGb,
+      mmprojSizeGb: input.mmprojSizeGb,
+    }),
+  );
 }
 
 /**
@@ -392,10 +466,11 @@ export function fitContextToKvBudget(
  * caller. When `configuredContextSize > 0` the operator's value wins
  * (clamped to the model ceiling). Otherwise the size is fitted to free
  * VRAM: weights + projector + compute overhead are subtracted, and the
- * remainder is what the KV cache may take — costed from the model's
- * layout when the header was readable, from the file-size scale when
- * not — then clamped into `[MIN_AUTO_CONTEXT, MAX_AUTO_CONTEXT]` and the
- * model's trained ceiling.
+ * remainder is what the KV cache may take — held to the RAM shares of a
+ * unified-memory machine when `systemMemoryMiB` is given, costed from the
+ * model's layout when the header was readable, from the file-size scale
+ * when not — then clamped into `[MIN_AUTO_CONTEXT, MAX_AUTO_CONTEXT]` and
+ * the model's trained ceiling.
  */
 export function estimateContextSize(input: EstimateContextSizeInput): number {
   const {
@@ -420,6 +495,7 @@ export function estimateContextSize(input: EstimateContextSizeInput): number {
     freeVramMiB,
     modelSizeGb,
     mmprojSizeGb,
+    systemMemoryMiB: input.systemMemoryMiB ?? null,
   });
   const kvBudgetBytes = kvBudgetMiB > 0 ? kvBudgetMiB * 1024 * 1024 : 0;
 

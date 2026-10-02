@@ -17,6 +17,9 @@ import {
   kvBitsPerValue,
   resolveDeviceFreeVramMiB,
   resolveKvBudgetMiB,
+  resolveUnifiedMemoryKvCapMiB,
+  UNIFIED_MEMORY_KV_SHARE,
+  UNIFIED_MEMORY_RESERVE_SHARE,
   type KvCacheLayout,
 } from "./context-size.js";
 import type { GpuDevice } from "./gpu-devices.js";
@@ -506,6 +509,135 @@ describe("estimateContextSize", () => {
         configuredContextSize: 0,
       }),
     ).toBe(131_072);
+  });
+});
+
+/**
+ * Backlog 42: Qwen 3.5 4B started with `--ctx-size 262144` "fitted from
+ * the model's KV layout" on a 16 GB Mac that was 13.5 GB into swap.
+ * Metal reports its working-set ceiling as free whatever else runs, so
+ * the fit alone had ~6.5 GB to spend; on unified memory the auto size is
+ * also held to two shares of physical RAM.
+ */
+describe("the unified-memory cap (backlog 42)", () => {
+  /** The catalogue's Qwen 3.5 4B, text-only (no projector on disk). */
+  const QWEN35_4B = { modelSizeGb: 2.7, mmprojSizeGb: 0, maxContextLength: 262_144 };
+  /** What Metal reports as free on a 16 GB Apple silicon Mac (its working-set ceiling). */
+  const MAC_16GB_METAL_FREE_MIB = 10_922;
+
+  it("costs Qwen 3.5 4B 7 KiB per token: 1.75 GiB at 262,144, 224 MiB at 32,768", () => {
+    // 8 attention layers × 4 KV heads × (256 + 256) dims × 3.5 bits.
+    expect(estimateKvBytesPerToken(QWEN35_4B_LAYOUT, MANAGED_KV_CACHE_TYPE, 262_144)).toBe(7_168);
+    expect(estimateKvBytesTotal(QWEN35_4B_LAYOUT, MANAGED_KV_CACHE_TYPE, 262_144)).toBe(1.75 * 1024 ** 3);
+    expect(estimateKvBytesTotal(QWEN35_4B_LAYOUT, MANAGED_KV_CACHE_TYPE, 32_768)).toBe(224 * 1024 ** 2);
+  });
+
+  it("gave Qwen 3.5 4B its whole trained context on a 16 GB Mac from Metal's figure alone", () => {
+    expect(
+      estimateContextSize({
+        ...QWEN35_4B,
+        freeVramMiB: MAC_16GB_METAL_FREE_MIB,
+        configuredContextSize: 0,
+        kvLayout: QWEN35_4B_LAYOUT,
+      }),
+    ).toBe(262_144);
+  });
+
+  it("holds it to 1 GiB of cache on that Mac: 149,504 tokens", () => {
+    const ctx = estimateContextSize({
+      ...QWEN35_4B,
+      freeVramMiB: MAC_16GB_METAL_FREE_MIB,
+      configuredContextSize: 0,
+      kvLayout: QWEN35_4B_LAYOUT,
+      systemMemoryMiB: 16_384,
+    });
+    expect(ctx).toBe(149_504);
+    expect(estimateKvBytesTotal(QWEN35_4B_LAYOUT, MANAGED_KV_CACHE_TYPE, ctx)).toBeLessThanOrEqual(
+      16_384 * UNIFIED_MEMORY_KV_SHARE * 1024 * 1024,
+    );
+  });
+
+  it("scales with the machine: 74,752 on 8 GB, the trained 262,144 on 32 GB (1.75 GiB fits its 2 GiB)", () => {
+    const at = (systemMemoryMiB: number, freeVramMiB: number) =>
+      estimateContextSize({
+        ...QWEN35_4B,
+        freeVramMiB,
+        configuredContextSize: 0,
+        kvLayout: QWEN35_4B_LAYOUT,
+        systemMemoryMiB,
+      });
+    expect(at(8_192, 5_461)).toBe(74_752);
+    expect(at(32_768, 21_845)).toBe(262_144);
+  });
+
+  it("keeps Gemma 4 31B above 200k on a 64 GB Mac (4 GiB of cache)", () => {
+    const ctx = estimateContextSize({
+      ...GEMMA_31B,
+      freeVramMiB: 49_152,
+      configuredContextSize: 0,
+      kvLayout: GEMMA4_31B_LAYOUT,
+      systemMemoryMiB: 65_536,
+    });
+    expect(ctx).toBe(229_376);
+    expect(estimateKvBytesTotal(GEMMA4_31B_LAYOUT, MANAGED_KV_CACHE_TYPE, ctx)).toBeLessThanOrEqual(
+      4 * 1024 ** 3,
+    );
+  });
+
+  it("lands on the floor when the weights alone take the half the system keeps", () => {
+    // Gemma 4 31B with its projector (18.5 GB) on a 32 GB Mac.
+    expect(
+      resolveUnifiedMemoryKvCapMiB({
+        systemMemoryMiB: 32_768,
+        modelSizeGb: GEMMA_31B.modelSizeGb,
+        mmprojSizeGb: GEMMA_31B.mmprojSizeGb,
+      }),
+    ).toBeLessThan(0);
+    expect(
+      estimateContextSize({
+        ...GEMMA_31B,
+        freeVramMiB: 25_558,
+        configuredContextSize: 0,
+        kvLayout: GEMMA4_31B_LAYOUT,
+        systemMemoryMiB: 32_768,
+      }),
+    ).toBe(MIN_AUTO_CONTEXT);
+  });
+
+  it("is the smaller of the server's share and the cache's share", () => {
+    const input = { systemMemoryMiB: 16_384, modelSizeGb: 2.7, mmprojSizeGb: 0 };
+    expect(UNIFIED_MEMORY_RESERVE_SHARE).toBe(0.5);
+    expect(resolveUnifiedMemoryKvCapMiB(input)).toBe(1_024);
+    expect(
+      resolveKvBudgetMiB({ ...input, freeVramMiB: MAC_16GB_METAL_FREE_MIB }),
+    ).toBe(1_024);
+    // A tight free figure still wins over the shares.
+    expect(resolveKvBudgetMiB({ ...input, freeVramMiB: 4_000 })).toBe(
+      resolveKvBudgetMiB({ freeVramMiB: 4_000, modelSizeGb: 2.7, mmprojSizeGb: 0 }),
+    );
+  });
+
+  it("leaves a GPU with memory of its own, and a pinned context, as they were", () => {
+    // No system memory given: a discrete card's free VRAM is its own.
+    expect(
+      estimateContextSize({
+        ...QWEN35_4B,
+        freeVramMiB: MAC_16GB_METAL_FREE_MIB,
+        configuredContextSize: 0,
+        kvLayout: QWEN35_4B_LAYOUT,
+        systemMemoryMiB: null,
+      }),
+    ).toBe(262_144);
+    // The operator's number stays as set, unified memory or not.
+    expect(
+      estimateContextSize({
+        ...QWEN35_4B,
+        freeVramMiB: MAC_16GB_METAL_FREE_MIB,
+        configuredContextSize: 262_144,
+        kvLayout: QWEN35_4B_LAYOUT,
+        systemMemoryMiB: 16_384,
+      }),
+    ).toBe(262_144);
   });
 });
 
