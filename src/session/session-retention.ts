@@ -49,6 +49,11 @@ const VACUUM_FREELIST_RATIO = 0.1;
  * the `reason === "reply"` branch) and only an explicit `finish` writes
  * `completed`, so status says nothing about whether a session is done —
  * which is why age, not status, is the rule.
+ *
+ * `running` is written by `SessionStore.beginTurn` for as long as a turn
+ * runs. A row left that way by a process that is gone is ended by
+ * `SessionStore.recoverInterruptedTurns`, which boot runs before this
+ * pass, so the exemption never keeps such a row for ever.
  */
 export const LIVE_SESSION_STATUSES: readonly SessionStatus[] = [
   "running",
