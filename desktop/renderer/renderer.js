@@ -1174,6 +1174,7 @@ const TG = {
 const IMP = {
   mode:'configure', form:{source:'hermes', sourceDir:'', skills:true, memory:true, mcp:true, sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
   report:null, reportExecuted:false, notice:null, state:null, defaults:null, runs:0, busy:false,
+  applying:false, // the run on screen is Apply's (Importing…), not a preview's (Checking…)
 };
 const IMP_TOGGLE_FIELDS = ['skills','memory','mcp','sessions','cron','secrets','overwrite'];
 /* src/tui/import/import-sources.ts: the source row's order, its labels, the
@@ -21151,16 +21152,29 @@ async function importTabEntered() {
   if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = d[IMP.form.source] || ''; impRepaint(); }
 }
 function impDefaultDir(source) { return IMP.defaults && IMP.defaults[source] ? IMP.defaults[source] : (homeDir() ? homeDir() + impMeta(source).dir.slice(1) : ''); }
+/* Д51/Д52: Preview import lives in the header, which stays at the top of the
+   pane while the form scrolls. Under the form it moved with each source's
+   rows and, for the longer ones (Codex), went past the window's bottom edge. */
 function importTab() {
   const f = IMP.form;
   const meta = impMeta(f.source);
   const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
-  let body = report ? '' : '<div class="tk-bar sd-imphead">' + logoHTML(meta.logo, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3></div>';
+  const previewing = IMP.mode === 'configure' || (IMP.mode === 'running' && !IMP.applying);
+  let body = report ? '' : '<div class="tk-bar sd-imphead">' + impLogoHTML(f.source, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3>'
+    + (previewing ? '<span class="grow"></span><button class="btn btn-p sm' + (f.focus === 'run' && IMP.mode === 'configure' ? ' sd-kfocus' : '') + '" data-act="import:preview"'
+      + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Preview import</button>' : '')
+    + '</div>';
   if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
   if (IMP.mode === 'configure') body += impFormHTML(f);
-  else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>importing… please wait</p></div>';
+  // Д53: a preview is a check — nothing is imported until Apply.
+  else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>' + (IMP.applying ? 'Importing…' : 'Checking…') + '</p></div>';
   else if (report) body += impReportHTML(IMP.report, IMP.mode === 'done');
   return '<div class="sd-pane sd-imp">' + body + '</div>';
+}
+/* Д54: Pi and Oh-My-Pi have no mark in logos/, so they wear a neutral terminal
+   glyph the size of a mark rather than a logo made up for them. */
+function impLogoHTML(source, size) {
+  return logoHTML(impMeta(source).logo, size) || '<span class="tk-ico tk-ico--' + (size === 'xs' ? 'xs' : 'sm') + ' sd-implogo">' + ic('term') + '</span>';
 }
 function impFormHTML(f) {
   const fc = f.focus;
@@ -21175,16 +21189,16 @@ function impFormHTML(f) {
   return '<div class="sd-form">'
     + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
     + IMP_SOURCES.map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
-      + logoHTML(IMP_SOURCE_META[s].logo, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
+      + impLogoHTML(s, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
     + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
     + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + sw('overwrite', 'Overwrite', 'replace differing destinations') + '</div>'
-    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Limit</label>'
-    + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="no limit" autocomplete="off" spellcheck="false"></div>'
-    + '<div class="sd-run"><button class="btn btn-p' + (fc === 'run' ? ' sd-kfocus' : '') + '" data-act="import:preview"' + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Run preview</button></div>'
-
+    // Д52: `--limit N` caps the sessions imported, newest first (src/cli/import-command.ts); "Limit / no limit" said none of that.
+    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Sessions to import</label>'
+    + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="All" inputmode="numeric" autocomplete="off" spellcheck="false">'
+    + '<span class="tk-help">The newest first. Leave it empty to import them all.</span></div>'
     + '</div>';
 }
 /* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. ST-32. */
@@ -21194,26 +21208,36 @@ function impReportHTML(report, executed) {
   const s = report.summary;
   const n = report.items.length, noun = n === 1 ? ' item' : ' items';
   const tone = (st) => ({migrated:'tk-chip--green', conflict:'tk-chip--amber', error:'tk-chip--red'}[st] || '');
+  /* Д53: the report in words. A preview's `migrated` is what Apply would
+     import, so it reads "will import"; the run's reads "imported". */
+  const outcome = (st) => (st === 'migrated' ? (executed ? 'imported' : 'will import') : st);
   const arrowOf = (it) => (it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || ''));
-  // The summary stays one line of text (`migrated=0 · skipped=2 · …`): the chips are inline, not flex items.
-  const sum = (label, v, t) => '<span class="tk-chip tk-chip--sm ' + (v > 0 ? t : '') + '">' + label + '=' + v + '</span>';
+  // Nothing would be imported: Apply has nothing to do, so it is not offered as if it had.
+  const nothing = !executed && !(s.migrated > 0);
   return '<div class="tk-bar"><h3 class="sd-title">' + (executed ? 'Result' : 'Preview') + ' · ' + n + noun + '</h3>'
-    + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="tk-chip tk-chip--sm">dry run</span>')
+    + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="sd-cap sd-dry">Nothing is changed yet</span>')
     + '<span class="grow"></span>'
     + (executed
-      ? '<button class="btn btn-s sm" data-act="import:reset">Back to form</button>'
-      : '<button class="btn btn-g sm" data-act="import:reset">Edit</button><button class="btn btn-p sm" data-act="import:apply"' + (IMP.busy ? ' disabled' : '') + '>Apply</button>')
+      ? '<button class="btn btn-s sm" data-act="import:reset">Back</button>'
+      : '<button class="btn btn-g sm" data-act="import:reset">Back</button><button class="btn btn-p sm" data-act="import:apply"'
+        + (IMP.busy || nothing ? ' disabled' : '') + (nothing ? ' title="Nothing to import"' : '') + '>Apply</button>')
     + '</div>'
-    + '<div class="sd-sum">' + sum('migrated', s.migrated, 'tk-chip--green') + '<span class="sd-sep"> · </span>' + sum('skipped', s.skipped, '')
-    + '<span class="sd-sep"> · </span>' + sum('conflict', s.conflict, 'tk-chip--amber') + '<span class="sd-sep"> · </span>' + sum('error', s.error, 'tk-chip--red') + '</div>'
+    + '<p class="sd-sum">' + esc(impSummaryText(s, executed)) + '</p>'
     + (items.length ? '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-imptbl"><thead><tr><th>Outcome</th><th>Kind</th><th>Item</th></tr></thead><tbody>'
-      + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(it.status) + '</span></td>'
+      + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(outcome(it.status)) + '</span></td>'
         + '<td><span class="tk-chip tk-chip--sm tk-chip--line">' + esc(it.kind) + '</span></td>'
         + '<td class="sd-path" title="' + esc(arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : '')) + '">' + esc(arrowOf(it)) + (it.reason ? ' <span class="sd-reason">(' + esc(it.reason) + ')</span>' : '') + '</td></tr>').join('')
       + '</tbody></table></div>' : '')
     + (hidden > 0 ? '<p class="sd-cap">… ' + hidden + ' more</p>' : '')
     + (IMP.state === 'nothing' ? '<div class="tk-notice sd-quiet">' + ic('info') + '<span class="grow">Nothing to import.</span></div>' : '')
     + (executed ? tuiHints([['Enter / Esc back to form', 'import:reset']]) : tuiHints([['y / Enter apply', 'import:apply', {disabled:IMP.busy}], ['e edit', 'import:reset'], ['Esc cancel', 'import:reset']]));
+}
+/* Д53: "0 will be imported, 2 skipped" for `migrated=0 · skipped=2 · conflict=0 · error=0`; conflicts and errors only when there are any. */
+function impSummaryText(s, executed) {
+  const parts = [s.migrated + (executed ? ' imported' : ' will be imported'), s.skipped + ' skipped'];
+  if (s.conflict > 0) parts.push(s.conflict + (s.conflict === 1 ? ' conflict' : ' conflicts'));
+  if (s.error > 0) parts.push(s.error + (s.error === 1 ? ' error' : ' errors'));
+  return parts.join(', ');
 }
 /* import-orchestrator.ts runImport: the option set from the toggles, the
    limit parsed, then one `atag import` subprocess — never while a turn is
@@ -21223,7 +21247,7 @@ async function impRun(execute) {
   if (S.busy) { IMP.notice = 'Not while a turn is running'; impRepaint(); return {ok:false, error:IMP.notice}; }
   const f = IMP.form;
   const limit = f.limit.trim();
-  if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'limit must be a non-negative integer'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  if (limit && !/^\d+$/.test(limit)) { IMP.mode = 'configure'; IMP.notice = 'Sessions to import takes a whole number, or nothing for all of them.'; impRepaint(); return {ok:false, error:IMP.notice}; }
   // import-form-options.ts: every drawn toggle that is off is excluded; secrets is its own opt-in.
   const toggles = impMeta(f.source).toggles;
   const exclude = toggles.filter((t) => t !== 'secrets' && !f[t]);
@@ -21234,7 +21258,7 @@ async function impRun(execute) {
     IMP.mode = 'configure'; IMP.notice = 'nothing selected to import — enable ' + (names.length ? names.join(', ') + ' or ' + last : last);
     impRepaint(); return {ok:false, error:IMP.notice};
   }
-  IMP.mode = 'running'; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
+  IMP.mode = 'running'; IMP.applying = !!execute; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
   const secrets = toggles.includes('secrets') && f.secrets;
   const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets, overwrite:f.overwrite, limit, execute});
   IMP.busy = false;
@@ -21244,8 +21268,7 @@ async function impRun(execute) {
   if (execute) {
     IMP.mode = 'done'; IMP.reportExecuted = true;
     if (res.state === 'applied') {
-      const s = res.report.summary;
-      toast('import done', 'migrated=' + s.migrated + ' skipped=' + s.skipped + ' conflict=' + s.conflict + ' error=' + s.error);
+      toast('Import finished', impSummaryText(res.report.summary, true));
       if (toggles.includes('cron') && f.cron) tasksRefresh();
       if (f.sessions) loadResources();
     }
@@ -21263,7 +21286,8 @@ function importAct(what) {
   if (verb === 'field') { const [name, ...v] = rest; if (name === 'sourceDir' || name === 'limit') f[name] = v.join(':'); impRepaint(); return; }
   if (verb === 'focus') { f.focus = arg; impRepaint(); return; }
   if (verb === 'preview') { f.focus = 'run'; impRun(false); return; }
-  if (verb === 'apply') { if (IMP.mode === 'preview') impRun(true); return; }
+  // Д53: Apply (and y / Enter) does nothing when the preview found nothing to import.
+  if (verb === 'apply') { if (IMP.mode === 'preview' && IMP.report && IMP.report.summary.migrated > 0) impRun(true); return; }
   if (verb === 'reset') { IMP.mode = 'configure'; IMP.report = null; IMP.reportExecuted = false; IMP.notice = null; IMP.state = null; impRepaint(); return; }
 }
 /* import-key-bindings.ts. Text rows are real inputs here: letters type into them, ↑/↓ and Enter walk the form. */

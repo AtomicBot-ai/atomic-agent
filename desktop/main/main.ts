@@ -6615,13 +6615,14 @@ async function settingsTestPartC(
     + " source: [...form.querySelectorAll('.tk-seg button.on[data-act^=\"import:source:\"]')].map((b) => b.textContent.trim()),"
     + " dir: src ? src.value : null, limit: lim ? lim.value : null, switches: sw}; })()",
   );
+  // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite", "Limit"])
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite", "Sessions to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
-    "import tab: the TUI form with its defaults, and no CLI run until Run preview",
-    imp.runs === 0 && impDrawn && impBody.includes("Run preview") && !impBody.includes("↑↓ move")
+    "import tab: the TUI form with its defaults, and no CLI run until Preview import",
+    imp.runs === 0 && impDrawn && impBody.includes("Preview import") && !impBody.includes("↑↓ move")
       && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("replace differing destinations") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
@@ -6629,24 +6630,27 @@ async function settingsTestPartC(
   await js<void>(`window.__importAct(${JSON.stringify("field:sourceDir:" + dir)})`);
   const prev = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(false)");
   const prevBody = await js<string>("window.__settingsBody()");
-  // The report as drawn: the title, the dry-run chip, the table's headers and one row per item (outcome chip · kind chip · reason).
+  // The report as drawn: the title, the preview's "Nothing is changed yet" (the "dry run" chip before release fix 49, Д53),
+  // the table's headers and one row per item (outcome chip · kind chip · reason).
   type ReportView = { title: string; chip: string; heads: string[]; rows: Array<{ outcome: string; kind: string; reason: string }> };
   const reportView = () => js<ReportView>(
     "(() => { const box = document.querySelector('#settings .setbody .sd-imp'); if (!box) return {title: '', chip: '', heads: [], rows: []};"
-    + " const bar = box.querySelector(':scope > .tk-bar'); const chip = bar && bar.querySelector(':scope > .tk-chip');"
+    + " const bar = box.querySelector(':scope > .tk-bar'); const chip = bar && bar.querySelector(':scope > .sd-dry');"
     + " return {title: ((bar && bar.querySelector('.sd-title')) || {textContent: ''}).textContent.trim(), chip: chip ? chip.textContent.trim() : '',"
     + " heads: [...box.querySelectorAll('.sd-imptbl thead th')].map((th) => th.textContent.trim()),"
     + " rows: [...box.querySelectorAll('[data-import-row]')].map((tr) => { const c = tr.querySelectorAll('td');"
     + " return {outcome: c[0] ? c[0].textContent.trim() : '', kind: c[1] ? c[1].textContent.trim() : '', reason: ((tr.querySelector('.sd-reason') || {}).textContent || '').trim()}; })}; })()",
   );
   const pv = await reportView();
-  const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "dry run" && same(pv.heads, ["Outcome", "Kind", "Item"])
+  const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "Nothing is changed yet" && same(pv.heads, ["Outcome", "Kind", "Item"])
     && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "sessions" && r.reason === `(no state.db at ${dir}/state.db)`);
+  // Release fix 49 (Д53): the summary in words, and Apply drawn but off when the preview found nothing to import.
   check(
-    "import tab: Run preview runs atag import --dry-run and parses the report into the TUI rows",
+    "import tab: Preview import runs atag import --dry-run and parses the report into the TUI rows",
     prev.ok && prev.state === "preview" && prev.state2.mode === "preview" && prev.state2.runs === 1 && prev.state2.report?.items === 2 && prev.state2.report.summary.skipped === 2 && prev.state2.painted === 2
-      && previewDrawn && prevBody.includes("migrated=0 · skipped=2 · conflict=0 · error=0")
-      && (await js<boolean>("!!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:apply\"]') && !!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:reset\"]')")),
+      && previewDrawn && prevBody.includes("0 will be imported, 2 skipped")
+      && (await js<boolean>("(() => { const apply = document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:apply\"]');"
+        + " return !!apply && apply.disabled && !!document.querySelector('#settings .setbody .sd-imp .tk-bar [data-act=\"import:reset\"]'); })()")),
     prev.ok ? `state=${prev.state} items=${prev.state2.report?.items} runs=${prev.state2.runs}${previewDrawn ? "" : " drawn " + JSON.stringify(pv)}` : `error=${prev.error ?? "?"}`,
   );
   const applied = await js<{ ok: boolean; state?: string; error?: string; state2: ImpState }>("window.__importRun(true)");
@@ -6654,7 +6658,7 @@ async function settingsTestPartC(
   const av = await reportView();
   check(
     "import tab: apply passes --yes and reports the CLI's own Nothing to import",
-    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Back to form"),
+    applied.ok && applied.state === "nothing" && applied.state2.mode === "done" && applied.state2.runs === 2 && av.title === "Result · 2 items" && av.rows.length === 2 && appliedBody.includes("Nothing to import.") && appliedBody.includes("Back"),
     applied.ok ? `state=${applied.state} mode=${applied.state2.mode} title=${JSON.stringify(av.title)}` : `error=${applied.error ?? "?"}`,
   );
   await js<void>("window.__importAct('reset'); window.__settingsClose()");
