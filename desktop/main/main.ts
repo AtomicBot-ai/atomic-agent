@@ -2868,11 +2868,22 @@ async function smokeTest(): Promise<void> {
       cards = await toolTurn(listPrompt);
     }
     const live = cards.filter((c) => c.live);
-    const withArgs = live.filter((c) => /[{"]/.test(c.args) && c.args.length > 4);
-    const timed = live.filter((c) => c.source === "trace" && c.ms > 0);
+    /* A call can take no arguments and can be measured at 0 ms, and neither is
+       a placeholder. Seen for real: the model read "Run <nonce>:" as a task id
+       and added `tasks.list {}` to the turn, whose completion and call landed
+       in the same millisecond of the trace. So `{}` counts as real args when it
+       is exactly what the store recorded for the call (`argsKey`, which the
+       trace row matched as well), and a 0 counts as timed when it is the
+       trace's own difference rather than the clamp of a negative one. */
+    const withArgs = live.filter((c) => (/[{"]/.test(c.args) && c.args.length > 4) || (c.args === "{}" && c.argsKey === "{}" && c.source === "trace"));
+    const traceNow = live.some((c) => c.source === "trace" && c.ms === 0)
+      ? ((await traceTools((await js<string | null>("window.__stateDir()")) ?? "", await js<string>("window.__session()"))).rows ?? [])
+      : [];
+    const zeroIsMeasured = (c: Card) => traceNow.some((r) => r.ts === c.traceTs && r.tool === c.name && r.argsKey === c.argsKey && r.completionTs === r.ts);
+    const timed = live.filter((c) => c.source === "trace" && (c.ms > 0 || (c.ms === 0 && zeroIsMeasured(c))));
     check("tool cards carry args", live.length > 0 && withArgs.length === live.length, `${withArgs.length}/${live.length} with real args`);
     check("tool cards carry durations", live.length > 0 && timed.length === live.length, `${timed.length}/${live.length} timed from the trace: ${live.map((c) => c.ms + "ms").join(", ")}`);
-    if (live.length === 0 || timed.length !== live.length) {
+    if (live.length === 0 || withArgs.length !== live.length || timed.length !== live.length) {
       // Say what the cards held and what the store held, so a failure here is diagnosable from the log alone.
       process.stdout.write(`DIAG cards=${JSON.stringify(cards)}\n`);
       process.stdout.write(`DIAG store=${await js<string>("window.__storeDiag ? window.__storeDiag() : 'no hook'")}\n`);
