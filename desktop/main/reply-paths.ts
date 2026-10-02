@@ -74,17 +74,17 @@ export async function replyPathVerdict(raw: unknown, home: string, platform: Pla
   const expanded = path === "~" ? home : expandHome(platform, path, home);
   if (!isAbsoluteOn(platform, expanded)) return no(path, "not-a-path");
   const P = pathFor(platform);
-  let realHome: string;
-  try { realHome = await realpath(home); } catch { return no(path, "outside-home"); }
+  const realHome = await realpath(home).catch(() => null);
+  if (!realHome) return no(path, "outside-home");
   // Outside the home folder as written: refused without touching the disk.
   const lexical = P.resolve(expanded);
   if (!isUnder(platform, P.resolve(home), lexical) && !isUnder(platform, realHome, lexical)) return no(path, "outside-home");
-  let real: string;
-  try { real = await realpath(lexical); } catch { return no(path, "missing"); }
+  const real = await realpath(lexical).catch(() => null);
+  if (!real) return no(path, "missing");
   // A link inside the home folder that leads out of it is outside it.
   if (!isUnder(platform, realHome, real)) return no(path, "outside-home");
-  let st: Stats;
-  try { st = await stat(real); } catch { return no(path, "missing"); }
+  const st: Stats | null = await stat(real).catch(() => null);
+  if (!st) return no(path, "missing");
   const kind = st.isDirectory() ? "dir" : st.isFile() ? "file" : null;
   if (!kind) return no(path, "not-a-file");
   return { path, abs: real, ok: true, kind, reveal: runsWhenOpened(platform, real, kind, st.mode) };
