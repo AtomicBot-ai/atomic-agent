@@ -17,9 +17,11 @@
  *
  * Calm (S6): the wizard selects on a click and continues on its button;
  * rows show human names ("Qwen 3.5 9B") with one "Recommended" badge, one
- * facts line (blurb · download size) and at most one quiet caution line;
- * out-of-reach models read "Needs 24 GB" under "Needs more memory than this
- * Mac has". The checks below read that copy.
+ * facts line (blurb · download size) and at most one caution, a badge on the
+ * name line whose tooltip is the sentence (desktop 45: a third line made the
+ * cards two heights); out-of-reach models read "Needs 24 GB" under "Needs
+ * more memory than this Mac has", folded under that heading until it is
+ * clicked (still in the page). The checks below read that copy.
  *
  *   ATOMIC_AGENT_STATE_DIR=/some/dir node test/model-picks.drive.mjs
  *
@@ -53,10 +55,12 @@ function check(name, ok, detail = '') {
 }
 const say = (line) => process.stdout.write(`     ${line}\n`);
 
-/** The picker's rows, as a person reads them. */
+/** The picker's rows, as a person reads them. A caution is a badge whose tooltip is the sentence. */
 const PICKS = `[...document.querySelectorAll('#onboarding .ob-models .ob-row')].map((n) => ({
   name: (n.querySelector('.t').innerText || '').trim().replace(/\\s+/g, ' '),
   lines: [...n.querySelectorAll('.d > span')].map((s) => (s.innerText || '').trim()).filter(Boolean),
+  notes: [...n.querySelectorAll('.t .ob-badge[title]')].map((b) => b.title),
+  height: Math.round(n.getBoundingClientRect().height),
   best: !!n.querySelector('.ob-badge-best'),
 }))`;
 /** The models shown as out of reach — plain rows, never buttons. */
@@ -134,6 +138,7 @@ function transcribe(what, shown) {
   for (const p of shown.picks) {
     say(`   ${p.best ? '★' : '·'} ${p.name}`);
     for (const l of p.lines) say(`       ${l}`);
+    for (const l of p.notes) say(`       (badge tooltip) ${l}`);
   }
   if (shown.out.length) {
     say(`  ${shown.outHeading}`);
@@ -148,7 +153,7 @@ try {
      ================================================================ */
   const real = await pickListAt(null, 'this-mac');
   transcribe('the wizard on this Mac (no flag — the real RAM figure)', real);
-  const RAM_RE = /Ordered for this Mac.s (\d+) GB of memory/;
+  const RAM_RE = /Ordered for your (?:Mac|computer).s (\d+) GB of memory/;
   const ram = Number((real.intro.match(RAM_RE) || [])[1] || 0);
   check('the picker names the machine it is ranking for', ram > 0, `${ram} GB`);
   check('on this Mac exactly one row is recommended, and it is the first',
@@ -176,11 +181,14 @@ try {
     big.picks.every((p) => p.lines.length >= 1 && / · \d+(\.\d)? GB/.test(p.lines[0]) && !/^\d/.test(p.lines[0])),
     JSON.stringify(big.picks[0].lines));
   check('a model that needs no caution is given none — one line, no warning',
-    big.picks[0].lines.length === 1 && !big.picks[0].lines.some((l) => /small model|Tight fit/i.test(l)),
-    JSON.stringify(big.picks[0].lines));
+    big.picks[0].lines.length === 1 && big.picks[0].notes.length === 0,
+    JSON.stringify(big.picks[0]));
   check('the small-model caution belongs to the model, not to the machine — it is on the 4B rows even here',
-    big.picks.filter((p) => p.lines.some((l) => /A small model:/.test(l))).length === 2,
-    big.picks.filter((p) => p.lines.some((l) => /A small model:/.test(l))).map((p) => p.name).join(', '));
+    big.picks.filter((p) => p.notes.some((l) => /A small model:/.test(l))).length === 2,
+    big.picks.filter((p) => p.notes.some((l) => /A small model:/.test(l))).map((p) => p.name).join(', '));
+  check('every card is the same height: a caution is a badge, never a third line',
+    big.picks.every((p) => p.lines.length === 1) && new Set(big.picks.map((p) => p.height)).size === 1,
+    JSON.stringify(big.picks.map((p) => [p.name, p.height])));
   check('the Hugging Face row is still pinned last',
     big.lastRow === 'Add a model from Hugging Face…', JSON.stringify(big.lastRow));
   check('the list is on the screen, not just in the DOM',
@@ -192,19 +200,20 @@ try {
      ================================================================ */
   const small = await pickListAt(8, '8gb');
   transcribe('the wizard on a simulated 8 GB machine', small);
-  check('an 8 GB machine is told it is an 8 GB machine', /this Mac.s 8 GB of memory/.test(small.intro), small.intro.replace(/\s+/g, ' '));
+  check('an 8 GB machine is told it is an 8 GB machine', /your (?:Mac|computer).s 8 GB of memory/.test(small.intro), small.intro.replace(/\s+/g, ' '));
   check('only what runs here is offered',
     small.picks.length === 3 && small.out.length === 10, `${small.picks.length} offered, ${small.out.length} out of reach`);
   check('the recommendation is the best model that runs comfortably',
     small.picks[0].best && /Gemma 4 E4B/.test(small.picks[0].name), small.picks[0].name);
-  check('a small model says plainly what it gives up, in one line',
-    small.picks[0].lines.length === 2 && /^A small model: quick, but weaker at long multi-step work\.$/.test(small.picks[0].lines[1]),
-    JSON.stringify(small.picks[0].lines));
+  check('a small model says plainly what it gives up, in one badge',
+    small.picks[0].lines.length === 1 && small.picks[0].notes.length === 1
+      && /^A small model: quick, but weaker at long multi-step work\.$/.test(small.picks[0].notes[0]) && /Small model/.test(small.picks[0].name),
+    JSON.stringify(small.picks[0]));
   check('a tight fit is named as one, with this Mac’s RAM',
-    small.picks.some((p) => p.lines.some((l) => /^Tight fit on 8 GB\. It will run slowly\.$/.test(l))),
-    JSON.stringify((small.picks.find((p) => p.lines.some((l) => /Tight fit/.test(l))) || {}).lines));
-  check('every row has at most one caution line',
-    small.picks.every((p) => p.lines.length <= 2), JSON.stringify(small.picks.map((p) => p.lines.length)));
+    small.picks.some((p) => /Tight fit/.test(p.name) && p.notes.some((l) => /^Tight fit on 8 GB\. It will run slowly\.$/.test(l))),
+    JSON.stringify(small.picks.find((p) => /Tight fit/.test(p.name)) || {}));
+  check('every row has one facts line and at most one caution badge',
+    small.picks.every((p) => p.lines.length === 1 && p.notes.length <= 1), JSON.stringify(small.picks.map((p) => [p.lines.length, p.notes.length])));
   check('a model that will not run says how much RAM it wants',
     small.out.length > 0 && small.out.every((o) => /Needs \d+ GB$/.test(o)), small.out[0]);
   check('a model that will not run is not a control',

@@ -9857,11 +9857,16 @@ function obLocalPickHTML() {
       ? '<div class="ob-loading" role="status" aria-label="Loading models"><span class="tk-spin" aria-hidden="true"></span></div>'
       : '<div class="ob-explain">' + obNothingFitsLine() + '</div>';
   /* No grey "paste an owner/repo id…" line beside it (Danya, 30.09: the
-     button says what it does; the field it opens asks for the id). */
-  const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL), '', 'ob-hfrow', '', logoHTML('huggingface', 'sm'));
-  return '<div class="ob-explain">'
-      + esc(OB.ram ? 'Runs offline after one download. Ordered for ' + THIS_MACHINE + '’s ' + OB.ram + ' GB of memory.'
-                   : 'Runs offline after one download.') + '</div>'
+     button says what it does; the field it opens asks for the id). It is a
+     card of its own under the list, with the chevron of a way in: as a bare
+     row under the list it was lost (Danya, 01.10). */
+  const hf = obRow(models.length, onHf, esc(HF_ROW_LABEL), '', 'ob-hfrow', '', logoHTML('huggingface', ''),
+    '<span class="ob-chev" aria-hidden="true">' + ic('chevR') + '</span>');
+  /* The previous screen's card already says a local model runs offline
+     after one download; saying it again here was the same line twice in a
+     row (Danya, 01.10). What is left is what this list is ordered by. */
+  const yours = IS_MAC ? 'your Mac' : 'your computer';
+  return (OB.ram ? '<div class="ob-explain">' + esc('Ordered for ' + yours + '’s ' + OB.ram + ' GB of memory.') + '</div>' : '')
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
        Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
        item next to a sibling that cannot shrink absorbs every pixel of
@@ -9902,17 +9907,32 @@ function obGbWord(gb) { return (Math.round(gb * 10) / 10).toFixed(1).replace(/\.
  * One pick row's name line: the human name and, on exactly one row, the
  * badge a person chooses on. Calm (S6): one badge — "Recommended" on the
  * best fit for this Mac — not a second catalogue tag beside it.
+ *
+ * Where it is true, one more badge: a tight fit, a small model, or
+ * reduced-refusal weights, with the whole sentence as its tooltip. These
+ * were a third line under the facts, on some rows and not others, so the
+ * cards came out in two heights (Danya, 01.10). A comfortable fit says
+ * nothing; the line above the list already says what it is ordered for.
  */
 function obModelRowLabel(model, isBest) {
-  return esc(obModelName(model))
-    + (isBest ? '<span class="ob-badge ob-badge-best">Recommended</span>' : '');
+  return '<span class="ob-nm">' + esc(obModelName(model)) + '</span>'
+    + (isBest ? '<span class="ob-badge ob-badge-best">Recommended</span>' : '')
+    + obModelNoteBadge(model);
+}
+
+/** The one caution a row may carry, as a badge whose tooltip is the sentence. */
+function obModelNoteBadge(model) {
+  const note = modelPickNote(model, OB.ram);
+  if (!note || note.v === 'over') return '';
+  // The reduced-refusal tag ("Use at your own risk") is short enough to be its own word.
+  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model' : note.text;
+  const tone = note.v === 'tight' || model.uncensored ? ' ob-badge-warn' : ' ob-badge-note';
+  return '<span class="ob-badge' + tone + '" title="' + esc(note.text) + '">' + esc(word) + '</span>';
 }
 
 /**
- * The line under the name: the catalogue's own blurb and the download size.
- * Then, only where it is true, one quiet line: a tight fit, a small model,
- * or reduced-refusal weights. A comfortable fit says nothing; the heading
- * already says the list is ordered for this Mac.
+ * The line under the name: the catalogue's own blurb and the download size,
+ * and nothing more, so every card is the same height.
  *
  * A model with no catalogue entry gets no blurb rather than a sentence this
  * window made up about it.
@@ -9920,9 +9940,7 @@ function obModelRowLabel(model, isBest) {
 function obModelRowDetail(model) {
   const facts = [modelBlurb(model), modelSizeWord(model), model.downloaded ? 'already on ' + THIS_MACHINE : '']
     .filter(Boolean).join(' · ');
-  const note = modelPickNote(model, OB.ram);
-  return '<span>' + esc(facts) + '</span>'
-    + (note ? '<span class="' + (note.v === 'tight' ? 'ob-fit ob-fit-tight' : 'ob-caution') + '">' + esc(note.text) + '</span>' : '');
+  return '<span>' + esc(facts) + '</span>';
 }
 
 /* Calm (S7, U19): the words the wizard's local list says about a model, in
@@ -9967,16 +9985,50 @@ function obNothingFitsLine() {
  * went — but as plain rows, not buttons: no cursor position, no tab stop,
  * nothing to click. Each one says how much RAM it wants, so the answer to
  * "why can't I have that one" is on the screen next to it.
+ *
+ * Folded under one heading by default: open, the block ran on under the
+ * models that do run and read as more of them (Danya, 01.10). The heading
+ * is the one control here; it says how many there are and unfolds them.
+ * When nothing in the list runs here, it starts unfolded — those rows are
+ * then the whole answer. The rows stay in the page while folded.
  */
 function obOutOfReachHTML() {
   const out = obOutOfReach();
   if (!out.length) return '';
-  return '<div class="ob-h ob-out-h">' + esc('Needs more memory than ' + THIS_MACHINE + ' has') + '</div>'
-    + '<div class="ob-out-list">' + out.map((model) =>
+  const open = obOutOpen();
+  return '<button class="ob-out-h ob-outtoggle" data-obact="out:toggle" aria-expanded="' + open + '" aria-controls="ob-out-list">'
+      + '<span class="ob-outtoggle-t">' + esc('Needs more memory than ' + THIS_MACHINE + ' has') + '</span> '
+      + '<span class="ob-badge ob-badge-note">' + out.length + '</span>'
+      + '<span class="ob-chev" aria-hidden="true">' + ic(open ? 'chevU' : 'chevD') + '</span></button>'
+    + '<div class="ob-out-list" id="ob-out-list"' + (open ? '' : ' hidden') + '>' + out.map((model) =>
       '<div class="ob-out">' + modelMark(model.id, 'xs')
       + '<span class="t">' + esc(obModelName(model)) + '</span>'
       + '<span class="ob-fit ob-fit-over">' + esc(model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fitFor(model, OB.ram).short) + '</span></div>').join('')
     + '</div>';
+}
+
+/** Whether the out-of-reach block is unfolded: as the person left it, else only when nothing here runs. */
+function obOutOpen() {
+  if (typeof OB.outOpen === 'boolean') return OB.outOpen;
+  return !obPickRows().some((r) => r.kind === 'model');
+}
+
+/**
+ * Fold or unfold it, and when unfolded bring as much of it into the
+ * scroller's view as fits without pushing its heading out of the top — the
+ * rows open below the fold of a list that scrolls, where a click that
+ * changed nothing in view would look like it did nothing.
+ */
+function obToggleOutOfReach() {
+  OB.outOpen = !obOutOpen();
+  render();
+  if (!OB.outOpen) return;
+  const box = document.querySelector('#onboarding .ob-models');
+  const head = box && box.querySelector('.ob-outtoggle');
+  const list = box && box.querySelector('.ob-out-list');
+  if (!head || !list) return;
+  const b = box.getBoundingClientRect(), h = head.getBoundingClientRect(), l = list.getBoundingClientRect();
+  if (l.bottom > b.bottom) box.scrollTop += Math.max(0, Math.min(l.bottom - b.bottom, h.top - b.top));
 }
 
 /** r6 UX: the steps that draw the step error under their own field. */
@@ -9997,9 +10049,11 @@ function obHfRefHTML() {
      control, the chord behind it and the footer hint are unchanged. */
   const clear = !OB.busy && OB.hfReference.length > 0
     ? '<button class="ob-offer ob-offer-inline" data-obact="hf:clear">Clear</button>' : '';
+  /* The hint that used to stand beside the list's Hugging Face row (an
+     owner/repo id, or a huggingface.co link) is this field's placeholder. */
   return '<label class="ob-lbl" for="ob-hf-ref">' + esc('Which model? ') + '<span class="ob-explain">' + esc(HF_REF_TITLE_TAIL) + '</span></label>'
     + '<div class="ob-field' + (OB.error ? ' is-error' : '') + '">' + logoHTML('huggingface', 'sm')
-      + '<input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo" value="'
+      + '<input id="ob-hf-ref" class="ob-inp" autocomplete="off" spellcheck="false" placeholder="owner/repo or a huggingface.co link" value="'
       + esc(OB.hfReference) + '"' + (OB.busy ? ' disabled' : '') + '>'
       + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + clear + '</div>'
     + obInlineErrHTML()
@@ -11984,6 +12038,8 @@ async function openOnboarding(at) {
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false,
   });
+  // The out-of-reach models start folded again (obOutOpen decides).
+  OB.outOpen = null;
   // A new flow: any settle still out for the previous one must not touch it (obSettle).
   OB.openGen = (OB.openGen || 0) + 1;
   const gen = OB.openGen;
@@ -12339,6 +12395,7 @@ function obControlClick(spec) {
     return;
   }
   if (spec === 'import:failures') { OB.importFailuresOpen = !OB.importFailuresOpen; render(); return; }
+  if (spec === 'out:toggle') { obToggleOutOfReach(); return; }
   /* Retry only the sources that actually failed, so a retry after a
      444-item import does not re-walk the 444 that worked. */
   if (spec === 'import:retry') {

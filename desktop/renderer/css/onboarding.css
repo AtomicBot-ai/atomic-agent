@@ -194,30 +194,54 @@
 /* ---------------- the local model list (ON-03, ON-04) ---------------- */
 #onboarding .ob-models{flex:0 1 auto;min-height:140px;max-height:none;overflow-y:auto;overscroll-behavior:contain}
 #onboarding .ob-scroll{min-height:120px;overflow-y:auto;overscroll-behavior:contain}
-#onboarding .ob-models .ob-row{align-items:flex-start}
-#onboarding .ob-models .ob-row > .logo,#onboarding .ob-models .ob-row > .tk-ico{margin-top:2px}
+/* A model card is two lines and only two: the name, larger and heavier, with
+   its badges; then the facts (what it is · its size), smaller and quieter
+   (Danya, 01.10). Each line keeps to one line, so every card is the same
+   height; a caution is a badge on the name line, never a third line. The
+   facts are paler than --ink-2 and still well over 4.5:1 in both themes. */
+#onboarding .ob-models .ob-row{align-items:center;min-height:60px;padding:10px 12px}
+#onboarding .ob-models .ob-row .t{display:flex;align-items:center;gap:8px;min-width:0;min-height:22px;
+  font-size:15px;font-weight:650;letter-spacing:-.012em;white-space:nowrap}
+#onboarding .ob-models .ob-row .ob-nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#onboarding .ob-models .ob-row .d{font-size:12px;line-height:1.4;color:color-mix(in srgb,var(--ink-2) 55%,var(--ink-3))}
+#onboarding .ob-models .ob-row .d > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #onboarding .ob-row .t .ob-mono{font-size:13.5px;font-weight:500}
-#onboarding .ob-badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;margin-left:8px;vertical-align:1px;
-  border-radius:var(--r-pill);font:500 11.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
+/* Badges say something; they are not controls, so they are rounded
+   rectangles (--r-badge), not pills (Danya, 01.10). A caution's whole
+   sentence is its tooltip. */
+#onboarding .ob-badge{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 7px;
+  border-radius:var(--r-badge);font:500 11.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
   background:var(--brand-wash);color:var(--blue)}
+#onboarding .ob-badge[title]{cursor:help}
 #onboarding .ob-badge-best{background:var(--indigo);color:var(--on-indigo)}
 #onboarding .ob-badge-warn{background:var(--amber-wash);color:var(--amber-text)}
+#onboarding .ob-badge-note{background:var(--hover);color:var(--ink-2)}
 #onboarding .ob-row .d > span{display:block}
-#onboarding .ob-row .d > .ob-desc{display:inline}
-#onboarding .ob-row .d > .ob-desc + span{display:inline}
-#onboarding .ob-row .d > .ob-desc::after{content:" · "}
-#onboarding .ob-row .d .ob-fit{margin-top:1px}
-#onboarding .ob-fit-comfortable{color:var(--success)}
-#onboarding .ob-fit-tight{color:var(--amber-text)}
 #onboarding .ob-fit-over{color:var(--ink-2)}
-#onboarding .ob-row .d .ob-caution{margin-top:2px;color:var(--ink-2)}
-#onboarding .ob-hfrow{min-height:40px;padding:6px 12px}
-#onboarding .ob-hfrow .ob-rbody{flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:2px 8px}
-#onboarding .ob-hfrow .t{font-size:13.5px}
+#onboarding .ob-chev{flex:none;display:grid;place-items:center;width:22px;height:22px;margin-left:auto;color:var(--ink-3)}
+#onboarding .ob-chev svg{width:15px;height:15px}
+/* The Hugging Face way in: a card of its own under the list, the list's lift
+   and edge, the mark and the label where the model rows have theirs, and a
+   chevron. As a bare row under the list it was lost (Danya, 01.10). */
+#onboarding .ob-hfrow{min-height:56px;padding:10px 18px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
+#onboarding .ob-hfrow:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
+#onboarding .ob-hfrow:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
+#onboarding .ob-hfrow.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand),var(--sh-card)}
 /* Out of reach: shown, explained, not a control — a quiet well inside the
-   list card, after the rows it could not be one of. */
-#onboarding .ob-out-h{margin:12px 8px 6px;font-size:13.5px;font-weight:600;color:var(--ink)}
-#onboarding .ob-out-list{display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:var(--r-row);background:var(--well)}
+   list card, after the rows it could not be one of. Folded under its
+   heading by default (Danya, 01.10); the heading is the block's one
+   control, a full-width row that says how many and unfolds them. */
+#onboarding .ob-outtoggle{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;margin-top:4px;padding:8px 12px;
+  border:0;border-radius:var(--r-row);background:transparent;box-shadow:0 -1px 0 var(--divider);
+  font:600 13.5px/1.35 var(--font-ui);color:var(--ink);text-align:left;cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+#onboarding .ob-outtoggle:hover{background:var(--hover)}
+#onboarding .ob-outtoggle:active{background:var(--press)}
+#onboarding .ob-outtoggle:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+#onboarding .ob-outtoggle-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#onboarding .ob-outtoggle .ob-chev{color:var(--ink-2)}
+#onboarding .ob-out-list{display:flex;flex-direction:column;gap:2px;margin-top:4px;padding:6px;border-radius:var(--r-row);background:var(--well)}
+#onboarding .ob-out-list[hidden]{display:none}
 #onboarding .ob-out{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;
   padding:6px 8px;border:0;color:var(--ink-2);cursor:default}
 #onboarding .ob-out > .logo,#onboarding .ob-out > .tk-ico{grid-row:1 / span 3;align-self:start;margin-top:1px}
