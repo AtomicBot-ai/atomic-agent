@@ -9,7 +9,19 @@ export const ANALYTICS_EVENTS = {
   modelConfigured: "model_configured",
   messageSent: "message_sent",
   firstMessageSent: "first_message_sent",
+  analyticsDisabled: "analytics_disabled",
 } as const;
+
+/** Where an analytics opt-out was made. */
+export type AnalyticsDisabledVia = "settings" | "slash" | "config";
+
+/** Fixed context attached to the one-time `app_installed` event. */
+export interface AppInstalledContext {
+  /** Install channel enum (also stamped globally). */
+  installChannel?: string;
+  /** Whether the other surface (desktop / terminal) ran on this machine. */
+  otherSurfaceInstalled?: boolean;
+}
 
 /**
  * Non-sensitive context attached to message events. Only the active LLM
@@ -56,11 +68,39 @@ export interface MessageEventContext {
 export function captureAppInstalled(
   client: AnalyticsClient | null,
   store: AnalyticsStateStore,
+  context: AppInstalledContext = {},
 ): void {
   if (!client) return;
   if (store.isAppInstalledSent()) return;
-  client.capture(ANALYTICS_EVENTS.appInstalled);
+  client.capture(ANALYTICS_EVENTS.appInstalled, {
+    ...(context.installChannel !== undefined
+      ? { install_channel: context.installChannel }
+      : {}),
+    ...(context.otherSurfaceInstalled !== undefined
+      ? { other_surface_installed: context.otherSurfaceInstalled }
+      : {}),
+  });
   store.markAppInstalledSent();
+}
+
+/**
+ * Emit `analytics_disabled` — the last event this install sends before
+ * the operator's opt-out takes effect. Callers fire it right BEFORE
+ * tearing the client down so the shutdown flush delivers it. Carries
+ * `via` (where the switch was flipped) and `days_since_install` (omitted
+ * for installs that predate the stored install timestamp).
+ */
+export function captureAnalyticsDisabled(
+  client: AnalyticsClient | null,
+  store: AnalyticsStateStore,
+  via: AnalyticsDisabledVia,
+): void {
+  if (!client) return;
+  const days = store.getDaysSinceInstall();
+  client.capture(ANALYTICS_EVENTS.analyticsDisabled, {
+    via,
+    ...(days !== undefined ? { days_since_install: days } : {}),
+  });
 }
 
 /**

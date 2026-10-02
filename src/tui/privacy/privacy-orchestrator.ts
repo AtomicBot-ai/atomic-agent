@@ -1,3 +1,4 @@
+import type { AnalyticsDisabledVia } from "../../analytics/index.js";
 import { getConfig } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
@@ -33,21 +34,25 @@ export class PrivacyOrchestrator {
     });
   }
 
-  /** Flip analytics to the opposite of the live config value. */
+  /** Flip analytics to the opposite of the live config value (settings tab). */
   async toggleAnalytics(): Promise<void> {
-    await this.setAnalyticsEnabled(!getConfig().analytics.enabled);
+    await this.setAnalyticsEnabled(!getConfig().analytics.enabled, "settings");
   }
 
   /**
    * Persist `analytics.enabled = enabled`, invalidate the config cache,
    * then hot-swap the runtime clients. Fire-safe: a failure surfaces as a
-   * sticky error line and the settled action clears `busy`.
+   * sticky error line and the settled action clears `busy`. `via` says
+   * where an opt-out came from, for the `analytics_disabled` event.
    */
-  async setAnalyticsEnabled(enabled: boolean): Promise<void> {
+  async setAnalyticsEnabled(
+    enabled: boolean,
+    via: AnalyticsDisabledVia = "settings",
+  ): Promise<void> {
     this.bus.emit({ type: "privacy_action_started" });
     try {
       persistAnalyticsEnabled(enabled);
-      await this.runtime.setAnalyticsEnabled(enabled);
+      await this.runtime.setAnalyticsEnabled(enabled, via);
       this.bus.emit({
         type: "privacy_action_settled",
         message: enabled ? "analytics enabled" : "analytics disabled",

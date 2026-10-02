@@ -168,10 +168,13 @@ describe("extractSafeTool", () => {
 });
 
 describe("extractSafeTransportHost", () => {
-  it("extracts only the host, dropping path and query", () => {
+  it("sends a host class, never the host, path or query", () => {
     expect(
       extractSafeTransportHost({ url: "http://127.0.0.1:8080/completion?x=1" }),
-    ).toBe("127.0.0.1:8080");
+    ).toBe("localhost");
+    expect(
+      extractSafeTransportHost({ url: "https://llm.acme-corp.com/v1" }),
+    ).toBe("other");
   });
 
   it("drops a malformed url", () => {
@@ -384,7 +387,7 @@ describe("scrubError", () => {
     expect(ev.tool).toBe("os.shell.run");
   });
 
-  it("carries TransportError's url host through, never the full url", () => {
+  it("carries only the class of TransportError's url host", () => {
     const err = Object.assign(new Error("net down"), {
       name: "TransportError",
       category: "transport",
@@ -392,7 +395,7 @@ describe("scrubError", () => {
       url: "http://localhost:8080/completion",
     });
     const ev = scrubError(err, { source: "llm_failure" });
-    expect(ev.transportHost).toBe("localhost:8080");
+    expect(ev.transportHost).toBe("localhost");
   });
 
   it("prefers the cause's stack over the wrapper's own stack", () => {
