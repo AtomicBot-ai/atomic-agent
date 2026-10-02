@@ -6,10 +6,12 @@ export type {
 } from "./session-store.js";
 export {
   currentTurnOwnerProbe,
-  hostBootAt,
+  hostUptime,
   isTurnOwnerGone,
   parseTurnOwner,
+  readStartTicks,
   serializeTurnOwner,
+  turnOwnerFor,
 } from "./turn-owner.js";
 export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";

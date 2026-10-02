@@ -27,11 +27,14 @@ import {
   currentTurnOwnerProbe,
   isTurnOwnerGone,
   serializeTurnOwner,
+  turnOwnerFor,
   type TurnOwnerProbe,
 } from "./turn-owner.js";
 
-// `turn_owner` is null except while a turn is running on the row (see
-// `beginTurn`). Databases made before it existed get it from
+// `turn_owner` names the process running a turn on the row (see
+// `beginTurn`) and is null otherwise — a shutdown's stand-in keeps it
+// until the turn's own end or the store's last release (see
+// `releaseOwnTurns`). Databases made before it existed get it from
 // `ensureTurnOwnerColumn`; a binary that predates it never names the
 // column, so it reads and writes such a file exactly as before.
 const SCHEMA = `
@@ -55,28 +58,76 @@ const LIVE_STATUS_SQL_LIST = LIVE_SESSION_STATUSES.map(
   (status) => `'${status}'`,
 ).join(", ");
 
+const LIVE_STATUSES: ReadonlySet<string> = new Set(LIVE_SESSION_STATUSES);
+
 /**
- * The payload carries its own copy of `status` (and `lastError`), which
- * is what `load` hands back; the status-only writes below keep it in
- * step with the column. A payload that is not JSON is left alone — no
- * reader can parse it anyway — and the column still moves.
+ * A status-only write. The column is where a row's status lives — every
+ * reader takes it from there (`readPayload`) — so this moves the column
+ * and touches the payload only to set `lastError`, keeping the payload's
+ * own `status` in step while it is there. A payload that is not JSON is
+ * left as it is: no reader can parse it anyway.
  */
-const SET_STATUS_SQL = `status = @status,
-       payload = CASE WHEN json_valid(payload)
-                      THEN json_set(payload,
-                                    '$.status', @status,
-                                    '$.lastError', COALESCE(@last_error, json_extract(payload, '$.lastError')))
-                      ELSE payload END,
-       turn_owner = NULL`;
+const END_TURN_SQL = `status = @status,
+       payload = CASE WHEN @set_last_error = 0 OR NOT json_valid(payload)
+                      THEN payload
+                      ELSE json_set(payload, '$.status', @status, '$.lastError', @last_error)
+                 END`;
 
 /**
  * How a turn that could not write its own end is recorded instead: the
- * status it ends on, and the sentence `lastError` carries (`null` keeps
- * whatever the row already had).
+ * status it ends on, and what becomes of `lastError` — a sentence to
+ * set, `null` to clear it, absent to keep what the row has.
  */
 export interface TurnEnding {
   readonly status: SessionStatus;
   readonly lastError?: string | null;
+}
+
+function endingParams(ending: TurnEnding): {
+  status: SessionStatus;
+  set_last_error: number;
+  last_error: string | null;
+} {
+  return {
+    status: ending.status,
+    set_last_error: ending.lastError === undefined ? 0 : 1,
+    last_error: ending.lastError ?? null,
+  };
+}
+
+/** What a write needs to know about the row it is about to replace. */
+interface StoredRow {
+  /** The generated title, `null` when there is none. */
+  title: string | null;
+  status: string;
+  turnOwner: string | null;
+}
+
+/**
+ * The status a plain `save` may write over `stored`.
+ *
+ * A row's live status belongs to the turn that set it. While a row
+ * carries a turn's mark the stored status stands, whatever the copy
+ * being saved says — a model stamp from a copy read before the turn
+ * would otherwise say the session is idle while it runs. And `save`
+ * never writes a live status of its own: a copy read while a turn was
+ * running would put `running` back after that turn had ended, with no
+ * mark left that anything would ever take off. It keeps what the row
+ * says instead, or `pending` where that is itself a live status nothing
+ * owns.
+ */
+function statusForSave(
+  incoming: SessionStatus,
+  stored: StoredRow | undefined,
+): SessionStatus {
+  if (stored !== undefined && stored.turnOwner !== null) {
+    return stored.status as SessionStatus;
+  }
+  if (!LIVE_STATUSES.has(incoming)) return incoming;
+  if (stored === undefined || LIVE_STATUSES.has(stored.status)) {
+    return "pending";
+  }
+  return stored.status as SessionStatus;
 }
 
 /**
@@ -99,6 +150,12 @@ export interface SessionStoreOptions {
   turnOwnerProbe?: TurnOwnerProbe;
 }
 
+/** A row as the readers select it: the status column and the payload. */
+interface StoredPayloadRow {
+  status?: unknown;
+  payload: string;
+}
+
 /** Narrow projection returned by `listRecentWorkingDirs`. */
 export interface RecentWorkingDirRow {
   workingDir: string;
@@ -115,7 +172,8 @@ export class SessionStore {
   private readonly insertStmt: Database.Statement;
   private readonly updateStmt: Database.Statement;
   private readonly selectStmt: Database.Statement;
-  private readonly selectTitleStmt: Database.Statement;
+  private readonly selectStoredStmt: Database.Statement;
+  private readonly selectStoredBareStmt: Database.Statement;
   private readonly listByWorkingDirStmt: Database.Statement;
   private readonly listRecentStmt: Database.Statement;
   private readonly listRecentDirsStmt: Database.Statement;
@@ -126,6 +184,7 @@ export class SessionStore {
   private readonly beginTurnStmt: Database.Statement;
   private readonly finishTurnStmt: Database.Statement;
   private readonly releaseTurnStmt: Database.Statement;
+  private readonly standInTurnStmt: Database.Statement;
   private readonly listLiveTurnsStmt: Database.Statement;
   private readonly recoverTurnStmt: Database.Statement;
   /**
@@ -165,21 +224,27 @@ export class SessionStore {
            updated_at = @updated_at
        WHERE id = @id`,
     );
+    // Every reader takes `status` from the column, beside the payload:
+    // see `readPayload`.
     this.selectStmt = this.db.prepare(
-      `SELECT payload FROM sessions WHERE id = ?`,
+      `SELECT status, payload FROM sessions WHERE id = ?`,
     );
     // Projected in SQL rather than parsed in JS: `save` runs this on
     // every write, and a transcript payload is the one thing in this
     // row worth not re-parsing.
-    this.selectTitleStmt = this.db.prepare(
-      `SELECT json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title
+    this.selectStoredStmt = this.db.prepare(
+      `SELECT status, turn_owner AS turnOwner,
+              json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title
        FROM sessions WHERE id = ?`,
     );
+    this.selectStoredBareStmt = this.db.prepare(
+      `SELECT status, turn_owner AS turnOwner FROM sessions WHERE id = ?`,
+    );
     this.listByWorkingDirStmt = this.db.prepare(
-      `SELECT payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT status, payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
     );
     this.listRecentStmt = this.db.prepare(
-      `SELECT payload FROM sessions ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT status, payload FROM sessions ORDER BY updated_at DESC LIMIT ?`,
     );
     this.listRecentDirsStmt = this.db.prepare(
       `SELECT working_dir AS workingDir, updated_at AS updatedAt
@@ -193,16 +258,13 @@ export class SessionStore {
     this.summaryNextPageStmt = this.db.prepare(SUMMARY_NEXT_PAGE_SQL);
     this.countUnreadableStmt = this.db.prepare(COUNT_UNREADABLE_SQL);
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
-    // `updated_at` is left alone: the row's content has not changed, and
-    // it is what every list orders by and the desktop reads "unread" from.
+    // Two columns and nothing else, at every turn start: the payload is
+    // not rewritten (readers take the status from the column), and
+    // `updated_at` is left alone — the row's content has not changed,
+    // and it is what every list orders by and the desktop reads "unread"
+    // from.
     this.beginTurnStmt = this.db.prepare(
-      `UPDATE sessions
-       SET status = 'running',
-           payload = CASE WHEN json_valid(payload)
-                          THEN json_set(payload, '$.status', 'running')
-                          ELSE payload END,
-           turn_owner = @owner
-       WHERE id = @id`,
+      `UPDATE sessions SET status = 'running', turn_owner = @owner WHERE id = @id`,
     );
     this.finishTurnStmt = this.db.prepare(
       `UPDATE sessions
@@ -215,7 +277,15 @@ export class SessionStore {
     );
     this.releaseTurnStmt = this.db.prepare(
       `UPDATE sessions
-       SET ${SET_STATUS_SQL}
+       SET ${END_TURN_SQL},
+           turn_owner = NULL
+       WHERE id = @id AND turn_owner IS @owner`,
+    );
+    // The same, keeping the mark: a stand-in the turn's own end can
+    // still replace (`releaseOwnTurns` with `keepMarks`).
+    this.standInTurnStmt = this.db.prepare(
+      `UPDATE sessions
+       SET ${END_TURN_SQL}
        WHERE id = @id AND turn_owner IS @owner`,
     );
     // By status, not by mark: `idx_sessions_status` keeps this to the
@@ -229,7 +299,8 @@ export class SessionStore {
     // on the row in between keeps its mark.
     this.recoverTurnStmt = this.db.prepare(
       `UPDATE sessions
-       SET ${SET_STATUS_SQL}
+       SET ${END_TURN_SQL},
+           turn_owner = NULL
        WHERE id = @id AND status = @read_status AND turn_owner IS @owner`,
     );
   }
@@ -252,11 +323,13 @@ export class SessionStore {
    * `shouldNameSession` refuses to name a session twice — so "keep what
    * is there" is also the product behaviour.
    *
-   * `save` never touches a turn's mark (`beginTurn`): only the turn's
-   * own end — `finishTurn` or `releaseTurn` — takes it off.
+   * And the status a turn set is the turn's own (`statusForSave`): a
+   * save never writes a live status, and never changes the status of a
+   * row a turn has marked. Only the turn's own end — `finishTurn` or
+   * `releaseTurn` — moves it, and takes the mark off.
    */
   save(state: SessionState): void {
-    this.write(state, this.updateStmt);
+    this.write(state, false);
   }
 
   /**
@@ -278,11 +351,7 @@ export class SessionStore {
    * Returns whether a row was marked.
    */
   beginTurn(id: string, now: number = Date.now()): boolean {
-    const owner = serializeTurnOwner({
-      pid: this.turnOwnerProbe.pid,
-      bootAt: this.turnOwnerProbe.bootAt,
-      at: now,
-    });
+    const owner = serializeTurnOwner(turnOwnerFor(this.turnOwnerProbe, now));
     const result = this.beginTurnStmt.run({ id, owner }) as {
       changes: number;
     };
@@ -295,13 +364,16 @@ export class SessionStore {
    * Persist the state a turn ended with, and take the turn's mark off
    * the row. Same title rule as `save`; inserts the row when there is
    * none (a deferred session's first turn, or one deleted mid-turn).
+   *
+   * The turn stays this store's until the write has gone through: one
+   * that fails (a lock held too long, a full disk) leaves it to
+   * `releaseTurn` and, at shutdown, `releaseOwnTurns` — rather than a
+   * row that says `running` for as long as this process lives, under a
+   * pid no sweep will ever call gone.
    */
   finishTurn(state: SessionState): void {
-    try {
-      this.write(state, this.finishTurnStmt);
-    } finally {
-      this.ownTurns.delete(state.id);
-    }
+    this.write(state, true);
+    this.ownTurns.delete(state.id);
   }
 
   /**
@@ -309,36 +381,61 @@ export class SessionStore {
    * threw, or the runtime is closing under it — by writing `ending` as
    * its status. Touches the row only while it still carries this store's
    * own mark: a turn that wrote its end already, or one another process
-   * has since started on the row, is left as it is. Returns whether the
-   * row was changed.
+   * has since started on the row, is left as it is. A failed write keeps
+   * the turn this store's, as in `finishTurn`. Returns whether the row
+   * was changed.
    */
   releaseTurn(id: string, ending: TurnEnding): boolean {
     const owner = this.ownTurns.get(id);
     if (owner === undefined) return false;
-    try {
-      const result = this.releaseTurnStmt.run({
-        id,
-        owner,
-        status: ending.status,
-        last_error: ending.lastError ?? null,
-      }) as { changes: number };
-      return result.changes > 0;
-    } finally {
-      this.ownTurns.delete(id);
-    }
+    const result = this.releaseTurnStmt.run({
+      id,
+      owner,
+      ...endingParams(ending),
+    }) as { changes: number };
+    this.ownTurns.delete(id);
+    return result.changes > 0;
   }
 
   /**
-   * `releaseTurn` for every turn this store still has marked. For
-   * shutdown: the store is about to close, and a turn that has not
-   * written its end by now never will. Returns how many rows changed.
+   * Write `ending` on every row this store still has marked: shutdown,
+   * where a turn that has not written its end by now never will.
+   *
+   * `keepMarks` is for the top of a shutdown. The ending goes in as a
+   * stand-in — right away, so a stop that turns into a kill partway
+   * through teardown still leaves every row right — but the marks stay,
+   * and so does this store's record of them: a turn that still gets to
+   * its own end, through `finishTurn` or through `releaseTurn` when it
+   * throws, replaces the stand-in with what really happened. Without it
+   * the marks come off and the store forgets them, the last word before
+   * it closes.
+   *
+   * A row whose write fails does not stop the others; the first error is
+   * thrown once every row has been tried. Returns how many rows changed.
    */
-  releaseOwnTurns(ending: TurnEnding): number {
-    let released = 0;
-    for (const id of [...this.ownTurns.keys()]) {
-      if (this.releaseTurn(id, ending)) released += 1;
+  releaseOwnTurns(
+    ending: TurnEnding,
+    options: { keepMarks?: boolean } = {},
+  ): number {
+    const keepMarks = options.keepMarks === true;
+    const statement = keepMarks ? this.standInTurnStmt : this.releaseTurnStmt;
+    let changed = 0;
+    let failure: { error: unknown } | undefined;
+    for (const [id, owner] of [...this.ownTurns]) {
+      try {
+        const result = statement.run({
+          id,
+          owner,
+          ...endingParams(ending),
+        }) as { changes: number };
+        if (result.changes > 0) changed += 1;
+        if (!keepMarks) this.ownTurns.delete(id);
+      } catch (err) {
+        failure ??= { error: err };
+      }
     }
-    return released;
+    if (failure !== undefined) throw failure.error;
+    return changed;
   }
 
   /**
@@ -352,7 +449,10 @@ export class SessionStore {
    *
    * `isOwnerGone` defaults to `isTurnOwnerGone` against this process;
    * the default is only right at boot, before this process has started a
-   * turn (see there). Returns the ids it ended.
+   * turn (see there). Run as one `BEGIN IMMEDIATE` transaction: it reads
+   * and then writes, and a deferred one would fail outright when another
+   * process committed in between instead of waiting for the lock. Returns
+   * the ids it ended.
    */
   recoverInterruptedTurns(
     options: {
@@ -363,7 +463,7 @@ export class SessionStore {
     const probe = this.turnOwnerProbe;
     const isOwnerGone: (owner: string | null) => boolean =
       options.isOwnerGone ?? ((owner) => isTurnOwnerGone(owner, probe));
-    const ending = options.ending ?? INTERRUPTED_TURN_ENDING;
+    const ending = endingParams(options.ending ?? INTERRUPTED_TURN_ENDING);
     const sweep = this.db.transaction((): string[] => {
       const rows = this.listLiveTurnsStmt.all() as Array<{
         id: string;
@@ -378,71 +478,84 @@ export class SessionStore {
           id: row.id,
           read_status: row.status,
           owner: row.turnOwner,
-          status: ending.status,
-          last_error: ending.lastError ?? null,
+          ...ending,
         }) as { changes: number };
         if (result.changes > 0) recovered.push(row.id);
       }
       return recovered;
     });
-    return sweep();
-  }
-
-  private write(state: SessionState, update: Database.Statement): void {
-    const stored = this.storedTitle(state.id);
-    if (stored === undefined) {
-      this.insertStmt.run(this.serialize(state));
-      return;
-    }
-    const keep = stored !== null && readSessionTitle(state.metadata) === null;
-    update.run(
-      this.serialize(
-        keep
-          ? {
-              ...state,
-              metadata: {
-                ...state.metadata,
-                [SESSION_TITLE_METADATA_KEY]: stored,
-              },
-            }
-          : state,
-      ),
-    );
+    return sweep.immediate();
   }
 
   /**
-   * The stored title: `undefined` when there is no such row, `null`
-   * when the row has no title.
+   * One row write: `save` (`endsTurn` false) or a turn's own end
+   * (`finishTurn`). Both keep a stored title the state does not carry;
+   * only `save` is held to `statusForSave`.
+   */
+  private write(state: SessionState, endsTurn: boolean): void {
+    const stored = this.storedRow(state.id);
+    const status = endsTurn
+      ? state.status
+      : statusForSave(state.status, stored);
+    let next: SessionState =
+      status === state.status ? state : { ...state, status };
+    if (stored === undefined) {
+      this.insertStmt.run(this.serialize(next));
+      return;
+    }
+    if (stored.title !== null && readSessionTitle(next.metadata) === null) {
+      next = {
+        ...next,
+        metadata: {
+          ...next.metadata,
+          [SESSION_TITLE_METADATA_KEY]: stored.title,
+        },
+      };
+    }
+    const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
+    update.run(this.serialize(next));
+  }
+
+  /**
+   * What a write needs from the row it replaces, or `undefined` when
+   * there is no such row.
    *
    * `json_extract` raises on a payload that is not valid JSON, and this
    * table tolerates those (see `countUnreadable`) — a corrupt row must
-   * not make saving impossible, so it falls back to the existence check
-   * `save` did before.
+   * not make saving impossible, so it falls back to the columns alone
+   * and reads as having no title.
    */
-  private storedTitle(id: string): string | null | undefined {
+  private storedRow(id: string): StoredRow | undefined {
+    let row:
+      | { status: string; turnOwner: string | null; title?: unknown }
+      | undefined;
     try {
-      const row = this.selectTitleStmt.get(id) as
-        | { title: string | null }
-        | undefined;
-      if (row === undefined) return undefined;
-      return typeof row.title === "string" && row.title.trim().length > 0
-        ? row.title
-        : null;
+      row = this.selectStoredStmt.get(id) as typeof row;
     } catch {
-      return this.selectStmt.get(id) === undefined ? undefined : null;
+      row = this.selectStoredBareStmt.get(id) as typeof row;
     }
+    if (row === undefined) return undefined;
+    return {
+      title:
+        typeof row.title === "string" && row.title.trim().length > 0
+          ? row.title
+          : null,
+      status: row.status,
+      turnOwner: row.turnOwner,
+    };
   }
 
   load(id: string): SessionState | null {
-    const row = this.selectStmt.get(id) as { payload: string } | undefined;
+    const row = this.selectStmt.get(id) as StoredPayloadRow | undefined;
     if (!row) return null;
     return this.readPayload(row);
   }
 
   listByWorkingDir(workingDir: string, limit = 25): SessionState[] {
-    const rows = this.listByWorkingDirStmt.all(workingDir, limit) as Array<{
-      payload: string;
-    }>;
+    const rows = this.listByWorkingDirStmt.all(
+      workingDir,
+      limit,
+    ) as StoredPayloadRow[];
     return this.readPayloads(rows);
   }
 
@@ -452,7 +565,7 @@ export class SessionStore {
    * ongoing threads from any project root.
    */
   listRecent(limit = 25): SessionState[] {
-    const rows = this.listRecentStmt.all(limit) as Array<{ payload: string }>;
+    const rows = this.listRecentStmt.all(limit) as StoredPayloadRow[];
     return this.readPayloads(rows);
   }
 
@@ -530,17 +643,26 @@ export class SessionStore {
    * Parse one stored payload, or `null` when it will not parse. A row
    * that is not JSON — a truncated write, a hand edit — used to throw
    * out of every list and empty the rail; now it is skipped and counted.
+   *
+   * The status comes from the column, not the payload: `beginTurn` moves
+   * only the column (rewriting a whole transcript to flip one word at
+   * every turn start is not worth it), so the payload's copy can be a
+   * turn behind.
    */
-  private readPayload(row: { payload: string }): SessionState | null {
+  private readPayload(row: StoredPayloadRow): SessionState | null {
+    let state: SessionState;
     try {
-      return normalizeSessionState(JSON.parse(row.payload));
+      state = normalizeSessionState(JSON.parse(row.payload));
     } catch {
       this.unreadableSkips += 1;
       return null;
     }
+    return typeof row.status === "string"
+      ? { ...state, status: row.status as SessionStatus }
+      : state;
   }
 
-  private readPayloads(rows: Array<{ payload: string }>): SessionState[] {
+  private readPayloads(rows: StoredPayloadRow[]): SessionState[] {
     const states: SessionState[] = [];
     for (const row of rows) {
       const state = this.readPayload(row);
