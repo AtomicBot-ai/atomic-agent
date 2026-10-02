@@ -299,7 +299,7 @@ async function privacy(js: Js, check: Check): Promise<void> {
   check(
     "T49 (Д50): what analytics send is two plain lines under the analytics switch, not two cards, worded Sent / Never sent with analytics",
     !pane.err && pane.cards === 0 && pane.icons === 0 && pane.lines.length === 2
-      && pane.lines[0] === "Sent with analytics: an install id, coarse counters, crash reports."
+      && pane.lines[0] === "Sent with analytics: an install id, coarse counters, crash reports, button and menu usage (action names only), download and startup timings."
       && pane.lines[1] === "Never sent with analytics: message content, paths, tool arguments, IP address." && !pane.leaves,
     pane.err ?? show({ cards: pane.cards, icons: pane.icons, lines: pane.lines }),
   );

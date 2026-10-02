@@ -224,6 +224,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     // arg-parse / TTY early returns above have already run, so `--help`
     // and a non-TTY invocation never reach here.
     interactiveLaunch: true,
+    analyticsSurface: "tui",
     handlers: {
       onAgentEvent: (event, sessionId) => bus.emitAgentEvent(event, sessionId),
       onApprovalRequest: (request) => bus.emitApproval(request),
@@ -754,8 +755,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.telegram.toggleAdvanced(),
         onAnalyticsToggleRequested: () =>
           orchestrator.privacy.toggleAnalytics(),
+        // Only the `/analytics enable|disable` slash verbs call this.
         onAnalyticsSetEnabledRequested: (enabled) =>
-          orchestrator.privacy.setAnalyticsEnabled(enabled),
+          orchestrator.privacy.setAnalyticsEnabled(enabled, "slash"),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onIntegrationsRefreshRequested: () =>
           orchestrator.integrations.refresh(),

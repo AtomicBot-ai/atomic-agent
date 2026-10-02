@@ -7,6 +7,8 @@
  * or JSON snippets of user content).
  */
 
+import { classifyTransportHost } from "./classify-transport-host.js";
+
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
   /** Error class name, e.g. `TransportError` / `TypeError`. */
@@ -66,8 +68,9 @@ export interface ScrubbedErrorEvent {
    */
   tool?: string;
   /**
-   * Host (no path/query) parsed from `TransportError.url`, when present.
-   * Only the host travels — the full URL could carry query params.
+   * Class of the host in `TransportError.url`, when present
+   * (`localhost` / `private` / `known_cloud` / `other`). Neither the URL
+   * nor the host name itself ever travels.
    */
   transportHost?: string;
   /**
@@ -301,20 +304,15 @@ export function extractSafeTool(err: unknown): string | undefined {
 }
 
 /**
- * Read the host (no path/query) off `TransportError.url`, when the URL
- * parses cleanly. Only the host travels — llama-server URLs are operator
- * infrastructure config, not user content, but the path/query is dropped
- * defensively in case a custom endpoint ever encodes anything in it.
+ * Classify the host of `TransportError.url` (see `classifyTransportHost`):
+ * `localhost` / `private` / `known_cloud` / `other`. The host itself never
+ * travels — a custom endpoint's name can identify a company or a machine.
  */
 export function extractSafeTransportHost(err: unknown): string | undefined {
   if (typeof err !== "object" || err === null) return undefined;
   const url = (err as { url?: unknown }).url;
   if (typeof url !== "string" || url.length === 0) return undefined;
-  try {
-    return new URL(url).host || undefined;
-  } catch {
-    return undefined;
-  }
+  return classifyTransportHost(url);
 }
 
 /**

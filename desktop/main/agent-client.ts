@@ -578,6 +578,8 @@ export class AgentClient extends EventEmitter {
       // Both places a person might look: the Diagnostics pane, and the
       // terminal when the app was started from one.
       this.say(`[desktop] reaped an orphaned agent left by a previous run (pid ${orphan.pid})`);
+      // Analytics: the last session did not end cleanly (app_opened.prev_session_crashed).
+      this.emit("orphan-reaped");
     }
     const token = randomBytes(24).toString("hex");
     const port = await freePort();
@@ -654,6 +656,8 @@ export class AgentClient extends EventEmitter {
        booted has already said how (childExited); one a stop ended is a
        restart, not a failure. */
     else if (verdict === "timeout") {
+      // Analytics: a start that really ran out of time, never a stop or a superseded start.
+      this.emit("start-failed", { reason: "health_timeout", exitCode: null, signal: null });
       this.setStatus({
         state: "error",
         error: `The agent did not become healthy within ${Math.round(budget / 1000)}s.`,
@@ -680,6 +684,8 @@ export class AgentClient extends EventEmitter {
       this.setStatus({ state: "stopped", port: null, llama: null });
       return;
     }
+    // Analytics / error reporting: numbers and a signal name only, never the agent's output.
+    this.emit("unexpected-exit", { exitCode: code, signal, phase: this.status.state === "starting" ? "starting" : "running" });
     this.setStatus({
       state: "error",
       port: null,

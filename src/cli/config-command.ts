@@ -7,6 +7,8 @@ import {
   USER_CONFIG_VERSION,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import { reportAnalyticsOptOut, resolveSurface } from "../analytics/index.js";
+import { getAppVersion } from "../version.js";
 import { HELP } from "./config-help.js";
 import {
   deleteConfigPath,
@@ -136,7 +138,7 @@ async function readAllText(stream: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function setWholeFile(raw: string): number {
+async function setWholeFile(raw: string): Promise<number> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -160,6 +162,7 @@ function setWholeFile(raw: string): number {
     return 1;
   }
   const next = parseUserConfigFile(parsed);
+  await reportIfOptingOut(next.analytics.enabled);
   const path = getConfig().paths.userConfigFile;
   writeUserConfigFileSync(path, next);
   resetConfigCache();
@@ -167,7 +170,7 @@ function setWholeFile(raw: string): number {
   return 0;
 }
 
-function setOneKey(key: string, value: string): number {
+async function setOneKey(key: string, value: string): Promise<number> {
   const leaf = findConfigLeaf(key);
   if (!leaf) return rejectUnknownKey("set", key);
   if (isReadOnlyConfigKey(key)) {
@@ -201,6 +204,7 @@ function setOneKey(key: string, value: string): number {
   // the tree stays exactly as it was on disk, so the file does not get
   // expanded with every default (see `writeRawUserConfigFileSync`).
   writeConfigPath(tree, key, readConfigPath(next, key));
+  await reportIfOptingOut(next.analytics.enabled);
   writeRawUserConfigFileSync(path, tree);
   resetConfigCache();
   process.stdout.write(
@@ -260,6 +264,23 @@ function handleList(): number {
     process.stdout.write(`${row.rendered.padEnd(width)}  (default ${shown})\n`);
   }
   return 0;
+}
+
+/**
+ * Send `analytics_disabled` (via `config`) when this write turns analytics
+ * off, BEFORE the file changes — the last event, under the old consent.
+ * Skipped when the desktop app runs this command (`ATOMIC_AGENT_SURFACE=
+ * desktop`): its main process sends its own `analytics_disabled`.
+ */
+async function reportIfOptingOut(nextEnabled: boolean): Promise<void> {
+  const config = getConfig();
+  if (!config.analytics.enabled || nextEnabled) return;
+  if (resolveSurface() === "desktop") return;
+  await reportAnalyticsOptOut({
+    stateDir: config.paths.stateDir,
+    version: getAppVersion(),
+    via: "config",
+  });
 }
 
 /**

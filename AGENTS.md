@@ -1584,6 +1584,26 @@ Categorisation lives at the call sites (fs tools resolve workspace/home/outside 
 
 Slash commands: `/privacy` opens the tab; `/privacy analytics on|off|status` drives analytics (`/analytics` stays as the top-level alias); `/privacy level 1..5` moves the ladder; `/privacy approve on|off` survives as the alias pair for levels 5 and 1. The approval prompt itself points here — its footer says approving with `y` grants one call and the ladder lives on the Privacy tab.
 
+### Analytics surface, install id, and environment
+
+Anonymous analytics (PostHog) and crash reports (Sentry) live in [src/analytics/](src/analytics/) and [src/error-reporting/](src/error-reporting/). The runtime builds both clients and the live on/off switch through [toggle-runtime-telemetry.ts](src/analytics/toggle-runtime-telemetry.ts) (`buildRuntimeTelemetry`, `createTelemetryToggle`); `bootstrap.ts` only wires it. Every event and error report is stamped with process-wide dimensions from [resolve-analytics-dimensions.ts](src/analytics/resolve-analytics-dimensions.ts): `surface`, `arch`, `install_channel`, and `desktop_version` (desktop only). These env vars are read inside `src/analytics/` (each function takes an `env` parameter for tests), not through `src/config`, because they describe the process, not the operator's settings:
+
+| Env var | Effect |
+|---|---|
+| `ATOMIC_AGENT_ANALYTICS` | `off` (also `0` / `false` / `no` / `disabled`) disables PostHog and Sentry for this process regardless of `analytics.enabled`: no events, no reports, no write to the shared install id file. Not persisted. The desktop app sets it for smoke / test runs. |
+| `ATOMIC_AGENT_SURFACE` | `desktop` / `tui` / `cli`. The desktop app sets `desktop` on the agent it spawns. An explicit `analyticsSurface` beats it; anything else falls back to `cli`. |
+| `ATOMIC_AGENT_INSTALL_CHANNEL` | Install channel enum (`dmg` / `exe` / `appimage` / `deb` from the desktop). Wins over `<stateDir>/install-channel`, which `scripts/install.sh` / `install.ps1` write as `curl_sh` / `curl_ps1`; else `unknown`. |
+| `ATOMIC_AGENT_DESKTOP_VERSION` | Desktop app version, sent as `desktop_version` when it looks like a version string. |
+| `ATOMIC_AGENT_INSTALL_ID_FILE` | Path of the machine-wide install id file (default `~/.atomic-agent-install-id`). Tests must set it; the default path is never touched under the test runner. |
+
+`CreateAgentRuntimeOptions.analyticsSurface` is the entry point's surface: the TUI passes `tui`; headless entry points (`run`, `task`, `serve`, the sidecar) leave it unset so `ATOMIC_AGENT_SURFACE` applies, else `cli`.
+
+**Install id order** ([resolve-shared-install-id.ts](src/analytics/resolve-shared-install-id.ts)): a valid UUID in the shared file, then (desktop surface only) the terminal's `~/.atomic-agent/analytics.json` id unless `~/.atomic-agent/config.json` has `analytics.enabled: false`, then this state dir's own `analytics.json` id, then a fresh UUID. Nothing is read, minted, or written while analytics is off. The "fire once" flags stay per state dir, so each surface reports its own `app_installed`.
+
+**Opt-out event.** Turning analytics off sends `analytics_disabled` (`via`: `settings` / `slash` / `config`) once, before the clients shut down. `atomic-agent config set` sends it through `reportAnalyticsOptOut` before writing the file, except under `ATOMIC_AGENT_SURFACE=desktop` (the desktop shell sends its own).
+
+**Crash report host.** `transport_host` is a class (`localhost` / `private` / `known_cloud` / `other`, [classify-transport-host.ts](src/error-reporting/classify-transport-host.ts)), never a host name. `known_cloud` is derived from the non-local provider presets plus the built-in provider hosts.
+
 ### Session grants (prompt-side approval, issue #79)
 
 On top of the standing ladder the approval prompt offers two point exceptions, keyed at the prompt and scoped to the current session only. `[s]` ("allow this kind this session") approves the call and grants the whole `ApprovalCategory`; `[a]` ("allow all `<binary>` this session") approves and grants one shell command shape. `[y]` still approves the single call with no grant, `[n]`/`esc` deny. The grant is offered on the TUI `ApprovalModal` (keys routed in `app-key-bindings.ts`) and the CLI `run` stdin prompt; both surfaces have physical machine access, matching the level carve-out. Telegram/`ApprovalBridge` never grants: a remote channel approves per-request only, so a compromised bot token cannot raise session trust any more than it can raise the standing level.

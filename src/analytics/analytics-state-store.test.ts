@@ -49,7 +49,7 @@ describe("AnalyticsStateStore", () => {
     expect(reloaded.isModelConfiguredSent()).toBe(true);
   });
 
-  it("stores no machine-derived data — only id + boolean flags", () => {
+  it("stores no machine-derived data — only id, install time + boolean flags", () => {
     const store = new AnalyticsStateStore(file);
     store.markFirstMessageSent();
     const persisted = JSON.parse(readFileSync(file, "utf8"));
@@ -57,8 +57,33 @@ describe("AnalyticsStateStore", () => {
       "appInstalledSent",
       "firstMessageSent",
       "installId",
+      "installedAt",
       "modelConfiguredSent",
     ]);
+  });
+
+  it("records installedAt on a fresh install and reports whole days since", () => {
+    const store = new AnalyticsStateStore(file);
+    const persisted = JSON.parse(readFileSync(file, "utf8"));
+    const at = Date.parse(persisted.installedAt);
+    expect(Number.isFinite(at)).toBe(true);
+    expect(store.getDaysSinceInstall(at)).toBe(0);
+    expect(store.getDaysSinceInstall(at + 3.5 * 24 * 60 * 60 * 1000)).toBe(3);
+  });
+
+  it("does not backfill installedAt for a file that predates it", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({ installId: "11111111-2222-4333-8444-555555555555" }),
+      "utf8",
+    );
+    const store = new AnalyticsStateStore(file);
+    expect(store.getDaysSinceInstall()).toBeUndefined();
+  });
+
+  it("returns the local id as the shared id while analytics is disabled", () => {
+    const store = new AnalyticsStateStore(file);
+    expect(store.getSharedInstallId(false)).toBe(store.getInstallId());
   });
 
   it("reads a pre-existing file that predates modelConfiguredSent", () => {
