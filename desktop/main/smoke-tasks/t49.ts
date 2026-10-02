@@ -1,9 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
-
 import { BrowserWindow } from "electron";
-
-import { readWholeConfig } from "../agent-cli.js";
-import { redactSecrets } from "../report-redact.js";
 
 /**
  * Release-fix checks for Danya's Settings items (see main/release-fixes-smoke.ts).
@@ -12,39 +7,46 @@ import { redactSecrets } from "../report-redact.js";
  * Д36 Telegram showed config keys, `.env` and an `unknown` state, and an
  * Advanced toggle whose label changed width under the pointer: before a token
  * it is the Connect Telegram card alone, after it one Connected / Not
- * connected status over rows in words.
+ * connected status over rows in words — Connected only with Telegram on and
+ * no change still waiting for a restart — with a Check again that reads the
+ * tab anew, and a restart's lines that go once the new agent is up.
  * Д39 Memory's empty channels said "No votes yet" and nothing about it.
  * Д40 Tasks had a hole beside its filters: Refresh and New task share their row.
  * Д47 Privacy's read-scope change put a blue line above the rows that pushed
- * them down; it is a toast. Д48 Session grants was a row with nothing to set;
- * it is a line under the switch. Д49 Analytics sent you to General; the switch
- * is in Privacy too, drawn from the same value. Д50 The two cards of what
- * analytics send are two plain lines under that switch, worded as before.
+ * them down; it is a toast, and a restart still owed (analytics) stays offered
+ * under the rows, in General too. Д48 Session grants was a row with nothing
+ * to set; it is a line under the switch. Д49 Analytics sent you to General;
+ * the switch is in Privacy too, drawn from the same value. Д50 The two cards
+ * of what analytics send are two plain lines under that switch.
  * Д51 Import's Run preview moved with each source and went past the window's
- * edge; it stays in the pane's header. Д52 it is Preview import, and Limit
- * says what it limits. Д53 the report is in words, Apply is off when there is
- * nothing to import, and the check says Checking…. Д54 Pi and Oh-My-Pi wear a
- * neutral glyph.
- * Д55–Д59 Diagnostics says what it is for, copies values and the log, saves a
- * report for support (with the secrets out that the key-name rule kept), opens
- * the model server's log in place instead of jumping to Models, and no longer
- * repeats its rows as a status line.
+ * edge; it stays in the pane's header, first in the keyboard's order. Д52 it
+ * is Preview import, and Limit says what it limits. Д53 the report is in
+ * words, Apply is off when there is nothing to import, and the check says
+ * Checking…. Д54 Pi and Oh-My-Pi wear a neutral glyph.
+ * Д55–Д59 Diagnostics says what it is for, copies values and the log, names
+ * its report "Save report for support" (so do the Help menu and the palette),
+ * opens the model server's log in place instead of jumping to Models without
+ * asking `models status` on every tick, and no longer repeats its rows as a
+ * status line. (What the report holds and how it is cleaned is checked by the
+ * report's own item, not here.)
  *
  * Panes are drawn into detached elements from staged state where the state
- * would otherwise have to be written (a token, analytics, a report), and on
- * the window where layout is the point. Nothing is written to the config: the
- * read-scope write is stood in for, and the one file written, the report in
- * Downloads, is removed. Every block puts back what it staged and closes
- * Settings.
+ * would otherwise have to be written (a token, analytics), and on the window
+ * where layout or focus is the point. Nothing is written: the read-scope
+ * write, the analytics write and the token write are stood in for — the last
+ * two on the window's own IPC, relied on only after a probe proves the stand-in
+ * answers. Every block puts back what it staged and closes Settings.
  */
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 type Failed = { err?: string };
+type Handler = (event: unknown, payload: unknown) => unknown;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const show = (v: unknown) => JSON.stringify(v);
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const STAND_IN = "smoke t49 stand-in";
 
 /* A renderer error is a failed check, never a thrown one (see t09). */
 async function safe<T>(js: Js, code: string): Promise<T & Failed> {
@@ -60,6 +62,27 @@ function appWindow(): BrowserWindow | null {
   return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && /index\.html$/.test(w.webContents.getURL())) ?? null;
 }
 
+/**
+ * Runs `body` with `channel` answered by `handler` on the window's own IPC
+ * (asked before ipcMain's), after `probe` — a call the real handler refuses
+ * without writing anything — has come back with the stand-in's answer.
+ * Returns why it did not run, or null.
+ */
+async function withStandIn(js: Js, channel: string, handler: Handler, probe: string, body: () => Promise<void>): Promise<string | null> {
+  const win = appWindow();
+  if (!win) return "no app window";
+  win.webContents.ipc.removeHandler(channel);
+  win.webContents.ipc.handle(channel, handler);
+  try {
+    const answer = await js<{ error?: string; standIn?: string } | null>(probe).catch((e: unknown) => ({ error: message(e) }));
+    if (!answer || (answer.error !== STAND_IN && answer.standIn !== STAND_IN)) return `the stand-in on ${channel} did not answer the probe: ${show(answer)}`;
+    await body();
+    return null;
+  } finally {
+    if (!win.isDestroyed()) win.webContents.ipc.removeHandler(channel);
+  }
+}
+
 export async function checks49(js: Js, check: Check): Promise<void> {
   try {
     await telegram(js, check);
@@ -68,67 +91,129 @@ export async function checks49(js: Js, check: Check): Promise<void> {
     await privacy(js, check);
     await importPane(js, check);
     await diagnostics(js, check);
-    await report(js, check);
   } finally {
     await safe<void>(js, "window.__settingsClose()");
   }
 }
 
-/* Д36: the four states the tab can be in, drawn from staged key names and config. */
+/* Д36: the states the tab can be in, drawn from staged key names, config and agent generations. */
 async function telegram(js: Js, check: Check): Promise<void> {
-  type State = { status: string | null; cards: number; rows: number; advanced: boolean; technical: boolean; pairing: boolean; children: number };
-  const r = await safe<{ none: State; pairing: State; connected: State; off: State }>(js, `(() => {
-    const saved = {keysKnown: TG.keysKnown, dotenv: TG.dotenvKeys, env: TG.envKeys, mode: TG.mode, message: TG.message, restart: TG.restart,
-      lastError: TG.lastError, cfg: TG.cfg, live: LIVE_CONFIG};
+  type State = { status: string | null; line: string; cards: number; rows: number; advanced: boolean; technical: boolean; pairing: boolean;
+    children: number; refresh: boolean; notices: Array<{ text: string; restart: boolean }> };
+  const r = await safe<Record<"none" | "pairing" | "connected" | "off" | "unknown" | "owed" | "after" | "restarting" | "restartingOwed" | "restarted", State>>(js, `(() => {
+    const saved = {keysKnown: TG.keysKnown, dotenv: TG.dotenvKeys, env: TG.envKeys, mode: TG.mode, message: TG.message, msgKind: TG.msgKind,
+      msgGen: TG.msgGen, owedGen: TG.owedGen, lastError: TG.lastError, cfg: TG.cfg, keysBusy: TG.keysBusy, live: LIVE_CONFIG};
     const technical = /telegram\\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\\.env\\b|\\bunknown\\b/;
-    const draw = (token, telegram) => {
-      TG.dotenvKeys = token ? ['TELEGRAM_BOT_TOKEN'] : [];
-      LIVE_CONFIG = Object.assign({}, saved.live || {}, {telegram});
+    const set = (token, telegram) => { TG.dotenvKeys = token ? ['TELEGRAM_BOT_TOKEN'] : []; LIVE_CONFIG = Object.assign({}, saved.live || {}, {telegram}); };
+    const draw = () => {
       const box = document.createElement('div'); box.innerHTML = telegramTab();
-      const pane = box.firstElementChild, st = box.querySelector('[data-tg-status]');
-      return {status: st ? st.textContent.trim() : null, cards: box.querySelectorAll('.sd-tgcard').length,
+      const pane = box.firstElementChild, st = box.querySelector('[data-tg-status]'), d = box.querySelector('.sd-tgstatus .body .d');
+      return {status: st ? st.textContent.trim() : null, line: d ? d.textContent.trim() : '', cards: box.querySelectorAll('.sd-tgcard').length,
         rows: box.querySelectorAll('.sd-rows, .sd-tgstatus').length,
         advanced: /Advanced/.test(box.textContent) || !!box.querySelector('[data-act="telegram:advanced"]'),
-        technical: technical.test(box.textContent), pairing: /One last step/.test(box.textContent), children: pane ? pane.children.length : -1};
+        technical: technical.test(box.textContent), pairing: /One last step/.test(box.textContent), children: pane ? pane.children.length : -1,
+        refresh: !!box.querySelector('.sd-tgstatus [data-act="telegram:refresh"]'),
+        notices: [...box.querySelectorAll('.tk-notice')].map((n) => ({text: n.textContent.replace(/\\s+/g, ' ').trim(), restart: !!n.querySelector('[data-act="agent:restart"]')}))};
     };
     try {
-      TG.keysKnown = true; TG.envKeys = []; TG.mode = 'list'; TG.message = null; TG.restart = false; TG.lastError = null; TG.cfg = null;
-      return {none: draw(false, {enabled: false, ownerUserId: null}), pairing: draw(true, {enabled: true, ownerUserId: null}),
-        connected: draw(true, {enabled: true, ownerUserId: 4242}), off: draw(true, {enabled: false, ownerUserId: 4242})};
+      Object.assign(TG, {keysKnown: true, envKeys: [], mode: 'list', message: null, msgKind: 'info', msgGen: AGENT_GEN, owedGen: null, lastError: null, cfg: null, keysBusy: false});
+      const out = {};
+      set(false, {enabled: false, ownerUserId: null}); out.none = draw();
+      set(true, {enabled: true, ownerUserId: null}); out.pairing = draw();
+      set(true, {enabled: true, ownerUserId: 4242}); out.connected = draw();
+      set(true, {enabled: false, ownerUserId: 4242}); out.off = draw();
+      // No telegram.enabled in the file and no effective value read: unknown, which is not on (the schema's default is off).
+      set(true, {ownerUserId: 4242}); out.unknown = draw();
+      // A change the agent loads at start: owed until a new agent is up (AGENT_GEN moves when one connects).
+      set(true, {enabled: true, ownerUserId: 4242});
+      tgSetMessage('Telegram turned on.', 'owed'); out.owed = draw();
+      TG.owedGen = AGENT_GEN - 1; TG.msgGen = AGENT_GEN - 1; out.after = draw();
+      tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); out.restarting = draw();
+      TG.owedGen = AGENT_GEN; out.restartingOwed = draw();
+      TG.owedGen = AGENT_GEN - 1; TG.msgGen = AGENT_GEN - 1; out.restarted = draw();
+      return out;
     } finally {
-      Object.assign(TG, {keysKnown: saved.keysKnown, dotenvKeys: saved.dotenv, envKeys: saved.env, mode: saved.mode, message: saved.message,
-        restart: saved.restart, lastError: saved.lastError, cfg: saved.cfg});
+      Object.assign(TG, {keysKnown: saved.keysKnown, dotenvKeys: saved.dotenv, envKeys: saved.env, mode: saved.mode, message: saved.message, msgKind: saved.msgKind,
+        msgGen: saved.msgGen, owedGen: saved.owedGen, lastError: saved.lastError, cfg: saved.cfg, keysBusy: saved.keysBusy});
       LIVE_CONFIG = saved.live;
     }
   })()`);
   check(
     "T49 (Д36): before a token the Telegram tab is the Connect Telegram card alone — no Advanced, no rows",
-    !r.err && r.none.cards === 1 && r.none.children === 1 && r.none.rows === 0 && !r.none.advanced && !r.none.technical,
+    !r.err && r.none.cards === 1 && r.none.children === 1 && r.none.rows === 0 && !r.none.advanced && !r.none.technical && !r.none.refresh,
     r.err ?? show(r.none),
   );
   check(
-    "T49 (Д36): with a token, one status in words — Not connected until paired or when off, Connected when paired and on — and no config keys, .env or unknown",
+    "T49 (Д36): with a token, one status in words — Not connected until paired, when off, or when on is unknown; Connected when paired and on — no config keys, .env or unknown",
     !r.err && r.pairing.status === "Not connected" && r.pairing.pairing && r.connected.status === "Connected" && r.off.status === "Not connected"
-      && [r.pairing, r.connected, r.off].every((s) => !s.technical && !s.advanced && s.rows === 2),
-    r.err ?? show({ pairing: r.pairing, connected: r.connected, off: r.off }),
+      && r.unknown.status === "Not connected" && /Turned off/.test(r.unknown.line)
+      && [r.pairing, r.connected, r.off, r.unknown].every((s) => !s.technical && !s.advanced && s.rows === 2),
+    r.err ?? show({ pairing: r.pairing, connected: r.connected, off: r.off, unknown: r.unknown }),
+  );
+  check(
+    "T49 (Д36): a change waiting for a restart is not Connected, and its one notice offers the restart; once a new agent is up, Connected and no notice",
+    !r.err && r.owed.status === "Not connected" && /restart/i.test(r.owed.line) && r.owed.notices.length === 1 && r.owed.notices[0]!.restart
+      && /^Telegram turned on\. It takes effect after a restart\./.test(r.owed.notices[0]!.text)
+      && r.after.status === "Connected" && r.after.notices.length === 0,
+    r.err ?? show({ owed: r.owed, after: r.after }),
+  );
+  check(
+    "T49 (Д36): \"Restarting the agent…\" shows alone while the restart runs, and goes once the new agent is up",
+    !r.err && r.restarting.notices.length === 1 && /^Restarting the agent/.test(r.restarting.notices[0]!.text) && !r.restarting.notices[0]!.restart
+      && r.restartingOwed.notices.length === 1 && !r.restartingOwed.notices[0]!.restart && r.restarted.notices.length === 0,
+    r.err ?? show({ restarting: r.restarting.notices, restartingOwed: r.restartingOwed.notices, restarted: r.restarted.notices }),
+  );
+
+  // Check again: in every state with a token, and it reads the tab anew (the R key's refresh).
+  const again = await safe<{ calls: number }>(js, `(() => {
+    const real = tgRefresh, busy = TG.keysBusy;
+    let calls = 0;
+    try { tgRefresh = () => { calls++; return Promise.resolve(); }; telegramAct('refresh'); return {calls}; }
+    finally { tgRefresh = real; TG.keysBusy = busy; }
+  })()`);
+  check(
+    "T49 (Д36): with a token the status carries Check again, and it reads the tab anew",
+    !r.err && r.pairing.refresh && r.connected.refresh && r.off.refresh && !again.err && again.calls === 1,
+    r.err ?? again.err ?? show({ refresh: [r.pairing.refresh, r.connected.refresh, r.off.refresh], calls: again.calls }),
+  );
+
+  // A token the write refuses: said once, under the field — not again as the tab's error line.
+  type Saved = { ok: boolean; tokenError: string | null; lastError: string | null; shown: number };
+  let failed: Partial<Saved> & Failed = {};
+  const why = await withStandIn(js, "app:dotenvSet", () => ({ ok: false, error: STAND_IN }),
+    "BR.dotenvSet('/nonexistent-smoke-t49', 'SMOKE_T49_PROBE', null)", async () => {
+      failed = await safe<Saved>(js, `(async () => {
+        const saved = {mode: TG.mode, token: TG.token, lastError: TG.lastError, busy: TG.busy};
+        try {
+          Object.assign(TG, {mode: 'tokenPrompt', token: {error: null, submitting: false}, lastError: null});
+          const res = await tgTokenSave('smoke-t49-not-a-token');
+          const box = document.createElement('div'); box.innerHTML = telegramTab();
+          return {ok: res.ok, tokenError: TG.token.error, lastError: TG.lastError, shown: (box.textContent.match(/Could not save the token/g) || []).length};
+        } finally { Object.assign(TG, saved); }
+      })()`);
+    });
+  check(
+    "T49 (Д36): a token the write refuses is said once, under the field, not twice",
+    why === null && !failed.err && failed.ok === false && /^Could not save the token: smoke t49 stand-in/.test(failed.tokenError ?? "")
+      && failed.lastError === null && failed.shown === 1,
+    why ?? failed.err ?? show(failed),
   );
 }
 
-/* Д39: every channel's empty state says what would be in it. */
+/* Д39: every channel's empty state says what would be in it, and a search that found nothing says so. */
 async function memory(js: Js, check: Check): Promise<void> {
   type Empty = { title: string; line: string };
-  const r = await safe<{ channels: Record<string, Empty> }>(js, `(() => {
+  const r = await safe<{ channels: Record<string, Empty>; searched: Empty }>(js, `(() => {
     const saved = {mode: MEM.mode, channel: MEM.channel, rows: MEM.rows, hint: MEM.channelHint, at: MEM.lastRefreshedAt, search: MEM.search};
+    const read = () => { const box = document.createElement('div'); box.innerHTML = memListHTML();
+      const h = box.querySelector('.tk-empty h4'), p = box.querySelector('.tk-empty p');
+      return {title: h ? h.textContent : '', line: p ? p.textContent.trim() : ''}; };
     try {
       Object.assign(MEM, {mode: 'list', rows: [], channelHint: null, lastRefreshedAt: Date.now(), search: ''});
-      const out = {};
-      for (const ch of MEM_CHANNEL_ORDER) {
-        MEM.channel = ch;
-        const box = document.createElement('div'); box.innerHTML = memListHTML();
-        const h = box.querySelector('.tk-empty h4'), p = box.querySelector('.tk-empty p');
-        out[ch] = {title: h ? h.textContent : '', line: p ? p.textContent.trim() : ''};
-      }
-      return {channels: out};
+      const channels = {};
+      for (const ch of MEM_CHANNEL_ORDER) { MEM.channel = ch; channels[ch] = read(); }
+      MEM.channel = 'notes'; MEM.search = 'zzz-smoke-t49';
+      return {channels, searched: read()};
     } finally {
       Object.assign(MEM, {mode: saved.mode, channel: saved.channel, rows: saved.rows, channelHint: saved.hint, lastRefreshedAt: saved.at, search: saved.search});
     }
@@ -140,6 +225,11 @@ async function memory(js: Js, check: Check): Promise<void> {
     !r.err && votes?.title === "No votes yet" && /rates the memories it used/.test(votes?.line ?? "")
       && lines.length === 6 && lines.every((v) => v.line.length > 20),
     r.err ?? show(r.channels),
+  );
+  check(
+    "T49 (Д39): a search that found nothing says Nothing matches, not that the channel is empty",
+    !r.err && r.searched?.title === "Nothing matches “zzz-smoke-t49”",
+    r.err ?? show(r.searched),
   );
 }
 
@@ -236,17 +326,18 @@ async function privacy(js: Js, check: Check): Promise<void> {
 
   /* Д47: a read-scope change the agent takes at once. The write is stood in
      for (configPatchOr answers live, nothing is written), so the config the
-     next read brings back is the one that was there. */
+     next read brings back is the one that was there. Toasts are told apart by
+     id: one may expire while the check runs. */
   const live = await safe<{ skipped?: string; calls: number; top0: number | null; top1: number | null; notices: number; toast: string | null }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     for (let i = 0; i < 100 && (PRIV.busy || PRIV.pending); i++) await tick(100);
     if (!LIVE_CONFIG || PRIV.busy || PRIV.pending) return {skipped: 'no config read yet, or a privacy write still in flight after 10 s'};
-    const realPatch = configPatchOr, toastsBefore = S.toasts.length;
-    // A notice an earlier write left (an analytics restart line) is put aside, so the page starts as a person meets it.
-    const notes = {message: PRIV.message, messageLive: PRIV.messageLive, lastError: PRIV.lastError};
+    const realPatch = configPatchOr, lastToast = S.toastId;
+    // A restart offer an earlier write left (analytics) is put aside, so the page starts as a person meets it.
+    const notes = {owed: PRIV.owed, owedGen: PRIV.owedGen, lastError: PRIV.lastError};
     let calls = 0;
     try {
-      PRIV.message = null; PRIV.lastError = null;
+      Object.assign(PRIV, {owed: {}, owedGen: null, lastError: null});
       window.__settingsOpen('privacy'); await tick(250);
       const row = () => document.querySelector('#settings .setbody .set-privacy .tk-setrow');
       const top0 = row() ? Math.round(row().getBoundingClientRect().top) : null;
@@ -255,11 +346,11 @@ async function privacy(js: Js, check: Check): Promise<void> {
       await tick(150);
       const top1 = row() ? Math.round(row().getBoundingClientRect().top) : null;
       return {calls, top0, top1, notices: document.querySelectorAll('#settings .setbody .set-privacy .tk-notice--blue').length,
-        toast: (S.toasts.slice(toastsBefore).map((t) => t.t).pop()) || null};
+        toast: (S.toasts.filter((t) => t.id > lastToast).map((t) => t.t).pop()) || null};
     } finally {
       configPatchOr = realPatch;
       Object.assign(PRIV, notes);
-      S.toasts = S.toasts.slice(0, toastsBefore); renderToasts();
+      S.toasts = S.toasts.filter((t) => t.id <= lastToast); renderToasts();
       window.__settingsClose();
     }
   })()`);
@@ -269,12 +360,75 @@ async function privacy(js: Js, check: Check): Promise<void> {
       && typeof live.toast === "string" && /^The agent will (ask before reading|read anywhere)/.test(live.toast),
     live.err ?? live.skipped ?? show(live),
   );
+
+  /* Д47: the restart an analytics write owes stays offered through a
+     read-scope change, live or not, and is drawn under General's rows too;
+     it goes once a new agent is up. */
+  const kept = await safe<{ skipped?: string; afterLive: string; afterNotLive: string; generalBelow: boolean; afterRestart: string }>(js, `(async () => {
+    const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    for (let i = 0; i < 100 && (PRIV.busy || PRIV.pending); i++) await tick(100);
+    if (!LIVE_CONFIG || PRIV.busy || PRIV.pending) return {skipped: 'no config read yet, or a privacy write still in flight after 10 s'};
+    const realPatch = configPatchOr, lastToast = S.toastId;
+    const notes = {owed: PRIV.owed, owedGen: PRIV.owedGen, lastError: PRIV.lastError};
+    const other = () => (readScopeValue() === 'unrestricted' ? 'working-dir' : 'unrestricted');
+    try {
+      Object.assign(PRIV, {owed: {}, owedGen: null, lastError: null});
+      privOwe('analytics', 'analytics disabled');
+      configPatchOr = async () => ({ok: true, live: true});
+      await readScopeSet(other());
+      const afterLive = privOwedText();
+      configPatchOr = async () => ({ok: true, live: false});
+      await readScopeSet(other());
+      const afterNotLive = privOwedText();
+      const g = document.createElement('div'); g.innerHTML = generalPane();
+      const list = g.querySelector('.tk-list'), offer = g.querySelector('[data-act="agent:restart"]');
+      const generalBelow = !!list && !!offer && !list.contains(offer) && !!(list.compareDocumentPosition(offer) & Node.DOCUMENT_POSITION_FOLLOWING);
+      PRIV.owedGen = AGENT_GEN - 1;
+      return {afterLive, afterNotLive, generalBelow, afterRestart: privOwedText()};
+    } finally {
+      configPatchOr = realPatch;
+      Object.assign(PRIV, notes);
+      S.toasts = S.toasts.filter((t) => t.id <= lastToast); renderToasts();
+    }
+  })()`);
+  check(
+    "T49 (Д47): a restart analytics still needs stays offered through a read-scope change, under General's rows too, until a new agent is up",
+    !kept.err && !kept.skipped && kept.afterLive === "analytics disabled" && /analytics disabled/.test(kept.afterNotLive)
+      && /the agent will (ask before reading|read anywhere)/.test(kept.afterNotLive) && kept.generalBelow && kept.afterRestart === "",
+    kept.err ?? kept.skipped ?? show(kept),
+  );
+
+  // ... and the other way round: an analytics write keeps a read-scope restart offer. The write is stood in for on the window's IPC.
+  let both: { text?: string } & Failed = {};
+  type Both = { text: string };
+  const why = await withStandIn(js, "cli:configSet", () => ({ ok: true, stdout: "", stderr: "", standIn: STAND_IN }),
+    "BR.configSet('smoke t49 probe', 'x')", async () => {
+      both = await safe<Both>(js, `(async () => {
+        const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+        for (let i = 0; i < 100 && (PRIV.busy || PRIV.pending); i++) await tick(100);
+        const notes = {owed: PRIV.owed, owedGen: PRIV.owedGen, lastError: PRIV.lastError};
+        try {
+          Object.assign(PRIV, {owed: {}, owedGen: null, lastError: null});
+          privOwe('readScope', 'the agent will read anywhere without asking');
+          const eff = privacyEffective();
+          await privacySet(eff === null ? false : !eff);
+          return {text: privOwedText()};
+        } finally { Object.assign(PRIV, notes); }
+      })()`);
+    });
+  await safe<void>(js, "privacyRefresh()");
+  check(
+    "T49 (Д47): an analytics write keeps the read-scope restart offer and adds its own",
+    why === null && !both.err && /the agent will read anywhere without asking/.test(both.text ?? "") && /analytics (enabled|disabled)/.test(both.text ?? ""),
+    why ?? both.err ?? show(both),
+  );
 }
 
 /* Д51–Д54. */
 async function importPane(js: Js, check: Check): Promise<void> {
-  type Pos = { top: number; left: number; right: number; inView: boolean; label: string } | null;
-  const r = await safe<{ pos: Record<string, Pos>; scrolled: Pos; label: string; placeholder: string; marks: Record<string, boolean>; generic: boolean[]; oldRun: boolean }>(js, `(async () => {
+  type Pos = { top: number; left: number; right: number; inView: boolean; label: string; ringRoom: number } | null;
+  const r = await safe<{ pos: Record<string, Pos>; scrolled: Pos; label: string; placeholder: string; marks: Record<string, boolean>; generic: boolean[];
+    oldRun: boolean; order: string }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const saved = {mode: IMP.mode, form: Object.assign({}, IMP.form), report: IMP.report, notice: IMP.notice, state: IMP.state};
     const at = () => {
@@ -282,7 +436,8 @@ async function importPane(js: Js, check: Check): Promise<void> {
       if (!b || !body) return null;
       const r = b.getBoundingClientRect(), v = body.getBoundingClientRect();
       return {top: Math.round(r.top), left: Math.round(r.left), right: Math.round(r.right), label: b.textContent.trim(),
-        inView: r.top >= v.top - 1 && r.bottom <= v.bottom + 1 && r.left >= v.left - 1 && r.right <= v.right + 1};
+        inView: r.top >= v.top - 1 && r.bottom <= v.bottom + 1 && r.left >= v.left - 1 && r.right <= v.right + 1,
+        ringRoom: Math.round(r.top - v.top)};
     };
     try {
       Object.assign(IMP, {mode: 'configure', report: null, notice: null});
@@ -303,7 +458,7 @@ async function importPane(js: Js, check: Check): Promise<void> {
         if (src === 'pi' || src === 'oh-my-pi') { const g = btn && btn.querySelector('.tk-ico'); generic.push(!!g && !!g.querySelector('svg') && !g.querySelector('img')); }
       }
       return {pos, scrolled, label: lbl ? lbl.textContent.trim() : '', placeholder: inp ? inp.getAttribute('placeholder') : '', marks, generic,
-        oldRun: !!document.querySelector('#settings .sd-run')};
+        oldRun: !!document.querySelector('#settings .sd-run'), order: impFocusOrder('codex').join(',')};
     } finally {
       Object.assign(IMP, {mode: saved.mode, report: saved.report, notice: saved.notice, state: saved.state});
       Object.assign(IMP.form, saved.form);
@@ -317,6 +472,11 @@ async function importPane(js: Js, check: Check): Promise<void> {
     !r.err && spots.length === 6 && !!first && spots.every((p) => !!p && p.inView && p.top === first?.top && p.left === first?.left && p.right === first?.right)
       && !!r.scrolled && r.scrolled.inView && !r.oldRun,
     r.err ?? show({ pos: r.pos, scrolled: r.scrolled, oldRun: r.oldRun }),
+  );
+  check(
+    "T49 (Д51): the keyboard reaches Preview import first, as it stands above the form, with room for its focus ring",
+    !r.err && r.order.startsWith("run,sourceType,") && !r.order.endsWith(",run") && !!first && first.ringRoom >= 4,
+    r.err ?? show({ order: r.order, ringRoom: first?.ringRoom }),
   );
   check(
     "T49 (Д52): the button is Preview import, and the limit says it is the sessions to import, All when empty",
@@ -386,10 +546,10 @@ async function importPane(js: Js, check: Check): Promise<void> {
 /* Д55–Д59. */
 async function diagnostics(js: Js, check: Check): Promise<void> {
   const r = await safe<{ intro: string; rows: number; withValue: number; buttons: number; copied: Array<{ text: string; title: string }>; shown: string;
-    allHasRows: boolean; allHasLine: boolean; save: string; what: string; statusLine: boolean; jump: boolean;
+    allHasRows: boolean; allHasLine: boolean; save: string; menu: string | null; palette: string | null; statusLine: boolean; jump: boolean;
     pane: string | null; logOpen: boolean; modelsLog: boolean; logState: string }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
-    const saved = {open: DIAG.logOpen, copy: copyText, toasts: S.toasts.length, view: LLMP.view};
+    const saved = {open: DIAG.logOpen, copy: copyText, lastToast: S.toastId, view: LLMP.view};
     const copied = [];
     try {
       DIAG.logOpen = false;
@@ -405,13 +565,16 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
       const all = pane.querySelector('[data-act="diag:copyall"]');
       if (all) all.click();
       const allText = copied.length > 1 ? copied[copied.length - 1].text : '';
+      const dumpNode = window.__menuNodes().find((n) => n.id === 'help.dump');
+      const palRow = PAL.flatMap((g) => g[1]).find((row) => row[4] === 'dump');
       const out = {intro: ((pane.querySelector('.set-diagintro') || {}).textContent || '').trim(), rows: rows.length, withValue: valued.length,
         buttons: valued.filter((row) => !!row.querySelector('[data-act^="diag:copy:"]')).length, copied: copied.slice(), shown,
         allHasRows: rows.every((row) => allText.includes(row.querySelector('.t').textContent + ': ')), allHasLine: / \\| approval L/.test(allText),
-        save: ((pane.querySelector('[data-act="dump"]') || {}).textContent || '').trim(), what: ((pane.querySelector('.set-diagwhat') || {}).textContent || '').trim(),
+        save: ((pane.querySelector('[data-act="dump"]') || {}).textContent || '').trim(),
+        menu: dumpNode ? dumpNode.label : null, palette: palRow ? palRow[1] : null,
         statusLine: /Status line/.test(pane.textContent) || !!pane.querySelector('.set-diagline'),
         jump: !!pane.querySelector('[data-act="diag:llmlogs"]')};
-      // The verb Models › LLM logs is to use, from a closed window: it lands here, with the log open.
+      // The verb Models › LLM logs uses, from a closed window: it lands here, with the log open.
       window.__settingsClose();
       act('diag:llmlogs');
       let state = '';
@@ -433,7 +596,7 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
       copyText = saved.copy;
       DIAG.logOpen = saved.open; diagLogStop();
       if (LLMP.view === 'logs' && saved.view !== 'logs') { if (typeof llmStopLogs === 'function') llmStopLogs(); LLMP.view = saved.view; }
-      S.toasts = S.toasts.slice(0, saved.toasts); renderToasts();
+      S.toasts = S.toasts.filter((t) => t.id <= saved.lastToast); renderToasts();
       window.__settingsClose();
     }
   })()`);
@@ -449,9 +612,9 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
     r.err ?? show({ rows: r.rows, withValue: r.withValue, buttons: r.buttons, copied: r.copied.map((c) => c.title), shown: r.shown, allHasRows: r.allHasRows, allHasLine: r.allHasLine }),
   );
   check(
-    "T49 (Д57): Write debug bundle is Save report for support, and the screen says where it goes and what it holds",
-    !r.err && r.save === "Save report for support" && /Downloads/.test(r.what) && /keys, tokens and passwords taken out/.test(r.what),
-    r.err ?? show({ save: r.save, what: r.what }),
+    "T49 (Д57): Write debug bundle is Save report for support — on the Diagnostics button, in the Help menu and in the palette",
+    !r.err && r.save === "Save report for support" && r.menu === "Save report for support" && r.palette === "Save report for support",
+    r.err ?? show({ save: r.save, menu: r.menu, palette: r.palette }),
   );
   check(
     "T49 (Д58): the model server's log opens in Diagnostics, not Models — from the verb Models › LLM logs uses — and is read there",
@@ -463,49 +626,70 @@ async function diagnostics(js: Js, check: Check): Promise<void> {
     !r.err && !r.statusLine,
     r.err ?? show({ statusLine: r.statusLine }),
   );
-}
 
-/* Д57: what the report takes out, on a staged config with a secret in each
-   place the key-name rule missed, then the report the button writes, read
-   back and removed. */
-async function report(js: Js, check: Check): Promise<void> {
-  const staged = {
-    llm: { providers: [{ id: "smoke-t49", apiKey: "sk-t49-key", baseUrl: "https://t49user:t49pass@llm.example/v1" }] },
-    mcp: {
-      servers: [
-        { name: "t49-http", transport: { type: "http", url: "https://mcp.example/t49", headers: { Authorization: "Bearer t49-bearer" } } },
-        { name: "t49-stdio", transport: { type: "stdio", command: "npx", args: ["t49-server", "--api-key", "t49-arg", "--token=t49-flag", "--port", "8049"],
-          env: { DATABASE_URL: "postgres://t49:t49-db@db.example/x", T49_PLAIN: "kept" } } },
-      ],
-    },
-    telegram: { enabled: true, ownerUserId: 4949 },
-  };
-  const out = JSON.stringify(redactSecrets(staged));
+  /* Д58: the log's poll never turns into a `models status` spawn every 2 s:
+     a failed status is asked once, an external route (no data dir) never,
+     Refresh asks once per press; an unchanged read repaints only for Refresh. */
+  const poll = await safe<{ failed: { calls: number; error: string | null }; external: { calls: number; external: boolean }; pressed: number; quiet: number; forced: number }>(js, `(async () => {
+    const saved = {status: LLMP.status, statusErr: LLMP.statusErr, open: DIAG.logOpen, log: DIAG.log, asked: DIAG.statusAsked, ask: llmRefreshStatus, repaint: diagRepaint};
+    let calls = 0, repaints = 0;
+    try {
+      diagLogStop();
+      llmRefreshStatus = async () => { calls++; };
+      diagRepaint = () => { repaints++; };
+      Object.assign(DIAG, {logOpen: true, log: null, statusAsked: false});
+      Object.assign(LLMP, {status: null, statusErr: 'smoke t49: status refused'});
+      for (let i = 0; i < 4; i++) await diagLogRefresh();
+      const failed = {calls, error: DIAG.log && DIAG.log.error};
+      calls = 0; DIAG.statusAsked = false; Object.assign(LLMP, {status: {mode: 'external', dataDir: null}, statusErr: null});
+      for (let i = 0; i < 4; i++) await diagLogRefresh();
+      const external = {calls, external: !!(DIAG.log && DIAG.log.external)};
+      calls = 0; DIAG.statusAsked = false;
+      await diagLogRefresh(true); await diagLogRefresh();
+      const pressed = calls;
+      repaints = 0; await diagLogRefresh(); const quiet = repaints;
+      await diagLogRefresh(true); const forced = repaints - quiet;
+      return {failed, external, pressed, quiet, forced};
+    } finally {
+      llmRefreshStatus = saved.ask; diagRepaint = saved.repaint;
+      Object.assign(LLMP, {status: saved.status, statusErr: saved.statusErr});
+      Object.assign(DIAG, {logOpen: saved.open, log: saved.log, statusAsked: saved.asked});
+      diagLogStop();
+    }
+  })()`);
   check(
-    "T49 (Д57): the report takes out a key, an Authorization header, a --api-key argument, a --token= flag and URL passwords, and keeps the rest",
-    !/sk-t49-key|t49pass|t49-bearer|t49-arg|t49-flag|t49-db/.test(out)
-      && out.includes('"--api-key"') && out.includes('"--port","8049"') && out.includes('"T49_PLAIN":"kept"') && out.includes('"ownerUserId":4949')
-      && out.includes('"url":"https://mcp.example/t49"') && out.includes("@llm.example/v1") && out.includes("@db.example/x"),
-    out,
+    "T49 (Д58): the log's poll asks models status at most once — a failed answer is not retried every 2 s, an external route is never asked",
+    !poll.err && poll.failed.calls === 1 && /smoke t49: status refused/.test(poll.failed.error ?? "") && poll.external.calls === 0 && poll.external.external,
+    poll.err ?? show(poll),
+  );
+  check(
+    "T49 (Д58): Refresh asks once per press and repaints even when the file is the same; a tick that finds it the same does not",
+    !poll.err && poll.pressed === 1 && poll.quiet === 0 && poll.forced === 1,
+    poll.err ?? show({ pressed: poll.pressed, quiet: poll.quiet, forced: poll.forced }),
   );
 
-  // The report the Save button writes carries the config through that same rule.
-  const res: { ok: boolean; path?: string; error?: string } = await js<{ ok: boolean; path?: string; error?: string }>("window.atomic.debugBundle()")
-    .catch((e: unknown) => ({ ok: false, error: message(e) }));
-  let text = "";
-  try {
-    if (res.ok && res.path) text = readFileSync(res.path, "utf8");
-  } catch (e) {
-    text = "";
-    res.error = message(e);
-  } finally {
-    if (res.ok && res.path) rmSync(res.path, { force: true });
-  }
-  const cfg = await readWholeConfig();
-  const want = cfg.ok ? JSON.stringify(redactSecrets(cfg.config), null, 2) : null;
+  // Д58: the toggle keeps the keyboard focus; leaving Diagnostics closes the log and stops its poll.
+  const focus = await safe<{ opened: boolean; keptOpen: boolean; closed: boolean; keptClose: boolean; leftOpen: boolean; leftTimer: boolean }>(js, `(async () => {
+    const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+    const saved = DIAG.logOpen;
+    const focused = () => { const a = document.activeElement; return !!a && !!a.dataset && a.dataset.act === 'diag:log'; };
+    try {
+      DIAG.logOpen = false;
+      window.__settingsOpen('diagnostics'); await tick(200);
+      const btn = document.querySelector('#settings .setbody [data-act="diag:log"]');
+      if (!btn) return {err: 'no log toggle on Diagnostics'};
+      btn.focus(); btn.click(); await tick(100);
+      const opened = DIAG.logOpen, keptOpen = focused();
+      document.activeElement.click(); await tick(100);
+      const closed = !DIAG.logOpen, keptClose = focused();
+      DIAG.logOpen = true; diagRepaint(); await tick(100);
+      window.__settingsOpen('general'); await tick(2600);
+      return {opened, keptOpen, closed, keptClose, leftOpen: DIAG.logOpen, leftTimer: !!DIAG.logTimer};
+    } finally { DIAG.logOpen = saved; diagLogStop(); window.__settingsClose(); }
+  })()`);
   check(
-    "T49 (Д57): the report Save writes holds the config as the rule leaves it",
-    res.ok && !!want && text.includes("--- config (secrets removed) ---\n" + want + "\n"),
-    res.ok ? `${text.length} chars read and removed; config ${cfg.ok ? "read" : "not read: " + cfg.error}` : `not written: ${res.error ?? "?"}`,
+    "T49 (Д58): opening and closing the log keeps the focus on its toggle, and leaving Diagnostics closes it and stops its poll",
+    !focus.err && focus.opened && focus.keptOpen && focus.closed && focus.keptClose && !focus.leftOpen && !focus.leftTimer,
+    focus.err ?? show(focus),
   );
 }
