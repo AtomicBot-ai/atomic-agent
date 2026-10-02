@@ -1201,20 +1201,29 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
     );
   }
 
-  /** A healthy server; returns the probe POSTs. `busySlot`: one slot still decoding as the probe ends. */
-  function healthyServer(opts: { speed?: number; busySlot?: boolean } = {}): string[] {
+  /**
+   * A healthy server; returns the probe POSTs. `busySlot`: a slot decoding
+   * at every look at /slots; `busyAtFirstLook`: only at the first (a turn
+   * that was running as the probe began, and ended during it).
+   */
+  function healthyServer(
+    opts: { speed?: number; busySlot?: boolean; busyAtFirstLook?: boolean; alias?: string } = {},
+  ): string[] {
     const posts: string[] = [];
+    let looks = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(afterSpawn(async (url: string) => {
         const at = String(url);
         const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
         if (at.endsWith("/health")) return json({ status: "ok" });
-        if (at.endsWith("/v1/models")) return json({ data: [{ id: "qwen-3.5-4b" }] });
+        if (at.endsWith("/v1/models")) return json({ data: [{ id: opts.alias ?? "qwen-3.5-4b" }] });
         if (at.endsWith("/slots")) {
+          looks += 1;
+          const busy = opts.busySlot === true || (opts.busyAtFirstLook === true && looks === 1);
           return json([
             { id: 0, is_processing: false },
-            { id: 1, is_processing: opts.busySlot === true },
+            { id: 1, is_processing: busy },
           ]);
         }
         posts.push(at);
@@ -1223,6 +1232,9 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
     );
     return posts;
   }
+
+  /** What a `device: "cpu"` launch of Qwen 3.5 4B is: the no-VRAM 32,768, no free figure to fit against. */
+  const CPU_LAUNCH = { contextSize: 32_768, fitsDevice: null };
 
   /** The server stopped (its pid file gone) and the port free again before the next start. */
   function stopped(dataDir: string): void {
@@ -1326,7 +1338,7 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
       expect(measured).toMatchObject({
         tokensPerSecond: 19.45,
         alone: true,
-        measuredOn: throughputBasis(dataDir, "qwen-3.5-4b", "cpu"),
+        measuredOn: throughputBasis(dataDir, "qwen-3.5-4b", "cpu", CPU_LAUNCH),
       });
 
       stopped(dataDir);
@@ -1345,17 +1357,24 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
     }
   });
 
-  it("measures again after a llama.cpp update, on another device, and once the figure is a week old", async () => {
+  it("measures again after a llama.cpp update, on another device or context, and once the figure is a day old", async () => {
     const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-speed-again-`);
     try {
       stageQwen35(dataDir);
       const posts = healthyServer();
       let pid = 6200;
-      const start = async (device: string) => {
+      const start = async (device: string, contextSize?: number) => {
         stopped(dataDir);
         spawnMock.mockReturnValue(fakeChild(++pid));
         listDevicesAnswers("MTL0: Apple M4 (10922 MiB, 10922 MiB free)");
-        return startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19085, device, parallel: 1 });
+        return startDaemon({
+          dataDir,
+          modelId: "qwen-3.5-4b",
+          port: 19085,
+          device,
+          parallel: 1,
+          ...(contextSize ? { contextSize } : {}),
+        });
       };
       await start("cpu");
       expect(posts).toHaveLength(1);
@@ -1366,14 +1385,53 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
       expect(posts).toHaveLength(3);
       await start("MTL0");
       expect(posts).toHaveLength(3);
-      // The same record, a week and a minute old.
+      // The same device with another context is another launch.
+      await start("MTL0", 65_536);
+      expect(posts).toHaveLength(4);
+      await start("MTL0", 65_536);
+      expect(posts).toHaveLength(4);
+      // The same record, a day and a minute old.
+      expect(THROUGHPUT_REUSE_MAX_AGE_MS).toBe(24 * 60 * 60 * 1000);
       const record = readThroughputRecord(dataDir, pid)!;
       writeThroughputRecord(dataDir, {
         ...record,
         measuredAt: Date.now() - THROUGHPUT_REUSE_MAX_AGE_MS - 60_000,
       });
-      await start("MTL0");
-      expect(posts).toHaveLength(4);
+      await start("MTL0", 65_536);
+      expect(posts).toHaveLength(5);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("measures a launch that does not fit the card whole apart from one that does", async () => {
+    // Free VRAM on a 12 GB card: 3,600 MiB leaves nothing for the cache
+    // after Qwen 3.5 4B's weights (the floor's 224 MiB spills layers to
+    // the CPU); 3,881 MiB leaves 227 MiB, enough for the same 32,768.
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-speed-fit-`);
+    try {
+      stageQwen35(dataDir);
+      const posts = healthyServer();
+      let pid = 6250;
+      const start = async (freeMiB: number) => {
+        stopped(dataDir);
+        spawnMock.mockReturnValue(fakeChild(++pid));
+        listDevicesAnswers(`CUDA0: NVIDIA GeForce RTX 3060 (12288 MiB, ${freeMiB} MiB free)`);
+        return startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19083, parallel: 1 });
+      };
+      const spills = await start(3_600);
+      expect(spills.contextSize).toBe(32_768);
+      expect(readThroughputRecord(dataDir, pid)?.measuredOn).toBe(
+        throughputBasis(dataDir, "qwen-3.5-4b", "CUDA0", { contextSize: 32_768, fitsDevice: false }),
+      );
+      const fits = await start(3_881);
+      expect(fits.contextSize).toBe(32_768);
+      expect(posts).toHaveLength(2);
+      expect(readThroughputRecord(dataDir, pid)?.measuredOn).toBe(
+        throughputBasis(dataDir, "qwen-3.5-4b", "CUDA0", { contextSize: 32_768, fitsDevice: true }),
+      );
+      await start(3_881);
+      expect(posts).toHaveLength(2);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -1397,8 +1455,90 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
       expect(posts).toHaveLength(1);
       expect(again.tokensPerSecond).toBe(13.66);
       expect(
-        readReusableThroughput(dataDir, throughputBasis(dataDir, "qwen-3.5-4b", "cpu")),
+        readReusableThroughput(dataDir, throughputBasis(dataDir, "qwen-3.5-4b", "cpu", CPU_LAUNCH)),
       ).toMatchObject({ tokensPerSecond: 13.66 });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not carry over a speed measured while a turn was running as the probe began", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-speed-busy-before-`);
+    try {
+      stageQwen35(dataDir);
+      // Busy at the look before the probe, idle by the look after it.
+      const posts = healthyServer({ speed: 4.4, busyAtFirstLook: true });
+      spawnMock.mockReturnValue(fakeChild(6311));
+      await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19082, device: "cpu", parallel: 8 });
+      expect(posts).toHaveLength(1);
+      expect(readThroughputRecord(dataDir, 6311)).toMatchObject({ tokensPerSecond: 4.4, alone: false });
+      expect(
+        readReusableThroughput(dataDir, throughputBasis(dataDir, "qwen-3.5-4b", "cpu", CPU_LAUNCH)),
+      ).toBeNull();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  /** Gemma 4 31B's header and the catalogue's gemma-4-31b on disk (no projector). */
+  function stageGemma31(dataDir: string): void {
+    const binPath = resolveServerBinPath(dataDir, "llama-server");
+    mkdirSync(dirname(binPath), { recursive: true });
+    writeFileSync(binPath, "#!/bin/sh\n", "utf-8");
+    writeBackendVersion(dataDir, BUILD);
+    const model = getLocalModelDef("gemma-4-31b");
+    const modelPath = resolveModelFilePath(dataDir, model.id, model.filename);
+    mkdirSync(dirname(modelPath), { recursive: true });
+    writeFileSync(modelPath, encodeSyntheticGguf(gemma4Pairs()));
+  }
+
+  it("gives Gemma 4 31B on a 32 GB Mac 109,568 tokens and three auto slots, where half of RAM floored it at one", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-gemma32-`);
+    try {
+      stageGemma31(dataDir);
+      totalmemMock.mockReturnValue(32 * 1024 ** 3);
+      listDevicesAnswers("MTL0: Apple M2 Max (21845 MiB, 21845 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6401));
+      healthyServer({ alias: "gemma-4-31b" });
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19081,
+        parallel: "auto",
+        completionMaxTokens: 16_384,
+        throughputProbe: false,
+      });
+      expect(result.contextSize).toBe(109_568);
+      expect(spawnedArg("--parallel")).toBe("3");
+      // Its full sliding-window cache (12.9 GB at this context) is far past the budget here.
+      expect(result.swaFull.enabled).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps --swa-full for Gemma 4 31B on a 128 GB Mac: weighed against the headroom, not the context's share", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-gemma128-`);
+    try {
+      stageGemma31(dataDir);
+      totalmemMock.mockReturnValue(128 * 1024 ** 3);
+      listDevicesAnswers("MTL0: Apple M4 Max (98304 MiB, 98304 MiB free)");
+      spawnMock.mockReturnValue(fakeChild(6402));
+      healthyServer({ alias: "gemma-4-31b" });
+      const result = await startDaemon({
+        dataDir,
+        modelId: "gemma-4-31b",
+        port: 19080,
+        parallel: 1,
+        throughputProbe: false,
+      });
+      expect(result.contextSize).toBe(262_144);
+      expect(result.swaFull.enabled).toBe(true);
+      expect(spawnMock.mock.calls[0]![1] as string[]).toContain("--swa-full");
+      expect(result.prefixReuse).toBe("partial");
+      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).toContain(
+        "[atomic-agent] launch: swa-full: on (auto)",
+      );
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

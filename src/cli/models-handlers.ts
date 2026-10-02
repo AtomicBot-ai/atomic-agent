@@ -543,8 +543,8 @@ export async function runLocalModelsStart(): Promise<number> {
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(dataDir, binaryName);
-  // One `--list-devices` for the launch: the context fit reads the same
-  // table for the free memory (`deviceTableOnce`).
+  // One `--list-devices` for the launch, run only when something asks:
+  // an `auto` pick here, the context fit in startDaemon (`deviceTableOnce`).
   const listDevices = deviceTableOnce(binPath);
   const device = await resolveManagedDevice(
     binPath,
@@ -584,8 +584,11 @@ export async function runLocalModelsStart(): Promise<number> {
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),
-        // The table `dev` was picked from; the CPU rescue below swaps
-        // the binary and reads no device memory, so it gets none.
+        // The launch's device table: startDaemon reads the free memory the
+        // context is fitted into from it, so the binary is not asked again
+        // when an `auto` pick above already asked it. A `cpu` launch —
+        // configured, or the CPU rescue below on its swapped-in binary —
+        // offloads nothing and reads no device memory.
         ...(dev !== "cpu" ? { listDevices } : {}),
         // A configured tensor split only applies while a GPU build
         // serves — the forced-CPU rescue retry (`startWithDevice("cpu")`)

@@ -27,9 +27,11 @@ import {
 import {
   buildKvLayout,
   estimateContextSize,
+  estimateLaunchKvBytes,
   MANAGED_KV_CACHE_TYPE,
   resolveDeviceFreeVramMiB,
   resolveKvBudgetMiB,
+  resolveUnifiedMemoryHeadroomMiB,
   UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
@@ -156,9 +158,10 @@ export interface DaemonStartOptions {
    * is written next to the pid file and shown to the fusion orchestrator
    * as "~N tok/s single stream". Costs a few seconds of readiness — a
    * 31B model at 3 tok/s spends ~20 s on it, a 4B one 3-5 s on a 16 GB
-   * Mac — so a speed an earlier start measured on the same model, build
-   * and device is carried over instead (`readReusableThroughput`).
-   * `false` skips both and leaves the speed unknown.
+   * Mac — so a speed an earlier start measured on the same launch (model,
+   * build, device, context, whole fit) in the last day is carried over
+   * instead (`readReusableThroughput`). `false` skips both and leaves the
+   * speed unknown.
    */
   throughputProbe?: boolean;
   /**
@@ -189,39 +192,46 @@ export interface ThroughputRecord extends ThroughputSample {
   measuredAt: number;
   /**
    * What the speed was measured on (`throughputBasis`: model, llama.cpp
-   * build and install, device). Absent on records written before speeds
-   * were carried over; those are never reused.
+   * build and install, device, context, whether the model fit the device
+   * whole). Absent on records written before speeds were carried over;
+   * those are never reused.
    */
   measuredOn?: string;
   /**
    * Whether the probe had the server to itself: it ran on the only slot,
-   * or no slot was busy the moment it finished (`slotsAllIdle`). Only such
-   * a figure is carried over. On eight slots, requests that came in during
-   * the probe decoded beside it and it measured 1.1 tok/s, against 13-22
-   * alone, for the same model on the same Mac.
+   * or no slot was busy as it began and as it ended (`slotsAllIdle`). Only
+   * such a figure is carried over. On eight slots, requests that came in
+   * during the probe decoded beside it and it measured 1.1 tok/s, against
+   * 13-22 alone, for the same model on the same Mac.
    */
   alone?: boolean;
 }
 
 /**
  * How long a measured speed is carried over to later starts of the same
- * model on the same llama.cpp build and device before it is measured
- * again. Speed is a property of the model and the machine, not of one
- * server process; re-measuring it on every start kept the model from
- * answering for another 3-5 s after it had loaded, on every switch back
- * to the local model.
+ * launch before it is measured again. Speed is a property of the model,
+ * the machine and how the model sits on it, not of one server process;
+ * re-measuring it on every start kept the model from answering for
+ * another 3-5 s after it had loaded, on every switch back to the local
+ * model. A day, so a figure taken on a bad afternoon (thermal limits,
+ * another app on the GPU) does not outlive it by much.
  */
-export const THROUGHPUT_REUSE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const THROUGHPUT_REUSE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * What a speed measurement describes: the model, the llama.cpp build on
  * disk (its tag and when it was installed, so an update or a reinstall
- * measures again) and the device it ran on.
+ * measures again), the device, the launch's context, and whether the
+ * weights and that context's cache fit the device whole (`fitsDevice`) —
+ * when they do not, llama.cpp's `-fit` leaves layers on the CPU and the
+ * model decodes at another speed; `null` when there was no free figure
+ * to tell.
  */
 export function throughputBasis(
   dataDir: string,
   modelId: string,
   device: string | undefined,
+  launch: { contextSize: number; fitsDevice: boolean | null },
 ): string {
   const backend = readBackendVersion(dataDir);
   return JSON.stringify([
@@ -229,6 +239,8 @@ export function throughputBasis(
     backend?.tag ?? null,
     backend?.downloadedAt ?? null,
     device ?? null,
+    launch.contextSize,
+    launch.fitsDevice,
   ]);
 }
 
@@ -616,8 +628,17 @@ export function buildLlamaServerArgs(
  * (Apple silicon, an integrated GPU) the machine's physical memory too.
  * Best-effort — any enumeration failure degrades to the no-VRAM default.
  * Skips the probe entirely when the operator pinned a value or offload
- * is CPU-only. `note` says why a unified-memory machine got less than
- * its free figure would fit, for the daemon log.
+ * is CPU-only.
+ *
+ * - `kvBudgetBytes`: what the cache may take, within the system's
+ *   headroom on unified memory — the budget `--swa-full` is weighed
+ *   against (not the context's 1/16 share).
+ * - `deviceBudgetBytes`: what is left of the device's own free figure
+ *   after weights, projector and compute buffers (negative when the
+ *   weights alone overflow it), against which a launch's cache says
+ *   whether the model fits the device whole.
+ * - `note`: why a unified-memory machine got less than its free figure
+ *   would fit, for the daemon log.
  */
 async function resolveEffectiveContextSize(
   device: string | undefined,
@@ -633,7 +654,12 @@ async function resolveEffectiveContextSize(
     kvLayout?: KvLayoutSource | null;
     listDevices: ListDevices;
   },
-): Promise<{ contextSize: number; kvBudgetBytes: number | null; note: string | null }> {
+): Promise<{
+  contextSize: number;
+  kvBudgetBytes: number | null;
+  deviceBudgetBytes: number | null;
+  note: string | null;
+}> {
   let freeVramMiB: number | null = null;
   let systemMemoryMiB: number | null = null;
   if (opts.configured <= 0 && device && device !== "cpu") {
@@ -661,25 +687,29 @@ async function resolveEffectiveContextSize(
     if (fits > contextSize) {
       note =
         `held to ${Math.round(systemMemoryMiB / 1024)} GB of unified memory: ` +
-        `half left to the system, at most 1/${Math.round(1 / UNIFIED_MEMORY_KV_SHARE)} for the KV cache ` +
+        `at most 1/${Math.round(1 / UNIFIED_MEMORY_KV_SHARE)} of it for the KV cache, ` +
+        `${Math.round(resolveUnifiedMemoryHeadroomMiB(systemMemoryMiB) / 1024)} GB left to the system ` +
         `(${fits} would fit the GPU's free figure)`;
     }
   }
-  const kvBudgetBytes =
+  const budgetBytes = (withSystemMemory: boolean): number | null =>
     freeVramMiB !== null && freeVramMiB > 0
-      ? Math.max(
-          0,
-          resolveKvBudgetMiB({
-            freeVramMiB,
-            modelSizeGb: model.fileSizeGb,
-            mmprojSizeGb,
-            systemMemoryMiB,
-          }),
-        ) *
+      ? resolveKvBudgetMiB({
+          freeVramMiB,
+          modelSizeGb: model.fileSizeGb,
+          mmprojSizeGb,
+          systemMemoryMiB: withSystemMemory ? systemMemoryMiB : null,
+        }) *
         1024 *
         1024
       : null;
-  return { contextSize, kvBudgetBytes, note };
+  const kvBudgetBytes = budgetBytes(true);
+  return {
+    contextSize,
+    kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
+    deviceBudgetBytes: budgetBytes(false),
+    note,
+  };
 }
 
 /**
@@ -891,6 +921,7 @@ export async function startDaemon(
   const {
     contextSize,
     kvBudgetBytes,
+    deviceBudgetBytes,
     note: contextNote,
   } = await resolveEffectiveContextSize(device, model, {
     configured: opts.contextSize ?? 0,
@@ -898,14 +929,6 @@ export async function startDaemon(
     kvLayout,
     listDevices,
   });
-  // The speed an earlier start measured on this model, build and device,
-  // read before this launch clears the record: carried over, it spares
-  // the probe (`readReusableThroughput`).
-  const speedBasis = throughputBasis(opts.dataDir, model.id, device);
-  const knownSpeed =
-    opts.throughputProbe === false
-      ? null
-      : readReusableThroughput(opts.dataDir, speedBasis);
   const swaFull =
     opts.swaFullFlag !== undefined
       ? {
@@ -930,6 +953,29 @@ export async function startDaemon(
       : swaFull.enabled && !prefixReuse.hybrid
         ? "partial"
         : prefixReuse.prefixReuse;
+  // Whether the weights and this context's cache fit the device whole, or
+  // llama.cpp's `-fit` will leave layers on the CPU — another speed.
+  // Unknown (`null`) with no free figure to weigh them against.
+  const fitsDevice =
+    deviceBudgetBytes === null
+      ? null
+      : estimateLaunchKvBytes({
+          kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+          modelSizeGb: model.fileSizeGb,
+          contextSize,
+          swaFull: swaFull.enabled,
+        }) <= deviceBudgetBytes;
+  // The speed an earlier start measured on this same launch, read before
+  // this one clears the record: carried over, it spares the probe
+  // (`readReusableThroughput`).
+  const speedBasis = throughputBasis(opts.dataDir, model.id, device, {
+    contextSize,
+    fitsDevice,
+  });
+  const knownSpeed =
+    opts.throughputProbe === false
+      ? null
+      : readReusableThroughput(opts.dataDir, speedBasis);
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
   const apiKey =
@@ -1014,17 +1060,21 @@ export async function startDaemon(
       tokensPerSecond = knownSpeed.tokensPerSecond;
       writeThroughputRecord(opts.dataDir, { ...knownSpeed, pid: child.pid });
     } else if (opts.throughputProbe !== false) {
+      // On the only slot nothing can decode beside the probe. With more, a
+      // turn already running when it starts, or still running when it
+      // ends, shared the GPU with it: such a figure is not carried over.
+      const oneSlot = args[args.indexOf("--parallel") + 1] === "1";
+      const idleBefore =
+        oneSlot || (await slotsAllIdle({ port: opts.port, apiKey }));
       const sample = await probeThroughput({
         port: opts.port,
         apiKey,
       });
       if (sample) {
         tokensPerSecond = sample.tokensPerSecond;
-        // On the only slot nothing can decode beside the probe; with more,
-        // a request that came in meanwhile may have, and is still busy.
         const alone =
-          args[args.indexOf("--parallel") + 1] === "1" ||
-          (await slotsAllIdle({ port: opts.port, apiKey }));
+          oneSlot ||
+          (idleBefore && (await slotsAllIdle({ port: opts.port, apiKey })));
         writeThroughputRecord(opts.dataDir, {
           ...sample,
           pid: child.pid,

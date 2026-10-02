@@ -151,6 +151,8 @@ export {
 export {
   AUTO_UPDATE_RECHECK_MS,
   AUTO_UPDATE_RETRY_MS,
+  checkForBackendUpdateForPanel,
+  forgetBackendCheck,
   maybeAutoUpdateBackend,
   type AutoUpdateBackendResult,
 } from "./ensure-latest-backend.js";

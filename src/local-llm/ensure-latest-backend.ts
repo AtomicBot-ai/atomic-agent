@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 import {
   checkForBackendUpdate,
@@ -110,6 +110,34 @@ function noteBackendCheck(
   } catch {
     /* asked again next time */
   }
+}
+
+/**
+ * Drop the last check's record, so the next start asks GitHub again. For
+ * a check made elsewhere that found an update: a view offering an update
+ * while a start trusted an older "nothing newer" would have the two
+ * disagree for up to `AUTO_UPDATE_RECHECK_MS`.
+ */
+export function forgetBackendCheck(dataDir: string): void {
+  try {
+    unlinkSync(resolveBackendCheckFilePath(dataDir));
+  } catch {
+    /* none recorded */
+  }
+}
+
+/**
+ * `checkForBackendUpdate` for a view that shows whether an update is
+ * available — the TUI's Models panel, which asks on every refresh. When it
+ * finds one, the record a start trusts is dropped (`forgetBackendCheck`),
+ * so the next start asks too and installs it.
+ */
+export async function checkForBackendUpdateForPanel(
+  dataDir: string,
+): Promise<Awaited<ReturnType<typeof checkForBackendUpdate>>> {
+  const result = await checkForBackendUpdate(dataDir);
+  if (result.updateAvailable) forgetBackendCheck(dataDir);
+  return result;
 }
 
 /**
