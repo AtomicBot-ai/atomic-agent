@@ -113,9 +113,11 @@ async function workingFolder(js: Js, check: Check): Promise<void> {
       window.__settingsOpen('diagnostics'); await tick(250);
       const row = [...document.querySelectorAll('#settings .set-diagrow')].find((n) => ((n.querySelector('.t') || {}).textContent || '') === 'Working folder');
       const diag = row ? ((row.querySelector('.set-diagv') || {}).textContent || null) : null;
+      // On this platform's separators (backslashes on Windows).
+      const sep = IS_WIN ? '\\\\' : '/';
       return {wd, home, label: workingDirLabel(wd), general, diag,
-        homeLabel: home ? workingDirLabel(home) : null, inside: home ? workingDirLabel(home + '/Projects/app/') : null,
-        outside: workingDirLabel('/Volumes/Work/app')};
+        homeLabel: home ? workingDirLabel(home) : null, inside: home ? workingDirLabel(home + sep + 'Projects' + sep + 'app' + sep) : null,
+        insideWant: '~' + sep + 'Projects' + sep + 'app', outside: workingDirLabel('/Volumes/Work/app')};
     } finally {
       window.__settingsClose();
       if (keep.settings) { S.settings = keep.settings; S.settingsPane = keep.pane; render(); }
@@ -128,8 +130,8 @@ async function workingFolder(js: Js, check: Check): Promise<void> {
   );
   check(
     "T46 Д29: the home folder is written out whole, a folder inside it as ~/…, one outside it whole",
-    (r.home ? r.homeLabel === r.home && r.inside === "~/Projects/app" : true) && r.outside === "/Volumes/Work/app",
-    q({ home: r.home, homeLabel: r.homeLabel, inside: r.inside, outside: r.outside }),
+    (r.home ? r.homeLabel === r.home && r.inside === r.insideWant : true) && r.outside === "/Volumes/Work/app",
+    q({ home: r.home, homeLabel: r.homeLabel, inside: r.inside, insideWant: r.insideWant, outside: r.outside }),
   );
 }
 
@@ -286,7 +288,9 @@ async function composer(js: Js, check: Check): Promise<void> {
 
   const mic = await js<Record<string, unknown>>(`(async () => {
     if (!document.querySelector('.composer .field .micbtn')) return {skipped: 'no microphone on this platform'};
-    const toastsBefore = S.toasts.length;
+    // Found by its title after the press, so an older toast expiring meanwhile cannot hide it.
+    const OFF = 'Voice input is off';
+    S.toasts = S.toasts.filter((t) => t.t !== OFF);
     try {
       window.__voiceProbeSet({available: true});
       const on = document.querySelector('.composer .field .micbtn');
@@ -297,7 +301,7 @@ async function composer(js: Js, check: Check): Promise<void> {
       const offView = {aria: off.getAttribute('aria-disabled'), title: off.getAttribute('title'), hook: window.__voiceMic().disabled};
       off.click();   // a press with no mousedown before it: the keyboard's way in
       await new Promise((res) => setTimeout(res, 60));
-      return {live, off: offView, said: S.toasts.slice(toastsBefore).map((t) => t.t + ' / ' + t.s),
+      return {live, off: offView, said: S.toasts.filter((t) => t.t === OFF).map((t) => t.t + ' / ' + t.s),
         reason: VOICE_REASONS['voice-helper-missing'], state: VOICE.state};
     } finally {
       await window.__voiceReprobe();
@@ -411,7 +415,7 @@ async function panels(js: Js, check: Check): Promise<void> {
       act('toggle:inspector'); open = S.inspector; act('toggle:inspector');
       afterToggles = localStorage.getItem('atag.inspector');
     } finally { S.inspector = keep; render(); }
-    return {colors, atLaunch, stored, open, afterToggles};
+    return {colors, keep, atLaunch, stored, open, afterToggles};
   })()`);
   const colors = (r.colors ?? {}) as Record<string, string | null>;
   check(
@@ -421,7 +425,7 @@ async function panels(js: Js, check: Check): Promise<void> {
   );
   check(
     "T46 Д22: the side panel starts closed at launch whatever an older build stored, and opening it is not remembered",
-    r.atLaunch === false && r.stored === null && r.open === true && r.afterToggles === null,
+    r.atLaunch === false && r.stored === null && r.open === !r.keep && r.afterToggles === null,
     q(r),
   );
 }
