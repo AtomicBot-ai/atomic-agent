@@ -9507,8 +9507,14 @@ function dlCardOverChat(el) {
   const s = sc.getBoundingClientRect(), c = col.getBoundingClientRect(), f = face.getBoundingClientRect();
   const cs = getComputedStyle(col);
   const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
-  const room = !(f.width > 0) || f.right <= left || f.left >= right || f.top >= s.bottom ? 0
-    : Math.max(0, Math.round(s.bottom - f.top + DLC_EDGE));
+  /* The card's top as laid out (its own `bottom` and height in the window),
+     not as drawn: it arrives sliding up from 8px lower, and room measured off
+     that slide would be short by as much until the card is next drawn —
+     moving the chat again then. */
+  const win = document.getElementById('window');
+  const top = win ? win.getBoundingClientRect().bottom - (parseFloat(el.style.bottom) || 0) - el.offsetHeight : f.top;
+  const room = !(f.width > 0) || f.right <= left || f.left >= right || top >= s.bottom ? 0
+    : Math.max(0, Math.round(s.bottom - top + DLC_EDGE));
   if (!DLC.collapsed) DLC.openRoom = room;
   return room;
 }
