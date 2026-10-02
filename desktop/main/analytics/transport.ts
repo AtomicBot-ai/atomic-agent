@@ -97,7 +97,7 @@ export class PostHogTransport {
 
   /** One batch on the wire, aborted after `timeoutMs`. */
   private sendOne(timeoutMs: number): Promise<void> {
-    if (!this.deps.canSend() || POSTHOG_PROJECT_KEY === POSTHOG_PLACEHOLDER_KEY) {
+    if (!this.deps.canSend() || (POSTHOG_PROJECT_KEY as string) === POSTHOG_PLACEHOLDER_KEY) {
       this.queue = [];
       return Promise.resolve();
     }

@@ -8656,7 +8656,7 @@ app.on("before-quit", (event) => {
     if (!quitShutdown.done) event.preventDefault();
     return;
   }
-  if (!agent) { event.preventDefault(); const s = (quitShutdown = { done: false }); void analyticsClosed.finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
+  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void analyticsClosed.finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
   event.preventDefault();
   const client = agent;
   agent = null;
