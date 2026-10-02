@@ -7111,8 +7111,9 @@ async function uiTest(
 
   type Route = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string; settings: boolean };
   type Panes = { room: string; inspector: boolean; inspTab: string; consoleOpen: boolean; consoleTab: string };
-  // Snapshotted first: these acts really open the inspector and the console,
-  // the inspector starts OPEN, and the backend-switch lane runs after this one.
+  // Snapshotted first: these acts really open the inspector and the console
+  // (the inspector starts closed, chat review Д22), and the backend-switch
+  // lane runs after this one.
   const panesBefore = await js<Panes>("window.__panes()");
   const routes = await js<{ chat: Route; world: Route; llm: Route }>(
     "(() => { const chat = window.__route('room:chat');"

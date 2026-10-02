@@ -1456,7 +1456,6 @@ function ic(n, cls) {
     + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
 }
 const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="var(--brand)"/><path fill="var(--on-brand)" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
-const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
 
 /* ---------------- brand logos ----------------
    Real marks for models and providers (LobeHub icons, MIT; the AI/ML API mark
@@ -1652,7 +1651,9 @@ const PAL = [
 ];
 
 /* ---------------- state ---------------- */
-/** A per-viewer pane flag in localStorage: 'open' or 'closed'. */
+/** A per-viewer pane flag in localStorage: 'open' or 'closed'. Nothing reads
+    `atag.inspector` any more (inspectorAtLaunch below); kept because item 09's
+    smoke (t09.ts) still puts the panel back through it. */
 function writePaneFlag(key, on) {
   try { localStorage.setItem(key, on ? 'open' : 'closed'); } catch (e) { /* no storage: the choice lasts this launch */ }
 }
@@ -15438,10 +15439,10 @@ function noteSessionModelStamp(data) {
     return;
   }
   CTX055.stamp = {providerId: stamp.providerId, chatModel: model};
-  // `note:true` (see endMarkIds): this row is appended to a REPLAYED
-  // transcript whose last turn finished long ago, so it must not take that
-  // turn's full stop away. Soft Tactile: a blue notice — sentence, caption
-  // under it, Switch to it on the right (chat.css places the three).
+  // `note:true`: this row is appended to a REPLAYED transcript whose last
+  // turn finished long ago — a notice about the session, not that turn's
+  // outcome. Soft Tactile: a blue notice — sentence, caption under it,
+  // Switch to it on the right (chat.css places the three).
   S.log.push({id:nid(), k:'system', note:true, tone:'blue', icon:'refresh', text: esc('this session ran on ' + label + ' — the window is on ' + (liveProvider || 'no provider') + (shownModel ? '/' + shownModel : ''))
     + ' <span class="tk-stampcap">(a switch restarts the agent, so it is refused while any turn is running)</span>'
     + '<button class="btn sm btn-t tk-stampbtn" data-act="sessmodel:apply">Switch to it</button>'});
@@ -21924,7 +21925,8 @@ if (typeof window !== 'undefined') {
   /* Item 5: the routes above really open the inspector and the console, and the
      backend-switch lane runs after this one — so the panes are snapshotted and
      put back exactly, through the same acts, rather than being toggled off on
-     the assumption that they started closed (the inspector starts OPEN). */
+     the assumption that they started closed (a check before this one may
+     have left either open). */
   window.__panes = () => ({room: S.room, inspector: S.inspector, inspTab: S.inspTab,
                            consoleOpen: S.consoleOpen, consoleTab: S.consoleTab});
   window.__restorePanes = (was) => {
