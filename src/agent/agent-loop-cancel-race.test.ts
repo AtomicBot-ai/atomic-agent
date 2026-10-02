@@ -154,6 +154,34 @@ describe("a stop that races the end of a request", () => {
     expect(result.session.turnCount).toBe(1);
   });
 
+  it("still fails, and reports, an error no request makes even when the turn was stopped", async () => {
+    // `classifyFailure` answers `tool` for an error it does not know —
+    // the shape a programming error arrives in. A stop happening at the
+    // same moment must not file it away as a cancel.
+    const controller = new AbortController();
+    const events: AgentLoopEvent[] = [];
+    const loop = loopWith(async () => {
+      controller.abort();
+      throw new Error("bug: step context is undefined");
+    }, events);
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-bug", workingDir }),
+      {
+        userMessage: "work",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: controller.signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    expect(result.session.lastError).toBe("bug: step context is undefined");
+    const failure = events.find((event) => event.type === "loop_failed");
+    expect(failure?.type === "loop_failed" ? failure.category : null).toBe(
+      "tool",
+    );
+  });
+
   it("still fails a request that breaks while nobody has stopped the turn", async () => {
     const events: AgentLoopEvent[] = [];
     const loop = loopWith(async () => {
