@@ -11070,6 +11070,7 @@ async function chromeTest(
     order?: string[]; titles?: Array<string | null>;
     dangerColor?: string | null; right?: number; btnRight?: number | null;
     anchorRight?: number | null; insideBubble?: number;
+    btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -11553,15 +11554,19 @@ async function chromeTest(
     // the bubble's / the column's whichever way its children are justified, and
     // asserting that would stay green with the icons parked at the start of the
     // message. `btnRight` goes red the moment `justify-content:flex-end` is lost.
+    /* ATO-168: a reply's actions moved to its LEFT, under the text they copy,
+       after the dot the last reply carries (20px in); a user message keeps
+       them at its bubble's right edge. */
     check(
-      "item 4: the actions sit at the message's end and never inside the bubble",
+      "item 4: the actions sit at the user bubble's end and at the reply's start (after its dot), never inside the bubble",
       !!userActs && !!asstActs
-        && typeof userActs.btnRight === "number" && typeof asstActs.btnRight === "number"
+        && typeof userActs.btnRight === "number" && typeof asstActs.btnLeft === "number"
         && Math.abs(userActs.btnRight - (userActs.anchorRight ?? -1)) <= 1
-        && Math.abs(asstActs.btnRight - (asstActs.anchorRight ?? -1)) <= 1
+        && Math.abs(asstActs.btnLeft - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && asstActs.dot === true && asstActs.dotLive === false
         && userActs.insideBubble === 0,
       `user last button right ${userActs?.btnRight} vs bubble ${userActs?.anchorRight};`
-      + ` assistant last button right ${asstActs?.btnRight} vs prose ${asstActs?.anchorRight};`
+      + ` assistant first button left ${asstActs?.btnLeft} vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
       + ` (row boxes ${userActs?.right}/${asstActs?.right} span the whole column either way, so they are context only);`
       + ` .bubble .msgact count ${userActs?.insideBubble}`,
     );

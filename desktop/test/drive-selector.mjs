@@ -171,10 +171,10 @@ async function popupRows(app, { timeoutMs = 30000 } = {}) {
   return app.snap(POPUP);
 }
 
-/** A person's way out of a switch: its own Done button. NOT Escape. */
+/** A person's way out of a switch: a click outside it (ATO-167 took its Done away). NOT Escape. */
 async function done(app) {
-  const r = await app.clickSel('.selpop .popfoot [data-act="close"]', { settle: 500 });
-  if (!r.ok) await app.clickSel('.selpop [data-act="close"]', { settle: 500 });
+  await app.eval(`(() => { const s = document.querySelector('#overlays .scrim[data-close]'); if (s) s.click(); })()`);
+  await new Promise((r) => setTimeout(r, 500));
 }
 
 /** A person's way out of the settings window: its close button. */

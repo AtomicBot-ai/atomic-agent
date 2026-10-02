@@ -45,6 +45,7 @@ import { checks47 } from "./smoke-tasks/t47.js";
 import { checks51 } from "./smoke-tasks/t51.js";
 import { checks53 } from "./smoke-tasks/t53.js";
 import { checks54 } from "./smoke-tasks/t54.js";
+import { checks55, checks56, checks57 } from "./smoke-tasks/t55.js";
 
 /**
  * The 0.6.7 release fixes, in the smoke.
@@ -81,7 +82,7 @@ export type SmokeDownloads = {
   bootedOn: (cfg: unknown) => () => void;
 };
 
-export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54"];
+export const RELEASE_FIX_TASKS = ["03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "30", "32", "34", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "53", "54", "55", "56", "57"];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -341,15 +342,16 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
         const html = contextChip();
         const host = document.createElement('div'); host.className = 'cfoot'; host.innerHTML = html; document.body.appendChild(host);
         const fg = host.querySelector('.ctxring .fg'), bg = host.querySelector('.ctxring .bg');
-        const out = {pie: !!fg && fg.getAttribute('r') === '3.75', fgWidth: fg ? getComputedStyle(fg).strokeWidth : null,
-          bgFill: bg ? getComputedStyle(bg).fill : null, anim: fg ? getComputedStyle(fg).animationName : null};
+        const out = {donut: !!fg && !!bg && fg.getAttribute('r') === bg.getAttribute('r'), fgWidth: fg ? getComputedStyle(fg).strokeWidth : null,
+          bgStroke: bg ? getComputedStyle(bg).strokeWidth : null, anim: fg ? getComputedStyle(fg).animationName : null};
         host.remove();
         return out;
       } finally { Object.assign(CTX, saved); }
     })()`);
     check(
-      "T07d: the context gauge is a filled pie on a disc, not an arc",
-      d.pie === true && d.fgWidth === "7.5px" && d.bgFill !== "none" && (d.anim === "none" || d.anim === null),
+      // ATO-166 replaced the pie with a donut; what 07d guards — not a spinner — is a thick, still arc on a full track.
+      "T07d: the context gauge is a thick, still donut on a full track, not a thin spinner-like arc",
+      d.donut === true && d.fgWidth === "3px" && d.bgStroke === "3px" && (d.anim === "none" || d.anim === null),
       JSON.stringify(d),
     );
     // 07e — "Not answering" for the half minute a fresh server needs to open its port.
@@ -685,6 +687,12 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
   if (want.has("53")) await guarded("53", check, () => checks53(js, check));
   // 54 (ATO-164) — the chat's service notices in plain words: the model stamp, a chat still answering, the approval receipt.
   if (want.has("54")) await guarded("54", check, () => checks54(js, check));
+  // 55 (ATO-167) — no Done in the mode and model popovers; Download more models first, the out-of-reach list last.
+  if (want.has("55")) await guarded("55", check, () => checks55(js, check));
+  // 56 (ATO-168) — a dot under the last reply (pulsing while written), the reply's copy at its left.
+  if (want.has("56")) await guarded("56", check, () => checks56(js, check));
+  // 57 (ATO-166) — no model repeated under the greeting, a gear on Settings, the context gauge a donut.
+  if (want.has("57")) await guarded("57", check, () => checks57(js, check));
 
   // 38 — a chat opened again while its turn ran showed "no turns yet", not the message just sent nor the reply.
   if (want.has("38")) await guarded("38", check, () => checks38(js, check));
