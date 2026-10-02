@@ -420,6 +420,31 @@ function Add-ToUserPath($dir) {
   $script:PathStatus = "added"
 }
 
+# Install channel marker for anonymous analytics (`install_channel`). The
+# file holds one fixed word and nothing else. A value some other installer
+# already wrote (e.g. a desktop package) is left alone. Best effort: a
+# failure here never fails the install.
+function Write-InstallChannel {
+  try {
+    $stateDir = if ($env:ATOMIC_AGENT_STATE_DIR) {
+      $env:ATOMIC_AGENT_STATE_DIR
+    } else {
+      Join-Path $HOME ".atomic-agent"
+    }
+    $channelFile = Join-Path $stateDir "install-channel"
+    if (Test-Path -LiteralPath $channelFile) {
+      $existing = ([IO.File]::ReadAllText($channelFile)).Trim().TrimStart([char]0xFEFF)
+      if ($existing -ne "" -and $existing -ne "curl_ps1" -and $existing -ne "curl_sh") { return }
+    }
+    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+    [IO.File]::WriteAllText($channelFile, "curl_ps1`n", [Text.Encoding]::ASCII)
+  } catch {
+    # Analytics metadata only; ignore.
+  }
+}
+
+Write-InstallChannel
+
 Add-ToUserPath $InstallDir
 
 Write-Info ""

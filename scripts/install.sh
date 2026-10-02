@@ -611,6 +611,25 @@ add_to_path() {
   echo "added ${_dir} to PATH via ${_rc}"
 }
 
+# Install channel marker for anonymous analytics (`install_channel`). The
+# file holds one fixed word and nothing else. A value some other installer
+# already wrote (e.g. a desktop package) is left alone.
+record_install_channel() {
+  _state_dir="${ATOMIC_AGENT_STATE_DIR:-$HOME/.atomic-agent}"
+  _channel_file="$_state_dir/install-channel"
+  if [ -f "$_channel_file" ]; then
+    _existing="$(head -n 1 "$_channel_file" 2>/dev/null || true)"
+    case "$_existing" in
+      ""|curl_sh|curl_ps1) ;;
+      *) return 0 ;;
+    esac
+  fi
+  mkdir -p "$_state_dir" 2>/dev/null || return 0
+  printf 'curl_sh\n' > "$_channel_file" 2>/dev/null || true
+}
+
+record_install_channel
+
 add_to_path "$INSTALL_DIR"
 
 if [ "$OS_NAME" = "Darwin" ]; then
