@@ -34,6 +34,18 @@ describe("TurnsInFlight.settleCancelled", () => {
     expect(turns.size).toBe(0);
   });
 
+  it("waits for a turn its host stops from an I/O callback just after shutdown began", async () => {
+    const turns = new TurnsInFlight();
+    const controller = new AbortController();
+    const turn = turns.begin(controller.signal);
+    // A closing socket's callback is what stops a served turn; it runs a
+    // trip round the event loop after the shutdown that caused it.
+    setImmediate(() => controller.abort());
+    setTimeout(() => turn.end(), 30);
+    expect(await turns.settleCancelled(5_000)).toBe(0);
+    expect(turns.size).toBe(0);
+  });
+
   it("gives up on a stopped turn that does not end within the grace", async () => {
     const turns = new TurnsInFlight();
     turns.begin(stopped());

@@ -73,6 +73,11 @@ export class TurnsInFlight {
    * back to finish closing its stores.
    */
   async settleCancelled(graceMs: number): Promise<number> {
+    if (this.turns.size === 0) return 0;
+    // One trip round the event loop first: a host that stops its turns
+    // from an I/O callback (a closing socket) has not necessarily run it
+    // yet, and a turn sampled a moment too early is not waited for.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const cancelling = [...this.turns].filter(
       (turn) => turn.signal?.aborted === true,
     );
