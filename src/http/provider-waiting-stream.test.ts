@@ -108,6 +108,38 @@ describe("provider_waiting over SSE", () => {
     buildStreamEventHook(sse.writer as never, env(true))(waiting as never);
     expect(sse.written[0]!.payload).not.toHaveProperty("cause");
     expect(sse.written[0]!.payload).not.toHaveProperty("provider_id");
+    expect(sse.written[0]!.payload).not.toHaveProperty("fallback_failures");
+  });
+
+  it("lists the links that failed before the one waited on, each with its cause (item 40)", () => {
+    const sse = makeSse();
+    buildStreamEventHook(sse.writer as never, env(true))({
+      ...waiting,
+      cause: { kind: "refused" },
+      providerId: "local-llama",
+      fallbackFailures: [
+        {
+          providerId: "aimlapi",
+          reason: "openai provider 403: out of funds",
+          cause: { kind: "billing", status: 403 },
+        },
+        { providerId: "dashscope", reason: "boom", cause: { kind: "unknown" } },
+      ],
+    } as never);
+    expect(sse.written[0]!.payload).toMatchObject({
+      provider_id: "local-llama",
+      fallback_failures: [
+        {
+          providerId: "aimlapi",
+          reason: "openai provider 403: out of funds",
+          cause: { kind: "billing", status: 403 },
+        },
+        { providerId: "dashscope", reason: "boom" },
+      ],
+    });
+    const listed = (sse.written[0]!.payload as { fallback_failures: object[] })
+      .fallback_failures;
+    expect(listed[1]).not.toHaveProperty("cause");
   });
 
   it("says when the provider came back, so the readout can stop", () => {

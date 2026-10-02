@@ -3,12 +3,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
-import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
-import { classifyFailure } from "../llm/reliability/index.js";
 import {
-  readFailedAttempts,
-  summarizeFailedAttempts,
-} from "../llm/fallback/index.js";
+  classifyProviderWaitCause,
+  type ProviderWaitCause,
+  type ProviderWaitFailure,
+} from "../llm/reliability/provider-wait-cause.js";
+import { classifyFailure } from "../llm/reliability/index.js";
+import { readFailedAttempts } from "../llm/fallback/index.js";
+import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
   createEmptySessionState,
   type SessionState,
@@ -439,7 +441,16 @@ export function buildStreamEventHook(
         writeContent((turnStreamed ? "\n\n" : "") + text);
         turnStreamed = true;
       } else if (inner.type === "step_error") {
-        emitStreamError(sse, env, inner.error.message, inner.category);
+        /* A host that holds the first error frame of a turn (the desktop)
+           has only this one: so it says a billing refusal (item 40) and
+           the links that failed before this one, as loop_failed does. */
+        const failedBefore = describeFailedLinks(inner.error);
+        emitStreamError(sse, env, inner.error.message, inner.category, {
+          ...billingCauseFrame(inner.error),
+          ...(failedBefore.length > 0
+            ? { fallback_failures: failedLinksFrame(failedBefore) }
+            : {}),
+        });
       }
       return;
     }
@@ -482,6 +493,12 @@ export function buildStreamEventHook(
             : {}),
           ...(event.providerId !== undefined
             ? { provider_id: event.providerId }
+            : {}),
+          /* Item 40: the links that failed before the one waited on, the
+             picked provider usually first, each with its cause. */
+          ...(event.fallbackFailures !== undefined &&
+          event.fallbackFailures.length > 0
+            ? { fallback_failures: failedLinksFrame(event.fallbackFailures) }
             : {}),
         });
       }
@@ -547,13 +564,55 @@ export function buildStreamEventHook(
           ? primary.message
           : event.error.message;
         emitStreamError(sse, env, message, classifyFailure(primary), {
-          fallback_failures: summarizeFailedAttempts(event.error),
+          ...billingCauseFrame(primary),
+          fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
       }
-      emitStreamError(sse, env, event.error.message, event.category);
+      emitStreamError(
+        sse,
+        env,
+        event.error.message,
+        event.category,
+        billingCauseFrame(event.error),
+      );
     }
   };
+}
+
+/**
+ * `cause` on an error frame, for a refusal because the account cannot
+ * pay only: `{kind: "billing", status}` (item 40). A host shows the
+ * agent's sentence as the failure ("… refused the request: you've run
+ * out of funds. Top up …") instead of "not answering". Every other
+ * failure's frame stays exactly what it was.
+ */
+function billingCauseFrame(
+  err: unknown,
+): { cause?: { kind: "billing"; status: number } } {
+  const cause = classifyProviderWaitCause(err);
+  return cause.kind === "billing"
+    ? { cause: { kind: "billing", status: cause.status } }
+    : {};
+}
+
+/**
+ * The failed links as frames carry them: `{providerId, reason}`, as
+ * before, plus the link's own `cause` (`{kind, status?}`) when it has a
+ * kind to say.
+ */
+function failedLinksFrame(
+  failures: readonly ProviderWaitFailure[],
+): Array<{
+  providerId: string;
+  reason: string;
+  cause?: ReturnType<typeof waitCauseFrame>;
+}> {
+  return failures.map((f) => ({
+    providerId: f.providerId,
+    reason: f.reason,
+    ...(f.cause.kind !== "unknown" ? { cause: waitCauseFrame(f.cause) } : {}),
+  }));
 }
 
 /**

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
+import {
+  humanizeOpenAiHttpError,
+  OpenAiHttpError,
+} from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { classifyFailure } from "../llm/reliability/index.js";
+import { TransportError } from "../llm/reliability/llm-failures.js";
 import { buildStreamEventHook } from "./openai-chat-completions.js";
 
 /**
@@ -92,5 +98,123 @@ describe("loop_failed over SSE", () => {
     expect(frame.name).toBeNull();
     expect(JSON.stringify(frame.payload)).toContain("requires more credits");
     expect(JSON.stringify(frame.payload)).not.toContain("fallback_failures");
+  });
+});
+
+/**
+ * Item 40: a provider that refused because the account cannot pay. The
+ * frame says so as data (`cause: {kind: "billing", status}`) beside the
+ * agent's sentence, so a host shows that sentence as the failure instead
+ * of "<provider> is not answering". The desktop holds the FIRST error
+ * frame of a turn, which is the failed step's, so that one says it too,
+ * with the links that failed before it.
+ */
+describe("a billing refusal over SSE", () => {
+  const makeSse = () => {
+    const written: Array<{ name: string | null; payload: unknown }> = [];
+    return {
+      written,
+      writer: {
+        closed: false,
+        writeEvent(name: string | null, payload: unknown) {
+          written.push({ name, payload });
+        },
+      },
+    };
+  };
+  const env = {
+    completionId: "cmpl-1",
+    created: 0,
+    session: { id: "sess-1" },
+    request: { model: "atomic-agent", extensionsEnabled: true },
+  } as never;
+
+  const outOfFunds = (): OpenAiHttpError => {
+    const body =
+      '{"title":"Forbidden","status":403,"message":"You\'ve run out of funds. Please top up your balance"}';
+    return new OpenAiHttpError(
+      `openai provider 403: ${body}`,
+      403,
+      "https://api.aimlapi.com/v1/chat/completions",
+      false,
+      null,
+      "aimlapi",
+      undefined,
+      { body: parseProviderErrorBody(body) },
+    );
+  };
+  /** What the step executor hands the loop: the sentence, the provider's error as the cause. */
+  const stepFailure = (http: OpenAiHttpError) =>
+    new TransportError(humanizeOpenAiHttpError(http), http.status, http.url, { cause: http });
+
+  it("marks the turn's failure as billing, with the agent's sentence", () => {
+    const sse = makeSse();
+    const failure = stepFailure(outOfFunds());
+    buildStreamEventHook(sse.writer as never, env)({
+      type: "loop_failed",
+      error: failure,
+      category: "transport",
+    } as never);
+    expect(sse.written).toEqual([
+      {
+        name: "error",
+        payload: {
+          error: failure.message,
+          category: "transport",
+          cause: { kind: "billing", status: 403 },
+        },
+      },
+    ]);
+    expect(failure.message).toMatch(/^"aimlapi" refused the request: you've run out of funds\./);
+  });
+
+  it("marks the failed step's frame the same way", () => {
+    const sse = makeSse();
+    const failure = stepFailure(outOfFunds());
+    buildStreamEventHook(sse.writer as never, env)({
+      type: "llm_event",
+      event: { type: "step_error", error: failure, category: "transport" },
+    } as never);
+    expect(sse.written[0]).toEqual({
+      name: "error",
+      payload: {
+        error: failure.message,
+        category: "transport",
+        cause: { kind: "billing", status: 403 },
+      },
+    });
+  });
+
+  it("lists the picked provider's billing refusal on the failed step of a later link", () => {
+    const sse = makeSse();
+    const tail = new TypeError("fetch failed");
+    attachFailedAttempts(tail, [{ providerId: "aimlapi", error: outOfFunds() }]);
+    const failure = new TransportError("fetch failed", null, "", { cause: tail });
+    buildStreamEventHook(sse.writer as never, env)({
+      type: "llm_event",
+      event: { type: "step_error", error: failure, category: "transport" },
+    } as never);
+    const payload = sse.written[0]!.payload as Record<string, unknown>;
+    expect(payload.error).toBe("fetch failed");
+    expect(payload).not.toHaveProperty("cause");
+    expect(payload.fallback_failures).toEqual([
+      {
+        providerId: "aimlapi",
+        reason: expect.stringContaining("run out of funds"),
+        cause: { kind: "billing", status: 403 },
+      },
+    ]);
+  });
+
+  it("leaves a failed step with nothing before it and no billing exactly as before", () => {
+    const sse = makeSse();
+    const only = new TypeError("fetch failed");
+    buildStreamEventHook(sse.writer as never, env)({
+      type: "llm_event",
+      event: { type: "step_error", error: only, category: "transport" },
+    } as never);
+    expect(sse.written).toEqual([
+      { name: "error", payload: { error: "fetch failed", category: "transport" } },
+    ]);
   });
 });

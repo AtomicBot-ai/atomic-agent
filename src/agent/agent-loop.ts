@@ -41,10 +41,12 @@ import {
   isRequestSizeRejection,
 } from "../llm/index.js";
 import { readFailingLink } from "../llm/fallback/failed-attempts.js";
+import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import { readProviderErrorVerdict } from "../llm/reliability/provider-error-verdict.js";
 import {
   classifyProviderWaitCause,
   type ProviderWaitCause,
+  type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
 import {
   composeSizeRejectionNotice,
@@ -848,6 +850,14 @@ export type AgentLoopEvent =
        * did not come through the chain or a pinned link.
        */
       providerId?: string;
+      /**
+       * The links that failed before the one waited on, in the order
+       * they were tried, each with its own cause. The provider the user
+       * picked is usually the first, and why it failed (an account out
+       * of funds, a refused key) is the part a UI says before the link
+       * it waits on (item 40). Absent when nothing failed before it.
+       */
+      fallbackFailures?: readonly ProviderWaitFailure[];
     }
   | {
       /** The provider answered again; the parked turn is running on. */
@@ -2546,6 +2556,7 @@ export class AgentLoop {
           outageAttempts += 1;
           awaitingRecovery = true;
           const waitedOn = readFailingLink(err);
+          const failedBefore = describeFailedLinks(err);
           this.deps.onEvent?.({
             type: "provider_waiting",
             attempt: outageAttempts,
@@ -2555,6 +2566,9 @@ export class AgentLoop {
             reason: runError.message,
             cause: classifyProviderWaitCause(err),
             ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
+            ...(failedBefore.length > 0
+              ? { fallbackFailures: failedBefore }
+              : {}),
           });
           this.deps.logger?.warn("provider unreachable; parking the turn", {
             sessionId: state.id,
