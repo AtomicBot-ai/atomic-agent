@@ -2103,6 +2103,8 @@ function chatDot(s) {
    three states — it has not executed, so there is nothing to have read — and
    is drawn empty with a tooltip that says which. */
 function taskDot(t) {
+  // Q60 review: a task's turn waiting on an approval says so, as its chat's row does.
+  if (t.sessionId && PENDING_APPROVALS.has(t.sessionId)) return ['filled', 'waiting for your approval', 'tone-amber'];
   if (t.status === 'running') return ['running', 'running now — wait'];
   if (t.status === 'pending') return ['empty', t.when === 'once' ? 'queued — not run yet' : 'scheduled · ' + t.when];
   if (t.status === 'cancelled') return ['empty', 'cancelled'];
@@ -2819,6 +2821,7 @@ function apprCard(m) {
       : m.state === 'denying' ? 'Denying…'
       : m.state === 'undelivered' ? 'Not denied — the agent never took the verdict'
       : m.state === 'stopped' ? 'Not answered — the run was stopped'   // Backlog 25: its turn was stopped
+      : m.state === 'expired' ? 'Not answered — the agent stopped waiting'   // Q60 review: its turn ended elsewhere
       : 'Denied';
     /* Soft Tactile: the receipt pill. The label still opens the row's text
        ("Approved · 14:32:09"), which scenario 05 reads back. */
@@ -2826,6 +2829,7 @@ function apprCard(m) {
       : m.state === 'denying' ? '<span class="tk-gly"><span class="tk-spin"></span></span>'
       : m.state === 'undelivered' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : m.state === 'stopped' ? '<span class="tk-gly tk-gly--warn">' + ic('stop') + '</span>'
+      : m.state === 'expired' ? '<span class="tk-gly tk-gly--warn">' + ic('alert') + '</span>'
       : '<span class="tk-gly tk-gly--err">' + ic('x') + '</span>';
     const plain = CATEGORY_PLAIN[m.cat] || m.kind;   // ATO-164: what was allowed, in words; the agent's label is the tooltip
     return '<div class="appr done' + (ok ? ' ok' : '') + '">'
@@ -5862,9 +5866,9 @@ function screenTurnId() {
 }
 
 /* Backlog 25: the turn an approval card holds up. That is the turn of the chat
-   that asked, which need not be the chat on screen (placeInLiveTurn draws
-   another chat's request in this one); a request that names no chat is taken
-   to be the chat on screen's. */
+   that asked. Q60: that is the chat on screen, except for a request with no
+   chat of its own to be found in (approvalReachable), which is drawn where the
+   person is; a request that names no chat is taken to be the chat on screen's. */
 function approvalTurnId(req) {
   return req && req.sessionId ? sessionTurnId(req.sessionId) : screenTurnId();
 }
@@ -5891,18 +5895,26 @@ function abort() {
   // way or the other. The `aborted` frame clears the RUNNING entry, so the dot
   // pulses until the agent has actually stopped.
   /* Backlog 25: the turn of the chat on screen, not S.turnId; with none, the
-     turn behind the approval card on screen (a request another chat's turn
-     raised is drawn here too, and its card is why the Stop button shows).
-     The card goes with the turn that asked, because dropPendingApproval is
-     honest only for a turn cancelled with it: another chat's card stays when
-     it was this chat's own turn that stopped, and still answers its turn. */
+     turn behind the approval card on screen. That is this chat's own (Q60:
+     another chat's request is drawn here only when it has no chat of its own
+     to be found in, see approvalReachable). The card goes with the turn that
+     asked, because dropPendingApproval is honest only for a turn cancelled
+     with it: a card whose turn was not the one stopped stays, and still
+     answers its turn.
+     Q60 review: that includes a card whose turn this window does not run (a
+     scheduled task's): nothing here can stop that turn, so its request stays
+     open and answerable, and when nothing at all was stopped no line says
+     "Stopped". */
   const card = S.pending;
   const asker = card ? approvalTurnId(card) : null;
   const stopping = screenTurnId() || asker;
   if (stopping && BR) BR.cancel(stopping);
   S.busy = false;
-  if (card && asker && asker === stopping) stoppedCard(card);
-  if (!card || !asker || asker === stopping) dropPendingApproval();
+  const cardStopped = !!card && !!asker && asker === stopping;
+  const notOurs = !!card && !asker && !!card.sessionId;   // its turn is not one this window runs
+  if (cardStopped) stoppedCard(card);
+  if (!card || cardStopped || (!asker && !notOurs)) dropPendingApproval();
+  if (!stopping && notOurs) { render(); return; }
   S.log.push({id:nid(), k:'system', sev:'stop', text:'Stopped. Everything so far is kept.'});
   render();
 }
@@ -6021,9 +6033,10 @@ document.addEventListener('click', (e) => {
   const ap = t.closest('[data-appr]');
   if (ap) {
     /* Backlog 25: a card's buttons answer that card. S.pending is only the
-       newest request, and one view can show two open cards: a chat's own,
-       drawn again when it is opened, and one another chat's turn raised
-       meanwhile. A card whose request is no longer open answers nothing. */
+       newest request, and one view can still show two open cards (Q60: a
+       chat's own, and a request with no chat of its own to be found in,
+       approvalReachable, which is drawn where the person is). A card whose
+       request is no longer open answers nothing. */
     const box = ap.closest('[data-appr-id]');
     const req = box ? S.log.find((m) => m.k === 'approval' && !m.state && m.approvalId && m.approvalId === box.dataset.apprId) : null;
     if (req && req !== S.pending) {
@@ -7112,6 +7125,7 @@ function applyStatus(st) {
 async function loadResources() {
   if (!BR) return;
   loadCodingMode();
+  const askedAt = Date.now();   // Q60 review: applySessions
   const [caps, cfg, skills, tasks, sessions] = await Promise.all([
     BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
   ]);
@@ -7157,7 +7171,7 @@ async function loadResources() {
       ? 'tasks are disabled in this agent'
       : 'could not load tasks: ' + ((tasks.error || 'unknown error'));
   }
-  applySessions(sessions);
+  applySessions(sessions, askedAt);
   render();
   nameVisibleSessions();
   bswRefreshFacts();
@@ -7193,7 +7207,7 @@ function applyTasks(list) { TASKS.length = 0; list.forEach((t) => { if (t && t.i
 /** GET /api/sessions → the Chats rows. turnCount > 0 is the desktop's
     hasFirstPrompt: the store is written at turn end, so a row with no turn has
     no first prompt to name it with (chat-orchestrator.ts:388-399). */
-function applySessions(res) {
+function applySessions(res, askedAt) {
   if (!res || !res.ok || !res.data || !Array.isArray(res.data.sessions)) return false;
   const before = new Map(SESSIONS.map((s) => [s.id, s]));
   SESSIONS.length = 0;
@@ -7215,14 +7229,20 @@ function applySessions(res) {
     });
   });
   settlePendingChats();
+  // Q60 review: a kept request of a turn not running here ends with its chat's turn (approvalOver).
+  for (const sid of [...PENDING_APPROVALS.keys()]) {
+    const row = SESSIONS.find((x) => x.id === sid);
+    if (row) approvalOver(sid, row.status, askedAt);
+  }
   return true;
 }
 
 /** Re-read the list: after a turn ends, after a delete, after a page grows. */
 async function refreshSessions() {
   if (!BR) return;
+  const askedAt = Date.now();   // Q60 review: applySessions
   const res = await BR.sessions();
-  if (!applySessions(res)) return;
+  if (!applySessions(res, askedAt)) return;
   render();
   nameVisibleSessions();
 }
@@ -7995,6 +8015,8 @@ function onChatEvent(ev) {
     if (S.log.some((m) => m.id === S.streamId)) {
       S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id');
       S.sessionId = S.agentSession;
+      // Q60 review: a request this turn raised before it said its session waited for it (approvalOnScreen).
+      if (showKeptApproval(S.agentSession)) render();
     }
     renderSidebar();
     renderToolbar();   // item 27: a new chat's title is its first message from here, as its row's is
@@ -8223,9 +8245,11 @@ function onChatEvent(ev) {
     }
     /* Backlog 26: the queue on screen drains behind this turn when it is this
        turn's chat's, or when the chat on screen runs no turn of its own: what
-       is parked there then waited on another chat's turn (Enter under that
-       chat's approval card takes the steer path), or came back refused after
-       its own turn had ended. A chat on screen with a turn of its own keeps
+       is parked there then came back refused after its own turn had ended
+       (the steer was asked while it ran), or (Q60: no longer for any other
+       chat's card, only one with no chat of its own to be shown in, see
+       approvalReachable) was typed under another chat's approval card, which
+       takes the steer path. A chat on screen with a turn of its own keeps
        its queue for that turn's end; a left chat's waits in QUEUES until the
        person is back there (openSession). The watermark goes with the turn
        its queue waited on (queueTurnEnded does a left chat's). */
@@ -8436,8 +8460,9 @@ function stripStreamedNote(body, note) {
    item. `afterTool` puts an approval under the newest card of the call that
    asked for it (after any receipts already hanging off that card), which is
    also where a reopened chat puts it (sessionTurnsToLog). Anything that is not
-   this window's live turn — no stream on screen, or a request raised by
-   another session — is appended exactly as before. */
+   this window's live turn — no stream on screen, or (Q60: only when it has no
+   chat of its own to be shown in) a request raised by another session — is
+   appended exactly as before. */
 function placeInLiveTurn(entry, opts) {
   const o = opts || {};
   const item = S.streamId ? S.log.find((m) => m.id === S.streamId) : null;
@@ -8480,7 +8505,10 @@ function placeAfterRow(row, entry) {
    transcript is about to be replaced, and openSession draws the chat's own
    card when it lands. A new chat whose first turn has not said its session
    yet (the request comes on /api/events, which can overtake the turn's own
-   session_id frame) takes a request no other running turn is known to own.
+   session_id frame) takes a request only while no other running turn could
+   be the one that asked: none known to run in that session, and no other new
+   chat's first turn still unnamed. Otherwise the request waits, and the
+   turn's session_id frame draws it in its chat (showKeptApproval).
    A request that names no session is drawn where the person is, as before. */
 function approvalOnScreen(sid) {
   if (!sid) return true;
@@ -8489,20 +8517,73 @@ function approvalOnScreen(sid) {
   if (here) return sid === here;
   const turn = S.turnId && S.streamId && S.log.some((m) => m.id === S.streamId) ? S.turnId : null;
   if (!turn || !RUNNING.has(turn) || RUNNING.get(turn)) return false;
-  return ![...RUNNING].some(([t, s]) => t !== turn && s === sid);
+  return ![...RUNNING].some(([t, s]) => t !== turn && (s === sid || !s));
+}
+
+/* Q60 review: a request kept for its chat must have a chat the person can
+   open: a row on the list (or the stand-in row of a new chat), or a turn
+   running here whose chat it is. A new chat's first turn not yet named may
+   be the one that asked, and is named in a moment. A request with none of
+   these (a one-shot scheduled task whose session is on no list yet) is
+   drawn in the chat on screen, as every request was before: shown there,
+   it can be answered; kept, it could not be found. */
+function approvalReachable(sid) {
+  if (!sid) return false;
+  if (OPENING && OPENING.id === sid) return true;   // the chat being opened: openSession draws it when it lands
+  if (SESSIONS.some((x) => x.id === sid) || PENDING_CHATS.has(sid)) return true;
+  for (const s of RUNNING.values()) if (!s || s === sid) return true;
+  return false;
+}
+
+/* Q60 review: a request kept for chat `sid` is drawn there now (the chat
+   came on screen: its first turn named its session, say). True when it was. */
+function showKeptApproval(sid) {
+  const req = sid ? APPROVAL_CARDS.get(sid) : null;
+  if (!req || req.state || PENDING_APPROVALS.get(sid) !== req.approvalId) return false;
+  if (!S.log.some((m) => m.k === 'approval' && m.approvalId === req.approvalId)) placeInLiveTurn(req, {afterTool: req.tool});
+  if (!req.drawn) { req.drawn = true; ANX.apprShown(req); }
+  S.pending = req; S.apprFocused = false; S.busy = false;
+  return true;
+}
+
+/* Q60 review: a request kept for a chat whose turn this window does not run
+   (a scheduled task's) has nothing here that ends it: the turn's end frame
+   only reaches a window that started the turn, and the events stream sends
+   requests, never their end. The chat's row does: `running` while a turn is
+   in flight (route-sessions.ts), and anything else once it is over, the
+   request with it. Such a request is forgotten, and a card of it still on
+   screen says it is no longer waited for. Requests of turns running here
+   are left to their turn's own end. An unknown status (an agent that does
+   not send one) proves nothing, and neither does a status read before the
+   request came (`askedAt`, when the fetch went out): the turn may have
+   started after it. */
+function approvalOver(sid, status, askedAt) {
+  if (!sid || [...RUNNING.values()].includes(sid)) return false;
+  if (typeof status !== 'string' || !status || status === 'running') return false;
+  const req = APPROVAL_CARDS.get(sid);
+  if (!req || !askedAt || !(req.seenAt < askedAt)) return false;
+  PENDING_APPROVALS.delete(sid);
+  APPROVAL_CARDS.delete(sid);
+  if (req && !req.state) { req.state = 'expired'; req.at = new Date().toTimeString().slice(0, 8); }
+  if (req && S.pending === req) S.pending = null;
+  return true;
 }
 
 function onApprovalEvent(payload) {
   if (!payload || !payload.approvalId) return;
   const sid = payload.sessionId || null;
   /* Q60: one request is one card. The same approvalId again (the events
-     stream reconnecting, a replay) finds the card already drawn here or
-     kept for its chat, and draws no second one. Once answered or stopped,
-     a late copy changes nothing: the request is not open again. */
+     stream reconnecting replays every request still pending) finds the card
+     already drawn here or kept for its chat, and draws no second one. An
+     answer the agent confirmed, or one still on its way, is not undone by a
+     late copy. Anything else (an answer that never landed, a card marked
+     stopped or no longer waited for) is wrong: the agent says the request
+     is still open, so the card opens again. */
   const drawn = S.log.find((m) => m.k === 'approval' && m.approvalId === payload.approvalId) || null;
   const kept = sid ? APPROVAL_CARDS.get(sid) : null;
   const again = drawn || (kept && kept.approvalId === payload.approvalId ? kept : null);
-  if (again && again.state) return;
+  if (again && again.state && (again.landed === true || again.answering)) return;
+  if (again && again.state) { delete again.state; delete again.at; delete again.landed; }
   const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
   const first = affects[0] || S.live.workingDir || '';
   const cut = lastSepIndex(first);
@@ -8528,9 +8609,11 @@ function onApprovalEvent(payload) {
     // not start (a scheduled task's, say).
     sessionId: sid,
   };
+  req.seenAt = Date.now();   // Q60 review: a status read before this proves nothing about it (approvalOver)
   if (sid) { PENDING_APPROVALS.set(sid, req.approvalId); APPROVAL_CARDS.set(sid, req); }
   // Q60: another chat's request: its dot, not a card in this chat, and not this chat's y/n.
-  if (!approvalOnScreen(sid)) { render(); return; }
+  // Q60 review: unless it has no chat to be found in (approvalReachable).
+  if (!approvalOnScreen(sid) && approvalReachable(sid)) { render(); return; }
   if (!drawn) {
     if (!req.drawn) { req.drawn = true; ANX.apprShown(req); }   // analytics: ms_to_answer starts when the card is drawn
     placeInLiveTurn(req, {afterTool: req.tool});
@@ -8634,7 +8717,8 @@ function answerLive(req, key) {
      and the agent carries on with the refusal. The one verdict that really
      does leave this window idle is the abort below, so it is excluded.
      Guarded on this window owning the turn — an approval raised by another
-     session (a scheduled task's) must not make THIS chat look busy.
+     session (a scheduled task's with no chat to be found in, drawn here,
+     see approvalReachable) must not make THIS chat look busy.
      Backlog 25: "the turn" is the one that asked (approvalTurnId), not
      S.turnId, the window's last-started turn: that can be another chat's,
      and Abort run (Esc) below cancelled it while the asking turn ran on. */
@@ -8642,12 +8726,17 @@ function answerLive(req, key) {
   if (key !== 'esc' && turn && (!req.sessionId || req.sessionId === S.agentSession)) {
     S.busy = true;
   }
+  /* Q60 review: whether the agent took it, for a replay of the same request
+     (onApprovalEvent): only a confirmed answer keeps the card closed. */
+  req.answering = true; delete req.landed;
   BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
+    req.answering = false;
+    req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
     if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
   });
   // Backlog 25: the chat on screen stays busy when the turn stopped here was
-  // another chat's, drawn here, and its own runs on.
+  // another chat's (Q60: a request with no chat of its own, drawn here), and its own runs on.
   if (key === 'esc') { if (turn) BR.cancel(turn); const own = screenTurnId(); S.busy = !!own && own !== turn; }
   render();
 }
@@ -8676,6 +8765,7 @@ async function denyByProse(req, text, post) {
   if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
   req.at = new Date().toTimeString().slice(0, 8);
   req.state = 'denying';   // in flight — not yet a fact, and the card says so
+  req.answering = true; delete req.landed;   // Q60 review: see answerLive
   render();
   // `post` is the same injected-round-trip seam setCodingMode takes: the smoke
   // needs to watch the verdict leave without answering a real gate.
@@ -8698,6 +8788,7 @@ async function denyByProse(req, text, post) {
     : (data && typeof data.error === 'string') ? data.error
     : 'the agent did not confirm it';
   req.state = landed ? 'denied' : 'undelivered';
+  req.answering = false; req.landed = landed;
   /* r6: same contract as answerLive — a delivered refusal does not end the
      turn, it fails one call and the agent goes back to the model with the
      operator's words. The window must therefore go back to saying so. Only
@@ -16257,6 +16348,7 @@ async function openSession(id) {
   S.stick = true;
   render();
 
+  const askedAt = Date.now();   // Q60 review: approvalOver below
   const res = await BR.session(id);
   /* Backlog 24: this open is over, landed or not. A newer open (another chat,
      or this one again) owns OPENING by now and is left alone. A failed
@@ -16330,6 +16422,10 @@ async function openSession(id) {
      its own chat now, so a chat whose turn runs elsewhere (a scheduled task's)
      shows its card here or nowhere. Never twice: a card with that approvalId
      already in the rebuilt rows is the one. */
+  /* Q60 review: and only while the request can still be open. For a turn
+     running here its end frame clears it; for any other, the session's own
+     status just fetched says whether a turn is still in flight there. */
+  if (!live) approvalOver(id, data.status, askedAt);
   const asked = APPROVAL_CARDS.get(id) || null;
   if (asked && !asked.state && PENDING_APPROVALS.get(id) === asked.approvalId) {
     /* Item 38: with the turn's rows back, a card it raised while they were on
