@@ -569,6 +569,35 @@ export function estimateContextSize(input: EstimateContextSizeInput): number {
 }
 
 /**
+ * Bytes of KV cache a launch's context costs, the way the auto-size
+ * costs it: from the model's layout when its header was readable (with
+ * `--swa-full`, when the launch carries it), from the file-size fallback
+ * when not. Set against `resolveKvBudgetMiB` without a system memory
+ * figure, it says whether the weights and the cache fit the device whole
+ * or llama.cpp's `-fit` will leave layers on the CPU.
+ */
+export function estimateLaunchKvBytes(input: {
+  kvLayout: KvCacheLayout | null;
+  modelSizeGb: number;
+  contextSize: number;
+  cacheType?: KvCacheType | string;
+  swaFull?: boolean;
+}): number {
+  if (input.kvLayout && input.kvLayout.layers.length > 0) {
+    return estimateKvBytesTotal(
+      input.kvLayout,
+      input.cacheType ?? MANAGED_KV_CACHE_TYPE,
+      input.contextSize,
+      { swaFull: input.swaFull === true },
+    );
+  }
+  return (
+    input.contextSize *
+    Math.max(KV_MIN_BYTES_PER_TOKEN, input.modelSizeGb * KV_BYTES_PER_TOKEN_PER_GB)
+  );
+}
+
+/**
  * Look up the free VRAM (binary MiB) for the resolved offload device, or
  * `null` when there is no usable figure. Falls back to `totalMemMiB`
  * when the backend reported a total but no free figure. `device` is the
