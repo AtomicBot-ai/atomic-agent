@@ -233,7 +233,9 @@ two app restarts and a fresh session — with nothing on screen to say the link 
    fallback chain the error the loop sees is the last link's, so a dead key on the primary used to
    park the turn on a stopped local link's `fetch failed`; the primary's refused key now outranks
    it unless a fallback has been serving (§"Provider fallback chain", invariant 5). The `provider_waiting` event names the link it
-   waits on (`providerId`), the trace row records it, and the SSE frame carries it as `provider_id` beside `cause`.
+   waits on (`providerId`), the trace row records it, and the SSE frame carries it as `provider_id` beside `cause`. The event,
+   its trace row (beside `cause`) and the `provider unreachable; parking the turn` log line also carry `causeCode`, the errno
+   the transport left on the failure's `cause` chain (`ECONNREFUSED` for a server that is not running).
 3. **Backoff is 2s doubling to 30s, clipped so the last wait ends exactly at `maxWaitMs`.** The
    budget the operator configured is the budget they get.
 4. **Esc during a wait ends the turn at once** — the sleep is abort-aware, and the turn settles
@@ -2684,7 +2686,7 @@ Emitted `TraceEvent` types (see [src/tracing/trace/trace-event.ts](src/tracing/t
 - `prompt_captured` — `{ stablePrefixHash, tail, tokens: { total, stablePrefix, tail }, slotId, cacheReused }`. The stable prefix is stored only as its salted hash (via `hashPrefix` from [src/llm/slot-manager.ts](src/llm/slot-manager.ts)) so trace files stay compact across steps; the variable tail is stored verbatim.
 - `llm_completion` — full completion `content` + `reasoningContent` + `timing`, with `attempt: 1 | 2` (attempt 2 == parse retry). `reasoningContent` is sourced from two mutually-exclusive channels: **Channel A** is the dedicated `reasoning_content` SSE field (QwQ / DeepSeek-R1 with `--reasoning-format deepseek`); **Channel B** is the inline `<think>...</think>` / `<|channel>thought...<channel|>` block that the grammar-aware stream parser splits client-side. `consumeStream` accumulates both separately and prefers Channel A when both fire; the legacy `/completion` endpoint always falls back to Channel B because it never emits `reasoning_content`. Pinned by [src/agent/step-executor.test.ts](src/agent/step-executor.test.ts) "executeStep streaming reasoning accumulator".
 - `tool_invocation` — executed tool call with args, status, summary, and optional details.
-- `parse_retry`, `loop_detected`, `error`, `trace_truncated` — diagnostics.
+- `parse_retry`, `loop_detected`, `error`, `trace_truncated` — diagnostics. A `transport` `error` row carries `causeCode`, the errno read off the failure's `cause` chain (`ECONNREFUSED`, `ETIMEDOUT`, `UND_ERR_SOCKET`, …), and so does the `agent loop failed` log line.
 
 Invariants:
 

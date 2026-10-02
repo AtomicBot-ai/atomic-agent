@@ -99,11 +99,16 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
           : ""
       }`;
     case "provider_waiting":
+      // The errno last: `reason` is often a bare `fetch failed`, and
+      // the code is what says whether the server was refused, timed out
+      // or never resolved. Rows without one print as they always have.
       return `${head} attempt=${event.attempt} waited=${Math.round(
         event.waitedMs / 1000,
       )}s/${Math.round(event.maxWaitMs / 1000)}s next=${Math.round(
         event.nextRetryMs / 1000,
-      )}s reason=${truncate(event.reason, 120, raw)}`;
+      )}s reason=${truncate(event.reason, 120, raw)}${causeCodeSuffix(
+        event.causeCode,
+      )}`;
     case "provider_recovered":
       return `${head} waited=${Math.round(event.waitedMs / 1000)}s`;
     case "completion_truncated":
@@ -129,9 +134,11 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
       const after = (event.fallbackFailures ?? []).map(
         (f) => `"${f.providerId}" failed: ${f.reason}`,
       );
-      return `${head} message=${event.message}${
-        after.length > 0 ? ` (after ${after.join("; ")})` : ""
-      }`;
+      // The code sits right after the message it explains, ahead of the
+      // links that failed before: it belongs to the last link's error.
+      return `${head} message=${event.message}${causeCodeSuffix(
+        event.causeCode,
+      )}${after.length > 0 ? ` (after ${after.join("; ")})` : ""}`;
     }
     case "trace_truncated":
       // The counts are the point of the row: they tell the reader how
@@ -148,6 +155,11 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
     default:
       return `${head} ${JSON.stringify(event)}`;
   }
+}
+
+/** ` code=ECONNREFUSED`, or nothing when the row carries no cause code. */
+function causeCodeSuffix(causeCode: string | undefined): string {
+  return causeCode !== undefined ? ` code=${causeCode}` : "";
 }
 
 function truncate(input: string, max: number, raw: boolean): string {

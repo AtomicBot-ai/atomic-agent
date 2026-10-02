@@ -493,6 +493,9 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(events[0]!.nextRetryMs).toBe(2_000);
     expect(events[1]!.nextRetryMs).toBe(4_000);
     expect(events[0]!.reason).toBe("fetch failed");
+    // A bare `TransportError` carries no errno anywhere on its chain, so
+    // the event names none rather than guessing one.
+    expect(events[0]).not.toHaveProperty("causeCode");
     // The parked attempts are not steps and replay nothing: one tool
     // step plus the reply, not four steps and two noops.
     expect(noopRuns).toBe(1);
@@ -1365,6 +1368,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // statusless shape and is exactly what the park exists for.
     const registry = buildDefaultToolRegistry();
     const waits: unknown[] = [];
+    const warnings: Array<{
+      message: string;
+      context?: Record<string, unknown>;
+    }> = [];
     let calls = 0;
     const loop = new AgentLoop({
       registry,
@@ -1391,6 +1398,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       onEvent: (event) => {
         if (event.type === "provider_waiting") waits.push(event);
       },
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: (message: string, context?: Record<string, unknown>) => {
+          warnings.push({ message, context });
+        },
+        error: () => {},
+      } as never,
     });
     const result = await loop.runTurn(
       createEmptySessionState({ id: "s-econnrefused", workingDir }),
@@ -1404,6 +1419,73 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
     expect(calls).toBe(2);
+    // The reason is a bare `fetch failed` — the same line a network
+    // outage gives. The errno is what says the server was not running,
+    // and it reaches both the event (and so the trace) and the log.
+    expect(waits[0]).toMatchObject({
+      reason: "fetch failed",
+      cause: { kind: "refused" },
+      causeCode: "ECONNREFUSED",
+    });
+    expect(
+      warnings.find(
+        (w) => w.message === "provider unreachable; parking the turn",
+      )?.context,
+    ).toMatchObject({ error: "fetch failed", causeCode: "ECONNREFUSED" });
+  });
+
+  it("names the errno in the failure log when the turn does not wait", async () => {
+    // The same refused connection with waiting switched off: the turn
+    // fails at once, and `agent loop failed` is the only log line about
+    // it — it must not say only `fetch failed` either.
+    const registry = buildDefaultToolRegistry();
+    const failures: Array<{
+      message: string;
+      context?: Record<string, unknown>;
+    }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new LlamaServerError(
+          "fetch failed",
+          null,
+          "http://127.0.0.1:8080/completion",
+          false,
+          "ECONNREFUSED",
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: (message: string, context?: Record<string, unknown>) => {
+          failures.push({ message, context });
+        },
+      } as never,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-econnrefused-no-wait", workingDir }),
+      {
+        userMessage: "server stopped",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        providerWaitEnabled: false,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(
+      failures.find((f) => f.message === "agent loop failed")?.context,
+    ).toMatchObject({
+      error: "fetch failed",
+      category: "transport",
+      causeCode: "ECONNREFUSED",
+    });
   });
 
   it("still waits out a socket-level ETIMEDOUT, which is the kernel's deadline (issue #490)", async () => {
