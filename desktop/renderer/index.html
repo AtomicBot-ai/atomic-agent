@@ -40,6 +40,8 @@
     </div>
   </div>
 </div>
+<!-- Anonymous usage analytics and error reports: first, so its error listeners see the other modules load. -->
+<script src="analytics.js"></script>
 <script src="tui-parity.js"></script>
 <!-- Feature modules declare functions only; renderer.js boots the app and calls them. -->
 <script src="config-patch.js"></script>

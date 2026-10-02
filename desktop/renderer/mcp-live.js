@@ -69,6 +69,7 @@ async function mcpLiveAct(op, name) {
   if (op === 'toggle') op = cfg.enabled === false ? 'enable' : 'disable';
   if (op === 'restart' && cfg.enabled === false) { MCP.msg = {text:name + ' is off. Turn it on first.'}; render(); return {ok:false, error:'disabled'}; }
   MCP_LIVE.busy = name; MCP.lastError = null; MCP.msg = null; render();
+  if (typeof ANX !== 'undefined') ANX.mcpAction(op);   // analytics: the verb only, never the server name
   let res;
   try { res = await BR.mcpServer(name, op); } finally { MCP_LIVE.busy = null; }
   if (!res || !res.ok) {
