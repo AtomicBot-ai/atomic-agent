@@ -507,6 +507,10 @@ export function buildStreamEventHook(
        know is not named here, for the reason the TUI line omits it. */
     if (event.type === "fusion_worker") {
       if (env.request.extensionsEnabled) {
+        // `phase: "usage"` carries how full the worker's context is, for
+        // the live row only (no feed line). Read through a cast so this
+        // compiles before and after the field joins the event type.
+        const contextTokens = (event as { contextTokens?: unknown }).contextTokens;
         sse.writeEvent("fusion_worker", {
           object: "atomic.fusion_worker",
           session_id: env.session.id,
@@ -522,6 +526,9 @@ export function buildStreamEventHook(
           ...(event.stepCount === undefined ? {} : { step_count: event.stepCount }),
           ...(event.durationMs === undefined ? {} : { duration_ms: event.durationMs }),
           ...(event.summary === undefined ? {} : { summary: event.summary }),
+          ...(typeof contextTokens === "number" && Number.isFinite(contextTokens) && contextTokens > 0
+            ? { context_tokens: contextTokens }
+            : {}),
         });
       }
       return;

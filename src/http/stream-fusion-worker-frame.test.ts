@@ -109,6 +109,27 @@ describe("fusion_worker over SSE", () => {
     expect(sse.written[1]!.payload).not.toHaveProperty("eta_seconds");
   });
 
+  it("carries a worker's context size on its usage frame", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    // Cast: `usage` and `contextTokens` join the event type with the worker
+    // token counts; the frame must forward them whichever side lands first.
+    hook({
+      type: "fusion_worker",
+      taskId: "t5",
+      title: "parser",
+      phase: "usage",
+      role: "worker",
+      model: "qwen-3.5-4b",
+      contextTokens: 12345,
+    } as never);
+    hook({ type: "fusion_worker", taskId: "t5", title: "parser", phase: "tool", tool: "os.fs.read" });
+
+    expect(sse.written[0]!.payload).toMatchObject({ phase: "usage", context_tokens: 12345 });
+    expect(sse.written[1]!.payload).not.toHaveProperty("context_tokens");
+  });
+
   it("keeps the orchestrator's own bracket line distinguishable", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));

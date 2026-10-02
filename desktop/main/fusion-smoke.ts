@@ -263,6 +263,15 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       "worker tests · qwen-3.5-4b: failed — timed out",
     ]) && end.beforeReply,
     JSON.stringify(end.lines));
+  /* `phase: "usage"` (agent with the worker token counts): a context size for
+     the live row, never a transcript line, and not a step — the row keeps
+     the tool it was on. An agent without it never sends the frame. */
+  const usage = { object: "atomic.fusion_worker", task_id: "t1", title: "write the parser", phase: "usage", role: "worker", model: "qwen-3.5-4b", context_tokens: 12345 };
+  const withUsage = await js<EvProbe>(`window.__fzEventProbe(${JSON.stringify([...frames.slice(0, 3), usage])})`);
+  check("fusion: a usage frame adds no transcript line and shows the worker's context size on its live row",
+    same(withUsage.lines, end.lines.slice(0, 3))
+      && /^write the parser · qwen-3\.5-4b — os\.fs\.write · \d+(?:m\d\d)?s(?: \([^)]*\))? · 12\.3k ctx$/.test(withUsage.live[0] ?? ""),
+    `${JSON.stringify(withUsage.lines)} · ${JSON.stringify(withUsage.live)}`);
 
   /* ---- labels, slash, leftovers, menu ---- */
   const cat = await js<{ label: string | null; level: number | null }>("window.__approvalCat('fusion_fanout')");

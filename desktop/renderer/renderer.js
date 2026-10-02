@@ -7122,10 +7122,14 @@ function onChatEvent(ev) {
       stepCount: typeof p.step_count === 'number' ? p.step_count : undefined,
       summary: typeof p.summary === 'string' ? p.summary : undefined,
       etaSeconds: typeof p.eta_seconds === 'number' ? p.eta_seconds : undefined,
+      contextTokens: typeof p.context_tokens === 'number' && p.context_tokens > 0 ? p.context_tokens : undefined,
     };
     FZ.live = fzReduceLive(FZ.live, e);
     tpFzEnsureTick();
-    if (item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
+    // `usage` (agent with the worker token counts) only moves the live row's
+    // context size: one transcript line per completion per worker would bury
+    // the lines that say what happened, as the TUI's reducer keeps it off its feed.
+    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
     render();
     return;
   }
@@ -14952,20 +14956,26 @@ function fzSlash(args) {
 function fzReduceLive(current, e) {
   if (e.role === 'orchestrator') return current;
   const at = current.findIndex((w) => w.taskId === e.taskId);
-  const done = e.phase === 'finished' || e.phase === 'failed' || e.phase === 'cancelled';
   const prev = at >= 0 ? current[at] : null;
-  const next = {taskId: e.taskId, title: e.title, phase: e.phase,
+  // A token count is not a step: the row keeps the phase, tool and done it had.
+  const usage = e.phase === 'usage';
+  const done = usage ? !!(prev && prev.done) : e.phase === 'finished' || e.phase === 'failed' || e.phase === 'cancelled';
+  const next = {taskId: e.taskId, title: e.title, phase: usage ? ((prev && prev.phase) || 'started') : e.phase,
     model: e.model ?? (prev && prev.model) ?? null,
-    tool: done ? null : (e.tool ?? (prev && prev.tool) ?? null), done};
+    tool: done ? null : (usage ? ((prev && prev.tool) ?? null) : (e.tool ?? (prev && prev.tool) ?? null)), done,
+    // Kept once the leg is done: the final size answers "which worker ate the window".
+    contextTokens: e.contextTokens ?? (prev && prev.contextTokens) ?? null};
   Object.assign(next, tpFzClock(prev, e, done));   // tui-parity.js: per-leg clock and estimate
   if (at < 0) return current.concat([next]);
   const copy = current.slice();
   copy[at] = next;
   return copy;
 }
-/** formatFusionLiveWorker: `<title> · <model> — <tool|working|done> · <elapsed> (~<expected>)`. */
+/** formatFusionLiveWorker: `<title> · <model> — <tool|working|done> · <elapsed> (~<expected>) · <n> ctx`. */
 function fzLiveLine(w) {
-  return w.title + ' · ' + (w.model ?? 'local') + ' — ' + (w.done ? 'done' : (w.tool ?? 'working')) + tpFzTiming(w, FZ.live);
+  // Last, so a narrow strip cuts the count before the clock.
+  const ctx = typeof w.contextTokens === 'number' ? ' · ' + fmtTokens(w.contextTokens) + ' ctx' : '';
+  return w.title + ' · ' + (w.model ?? 'local') + ' — ' + (w.done ? 'done' : (w.tool ?? 'working')) + tpFzTiming(w, FZ.live) + ctx;
 }
 /** format-fusion-worker-line.ts, without the feed's `» ` glyph. */
 function fzWorkerLine(e) {
@@ -14977,6 +14987,8 @@ function fzWorkerLine(e) {
       ? who + ' — ' + (e.tool ?? 'working') + ' (' + e.title + ')'
       : who + ' — ' + (e.tool ?? 'working');
   }
+  // Kept off the transcript (onChatEvent); something true if it is ever printed.
+  if (e.phase === 'usage') return who + ': ' + fmtTokens(e.contextTokens ?? 0) + ' ctx';
   if (e.phase === 'cancelled') return who + ': cancelled';
   if (e.phase === 'failed') return who + ': failed — ' + (e.summary ?? 'no detail');
   if (e.phase === 'finished') {
