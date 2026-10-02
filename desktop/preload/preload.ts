@@ -291,7 +291,7 @@ contextBridge.exposeInMainWorld("atomic", {
   ackSteers: (sessionId: string, through: number, discarded: number) =>
     ipcRenderer.invoke("agent:ackSteers", { sessionId, through, discarded }),
 
-  /** Analytics (SPEC "Desktop transport"): fire and forget. Main re-validates
+  /** Analytics (desktop/ANALYTICS.md): fire and forget. Main re-validates
    *  every event against its allowlist and drops anything it does not know;
    *  nothing is sent while analytics is off. */
   track: (event: string, props?: Record<string, unknown>) => {
