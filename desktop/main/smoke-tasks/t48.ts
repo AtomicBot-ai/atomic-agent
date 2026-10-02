@@ -390,7 +390,7 @@ async function nowLine(js: Js, check: Check): Promise<void> {
       LLMP.status = {mode: 'managed', activeModel: 'smoke-t48', activeDownloaded: true, daemonRunning: false, daemonPid: null, health: 'down'};
       LLMP.served = down;
       out.cloudDown = read();
-      // A Custom server route, the managed server left up behind it (`models status` says nothing of it there).
+      // A Custom server route, the managed server left up behind it (models status says nothing of it there).
       LIVE_CONFIG = base({localModels: {mode: 'external', url: 'http://10.0.0.5:8080', managed: {modelId: 'smoke-t48'}}});
       LLMP.status = {mode: 'external', url: 'http://10.0.0.5:8080', daemonRunning: false};
       LLMP.served = up(['smoke-t48']);
