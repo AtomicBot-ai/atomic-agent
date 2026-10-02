@@ -8401,7 +8401,11 @@ if (BR) {
   BR.onMenu((command) => { if (typeof command === 'string') act(command); });
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;
-    LOGS.push([new Date().toTimeString().slice(0, 8), entry.stream === 'stderr' ? 'warn' : 'info', entry.line]);
+    /* ATO-121: one of the agent's structured lines comes with its own level
+       (main's agent-output.ts), so routine INFO is not drawn as a warning; any
+       other stderr line still is. */
+    const lvl = ['debug', 'info', 'warn', 'error'].includes(entry.level) ? entry.level : (entry.stream === 'stderr' ? 'warn' : 'info');
+    LOGS.push([new Date().toTimeString().slice(0, 8), lvl, entry.line]);
     if (LOGS.length > 300) LOGS.shift();
     if (S.consoleOpen) renderConsole();
   });

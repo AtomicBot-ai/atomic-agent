@@ -5,6 +5,8 @@ import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
+import type { Readable } from "node:stream";
+import { LineSplitter, structuredLevel } from "./agent-output.js";
 // r5 item 9 — the supervised `atag serve` child gets the desktop state dir.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
@@ -540,13 +542,21 @@ export class AgentClient extends EventEmitter {
     );
     this.child = child;
 
-    const relay = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
-      for (const line of chunk.toString("utf8").split("\n")) {
-        if (line.trim()) this.emit("log", { stream, line });
-      }
+    /* Whole lines, however the pipe cut them, each with its level when it is
+       one of the agent's structured log lines (agent-output.ts). What is left
+       when a stream closes is let out too: an agent that died mid-line. */
+    const relay = (stream: "stdout" | "stderr", from: Readable | null) => {
+      if (!from) return;
+      const lines = new LineSplitter((line) => {
+        if (!line.trim()) return;
+        const level = structuredLevel(line);
+        this.emit("log", { stream, line, ...(level ? { level } : {}) });
+      });
+      from.on("data", (chunk: Buffer) => lines.push(chunk));
+      from.on("close", () => lines.end());
     };
-    child.stdout?.on("data", relay("stdout"));
-    child.stderr?.on("data", relay("stderr"));
+    relay("stdout", child.stdout);
+    relay("stderr", child.stderr);
     /* r6: write down who we just started, so the next launch can clean up
        after this one however this one ends. */
     if (child.pid) rememberServeRecord(this.recordPath, child.pid, port);

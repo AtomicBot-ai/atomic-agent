@@ -24,6 +24,7 @@ import { AgentClient } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { buildMenu } from "./menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
+import { agentLogTag, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
   configGet,
   configSet,
@@ -2083,10 +2084,17 @@ function wireIpc(client: AgentClient): void {
      not become healthy within 120s" with no cause attached, and the cause had
      to be guessed at from outside the process that knew it. Small ring,
      write-only until a check fails. */
-  client.on("log", (event: { stream?: string; line?: string }) => {
-    AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${String(event.line ?? "").slice(0, 300)}`);
-    if (AGENT_SAID.length > 40) AGENT_SAID.shift();
-    appendAgentLog(`${new Date().toISOString()} ${event.stream === "stderr" ? "ERR" : "OUT"} ${String(event.line ?? "")}`);
+  client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
+    const line = String(event.line ?? "");
+    /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
+       INFO lines filled this ring. A structured line is tagged with its own
+       level (agent-output.ts); INFO and DEBUG stay in agent.log and the
+       console drawer but out of the ring, which is for what went wrong. */
+    if (worthQuoting(event.level)) {
+      AGENT_SAID.push(`${event.stream === "stderr" ? "!" : " "}${line.slice(0, 300)}`);
+      if (AGENT_SAID.length > 40) AGENT_SAID.shift();
+    }
+    appendAgentLog(`${new Date().toISOString()} ${agentLogTag(event.stream, event.level)} ${line}`);
   });
 
   // Lane B — backend switch: snapshot the route serve booted with, as soon
