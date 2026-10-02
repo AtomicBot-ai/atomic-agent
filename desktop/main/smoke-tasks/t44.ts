@@ -252,7 +252,10 @@ async function launchMove(check: Check, agent: Agent, dir: string, lb: { base: s
     `config.json ${modeOf(join(dir, "config.json"))}`,
   );
 
-  // What the agent sends now, for each moved key: read from .env, not the environment's own value.
+  /* What the agent sends now, for each moved key: read from .env, not the
+     environment's own value. `models search` builds the same runtime config
+     `atag serve` boots on, and every route reads the key from there — the
+     chat route, the fallback chain's links, Fusion's orchestrator. */
   const sent = {
     one: (await agent.sends(dir, env, "smoke-t44", "/one", lb)) === `Bearer ${K.one}`,
     a: (await agent.sends(dir, env, "smoke-t44-a", "/a", lb)) === `Bearer ${K.a}`,
@@ -270,7 +273,7 @@ async function launchMove(check: Check, agent: Agent, dir: string, lb: { base: s
   const bad = providers.find((p) => p.id === "smoke-t44-bad");
   const usable = providers.filter((p) => p.id !== "smoke-t44-bad" && p.id !== "local-llama").map((p) => [p.id, providerIsUsable(p, names)] as const);
   check(
-    "T44: a moved key with a character keys don't have still reads Key invalid; the others count as keys",
+    "T44: a moved key with a character keys don't have still reads Key invalid; the others count as keys for the switches, Fusion and the fallback rows",
     !!bad && providerKeyInvalid(bad, names) && !providerIsUsable(bad, names) && usable.length === 5 && usable.every(([, u]) => u),
     q({ badInvalid: !!bad && providerKeyInvalid(bad, names), usable }),
   );
