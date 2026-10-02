@@ -233,6 +233,15 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
       ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch pane · s start/stop · R restart · r refresh"
       : "j/k · Enter · a add · ←/→ mode · r";
   }
+  if (mode === "cloud") {
+    // `d remove` is paid for the way `R restart` is on the Local pane:
+    // the pane list shrinks to `←/→ switch pane`, so the strip ends up
+    // shorter (115 columns against 129). Compact stays as it is, for the
+    // same 38-column reason — the key works without being listed.
+    return useFull
+      ? "j/k move · Enter selected action · ←/→ switch pane · f filter · n add provider · c configure · d remove · r refresh"
+      : "j/k · Enter · ←/→ mode · f filter · r";
+  }
   return useFull
     ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External/Fallback · f filter · n add provider · c configure · r refresh"
     : "j/k · Enter · ←/→ mode · f filter · r";

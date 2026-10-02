@@ -65,6 +65,11 @@ export class ProviderRegistry {
     return new ProviderRegistry(resolved.activeTextProvider, built);
   }
 
+  /** Id of the provider serving chat right now (may differ from config until it is re-read). */
+  get activeTextProviderId(): string {
+    return this.activeTextId;
+  }
+
   get activeText(): LlmProvider {
     const p = this.providers.get(this.activeTextId);
     if (!p) {

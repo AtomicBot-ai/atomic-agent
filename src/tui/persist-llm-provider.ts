@@ -29,6 +29,23 @@ export class LlmRemoveProviderError extends Error {
   }
 }
 
+/**
+ * Why removing `id` is refused: it is the provider serving chat. Shared
+ * by the Cloud pane's snapshot guard, the orchestrator's early check and
+ * {@link removeLlmProvider} itself, so all three read the same.
+ */
+export function activeProviderRemovalMessage(id: string): string {
+  return `${id} is the active provider; switch to another provider or a local model before removing it`;
+}
+
+/** {@link removeLlmProvider} refused `id` because it is the active text provider. */
+export class LlmRemoveActiveProviderError extends LlmRemoveProviderError {
+  constructor(public readonly providerId: string) {
+    super(activeProviderRemovalMessage(providerId));
+    this.name = "LlmRemoveActiveProviderError";
+  }
+}
+
 export function parseAddProviderJson(raw: string): UserLlmProviderEntry {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
@@ -188,11 +205,16 @@ export function removeLlmProvider(id: string): void {
   if (remaining.length === file.llm.providers.length) {
     throw new LlmRemoveProviderError(`provider "${id}" is not configured`);
   }
+  // Decide on the file just read, not on `getConfig()`: the cache can
+  // lag a switch made by another process (Telegram `/model`, a second
+  // TUI), and re-pointing chat at `local-llama` here would be silent,
+  // with possibly no local model to serve the next turn. Refuse and
+  // write nothing; the operator switches first, then removes.
+  if (file.llm.activeTextProvider === id) {
+    throw new LlmRemoveActiveProviderError(id);
+  }
   let activeTextProvider = file.llm.activeTextProvider;
   let activeEmbeddingProvider = file.llm.activeEmbeddingProvider;
-  if (activeTextProvider === id) {
-    activeTextProvider = "local-llama";
-  }
   if (activeEmbeddingProvider === id) {
     activeEmbeddingProvider = "local-llama";
   }
@@ -203,18 +225,40 @@ export function removeLlmProvider(id: string): void {
     activeEmbeddingProvider = remaining[0]?.id ?? "local-llama";
   }
   const runMode = scrubRunModeProviderPins(file.llm.runMode, id);
-  const next: UserConfigFile = {
-    ...file,
-    llm: {
-      ...file.llm,
-      activeTextProvider,
-      activeEmbeddingProvider,
-      providers: remaining,
-      ...(runMode ? { runMode } : {}),
-    },
+  const fallback = scrubFallbackChain(file.llm.fallback, id);
+  const nextLlm: UserLlmFileConfig = {
+    ...file.llm,
+    activeTextProvider,
+    activeEmbeddingProvider,
+    providers: remaining,
+    ...(runMode ? { runMode } : {}),
   };
+  if (fallback) nextLlm.fallback = fallback;
+  else delete nextLlm.fallback;
+  const next: UserConfigFile = { ...file, llm: nextLlm };
   writeUserConfigFileSync(path, next);
   resetConfigCache();
+}
+
+/**
+ * Drop a removed provider from `llm.fallback.chain`. The loader rejects a
+ * chain id that is not a configured provider (`parseLlmFallbackConfig`),
+ * so leaving it behind would make the whole config unreadable on the next
+ * load. Timing knobs and `appendLocal` are kept; a chain that ends up
+ * empty is omitted, which `resolveFallbackChain` reads as "just the
+ * active provider" — the same as an empty one. Returns `undefined` when
+ * nothing is left of the block.
+ */
+function scrubFallbackChain(
+  fallback: UserLlmFallbackConfig | undefined,
+  id: string,
+): UserLlmFallbackConfig | undefined {
+  if (!fallback) return undefined;
+  const { chain, ...rest } = fallback;
+  const nextChain = chain?.filter((entry) => entry !== id);
+  const next: UserLlmFallbackConfig =
+    nextChain && nextChain.length > 0 ? { ...rest, chain: nextChain } : rest;
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 export function setActiveEmbeddingProviderInConfig(id: string): void {
