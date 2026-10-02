@@ -13,9 +13,12 @@ import { BrowserWindow } from "electron";
  * of it after that. Now the chat shows the turn: its message, what it did so
  * far (what came while the chat was not open too), and the rest streams on
  * into it. A turn that ended meanwhile is read from the store, once; a first
- * turn that failed shows the message and why; and on a local model that
- * serves one chat at a time, a chat waiting while another one gets its words
- * says so.
+ * turn that failed shows the message and why, with no card left spinning;
+ * and on a local model that serves one chat at a time, a chat waiting while
+ * another one gets its words says so. The review cases: the plan bar goes
+ * with the stance its own turn started in, a steer keeps one bubble, opening
+ * a chat after many calls paints a few times, and Clear Transcript keeps the
+ * turn that is running.
  *
  * Nothing reaches the agent. As in t26 and t27, the window's own IPC (asked
  * before ipcMain's; a probe proves it first) answers the chat, the session
@@ -33,6 +36,7 @@ type Sent = { sessionId: string | null; text: string };
 type View = {
   sessionId: string; agentSession: string | null; busy: boolean; stop: boolean;
   rows: string[]; working: string | null; errs: string[]; lastErr: boolean;
+  spinning: number; planBars: number; steered: string[];
 };
 type Handler = (event: unknown, arg: unknown) => unknown;
 type Listed = { id: string; turnCount: number; title: string | null; updatedAt: number };
@@ -65,6 +69,8 @@ class StandIn {
   slots: number | null = null;
   /** How many times /props was read. */
   props = 0;
+  /** How agent:steer answers: the turn takes it, or cannot. */
+  steer: "take" | "refuse" = "refuse";
 
   constructor(private readonly real: unknown[]) {}
 
@@ -90,8 +96,14 @@ class StandIn {
     return { ok: true, n_ctx: 32768, model: null, slots: this.slots };
   };
 
+  readonly steerTo: Handler = (_e, payload) => {
+    const p = (payload ?? {}) as { sessionId?: unknown };
+    const sessionId = typeof p.sessionId === "string" ? p.sessionId : null;
+    return this.steer === "take" ? { ok: true, steered: true, sessionId }
+      : { ok: false, steered: false, error: "smoke t38: the turn is not taking steers" };
+  };
+
   private readonly quiet: Handler = () => ({ ok: false, error: QUIET });
-  private readonly refused: Handler = () => ({ ok: false, steered: false, error: "smoke t38: the turn is not taking steers" });
   private readonly noParked: Handler = () => ({ ok: true, data: { undelivered: [], discarded: 0 } });
   private readonly fine: Handler = () => ({ ok: true });
   private readonly nothing: Handler = () => true;
@@ -99,7 +111,7 @@ class StandIn {
   private channels(): Array<[string, Handler]> {
     return [
       ["agent:chat", this.chat], ["agent:sessions", this.sessions], ["agent:session", this.session],
-      ["agent:steer", this.refused], ["agent:ackSteers", this.fine], ["agent:cancel", this.nothing],
+      ["agent:steer", this.steerTo], ["agent:ackSteers", this.fine], ["agent:cancel", this.nothing],
       ["agent:approve", this.quiet], ["agent:deleteSession", this.quiet], ["agent:undeliveredSteers", this.noParked],
       ["agent:contextPreview", this.quiet], ["cli:chatModelsList", this.quiet], ["agent:llamaProps", this.llamaProps],
     ];
@@ -158,7 +170,10 @@ const H = String.raw`
       rows: S.log.map((m) => m.k + ':' + String(m.k === 'tool' ? m.name : (m.text || m.approvalId || '')).slice(0, 100)),
       working: label ? label.textContent : null,
       errs: S.log.filter((m) => m.k === 'system' && m.sev === 'err').map((m) => String(m.text || '')),
-      lastErr: !!last && last.k === 'system' && last.sev === 'err'};
+      lastErr: !!last && last.k === 'system' && last.sev === 'err',
+      spinning: document.querySelectorAll('#scroller .card.running').length,
+      planBars: document.querySelectorAll('#scroller .planbar').length,
+      steered: S.log.filter((m) => m.k === 'user' && m.steered).map((m) => String(m.text || ''))};
   };
 `;
 const VIEW = `(() => { ${H} return view(); })()`;
@@ -185,8 +200,11 @@ const KEEP = `(() => {
     queued: S.queued.slice(), ahead: STEER.ahead, mine: STEER.mine.slice(), live: S.live.state, gating: BSW.gating, gate: localTurnGate,
     owed: typeof DRAIN_OWED !== 'undefined' ? DRAIN_OWED : null, had: 'turnStartedAt' in S, started: S.turnStartedAt, fz: FZ.live,
     wait: WAIT, stamp: CTX055.stamp, plan: {on: PLAN.on, itemId: PLAN.itemId, sessionId: PLAN.sessionId, startedMode: PLAN.startedMode},
-    cfg: LIVE_CONFIG, caps: LIVE_CAPS, want: SWX.want,
-    slots: typeof LLAMA_SLOTS !== 'undefined' ? Object.assign({}, LLAMA_SLOTS) : null};
+    cfg: LIVE_CONFIG, caps: LIVE_CAPS, want: SWX.want, mode: {known: MODE.known, current: MODE.current},
+    slots: typeof LLAMA_SLOTS !== 'undefined' ? Object.assign({}, LLAMA_SLOTS) : null,
+    unverified: UNVERIFIED, deferred: DL.deferred};
+  // A staged turn's end must not clear a key's badge or activate a parked download (as t27).
+  UNVERIFIED = []; DL.deferred = null;
   return true;
 })()`;
 
@@ -202,7 +220,7 @@ const RESET = `(() => { ${H}
   S.settings = null; S.overlay = null; S.menuOpen = null; S.slash = false; S.room = 'chat';
   S.live.state = 'connected';
   WAIT = null; if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
-  FZ.live = [];
+  FZ.live = []; clearPlanOffer();
   S.draft = ''; const e = document.getElementById('entry'); if (e) e.value = '';
   S.toasts = []; renderToasts();
   ${FORGET}
@@ -225,8 +243,9 @@ const RESTORE = `(async () => { ${H}
     if (k.live !== 'connected' && S.live.state === 'connected') S.live.state = k.live;
     if (k.had) S.turnStartedAt = k.started; else delete S.turnStartedAt;
     FZ.live = k.fz; CTX055.stamp = k.stamp; Object.assign(PLAN, k.plan);
-    LIVE_CONFIG = k.cfg; LIVE_CAPS = k.caps; SWX.want = k.want;
+    LIVE_CONFIG = k.cfg; LIVE_CAPS = k.caps; SWX.want = k.want; MODE.known = k.mode.known; MODE.current = k.mode.current;
     if (k.slots && typeof LLAMA_SLOTS !== 'undefined') Object.assign(LLAMA_SLOTS, k.slots);
+    UNVERIFIED = k.unverified; DL.deferred = k.deferred;
   }
   // A wait a staged turn was left in goes; the window's own comes back.
   WAIT = k ? k.wait : null;
@@ -321,6 +340,10 @@ export async function checks38(js: Js, check: Check): Promise<void> {
     await endedWhileAway(js, check, agent, w);
     await firstTurnFailed(js, check, agent, w);
     await localModelTaken(js, check, agent, w);
+    await planStanceOfItsOwn(js, check, agent, w);
+    await steerBubbleOnce(js, check, agent, w);
+    await paintsOnceOnOpening(js, check, agent, w);
+    await clearMidTurn(js, check, agent, w);
   } finally {
     agent.uninstall(wins);
     if (kept) await js<unknown>(RESTORE);
@@ -486,6 +509,8 @@ async function firstTurnFailed(js: Js, check: Check, agent: StandIn, w: BrowserW
     await js<boolean>(RESET);
     const started = (await newChat(js)) && (await send(js, agent, turnA, said)) && (await named(js, w, turnA, a));
     const away = await land(js, b, "smoke t38: chat B (d)");
+    // A call it made while the chat was not open, which the stream never says the end of.
+    await frame(js, w, turnA, "tool_progress", tool("os.fs.list_dir", '{"path":"."}'));
     if (stored) {
       agent.transcripts.set(a, [{ kind: "user", text: said }]);
       agent.rows = [listed(a, 1, said), listed(b, 2, "smoke t38: chat B (d)")];
@@ -496,12 +521,33 @@ async function firstTurnFailed(js: Js, check: Check, agent: StandIn, w: BrowserW
     check(
       stored
         ? "T38: a new chat whose first turn failed, stored by the agent: opened again, its message is there once, and why the turn failed under it"
-        : "T38: a new chat whose first turn failed and was lost by the agent: opened again, its message is there, and why the turn failed, not \"no turns yet\"",
+        : "T38: a new chat whose first turn failed and was lost by the agent: opened again, its message and its call are there, the call not spinning, and why the turn failed, not \"no turns yet\"",
       started && away && backA && count(after, `user:${said}`) === 1 && after.errs.length === 1 && after.lastErr
+        && (stored || after.rows.includes("tool:os.fs.list_dir")) && after.spinning === 0
         && !after.busy && after.working === null && neverSaid(after),
       `started=${started} away=${away} back=${backA} after=${show(after)}`,
     );
   }
+
+  /* The same message as the turn before it ("continue"), and this time the
+     agent lost the turn: the stored chat ends on the earlier one. */
+  const c = `${PREFIX}c-d`;
+  const turnC = `${PREFIX}turn-c-d`;
+  const again = "smoke t38: continue";
+  agent.transcripts.set(c, [{ kind: "user", text: again }, { kind: "assistant_reply", text: "smoke t38: the earlier answer" }]);
+  agent.rows = [listed(c, 1, "smoke t38: chat C (d)"), listed(b, 2, "smoke t38: chat B (d)")];
+  await js<boolean>(RESET);
+  const sent = (await land(js, c, "smoke t38: chat C (d)")) && (await send(js, agent, turnC, again));
+  const away = await land(js, b, "smoke t38: chat B (d)");
+  await frame(js, w, turnC, "error", { error: "smoke t38: the retry failed", category: "agent" });
+  const backC = await land(js, c, "smoke t38: chat C (d)");
+  const after = await js<View>(VIEW);
+  check(
+    "T38: a failed turn the agent lost, sent with the same words as the stored turn before it, shows both messages and why it failed",
+    sent && away && backC && count(after, `user:${again}`) === 2 && after.rows[1] === "assistant:smoke t38: the earlier answer"
+      && after.errs.length === 1 && after.lastErr && !after.busy,
+    `sent=${sent} away=${away} back=${backC} after=${show(after)}`,
+  );
 }
 
 /* (e) Two chats run at once on a local model server that answers one at a
@@ -546,7 +592,9 @@ async function localModelTaken(js: Js, check: Check, agent: StandIn, w: BrowserW
   const two = await workingReads(js, WAITING, 2500);
   await frame(js, w, turnB, "delta", { text: "smoke t38: B's words" });
   const gone = await js<boolean>(`(async () => { ${H} return until(() => !document.querySelector('#scroller .tk-working'), 2000); })()`);
-  // Without the fix the same holds: it guards against saying so where the server takes both chats.
+  /* It guards against saying so where the server takes both chats. It fails
+     without the fix as well, for another reason: a chat opened again had no
+     reply row then, so no "Working…" line at all. */
   check(
     "T38: where the local model takes two chats at once it stays Working…, and the line goes at the chat's own first words",
     reread && two === "Working…" && gone,
@@ -554,4 +602,132 @@ async function localModelTaken(js: Js, check: Check, agent: StandIn, w: BrowserW
   );
   await frame(js, w, turnA, "done");
   await frame(js, w, turnB, "done");
+}
+
+/* (f) The plan hand-off bar is offered at the end of a turn that started in
+   plan mode. Chat A's turn starts in another mode; the person opens chat B,
+   switches to plan mode there (the window's stance) and sends; then back in
+   A, A's turn ends; then B's. The stance is the window's copy only: nothing
+   goes to the agent. */
+async function planStanceOfItsOwn(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-f`;
+  const b = `${PREFIX}b-f`;
+  const turnA = `${PREFIX}turn-a-f`;
+  const turnB = `${PREFIX}turn-b-f`;
+  agent.transcripts.set(a, turns("A", 1));
+  agent.transcripts.set(b, turns("B", 1));
+  agent.rows = [listed(a, 2, "smoke t38: chat A (f)"), listed(b, 2, "smoke t38: chat B (f)")];
+  await js<boolean>(RESET);
+  const stance = (mode: string) => js<boolean>(`(() => { MODE.known = true; MODE.current = ${q(mode)}; SWX.want = null; render(); return true; })()`);
+  const startedA = (await stance("default")) && (await land(js, a, "smoke t38: chat A (f)"))
+    && (await send(js, agent, turnA, "smoke t38: a task in chat A (f)"));
+  const startedB = (await land(js, b, "smoke t38: chat B (f)")) && (await stance("plan"))
+    && (await send(js, agent, turnB, "smoke t38: plan something in chat B (f)"));
+  const backA = await land(js, a, "smoke t38: chat A (f)");
+  await frame(js, w, turnA, "delta", { text: "smoke t38: A's answer" });
+  await frame(js, w, turnA, "done");
+  const inA = await js<View>(VIEW);
+  const backB = await land(js, b, "smoke t38: chat B (f)");
+  await frame(js, w, turnB, "delta", { text: "smoke t38: B's plan" });
+  await frame(js, w, turnB, "done");
+  const inB = await js<View>(VIEW);
+  check(
+    "T38: the plan bar comes under the turn that started in plan mode, not under another chat's turn that ended after it",
+    startedA && startedB && backA && backB && inA.rows.includes("assistant:smoke t38: A's answer") && inA.planBars === 0
+      && inB.rows.includes("assistant:smoke t38: B's plan") && inB.planBars === 1,
+    `started=${startedA},${startedB} back=${backA},${backB} inA=${show(inA)} inB=${show(inB)}`,
+  );
+  await js<boolean>("(() => { clearPlanOffer(); render(); return true; })()");
+}
+
+/* (g) A steer typed into chat A's running turn has its bubble at once. The
+   person opens chat B before the agent applies it; B's turn runs and ends
+   there (a turn's end clears the window's list of steers it sent), and A's
+   steer_applied frame comes while A is not open. Then back in A. */
+async function steerBubbleOnce(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-g`;
+  const b = `${PREFIX}b-g`;
+  const turnA = `${PREFIX}turn-a-g`;
+  const turnB = `${PREFIX}turn-b-g`;
+  const steer = "smoke t38: a steer into chat A's turn";
+  agent.transcripts.set(a, turns("A", 1));
+  agent.transcripts.set(b, turns("B", 1));
+  agent.rows = [listed(a, 2, "smoke t38: chat A (g)"), listed(b, 2, "smoke t38: chat B (g)")];
+  await js<boolean>(RESET);
+  const startedA = (await land(js, a, "smoke t38: chat A (g)")) && (await send(js, agent, turnA, "smoke t38: a question in chat A (g)"));
+  agent.steer = "take";
+  const steered = await js<string[]>(`(async () => { ${H} type(${q(steer)}); enter(); await tick(100); await STEER.chain; return view().steered; })()`);
+  agent.steer = "refuse";
+  const startedB = (await land(js, b, "smoke t38: chat B (g)")) && (await send(js, agent, turnB, "smoke t38: a question in chat B (g)"));
+  await frame(js, w, turnB, "done");
+  await frame(js, w, turnA, "steer_applied", { text: steer, stepIndex: 1 });
+  const backA = await land(js, a, "smoke t38: chat A (g)");
+  const inA = await js<View>(VIEW);
+  check(
+    "T38: a steer a chat's turn took while the chat was open has one bubble when it is opened again, after another chat's turn ended meanwhile",
+    startedA && show(steered) === show([steer]) && startedB && backA && show(inA.steered) === show([steer]) && inA.busy,
+    `started=${startedA},${startedB} steered=${show(steered)} back=${backA} inA=${show(inA)}`,
+  );
+  await frame(js, w, turnA, "done");
+}
+
+/* (h) Chat A's turn makes forty tool calls while the person is in chat B.
+   Opening A draws every one of them, and paints the transcript a few times,
+   not once per call. */
+async function paintsOnceOnOpening(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-h`;
+  const b = `${PREFIX}b-h`;
+  const turnA = `${PREFIX}turn-a-h`;
+  const calls = 40;
+  agent.transcripts.set(a, turns("A", 1));
+  agent.transcripts.set(b, turns("B", 1));
+  agent.rows = [listed(a, 2, "smoke t38: chat A (h)"), listed(b, 2, "smoke t38: chat B (h)")];
+  await js<boolean>(RESET);
+  const startedA = (await land(js, a, "smoke t38: chat A (h)")) && (await send(js, agent, turnA, "smoke t38: a long task in chat A (h)"));
+  const away = await land(js, b, "smoke t38: chat B (h)");
+  for (let i = 0; i < calls; i++) w.webContents.send("agent:chat", { turnId: turnA, kind: "tool_progress", ...tool("os.fs.list_dir", `{"path":"dir-${i}"}`) });
+  await frame(js, w, turnA, "delta", { text: "smoke t38: still working" });
+  // The transcript's paints, counted while A opens.
+  await js<boolean>(`(() => {
+    window.__t38paint = {real: renderContent, n: 0};
+    renderContent = function () { window.__t38paint.n++; return window.__t38paint.real.apply(this, arguments); };
+    return true;
+  })()`);
+  let backA = false;
+  let paints = -1;
+  try {
+    backA = await land(js, a, "smoke t38: chat A (h)");
+  } finally {
+    paints = await js<number>("(() => { const p = window.__t38paint; delete window.__t38paint; if (p) renderContent = p.real; return p ? p.n : -1; })()");
+  }
+  const inA = await js<View>(VIEW);
+  check(
+    "T38: a chat opened again after forty tool calls came while it was not open shows all of them, and paints a few times, not once per call",
+    startedA && away && backA && count(inA, "tool:os.fs.list_dir") === calls && inA.rows.includes("assistant:smoke t38: still working")
+      && paints >= 1 && paints <= 10,
+    `started=${startedA} away=${away} back=${backA} paints=${paints} tools=${count(inA, "tool:os.fs.list_dir")}`,
+  );
+  await frame(js, w, turnA, "done");
+}
+
+/* (i) Clear Transcript in a chat whose turn is running: the history goes,
+   the turn's own rows stay, and it streams on there. */
+async function clearMidTurn(js: Js, check: Check, agent: StandIn, w: BrowserWindow): Promise<void> {
+  const a = `${PREFIX}a-i`;
+  const turnA = `${PREFIX}turn-a-i`;
+  const said = "smoke t38: a question in chat A, then Clear Transcript (i)";
+  agent.transcripts.set(a, turns("A", 1));
+  agent.rows = [listed(a, 2, "smoke t38: chat A (i)")];
+  await js<boolean>(RESET);
+  const startedA = (await land(js, a, "smoke t38: chat A (i)")) && (await send(js, agent, turnA, said));
+  await frame(js, w, turnA, "delta", { text: "smoke t38: before the clear" });
+  await js<boolean>("(() => { act('clear'); return true; })()");
+  await frame(js, w, turnA, "delta", { text: " and after it" });
+  const after = await js<View>(VIEW);
+  check(
+    "T38: Clear Transcript while a chat's turn runs clears the history and keeps that turn, which goes on streaming",
+    startedA && show(after.rows) === show([`user:${said}`, "assistant:smoke t38: before the clear and after it"]) && after.busy && after.stop,
+    `started=${startedA} after=${show(after)}`,
+  );
+  await frame(js, w, turnA, "done");
 }

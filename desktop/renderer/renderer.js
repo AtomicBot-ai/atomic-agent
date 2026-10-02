@@ -1816,6 +1816,10 @@ const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'delta', 'pro
 /* Item 38: the local model server's request slots (`total_slots` in its
    /props), read when two chats run at once. */
 const LLAMA_SLOTS = {n:null, busy:false};
+/* Item 38: kept frames are being drawn into a chat being opened (liveReplay).
+   Nothing paints until that is done (one render follows), and nothing a frame
+   says about the moment it came (a status line, a STREAM_ERR mark) is news. */
+let LIVE_REPLAY = false;
 const PAIRS_DEFAULT = 200, PAIRS_MAX = 1000;   // B2: agent.conversationMaxPairs (agent ≥ 0.6.3)               // turnId → sessionId, fed only by the turn stream's own frames
 let TASKS_ERR = null;                    // GET /api/tasks failed — the honest line, not an empty list
 const STATUS_RANK = {running:0, pending:1, blocked:2, failed:3, cancelled:4, completed:5}; // sidebar-tasks-selector.ts
@@ -1871,6 +1875,7 @@ S.log = [
    render
    ============================================================ */
 function render() {
+  if (LIVE_REPLAY) return;   // Item 38: the chat being opened renders once, after its kept frames
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
@@ -5190,7 +5195,7 @@ function act(a) {
                              // Lane B — item 3: a new thread has a new window fill (the TUI resets contextUsage on session_created), so the chip goes back to the projection.
                              refreshContext(); return; }
   if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
-  if (a === 'clear') { close(); liveLeave(); S.log = []; S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
+  if (a === 'clear') { close(); S.log = liveClearedLog(); S.history = []; render(); toast('Transcript cleared', 'The next turn starts fresh'); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -5463,6 +5468,7 @@ async function steerOrQueueRun(text, post, typedIn) {
     // did take it, and reopening that chat reads it back from the store.
     if (here) {
       STEER.mine.push(text);
+      liveSteered(sid, text);   // Item 38: and the turn's own record, which outlives STEER.mine
       // Under the steer it explains, inside the turn — appended, it landed
       // under the reply the turn went on to write (see placeInLiveTurn).
       pushSteerEntry(text);
@@ -7153,7 +7159,9 @@ function startLiveTurn(text) {
   render();
   // Item 38: the message's row (submit() and drainQueued() push it just
   // before), the transcript the turn draws into, and when it was sent.
-  const live = {text, asked:liveAskedRow(text), item:streaming, log:S.log, startedAt:S.turnStartedAt};
+  // The stance it opens with is its own too (PLAN.startedMode, read at its end).
+  const asked = liveAskedRow(text);
+  const live = {text, asked, item:streaming, log:S.log, startedAt:S.turnStartedAt, planMode:PLAN.startedMode, prior:livePriorAsks(asked)};
   // Item 27: with no session yet, this message opens a new chat, and the
   // chat's row goes on the list when the stream names its session.
   const opensChat = !S.agentSession;
@@ -7267,11 +7275,24 @@ function liveAskedRow(text) {
   return null;
 }
 
+/** How many messages the transcript held before the message's row: the
+    store has the turn when it holds more than that (liveEndedView). Null
+    when the row is not known. */
+function livePriorAsks(asked) {
+  if (!asked) return null;
+  let n = 0;
+  for (const m of S.log) {
+    if (m === asked) return n;
+    if (m.k === 'user' && !m.steered) n++;
+  }
+  return null;
+}
+
 /** BR.chat answered: turn `turnId` runs, in chat `sid` (null: a new chat, until its session_id frame). */
 function liveTurnStarted(turnId, live, sid) {
   // A chat runs one turn at a time: what was kept of its last one is over.
   if (sid) for (const [id, r] of LIVE_TURNS) if (r.ended && r.sid === sid) LIVE_TURNS.delete(id);
-  LIVE_TURNS.set(turnId, Object.assign(live, {view:null, missed:[], outAt:0, ended:null, sid:null, endedAt:0, endRows:[]}));
+  LIVE_TURNS.set(turnId, Object.assign(live, {view:null, missed:[], steers:[], outAt:0, ended:null, sid:null, endedAt:0, endRows:[]}));
   // Two chats at once: does the local model take them together or one by one (workingLabel)?
   if (RUNNING.size > 1) llamaSlotsRefresh();
 }
@@ -7285,7 +7306,10 @@ function liveTurnStarted(turnId, live, sid) {
     reply row S.streamId named there. A kept frame carries `at`. */
 function liveTurnFrame(ev) {
   const rec = ev && ev.turnId ? LIVE_TURNS.get(ev.turnId) : null;
-  if (!rec || rec.ended || !LIVE_DRAWS.has(ev.kind)) return false;
+  if (!rec || !LIVE_DRAWS.has(ev.kind)) return false;
+  // A steer this window sent into this turn has had its bubble since the turn took it, wherever the frame is.
+  if (ev.kind === 'steer_applied' && liveSteerDrawn(rec, String(ev.text || ''))) return true;
+  if (rec.ended) return false;
   // The model is writing for this turn now (workingLabel); a kept frame being drawn says nothing of now.
   if ((ev.kind === 'delta' || ev.kind === 'reasoning_progress') && !ev.at) rec.outAt = Date.now();
   if (liveOnScreen(ev.turnId, rec)) return false;   // drawn as it comes
@@ -7300,6 +7324,26 @@ function liveOnScreen(turnId, rec) {
 function liveShowsTurn() {
   const rec = S.turnId ? LIVE_TURNS.get(S.turnId) : null;
   return !!rec && !rec.ended && liveOnScreen(S.turnId, rec);
+}
+
+/* A steer typed in this window and taken by the turn has its bubble at once
+   (steerOrQueueRun), and its steer_applied frame must not draw a second one.
+   STEER.mine says so only until a turn ends anywhere (the end clears it), so
+   a turn left with a steer not yet applied drew it twice when its kept frame
+   was drawn. The turn's record keeps its own list. */
+function liveSteered(sid, text) {
+  const turnId = sessionTurnId(sid);
+  const rec = turnId ? LIVE_TURNS.get(turnId) : null;
+  if (rec) rec.steers.push(text);
+}
+/** True (and taken off both lists) when this steer's bubble is already drawn. */
+function liveSteerDrawn(rec, text) {
+  const at = rec.steers.indexOf(text);
+  if (at < 0) return false;
+  rec.steers.splice(at, 1);
+  const mine = STEER.mine.indexOf(text);
+  if (mine >= 0) STEER.mine.splice(mine, 1);
+  return true;
 }
 /** Kept, dated when it came. A run of reply or reasoning text is kept as one frame. */
 function liveKeep(rec, ev) {
@@ -7319,9 +7363,9 @@ function liveKeep(rec, ev) {
   rec.missed.push(Object.assign({}, ev, {at}));
 }
 
-/** The rows on screen leave it (another chat, a new one, a cleared
-    transcript). What of the turn's view is window-wide (the wait strip, the
-    fan-out list) goes into its record, and off the window. */
+/** The rows on screen leave it (another chat, a new one). What of the
+    turn's view is window-wide (the wait strip, the fan-out list) goes into
+    its record, and off the window. */
 function liveLeave() {
   const rec = S.turnId ? LIVE_TURNS.get(S.turnId) : null;
   if (!rec || rec.ended || rec.view || !liveOnScreen(S.turnId, rec)) return;
@@ -7381,14 +7425,22 @@ function liveRebuild(own, stored) {
   FZ.live = view.fz || [];
   if (FZ.live.length) tpFzEnsureTick();
   S.reasonId = liveReasonId(rec);
+  // The stance it opened with: its end offers a plan only if that was plan mode, whatever the next turn started in.
+  PLAN.startedMode = rec.planMode;
   liveReplay(rec);
   if (RUNNING.size > 1) llamaSlotsRefresh();
 }
 
 /** The kept frames, drawn through onChatEvent as they would have been when
     they came: a running tool's card is measured to the frame after it, and a
-    card, a wait and a fan-out leg are dated by their own frame. */
+    card, a wait and a fan-out leg are dated by their own frame. Nothing
+    paints meanwhile (LIVE_REPLAY): the opening renders once when they are in. */
 function liveReplay(rec) {
+  const was = LIVE_REPLAY;
+  LIVE_REPLAY = true;
+  try { liveReplayFrames(rec); } finally { LIVE_REPLAY = was; }
+}
+function liveReplayFrames(rec) {
   for (const f of rec.missed.splice(0)) {
     for (let i = S.log.length - 1; i >= 0; i--) {   // as the top of onChatEvent brackets it, at the frame's time
       const c = S.log[i];
@@ -7420,14 +7472,22 @@ function liveReplay(rec) {
 function liveTurnEnded(ev, sid) {
   const rec = LIVE_TURNS.get(ev.turnId);
   if (!rec) return;
-  if (sid) for (const [id, r] of LIVE_TURNS) if (id !== ev.turnId && r.ended && r.sid === sid) LIVE_TURNS.delete(id);
-  const newer = !!sid && [...LIVE_TURNS].some(([id, r]) => id !== ev.turnId && !r.ended && RUNNING.get(id) === sid);
-  if (ev.kind === 'done' || !sid || newer) { LIVE_TURNS.delete(ev.turnId); return; }
-  rec.endRows = ev.kind === 'error' ? liveFailureRows(rec, ev, liveOnScreen(ev.turnId, rec) ? WAIT : liveWaitOf(rec)) : [];
-  rec.ended = ev.kind; rec.sid = sid; rec.endedAt = Date.now();
-  rec.log = liveSegment(rec);   // its own rows, not the whole transcript they were in
-  const ended = [...LIVE_TURNS].filter(([, r]) => r.ended);
-  ended.slice(0, Math.max(0, ended.length - 20)).forEach(([id]) => LIVE_TURNS.delete(id));
+  /* It runs in the middle of the turn's end bookkeeping (the approval map,
+     "busy", the reload): whatever goes wrong here, that goes on. The chat
+     then opens from the store alone, as before item 38. */
+  try {
+    if (sid) for (const [id, r] of LIVE_TURNS) if (id !== ev.turnId && r.ended && r.sid === sid) LIVE_TURNS.delete(id);
+    const newer = !!sid && [...LIVE_TURNS].some(([id, r]) => id !== ev.turnId && !r.ended && RUNNING.get(id) === sid);
+    if (ev.kind === 'done' || !sid || newer) { LIVE_TURNS.delete(ev.turnId); return; }
+    rec.endRows = ev.kind === 'error' ? liveFailureRows(rec, ev, liveOnScreen(ev.turnId, rec) ? WAIT : liveWaitOf(rec)) : [];
+    rec.ended = ev.kind; rec.sid = sid; rec.endedAt = Date.now();
+    rec.log = liveSegment(rec);   // its own rows, not the whole transcript they were in
+    const ended = [...LIVE_TURNS].filter(([, r]) => r.ended);
+    ended.slice(0, Math.max(0, ended.length - 20)).forEach(([id]) => LIVE_TURNS.delete(id));
+  } catch (e) {
+    LIVE_TURNS.delete(ev.turnId);
+    LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', 'a turn that ended was not kept for its chat: ' + String((e && e.message) || e)]);
+  }
 }
 /** The wait a turn whose rows are not on screen was in: as its chat was left, then its kept frames. */
 function liveWaitOf(rec) {
@@ -7455,15 +7515,24 @@ function liveFailureRows(rec, ev, wait) {
 }
 
 /** openSession: chat `own` is opened, and the last turn this window ran in
-    it failed or was stopped. When its message is the last one stored, the
-    store has it: the stored transcript, and under it the failure line. When
-    not, the turn as the window had it (its rows, what came while they were
-    not on screen, its end) under the stored transcript. False when the
-    store was written after the turn ended (the chat moved on elsewhere). */
+    it failed or was stopped. When the store has it, the stored transcript,
+    and under it the failure line. When not, the turn as the window had it
+    (its rows, what came while they were not on screen, its end) under the
+    stored transcript. Either way no card spins: nothing runs here. False
+    when the store was written after the turn ended (the chat moved on
+    elsewhere). */
 function liveEndedView(own, turns, data, stored) {
   const {turnId, rec} = own;
-  const last = turns.filter((t) => t && t.kind === 'user' && !t.steered).pop();
-  if (last && String(last.text || '').trim() === rec.text.trim()) { S.log = stored.concat(rec.endRows); return true; }
+  /* Stored: more messages than the transcript held before this one, the
+     last of them this one. The text alone took an earlier "continue" for a
+     retried "continue" the agent lost. */
+  const asks = turns.filter((t) => t && t.kind === 'user' && !t.steered);
+  const last = asks[asks.length - 1];
+  if (last && String(last.text || '').trim() === rec.text.trim() && (rec.prior === null || asks.length > rec.prior)) {
+    S.log = stored.concat(rec.endRows);
+    liveSettleCards();
+    return true;
+  }
   if (data && Number.isFinite(data.updatedAt) && data.updatedAt > rec.endedAt + 5000) { LIVE_TURNS.delete(turnId); return false; }
   const keep = {turnId:S.turnId, streamId:S.streamId, reasonId:S.reasonId, wait:WAIT, fz:FZ.live, busy:S.busy};
   S.log = stored.concat(liveSegment(rec));
@@ -7484,8 +7553,25 @@ function liveEndedView(own, turns, data, stored) {
     rec.item.text = rec.ended === 'aborted' ? '(stopped)' : '(no reply)';
     rec.item.placeholder = true; rec.item.failed = rec.ended === 'error';
   }
+  liveSettleCards();
   S.log.push(...rec.endRows);
   return true;
+}
+/** Nothing runs in a chat opened on a turn that is over, so no card may go
+    on spinning: one the store never describes is finished, its outcome
+    unknown, as reconcileToolCards leaves it at a turn's end (`forced`). */
+function liveSettleCards() {
+  S.log.forEach((c) => { if (c.k === 'tool' && c.ok === null) { c.ok = true; c.forced = true; c.out = c.out || ''; } });
+}
+/** Clear Transcript while the chat's turn runs on screen: the history goes,
+    the turn's own rows stay, and it streams on there with its wait strip and
+    fan-out list. Cleared whole, its reply went on with nowhere to land, and
+    its end brought the whole history back. */
+function liveClearedLog() {
+  const rec = liveShowsTurn() ? LIVE_TURNS.get(S.turnId) : null;
+  if (!rec) return [];
+  rec.log = liveSegment(rec);
+  return rec.log;
 }
 /** A deleted chat's kept turn goes with it. */
 function liveForget(sid) {
@@ -7646,7 +7732,8 @@ function onChatEvent(ev) {
      request itself failed) still end the turn at once. */
   if (ev && ev.turnId && STREAM_ERR.has(ev.turnId)) {
     const held = STREAM_ERR.get(ev.turnId);
-    if (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress') held.after = true;
+    // Item 38: a kept frame drawn later came before or after the error as it came, and was marked then.
+    if (!LIVE_REPLAY && (ev.kind === 'delta' || ev.kind === 'tool_progress' || ev.kind === 'progress_note' || ev.kind === 'reasoning_progress')) held.after = true;
     if (ev.kind === 'done') {
       STREAM_ERR.delete(ev.turnId);
       if (!held.after) ev = Object.assign({}, held.ev, {kind:'error', turnId:ev.turnId, deferred:true});
@@ -7776,7 +7863,8 @@ function onChatEvent(ev) {
   if (ev.kind === 'provider_recovered') {
     WAIT = null;
     if (WAIT_TICK) { clearInterval(WAIT_TICK); WAIT_TICK = 0; }
-    appSay('Provider answered again after ' + Math.round((Number((ev.payload || {}).waited_ms) || 0) / 1000) + ' s');
+    // Item 38: not for a kept frame drawn when its chat is opened, long after it came.
+    if (!LIVE_REPLAY) appSay('Provider answered again after ' + Math.round((Number((ev.payload || {}).waited_ms) || 0) / 1000) + ' s');
     if (item) tpOnProviderRecovered(Number((ev.payload || {}).waited_ms) || 0);
     render();
     return;
@@ -16032,7 +16120,11 @@ async function openSession(id) {
   S.agentSession = id;
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
-  noteSessionModelStamp(data);
+  /* Item 38: not under a turn running on screen again. It runs on the model
+     the window is on, and the notice would land below its reply, saying the
+     session ran on the model of the turn before it. */
+  if (rebuilt) CTX055.stamp = null;
+  else noteSessionModelStamp(data);
   /* Backlog 25: if that turn is waiting on a request it raised here, its card
      is drawn again, as the last row, so the chat shows what it waits for and
      y/n answer this chat's own request. Only while the request is still
