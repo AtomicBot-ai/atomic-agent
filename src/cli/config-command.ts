@@ -7,6 +7,8 @@ import {
   USER_CONFIG_VERSION,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import { reportAnalyticsOptOut } from "../analytics/index.js";
+import { getAppVersion } from "../version.js";
 import { HELP } from "./config-help.js";
 import {
   deleteConfigPath,
@@ -33,7 +35,7 @@ export async function configCommand(args: string[]): Promise<number> {
       case "get":
         return handleGet(args.slice(1));
       case "set":
-        return handleSet(args.slice(1));
+        return await handleSet(args.slice(1));
       case "unset":
         return handleUnset(args.slice(1));
       case "list":
@@ -80,7 +82,7 @@ function handleGet(args: string[]): number {
   return 0;
 }
 
-function handleSet(args: string[]): number {
+async function handleSet(args: string[]): Promise<number> {
   if (args.length === 0) {
     process.stderr.write(
       "usage: atomic-agent config set <key> <value>\n" +
@@ -108,7 +110,7 @@ function handleSet(args: string[]): number {
   return setWholeFile(args.join(" "));
 }
 
-function setWholeFile(raw: string): number {
+async function setWholeFile(raw: string): Promise<number> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -132,6 +134,7 @@ function setWholeFile(raw: string): number {
     return 1;
   }
   const next = parseUserConfigFile(parsed);
+  await reportIfOptingOut(next.analytics.enabled);
   const path = getConfig().paths.userConfigFile;
   writeUserConfigFileSync(path, next);
   resetConfigCache();
@@ -139,7 +142,7 @@ function setWholeFile(raw: string): number {
   return 0;
 }
 
-function setOneKey(key: string, value: string): number {
+async function setOneKey(key: string, value: string): Promise<number> {
   const leaf = findConfigLeaf(key);
   if (!leaf) return rejectUnknownKey("set", key);
   if (isReadOnlyConfigKey(key)) {
@@ -173,6 +176,7 @@ function setOneKey(key: string, value: string): number {
   // the tree stays exactly as it was on disk, so the file does not get
   // expanded with every default (see `writeRawUserConfigFileSync`).
   writeConfigPath(tree, key, readConfigPath(next, key));
+  await reportIfOptingOut(next.analytics.enabled);
   writeRawUserConfigFileSync(path, tree);
   resetConfigCache();
   process.stdout.write(
@@ -232,6 +236,20 @@ function handleList(): number {
     process.stdout.write(`${row.rendered.padEnd(width)}  (default ${shown})\n`);
   }
   return 0;
+}
+
+/**
+ * Send `analytics_disabled` (via `config`) when this write turns analytics
+ * off, BEFORE the file changes — the last event, under the old consent.
+ */
+async function reportIfOptingOut(nextEnabled: boolean): Promise<void> {
+  const config = getConfig();
+  if (!config.analytics.enabled || nextEnabled) return;
+  await reportAnalyticsOptOut({
+    stateDir: config.paths.stateDir,
+    version: getAppVersion(),
+    via: "config",
+  });
 }
 
 /**

@@ -244,13 +244,20 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
 import {
   AnalyticsStateStore,
   createAnalyticsClient,
+  captureAnalyticsDisabled,
   captureAppInstalled,
   captureAppOpened,
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
+  detectOtherSurfaceInstalled,
+  resolveAnalyticsDimensions,
   sanitizeModelAlias,
   TurnUsageMeter,
+} from "../analytics/index.js";
+import type {
+  AnalyticsDisabledVia,
+  AnalyticsSurface,
 } from "../analytics/index.js";
 import {
   createSentryClient,
@@ -331,6 +338,12 @@ export interface CreateAgentRuntimeOptions {
    * day. Only the TUI passes `true`.
    */
   interactiveLaunch?: boolean;
+  /**
+   * Analytics `surface` of the entry point (the TUI passes `tui`).
+   * Headless entry points leave it unset so `ATOMIC_AGENT_SURFACE` from
+   * the desktop app applies, else `cli`.
+   */
+  analyticsSurface?: AnalyticsSurface;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
     llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -696,9 +709,13 @@ export interface AgentRuntime {
    * single `config.analytics.enabled` opt-out). Rebuilds the in-memory
    * PostHog / Sentry clients so the change applies without a restart.
    * Persisting the flag to `config.json` is the caller's responsibility
-   * (the TUI settings tab). Idempotent.
+   * (the TUI settings tab). Idempotent. Turning it off first sends
+   * `analytics_disabled` with `via` (default `settings`).
    */
-  setAnalyticsEnabled(enabled: boolean): Promise<void>;
+  setAnalyticsEnabled(
+    enabled: boolean,
+    via?: AnalyticsDisabledVia,
+  ): Promise<void>;
   /**
    * Report that the first-run flow reached `step` (a closed
    * `OnboardingStep` name, never free text). `outcome` is passed only on
@@ -803,18 +820,32 @@ export async function createAgentRuntime(
   const analyticsStateStore = new AnalyticsStateStore(
     resolve(config.paths.stateDir, "analytics.json"),
   );
+  // Surface / arch / install channel / desktop version, stamped on every
+  // event and error report. The install id is the machine-wide one
+  // shared with the other surface (desktop <-> terminal).
+  const analyticsDimensions = resolveAnalyticsDimensions({
+    stateDir: config.paths.stateDir,
+    ...(options.analyticsSurface ? { surface: options.analyticsSurface } : {}),
+  });
+  const appInstalledContext = () => ({
+    installChannel: analyticsDimensions.installChannel,
+    otherSurfaceInstalled: detectOtherSurfaceInstalled(
+      analyticsDimensions.surface,
+    ),
+  });
   // Both clients are `let` (not `const`) so `setAnalyticsEnabled` can
   // hot-swap them without a process restart. The `runTurn` / `onEvent` /
   // `shutdown` closures read these variables at call time, so a reassign
   // is picked up on the next event.
   let analytics = createAnalyticsClient({
     enabled: config.analytics.enabled,
-    installId: analyticsStateStore.getInstallId(),
+    installId: analyticsStateStore.getSharedInstallId(config.analytics.enabled),
     platform: process.platform,
     version: getAppVersion(),
+    dimensions: analyticsDimensions,
     logger,
   });
-  captureAppInstalled(analytics, analyticsStateStore);
+  captureAppInstalled(analytics, analyticsStateStore, appInstalledContext());
   // Every interactive launch, not just the first: `app_installed` alone
   // cannot tell a download that never ran from one that ran and stalled.
   // Gated on the entry point opting in, so a cron task or a `serve`
@@ -832,9 +863,10 @@ export async function createAgentRuntime(
   // the placeholder sentinel.
   let errorReporter = createSentryClient({
     enabled: config.analytics.enabled,
-    installId: analyticsStateStore.getInstallId(),
+    installId: analyticsStateStore.getSharedInstallId(config.analytics.enabled),
     release: getAppVersion(),
     platform: process.platform,
+    dimensions: analyticsDimensions,
     logger,
   });
   // Read the current reporter lazily so a hot-toggle is reflected without
@@ -854,9 +886,15 @@ export async function createAgentRuntime(
    * change takes effect without a restart. Idempotent: a no-op when the
    * requested value already matches the live intent.
    */
-  const setAnalyticsEnabled = async (enabled: boolean): Promise<void> => {
+  const setAnalyticsEnabled = async (
+    enabled: boolean,
+    via: AnalyticsDisabledVia = "settings",
+  ): Promise<void> => {
     if (enabled === analyticsEnabled) return;
     analyticsEnabled = enabled;
+    // The opt-out's last event, sent before the client is torn down so
+    // the shutdown below flushes it. A no-op when no client is live.
+    if (!enabled) captureAnalyticsDisabled(analytics, analyticsStateStore, via);
     // Tear down the previous clients (fire-safe: `shutdown` swallows its
     // own errors) before rebuilding so queued events are flushed.
     if (analytics) {
@@ -870,19 +908,25 @@ export async function createAgentRuntime(
     if (enabled) {
       analytics = createAnalyticsClient({
         enabled: true,
-        installId: analyticsStateStore.getInstallId(),
+        installId: analyticsStateStore.getSharedInstallId(true),
         platform: process.platform,
         version: getAppVersion(),
+        dimensions: analyticsDimensions,
         logger,
       });
       // Fire the one-time `app_installed` event if it never went out
       // while analytics was disabled (guarded by the state store).
-      captureAppInstalled(analytics, analyticsStateStore);
+      captureAppInstalled(
+        analytics,
+        analyticsStateStore,
+        appInstalledContext(),
+      );
       errorReporter = createSentryClient({
         enabled: true,
-        installId: analyticsStateStore.getInstallId(),
+        installId: analyticsStateStore.getSharedInstallId(true),
         release: getAppVersion(),
         platform: process.platform,
+        dimensions: analyticsDimensions,
         logger,
       });
     }
