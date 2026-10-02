@@ -1330,12 +1330,13 @@ function wireIpc(client: AgentClient): void {
   });
   /* ATO-161: an empty key field — is there a saved key or a variable behind it? Yes or no, never the key. */
   ipcMain.handle("cli:providerKeyPresent", (_event, payload: unknown) => {
-    const { id, kind, apiKeyEnvVar } = (payload ?? {}) as { id?: unknown; kind?: unknown; apiKeyEnvVar?: unknown };
+    const { id, kind, apiKeyEnvVar, baseUrl } = (payload ?? {}) as { id?: unknown; kind?: unknown; apiKeyEnvVar?: unknown; baseUrl?: unknown };
     if (typeof kind !== "string" || !kind) return { ok: false, error: "kind is required" };
     return providerKeyPresent({
       kind,
       ...(typeof id === "string" && id ? { id } : {}),
       ...(typeof apiKeyEnvVar === "string" && apiKeyEnvVar ? { apiKeyEnvVar } : {}),
+      ...(typeof baseUrl === "string" && baseUrl ? { baseUrl } : {}),
     });
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {

@@ -15,9 +15,10 @@ import { providerKeyPresent } from "../agent-cli.js";
  * strip stayed under the model list after a good key went in.
  *
  * Now an empty field with nothing behind it (no saved key, no variable) is asked
- * for, calmly, before anything is written or anyone is called; the quick pane
- * opens the wizard's key step for the preset that was picked; the popover's strip
- * does not follow the wizard's screens, and typing a key clears it.
+ * for, calmly, before anything is written or anyone is called; the quick pane is
+ * gone (no provider yet opens the wizard's list); a provider with no key opens
+ * its own key screen, saying it once; the popover's strip does not follow the
+ * wizard's screens.
  *
  * Nothing reaches a provider and the config is not written: the setup's writes,
  * the key check and main's "is there a key behind the empty field" are answered
@@ -29,7 +30,6 @@ type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
 const ASK = "Paste your OpenRouter API key to continue.";
-const ASK_AIML = "Paste your AI/ML API key to continue.";
 const show = (s: unknown) => JSON.stringify(s);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -49,8 +49,15 @@ async function keyPresentInMain(check: Check): Promise<void> {
     const some = await providerKeyPresent({ kind: "smoke-t51", apiKeyEnvVar: NAME });
     check(
       "T51: main says whether an empty key field has a variable behind it — no with none, yes with one — and never returns the key",
-      none.present === false && some.present === true && !JSON.stringify(some).includes("smoke-t51-dummy"),
+      none.ok && some.ok && none.present === false && some.present === true && !JSON.stringify(some).includes("smoke-t51-dummy"),
       show({ none, some }),
+    );
+    // A custom URL on this machine needs no key: an empty field there is not asked for.
+    const local = await providerKeyPresent({ kind: "openai-compatible", apiKeyEnvVar: NAME, baseUrl: "http://localhost:8000/v1" });
+    check(
+      "T51: an empty key on a custom server at localhost is not asked for — a server on this machine needs none",
+      local.ok && local.present === true,
+      show(local),
     );
   } finally {
     if (had === undefined) delete process.env[NAME]; else process.env[NAME] = had;
@@ -59,15 +66,21 @@ async function keyPresentInMain(check: Check): Promise<void> {
 
 async function keyScreens(js: Js, check: Check): Promise<void> {
   const wins = BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed());
-  const seen: Array<{ ch: string; id?: unknown }> = [];
+  const seen: Array<{ ch: string; id?: unknown; baseUrl?: unknown }> = [];
   const answer = { present: false, verify: { ok: true, checked: true, status: 200 } as Record<string, unknown> };
   const stand: Record<string, (_e: unknown, payload: unknown) => unknown> = {
-    "cli:providerKeyPresent": () => { seen.push({ ch: "present" }); return { ok: true, present: answer.present, smokeT51: true }; },
+    "cli:providerKeyPresent": (_e, p) => {
+      seen.push({ ch: "present", baseUrl: (p as { baseUrl?: unknown } | null)?.baseUrl });
+      return { ok: true, present: answer.present, smokeT51: true };
+    },
     "cli:upsertProvider": (_e, entry) => { seen.push({ ch: "upsert", id: (entry as { id?: unknown } | null)?.id }); return { ok: true, stdout: "", stderr: "" }; },
     "cli:providerModels": () => { seen.push({ ch: "models" }); return { ok: true, models: [{ provider: "openrouter", id: "openrouter/auto", kind: "chat" }] }; },
     "cli:verifyProviderKey": () => { seen.push({ ch: "verify" }); return answer.verify; },
     "cli:removeProvider": (_e, id) => { seen.push({ ch: "remove", id }); return { ok: true, stdout: "", stderr: "" }; },
     "app:unverifiedSet": () => ({ ok: true }),
+    /* The setup re-reads the config after a failed check; answered "could not read", the staged copy stands. */
+    "cli:configGet": () => ({ ok: false, error: "smoke t51: the staged config stands" }),
+    "cli:providersReady": () => ({ ok: false, error: "smoke t51: the staged key list stands" }),
     "cli:selectCloudModel": () => { seen.push({ ch: "select" }); return { ok: false, error: "smoke t51: nothing is switched" }; },
     "cli:activateProvider": () => { seen.push({ ch: "activate" }); return { ok: false, error: "smoke t51: nothing is switched" }; },
   };
@@ -120,7 +133,7 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       show(seen),
     );
 
-    // 2. Typing clears the line, and a strip the popover kept from before goes with it.
+    // 2. Typing clears the line; a strip the popover holds is not drawn over the wizard's screens.
     const typed = await js<Record<string, unknown>>(`(() => {
       SEL.err = 'smoke t51: a strip left from the pane before'; render();
       const k = document.querySelector('#overlays .selpop #wiz-key');
@@ -128,10 +141,11 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       return window.__t51View();
     })()`);
     check(
-      "T51: the first keystroke clears the request and the popover's old strip",
-      typed["error"] === null && typed["selErr"] === null && !typed["strip"] && typed["ask"] === null,
+      "T51: the first keystroke clears the request, and the popover's red strip is not drawn under the key field",
+      typed["error"] === null && !typed["strip"] && typed["ask"] === null,
       show(typed),
     );
+    await js<unknown>("(() => { SEL.err = null; render(); })()");
 
     // 3. The variable is there, but main's check finds no key after all: still a request, not "didn't accept this key".
     seen.length = 0;
@@ -162,28 +176,34 @@ async function keyScreens(js: Js, check: Check): Promise<void> {
       show(opened),
     );
 
-    // 5. The quick "Add a provider" pane: the row picked is the provider set up, through the wizard's key step.
-    seen.length = 0;
-    const quick = await js<Record<string, unknown>>(`(async () => {
-      WIZ.phase = null; SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render();
-      const lit = document.querySelector('#overlays .selpop [data-sel-preset].on .nm');
-      const litName = lit ? lit.textContent : null;
-      act('sel:savePreset'); await window.__t51Settle();
-      return Object.assign(window.__t51View(), {litName, addOpen: SEL.addOpen});
+    // 5. A Groq entry with no key opens Groq's screen, not the first OpenAI-compatible preset's (Anthropic).
+    const groq = await js<Record<string, unknown>>(`(() => {
+      WIZ.phase = null; window.__t51Stage([{id: 'groq', kind: 'openai-compatible', baseUrl: 'https://api.groq.com/openai', apiKeyEnvVar: 'GROQ_API_KEY'}]);
+      SEL.err = null; bswOpenKey('groq'); return window.__t51View();
     })()`);
     check(
-      "T51: with OpenRouter set up, the quick pane's first row is AI/ML API, and adding it with an empty key opens AI/ML API's key step asking for the key",
-      quick["litName"] === "AI/ML API" && quick["addOpen"] === false && quick["row"] === "aimlapi"
-        && quick["error"] === ASK_AIML && quick["soft"] === true,
-      show(quick),
-    );
-    check(
-      "T51: …and the quick pane saves and activates nothing on its own",
-      !seen.some((c) => ["upsert", "activate", "select"].includes(c.ch)),
-      show(seen),
+      "T51: a Groq entry with no key opens Groq's key screen — not Anthropic's — asking for a Groq key",
+      groq["phase"] === "configure" && groq["row"] === "groq" && groq["error"] === "Paste your Groq API key to continue." && groq["soft"] === true,
+      show(groq),
     );
 
-    // 6. A failure is still red: a key the provider turned down.
+    // 6. A custom URL is handed to main with the empty-field question, so a server on this machine is let through there.
+    seen.length = 0;
+    answer.present = true;
+    answer.verify = { ok: true, checked: true, status: 200 };
+    const custom = await js<Record<string, unknown>>(`(async () => {
+      WIZ.phase = null; window.__t51Stage([]);
+      Object.assign(WIZ, {row: KIND_ROWS.find((k) => k.custom), phase: 'configure', apiKey: '', baseUrl: 'http://localhost:8000/v1', error: null,
+        softError: null, forId: null, unfinishedId: null, modelChosen: false}); render();
+      act('wiz:next'); await window.__t51Settle(); return window.__t51View();
+    })()`);
+    check(
+      "T51: an empty key on a custom URL asks main with that URL, and goes on to the model step when main says nothing is missing",
+      seen.some((c) => c.ch === "present" && c.baseUrl === "http://localhost:8000/v1") && custom["phase"] === "pick_model",
+      show({ custom, calls: seen }),
+    );
+
+    // 7. A failure is still red: a key the provider turned down.
     seen.length = 0;
     answer.verify = { ok: false, checked: true, status: 401, error: "the provider rejected this key: User not found" };
     const bad = await js<Record<string, unknown>>(`(async () => {

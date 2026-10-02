@@ -466,8 +466,9 @@ try {
        it; on the throwaway directory this driver makes for itself there is
        no key, and the honest result is a skip rather than a failure that
        says nothing about the app. */
-    // ATO-161: a missing key now reads "Paste your OpenRouter API key to continue."
-    const noKeyHere = /no API key|didn.t accept this key|Paste your .* API key/.test((await app.snap()).error || '');
+    // ATO-161: a missing key is now asked for in a hint line (.wiz-ask), not an error: "Paste your OpenRouter API key to continue."
+    const askLine = await app.js("(document.querySelector('#onboarding .wiz-ask') || {}).textContent || ''");
+    const noKeyHere = /no API key|didn.t accept this key/.test((await app.snap()).error || '') || /Paste your .* key/.test(askLine || '');
     if (noKeyHere && !process.env.ATOMIC_AGENT_STATE_DIR) {
       say('SKIP an empty key verifies from .env — this run has no OPENROUTER_API_KEY to answer with');
     } else {

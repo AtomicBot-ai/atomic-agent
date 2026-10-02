@@ -5282,8 +5282,6 @@ function act(a) {
     render(); return;
   }
   if (a === 'sel:browseLocal') { SEL.kind = 'model'; SEL.filter = ''; render(); selLoadLocal(); return; }
-  if (a === 'sel:closeAdd') { SEL.addOpen = false; render(); return; }
-  if (a === 'sel:savePreset') { selSavePreset(); return; }
   if (a === 'sel:cancelPull') { BR.cancelPull(); SEL.pulling = null; render(); return; }
   if (a === 'session:new') { close();
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
@@ -6076,8 +6074,6 @@ document.addEventListener('click', (e) => {
     WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
     render(); return;
   }
-  const selPreset = t.closest('[data-sel-preset]');
-  if (selPreset) { SEL.presetCur = +selPreset.dataset.selPreset; render(); return; }
   const ctxStep = t.closest('[data-ctx-step]');
   if (ctxStep) { ctxAdjust(ctxStep.dataset.ctxStep); return; }
   const modeRow = t.closest('[data-mode]');
@@ -6168,8 +6164,7 @@ document.addEventListener('input', (e) => {
        to. A key typed after an error left the old error under it, so the
        screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
-    /* ATO-161: and a strip the popover kept from the pane before goes with it. */
-    if (WIZ.error || WIZ.uncheckedFor || SEL.err) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; SEL.err = null; render(); }
+    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; render(); }
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
@@ -13500,8 +13495,7 @@ document.addEventListener('input', (e) => {
        to. A key typed after an error left the old error under it, so the
        screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
-    /* ATO-161: and a strip the popover kept from the pane before goes with it. */
-    if (WIZ.error || WIZ.uncheckedFor || SEL.err) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; SEL.err = null; render(); }
+    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; render(); }
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
@@ -14395,25 +14389,9 @@ function selectorHTML() {
       '<span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>');
   }
 
-  if (SEL.addOpen) {
-    const taken = new Set(selProviders().map((p) => p.id));
-    const free = PRESETS.filter((p) => !taken.has(p.id));
-    return selShell('Add a provider',
-      '<div class="selbody">'
-      + (free.length
-        ? '<div class="sellist">' + free.map((p, i) =>
-            '<button class="modelrow' + (i === SEL.presetCur ? ' on' : '') + '" data-sel-preset="' + i + '">'
-            + providerMark(p.id, 'sm')
-            + '<span class="col"><span class="nm">' + esc(p.label) + '</span>'
-            + '<span class="cap mono">' + esc(p.baseUrl) + '</span></span>'
-            + '<span class="selr"><span class="radio' + (i === SEL.presetCur ? ' on' : '') + '"></span></span></button>').join('') + '</div>'
-            + '<div class="selkey"><label class="tk-inpwrap">' + ic('key') + '<input id="sel-key" type="password" '
-            + 'placeholder="API key — blank reads ' + esc((free[SEL.presetCur] || free[0]).env) + '"></label></div>'
-        : '<p class="selnote cap">Every preset is already configured.</p>')
-      + '</div>',
-      '<button class="btn btn-g xs" data-act="sel:closeAdd">Back</button><span class="grow"></span>'
-      + (free.length ? '<button class="btn btn-p xs" data-act="sel:savePreset">Add provider</button>' : ''));
-  }
+  /* ATO-161: the quick "Add a provider" pane (a preset list with a key field,
+     saved and activated without a key check) is gone: no provider yet opens
+     the wizard's list (sel:add), which checks the key before it saves. */
 
   const title = SEL.kind === 'backend' ? 'Where it runs'
     : SEL.kind === 'provider' ? 'Provider' : SEL.kind === 'workers' ? 'Workers' : 'Model';
@@ -14502,36 +14480,12 @@ function selShell(title, body, foot, lead) {
     /* The inline colour is the hook drive-selector reads switch errors by.
        ATO-161: not on the add-provider wizard's screens, which have their own
        message slot — a strip left over from the pane before used to stay
-       under the key field and the model list after the key was fixed. */
+       under the key field and the model list after the key was fixed. A strip
+       set meanwhile (a download failing behind the wizard) shows again when
+       the wizard closes. */
     + (SEL.err && !WIZ.phase ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.err) + '</span></div>' : '')
     + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
     + '</div></div>';
-}
-
-/* ATO-161: the quick "Add a provider" pane no longer saves anything itself.
-   It wrote the preset straight into the config and activated it — no key
-   check, an empty field welcome — so a provider with no key was "saved, but
-   could not activate it", stayed in the list with no key, and the pane then
-   lit up whichever preset slid into the freed row (it read PRESETS by the
-   index of a row in the list of presets NOT configured yet, so with
-   OpenRouter configured, the second row added OpenRouter again and the pane
-   showed AI/ML API as picked). The pick now opens the wizard's key step for
-   that very preset, with what was typed, and runs it: the same key check,
-   the same model step, the same activation as every other way in. */
-function selSavePreset() {
-  const taken = new Set(selProviders().map((p) => p.id));
-  const free = PRESETS.filter((p) => !taken.has(p.id));
-  const preset = free[SEL.presetCur] || free[0];
-  if (!preset) { SEL.addOpen = false; render(); return; }
-  const row = KIND_ROWS.find((k) => k.id === preset.id);
-  const input = document.getElementById('sel-key');
-  const apiKey = cleanKeyInput(input && input.value);
-  SEL.addOpen = false; SEL.err = null;
-  if (!row) { act('sel:add'); return; }
-  Object.assign(WIZ, {row, forId: null, apiKey, baseUrl: '', error: null, softError: null, errorDetail: null,
-    uncheckedFor: null, acceptUnchecked: false, modelChosen: false, alone: false, phase: 'configure'});
-  render();
-  wizNext();
 }
 
 /* ============================================================
@@ -15488,7 +15442,7 @@ async function selChooseBackend(id) {
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
     /* ATO-161: no provider yet opens the wizard's list, which checks the key before it saves anything. */
-    if (res && res.needsProvider) { SEL.kind = 'provider'; act('sel:add'); return res; }
+    if (res && res.needsProvider) { if (!SEL.open) openSelector('provider'); SEL.kind = 'provider'; act('sel:add'); return res; }
     if (res && res.needsKey) { bswOpenKey(res.providerId, res.keyInvalid); return res; }
     SEL.err = (res && res.error) || 'could not switch to ' + id;
     toast('Could not switch to ' + id, SEL.err);
@@ -16696,7 +16650,7 @@ async function wizNextStep() {
   if (!WIZ.apiKey && !k.local && !WIZ.modelChosen && !(savedEntry && BSW.readyIds.includes(id)) && BR.providerKeyPresent) {
     let has = null;
     try {
-      const r = await BR.providerKeyPresent({id, kind: k.kind, apiKeyEnvVar: k.env});
+      const r = await BR.providerKeyPresent({id, kind: k.kind, apiKeyEnvVar: k.env, baseUrl: entry.baseUrl});
       if (r && r.ok) has = !!r.present;
     } catch (e) { /* unknown: the check below answers it, as before */ }
     if (has === false) { wizAskKey(k); render(); wizFocusKey(); return; }
@@ -17595,7 +17549,14 @@ function bswOpenKey(id, keyInvalid) {
   // openProviderConfigFor), so a hand-named entry gets one too; the id
   // only matches a preset when the entry was created from it.
   const entry = selProviders().find((p) => p.id === id);
-  const row = (entry && KIND_ROWS.find((k) => k.kind === entry.kind)) || KIND_ROWS.find((k) => k.id === id);
+  /* ATO-161: the preset of that very id first. By kind first, every
+     OpenAI-compatible entry (Groq, DeepSeek, a hand-named one) opened
+     Anthropic's screen — "Paste your Anthropic API key" over a Groq entry —
+     and the save then took Anthropic's URL. A hand-named OpenAI-compatible
+     entry opens the custom row, which keeps its own URL. */
+  const row = KIND_ROWS.find((k) => k.id === id)
+    || (entry && entry.kind === 'openai-compatible' ? KIND_ROWS.find((k) => k.custom) : null)
+    || (entry && KIND_ROWS.find((k) => k.kind === entry.kind));
   const env = (entry && entry.apiKeyEnvVar) || (row && row.env);
   const bad = keyInvalid || savedKeyInvalid(entry);
   const line = bad ? savedKeyLine(id) : 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');

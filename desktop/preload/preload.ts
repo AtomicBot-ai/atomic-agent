@@ -120,7 +120,7 @@ contextBridge.exposeInMainWorld("atomic", {
   verifyProviderKey: (entry: Record<string, unknown>, model: string) =>
     ipcRenderer.invoke("cli:verifyProviderKey", { entry, model }),
   // ATO-161: an empty key field — a saved key or a variable behind it? Yes or no.
-  providerKeyPresent: (entry: { id?: string; kind: string; apiKeyEnvVar?: string }) =>
+  providerKeyPresent: (entry: { id?: string; kind: string; apiKeyEnvVar?: string; baseUrl?: string }) =>
     ipcRenderer.invoke("cli:providerKeyPresent", entry),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
