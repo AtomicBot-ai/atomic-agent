@@ -5,10 +5,7 @@ import { join } from "node:path";
 
 import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { userTurn } from "./conversation-turn.js";
-import {
-  INTERRUPTED_TURN_ENDING,
-  SessionStore,
-} from "./session-store.js";
+import { INTERRUPTED_TURN_ENDING, SessionStore } from "./session-store.js";
 import {
   createEmptySessionState,
   incrementTurnCount,
@@ -26,13 +23,18 @@ import type { TurnOwnerProbe } from "./turn-owner.js";
  * cut off before its end left the row as it was before the turn.
  */
 
-const BOOT = 1_790_000_000;
+const UPTIME = 50_000;
 
 function probe(
   pid: number,
   isAlive: (pid: number) => boolean = () => true,
 ): TurnOwnerProbe {
-  return { pid, bootAt: BOOT, isAlive };
+  return {
+    pid,
+    hostUptime: () => UPTIME,
+    isAlive,
+    startTicksOf: () => null,
+  };
 }
 
 interface RawRow {
@@ -68,6 +70,19 @@ describe("SessionStore turn marks", () => {
       .get(id) as RawRow | undefined;
   }
 
+  /** Make every UPDATE of the table fail, as a full disk or a held lock would. */
+  function failWrites(on: boolean): void {
+    const db = store.getDatabaseHandleForRetention();
+    if (on) {
+      db.exec(
+        `CREATE TRIGGER fail_writes BEFORE UPDATE ON sessions
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+      );
+    } else {
+      db.exec(`DROP TRIGGER fail_writes`);
+    }
+  }
+
   function seed(id: string, extra: Partial<SessionState> = {}): SessionState {
     const state: SessionState = {
       ...createEmptySessionState({ id, workingDir: "/w" }),
@@ -89,21 +104,26 @@ describe("SessionStore turn marks", () => {
     };
   }
 
-  it("beginTurn marks the row running, in the column and the payload, and names this process", () => {
+  it("beginTurn marks the row running, names this process, and rewrites nothing else", () => {
     seed("s1");
+    const before = raw("s1");
     expect(store.beginTurn("s1", 7_000)).toBe(true);
     const row = raw("s1");
     expect(row?.status).toBe("running");
+    // Readers take the status from the column.
     expect(store.load("s1")?.status).toBe("running");
+    expect(store.listRecent(10).find((s) => s.id === "s1")?.status).toBe(
+      "running",
+    );
     expect(JSON.parse(row?.turnOwner ?? "null")).toEqual({
       pid: 100,
-      bootAt: BOOT,
+      hostUptime: UPTIME,
       at: 7_000,
     });
-    // Ordering and the desktop's "unread" both read `updated_at`: a turn
-    // starting changes neither.
+    // Neither the transcript nor `updated_at` (list order, the desktop's
+    // unread dot) moves when a turn starts.
+    expect(row?.payload).toBe(before?.payload);
     expect(row?.updatedAt).toBe(5_000);
-    expect(store.load("s1")?.updatedAt).toBe(5_000);
   });
 
   it("beginTurn writes nothing for a session that has no row yet", () => {
@@ -144,16 +164,75 @@ describe("SessionStore turn marks", () => {
     expect(store.load("s-title")?.metadata.title).toBe("Named meanwhile");
   });
 
-  it("a plain save during the turn leaves the mark for the turn's end", () => {
-    const state = seed("s3");
-    store.beginTurn("s3");
-    // A model stamp, a wake-reason stamp, a session title: none of them
-    // ends the turn.
-    store.save({ ...state, metadata: { ...state.metadata, stamped: true } });
-    expect(raw("s3")?.turnOwner).not.toBeNull();
-    expect(store.releaseTurn("s3", { status: "cancelled" })).toBe(true);
-    expect(raw("s3")?.status).toBe("cancelled");
-    expect(raw("s3")?.turnOwner).toBeNull();
+  it("keeps the turn its own when the write of its end fails", () => {
+    const state = seed("s-busy");
+    store.beginTurn("s-busy");
+    failWrites(true);
+    expect(() => store.finishTurn(ended(state, "pending"))).toThrow(
+      /disk full/,
+    );
+    failWrites(false);
+    // Not forgotten: the end can still be written, and the mark comes off.
+    expect(store.releaseTurn("s-busy", { status: "failed", lastError: "x" })).toBe(
+      true,
+    );
+    expect(raw("s-busy")?.status).toBe("failed");
+    expect(raw("s-busy")?.turnOwner).toBeNull();
+  });
+
+  it("keeps the turn its own when a release fails, for the next one to finish", () => {
+    seed("s-release");
+    store.beginTurn("s-release");
+    failWrites(true);
+    expect(() =>
+      store.releaseTurn("s-release", { status: "cancelled" }),
+    ).toThrow(/disk full/);
+    failWrites(false);
+    expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(1);
+    expect(raw("s-release")?.status).toBe("cancelled");
+    expect(raw("s-release")?.turnOwner).toBeNull();
+  });
+
+  describe("save while a turn runs", () => {
+    it("keeps the running status a copy from before the turn would overwrite", () => {
+      const state = seed("s3");
+      store.beginTurn("s3");
+      // A model stamp from a copy read before the turn started.
+      store.save({ ...state, metadata: { ...state.metadata, stamped: true } });
+      expect(raw("s3")?.status).toBe("running");
+      expect(raw("s3")?.turnOwner).not.toBeNull();
+      expect(store.load("s3")?.metadata.stamped).toBe(true);
+      expect(store.releaseTurn("s3", { status: "cancelled" })).toBe(true);
+      expect(raw("s3")?.status).toBe("cancelled");
+      expect(raw("s3")?.turnOwner).toBeNull();
+    });
+
+    it("never writes back a running status read from a copy after the turn ended", () => {
+      const state = seed("s4");
+      store.beginTurn("s4");
+      const readMidTurn = store.load("s4")!;
+      expect(readMidTurn.status).toBe("running");
+      store.finishTurn(ended(state, "failed"));
+      // The copy read mid-turn, saved after the turn ended.
+      store.save({ ...readMidTurn, stepCount: 9 });
+      expect(raw("s4")?.status).toBe("failed");
+      expect(store.load("s4")?.status).toBe("failed");
+      expect(store.load("s4")?.stepCount).toBe(9);
+    });
+
+    it("writes a new row with a live status as pending", () => {
+      store.save({
+        ...createEmptySessionState({ id: "fresh", workingDir: "/w" }),
+        status: "running",
+      });
+      expect(raw("fresh")?.status).toBe("pending");
+    });
+
+    it("lets every other status through as before", () => {
+      const state = seed("s5");
+      store.save({ ...state, status: "completed" });
+      expect(store.load("s5")?.status).toBe("completed");
+    });
   });
 
   it("releaseTurn writes the status and keeps lastError unless it is given one", () => {
@@ -173,6 +252,11 @@ describe("SessionStore turn marks", () => {
     expect(store.load("replace")?.lastError).toBe("it threw");
     // The transcript is the one from before the turn: there is no other.
     expect(store.load("replace")?.turns).toEqual([]);
+
+    seed("clear", { lastError: "stale" });
+    store.beginTurn("clear");
+    store.releaseTurn("clear", { status: "cancelled", lastError: null });
+    expect(store.load("clear")?.lastError).toBeNull();
   });
 
   it("releaseTurn does nothing once the turn wrote its own end", () => {
@@ -220,6 +304,59 @@ describe("SessionStore turn marks", () => {
     expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(0);
   });
 
+  describe("a shutdown's stand-in (keepMarks)", () => {
+    it("records the ending at once and leaves the mark", () => {
+      seed("s-stand");
+      store.beginTurn("s-stand");
+      expect(
+        store.releaseOwnTurns(INTERRUPTED_TURN_ENDING, { keepMarks: true }),
+      ).toBe(1);
+      expect(store.load("s-stand")?.status).toBe("cancelled");
+      expect(store.load("s-stand")?.lastError).toBe(
+        INTERRUPTED_TURN_ENDING.lastError,
+      );
+      expect(raw("s-stand")?.turnOwner).not.toBeNull();
+      // The final release takes the mark off and forgets the turn.
+      expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(1);
+      expect(raw("s-stand")?.turnOwner).toBeNull();
+      expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(0);
+    });
+
+    it("gives way to the turn's own end", () => {
+      const state = seed("s-own");
+      store.beginTurn("s-own");
+      store.releaseOwnTurns(INTERRUPTED_TURN_ENDING, { keepMarks: true });
+      store.finishTurn(ended(state, "cancelled"));
+      const loaded = store.load("s-own");
+      expect(loaded?.status).toBe("cancelled");
+      expect(loaded?.lastError).toBeNull();
+      expect(loaded?.turns.map((t) => t.kind)).toEqual(["user"]);
+      expect(raw("s-own")?.turnOwner).toBeNull();
+      expect(store.releaseOwnTurns(INTERRUPTED_TURN_ENDING)).toBe(0);
+      expect(store.load("s-own")?.lastError).toBeNull();
+    });
+
+    it("gives way to the end of a turn that threw", () => {
+      seed("s-threw");
+      store.beginTurn("s-threw");
+      store.releaseOwnTurns(INTERRUPTED_TURN_ENDING, { keepMarks: true });
+      expect(
+        store.releaseTurn("s-threw", { status: "failed", lastError: "boom" }),
+      ).toBe(true);
+      expect(store.load("s-threw")?.status).toBe("failed");
+      expect(store.load("s-threw")?.lastError).toBe("boom");
+      expect(raw("s-threw")?.turnOwner).toBeNull();
+    });
+
+    it("is left alone by a save, like the running status before it", () => {
+      const state = seed("s-saved");
+      store.beginTurn("s-saved");
+      store.releaseOwnTurns(INTERRUPTED_TURN_ENDING, { keepMarks: true });
+      store.save({ ...state, status: "pending" });
+      expect(raw("s-saved")?.status).toBe("cancelled");
+    });
+  });
+
   describe("recoverInterruptedTurns", () => {
     /** A turn another process started on `id` and never ended. */
     function markedBy(pid: number, id: string): void {
@@ -234,6 +371,15 @@ describe("SessionStore turn marks", () => {
         // Closing is not ending: that process died mid-turn.
         other.close();
       }
+    }
+
+    /** A row that says `running` with no mark behind it. */
+    function runningUnclaimed(id: string): void {
+      seed(id);
+      store
+        .getDatabaseHandleForRetention()
+        .prepare(`UPDATE sessions SET status = 'running' WHERE id = ?`)
+        .run(id);
     }
 
     it("ends a turn whose process is gone, and leaves one a live process owns", () => {
@@ -260,9 +406,7 @@ describe("SessionStore turn marks", () => {
     });
 
     it("ends a running row nothing claims", () => {
-      // A copy read mid-turn and saved after the turn ended writes
-      // `running` with no mark behind it.
-      seed("unclaimed", { status: "running" });
+      runningUnclaimed("unclaimed");
       expect(raw("unclaimed")?.turnOwner).toBeNull();
       expect(store.recoverInterruptedTurns()).toEqual(["unclaimed"]);
       expect(store.load("unclaimed")?.status).toBe("cancelled");

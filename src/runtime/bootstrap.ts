@@ -2831,10 +2831,14 @@ export async function createAgentRuntime(
    * interrupted. Shutdown only: by then a turn that has not written its
    * end cannot be counted on to, and a row left `running` would show a
    * turn nothing is running until some later boot cleans it up.
+   * `keepMarks` writes it as a stand-in the turn's own end can still
+   * replace (`SessionStore.releaseOwnTurns`).
    */
-  const releaseTurnsInterrupted = (): void => {
+  const releaseTurnsInterrupted = (
+    options: { keepMarks?: boolean } = {},
+  ): void => {
     try {
-      sessionStore.releaseOwnTurns(INTERRUPTED_TURN_ENDING);
+      sessionStore.releaseOwnTurns(INTERRUPTED_TURN_ENDING, options);
     } catch (err) {
       logger.warn("could not record the turns this shutdown interrupted", {
         error: err instanceof Error ? err.message : String(err),
@@ -2848,9 +2852,19 @@ export async function createAgentRuntime(
     // Say now, while the store is certainly open, that the turns still
     // running were interrupted: a stop that turns into a kill partway
     // through this teardown — the desktop gives it 4 s — still leaves
-    // every row right. A turn that writes its own end before the store
-    // closes (below) replaces this with what really happened.
-    releaseTurnsInterrupted();
+    // every row right. It goes in as a stand-in: a turn that writes its
+    // own end before the store closes (below), or that throws and ends
+    // through `releaseTurn`, replaces it with what really happened.
+    releaseTurnsInterrupted({ keepMarks: true });
+    // No scheduled turn may start on a runtime that is closing: the
+    // ticker stops here. The tick already running — and the task turn in
+    // it, which nothing stops — is waited for further down, where it
+    // always was.
+    const schedulerStopped = scheduler?.stop().catch((err: unknown) => {
+      logger.warn("scheduler stop failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     // Nothing will drain the inbox after this point; drop pending
     // steers so a message cannot resurface in a later process.
     steeringInbox.clearAll();
@@ -2966,15 +2980,8 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
-    if (scheduler) {
-      try {
-        await scheduler.stop();
-      } catch (err) {
-        logger.warn("scheduler stop failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    // Stopped at the top; this waits out the tick that was running then.
+    await schedulerStopped;
     if (consolidatorJob) {
       try {
         await consolidatorJob.stop();
@@ -3345,19 +3352,21 @@ export async function createAgentRuntime(
    * End a turn that has no state to save — it threw — on the status it
    * actually ended with: `cancelled` when it had been told to stop (an
    * abort can surface as any error), `failed` with the error otherwise.
-   * The transcript stays what it was before the turn; there is nothing
-   * truer to put there.
+   * The transcript stays what it was before the turn (`session`); there
+   * is nothing truer to put there. A cancel puts back the `lastError`
+   * the session had before the turn, which a shutdown's stand-in may
+   * have overwritten meanwhile.
    */
   const releaseThrownTurn = (
-    sessionId: string,
+    session: SessionState,
     err: unknown,
     signal: AbortSignal | undefined,
   ): void => {
     try {
       sessionStore.releaseTurn(
-        sessionId,
+        session.id,
         signal?.aborted === true
-          ? { status: "cancelled" }
+          ? { status: "cancelled", lastError: session.lastError }
           : {
               status: "failed",
               lastError: err instanceof Error ? err.message : String(err),
@@ -3365,7 +3374,7 @@ export async function createAgentRuntime(
       );
     } catch (releaseErr) {
       logger.warn("could not record how a turn ended", {
-        sessionId,
+        sessionId: session.id,
         error:
           releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
       });
@@ -3526,7 +3535,7 @@ export async function createAgentRuntime(
         // reply, finish, max steps, failed, cancelled — so this is a turn
         // that threw, or whose save did. Its row must not go on saying
         // `running`.
-        releaseThrownTurn(session.id, err, runOptions.signal);
+        releaseThrownTurn(session, err, runOptions.signal);
         throw err;
       } finally {
         inFlight.end();

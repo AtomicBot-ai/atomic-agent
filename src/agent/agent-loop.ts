@@ -2184,17 +2184,22 @@ export class AgentLoop {
         // (issue #107 — cancellation semantics remain unchanged), not
         // be relabelled `max_steps`.
         //
-        // Once the turn's own signal has aborted, whatever the request
-        // threw is the stop's doing, not a verdict on the provider. An
-        // abort that lands as the stream ends does not always surface as
-        // an abort: the socket the stop tore down can come back as
-        // `terminated` or `fetch failed`, or a cut-off body as a parse
-        // failure — read as a transport outage (a wait, then a second
-        // close of the turn) or as `failed` with the transport's words,
-        // for a turn the user had simply stopped.
+        // Once the turn's own signal has aborted, a request that fails the
+        // way requests fail is the stop's doing, not a verdict on the
+        // provider. An abort that lands as the stream ends does not always
+        // surface as an abort: the socket the stop tore down can come back
+        // as `terminated` or `fetch failed`, a cut-off body as a parse or
+        // empty-completion failure — read as a transport outage (a wait,
+        // then a second close of the turn) or as `failed` with the
+        // transport's words, for a turn the user had simply stopped. The
+        // `tool` catch-all is left out on purpose: it is what
+        // `classifyFailure` answers for an error it does not recognise,
+        // which is how a programming error arrives, and that stays a
+        // failure — reported as one — whatever the signal says.
+        const stoppedRequest = options.signal.aborted && category !== "tool";
         const cancelled =
           !ceilingFired &&
-          (options.signal.aborted ||
+          (stoppedRequest ||
             err instanceof CancelledError ||
             (err instanceof LlmFailure && err.category === "cancelled") ||
             category === "cancelled");

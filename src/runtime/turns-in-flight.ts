@@ -20,9 +20,11 @@ interface InFlightTurn {
  * on before it closes the session store.
  *
  * Every host stops its own turns before it shuts the runtime down —
- * `serve` drops the connections, the TUI and the sidecar abort their
- * controllers, the channels abort theirs as they stop — but shutdown
- * then closed the store at once, while those turns were still unwinding.
+ * `serve` drops the connections (and its server's `close()` resolves
+ * only once every request has seen that), the TUI and the sidecar abort
+ * their controllers, the channels abort theirs as they stop — but
+ * shutdown then closed the store at once, while those turns were still
+ * unwinding.
  * A turn that lost that race could not write its end: its row kept
  * whatever it held before the turn, so a chat cancelled by quitting the
  * app looked like one where nothing had happened. Seen in a user's
@@ -71,6 +73,11 @@ export class TurnsInFlight {
    * back to finish closing its stores.
    */
   async settleCancelled(graceMs: number): Promise<number> {
+    if (this.turns.size === 0) return 0;
+    // One trip round the event loop first: a host that stops its turns
+    // from an I/O callback (a closing socket) has not necessarily run it
+    // yet, and a turn sampled a moment too early is not waited for.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const cancelling = [...this.turns].filter(
       (turn) => turn.signal?.aborted === true,
     );

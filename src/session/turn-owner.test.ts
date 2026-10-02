@@ -2,40 +2,52 @@ import { describe, expect, it } from "vitest";
 import { uptime } from "node:os";
 
 import {
-  hostBootAt,
+  currentTurnOwnerProbe,
+  hostUptime,
   isTurnOwnerGone,
   parseTurnOwner,
+  readStartTicks,
   serializeTurnOwner,
+  turnOwnerFor,
+  type TurnOwner,
   type TurnOwnerProbe,
 } from "./turn-owner.js";
 
 /**
  * The boot sweep's one judgement: is the process a `running` row names
- * gone, so the turn will never write its end? Every case that cannot
- * prove it must answer "still running" — cancelling a turn another
- * window is running is the worse mistake.
+ * gone, so the turn will never write its end? Once the pid is alive only
+ * certain evidence may say so — cancelling a turn another window is
+ * still running is the worse mistake.
  */
-
-const BOOT = 1_790_000_000;
 
 function probe(overrides: Partial<TurnOwnerProbe> = {}): TurnOwnerProbe {
   return {
     pid: 100,
-    bootAt: BOOT,
+    hostUptime: () => 50_000,
     isAlive: () => true,
+    startTicksOf: () => null,
     ...overrides,
   };
 }
 
-function mark(pid: number, bootAt: number = BOOT): string {
-  return serializeTurnOwner({ pid, bootAt, at: 1_790_000_123_456 });
+function mark(owner: Partial<TurnOwner> & { pid: number }): string {
+  return serializeTurnOwner({ at: 1_790_000_123_456, ...owner });
 }
 
-describe("parseTurnOwner", () => {
-  it("reads back what serializeTurnOwner wrote", () => {
-    expect(parseTurnOwner(mark(4242))).toEqual({
+describe("serializeTurnOwner / parseTurnOwner", () => {
+  it("reads back what was written", () => {
+    const owner: TurnOwner = {
       pid: 4242,
-      bootAt: BOOT,
+      hostUptime: 40_000,
+      startTicks: "123456",
+      at: 1_790_000_123_456,
+    };
+    expect(parseTurnOwner(serializeTurnOwner(owner))).toEqual(owner);
+  });
+
+  it("leaves out what the platform could not say", () => {
+    expect(parseTurnOwner(mark({ pid: 9 }))).toEqual({
+      pid: 9,
       at: 1_790_000_123_456,
     });
   });
@@ -45,30 +57,52 @@ describe("parseTurnOwner", () => {
     expect(parseTurnOwner("{not json")).toBeNull();
     expect(parseTurnOwner("42")).toBeNull();
     expect(parseTurnOwner("null")).toBeNull();
-    expect(parseTurnOwner(JSON.stringify({ bootAt: BOOT }))).toBeNull();
+    expect(parseTurnOwner(JSON.stringify({ hostUptime: 5 }))).toBeNull();
     expect(parseTurnOwner(JSON.stringify({ pid: "7" }))).toBeNull();
     expect(parseTurnOwner(JSON.stringify({ pid: 0 }))).toBeNull();
     expect(parseTurnOwner(JSON.stringify({ pid: 1.5 }))).toBeNull();
   });
 
-  it("defaults a missing boot time and start time to 0", () => {
-    expect(parseTurnOwner(JSON.stringify({ pid: 9 }))).toEqual({
-      pid: 9,
-      bootAt: 0,
-      at: 0,
-    });
+  it("drops fields of the wrong shape and keeps the pid", () => {
+    expect(
+      parseTurnOwner(
+        JSON.stringify({ pid: 9, hostUptime: "soon", startTicks: 12, at: "x" }),
+      ),
+    ).toEqual({ pid: 9, at: 0 });
+  });
+});
+
+describe("turnOwnerFor", () => {
+  it("records the probe's process, the host's uptime now and the start ticks", () => {
+    let up = 1_000;
+    const owner = turnOwnerFor(
+      probe({
+        pid: 77,
+        hostUptime: () => up,
+        startTicksOf: (pid) => (pid === 77 ? "555" : null),
+      }),
+      123,
+    );
+    expect(owner).toEqual({ pid: 77, hostUptime: 1_000, startTicks: "555", at: 123 });
+    // Read at the moment of the mark, not when the probe was built.
+    up = 2_000;
+    expect(turnOwnerFor(probe({ hostUptime: () => up }), 1).hostUptime).toBe(
+      2_000,
+    );
   });
 });
 
 describe("isTurnOwnerGone", () => {
-  it("keeps a turn whose process is alive on this boot", () => {
-    expect(isTurnOwnerGone(mark(200), probe())).toBe(false);
+  it("keeps a turn whose process is alive", () => {
+    expect(isTurnOwnerGone(mark({ pid: 200, hostUptime: 40_000 }), probe())).toBe(
+      false,
+    );
   });
 
   it("ends a turn whose process has exited", () => {
-    const alive = (pid: number) => pid !== 200;
-    expect(isTurnOwnerGone(mark(200), probe({ isAlive: alive }))).toBe(true);
-    expect(isTurnOwnerGone(mark(300), probe({ isAlive: alive }))).toBe(false);
+    const isAlive = (pid: number) => pid !== 200;
+    expect(isTurnOwnerGone(mark({ pid: 200 }), probe({ isAlive }))).toBe(true);
+    expect(isTurnOwnerGone(mark({ pid: 300 }), probe({ isAlive }))).toBe(false);
   });
 
   it("ends a turn marked with this process's own pid, without asking whether it is alive", () => {
@@ -76,7 +110,7 @@ describe("isTurnOwnerGone", () => {
     // process that had the same number.
     let asked = false;
     const gone = isTurnOwnerGone(
-      mark(100),
+      mark({ pid: 100 }),
       probe({
         isAlive: () => {
           asked = true;
@@ -88,20 +122,69 @@ describe("isTurnOwnerGone", () => {
     expect(asked).toBe(false);
   });
 
-  it("ends a turn from an earlier boot even when its pid is alive now", () => {
-    expect(isTurnOwnerGone(mark(200, BOOT - 3_600), probe())).toBe(true);
+  it("ends a turn from before a reboot even when its pid is alive now", () => {
+    // Up for a day when the mark was written, up for an hour now.
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, hostUptime: 86_400 }),
+        probe({ hostUptime: () => 3_600 }),
+      ),
+    ).toBe(true);
   });
 
-  it("reads two boot times a little apart as the same boot", () => {
-    expect(isTurnOwnerGone(mark(200, BOOT - 30), probe())).toBe(false);
-    expect(isTurnOwnerGone(mark(200, BOOT + 30), probe())).toBe(false);
+  it("does not read a reboot into an uptime a moment off, or a clock step", () => {
+    // Uptime is whole seconds on some platforms; and it does not move
+    // with the wall clock, so nothing here can turn a clock step into a
+    // reboot.
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, hostUptime: 3_601 }),
+        probe({ hostUptime: () => 3_600 }),
+      ),
+    ).toBe(false);
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, hostUptime: 3_600 }),
+        probe({ hostUptime: () => 90_000 }),
+      ),
+    ).toBe(false);
   });
 
-  it("skips the boot check when either side does not know its boot time", () => {
-    expect(isTurnOwnerGone(mark(200, 0), probe())).toBe(false);
-    expect(isTurnOwnerGone(mark(200, BOOT - 3_600), probe({ bootAt: 0 }))).toBe(
-      false,
-    );
+  it("keeps a live pid when either side does not know the uptime", () => {
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200 }),
+        probe({ hostUptime: () => 1 }),
+      ),
+    ).toBe(false);
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, hostUptime: 86_400 }),
+        probe({ hostUptime: () => undefined }),
+      ),
+    ).toBe(false);
+  });
+
+  it("ends a turn whose pid now belongs to a process that started at another moment", () => {
+    const startTicksOf = (pid: number) => (pid === 200 ? "999" : null);
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, startTicks: "555" }),
+        probe({ startTicksOf }),
+      ),
+    ).toBe(true);
+    expect(
+      isTurnOwnerGone(
+        mark({ pid: 200, startTicks: "999" }),
+        probe({ startTicksOf }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a live pid whose start time cannot be read", () => {
+    expect(
+      isTurnOwnerGone(mark({ pid: 200, startTicks: "555" }), probe()),
+    ).toBe(false);
   });
 
   it("ends a live status with no mark, or a mark that does not parse", () => {
@@ -110,12 +193,25 @@ describe("isTurnOwnerGone", () => {
   });
 });
 
-describe("hostBootAt", () => {
-  it("is now minus the host's uptime, in whole seconds", () => {
-    const now = Date.now();
-    const expected = now / 1000 - uptime();
-    const bootAt = hostBootAt(now);
-    expect(Number.isInteger(bootAt)).toBe(true);
-    expect(Math.abs(bootAt - expected)).toBeLessThanOrEqual(2);
+describe("the live probe", () => {
+  it("reports this process, a positive uptime and itself as alive", () => {
+    const live = currentTurnOwnerProbe();
+    expect(live.pid).toBe(process.pid);
+    expect(live.isAlive(process.pid)).toBe(true);
+    const up = live.hostUptime();
+    expect(up).toBeGreaterThan(0);
+    expect(Math.abs((up ?? 0) - uptime())).toBeLessThanOrEqual(2);
+    expect(hostUptime()).toBeGreaterThan(0);
+  });
+
+  it("reads start ticks only where the kernel offers them", () => {
+    const own = readStartTicks(process.pid);
+    if (process.platform === "linux") {
+      expect(own).toMatch(/^\d+$/);
+      // The same process reads the same start twice.
+      expect(readStartTicks(process.pid)).toBe(own);
+    } else {
+      expect(own).toBeNull();
+    }
   });
 });
