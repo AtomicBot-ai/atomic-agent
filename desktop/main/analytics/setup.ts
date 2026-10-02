@@ -1,0 +1,119 @@
+/**
+ * Provider and backend events: `provider_key_checked`, `model_configured`
+ * (once per desktop state dir), `backend_switched`, `fusion_configured`,
+ * `local_backend_started`.
+ */
+
+import { curatedMeta } from "../model-catalog.js";
+import { daemonEffect, keyCheckResult, presetOf, switchOutcome } from "./classify.js";
+import { readConfigFile } from "./environment.js";
+import { analyticsEnabled, currentRunMode, flagsStore, refreshRunMode, track } from "./core.js";
+
+let stateDir = "";
+export function configureSetup(opts: { stateDir: string }): void {
+  stateDir = opts.stateDir;
+}
+
+const modelIdProp = (id: unknown): string => (typeof id === "string" && curatedMeta(id) ? id : "hf_custom");
+
+/** Around `verifyProviderKey`: the result enum and the HTTP status only. */
+export function providerKeyChecked(providerId: unknown, res: unknown): void {
+  try {
+    const { result, http_status } = keyCheckResult(res as Parameters<typeof keyCheckResult>[0]);
+    track("provider_key_checked", { provider_preset: presetOf(providerId), result, http_status });
+  } catch {
+    /* never */
+  }
+}
+
+/** The provider the config now routes to, as `model_configured` names it. */
+function configuredRoute(): { provider: string; kind: "local" | "cloud" | "custom" } | null {
+  const cfg = readConfigFile(stateDir);
+  if (!cfg) return null;
+  const llm = cfg["llm"] as { activeTextProvider?: unknown; providers?: unknown } | undefined;
+  const active = typeof llm?.activeTextProvider === "string" ? llm.activeTextProvider : "local-llama";
+  const providers = Array.isArray(llm?.providers) ? (llm!.providers as Array<Record<string, unknown>>) : [];
+  const entry = providers.find((p) => p && p["id"] === active);
+  const lm = cfg["localModels"] as { mode?: unknown } | undefined;
+  if (active === "local-llama" || entry?.["kind"] === "llama-server") {
+    // An external llama-server (the wizard's custom-endpoint branch) is `custom`.
+    return lm?.mode === "external" ? { provider: "custom", kind: "custom" } : { provider: "local-llama", kind: "local" };
+  }
+  const preset = presetOf(active);
+  return { provider: preset, kind: preset === "custom" ? "custom" : "cloud" };
+}
+
+/** A switch / activation / custom-endpoint write landed with a usable provider: `model_configured`, once. */
+export function maybeModelConfigured(): void {
+  try {
+    if (!analyticsEnabled()) return;
+    const store = flagsStore();
+    if (!store || store.get().modelConfiguredSent) return;
+    const route = configuredRoute();
+    if (!route) return;
+    track("model_configured", route);
+    store.set({ modelConfiguredSent: true });
+  } catch {
+    /* never */
+  }
+}
+
+/** Before a switch runs: the mode it leaves, and the clock. */
+export function switchBegin(): { from: string | null; at: number } {
+  return { from: currentRunMode() ?? refreshRunMode(), at: Date.now() };
+}
+
+type SwitchLike = {
+  ok?: boolean; restart?: boolean; daemon?: string; providerId?: string; modelId?: string;
+  runMode?: { before?: string; after?: string; enteredFusion?: boolean };
+} & Parameters<typeof switchOutcome>[0];
+
+/** After `switched()`: `backend_switched`, any daemon effect, and `model_configured` the first time it lands. */
+export function switchEnd(
+  begin: { from: string | null; at: number },
+  res: unknown,
+  fusion?: { action: "enter" | "swap_legs" | "set_workers" | "pick_worker_model" },
+): void {
+  try {
+    const r = (res && typeof res === "object" ? res : null) as SwitchLike | null;
+    const ms = Date.now() - begin.at;
+    const to = refreshRunMode();
+    const { result, refusal } = switchOutcome(r);
+    track("backend_switched", {
+      from: begin.from,
+      to,
+      result,
+      refusal,
+      restart: r?.restart === true,
+      ms,
+    });
+    const effect = daemonEffect(r?.daemon);
+    if (effect && effect !== "untouched" && effect !== "superseded" && effect !== "skipped") {
+      track("local_backend_started", { via: "swap", result: effect, model_id: modelIdProp(r?.modelId), ms });
+    }
+    if (fusion && r?.ok) fusionConfigured(fusion.action);
+    if (r?.ok) maybeModelConfigured();
+  } catch {
+    /* never */
+  }
+}
+
+function fusionConfigured(action: "enter" | "swap_legs" | "set_workers" | "pick_worker_model"): void {
+  const cfg = readConfigFile(stateDir);
+  const fusion = ((cfg?.["llm"] as Record<string, unknown> | undefined)?.["runMode"] as Record<string, unknown> | undefined)?.["fusion"] as
+    | { workers?: unknown }
+    | undefined;
+  const workers = typeof fusion?.workers === "number" ? fusion.workers : null;
+  track("fusion_configured", { action, workers, degraded: currentRunMode() !== "fusion" });
+}
+
+/** The launch start or a ⇄'s background bring-up said how it ended. */
+export function localBackendStarted(via: "launch" | "swap", daemon: unknown, modelId: unknown, ms: number | null): void {
+  try {
+    const effect = daemonEffect(daemon);
+    if (!effect) return;
+    track("local_backend_started", { via, result: effect, model_id: modelIdProp(modelId), ms });
+  } catch {
+    /* never */
+  }
+}
