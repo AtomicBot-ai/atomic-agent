@@ -3,7 +3,7 @@ import type { SessionState } from "./session-state.js";
 
 /**
  * Column-level view of one stored session: what a list needs to render
- * a row without parsing the transcript. `SessionStore.listSummaries`
+ * a row without parsing the transcript. `SessionStore.listSummaryPage`
  * projects it straight out of SQL; `summarizeSessionState` is the same
  * projection over an in-memory state, so a stub can stand in for the
  * store and a test can check the two agree.

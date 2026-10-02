@@ -126,18 +126,52 @@ export function composeEmptyCompletionNotice(
  * two empties with nothing between them, which is what the consecutive
  * budget above guarantees.
  *
- * The tags (`reason`, `transport`, `stage`) and the `cause` chain are
- * kept so this stays the SAME Sentry issue as the empty it wraps, not a
- * new one: `pickFrames` prefers the cause's stack, so the fingerprint's
- * top frame remains the original step-executor throw. That is
- * deliberate — a doubled empty is the same defect on the same link, and
- * splitting it into its own cluster would fragment the very volume this
- * recovery is measured by. Sentry will therefore NOT show the two
- * apart: the rewritten message is for the operator's terminal, and the
- * scrubber never transmits a message (`STATIC_MESSAGE_ERRORS` is empty
- * by design). The trace is where the two are told apart — a turn that
- * spent its retry carries an `empty_completion_recovered` event and one
- * that failed on the first empty does not.
+ * Know before reading any Sentry volume off either side: wrapping puts
+ * the doubled empty in its OWN issue. `buildEnvelope`'s fingerprint
+ * discriminator is `causeType ?? tool ?? reason ?? transportHost`, and
+ * the scrubber sets `causeType` whenever `err.cause instanceof Error` —
+ * so the step executor's first-empty throw, which carries no cause,
+ * discriminates on `reason` (`"empty"`), while the `{ cause: err }`
+ * below discriminates on `causeType` (`"ModelError"`). The shared stack
+ * does not pull them back together: `pickFrames` does prefer the cause's
+ * frames, so both events point at the same step-executor throw, but
+ * `topFrame` is the LAST fingerprint element and cannot merge two events
+ * that already differ in the fourth. Pinned by
+ * `empty-completion-recovery.test.ts`.
+ *
+ * What the split separates is narrower than it looks, and narrower than
+ * the volume argument it replaces assumed. Three limits, in the order
+ * they bite:
+ *
+ *  - **A turn this recovery SAVED is in no Sentry issue at all.** The
+ *    loop clears `runError` and `continue`s, so the save emits no
+ *    `loop_failed` — and `loop_failed` is the only agent event
+ *    `bootstrap.ts` hands to `captureError`. Sentry sees losses and
+ *    nothing else, whichever way the two are grouped, so no arrangement
+ *    of these fingerprints can compare saves against losses.
+ *  - **What the split does separate** is a turn that SPENT its retry and
+ *    still lost (`cause_type=ModelError`) from one that never got a
+ *    retry (`reason=empty`, no `cause_type`).
+ *  - **The no-`cause_type` side is not one population.** `transport` and
+ *    `stage` are Sentry *tags*, not fingerprint elements, so every
+ *    `reason=empty` `ModelError` out of the step executor shares that
+ *    one fingerprint: the `native_tools`/`initial` shape this recovery
+ *    is eligible for, the grammar-link empty that has its own in-step
+ *    repair, and the post-repair empty. Filter on `tool_transport` and
+ *    `failure_stage` before that count means anything about this
+ *    recovery.
+ *
+ * So: never quote either count as total empty volume, and never read
+ * either as a save rate. The per-turn discriminator is in the trace, not
+ * in Sentry — a turn that spent its retry carries an
+ * `empty_completion_recovered` event and one that failed on the first
+ * empty does not.
+ *
+ * The tags (`reason`, `transport`, `stage`) are kept regardless, because
+ * they are all Sentry ever learns about the completion itself: the
+ * scrubber never transmits a message (`STATIC_MESSAGE_ERRORS` is empty by
+ * design), so the rewritten sentence above only ever reaches the
+ * operator's terminal.
  */
 export function repeatedEmptyCompletionError(err: ModelError): ModelError {
   return new ModelError(

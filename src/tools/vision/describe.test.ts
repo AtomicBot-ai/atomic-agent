@@ -77,7 +77,77 @@ describe("buildVisionDescribeTool", () => {
       ctx(process.cwd()),
     );
     expect(result.status).toBe("error");
-    expect(result.summary).toMatch(/vision is not available/i);
+    expect(result.summary).toMatch(/cannot read images/i);
+    expect(result.details).toMatchObject({
+      retryable: false,
+      reason: "model-cannot-see",
+    });
+  });
+
+  it("names the provider it refused on", async () => {
+    const tool = buildVisionDescribeTool({
+      provider: () =>
+        ({
+          ...fakeProvider({
+            capabilities: { vision: false, visionSource: "absent" },
+          }),
+          id: "aimlapi",
+        }) as LlmProvider,
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      { prompt: "x", path: "x.png" },
+      ctx(process.cwd()),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(
+      /the model on aimlapi cannot read images \(no vision projector/,
+    );
+  });
+
+  it("resolves the provider on every call, with the step's pin", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const path = join(tmp, "image.png");
+    await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const cloud = fakeProvider();
+    const local = fakeProvider();
+    const worker = fakeProvider();
+    let active = cloud;
+    const pins: (string | undefined)[] = [];
+    const tool = buildVisionDescribeTool({
+      provider: (providerId) => {
+        pins.push(providerId);
+        return providerId === "worker" ? worker : active;
+      },
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    await tool.run({ prompt: "describe", path }, ctx(tmp));
+    active = local; // `/llm provider local-llama`
+    await tool.run({ prompt: "describe", path }, ctx(tmp));
+    await tool.run(
+      { prompt: "describe", path },
+      { ...ctx(tmp), providerId: "worker" },
+    );
+    expect(cloud.describeImage).toHaveBeenCalledTimes(1);
+    expect(local.describeImage).toHaveBeenCalledTimes(1);
+    expect(worker.describeImage).toHaveBeenCalledTimes(1);
+    expect(pins).toEqual([undefined, undefined, "worker"]);
+  });
+
+  it("refuses when nothing serves the step, without calling anyone", async () => {
+    const tool = buildVisionDescribeTool({
+      provider: () => undefined,
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      { prompt: "x", path: "x.png" },
+      { ...ctx(process.cwd()), providerId: "gone" },
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/"gone" is not configured/);
   });
 
   it("rejects a file that is neither a known extension nor known bytes", async () => {

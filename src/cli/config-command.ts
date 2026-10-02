@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-
 import {
   ConfigValidationError,
   ensureUserConfigFileSync,
@@ -18,6 +16,7 @@ import {
   isReadOnlyConfigKey,
   listConfigLeaves,
   readConfigPath,
+  readRawConfigTree,
   suggestConfigKey,
   writeConfigPath,
   writeRawUserConfigFileSync,
@@ -248,32 +247,4 @@ function rejectUnknownKey(sub: string, key: string): number {
   process.stderr.write(`config ${sub} failed: unknown key ${key}${hint}\n`);
   process.stderr.write("run `atomic-agent config list` to see every key\n");
   return 1;
-}
-
-/**
- * Read the config file as a plain JSON tree, without filling in defaults.
- *
- * Deliberately not `ensureUserConfigFileSync`: that returns the fully
- * defaulted config, so writing it back would freeze today's 139 defaults
- * into the user's file and silently pin them against future schema
- * changes. A point edit must leave the rest of the file byte-for-byte
- * alone, which means starting from what is actually on disk.
- */
-function readRawConfigTree(path: string): Record<string, unknown> {
-  if (!existsSync(path)) return {};
-  const text = readFileSync(path, "utf8");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new ConfigValidationError(
-      "<file>",
-      `${path} is not valid JSON: ${message}`,
-    );
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new ConfigValidationError("<file>", `${path} is not a JSON object`);
-  }
-  return parsed as Record<string, unknown>;
 }

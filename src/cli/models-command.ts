@@ -24,7 +24,8 @@ const HELP =
   [
     "atomic-agent models — manage the local-LLM runtime (llama.cpp backend + GGUF models)",
     "",
-    'Available only when config.localModels.mode = "managed" (see `atomic-agent config`).',
+    '`start` and `update` refuse unless config.localModels.mode = "managed"; `use` switches',
+    "to managed mode (see `atomic-agent config`).",
     "",
     "Subcommands:",
     "  list                          Show model catalog + disk presence (active marked with *)",

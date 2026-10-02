@@ -453,10 +453,14 @@ export const WORKER_HINT_SATURATED =
 export const WORKER_HINT_QUOTA =
   "provider credit/quota exhausted — retrying will not help";
 /**
- * The client's `/slots` watchdog proved the server answers nothing at
- * all (`first-token-unreachable`). That is evidence `WORKER_HINT_QUEUED`
- * and `WORKER_HINT_SATURATED` do not have: the server is not full, it is
- * gone, and narrowing the fan-out on a dead daemon wastes another wave.
+ * The client's watchdog proved the server answers nothing at all —
+ * either no connection was made (`first-token-unreachable`) or one was
+ * made and nothing came back on any endpoint
+ * (`first-token-unresponsive`). Either way it is evidence
+ * `WORKER_HINT_QUEUED` and `WORKER_HINT_SATURATED` do not have: the
+ * server is not full, and narrowing the fan-out on a daemon that is
+ * answering nobody wastes another wave. The remedy is the same for
+ * both, which is why they share a hint.
  */
 export const WORKER_HINT_UNREACHABLE =
   "the local server stopped answering entirely: restart the daemon before re-delegating — fewer workers will not help";
@@ -465,7 +469,8 @@ const CONTEXT_EXCEEDED =
   /context size has been exceeded|ran out of context|exceeds? the (?:available )?context|context (?:size|length|window) (?:exceeded|was exceeded)/i;
 const SERVER_SATURATED =
   /no first token|first[- ]token timeout|sent no data for \d+\s*ms|idle timeout/i;
-const SERVER_UNREACHABLE = /stopped answering GET \/slots|it is unreachable/i;
+const SERVER_UNREACHABLE =
+  /stopped answering GET \/slots|it is unreachable|accepted the connection and answered nothing/i;
 const CREDIT_OR_QUOTA =
   /\b402\b|\b429\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of credits?|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|rate[- ]limit|too many requests/i;
 
@@ -488,6 +493,57 @@ export function workerFailureHint(message: string): string | undefined {
   if (CONTEXT_EXCEEDED.test(message)) return WORKER_HINT_CONTEXT;
   if (CREDIT_OR_QUOTA.test(message)) return WORKER_HINT_QUOTA;
   return undefined;
+}
+
+/**
+ * The transport failures that name nothing.
+ *
+ * Node's fetch collapses a whole family of socket outcomes into the bare
+ * string `fetch failed` — the 300-second `UND_ERR_HEADERS_TIMEOUT` among
+ * them — and undici's own words for the rest (`terminated`, `socket hang
+ * up`, `other side closed`) tell a reader no more. Not one of them says
+ * what the server did, which is why a worker that dies on one before its
+ * first token has to be diagnosed from its shape instead of its message.
+ *
+ * `ECONNREFUSED` and the DNS errors are deliberately absent: those name
+ * the fault themselves, and a message that already tells the operator
+ * what happened must keep reading the way it reads today.
+ */
+const OPAQUE_TRANSPORT =
+  /fetch failed|socket hang up|other side closed|premature close|\bterminated\b|\bECONNRESET\b|\bEPIPE\b|\bUND_ERR_\w+/i;
+
+/**
+ * The `queued` outcome's diagnosis, reached through the other door.
+ *
+ * A worker whose very first request dies on the transport never gets as
+ * far as the queue watchdog, so it comes back `failed` carrying whatever
+ * the socket said — in the field, twice in a row, a row whose whole
+ * content was `error: fetch failed` over zero steps and 306 seconds. But
+ * zero steps and a `null` `queueWaitMs` are the same two facts the
+ * `queued` outcome reports: the request went out and the server answered
+ * nothing. So the remedy is the same one, and it splits the same way —
+ * alone on the leg there was nothing to queue behind and the daemon is
+ * the suspect, alongside others the fan-out is simply too wide.
+ *
+ * `undefined` for everything else, and deliberately. A worker that took
+ * a step, one that was served and only then failed, and any message
+ * `workerFailureHint` already recognises all keep the row they have; an
+ * absent `queueWaitMs` is not a `null` one, so a row nobody measured is
+ * a row nothing is claimed about. The hint is added beside the error,
+ * never in place of it: the socket's own word is the only evidence an
+ * operator has that the request was even sent.
+ */
+export function unservedWorkerHint(
+  result: WorkerTaskResult,
+  ranAlone: boolean,
+): string | undefined {
+  if (result.status !== "failed") return undefined;
+  if (result.stepCount > 0) return undefined;
+  if (result.queueWaitMs !== null) return undefined;
+  if (result.error === undefined) return undefined;
+  if (workerFailureHint(result.error) !== undefined) return undefined;
+  if (!OPAQUE_TRANSPORT.test(result.error)) return undefined;
+  return ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_QUEUED;
 }
 
 const NO_REPLY = "(the worker produced no reply)";

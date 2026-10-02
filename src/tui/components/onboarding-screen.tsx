@@ -52,10 +52,9 @@ export interface OnboardingScreenCallbacks {
   onOnboardingStep?(step: string, outcome?: string): void;
   /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
   onLocalModelsPullRequested?(modelId: LocalModelId): void;
-  /** Run the import step's preview (`execute: false`) or write (`true`). */
+  /** Run the import step's write; the flow has no dry-run screen. */
   onOnboardingImportRequested?(
     plan: import("../onboarding/import-step.js").OnboardingImportPlan,
-    execute: boolean,
   ): void;
 }
 
@@ -192,7 +191,6 @@ export function OnboardingScreen(props: {
     hfRepo: onboarding.hfRepo,
     hfError: onboarding.step === "local_hf_ref" ? onboarding.error : null,
     importAgents: onboarding.importAgents,
-    importOptions: onboarding.importOptions,
     importReport: onboarding.importReport,
   });
 

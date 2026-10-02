@@ -5,6 +5,7 @@ import type { TuiState } from "../tui-state.js";
 import {
   selectLlmActiveRouteSummary,
   selectLlmPanelRows,
+  selectLlmRowAt,
 } from "../llm-panel/llm-panel-selectors.js";
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
 import {
@@ -14,6 +15,7 @@ import {
 import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
+import { LocalModelDetail } from "./local-models-panel.js";
 import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
@@ -75,6 +77,23 @@ export function LlmPanel({
     return (
       <Box flexDirection="column" width="100%">
         <LocalModelsHuggingFaceBranch panel={state.localModelsPanel} />
+      </Box>
+    );
+  }
+  // `i` on a Local text-model row: the detail view replaces the list
+  // and owns the keys until Esc (`handleLlmLocalPaneKey`).
+  if (
+    state.llmPanel.mode === "local" &&
+    state.localModelsPanel.mode === "detail"
+  ) {
+    const row = selectLlmRowAt(state);
+    return (
+      <Box flexDirection="column" width="100%">
+        {row?.kind === "localTextModel" ? (
+          <LocalModelDetail row={row.model} panel={state.localModelsPanel} />
+        ) : (
+          <Text color={theme.colors.muted}>(no row) · Esc back</Text>
+        )}
       </Box>
     );
   }

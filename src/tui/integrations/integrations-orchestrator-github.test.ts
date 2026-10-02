@@ -95,6 +95,8 @@ describe("IntegrationsOrchestrator — GitHub", () => {
     expect(row.level).toBe("not_configured");
     expect(row.actions.map((a) => a.id)).toEqual(["import"]);
     expect(row.setupSteps?.length).toBeGreaterThan(0);
+    // The panel masks a secret field's edit buffer off this flag.
+    expect(row.fields.find((f) => f.key === "token")?.secret).toBe(true);
   });
 
   it("a saved token lands in .env and process.env and refreshes the catalog", async () => {

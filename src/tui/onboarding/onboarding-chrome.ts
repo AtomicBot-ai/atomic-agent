@@ -20,7 +20,6 @@ export const ONBOARDING_SUBTITLES: Record<OnboardingStep, string> = {
   propose_second: "one more thing",
   wait_or_jump: "almost there",
   import_pick: "bring your data · one last step",
-  import_preview: "bring your data · preview",
   import_done: "bring your data · done",
   cloud: "cloud model · step 2 of 2",
   custom_chat_url: "custom endpoint · step 2 of 2",
@@ -68,14 +67,10 @@ export function onboardingFooterFor(
     case "propose_second":
       return `↑/↓ move   enter select   esc skip   ${quit}`;
     case "import_pick":
-      // While a dry-run is out with the importers, Enter would double-run.
-      return onboarding.busy
-        ? `scanning…   ${quit}`
-        : `↑/↓ move   space tick   enter select   esc skip   ${quit}`;
-    case "import_preview":
+      // While the run is out with the importers, Enter would double-run.
       return onboarding.busy
         ? `importing…   ${quit}`
-        : `enter import   esc adjust   ${quit}`;
+        : `↑/↓ move   space tick   enter import   esc skip   ${quit}`;
     case "import_done":
       return `any key to start   ${quit}`;
     case "wait_or_jump":

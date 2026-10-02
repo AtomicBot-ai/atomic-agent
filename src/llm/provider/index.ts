@@ -1,5 +1,6 @@
 export {
   VisionUnsupportedError,
+  ModelCannotSeeError,
   type LlmProvider,
   type ProviderCapabilities,
   type ProviderHealthResult,

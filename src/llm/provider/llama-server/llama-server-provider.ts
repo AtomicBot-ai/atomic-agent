@@ -32,6 +32,11 @@ export class LlamaServerProvider implements LlmProvider {
   readonly toolCallAdapter = null;
   readonly streamConsumer = null;
 
+  /** The local model loaded right now, when the runtime tracks it. */
+  get chatModelId(): string | undefined {
+    return this.getModelId?.() ?? undefined;
+  }
+
   get capabilities(): ProviderCapabilities {
     const visionCaps = resolveVisionCapabilities({
       profile: this.getProfile(),
@@ -65,7 +70,14 @@ export class LlamaServerProvider implements LlmProvider {
       maxImagesPerCall: number;
       fetchImpl?: typeof fetch;
       baseUrlOverride?: string;
-      requestTimeoutMs?: number;
+      /**
+       * Whole-request budget for `describeImage`. Required on purpose:
+       * the one production construction site resolves it from
+       * `llm.providers[].requestTimeoutMs` / `localModels.requestTimeoutMs`,
+       * and a default here would be a second, invisible policy that only
+       * a future second call site ever hits.
+       */
+      requestTimeoutMs: number;
       /** The model whose template is in force; keys the rendered-prefix cache. */
       getModelId?: () => string | null;
       logger?: StructuredLogger;
@@ -84,7 +96,7 @@ export class LlamaServerProvider implements LlmProvider {
     this.maxImagesPerCall = options.maxImagesPerCall;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.baseUrlOverride = options.baseUrlOverride;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
+    this.requestTimeoutMs = options.requestTimeoutMs;
   }
 
   private readonly getProfile: () => ModelProfile;

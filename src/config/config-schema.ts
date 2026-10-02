@@ -286,6 +286,13 @@ export interface AtomicAgentConfig {
     localModelsDataDir: string;
   };
   agent: {
+    /**
+     * Compact target for the upper prompt. Its only remaining effect on
+     * a built prompt is the `### session-facts` + `### loaded-skills`
+     * share, and `sessionSectionsMaxTokens` now overrides that directly;
+     * the stable prefix is sized by what it contains, not by this
+     * number.
+     */
     tokenBudget: number;
     /**
      * Steps in one *leg* of a task — a checkpoint interval, not the end
@@ -394,6 +401,13 @@ export interface AtomicAgentConfig {
      */
     conversationLowWater: number;
     /**
+     * Ceiling for `### session-facts` + `### loaded-skills` combined —
+     * the one prompt limit `tokenBudget` still moves. `0` keeps the
+     * historical `tokenBudget * 0.15` share
+     * (`SESSION_SECTIONS_CAP_AUTO`).
+     */
+    sessionSectionsMaxTokens: number;
+    /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
      * edge cases where compression misses (huge SVG trees, etc.).
@@ -455,10 +469,14 @@ export interface AtomicAgentConfig {
      * `loopHistorySize` — sliding window size for the tracker's history
      * ring (env `ATOMIC_AGENT_LOOP_HISTORY_SIZE`).
      * `loopWanderingThreshold` — distinct-args spread on a wandering-prone
-     * tool (web/http/browser) that injects an actionable redirect notice
-     * (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
-     * `loopWanderingEscalation` — distinct-args spread that escalates to a
-     * forced graceful reply (env `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`).
+     * tool (search/web/http/browser), counted since the turn last made
+     * progress outside that tool's family, that injects an actionable
+     * redirect notice (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
+     * `loopWanderingEscalation` — the same run spread at which the loop
+     * escalates to a forced graceful reply (env
+     * `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`). The window spread has its
+     * own rungs, derived from `loopHistorySize` — see
+     * `WANDERING_CEILING_SHARE`.
      * All env-only.
      */
     loopWarningThreshold: number;
@@ -566,6 +584,30 @@ export interface AtomicAgentConfig {
   };
   log: {
     level: LogLevel;
+  };
+  /**
+   * Retention for `<stateDir>/sessions.sqlite` and the per-session trace
+   * files beside it. Mirrors `UserConfigFile.sessions`. Nothing in the
+   * runtime ever shrank either before this block: `delete(id)` is
+   * one-at-a-time and operator-driven, and the only bulk wipe is
+   * `atag uninstall`. See §"Session retention" in AGENTS.md.
+   */
+  sessions: {
+    retention: {
+      /**
+       * Master switch, default `false`. A session is the transcript of
+       * the operator's own work, so nothing deletes one until they ask:
+       * with this off the prune does not even open the table.
+       */
+      enabled: boolean;
+      /**
+       * Prune sessions whose `updated_at` is older than this; `null` is
+       * no age rule.
+       */
+      maxAgeDays: number | null;
+      /** Keep at most this many sessions, oldest first; `null` is no cap. */
+      maxRows: number | null;
+    };
   };
   tracing: {
     trace: {
@@ -1527,6 +1569,16 @@ export interface UserManagedLocalLlmConfig {
    * Added in config v34; older files transparently get `true`.
    */
   stopOnExit: boolean;
+  /**
+   * Bring the managed chat daemon back by itself when it dies (or, from
+   * the wedge watchdog, stops answering) while this TUI owns it. `true`
+   * (default): a crashed or killed llama-server is restarted within a
+   * few seconds and a parked turn resumes on it; three deaths within a
+   * minute of their start stop the retries and name the fault. `false`:
+   * a dead daemon stays dead until `/llm restart` or `R`. Files that
+   * predate the key get `true`.
+   */
+  autoRestart: boolean;
 }
 
 /**
@@ -1709,6 +1761,33 @@ export interface UserConfigFile {
      * held to at most `0.5`. `1` restores cutting just enough per step.
      */
     conversationLowWater: number;
+    /**
+     * Ceiling on `### session-facts` + `### loaded-skills` combined
+     * (config v74). One cap over two sections because one
+     * `truncateToTokens` call trims the two as a single blob, facts
+     * first, so the skill bodies at its tail are what a cut takes.
+     *
+     * `0` is `SESSION_SECTIONS_CAP_AUTO`: keep the historical
+     * `tokenBudget * 0.15`. Raising it costs no KV cache — both sections
+     * sit in the variable tail — but it does eat into the room
+     * `computeEffectiveConversationCap` leaves the transcript, since
+     * `sessionTokens` is subtracted from the window there.
+     *
+     * Any other value is enforced verbatim: no floor at the bottom (a
+     * value too small for one token empties both sections) and no clamp
+     * against the model's context window at the top (past
+     * `CONVERSATION_CAP_FLOOR` the transcript has nothing left to give
+     * and the prompt overruns the window). Both are spelled out on
+     * `SESSION_SECTIONS_CAP_AUTO` with the reasons.
+     *
+     * There is deliberately no sibling key for the stable prefix. Its
+     * `tokenBudget * 0.35` figure is computed and then read by nothing:
+     * the prefix cannot be trimmed without cutting `### tools` or
+     * `### instructions` out from under the grammar. Size the prefix
+     * with `skills.catalogTokenBudget` (its one elastic section) and the
+     * `tool.view` tier split instead.
+     */
+    sessionSectionsMaxTokens: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -1760,6 +1839,33 @@ export interface UserConfigFile {
        * positive integer.
        */
       maxJobs: number;
+    };
+  };
+  /**
+   * Session retention (config v73). One bounded prune of
+   * `sessions.sqlite` at startup, plus the trace file of every row it
+   * removed. Off by default — see the runtime type above for why — and
+   * a no-op end to end while it is off.
+   */
+  sessions: {
+    retention: {
+      /** Default `false`: the operator opts in. */
+      enabled: boolean;
+      /**
+       * Age cutoff in days against `updated_at`. Default 90. A positive
+       * integer, or `null` for no age rule (leaving `maxRows` as the
+       * only thing that prunes). Note that `undefined` takes the
+       * default and an explicit `null` does not — clearing the rule is
+       * a choice, not an omission.
+       */
+      maxAgeDays: number | null;
+      /**
+       * Hard cap on stored sessions; anything past it goes oldest
+       * first. Default `null` (no cap) — a row count means nothing
+       * without knowing how the operator works, so age is the rule that
+       * ships on.
+       */
+      maxRows: number | null;
     };
   };
   tracing: {
@@ -2091,8 +2197,10 @@ export interface UserConfigFile {
      * referential (short, pronouns, conjunction-starter), one LLM
      * call rewrites it into a self-contained query using the last
      * few turns of conversation; otherwise the raw message is used
-     * as today. The rewriter uses `slotId = -1` so the **main agent
-     * slot** and the **reflection slot** are both untouched.
+     * as today. The rewriter runs on the side-call slot
+     * (`slotManager.sideCallSlotId()`: the reserved reflection slot,
+     * or `-1` when only one slot exists), so the **main agent slot**
+     * is untouched.
      *
      * `retrieve.rewriter` keys:
      *  - `enabled`       master switch. Default `true`.
@@ -2500,6 +2608,15 @@ export interface UserConfigFile {
 // parsed away without a word (issue #466). Additive: an older file has
 // no field, takes the env default, and renders the same prompt. The env
 // var still overrides the file value.
+// v74: `agent.sessionSectionsMaxTokens` (default 0) — the
+// `### session-facts` + `### loaded-skills` cap, until now reachable only
+// by scaling all of `agent.tokenBudget`. `0` is the sentinel for "keep
+// the `tokenBudget * 0.15` share", so an older file renders a
+// byte-identical prompt.
+// v73: `sessions.retention` (`enabled` false, `maxAgeDays` 90, `maxRows`
+// null) — one bounded prune of `sessions.sqlite` and the matching trace
+// files at startup. Additive: an older file has no block and takes the
+// defaults, which prune nothing until the operator sets `enabled`.
 // v72: `agent.nameSessions` (default true) — one short completion per
 // session names it from its first prompt, so the rail and the header
 // show what the thread is about instead of the raw prompt. Additive: an
@@ -2508,7 +2625,7 @@ export interface UserConfigFile {
 // writes an OSC 9 notification plus a BEL to its own terminal when a
 // turn ends, so an operator who walked away finds out. Additive: an
 // older file has no block and takes the defaults.
-export const USER_CONFIG_VERSION = 72;
+export const USER_CONFIG_VERSION = 74;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -2669,6 +2786,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   69,
   70,
   71,
+  72,
+  73,
   USER_CONFIG_VERSION,
 ];
 
@@ -2679,6 +2798,13 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
  * see `SKILL_CATALOG_CHARS_PER_TOKEN`.
  */
 export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
+
+/**
+ * Bounds of `agent.conversationMaxPairs`, shared with the TUI's
+ * `/context` selector so it can neither offer nor clamp to less.
+ */
+export const CONVERSATION_MAX_PAIRS_MIN = 1;
+export const CONVERSATION_MAX_PAIRS_MAX = 1000;
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -2695,6 +2821,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       dataDirOverride: null,
       autoUpdate: true,
       stopOnExit: true,
+      autoRestart: true,
       device: "auto",
       backendVariant: "auto",
       contextSize: 0,
@@ -2744,6 +2871,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     conversationMaxPairs: 200,
     nameSessions: true,
     conversationLowWater: 0.65,
+    // `0` = keep the `tokenBudget * 0.15` share (SESSION_SECTIONS_CAP_AUTO).
+    sessionSectionsMaxTokens: 0,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -2797,6 +2926,20 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       // Three concurrent jobs is a server, a watcher and a build; more
       // is a model that has stopped waiting for anything.
       maxJobs: 3,
+    },
+  },
+  sessions: {
+    retention: {
+      // Off. Deleting an operator's transcripts is not a default.
+      enabled: false,
+      // A quarter: long enough that "what did I do on that project?"
+      // still has an answer, short enough that an install left running
+      // for a year is not carrying every session it ever had.
+      maxAgeDays: 90,
+      // No cap. Age is a statement about what is still interesting; a
+      // row count is a statement about disk, and only the operator
+      // knows whether theirs is the problem.
+      maxRows: null,
     },
   },
   tracing: {
@@ -2946,8 +3089,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     retrieve: {
       rewriter: {
         // v2.5 (v18) — heuristic-gated query rewriter before recall.
-        // Uses `slotId=-1` so the main agent and reflection slots stay
-        // untouched.
+        // Runs on the side-call slot (`sideCallSlotId()`; `-1` only when
+        // there is a single slot) so the main agent slot stays untouched.
         enabled: true,
         timeoutMs: 10_000,
         historyTurns: 3,
@@ -3136,9 +3279,9 @@ export const ENV_DEFAULTS = {
   LOOP_BREAKER_VETO_STREAK: 3,
   /** Sliding window size for the loop tracker's history ring. */
   LOOP_HISTORY_SIZE: 30,
-  /** Distinct-args spread on a wandering-prone tool that redirects. */
+  /** Distinct-args run spread on a wandering-prone tool that redirects. */
   LOOP_WANDERING_THRESHOLD: 6,
-  /** Distinct-args spread that escalates a wandering loop to graceful reply. */
+  /** Run spread that escalates a wandering loop to a graceful reply. */
   LOOP_WANDERING_ESCALATION: 12,
 };
 
@@ -3600,6 +3743,25 @@ function resolveEmbeddingModelId(
 export function parseBoolOrNull(raw: unknown, field: string): boolean | null {
   if (raw === null || raw === undefined) return null;
   return parseBool(raw, field);
+}
+
+/**
+ * Parse an optional cap: a positive integer, or `null` for "no limit".
+ *
+ * Takes its own fallback rather than reading `raw ?? default` at the call
+ * site, because the two absences are not the same thing when the default
+ * is a number: a missing key means "you decide" and must land on
+ * `fallback`, while an explicit `null` is the operator switching the rule
+ * off and `??` would quietly put the default back.
+ */
+function parseCapOrNull(
+  raw: unknown,
+  field: string,
+  fallback: number | null,
+): number | null {
+  if (raw === undefined) return fallback;
+  if (raw === null) return null;
+  return parsePositiveInt(raw, field);
 }
 
 export function parseNonEmptyString(raw: unknown, field: string): string {
@@ -4513,6 +4675,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (webSearch.exa as Record<string, unknown> | undefined) ?? {};
   const webSearchBrave =
     (webSearch.brave as Record<string, unknown> | undefined) ?? {};
+  const sessions = (obj.sessions as Record<string, unknown> | undefined) ?? {};
+  const sessionsRetention =
+    (sessions.retention as Record<string, unknown> | undefined) ?? {};
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
@@ -4616,6 +4781,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       rawManaged.stopOnExit ??
         USER_CONFIG_DEFAULTS.localModels.managed.stopOnExit,
       "localModels.managed.stopOnExit",
+    ),
+    autoRestart: parseBool(
+      rawManaged.autoRestart ??
+        USER_CONFIG_DEFAULTS.localModels.managed.autoRestart,
+      "localModels.managed.autoRestart",
     ),
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
@@ -4790,8 +4960,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationMaxPairs ??
           USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
         "agent.conversationMaxPairs",
-        1,
-        1000,
+        CONVERSATION_MAX_PAIRS_MIN,
+        CONVERSATION_MAX_PAIRS_MAX,
       ),
       // `(0, 1]`: `1` is a real setting (cut just enough, every step),
       // `0` would drop the whole transcript at the first overflow.
@@ -4799,6 +4969,15 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationLowWater ??
           USER_CONFIG_DEFAULTS.agent.conversationLowWater,
         "agent.conversationLowWater",
+      ),
+      // Non-negative like `conversationMaxTokens`, and for the same
+      // reason: `0` is the "derive it from the share" sentinel
+      // (`SESSION_SECTIONS_CAP_AUTO`), not a request for no session
+      // sections at all.
+      sessionSectionsMaxTokens: parseNonNegativeInt(
+        agent.sessionSectionsMaxTokens ??
+          USER_CONFIG_DEFAULTS.agent.sessionSectionsMaxTokens,
+        "agent.sessionSectionsMaxTokens",
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??
@@ -4949,6 +5128,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         maxJobs: parsePositiveInt(
           toolsShell.maxJobs ?? USER_CONFIG_DEFAULTS.tools.shell.maxJobs,
           "tools.shell.maxJobs",
+        ),
+      },
+    },
+    sessions: {
+      retention: {
+        enabled: parseBool(
+          sessionsRetention.enabled ??
+            USER_CONFIG_DEFAULTS.sessions.retention.enabled,
+          "sessions.retention.enabled",
+        ),
+        maxAgeDays: parseCapOrNull(
+          sessionsRetention.maxAgeDays,
+          "sessions.retention.maxAgeDays",
+          USER_CONFIG_DEFAULTS.sessions.retention.maxAgeDays,
+        ),
+        maxRows: parseCapOrNull(
+          sessionsRetention.maxRows,
+          "sessions.retention.maxRows",
+          USER_CONFIG_DEFAULTS.sessions.retention.maxRows,
         ),
       },
     },

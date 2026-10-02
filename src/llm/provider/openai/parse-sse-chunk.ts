@@ -30,6 +30,13 @@ export function parseOpenAiSseEvent(
   emittedReplyLength: number;
   done: boolean;
   finishReason: string | null;
+  /**
+   * `native_finish_reason`: the upstream's own reason, which OpenRouter
+   * passes through beside its normalised `finish_reason`. Only interesting
+   * when the finish is an error — it is what says *why* the provider gave up
+   * (e.g. `MALFORMED_FUNCTION_CALL`).
+   */
+  nativeFinishReason: string | null;
   modelId: string | null;
   usage: Record<string, unknown> | null;
   toolCallDeltas: OpenAiToolCallDelta[];
@@ -57,6 +64,7 @@ export function parseOpenAiSseEvent(
         extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: false,
       finishReason: null,
+      nativeFinishReason: null,
       modelId: null,
       usage: null,
       toolCallDeltas: [],
@@ -74,6 +82,7 @@ export function parseOpenAiSseEvent(
         extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: true,
       finishReason: null,
+      nativeFinishReason: null,
       modelId: null,
       usage: null,
       toolCallDeltas: [],
@@ -91,6 +100,11 @@ export function parseOpenAiSseEvent(
     const reasoningDelta = reasoning.extractDelta({ delta });
     const finishReason =
       typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+    const nativeFinishReason =
+      typeof choice?.native_finish_reason === "string" &&
+      choice.native_finish_reason.length > 0
+        ? choice.native_finish_reason
+        : null;
     const modelId = typeof payload.model === "string" ? payload.model : null;
     const id = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
     const error = readStreamError(payload.error);
@@ -122,6 +136,7 @@ export function parseOpenAiSseEvent(
           extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
         done: false,
         finishReason,
+        nativeFinishReason,
         modelId,
         usage,
         id,
@@ -157,6 +172,7 @@ export function parseOpenAiSseEvent(
         extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: false,
       finishReason,
+      nativeFinishReason,
       modelId,
       usage,
       id,
@@ -172,6 +188,7 @@ export function parseOpenAiSseEvent(
         extractPartialReplyTextFromToolArguments(toolArgsBuffer).length,
       done: false,
       finishReason: null,
+      nativeFinishReason: null,
       modelId: null,
       usage: null,
       toolCallDeltas: [],

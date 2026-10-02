@@ -9,6 +9,7 @@ import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import { PlanHandoff } from "./plan-handoff.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { ChatConfigureFallbackButton } from "./chat-configure-fallback-button.js";
+import { ChatSwitchBackButton } from "./chat-switch-back-button.js";
 import { SystemBubble } from "./system-bubble.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
@@ -126,6 +127,14 @@ export function FinalisedMessage({
         ) : null}
         {message.action === "configure-fallback" ? (
           <ChatConfigureFallbackButton />
+        ) : null}
+        {/*
+          The notices a mid-turn switch leaves behind name the thread
+          they are about — detached, finished, failed — and each one
+          tells the operator to go there. The button is the way.
+        */}
+        {message.switchToSessionId !== undefined ? (
+          <ChatSwitchBackButton sessionId={message.switchToSessionId} />
         ) : null}
       </Box>
     </Box>

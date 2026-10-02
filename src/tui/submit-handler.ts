@@ -207,36 +207,7 @@ export function runSlashCommand(
     callbacks.onWhileBusyModePersistRequested?.(result.setWhileBusyMode);
   }
   for (const action of result.actions) {
-    if (action.type === "providers_chat_model_picker_requested") {
-      // A state no-op as a reducer action: the orchestrator that owns
-      // the `/v1/models` fetch listens on the event bus, and dispatch
-      // never reaches it. Route the request through the callback that
-      // `tui-command` binds to `ProvidersOrchestrator.openChatModelPicker`,
-      // like every other provider operation.
-      callbacks.onProvidersChatModelPickerRequested?.(action.providerId);
-      continue;
-    }
-    if (action.type === "providers_contract_probe_requested") {
-      // Same wiring rule again for `/llm check`: the probe lives on
-      // `ProvidersOrchestrator.runContractProbe`, which only the
-      // callback layer can reach.
-      callbacks.onProvidersContractProbeRequested?.(action.providerId);
-      continue;
-    }
-    if (action.type === "local_models_daemon_restart_requested") {
-      // Same wiring rule for `/llm restart`: the restart lives on
-      // `LocalModelsOrchestrator.restartDaemon`, which the reducer
-      // cannot reach.
-      void callbacks.onLocalModelsDaemonRestartRequested?.();
-      continue;
-    }
-    if (action.type === "providers_inline_models_ensure_requested") {
-      // Same wiring rule for the inline Cloud-pane model list (`/model`):
-      // the catalog ensure must reach
-      // `ProvidersOrchestrator.ensureInlineModels` through the callback.
-      callbacks.onProvidersInlineModelsEnsureRequested?.(action.providerId);
-      continue;
-    }
+    if (routeOrchestratorAction(action, callbacks)) continue;
     dispatch(action);
   }
   if (result.systemMessage) {
@@ -295,17 +266,19 @@ export function runSlashCommand(
   }
   if (result.skillHubInstallId)
     callbacks.onSkillHubInstall?.(result.skillHubInstallId);
-  if (
-    result.localModelsPullModelId &&
-    isKnownLocalModelId(result.localModelsPullModelId)
-  ) {
-    callbacks.onLocalModelsPullRequested?.(result.localModelsPullModelId);
+  if (result.localModelsPullModelId) {
+    if (isKnownLocalModelId(result.localModelsPullModelId)) {
+      callbacks.onLocalModelsPullRequested?.(result.localModelsPullModelId);
+    } else {
+      reportUnknownLocalModel(result.localModelsPullModelId, dispatch);
+    }
   }
-  if (
-    result.localModelsUseModelId &&
-    isKnownLocalModelId(result.localModelsUseModelId)
-  ) {
-    callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);
+  if (result.localModelsUseModelId) {
+    if (isKnownLocalModelId(result.localModelsUseModelId)) {
+      callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);
+    } else {
+      reportUnknownLocalModel(result.localModelsUseModelId, dispatch);
+    }
   }
   if (result.triggerLocalModelsStatus)
     void callbacks.onLocalModelsStatusRequested?.();
@@ -329,6 +302,84 @@ export function runSlashCommand(
     callbacks.onMouseSupportRequested?.(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
+  }
+}
+
+/**
+ * `/model pull <id>` and `/model use <id>` with an id outside the
+ * catalog used to open the LLM tab and do nothing else, which reads as
+ * a hang. Say why nothing is happening.
+ */
+function reportUnknownLocalModel(id: string, dispatch: Dispatch): void {
+  const text = `unknown local model "${id}" — the LLM tab lists the catalog ids`;
+  dispatch({ type: "runtime_info", line: text });
+  dispatch({ type: "system_message", text });
+}
+
+/**
+ * Slash actions whose only handler is an orchestrator on the event bus.
+ *
+ * Dispatch feeds the React reducer only; the bus the orchestrators
+ * listen on is bridged into the reducer one way
+ * (`bus.subscribe(dispatch)`), so a request like these, dispatched,
+ * is a reducer no-op that never reaches the code that does the work.
+ * Each one goes through the callback `tui-command` binds to the
+ * orchestrator method instead. Returns true when the action was
+ * routed (and must not be dispatched as well).
+ *
+ * `slash-bus-routing.test.ts` fails when a slash command starts
+ * emitting a bus-handled action that is not routed here.
+ */
+function routeOrchestratorAction(
+  action: TuiAction,
+  callbacks: TuiAppCallbacks,
+): boolean {
+  switch (action.type) {
+    case "providers_set_active_text":
+      // `/llm provider <id>`: the switch (registry swap, config write,
+      // feed line, route chip) is `ProvidersOrchestrator.setActiveText`.
+      callbacks.onProvidersSetActiveText?.(action.id);
+      return true;
+    case "providers_refresh_requested":
+      // Bare `/llm` and `/llm fallback`: the same refresh the tab
+      // entry runs, which also re-mirrors the fallback chain. Needed
+      // when the LLM tab is already active, where the tab-entry
+      // effect does not fire again.
+      callbacks.onProvidersTabRefresh?.();
+      return true;
+    case "providers_chat_model_picker_requested":
+      // `ProvidersOrchestrator.openChatModelPicker` owns the
+      // `/v1/models` fetch.
+      callbacks.onProvidersChatModelPickerRequested?.(action.providerId);
+      return true;
+    case "providers_contract_probe_requested":
+      // `/llm check`: `ProvidersOrchestrator.runContractProbe`.
+      callbacks.onProvidersContractProbeRequested?.(action.providerId);
+      return true;
+    case "providers_inline_models_ensure_requested":
+      // `/model`: the inline Cloud-pane catalog ensure,
+      // `ProvidersOrchestrator.ensureInlineModels`.
+      callbacks.onProvidersInlineModelsEnsureRequested?.(action.providerId);
+      return true;
+    case "local_models_daemon_restart_requested":
+      // `/llm restart`: `LocalModelsOrchestrator.restartDaemon`.
+      void callbacks.onLocalModelsDaemonRestartRequested?.();
+      return true;
+    case "memory_refresh_requested":
+      // `/memory`: reload the list on the requested channel now, not
+      // on the next tick of a loop that may still hold another one.
+      callbacks.onMemoryRefreshRequested?.({
+        channel: action.channel,
+        notesArchiveFilter: action.notesArchiveFilter,
+        searchQuery: action.searchQuery,
+      });
+      return true;
+    case "mcp_refresh_requested":
+      // `/mcp`: `McpOrchestrator.refresh`.
+      callbacks.onMcpRefreshRequested?.();
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -434,9 +485,6 @@ function runTelegramVerb(
       return;
     case "pair":
       void callbacks.onTelegramStartPairingRequested?.();
-      return;
-    case "token":
-      callbacks.onTelegramTokenPromptOpenRequested?.();
       return;
     case "clear-token":
       void callbacks.onTelegramClearTokenRequested?.();

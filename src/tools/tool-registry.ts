@@ -23,6 +23,14 @@ export interface ToolContext {
    * nothing named.
    */
   readRoots?: readonly string[];
+  /**
+   * The provider id this step's completions are pinned to
+   * (`StepDependencies.providerId` — a fusion worker runs on the local
+   * leg). Absent ⇒ the step runs on the active text provider. Read by
+   * tools that call a model themselves (`vision.describe`) so they talk
+   * to the provider serving the step, not the one active at boot.
+   */
+  providerId?: string;
 }
 
 export interface ToolDefinition {

@@ -42,7 +42,7 @@ function makeSendMessageHandler(
           );
         }
         return runtime.executeTurn(active.session, text, {
-          maxSteps: maxSteps ?? runtime.config.agent.maxSteps,
+          ...(typeof maxSteps === "number" ? { maxSteps } : {}),
           signal: controller.signal,
         });
       },
@@ -85,8 +85,9 @@ describe("sidecar send_message concurrency", () => {
     const llamaComplete = async (params: {
       sessionId: string;
     }): Promise<CompletionResult> => {
-      // Reflection completes immediately; only block on user turns.
-      if (params.sessionId.startsWith("reflection:")) {
+      // Side calls (reflection, session title, query rewriter) complete
+      // immediately; only block on and count user turns.
+      if (/^(reflection|title|rewriter):/.test(params.sessionId)) {
         return reply("ignored");
       }
       userCallCount += 1;

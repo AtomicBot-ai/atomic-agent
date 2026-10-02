@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { INSTALLER_PATH_MARKER } from "./strip-installer-path-line.js";
 import { runUninstall } from "./run-uninstall.js";
+import type { UserPathStore } from "./windows-user-path.js";
 import { measureUninstallPlan, formatBytes } from "./measure-uninstall-plan.js";
 
 let home: string;
@@ -110,6 +111,98 @@ describe("runUninstall", () => {
     });
     expect(result.rcFilesEdited).toEqual([]);
     expect(await readFile(rc, "utf8")).toBe(original);
+  });
+
+  function fakeUserPath(initial: string | null): UserPathStore & {
+    writes: string[];
+  } {
+    const writes: string[] = [];
+    return {
+      writes,
+      read: async () => initial,
+      write: async (value) => {
+        writes.push(value);
+      },
+    };
+  }
+
+  it("takes the install dir back off the windows user PATH", async () => {
+    const store = fakeUserPath(
+      "C:\\Tools;C:\\Users\\op\\AppData\\Local\\atomic-agent",
+    );
+    const result = await runUninstall({
+      targets: [],
+      homeDir: home,
+      platform: "win32",
+      installDir: "C:\\Users\\op\\AppData\\Local\\atomic-agent",
+      userPathStore: store,
+    });
+    expect(store.writes).toEqual(["C:\\Tools"]);
+    expect(result.userPathEntryRemoved).toBe(
+      "C:\\Users\\op\\AppData\\Local\\atomic-agent",
+    );
+    expect(result.complete).toBe(true);
+  });
+
+  it("leaves the windows user PATH alone under --keep-path", async () => {
+    const store = fakeUserPath("C:\\Tools;C:\\aa");
+    const result = await runUninstall({
+      targets: [],
+      homeDir: home,
+      platform: "win32",
+      installDir: "C:\\aa",
+      keepPathEntry: true,
+      userPathStore: store,
+    });
+    expect(store.writes).toEqual([]);
+    expect(result.userPathEntryRemoved).toBeUndefined();
+  });
+
+  it("does not write the user PATH when the install dir is not on it", async () => {
+    const store = fakeUserPath("C:\\Tools");
+    await runUninstall({
+      targets: [],
+      homeDir: home,
+      platform: "win32",
+      installDir: "C:\\aa",
+      userPathStore: store,
+    });
+    expect(store.writes).toEqual([]);
+  });
+
+  it("never touches the user PATH without an install dir or off windows", async () => {
+    const store = fakeUserPath("C:\\aa");
+    await runUninstall({
+      targets: [],
+      homeDir: home,
+      platform: "win32",
+      userPathStore: store,
+    });
+    await runUninstall({
+      targets: [],
+      homeDir: home,
+      platform: "darwin",
+      installDir: "C:\\aa",
+      userPathStore: store,
+    });
+    expect(store.writes).toEqual([]);
+  });
+
+  it("reports a user PATH it could not edit instead of claiming success", async () => {
+    const result = await runUninstall({
+      targets: [],
+      homeDir: home,
+      platform: "win32",
+      installDir: "C:\\aa",
+      userPathStore: {
+        read: async () => "C:\\aa",
+        write: async () => {
+          throw new Error("access denied");
+        },
+      },
+    });
+    expect(result.complete).toBe(false);
+    expect(result.removed[0]?.error).toBe("access denied");
   });
 
   it("narrates every removal through onProgress", async () => {

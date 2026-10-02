@@ -73,6 +73,8 @@ export interface GithubSkillClientOptions {
   maxTotalBytes?: number;
 }
 
+/** A tap read blocks a skills install; past this it is not coming. */
+const GITHUB_SKILL_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_API_BASE = "https://api.github.com";
 const DEFAULT_RAW_BASE = "https://raw.githubusercontent.com";
 const DEFAULT_MAX_FILES = 200;
@@ -248,7 +250,13 @@ export class GithubSkillClient implements SkillHubClient {
   ): Promise<Response> {
     let res: Response;
     try {
-      res = await this.fetchImpl(url, { headers });
+      res = await this.fetchImpl(url, {
+        headers,
+        // A tap read blocks a skills install; it had no clock of its
+        // own and inherited the transport's, which is no longer five
+        // minutes — see `installTransportDeadlines`.
+        signal: AbortSignal.timeout(GITHUB_SKILL_REQUEST_TIMEOUT_MS),
+      });
     } catch (err) {
       throw new GithubSkillError(
         `network error fetching ${url}: ${err instanceof Error ? err.message : String(err)}`,

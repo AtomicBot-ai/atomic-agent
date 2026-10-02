@@ -206,6 +206,15 @@ export function formatApprovalCategory(category: ApprovalCategory): string {
   return APPROVAL_CATEGORY_LABELS[category];
 }
 
+/**
+ * `"e-mail send is never granted for the session"` — the note an approval
+ * prompt shows for a category `isGrantableCategory` rejects, naming the
+ * category rather than assuming it is the trust config.
+ */
+export function formatNeverGrantedNote(category: ApprovalCategory): string {
+  return `${formatApprovalCategory(category)} is never granted for the session`;
+}
+
 /** Human names for the five levels, used across TUI and CLI surfaces. */
 export const APPROVAL_LEVEL_NAMES: Record<ApprovalLevel, string> = {
   1: "paranoid",

@@ -137,7 +137,7 @@ describe("ImportOrchestrator", () => {
       ],
     };
     const { actions, bus } = makeBus();
-    await new ImportOrchestrator(runtime, bus).runOnboarding(plan, true);
+    await new ImportOrchestrator(runtime, bus).runOnboarding(plan);
 
     const done = actions.find((a) => a.type === "onboarding_import_report");
     expect(done).toBeDefined();
@@ -315,15 +315,10 @@ describe("ImportOrchestrator refreshSessions", () => {
   });
 
   it("refreshes the rail after an executed onboarding import with sessions", async () => {
-    await orchestrator.runOnboarding(plan(tmp, "sessions"), true);
+    await orchestrator.runOnboarding(plan(tmp, "sessions"));
     expect(actions.some((a) => a.type === "onboarding_import_report")).toBe(
       true,
     );
     expect(refreshSessions).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not refresh after an onboarding preview", async () => {
-    await orchestrator.runOnboarding(plan(tmp, "sessions"), false);
-    expect(refreshSessions).not.toHaveBeenCalled();
   });
 });

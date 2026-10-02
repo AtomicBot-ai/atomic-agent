@@ -35,9 +35,12 @@ export interface DaemonRestartDeps {
  *   costs hybrid recall. `stopChatDaemonOnly` does not.
  * - It never restarts anything the TUI does not own: external mode and a
  *   live cloud route each get a line saying so and nothing else happens.
- * - It never fires by itself. An unattended relaunch of a 27B model in
- *   the middle of a turn is not a default; a provider outage is handled
- *   by the fallback chain, not by respawning a server.
+ * - This is the operator's restart. The unattended one — a daemon this
+ *   TUI owns that *died* — is `DaemonSupervisor`'s (`autoRestart`), which
+ *   shares the orchestrator's single-flight slot with this one and skips
+ *   the route check below, since a dead daemon also fails Fusion workers
+ *   and the fallback chain's local link. A provider that is merely slow
+ *   or down on the cloud side is still the fallback chain's business.
  *
  * Narration goes to the runtime feed (`runtime_info`). The local-models
  * panel's `errorLine` is wiped by every refresh — and `startDaemon` ends

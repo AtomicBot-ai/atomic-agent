@@ -65,7 +65,17 @@ export interface ProviderCapabilities {
     | "default_generation_settings.has_multimodal"
     | "absent"
     | "config-disabled"
-    | "auto-detect-disabled";
+    | "auto-detect-disabled"
+    // Cloud links: where the per-model answer came from
+    // (`model-vision.ts`). `assumed` = nothing describes the model, so it
+    // is offered until the service rejects an image; `rejected-images` =
+    // it did, and the model is text-only for the rest of the process.
+    | "config.userModels"
+    | "config.provider"
+    | "catalog"
+    | "catalog.live"
+    | "assumed"
+    | "rejected-images";
   toolTransport: ToolCallTransport;
   contextWindow: number;
   supportsParallelTools: boolean;
@@ -98,6 +108,11 @@ export interface LlmProvider {
   readonly name: string;
   readonly capabilities: ProviderCapabilities;
   /**
+   * The chat model this link serves right now, when the provider knows
+   * it — named in the refusal when that model cannot read images.
+   */
+  readonly chatModelId?: string | undefined;
+  /**
    * Native tool mapper. Absent for grammar-only llama-server providers
    * where GBNF enforces the wire shape instead.
    */
@@ -114,8 +129,28 @@ export interface LlmProvider {
 }
 
 export class VisionUnsupportedError extends Error {
-  constructor(provider: string) {
-    super(`vision is not supported by provider "${provider}"`);
+  constructor(provider: string, message?: string) {
+    super(message ?? `vision is not supported by provider "${provider}"`);
     this.name = "VisionUnsupportedError";
+  }
+}
+
+/**
+ * The service refused an image for a model nobody had described, and
+ * the model is now recorded as text-only (`model-vision-rejections.ts`).
+ * A `VisionUnsupportedError`, so every caller that already stops on
+ * "cannot see" stops on this too.
+ */
+export class ModelCannotSeeError extends VisionUnsupportedError {
+  constructor(
+    readonly providerId: string,
+    readonly modelId: string,
+    readonly serviceMessage: string,
+  ) {
+    super(
+      providerId,
+      `${modelId} on ${providerId} rejected the image (${serviceMessage})`,
+    );
+    this.name = "ModelCannotSeeError";
   }
 }

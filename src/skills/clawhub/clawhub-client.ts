@@ -82,6 +82,8 @@ export interface DownloadOptions {
   version?: string;
 }
 
+/** A catalogue read blocks a browse; past this it is not coming. */
+const CLAWHUB_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_API_BASE = "https://clawhub.ai";
 const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -238,7 +240,13 @@ export class ClawHubClient {
     const url = `${this.apiBase}${path}`;
     let res: Response;
     try {
-      res = await this.fetchImpl(url, { headers });
+      res = await this.fetchImpl(url, {
+        headers,
+        // A catalogue read blocks a skills browse; it had no clock of
+        // its own and inherited the transport's, which is no longer
+        // five minutes — see `installTransportDeadlines`.
+        signal: AbortSignal.timeout(CLAWHUB_REQUEST_TIMEOUT_MS),
+      });
     } catch (err) {
       throw new ClawHubError(
         `network error fetching ${url}: ${err instanceof Error ? err.message : String(err)}`,

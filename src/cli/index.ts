@@ -18,7 +18,9 @@ import { importCommand } from "./import-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { tuiCommand } from "../tui/index.js";
+import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { getAppVersion } from "../version.js";
+import { USER_CONFIG_DEFAULTS } from "../config/index.js";
 
 interface CommandDescriptor {
   name: string;
@@ -154,7 +156,8 @@ function printHelp(): void {
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
     "  ATOMIC_AGENT_LLAMA_API_KEY     Optional bearer token for the llama-server",
-    "  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default 8192, clamped 64..131072",
+    "  ATOMIC_AGENT_SERVE_NO_PARENT_EXIT  1 to keep `serve` running after its parent exits (same as --no-parent-exit)",
+    `  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default ${USER_CONFIG_DEFAULTS.localModels.completionMaxTokens}, clamped 64..131072`,
     "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
     "  ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH   Explicit path to a Chromium-family binary (overrides auto-detect)",
     "  ATOMIC_AGENT_BROWSER_HEADLESS          1 to run headless (default 0)",
@@ -180,6 +183,16 @@ function userArgsFromArgv(): string[] {
   }
   return argv.slice(2);
 }
+
+// Before any command can issue a request: undici applies a 300 s deadline
+// of its own beneath every AbortSignal this process arms, and a request
+// that hits it fails as a bare `fetch failed` naming nothing. Installed
+// here without a config — `getConfig()` writes a config file on first
+// use, which an install or `--help` must not do — so this is the floor
+// off the shipped defaults; `createAgentRuntime` widens it from the real
+// config when a command actually builds a runtime. See
+// `installTransportDeadlines`.
+installTransportDeadlines();
 
 async function main(): Promise<number> {
   const [command, ...rest] = userArgsFromArgv();

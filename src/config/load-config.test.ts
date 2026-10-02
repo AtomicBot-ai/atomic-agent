@@ -58,6 +58,32 @@ describe("loadConfig", () => {
     expect(config.agent.conversationMaxPairs).toBe(200);
     expect(written.agent.conversationMaxTokens).toBe(0);
     expect(written.agent.conversationMaxPairs).toBe(200);
+    // The session-sections cap ships on its sentinel, so a first run
+    // keeps the `tokenBudget * 0.15` share it always had.
+    expect(config.agent.sessionSectionsMaxTokens).toBe(0);
+    expect(written.agent.sessionSectionsMaxTokens).toBe(0);
+  });
+
+  /**
+   * File-only, exactly like `worldSnapshotMaxTokens` and
+   * `conversationMaxTokens`: the prompt-section caps are a config-file
+   * surface, and inventing an env override for one of the three would
+   * make the set inconsistent to reason about.
+   */
+  it("reads agent.sessionSectionsMaxTokens from the file only", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      agent: { ...USER_CONFIG_DEFAULTS.agent, sessionSectionsMaxTokens: 4096 },
+    });
+    resetConfigCache();
+    expect(loadConfig().agent.sessionSectionsMaxTokens).toBe(4096);
+    process.env.ATOMIC_AGENT_SESSION_SECTIONS_MAX_TOKENS = "99";
+    resetConfigCache();
+    try {
+      expect(loadConfig().agent.sessionSectionsMaxTokens).toBe(4096);
+    } finally {
+      delete process.env.ATOMIC_AGENT_SESSION_SECTIONS_MAX_TOKENS;
+    }
   });
 
   it("maps ATOMIC_AGENT_LLAMA_MAX_TOKENS to completionMaxTokens with bounds", () => {
@@ -214,6 +240,30 @@ describe("loadConfig", () => {
     });
   });
 
+  it("maps llm.openrouter from the file onto the runtime config (#548)", () => {
+    // The provider factory reads `config.llm.openrouter.preferCacheRoutes`
+    // and treats absence as `true`; dropping the block here made `false`
+    // in the file a no-op.
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        activeTextProvider: "openrouter",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
+        ],
+        openrouter: { preferCacheRoutes: false },
+      },
+    });
+    expect(loadConfig().llm?.openrouter).toEqual({ preferCacheRoutes: false });
+  });
+
   it("keeps non-user-facing knobs on environment variables", () => {
     process.env.ATOMIC_AGENT_LLAMA_API_KEY = "secret";
     process.env.ATOMIC_AGENT_BROWSER_CHANNEL = "msedge";
@@ -230,6 +280,24 @@ describe("loadConfig", () => {
       join(stateDir, "browser-profile"),
     );
     expect(config.paths.tracesDir).toBe(join(stateDir, "traces"));
+  });
+
+  it("surfaces sessions.retention, off, with the file's caps", () => {
+    expect(loadConfig().sessions.retention).toEqual({
+      enabled: false,
+      maxAgeDays: 90,
+      maxRows: null,
+    });
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      sessions: { retention: { enabled: true, maxAgeDays: null, maxRows: 250 } },
+    });
+    resetConfigCache();
+    expect(loadConfig().sessions.retention).toEqual({
+      enabled: true,
+      maxAgeDays: null,
+      maxRows: 250,
+    });
   });
 
   it("tracing.trace defaults expose the per-session NDJSON dir", () => {

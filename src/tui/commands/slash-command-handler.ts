@@ -83,7 +83,6 @@ export interface SlashDispatchResult {
     | "stop"
     | "restart"
     | "pair"
-    | "token"
     | "clear-token"
     | "clear-owner";
   /**
@@ -874,10 +873,10 @@ function dispatchSkillSub(rawArgs: string): SlashDispatchResult {
 /**
  * Sub-dispatcher for `/telegram [verb]`. Bare `/telegram` opens the
  * Telegram tab. Verbs (`enable | disable | start | stop | restart |
- * pair | token | clear-token | clear-owner`) are forwarded to the
- * orchestrator as side-effect flags. The token verb just opens the
- * masked prompt — slash commands never accept a token argument so the
- * value never lands in shell history.
+ * pair | clear-token | clear-owner`) are forwarded to the orchestrator
+ * as side-effect flags. The token itself is entered in the Integrations
+ * tab — slash commands never accept a token argument so the value never
+ * lands in shell history.
  */
 function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
   const argPart = rawArgs.trim();
@@ -907,7 +906,7 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
     default:
       return pureActions([], {
         systemMessage:
-          "usage: /telegram | /telegram enable | disable | start | stop | restart | pair | token | clear-token | clear-owner",
+          "usage: /telegram | /telegram enable | disable | start | stop | restart | pair | clear-token | clear-owner",
       });
   }
 }

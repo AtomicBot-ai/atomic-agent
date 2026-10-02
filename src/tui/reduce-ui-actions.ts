@@ -1,3 +1,7 @@
+import {
+  CONVERSATION_MAX_PAIRS_MAX,
+  CONVERSATION_MAX_PAIRS_MIN,
+} from "../config/config-schema.js";
 import { CODING_MODES, cycleCodingMode } from "./coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
@@ -117,7 +121,10 @@ export function reduceUiAction(
       // caller actually persisted makes them impossible to disagree.
       return {
         ...state,
-        contextPanelPairsDraft: Math.max(1, Math.min(100, action.pairs)),
+        contextPanelPairsDraft: Math.max(
+          CONVERSATION_MAX_PAIRS_MIN,
+          Math.min(CONVERSATION_MAX_PAIRS_MAX, action.pairs),
+        ),
       };
     }
     case "context_menu_opened":
@@ -185,7 +192,18 @@ export function reduceUiAction(
         slashPaletteCursor: 0,
       };
     case "queue_changed":
-      return { ...state, queuedMessages: [...action.queued] };
+      return {
+        ...state,
+        queuedMessages: [...action.queued],
+        // A steer the running turn would not take is parked instead
+        // (`queueAsSteer`, and the `undelivered` re-route), and the
+        // strip above the prompt is now the thing showing it. Drop our
+        // copy so one message is on screen once, in the place that
+        // describes what will actually happen to it.
+        pendingSteers: state.pendingSteers.filter(
+          (text) => !action.queued.includes(text),
+        ),
+      };
     case "plan_handoff_dismissed":
       // Mode untouched: dismissing a plan is declining this one, not
       // leaving the mode you are planning in.
@@ -239,6 +257,17 @@ export function reduceUiAction(
     case "message_steered":
       return {
         ...state,
+        // The one thing a steer used to leave behind was an empty
+        // editor: the bubble was not drawn until the loop folded the
+        // message in, which is a step boundary away — long enough,
+        // behind a slow tool call, to read as "my Enter did nothing"
+        // and to be typed again. Park it at the foot of the chat now
+        // and let `steer_applied` promote it to transcript later.
+        pendingSteers: [...state.pendingSteers, action.text],
+        // And put the log where that bubble is. Sending a message is a
+        // deliberate act; answering it with a screen still parked up in
+        // the scrollback hides the very thing that proves it was sent.
+        chatScrollOffset: 0,
         inputValue: "",
         inputHistoryCursor: null,
         // A steered submit is still a submit: the parked history draft
@@ -252,6 +281,7 @@ export function reduceUiAction(
       return {
         ...state,
         messages: [],
+        pendingSteers: [],
         reasoning: [],
         feed: [],
         streamingAssistantText: null,
@@ -300,8 +330,21 @@ export function reduceUiAction(
       return {
         ...state,
         recentSessions: action.sessions,
+        recentSessionsMorePages: action.morePages,
         sidebarCursor: Math.min(state.sidebarCursor, max),
         sidebarDrag: null,
+        // The picker is a view of this list, not a second list — the
+        // menu's "N recent" badge counts the rail's rows and advertises
+        // the picker with that number. An open picker follows it, cursor
+        // where the operator left it: the refresh that matters is the
+        // one their own ↓ asked for, and resetting to the top there
+        // would undo the walk that fetched the rows.
+        ...(state.sessionPickerOpen
+          ? {
+              sessionPickerList: action.sessions,
+              sessionPickerCursor: Math.min(state.sessionPickerCursor, max),
+            }
+          : {}),
       };
     }
     case "chat_focus_toggled":
@@ -438,6 +481,10 @@ export function reduceUiAction(
         sidebarDrag: null,
         sidebarTasksCursor: 0,
         queuedMessages: [],
+        // Both belong to the thread being left: its queue drains into
+        // its own turns, and a steer aimed at its running turn is not
+        // aimed at anything on this screen.
+        pendingSteers: [],
       };
     }
     default:

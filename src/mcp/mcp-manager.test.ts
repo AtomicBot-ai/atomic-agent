@@ -316,6 +316,29 @@ describe("McpManager", () => {
     expect(mgr.listStatuses()[0]!.state).toBe("disabled");
   });
 
+  it("restartServer reconnects a known server and reports unknown names", async () => {
+    const tools = new ToolRegistry();
+    const connectSpy = vi.fn(async () => {});
+    FAKE_BY_NAME.set("docs", {
+      connect: connectSpy,
+      close: async () => {},
+      catalog: {
+        server: "docs",
+        tools: [metaOf("docs", "search")],
+        resources: [],
+        prompts: [],
+      },
+    });
+    const mgr = new McpManager([stdioConfig("docs")], { toolRegistry: tools });
+    await mgr.start();
+    expect(await mgr.restartServer("docs")).toBe(true);
+    expect(connectSpy).toHaveBeenCalledTimes(2);
+    expect(tools.has("mcp.docs.search")).toBe(true);
+    expect(mgr.listStatuses()[0]!.state).toBe("up");
+    expect(await mgr.restartServer("nope")).toBe(false);
+    expect(await mgr.setServerEnabled("nope", true)).toBe(false);
+  });
+
   it("shutdown() closes all clients and clears the resolver", async () => {
     const tools = new ToolRegistry();
     const closeSpy = vi.fn(async () => {});

@@ -93,7 +93,7 @@ export interface UpdateInvocation {
  * install.ps1 no longer depends on those modules either, so the two fixes
  * are belt and braces.
  */
-function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
+export function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
   const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? env.systemroot;
   if (!systemRoot) return "powershell.exe";
   return pathWin32.join(

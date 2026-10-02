@@ -18,6 +18,7 @@ import {
   parseAddServerJson,
   persistMcpServer,
   removeMcpServer,
+  setMcpServerEnabled,
 } from "../persist-mcp-server.js";
 import { isMcpAction } from "./mcp-actions.js";
 import type { McpServerDetail, McpServerRow } from "./mcp-panel-state.js";
@@ -33,6 +34,8 @@ export class McpOrchestrator {
   private readonly refreshIntervalMs: number;
   /** `rowKey` (server name) of the currently-open detail view, if any. */
   private openDetailKey: string | null = null;
+  /** Server names with a restart / enable toggle in flight. */
+  private readonly busyServers = new Set<string>();
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -108,15 +111,14 @@ export class McpOrchestrator {
 
   /**
    * Append a new MCP server to `<stateDir>/config.json` from a
-   * JSON-paste payload. Variant α: the live `McpManager` is NOT
-   * mutated — the new server is picked up on the next runtime boot.
-   * The operator is reminded to restart via a `runtime_info` line.
+   * JSON-paste payload, then connect it live via
+   * `McpManager.addServerLive` + `runtime.refreshMcp()`.
    *
    * Validation errors (malformed JSON, schema rejection, duplicate
    * name) are folded into `mcp_add_validation_failed`; write errors
    * into `mcp_add_failed`. On success, `mcp_add_succeeded` fires and
-   * the modal closes; the panel refreshes so the new row shows up as
-   * `down` (state) until the next restart connects it.
+   * the modal closes; the panel refreshes so the new row shows up
+   * with its live state.
    */
   addServerFromJson(json: string): void {
     void this.addServerFromJsonAsync(json);
@@ -190,10 +192,9 @@ export class McpOrchestrator {
   }
 
   /**
-   * Remove an MCP server from `<stateDir>/config.json` by name. Variant
-   * α: the live `McpManager` is NOT mutated — the removed server stays
-   * connected until the next runtime boot. The operator is reminded to
-   * restart via a `runtime_info` line.
+   * Remove an MCP server from `<stateDir>/config.json` by name, then
+   * disconnect it live via `McpManager.removeServerLive` +
+   * `runtime.refreshMcp()`.
    *
    * Failures (missing entry, validation error on the rewritten file)
    * fold into `mcp_remove_failed` and the modal stays open so the
@@ -250,6 +251,66 @@ export class McpOrchestrator {
   }
 
   /**
+   * Stop + start one server live (`R` on the MCP tab). A server that is
+   * in config but unknown to the manager (e.g. added through
+   * `PATCH /api/config`) is connected via `addServerLive` instead.
+   * Config is not touched.
+   */
+  restartServer(name: string): void {
+    void this.runServerOp(name, async (cfg) => {
+      const mgr = this.runtime.mcpManager;
+      if (!(await mgr.restartServer(name))) await mgr.addServerLive(cfg);
+      return `restarted ${JSON.stringify(name)}`;
+    });
+  }
+
+  /**
+   * Flip one server's `enabled` flag (`e` on the MCP tab): persist it to
+   * `<stateDir>/config.json` the same way add/remove do, then connect
+   * or disconnect it live.
+   */
+  toggleServerEnabled(name: string): void {
+    void this.runServerOp(name, async (cfg) => {
+      const { server } = setMcpServerEnabled(name, !cfg.enabled);
+      const mgr = this.runtime.mcpManager;
+      if (!(await mgr.setServerEnabled(name, server.enabled))) {
+        await mgr.addServerLive(server);
+      }
+      return `${server.enabled ? "enabled" : "disabled"} ${JSON.stringify(name)}`;
+    });
+  }
+
+  private async runServerOp(
+    name: string,
+    op: (cfg: McpServerConfig) => Promise<string>,
+  ): Promise<void> {
+    if (this.busyServers.has(name)) return;
+    const cfg = readConfiguredServers().find((s) => s.name === name);
+    if (!cfg) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `mcp: ${JSON.stringify(name)} not found in config.json`,
+      });
+      return;
+    }
+    this.busyServers.add(name);
+    try {
+      const done = await op(cfg);
+      await this.runtime.refreshMcp();
+      this.bus.emit({ type: "runtime_info", line: `mcp: ${done}` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `mcp: ${JSON.stringify(name)} failed — ${msg}`,
+      });
+    } finally {
+      this.busyServers.delete(name);
+    }
+    this.refresh();
+  }
+
+  /**
    * Open the detail view for the server at the given row key (server
    * name). Emits `mcp_detail_opened` with a freshly-built payload.
    */
@@ -285,11 +346,11 @@ export class McpOrchestrator {
  * reflect adds/removes without a runtime restart.
  *
  * Live `McpManager` state (statuses, catalogs) is read from the
- * runtime directly — these *are* live (the manager is mutated, not
- * snapshotted), and a newly-added server simply shows as `down` until
- * the next restart connects it, while a removed server keeps its old
- * status/tools until the next restart drops the connection. Both are
- * accurate reflections of variant α semantics.
+ * runtime directly — the manager is mutated in place by live add /
+ * remove / restart / enable toggles, not snapshotted. A server that is
+ * in config but unknown to the manager (edited in through
+ * `PATCH /api/config`) shows as `down` / `disabled` until a restart
+ * (`R`) connects it.
  */
 function readConfiguredServers(): readonly McpServerConfig[] {
   return getConfig().mcp?.servers ?? [];

@@ -1240,6 +1240,60 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(result.reason).toBe("reply");
     expect(waits).toHaveLength(1);
+    expect(waits[0]).toMatchObject({ cause: { kind: "http", status: 503 } });
+  });
+
+  it("says a reply the provider ended with an error was that, not a 502", async () => {
+    // e2e regression: a 200 stream that streamed, then ended with
+    // `finish_reason: "error"`. The stream consumer types it with a
+    // status so the step parks; the wait must not report that status
+    // or the HTTP client's retry count as if the provider had answered it.
+    const registry = buildDefaultToolRegistry();
+    const waits: Array<Extract<AgentLoopEvent, { type: "provider_waiting" }>> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new OpenAiHttpError(
+            "openai provider 502: the provider ended the completion with an error",
+            502,
+            "https://api.fake.test/v1/chat/completions",
+            false,
+            null,
+            "fake",
+            undefined,
+            { streamError: "the provider ended the completion with an error" },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+      },
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-park-error-finish", workingDir }),
+      {
+        userMessage: "flaky provider",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("reply");
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.cause).toEqual({ kind: "error_finish" });
+    expect(waits[0]?.reason).not.toMatch(/\b502\b/);
+    expect(waits[0]?.reason).not.toContain("Tried");
   });
 
   it("does not wait out our own request deadline (issue #490)", async () => {
@@ -2701,6 +2755,104 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(text).toContain("hit the limit on different arguments");
     expect(text).toContain("12, counting the last call");
     expect(text).not.toMatch(/no-progress|blocked attempts|repeated/i);
+  });
+
+  // The other half of issue #458: the same fetch fan-out, but the turn is
+  // doing real work between the probes. Nothing may be vetoed, and the
+  // model gets to end the turn itself.
+  it("lets a probe fan-out run when the turn keeps making progress", async () => {
+    const registry = buildDefaultToolRegistry();
+    let fetchCount = 0;
+    registry.register({
+      name: "os.web.fetch",
+      description: "fetch",
+      readonly: true,
+      async run(args) {
+        fetchCount += 1;
+        const url = (args as { url?: string }).url ?? "";
+        return {
+          tool: "os.web.fetch",
+          status: "ok",
+          summary: `content of ${url}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let noteCount = 0;
+    registry.register({
+      name: "note",
+      description: "record a finding",
+      readonly: true,
+      async run(args) {
+        noteCount += 1;
+        const text = (args as { text?: string }).text ?? "";
+        return {
+          tool: "note",
+          status: "ok",
+          summary: `noted ${text}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const detected: Array<{ level?: string; detector?: string }> = [];
+    let step = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        step += 1;
+        // Twice the default escalation spread of 12 distinct URLs, each
+        // followed by a note that lands — the shape of the reported
+        // research turns.
+        if (step > 48) {
+          return makeCompletion(
+            JSON.stringify({ tool: "reply", args: { text: "done" } }),
+          );
+        }
+        return makeCompletion(
+          step % 2 === 1
+            ? JSON.stringify({
+                tool: "os.web.fetch",
+                args: { url: `https://example.com/file-${step}.ts` },
+              })
+            : JSON.stringify({
+                tool: "note",
+                args: { text: `finding ${step}` },
+              }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") {
+          detected.push({ level: event.level, detector: event.detector });
+        }
+      },
+    });
+    const session = createEmptySessionState({
+      id: "s-wandering-progress",
+      workingDir,
+    });
+    const result = await loop.runTurn(session, {
+      userMessage: "research these files",
+      maxSteps: 60,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(fetchCount).toBe(24);
+    expect(noteCount).toBe(24);
+    // Nothing was vetoed and nothing ended the turn: every signal raised
+    // along the way was an advisory the model could act on, and it ran to
+    // its own `reply`.
+    expect(detected.every((e) => e.level === "warn")).toBe(true);
+    expect(detected.some((e) => e.level === "breaker")).toBe(false);
+    expect(detected.some((e) => e.level === "critical")).toBe(false);
+    const last = result.session.turns.at(-1);
+    expect(last).toMatchObject({ kind: "assistant_reply", text: "done" });
   });
 
   it("refreshes memory context between non-terminal tool steps", async () => {

@@ -28,6 +28,10 @@ import {
   SESSION_LLM_METADATA_KEY,
 } from "../session/session-llm.js";
 import {
+  readSessionTitle,
+  SESSION_TITLE_TIMEOUT_MS,
+} from "../session/session-title.js";
+import {
   buildSearchCacheKey,
   createPersistentSearchCache,
 } from "../tools/os/web-search/transport/index.js";
@@ -1015,6 +1019,358 @@ describe("createAgentRuntime", () => {
       await runtime.shutdown();
       delete process.env.ATOMIC_AGENT_TASKS_ENABLED;
       resetConfigCache();
+    }
+  });
+
+  // -----------------------------------------------------------------
+  // Session naming across teardown. Naming is fired as a bare `void`
+  // at the end of a turn and reads-modifies-writes the session store
+  // only once its completion comes back, up to 20 s later. A quit in
+  // that window closed the store under the continuation and
+  // better-sqlite3's `TypeError` left the process as an
+  // unhandledRejection — the same race the reflection decorators are
+  // pinned against in `memory/reflection-decorator-fire-safety.test.ts`.
+  // -----------------------------------------------------------------
+
+  /** A completer that answers agent turns, naming calls and sub-calls. */
+  function namingCompleter(
+    onTitleCall?: (signal: AbortSignal | undefined) => Promise<void>,
+  ): (params: {
+    sessionId: string;
+    signal?: AbortSignal;
+  }) => Promise<CompletionResult> {
+    return async (params) => {
+      if (params.sessionId.startsWith("title:")) {
+        await onTitleCall?.(params.signal);
+        return completion("Fix the abort chord");
+      }
+      // Reflection and the other sub-call partitions share this
+      // completer; keep them out of the agent-reply shape.
+      if (/^(reflection|rewriter|link|vote|distill):/.test(params.sessionId)) {
+        return completion("NONE\n");
+      }
+      return completion(
+        JSON.stringify({ tool: "reply", args: { text: "hi back" } }),
+      );
+    };
+  }
+
+  /**
+   * Collect unhandled rejections raised while `body` runs — the shape
+   * `agent/agent-loop-reflection-fire-safety.test.ts` uses for the same
+   * question.
+   */
+  async function withUnhandledRejectionWatch(
+    body: () => Promise<void>,
+  ): Promise<unknown[]> {
+    const seen: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      seen.push(reason);
+    };
+    // Vitest installs its own handler; prepend so ours observes first
+    // and keep the runner's in place.
+    process.prependListener("unhandledRejection", onRejection);
+    try {
+      await body();
+      // An unhandled rejection is reported after the microtask queue
+      // drains — give the `void`-ed naming promise two macrotask ticks,
+      // rather than betting on a wall-clock wait under load.
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    } finally {
+      process.removeListener("unhandledRejection", onRejection);
+    }
+    return seen;
+  }
+
+  /** Every `warn` the naming catch emits. */
+  function namingWarnings(logs: LogRecord[]): LogRecord[] {
+    return logs.filter(
+      (record) =>
+        record.level === "warn" &&
+        record.message === "session naming failed to store the title",
+    );
+  }
+
+  it("names a session from its first prompt after an answered turn", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(),
+      },
+    });
+    try {
+      const session = runtime.createSession();
+      await runtime.runTurn(session, "починить отмену турна", { maxSteps: 3 });
+      // Fire-and-forget: the name lands after the turn has returned.
+      await waitFor(
+        () =>
+          readSessionTitle(runtime.sessionStore.load(session.id)?.metadata) !==
+          null,
+      );
+      expect(
+        readSessionTitle(runtime.sessionStore.load(session.id)?.metadata),
+      ).toBe("Fix the abort chord");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("premise: a session-store read after shutdown throws a TypeError", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+      },
+    });
+    const session = runtime.createSession();
+    runtime.sessionStore.save(session);
+    expect(runtime.sessionStore.load(session.id)).not.toBeNull();
+    await runtime.shutdown();
+    let thrown: unknown;
+    try {
+      runtime.sessionStore.load(session.id);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect((thrown as Error).message).toContain(
+      "database connection is not open",
+    );
+  });
+
+  it("shutdown cuts an in-flight naming call before any store is closed", async () => {
+    let releaseTitle: (() => void) | undefined;
+    let titleSignal: AbortSignal | undefined;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(async (signal) => {
+          titleSignal = signal;
+          await new Promise<void>((resolve) => {
+            releaseTitle = resolve;
+          });
+        }),
+      },
+    });
+    const session = runtime.createSession();
+    await runtime.runTurn(session, "починить отмену турна", { maxSteps: 3 });
+    await waitFor(() => releaseTitle !== undefined);
+
+    // Ordering, not just the end state: "aborted by the time shutdown
+    // returned" would also hold if the abort ran after the handle the
+    // continuation reads through had already gone away.
+    let abortedWhenStoreClosed: boolean | undefined;
+    const closeStore = runtime.sessionStore.close.bind(runtime.sessionStore);
+    vi.spyOn(runtime.sessionStore, "close").mockImplementation(() => {
+      abortedWhenStoreClosed ??= titleSignal?.aborted;
+      closeStore();
+    });
+    const loads = vi.spyOn(runtime.sessionStore, "load");
+    const rejections = await withUnhandledRejectionWatch(async () => {
+      await runtime.shutdown();
+      // Teardown owns the call: the completion does not outlive the
+      // runtime that asked for it.
+      expect(titleSignal?.aborted).toBe(true);
+      expect(abortedWhenStoreClosed).toBe(true);
+      // The provider answers one tick too late — the live crash.
+      releaseTitle?.();
+    });
+    expect(loads).not.toHaveBeenCalled();
+    expect(rejections).toEqual([]);
+  });
+
+  it("shutdown cuts every pending naming call, not just the first", async () => {
+    // Two sessions naming at once is ordinary: TUI tabs, a Telegram and
+    // a Discord chat, a swarm fan-out.
+    const titleSignals: Array<AbortSignal | undefined> = [];
+    const releases: Array<() => void> = [];
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(async (signal) => {
+          titleSignals.push(signal);
+          await new Promise<void>((resolve) => {
+            releases.push(resolve);
+          });
+        }),
+      },
+    });
+    const first = runtime.createSession();
+    const second = runtime.createSession();
+    await runtime.runTurn(first, "первый вопрос", { maxSteps: 3 });
+    await runtime.runTurn(second, "второй вопрос", { maxSteps: 3 });
+    await waitFor(() => releases.length === 2);
+
+    const loads = vi.spyOn(runtime.sessionStore, "load");
+    const rejections = await withUnhandledRejectionWatch(async () => {
+      await runtime.shutdown();
+      expect(titleSignals.map((signal) => signal?.aborted)).toEqual([
+        true,
+        true,
+      ]);
+      for (const release of releases) release();
+    });
+    expect(loads).not.toHaveBeenCalled();
+    expect(rejections).toEqual([]);
+  });
+
+  it("a turn that finishes while teardown is under way never starts naming", async () => {
+    // `shutdown` aborts and clears the pending set and only then awaits
+    // channel / MCP / browser teardown, with the stores still open. A
+    // turn completing inside that window used to register a fresh
+    // controller into a set nothing visits again — un-abortable, and its
+    // store write landed on a closed handle a moment later.
+    const logs: LogRecord[] = [];
+    let backendEntered = false;
+    let releaseBackend: (() => void) | undefined;
+    const backendGate = new Promise<void>((resolve) => {
+      releaseBackend = resolve;
+    });
+    class BlockingBackend extends FakeBackend {
+      override async shutdown(): Promise<void> {
+        backendEntered = true;
+        await backendGate;
+        await super.shutdown();
+      }
+    }
+    const titleGates: Array<() => void> = [];
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      handlers: { logSinks: [(record) => logs.push(record)] },
+      overrides: {
+        browserBackend: new BlockingBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(async () => {
+          await new Promise<void>((resolve) => {
+            titleGates.push(resolve);
+          });
+        }),
+      },
+    });
+
+    const quit = runtime.shutdown();
+    await waitFor(() => backendEntered);
+    const session = runtime.createSession();
+    await runtime.runTurn(session, "ещё один турн на выходе", { maxSteps: 3 });
+    releaseBackend?.();
+    await quit;
+
+    const loads = vi.spyOn(runtime.sessionStore, "load");
+    const rejections = await withUnhandledRejectionWatch(async () => {
+      // Whatever did start has nothing aborting it: let it answer, so a
+      // write into the now-closed store happens before the assertions.
+      for (const release of titleGates) release();
+    });
+    expect(titleGates).toHaveLength(0);
+    expect(loads).not.toHaveBeenCalled();
+    expect(rejections).toEqual([]);
+    // Every quit-in-window would otherwise leave a line, which is the
+    // noise the abort was added to avoid.
+    expect(namingWarnings(logs)).toEqual([]);
+  });
+
+  it("a title that lands after its own deadline is still stored", async () => {
+    // The deadline is not a veto: it is there to stop a hung call
+    // holding a side-call slot, so a provider that ignores the abort and
+    // answers late still names the session — as it did before naming was
+    // wired into teardown. Shortened rather than waited out; 20 s of
+    // wall clock is the only other way into this branch.
+    const realSetTimeout = globalThis.setTimeout;
+    const shortDeadline = vi.spyOn(globalThis, "setTimeout");
+    shortDeadline.mockImplementation(((
+      fn: (...args: unknown[]) => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) =>
+      realSetTimeout(
+        fn,
+        ms === SESSION_TITLE_TIMEOUT_MS ? 10 : ms,
+        ...rest,
+      )) as unknown as typeof globalThis.setTimeout);
+    try {
+      const logs: LogRecord[] = [];
+      let titleAnswered = false;
+      const runtime = await createAgentRuntime({
+        workingDir,
+        approvalLevel: 5,
+        handlers: { logSinks: [(record) => logs.push(record)] },
+        overrides: {
+          browserBackend: new FakeBackend(),
+          skipLlamaHealthCheck: true,
+          llamaComplete: namingCompleter(async (signal) => {
+            await waitFor(() => signal?.aborted === true);
+            titleAnswered = true;
+          }),
+        },
+      });
+      try {
+        const session = runtime.createSession();
+        await runtime.runTurn(session, "поздний заголовок", { maxSteps: 3 });
+        // The deadline has fired and the call answered anyway; the
+        // read-modify-write it feeds is synchronous from here.
+        await waitFor(() => titleAnswered);
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(
+          readSessionTitle(runtime.sessionStore.load(session.id)?.metadata),
+        ).toBe("Fix the abort chord");
+        expect(namingWarnings(logs)).toEqual([]);
+      } finally {
+        await runtime.shutdown();
+      }
+    } finally {
+      shortDeadline.mockRestore();
+    }
+  });
+
+  it("a naming call that does reach a dead store logs instead of rejecting", async () => {
+    const logs: LogRecord[] = [];
+    let releaseTitle: (() => void) | undefined;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      handlers: { logSinks: [(record) => logs.push(record)] },
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: namingCompleter(async () => {
+          await new Promise<void>((resolve) => {
+            releaseTitle = resolve;
+          });
+        }),
+      },
+    });
+    const session = runtime.createSession();
+    await runtime.runTurn(session, "починить отмену турна", { maxSteps: 3 });
+    await waitFor(() => releaseTitle !== undefined);
+
+    try {
+      const rejections = await withUnhandledRejectionWatch(async () => {
+        // Not the teardown path: the handle dies under the call with
+        // nothing aborting it, which is what any other store failure
+        // looks like from in here. The write must still not crash the
+        // process — and must still leave a line, or a real naming bug is
+        // invisible.
+        runtime.sessionStore.close();
+        releaseTitle?.();
+      });
+      expect(rejections).toEqual([]);
+      expect(namingWarnings(logs)).toHaveLength(1);
+    } finally {
+      await runtime.shutdown();
     }
   });
 

@@ -7,7 +7,7 @@ see `npm run bundle:sea`) with `mainFormat: "module"` in
 `sea-config.json`. The separate **Tauri sidecar** entry is still
 `atomic-agent-sidecar` when installed from npm; it is not the SEA
 release described here. llama-server is **not** bundled — connect over
-HTTP (`ATOMIC_AGENT_LLAMA_URL`) or use `atomic-agent models` for managed
+HTTP (`localModels.url` in `config.json`) or use `atomic-agent models` for managed
 local runtimes. Neither Chrome/Edge nor Playwright browser binaries are
 bundled; `playwright-core` attaches to the already-installed system
 browser.
@@ -219,7 +219,8 @@ which are standard OS utilities and need no bundling.
 ## Runtime requirements (documented in README.txt)
 
 - **External llama-server (or managed mode).** Set
-  `ATOMIC_AGENT_LLAMA_URL=http://host:port` as needed.
+  `localModels.url` (`atomic-agent config set localModels.url http://host:port`)
+  as needed.
 - **Google Chrome or Microsoft Edge installed** on the host. We use the
   system browser via `playwright-core` (`channel: chrome|msedge`).
 - **macOS:** Accessibility + Screen Recording permissions must be granted

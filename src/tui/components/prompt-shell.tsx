@@ -11,7 +11,7 @@ import {
   MultiLineEditor,
   type MultiLineEditorProps,
 } from "./multi-line-editor.js";
-import { PromptMetaBar } from "./prompt-meta-bar.js";
+import { PromptMetaBar, type PromptMetaBarProps } from "./prompt-meta-bar.js";
 
 /**
  * The composer: a framed input field with Send in it and a toolbar under
@@ -91,11 +91,15 @@ export interface PromptShellProps extends Omit<
    * present.
    */
   leftSlot?: ReactElement | null;
-  /** Optional content rendered at the toolbar's right end. */
-  rightSlot?: ReactElement | null;
   /** Optional context readout, rendered at the action bar's right end. */
   contextSlot?: ReactElement | null;
   modeSlot?: ReactElement | null;
+  /**
+   * The meta bar's measured widths — see `PromptMetaBarProps.fit`. Only
+   * `TuiApp` knows them, and only it passes them; every other caller
+   * gets the bar's pre-measurement shape.
+   */
+  fit?: PromptMetaBarProps["fit"];
   /**
    * A turn is in flight. Puts the stop chip into the field, next to
    * Send — the one moment the composer has a destructive verb to offer.
@@ -119,9 +123,9 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     provider,
     needsModelDownload,
     leftSlot,
-    rightSlot,
     contextSlot,
     modeSlot,
+    fit,
     running,
     onStop,
     focus,
@@ -262,9 +266,9 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           provider={provider ?? null}
           needsModelDownload={needsModelDownload ?? false}
           fusion={fusion}
-          rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
           modeSlot={modeSlot ?? null}
+          fit={fit}
           // Same raised layer as the overlay backstop behind the bar —
           // see `composer-overlay.tsx`.
           mouseLayer={mouseLayer}

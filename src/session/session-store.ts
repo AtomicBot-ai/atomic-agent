@@ -7,6 +7,14 @@ import { stripEphemeral, type SessionState } from "./session-state.js";
 import { normalizeSessionState } from "./normalize-session-state.js";
 import type { SessionSummary } from "./session-summary.js";
 import {
+  summaryPageParams,
+  SUMMARY_FIRST_PAGE_SQL,
+  SUMMARY_NEXT_PAGE_SQL,
+  toSummary,
+  type SessionSummaryPageOptions,
+  type SummaryRow,
+} from "./session-summary-page.js";
+import {
   SESSION_TITLE_METADATA_KEY,
   readSessionTitle,
 } from "./session-title.js";
@@ -22,77 +30,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_working_dir ON sessions(working_dir);
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_id ON sessions(updated_at DESC, id DESC);
 `;
 
-/**
- * One row per readable session, newest first, with the fields a list
- * renders lifted out of the JSON in SQL — no LIMIT, because the rail
- * windows its own rows, and no JSON.parse, because one malformed payload
- * must not take every other row down with it. The `WHERE` keeps the
- * `json_each` subquery off payloads it cannot walk, and the subquery's
- * `t.type = 'object'` keeps `json_extract` off array elements that are
- * not JSON objects — a bare string element is not JSON text and would
- * raise "malformed JSON". `AND` short-circuits, so the guard holds.
- */
-const LIST_SUMMARIES_SQL = `
-SELECT id,
-       working_dir AS workingDir,
-       status,
-       created_at AS createdAt,
-       updated_at AS updatedAt,
-       json_extract(payload, '$.turnCount') AS turnCount,
-       json_extract(payload, '$.stepCount') AS stepCount,
-       (SELECT json_extract(t.value, '$.text')
-          FROM json_each(payload, '$.turns') AS t
-         WHERE t.type = 'object'
-           AND json_extract(t.value, '$.kind') = 'user'
-         LIMIT 1) AS firstPrompt,
-       json_extract(payload, '$.metadata.title') AS title,
-       json_extract(payload, '$.metadata.importedFrom') AS importedFrom
-  FROM sessions
- WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
- ORDER BY updated_at DESC`;
-
 const COUNT_UNREADABLE_SQL = `SELECT COUNT(*) AS n FROM sessions WHERE NOT json_valid(payload)`;
-
-interface SummaryRow {
-  id: string;
-  workingDir: string;
-  status: string;
-  createdAt: number;
-  updatedAt: number;
-  turnCount: unknown;
-  stepCount: unknown;
-  firstPrompt: unknown;
-  title: unknown;
-  importedFrom: unknown;
-}
-
-function toSummary(row: SummaryRow): SessionSummary {
-  return {
-    id: row.id,
-    workingDir: row.workingDir,
-    status: row.status,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    turnCount: toCount(row.turnCount),
-    stepCount: toCount(row.stepCount),
-    firstPrompt: toText(row.firstPrompt),
-    title: toText(row.title),
-    importedFrom: toText(row.importedFrom),
-  };
-}
-
-/** `json_extract` hands back whatever the JSON held; a count is a number or 0. */
-function toCount(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/** `NULL` stays null; a non-string JSON value is still shown, as text. */
-function toText(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  return typeof value === "string" ? value : String(value);
-}
 
 export interface SessionStoreOptions {
   dbFile?: string;
@@ -118,7 +59,8 @@ export class SessionStore {
   private readonly listByWorkingDirStmt: Database.Statement;
   private readonly listRecentStmt: Database.Statement;
   private readonly listRecentDirsStmt: Database.Statement;
-  private readonly listSummariesStmt: Database.Statement;
+  private readonly summaryFirstPageStmt: Database.Statement;
+  private readonly summaryNextPageStmt: Database.Statement;
   private readonly countUnreadableStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
   /**
@@ -169,7 +111,12 @@ export class SessionStore {
       `SELECT working_dir AS workingDir, updated_at AS updatedAt
        FROM sessions ORDER BY updated_at DESC LIMIT ?`,
     );
-    this.listSummariesStmt = this.db.prepare(LIST_SUMMARIES_SQL);
+    // Two statements, one SQL text: the cursor has to be absent from
+    // the first page's `WHERE` for SQLite to plan a plain index walk,
+    // and present in the rest for it to plan a range seek. A single
+    // statement with a nullable cursor gets neither.
+    this.summaryFirstPageStmt = this.db.prepare(SUMMARY_FIRST_PAGE_SQL);
+    this.summaryNextPageStmt = this.db.prepare(SUMMARY_NEXT_PAGE_SQL);
     this.countUnreadableStmt = this.db.prepare(COUNT_UNREADABLE_SQL);
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
   }
@@ -261,13 +208,29 @@ export class SessionStore {
   }
 
   /**
-   * Every readable session as a list row, newest first, projected in
-   * SQL (see `LIST_SUMMARIES_SQL`). Rows whose payload is not valid JSON
-   * or whose `turns` is not an array are left out; `countUnreadable`
-   * says how many of the former there are.
+   * One page of list rows, newest first, projected in SQL (see
+   * `session-summary-page.ts`). `after` resumes from the cursor a
+   * previous page ended on — `sessionSummaryCursorAfter(page)` builds
+   * it — so walking the table costs the same per page however deep the
+   * walk goes.
+   *
+   * There is deliberately no whole-table reader. This query used to run
+   * without a LIMIT on the theory that the rail windows its own rows,
+   * and it does — but better-sqlite3 is synchronous, so the read froze
+   * the Ink thread for as long as it took: 30 ms at 1 100 stored rows,
+   * 170 ms at 6 600, 540 ms at 22 000, on every boot, every switch and
+   * the end of every turn. A caller that wants more than one page asks
+   * for the next one.
+   *
+   * Rows whose payload is not valid JSON or whose `turns` is not an
+   * array are left out, as are rows nobody has spoken to;
+   * `countUnreadable` says how many of the first kind there are.
    */
-  listSummaries(): SessionSummary[] {
-    const rows = this.listSummariesStmt.all() as SummaryRow[];
+  listSummaryPage(options: SessionSummaryPageOptions): SessionSummary[] {
+    const stmt = options.after
+      ? this.summaryNextPageStmt
+      : this.summaryFirstPageStmt;
+    const rows = stmt.all(summaryPageParams(options)) as SummaryRow[];
     return rows.map(toSummary);
   }
 
@@ -295,6 +258,19 @@ export class SessionStore {
 
   delete(id: string): void {
     this.deleteStmt.run(id);
+  }
+
+  /**
+   * The live `better-sqlite3` handle, for the startup retention pass
+   * (`pruneSessions`). The same connection on purpose: a second one
+   * would sit behind this one's WAL write lock for the whole prune,
+   * which is exactly the boot-time stall the batching exists to avoid.
+   *
+   * Do not stash the handle outside the runtime — its lifetime belongs
+   * to this store and it dies with `close()`.
+   */
+  getDatabaseHandleForRetention(): Database.Database {
+    return this.db;
   }
 
   close(): void {

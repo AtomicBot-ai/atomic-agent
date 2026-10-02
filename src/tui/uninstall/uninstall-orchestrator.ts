@@ -1,5 +1,6 @@
 import {
   formatBytes,
+  pathEntryToRemove,
   resolveUninstallPlan,
   runUninstall,
   type ResolvedUninstallPlan,
@@ -85,10 +86,16 @@ export async function performUninstall(
   }
   const result = await runUninstall({
     targets: plan.targets,
+    installDir: pathEntryToRemove(plan),
     onProgress: (line) => write(`  ${line}\n`),
   });
   for (const rc of result.rcFilesEdited) {
     write(`  edited ${rc} — open a new shell for PATH to catch up\n`);
+  }
+  if (result.userPathEntryRemoved) {
+    write(
+      `  removed ${result.userPathEntryRemoved} from your user PATH — open a new terminal for it to catch up\n`,
+    );
   }
   const failures = result.removed.filter((entry) => !entry.ok);
   if (failures.length > 0) {

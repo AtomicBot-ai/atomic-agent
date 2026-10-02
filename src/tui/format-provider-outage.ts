@@ -1,3 +1,4 @@
+import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import type { TuiState } from "./tui-state.js";
 
 /** Longest reason fragment carried into the one-row meta bar. */
@@ -23,6 +24,66 @@ const HUMANISED_REASONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^other side closed\b/i, "connection dropped mid-reply"],
   [/^fetch failed\b/i, "no connection"],
 ];
+
+/**
+ * The phrase for each failure the runtime can tell apart. Every one
+ * states only what the error held: a status appears only when a
+ * response carried one, and no attempt count appears at all — the HTTP
+ * client's retries are not the loop's, and a failure inside a stream
+ * was never retried below the loop.
+ */
+function describeCause(cause: ProviderWaitCause): string | null {
+  switch (cause.kind) {
+    case "refused":
+      return "connection refused";
+    case "dropped":
+      return "connection dropped mid-reply";
+    case "unreachable":
+      return "no connection";
+    case "timeout":
+      return "the request timed out";
+    case "loading":
+      return "the server is still loading the model";
+    case "http":
+      return `HTTP ${cause.status}`;
+    case "stream_error":
+      return cause.status === null
+        ? "the provider reported an error mid-reply"
+        : `the provider reported an error mid-reply (${cause.status})`;
+    case "error_finish":
+      return "the provider ended its reply with an error";
+    case "unknown":
+      return null;
+  }
+}
+
+/**
+ * The same phrases, recognised in a reason that arrived as text only
+ * (an event from a runtime that sent no cause). Deliberately short: a
+ * reason that matches none of these gets a neutral sentence in the
+ * chat, never a guess — a humanised line such as "server trouble
+ * (502). Tried 3 times" cannot be told apart from what it was wrongly
+ * built from.
+ */
+const REASON_TEXT_CAUSES: ReadonlyArray<readonly [RegExp, ProviderWaitCause]> =
+  [
+    [/^(?:terminated|socket hang up|other side closed)\b/i, { kind: "dropped" }],
+    [/^fetch failed\b/i, { kind: "unreachable" }],
+    [/\bECONNREFUSED\b/, { kind: "refused" }],
+    [
+      /\bended (?:the|its) (?:completion|reply) with an error\b/i,
+      { kind: "error_finish" },
+    ],
+    [/\bloading model\b/i, { kind: "loading" }],
+  ];
+
+function causeFromReasonText(raw: string): ProviderWaitCause {
+  const flat = raw.trim().replace(/\s+/g, " ");
+  for (const [pattern, cause] of REASON_TEXT_CAUSES) {
+    if (pattern.test(flat)) return cause;
+  }
+  return { kind: "unknown" };
+}
 
 /**
  * The readout split where it is allowed to give up columns.
@@ -86,7 +147,7 @@ export function formatProviderOutageParts(
   if (outage.givenUp) {
     return {
       head: "provider unreachable",
-      tail: ` — ${describeReason(outage.reason)}`,
+      tail: ` — ${describeReason(outage.reason, outage.cause)}`,
     };
   }
   const inPhaseMs = Math.max(0, now - outage.sinceTs);
@@ -101,7 +162,7 @@ export function formatProviderOutageParts(
   const waited = Math.min(outage.waitedMs + inPhaseMs, outage.maxWaitMs);
   return {
     head: `waiting for provider ${seconds(waited)}s/${seconds(outage.maxWaitMs)}s`,
-    tail: ` — ${describeReason(outage.reason)}`,
+    tail: ` — ${describeReason(outage.reason, outage.cause)}`,
   };
 }
 
@@ -109,7 +170,9 @@ function seconds(ms: number): number {
   return Math.round(ms / 1000);
 }
 
-function describeReason(raw: string): string {
+function describeReason(raw: string, cause?: ProviderWaitCause): string {
+  const phrase = cause === undefined ? null : describeCause(cause);
+  if (phrase !== null) return phrase;
   const flat = raw.trim().replace(/\s+/g, " ");
   for (const [pattern, text] of HUMANISED_REASONS) {
     if (pattern.test(flat)) return text;
@@ -120,4 +183,62 @@ function describeReason(raw: string): string {
 function shortenReason(flat: string): string {
   if (flat.length <= REASON_MAX_LEN) return flat;
   return `${flat.slice(0, REASON_MAX_LEN - 1)}…`;
+}
+
+/**
+ * The chat notice for a turn that has just parked on its provider.
+ *
+ * The meta-row readout carries the live counter, but it is one row
+ * among several and says nothing about what happens next; from the
+ * chat, a parked turn read as an agent that stopped talking. Posted
+ * once per outage (the loop's attempt 1), never per retry.
+ *
+ * `localRoute` adds the one thing the operator can do that the loop
+ * cannot: a local server that is down and not coming back by itself is
+ * restarted with `/llm restart`.
+ */
+export function formatProviderWaitNotice(
+  reason: string,
+  maxWaitMs: number,
+  localRoute: boolean,
+  cause?: ProviderWaitCause,
+): string {
+  const phrase = describeCause(
+    cause !== undefined && cause.kind !== "unknown"
+      ? cause
+      : causeFromReasonText(reason),
+  );
+  const lead =
+    phrase === null
+      ? "The model is not answering."
+      : `The model is not answering (${phrase}).`;
+  const lines = [
+    `${lead} The turn is paused and retries by itself for up to ${formatBudget(maxWaitMs)} — Esc stops it.`,
+  ];
+  if (localRoute) {
+    lines.push(
+      "If the local model server is down and does not come back by itself, /llm restart restarts it.",
+    );
+  }
+  return lines.join("\n");
+}
+
+/** The parked turn's step came back: one line closing the wait notice. */
+export function formatProviderResumedNotice(waitedMs: number): string {
+  return `The model is answering again after ${formatBudget(waitedMs)} — the turn continues.`;
+}
+
+/**
+ * Put in front of the failure a turn ends with when it died parked:
+ * the chat said it was waiting, so it has to say the wait is over.
+ */
+export function formatProviderGaveUpLine(maxWaitMs: number): string {
+  return `Stopped waiting for the model (wait budget ${formatBudget(maxWaitMs)}, agent.providerWait.maxWaitMs).`;
+}
+
+function formatBudget(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 120) return `${s} s`;
+  const min = Math.round(s / 60);
+  return `${min} min`;
 }

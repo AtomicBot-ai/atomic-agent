@@ -6,7 +6,9 @@ import { join } from "node:path";
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-loop.js";
 import {
   WORKER_HINT_CONTEXT,
+  WORKER_HINT_QUEUED,
   WORKER_HINT_SATURATED,
+  WORKER_HINT_UNSERVED,
 } from "./worker-result.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import type { SessionState } from "../../session/session-state.js";
@@ -832,6 +834,99 @@ describe("runWorkerTasks", () => {
       error: lastError,
       hint: WORKER_HINT_SATURATED,
     });
+  });
+});
+
+/**
+ * The field row, twice in a row: `failed — (0 steps, 306s, 0 tool calls,
+ * 0 errors) — error: fetch failed`, and nothing else. The queue watchdog
+ * owns this diagnosis but never sees this worker: the transport killed
+ * the request before the watchdog's budget was up.
+ */
+describe("a first request that died on the transport", () => {
+  it("sends a worker that was alone on the leg to the daemon, keeping the transport's own word", async () => {
+    const { deps } = harness(async () => {
+      throw new Error("fetch failed");
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      stepCount: 0,
+      queueWaitMs: null,
+      // The evidence stays: the hint is added beside the cause, not
+      // instead of it.
+      error: "fetch failed",
+      hint: WORKER_HINT_UNSERVED,
+    });
+  });
+
+  it("blames the fan-out's width only when there was something to queue behind", async () => {
+    const { deps } = harness(async () => {
+      throw new Error("fetch failed");
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 2,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      error: "fetch failed",
+      hint: WORKER_HINT_QUEUED,
+    });
+  });
+
+  it("leaves a worker that was served and only then lost its socket alone", async () => {
+    const { deps } = harness(async ({ options }) => {
+      options.eventHook?.({
+        type: "llm_event",
+        event: { type: "assistant_delta", text: "…" },
+      });
+      throw new Error("fetch failed");
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      error: "fetch failed",
+    });
+    expect(results[0]!.queueWaitMs).not.toBeNull();
+    expect(results[0]).not.toHaveProperty("hint");
+  });
+
+  it("leaves a worker that had already stepped alone", async () => {
+    const { deps } = harness(async () =>
+      turnResult({
+        reason: "failed",
+        stepCount: 3,
+        session: {
+          ...createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+          lastError: "fetch failed",
+        },
+      }),
+    );
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      stepCount: 3,
+      error: "fetch failed",
+    });
+    expect(results[0]).not.toHaveProperty("hint");
   });
 });
 

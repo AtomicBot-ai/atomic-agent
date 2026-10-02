@@ -69,7 +69,7 @@ atag
 > Want to go through first-time setup again? Run `/onboarding` (or `/setup`) in the TUI, or start it with `atomic-agent tui --onboarding`. Your providers, keys, sessions and memory are kept.
 
 > [!TIP]
-> Coming from another agent? The first run offers to bring your data over, with a dry-run preview before anything is written. What moves depends on the source:
+> Coming from another agent? The first run offers to bring your data over: tick the sources it found and the import runs, without overwriting anything already here and without touching the source. What moves depends on the source:
 >
 > - **Claude Code:** skills, memory, MCP servers, sessions, and (opt-in) provider keys
 > - **Codex:** skills, memory, sessions, and (opt-in) provider keys
@@ -335,7 +335,7 @@ atomic-agent models pull qwen-3.5-35b                # follow a running download
 atomic-agent models downloads cancel qwen-3.5-35b    # stop it; what was fetched stays on disk
 ```
 
-The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you cancelled is not. In the Models tab, `x` stops the download in flight and keeps what it fetched, and Enter on the row resumes it.
+The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you cancelled is not. On the LLM tab's Local pane, `x` stops the download in flight and keeps what it fetched, and Enter on the row resumes it.
 
 The worker is a detached copy of the CLI writing its progress to `<stateDir>/models/downloads/<job>.json` and its log next to it, the same arrangement as the managed `llama-server` daemon. A worker that dies mid-way (a reboot, a `kill -9`) shows as `interrupted` in `models downloads`, and running the same `pull` again, with or without `--background`, resumes from the partial file. `pull --mmproj` also fetches a vision model's projector; `pull-embedding --background` works the same way for embedding models.
 
@@ -434,6 +434,12 @@ atomic-agent serve \
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
 `serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time; see Channels below.
+
+**`serve` does not outlive whoever started it.** When the process that started it goes away, the server finishes any turn still running and then shuts down, the same way it would on `SIGTERM` — so a killed editor, a crashed desktop app or a closed test harness cannot strand a server that holds its port and its database handles for weeks.
+
+**To daemonise it, pass `--no-parent-exit`** (or set `ATOMIC_AGENT_SERVE_NO_PARENT_EXIT=1`). That is the supported way to run `serve` in the background from a shell — including under `nohup` and with `& disown`, neither of which detaches the process from the shell, so neither survives on its own. A `serve` started with no parent at all, as under `launchd` or `systemd`, needs no flag.
+
+Each server records itself under `<stateDir>/serve/` and sweeps strays left by earlier runs; `atomic-agent serve --reap` does the same sweep by hand and prints what it found. The sweep signals a process only when it has positive evidence the server was abandoned — the exact process that started it is gone — *and* `/health` on the recorded port identifies it as that same atomic-agent, reparented and idle. A server marked as a daemon is never touched, no matter how long it runs; anything still working, and anything the sweep cannot confirm, is left alone and keeps its record.
 
 </details>
 
@@ -610,7 +616,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 **Linux notes:**
 - **Desktop tools** (install via your package manager): `ripgrep` (file search; bundled binary used when present), `xclip`/`xsel` (X11) or `wl-clipboard` (Wayland) for clipboard, `libnotify-bin` for notifications, `wmctrl` for window control (X11/XWayland only), `gio` (glib2) or `trash-cli` for `fs.trash`.
 - **Browser:** Chromium-family sandboxing can fail under some Linux setups (containers, certain kernels). If Chrome refuses to launch, set `ATOMIC_AGENT_BROWSER_NO_SANDBOX=1` so the agent starts it with `--no-sandbox` (containers and CI only).
-- **GPU acceleration (managed mode):** the backend always starts and falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver. Intel/AMD: `mesa-vulkan-drivers` (+ `vulkan-loader`/`libvulkan1`); NVIDIA: the stock proprietary driver bundles its Vulkan ICD. Device auto-selected at start; override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab. Multi-GPU: set `localModels.managed.tensorSplit` in `config.json` (e.g. `[3, 1]` for a 75%/25% layer split) to launch llama-server with `--split-mode layer --tensor-split` across every visible GPU; combine with `use-device Vulkan0,Vulkan1` to restrict which devices join the split.
+- **GPU acceleration (managed mode):** the backend always starts and falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver. Intel/AMD: `mesa-vulkan-drivers` (+ `vulkan-loader`/`libvulkan1`); NVIDIA: the stock proprietary driver bundles its Vulkan ICD. Device auto-selected at start; override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` on the TUI LLM tab's Local pane. Multi-GPU: set `localModels.managed.tensorSplit` in `config.json` (e.g. `[3, 1]` for a 75%/25% layer split) to launch llama-server with `--split-mode layer --tensor-split` across every visible GPU; combine with `use-device Vulkan0,Vulkan1` to restrict which devices join the split.
 
 </details>
 

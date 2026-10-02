@@ -22,6 +22,7 @@ import {
   WORKER_HINT_QUEUED,
   WORKER_HINT_UNSERVED,
   WORKER_QUEUED_NOTE,
+  unservedWorkerHint,
   type WorkerTaskResult,
 } from "./worker-result.js";
 import { getConfig } from "../../config/index.js";
@@ -789,6 +790,12 @@ async function runOneTask(
     result = { ...result, notes: [...(result.notes ?? []), ...budgetNotes] };
   }
 
+  // Was there anything to queue behind? A worker running alone that
+  // still got no token was not queued — nothing answered it. Computed
+  // once, because both doors onto that silence ask the same question:
+  // the queue watchdog below, and the transport failure after it.
+  const ranAlone = options.maxWorkers <= 1 || options.tasks.length <= 1;
+
   // A worker that never got a slot is not a worker that failed, ran out
   // of steps or was cancelled: it produced nothing because the machine
   // had nothing to give it. Saying so is the whole row — and it is the
@@ -796,9 +803,6 @@ async function runOneTask(
   // the status carries that hint rather than a bigger-deadline one.
   if (queuedOutcome) {
     const { error: _dropped, ...rest } = result;
-    // Was there anything to queue behind? A worker running alone that
-    // still got no token was not queued — nothing answered it.
-    const ranAlone = options.maxWorkers <= 1 || options.tasks.length <= 1;
     result = {
       ...rest,
       status: "queued",
@@ -812,6 +816,18 @@ async function runOneTask(
           : `no first token within ${Math.round(queueBudgetMs / 60_000)} min of being sent, while its own budget was ${Math.round(timeoutMs / 60_000)} min — up to ${options.maxWorkers} workers were sharing the server`,
       ],
     };
+  }
+
+  // The same silence, through the other door. A first request killed by
+  // the transport never reaches the watchdog above, so it lands here as
+  // a bare `failed` carrying the socket's word and no remedy at all —
+  // the orchestrator then has to guess whether to re-delegate, narrow
+  // the fan-out or stop, and in the field it stopped the whole run. The
+  // row already holds the answer: zero steps and no first token mean the
+  // server answered nothing, which is what the queued outcome reports.
+  const unserved = unservedWorkerHint(result, ranAlone);
+  if (unserved !== undefined) {
+    result = { ...result, hint: unserved };
   }
 
   // A hand-back is neither a cancellation nor a failure: the worker was

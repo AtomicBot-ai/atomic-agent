@@ -30,7 +30,10 @@ export interface RunModeOrchestratorDeps {
     ProvidersOrchestrator,
     "refresh" | "ensureInlineModels"
   >;
-  readonly localModels: Pick<LocalModelsOrchestrator, "startDaemon">;
+  readonly localModels: Pick<
+    LocalModelsOrchestrator,
+    "startDaemon" | "adoptDaemonForRoute"
+  >;
 }
 
 /**
@@ -42,7 +45,9 @@ export interface RunModeOrchestratorDeps {
  * Persist first, apply second, so a failed hot-swap still boots into
  * the mode the operator chose.
  *
- * Fusion additionally starts the managed worker daemon when it is down:
+ * Fusion additionally starts the managed worker daemon when it is down
+ * (and adopts it when it is up — a second start would only fail on the
+ * live pid file):
  * `autoStartIfReady` keys on `local-llama` being the ACTIVE provider,
  * and under fusion the active provider is the cloud orchestrator, so
  * nothing else would bring the workers up.
@@ -179,7 +184,12 @@ export class RunModeOrchestrator {
         text: describeFusionIntro(now),
       });
     }
-    if (now.effective === "fusion") {
+    // A mode whose legs land on the managed daemon takes ownership of
+    // one already running — the provider swap above reaches the same
+    // adoption, but a mode change that keeps the active provider (cloud
+    // → fusion with that cloud as orchestrator) swaps nothing.
+    const adopted = this.deps.localModels.adoptDaemonForRoute();
+    if (now.effective === "fusion" && !adopted) {
       const local = getConfig().localModels;
       if (local.mode === "managed" && local.managed.modelId) {
         // Fire-and-forget: the daemon reports its own progress lines.

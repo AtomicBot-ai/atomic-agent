@@ -2,6 +2,7 @@ import { Box, Text, measureElement, type DOMElement } from "ink";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { computeChatViewportRows } from "../layout.js";
+import { selectExtraChromeRows } from "../select-chrome-rows.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
@@ -14,12 +15,14 @@ import {
 import type { CodingMode } from "../coding-mode.js";
 import {
   estimateMessageHeight,
+  estimatePendingSteerHeight,
   estimateStreamingTailHeight,
 } from "./chat-message-height.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
+import { UserBubble } from "./user-bubble.js";
 
 interface ChatLogProps {
   state: TuiState;
@@ -81,13 +84,33 @@ export function ChatLog({
     state.streamingToolCards.length > 0 ||
     state.reasoning.length > 0;
   const showIndicator = state.status === "running";
-  const isEmpty = finalised.length === 0 && !hasStreamingTail && !showIndicator;
+  // Messages sent into the running turn that the loop has not read yet.
+  // They go where anything new goes — after everything the turn has
+  // said so far, and ahead of the spinner, which stays pinned to the
+  // bottom as the live thing it is. This is a chat: a message you send
+  // lands at the end of the conversation, and the "still working"
+  // indicator sits below it. When the loop folds one in, `steer_applied`
+  // moves it into the transcript proper with the step it reached, and
+  // it does not move on screen doing so.
+  const pendingSteers = state.pendingSteers;
+  const isEmpty =
+    finalised.length === 0 &&
+    !hasStreamingTail &&
+    !showIndicator &&
+    pendingSteers.length === 0;
   // All hooks must run unconditionally — only the JSX branches on
   // `isEmpty`. Compute viewport / measured-K / clamp regardless,
   // even when the early return for the splash branch fires below.
+  // Rows the composer's adaptive chrome is spending over its one-row
+  // baseline — the wrapped hint strip, today. They come out of the
+  // transcript: `CHROME_ROWS` counts one row for the strip, and a
+  // viewport that ignored the surplus would keep its bottom lines hidden
+  // behind the composer.
+  const extraChromeRows = selectExtraChromeRows(state, terminalSize);
   const viewport = computeChatViewportRows(
     terminalSize.rows,
     terminalSize.columns,
+    extraChromeRows,
   );
   // First-frame fallback for `K` until the post-mount `measureElement`
   // call returns the truth. Estimates are unreliable (text wraps, Yoga
@@ -98,7 +121,11 @@ export function ChatLog({
     ? 0
     : finalised.reduce((acc, m) => acc + estimateMessageHeight(m), 0) +
       (hasStreamingTail ? estimateStreamingTailHeight(state) : 0) +
-      (showIndicator ? 2 : 0);
+      (showIndicator ? 2 : 0) +
+      pendingSteers.reduce(
+        (acc, text) => acc + estimatePendingSteerHeight(text),
+        0,
+      );
   const innerRef = useRef<DOMElement>(null);
   const [measuredContentRows, setMeasuredContentRows] = useState<number>(0);
   // Re-measure the inner column on every render so the clamp tracks
@@ -132,7 +159,7 @@ export function ChatLog({
   if (isEmpty) {
     return (
       <Box flexDirection="column" flexGrow={1} justifyContent="center">
-        <SplashBanner />
+        <SplashBanner extraChromeRows={extraChromeRows} />
       </Box>
     );
   }
@@ -175,6 +202,17 @@ export function ChatLog({
           {hasStreamingTail ? (
             <StreamingTail state={state} fusion={fusion} />
           ) : null}
+          {pendingSteers.map((text, idx) => (
+            <UserBubble
+              // Position is the only identity a pending steer has; it
+              // is removed by value the moment it resolves, and two
+              // identical steers must still render as two bubbles.
+              key={`pending-steer-${idx}`}
+              text={text}
+              fusion={fusion}
+              pending
+            />
+          ))}
           {showIndicator ? <ThinkingIndicator state={state} /> : null}
         </Box>
       </Box>
