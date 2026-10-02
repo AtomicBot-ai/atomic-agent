@@ -1779,6 +1779,7 @@ S.log = [
    render
    ============================================================ */
 function render() {
+  ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
@@ -2296,6 +2297,7 @@ function copyMessage(id) {
   // turn that produced nothing (see the `done` frame). Copying them would hand
   // over desktop prose as the agent's words.
   if (m.placeholder) { toast('Nothing to copy', 'that turn produced no reply', 'bad'); return; }
+  ANX.messageAction('copy');
   copyText(String(m.text || ''), 'Copied message');
 }
 
@@ -2317,6 +2319,7 @@ function resendUser(id) {
   if (!m) return;
   const text = String(m.text || '').trim();
   if (!text) return;
+  ANX.messageAction('resend');
   const e = $('#entry');
   // The microphone owns the composer while it is open: submit() stops the
   // recording instead of sending, and overwriting the editor here would throw
@@ -4524,7 +4527,7 @@ function generalPane() {
       + tpNotifyRowHTML()
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">Crash reports and coarse usage counts, tied only to an install id. Your messages, paths and tool arguments are never sent with analytics. '
+          + '<div class="d">Crash reports and coarse usage counts (including which buttons and menus are used, by action name only, and download and startup timings), tied only to an install id. Your messages, paths and tool arguments are never sent with analytics. '
             + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
@@ -4622,7 +4625,7 @@ function privacyPane() {
        a promise the app does not make (a cloud model is sent the messages).
        The agent swaps the IP for 0.0.0.0 before an event goes out. */
     + '<div class="set-privgrid">'
-      + sentList('Sent with analytics', ['An install id', 'Coarse counters', 'Crash reports'], 'check', 'tk-ico--green')
+      + sentList('Sent with analytics', ['An install id', 'Coarse counters', 'Crash reports', 'Button and menu usage (action names only)', 'Download and startup timings'], 'check', 'tk-ico--green')
       + sentList('Never sent with analytics', ['Message content', 'Paths', 'Tool arguments', 'IP address'], 'x', 'tk-ico--red')
     + '</div>'
     + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
@@ -4680,19 +4683,20 @@ async function privacyToggle() {
   if (!BR || !LIVE_CONFIG || PRIV.busy) return;
   const eff = privacyEffective();
   if (typeof eff !== 'boolean') { privacyRefresh(); return; } // nothing to flip until the effective value is known
-  await privacySet(!eff);
+  await privacySet(!eff, 'settings');
 }
 /* privacy-orchestrator.ts setAnalyticsEnabled(enabled): persist the value
    through `atag config set analytics.enabled <enabled>` (an absolute write —
    the `a` key and the slash verbs both land here), then re-read. The
    running agent keeps its boot-time client; the pane's restart note says so. */
-async function privacySet(enabled) {
+async function privacySet(enabled, via) {
   if (!BR) return;
   // Writes queue behind each other (`/analytics on` then `/analytics off`
   // lands both, in order, as the TUI does) instead of dropping the second.
   const run = async () => {
     PRIV.busy = true; PRIV.message = null; PRIV.messageLive = false; PRIV.lastError = null; render();
-    const res = await BR.configSet('analytics.enabled', String(!!enabled));
+    // The third argument is analytics' `via` hint (settings / slash); main reads it when present.
+    const res = await BR.configSet('analytics.enabled', String(!!enabled), via || 'settings');
     if (!res || res.ok === false) {
       PRIV.lastError = 'analytics toggle failed: ' + ((res && res.error) || 'unknown error');
     } else {
@@ -4856,7 +4860,7 @@ function act(a) {
       + '?title=' + encodeURIComponent('[desktop] ')
       + '&body=' + encodeURIComponent(body);
     if (BR && BR.debugBundle) {
-      BR.debugBundle().then((res) => {
+      BR.debugBundle('report').then((res) => {
         if (res && res.ok) toast('Debug bundle written', res.path + ' — attach it if you want to');
       }).catch(() => {});
     }
@@ -4960,7 +4964,7 @@ function act(a) {
   if (a === 'dump') {
     close(); render();
     if (!BR || !BR.debugBundle) { toast('Write debug bundle', 'not available in this build', 'bad'); return; }
-    BR.debugBundle().then((res) => {
+    BR.debugBundle('dump').then((res) => {
       if (res && res.ok) { toast('Debug bundle written', res.path); if (BR.openPath) BR.openPath(res.path); }
       else toast('Could not write the bundle', (res && res.error) || '', 'bad');
     });
@@ -5314,7 +5318,7 @@ function submit() {
     denyByProse(S.pending, text);
     return;
   }
-  if (S.busy || S.pending) { steerOrQueue(text); return; }
+  if (S.busy || S.pending) { ANX.messageAction('steer'); steerOrQueue(text); return; }
   // Item 1 (plan hand-off): the second half of the ordering proof. executePlan
   // records 'mode:<m>' only after the agent has confirmed the new stance, and
   // this records the moment the execute message is actually accepted as a new
@@ -5492,13 +5496,14 @@ function abort() {
    effective value is then the schema default, true). */
 function analyticsSlash(args) {
   const verb = (args[0] || '').toLowerCase();
-  if (verb === 'on' || verb === 'enable' || verb === 'off' || verb === 'disable') { act('settings:general'); privacySet(verb === 'on' || verb === 'enable'); return; }
+  if (verb === 'on' || verb === 'enable' || verb === 'off' || verb === 'disable') { act('settings:general'); privacySet(verb === 'on' || verb === 'enable', 'slash'); return; }
   if (verb === 'status') { act('settings:general'); privacyRefresh(); return; }
   S.log.push({id:nid(), k:'system', text:'usage: /analytics on | off | status'}); render();
 }
 
 function runSlash(parts) {
   const name = parts[0];
+  ANX.via('slash'); ANX.slashUsed(name);   // analytics: the name only, never its arguments
   const nav = {chat:'room:chat', tasks:'settings:tasks', task:'tasks:new', skills:'settings:skills', skill:'settings:skills',
     memory:'settings:memory', feed:'insp:steps', world:'insp:world', reasoning:'insp:reasoning', observe:'insp:steps',
     logs:'console:agent', manage:'settings:open', mcp:'settings:mcp', llm:'settings:llm', model:'selector:model',
@@ -5576,7 +5581,7 @@ document.addEventListener('click', (e) => {
   // the bar keeps working if it ever renders inside something that carries
   // [data-close]. It is not in a scrim today; the ordering is one line.
   const pl = t.closest('[data-plan]');
-  if (pl && !pl.disabled) { e.preventDefault(); if (pl.dataset.plan === 'dismiss') dismissPlan(); else executePlan(pl.dataset.plan); return; }
+  if (pl && !pl.disabled) { e.preventDefault(); ANX.via('plan_bar'); if (pl.dataset.plan === 'dismiss') dismissPlan(); else executePlan(pl.dataset.plan); return; }
   if (t.closest('[data-close]') && !t.closest('.pal, .sheet, .popover, .alertbox')) { act('close'); return; }
   /* r5 item 5: an outside click dismisses the settings window. Placed AFTER
      the [data-act] branch above, so every real control inside — and the two
@@ -5649,7 +5654,7 @@ document.addEventListener('click', (e) => {
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
-  const uq = t.closest('[data-unqueue]'); if (uq) { const at = +uq.dataset.unqueue; S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1; render(); return; }
+  const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); const at = +uq.dataset.unqueue; S.queued.splice(at, 1); if (at < STEER.ahead) STEER.ahead -= 1; render(); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
@@ -5687,7 +5692,7 @@ document.addEventListener('click', (e) => {
      Back and a different pick, so the field came up pre-filled with the
      previous provider's key — and pressing Next would have saved it to
      the new one. */
-    WIZ.row = KIND_ROWS[+wizKind.dataset.wizKind]; WIZ.phase = 'configure';
+    WIZ.row = KIND_ROWS[+wizKind.dataset.wizKind]; WIZ.phase = 'configure'; ANX.providerStarted(WIZ.row);
     WIZ.error = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.uncheckedFor = null;
     WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
     render(); return;
@@ -6356,6 +6361,7 @@ function flatPalRows() {
 function activatePal(i) {
   const rows = flatPalRows();
   const r = rows[i]; if (!r) return;
+  ANX.via('palette');
   if (r.act && r.act.startsWith('scope:')) { act(r.act); return; }
   act(r.act);
 }
@@ -6399,8 +6405,8 @@ document.addEventListener('keydown', (e) => {
     // to a bare boolean), and answerLive then printed a line apologising for a
     // grant the operator never asked for. A key that cannot do what it says
     // must not be offered.
-    if (['y','n'].includes(kk)) { e.preventDefault(); answer(kk); return; }
-    if (k === 'Escape') { e.preventDefault(); answer('esc'); return; }
+    if (['y','n'].includes(kk)) { e.preventDefault(); ANX.via('key'); answer(kk); return; }
+    if (k === 'Escape') { e.preventDefault(); ANX.via('key'); answer('esc'); return; }
   }
 
   /* Item 1 (plan hand-off): the TUI's PLAN_CHORDS — auto `y`, bypass `b`,
@@ -6432,6 +6438,7 @@ document.addEventListener('keydown', (e) => {
   if (PLAN.on && !inText && !S.pending && !S.settings && !S.overlay && !S.menuOpen
       && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     const pk = k.toLowerCase();
+    if (pk === 'y' || pk === 'b' || pk === 'd') ANX.via('plan_bar');
     if (pk === 'y') { e.preventDefault(); executePlan('auto'); return; }
     if (pk === 'b') { e.preventDefault(); executePlan('bypass'); return; }
     if (pk === 'd') { e.preventDefault(); dismissPlan(); return; }
@@ -6446,10 +6453,10 @@ document.addEventListener('keydown', (e) => {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
                  '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts'};
-    if (map[k.toLowerCase()]) { e.preventDefault(); act(map[k.toLowerCase()]); return; }
+    if (map[k.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[k.toLowerCase()]); return; }
     if (k === 'Enter') { e.preventDefault(); submit(); return; }
   }
-  if (mod && e.shiftKey && k.toLowerCase() === 'y') { e.preventDefault(); act('toggle:console'); return; }
+  if (mod && e.shiftKey && k.toLowerCase() === 'y') { e.preventDefault(); ANX.via('shortcut'); act('toggle:console'); return; }
 
   // palette
   if (S.overlay === 'palette') {
@@ -7571,6 +7578,7 @@ function onApprovalEvent(payload) {
   };
   if (req.sessionId) { PENDING_APPROVALS.set(req.sessionId, req.approvalId); APPROVAL_CARDS.set(req.sessionId, req); }
   S.pending = req;
+  ANX.apprShown(req);   // analytics: ms_to_answer starts when the card is drawn
   placeInLiveTurn(req, {afterTool: req.tool, sessionId: req.sessionId});
   S.apprFocused = false;
   // Backlog 25: waiting is not "busy" for the chat that asked. A request
@@ -7647,6 +7655,7 @@ function agentReplyWords(why) {
 }
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a';
+  ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
   if (S.pending === req) S.pending = null;
@@ -7708,6 +7717,7 @@ function answerLive(req, key) {
  */
 async function denyByProse(req, text, post) {
   const typedIn = {sid:S.agentSession, key:queueKey()};   // Backlog 26: read at Enter, as steerOrQueue does
+  ANX.apprAnswered(req, 'prose');
   S.pending = null;
   if (req.sessionId) PENDING_APPROVALS.delete(req.sessionId);   // the row stops asking
   req.at = new Date().toTimeString().slice(0, 8);
@@ -7785,7 +7795,7 @@ if (BR) {
   BR.onStatus(applyStatus);
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
-  BR.onMenu((command) => { if (typeof command === 'string') act(command); });
+  BR.onMenu((command) => { if (typeof command === 'string') { ANX.via('menu'); act(command); } });
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;
     LOGS.push([new Date().toTimeString().slice(0, 8), entry.stream === 'stderr' ? 'warn' : 'info', entry.line]);
@@ -8284,6 +8294,7 @@ function obDispatch(action) {
   // Review fix: both legs can leave a cloud provider behind them, and the
   // download step's cloud offer is gated on that fact. See obRefreshCloudReady.
   if (action.type === 'providers_wizard_succeeded' || action.type === 'providers_wizard_closed') obRefreshCloudReady();
+  if (action.type === 'onboarding_local_model_picked') obTrackModelPicked(action.modelId);
   const next = obReduce(obSnapshot(), action);
   if (next) Object.assign(OB, next);
   obAfterStep();
@@ -8300,6 +8311,7 @@ function obAfterStep() {
   if (OB.step === OB_LAST_STEP) return;
   const was = OB_LAST_STEP;
   OB_LAST_STEP = OB.step;
+  ANX.obStep(OB.step, was, OB.outcome);
   if (was === 'intro' && OB.step !== 'intro') obSkyStop();
   // isLocalSetupStep (propose-second-backend.ts:57-59): the list itself
   // and the two download screens. Walking in and back out is an answer.
@@ -9024,7 +9036,7 @@ function dlSpawn(job) {
  * this is where a check stands in for it.
  */
 function dlPullStart(job) {
-  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id);
+  return job.kind === 'runtime' ? BR.modelsUpdateStream() : BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
 }
 
 /**
@@ -10670,7 +10682,7 @@ function obKey(input, key) {
 function obChooseKey(input, key) {
   // Ctrl+C is deliberately never claimed.
   if (key.ctrl && input === 'c') return false;
-  if (key.escape) { obDispatch({type:'onboarding_finished', outcome:'skipped'}); return true; }
+  if (key.escape) { ANX.obSkipped(OB.step); obDispatch({type:'onboarding_finished', outcome:'skipped'}); return true; }
   if (key.upArrow || input === 'k') { obDispatch({type:'onboarding_cursor_moved', delta:-1}); return true; }
   if (key.downArrow || input === 'j') { obDispatch({type:'onboarding_cursor_moved', delta:1}); return true; }
   if (key.return) {
@@ -10945,7 +10957,7 @@ function obCloudKey(input, key) {
       const picked = rows[rows.length ? WIZ.cur % rows.length : 0];
       if (!picked) return true;
       // Same rule as the popover's row: a new provider starts with an empty field.
-      WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null;
+      WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null; ANX.providerStarted(WIZ.row);
       WIZ.apiKey = ''; WIZ.baseUrl = picked.k.custom ? WIZ.baseUrl : '';
       WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
       render();
@@ -10965,6 +10977,11 @@ function obOpenCloudWizard() {
   WIZ.cur = 0; WIZ.q = null;
 }
 
+/* Analytics: model_picked, from the row the pick names (a Hugging Face add is not in the list → custom). */
+function obTrackModelPicked(id) {
+  const m = (OB.models || []).find((x) => x && x.id === id) || null;
+  ANX.modelPicked(m, m ? fitFor(m, hostRamGb()) : null, hostRamGb(), m ? (Number(m.sizeGb) || sizeStringGb(m.size)) : null);
+}
 async function obLoadModels() {
   if (!BR) return;
   OB.busy = true; OB.error = null; render();
@@ -11547,6 +11564,7 @@ async function obUrlSubmit() {
   if (!value) { obDispatch({type:'onboarding_error_set', error:'Type the base URL of your llama-server.'}); return; }
   obDispatch({type:'onboarding_busy_set', busy:true});
   const res = await BR.llamaProbe(value);
+  ANX.endpointTested(chat ? 'chat' : 'embedding', !!(res && res.ok && res.probe && res.probe.reachable));
   // The step is part of the guard, not just `open`: a probe that answers
   // after the flow has moved on must not paint on the screen it reaches.
   if (!OB.open || OB.step !== from) return;
@@ -11960,6 +11978,7 @@ async function openOnboarding(at) {
   // treats a new canvas node as a remount (review fix).
   obSkyReset();
   OB_LAST_STEP = first;
+  ANX.obStep(first, null, null);   // analytics: the flow's first screen
   render();
   // Backlog 03: the title card is the loader for the reads below.
   if (first === 'intro') obIntroArm(gen);
@@ -13335,7 +13354,7 @@ async function selActivate(row) {
 
 function selPull(id) {
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null; render();
-  BR.modelsPull(id).then((res) => {
+  BR.modelsPull(id, {trigger: 'selector'}).then((res) => {
     if (res && res.ok === false) { SEL.pulling = null; SEL.err = res.error || 'could not start the download'; render(); }
   });
 }
@@ -14084,8 +14103,9 @@ function reassertCodingMode(id) {
    surface over. The plan bar's failure check drives THIS function's own
    "came back !ok" branch through it, rather than patching window.atomic,
    which the contextBridge freezes. Nothing else passes it. */
-async function setCodingMode(id, post) {
+async function setCodingMode(id, post, anxViaGiven) {
   if (S.busy) { toast('Not while a turn is running'); return; }
+  const anxFrom = MODE.current, anxVia = anxViaGiven || ANX.modeVia();   // analytics: a caller that knows says so; else the marker
   // An explicit click outranks anything the reconnect path is still waiting
   // to re-assert: without this a queued re-assert would land after the turn
   // ends and quietly put the stance back to what the window had before.
@@ -14118,6 +14138,7 @@ async function setCodingMode(id, post) {
     return;
   }
   MODE.supported = true; MODE.current = res.mode; MODE.known = true; MODE.confirmedGen = AGENT_GEN;
+  ANX.modeChanged(anxFrom, res.mode, anxVia);
   MODE.approvalLevel = res.approvalLevel; MODE.baseLevel = res.baseLevel;
   LAST_MODE = res.mode;
   // Item 1 (plan hand-off): any stance that is no longer `plan` retires the
@@ -14243,6 +14264,7 @@ function planHandoffHTML() {
 async function executePlan(mode) {
   if (!PLAN.on || PLAN.busy) return;
   if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  ANX.planHandoff(mode === 'bypass' ? 'bypass' : 'auto'); ANX.via('plan_bar');
   PLAN_TRACE.length = 0;
   PLAN.busy = true; render();
   /* Review fix (Item 1): the thread this plan belongs to, captured BEFORE the
@@ -14270,7 +14292,7 @@ async function executePlan(mode) {
   const mine = MODE.seq + 1;
   await setCodingMode(mode, PLAN.failMode
     ? () => Promise.resolve({ok:false, supported:true, error:'forced by __planFailMode'})
-    : undefined);
+    : undefined, 'plan_bar');
   PLAN.busy = false;
   if (MODE.seq !== mine) {
     S.log.push({id:nid(), k:'system', note:true,
@@ -14396,6 +14418,7 @@ function pausedRowHTML(m) {
 }
 function continueTurn() {
   if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  ANX.messageAction('continue');
   if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
     toast('The microphone is open', 'finish or cancel the dictation, then continue', 'bad');
     return;
@@ -14415,6 +14438,7 @@ function continueTurn() {
 /** Put the plan away. Stays in plan mode — src/tui/reduce-ui-actions.ts. */
 function dismissPlan() {
   if (!PLAN.on) return;
+  ANX.planHandoff('dismiss');
   clearPlanOffer();
   // `note:true`: endMarkIds walks back over trailing note rows, so the turn
   // keeps its completion mark instead of losing it to this line.
@@ -15587,7 +15611,7 @@ async function wizNextStep() {
   if (key) WIZ.apiKey = cleanKeyInput(key.value);
   const url = document.getElementById('wiz-url');
   if (url) WIZ.baseUrl = url.value.trim();
-  if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { WIZ.error = 'That does not look like a URL.'; render(); return; }
+  if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { ANX.providerFailed('bad_url', OB.open); WIZ.error = 'That does not look like a URL.'; render(); return; }
   /* Backlog 32 — a key with a character keys don't have stops here, on its
      own screen, before anything is saved or asked. It used to be saved, then
      sent to the check, whose fetch refused the header — which read as "Could
@@ -15595,6 +15619,7 @@ async function wizNextStep() {
      on offer, so it was saved anyway and every turn on it failed. Save
      unchecked comes through here too. */
   if (!keyCharsOk(WIZ.apiKey)) {
+    ANX.providerFailed('bad_key_chars', OB.open);
     WIZ.phase = 'configure'; WIZ.error = KEY_CHAR_ERROR; WIZ.errorDetail = null;
     WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
     render(); return;
@@ -15643,7 +15668,7 @@ async function wizNextStep() {
   // step, then Next again) is still this wizard's, not a pre-existing one.
   const existedBefore = WIZ.unfinishedId !== id && !!selProviders().find((p) => p.id === id);
   let res = await BR.upsertProvider(entry);
-  if (res && res.ok === false) { WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+  if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
   // U29: remember an entry this wizard created without a model, so leaving
   // before the model is committed removes it again (see wizDropUnfinished).
   // A different id this pass (Back, then a changed custom URL) leaves the
@@ -15663,6 +15688,7 @@ async function wizNextStep() {
     ? {ok: true, models: WIZ.models}
     : await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
+    ANX.providerFailed('catalog_empty', OB.open);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
@@ -17330,7 +17356,7 @@ function chordKey(e, k) {
       if (n.chord === k) hit = n;
       (n.sub || []).forEach((c) => { if (c.chord === k) hit = c; });
     }));
-    if (hit) { if (hit.na) toast(hit.label, 'not available in the desktop'); else menuActivate(hit.id); }
+    if (hit) { if (hit.na) toast(hit.label, 'not available in the desktop'); else { ANX.via('shortcut'); menuActivate(hit.id); } }
     return true;
   }
   if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && k.toLowerCase() === 'g') {
@@ -18895,16 +18921,18 @@ async function mcpAddSubmit(json) {
   if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
   m.json = json; m.error = null;
   const parsed = mcpParseAddJson(json);
-  if (!parsed.ok) { m.error = parsed.error; render(); return parsed; }
+  if (!parsed.ok) { ANX.mcpAdded(false); m.error = parsed.error; render(); return parsed; }
   m.submitting = true; render();
   const cfg = await BR.config();
   const servers = cfg && cfg.ok && cfg.data && cfg.data.config && cfg.data.config.mcp && Array.isArray(cfg.data.config.mcp.servers) ? cfg.data.config.mcp.servers : mcpServers();
   if (servers.some((s) => s && s.name === parsed.server.name)) {
+    ANX.mcpAdded(false);
     m.submitting = false; m.error = 'server ' + JSON.stringify(parsed.server.name) + ' already exists in config.mcp.servers'; render(); return {ok:false, error:m.error};
   }
   const list = servers.concat([parsed.server]);
   const res = await configPatchOr({mcp:{servers:list}}, () => BR.configSetPath('mcp.servers', list));
   m.submitting = false;
+  ANX.mcpAdded(!!res.ok);
   if (!res.ok) { m.error = res.error; render(); return {ok:false, error:m.error}; }
   MCP.addModal = null;
   const added = 'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total)';
@@ -18928,6 +18956,7 @@ async function mcpRemoveConfirm() {
   c.submitting = false;
   if (!res.ok) { c.error = res.error; render(); return; }
   MCP.removeConfirm = null;
+  ANX.mcpAction('remove');
   delete MCP_LIVE.status[c.name];
   if (MCP.mode === 'detail' && MCP.detailName === c.name) { MCP.mode = 'list'; MCP.detailName = null; }
   const removed = 'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining)';
@@ -20402,7 +20431,7 @@ async function llmRemoveLocalConfirm() {
 function llmPull(kind, id) {
   if (!BR || LLMP.pulling) return;
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
-  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id);
+  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
 /* llm-panel-primary-actions.ts triggerLocalChatModel / triggerLocalEmbeddingModel / triggerCloud*, ported. */
@@ -23864,4 +23893,12 @@ if (typeof window !== 'undefined') {
       return {inner: inner, mid: mid, after: after, outer: res};
     });
   };
+}
+
+/* Analytics (analytics.js): the OUTERMOST wrapper of act, so it is installed
+   last — after the live-agent, onboarding and voice wrappers above. It counts
+   the verb (sanitised to a fixed word list) and hands the act on unchanged. */
+{
+  const actBeforeAnalytics = act;
+  act = function (a) { return ANX.aroundAct(a, actBeforeAnalytics); };
 }
