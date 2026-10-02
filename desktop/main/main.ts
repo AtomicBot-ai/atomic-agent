@@ -127,6 +127,7 @@ import {
   modelsStatus,
   modelsListEmbeddings,
   modelsRemove,
+  modelsRemoveSafe,
   modelsPullEmbedding,
   modelsUseEmbedding,
   modelsUpdate,
@@ -1713,9 +1714,17 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:modelsListEmbeddings", () => modelsListEmbeddings());
   // Item 11: at once — a start on its way is ended, not waited for.
   ipcMain.handle("cli:modelsStop", () => stopDaemonNow());
-  ipcMain.handle("cli:modelsRemove", (_event, id: unknown) =>
-    typeof id === "string" ? modelsRemove(id) : { ok: false, error: "model id required" },
-  );
+  /* ATO-119: Remove for any model on disk, the embedding models included —
+     never one a running server has loaded, nor one coming down. In the
+     daemon's turn, so no start lands between the check and the delete. */
+  const removeLocalModel = (kind: "chat" | "embedding", id: unknown) => {
+    if (typeof id !== "string") return { ok: false, error: "model id required" };
+    const running = downloadRunning();
+    if (running && running.id === id) return { ok: false, error: "it is still downloading — cancel the download first" };
+    return inDaemonTurn(() => modelsRemoveSafe(kind, id), () => ({ ok: false, stdout: "", stderr: "", error: "the app is quitting — nothing was deleted" }));
+  };
+  ipcMain.handle("cli:modelsRemove", (_event, id: unknown) => removeLocalModel("chat", id));
+  ipcMain.handle("cli:modelsRemoveEmbedding", (_event, id: unknown) => removeLocalModel("embedding", id));
   // Shares the one `pull` slot and the `cli:pull` stream with `cli:modelsPull`.
   ipcMain.handle("cli:modelsPullEmbedding", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };

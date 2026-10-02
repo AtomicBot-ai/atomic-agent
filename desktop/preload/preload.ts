@@ -187,6 +187,8 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsListEmbeddings: () => ipcRenderer.invoke("cli:modelsListEmbeddings"),
   modelsStop: () => ipcRenderer.invoke("cli:modelsStop"),
   modelsRemove: (id: string) => ipcRenderer.invoke("cli:modelsRemove", id),
+  // ATO-119: an embedding model's files (no `atag models` verb removes one).
+  modelsRemoveEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsRemoveEmbedding", id),
   modelsPullEmbedding: (id: string) => ipcRenderer.invoke("cli:modelsPullEmbedding", id),
   modelsUseEmbedding: (idOrDisable: string) => ipcRenderer.invoke("cli:modelsUseEmbedding", idOrDisable),
   modelsUpdate: () => ipcRenderer.invoke("cli:modelsUpdate"),

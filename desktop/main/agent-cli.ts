@@ -4,8 +4,8 @@ import { execFile, spawn } from "node:child_process";
 // desktop's own, which is DESKTOP_STATE_DIR (item 9).
 import { homedir, totalmem } from "node:os";
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 // Item 7 part C (LLM / Telegram / Import tabs): the .env writer and llama log tail.
 import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
-import { localLlamaKeyFor } from "./local-llama-key.js";
+import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
 
 // Moved next to the key lookup that needs it; main.ts still imports it from here.
 export { managedDataDir } from "./local-llama-key.js";
@@ -2420,6 +2420,127 @@ export async function chatModelsList(): Promise<{ ok: boolean; models?: CatalogM
 export async function modelsRemove(id: string): Promise<CliResult> {
   if (!MODEL_ID_RE.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a model id: ${id}` };
   return cli(["models", "remove", id], 60_000);
+}
+
+/* ---- ATO-119: Remove for every local model on disk, never under a server ----
+   Settings › Models had no Remove for the model in use, nor for any embedding
+   model (`atag models remove` takes chat models only). The window stops the
+   server first when it knows the model is loaded; this side checks again
+   before anything is deleted, against what each running server says it has
+   loaded, because the window can be wrong — a server still on the model it
+   ran before a pick (`models use` writes the config and leaves the server
+   be) is one case. */
+
+/**
+ * The catalogue id a managed model's file sits under: `<dataDir>/models/<id>/…`
+ * (src/local-llm/backend-paths.ts resolveModelDir). Null for a path elsewhere.
+ */
+export function modelIdFromPath(path: string, dataDir: string): string | null {
+  const rel = relative(join(dataDir, "models"), path);
+  if (!rel || /^\.\.(?:[\\/]|$)/.test(rel) || isAbsolute(rel)) return null;
+  const parts = rel.split(/[\\/]/);
+  return parts.length > 1 && parts[0] ? parts[0] : null;
+}
+
+/**
+ * Which catalogue model the llama-server at `url` has loaded, from its own
+ * `/props` (`model_path`, the GGUF it was started on), with the managed key
+ * when `url` is a managed daemon's address. Null when it names a file that is
+ * not a managed model; undefined when it cannot be asked.
+ */
+export async function servedModelId(url: string, dataDir: string, timeoutMs = 3000): Promise<string | null | undefined> {
+  const key = localLlamaKeyFor(url);
+  try {
+    const res = await fetch(llamaEndpointUrl(url, "/props"), {
+      headers: { accept: "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return undefined;
+    const json = (await res.json()) as Record<string, unknown>;
+    const settings = json["default_generation_settings"] as Record<string, unknown> | undefined;
+    const path = [json["model_path"], settings?.["model"], json["model"]].find((v): v is string => typeof v === "string" && v.trim().length > 0);
+    return path ? modelIdFromPath(path.trim(), dataDir) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One server, as a Remove sees it: up or not, the model the config gives it, the model its `/props` names (undefined: not asked or no answer). */
+export type ServerFacts = { running: boolean; activeId: string | null; served: string | null | undefined };
+
+/**
+ * Why `id` may not be deleted now, or null. A server has it loaded when its
+ * `/props` says so, or — when it could not be asked — when it is the model
+ * its config gives it.
+ */
+export function removeBlocker(id: string, chat: ServerFacts, embedding: ServerFacts): string | null {
+  const loaded = (s: ServerFacts) => s.running && (s.served === id || (s.served === undefined && s.activeId === id));
+  if (loaded(chat)) return "the local model server is running this model — stop it first";
+  if (loaded(embedding)) return "the embedding server is running this model — stop it first";
+  return null;
+}
+
+/**
+ * Delete `<dataDir>/models/<id>`, as the agent's own removeEmbeddingModel
+ * does (src/local-llm/model-installer.ts). Refused for anything but a plain
+ * model id under an absolute data dir.
+ */
+export async function removeModelDir(dataDir: string, id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!MODEL_ID_RE.test(id) || id === "." || id === "..") return { ok: false, error: `not a model id: ${id}` };
+  if (!dataDir || !isAbsolute(dataDir)) return { ok: false, error: "the models folder is not known" };
+  const root = join(dataDir, "models");
+  const dir = join(root, id);
+  if (dirname(dir) !== root) return { ok: false, error: `not a model id: ${id}` };
+  try {
+    await rm(dir, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** `localModels.managed.dataDirOverride` as the CLI reads it, else `<stateDir>/models` (an external-mode status prints no data dir). */
+function managedDataDirFromFile(): string {
+  try {
+    const cfg = JSON.parse(readFileSync(join(DESKTOP_STATE_DIR, "config.json"), "utf8")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const o = cfg.localModels?.managed?.dataDirOverride;
+    return managedDataDir(typeof o === "string" ? o : null);
+  } catch {
+    return managedDataDir(null);
+  }
+}
+
+/**
+ * Delete a local model's files — a chat model through `atag models remove`
+ * (which also refuses the active one while its server runs), an embedding
+ * model's directory here, since no CLI verb removes one — unless a running
+ * server has it loaded: then nothing is deleted and the answer says so
+ * (`running`), so the window can stop the server and ask again.
+ */
+export async function modelsRemoveSafe(kind: "chat" | "embedding", id: string): Promise<CliResult & { running?: boolean }> {
+  if (!MODEL_ID_RE.test(id) || id === "." || id === "..") return { ok: false, stdout: "", stderr: "", error: `not a model id: ${id}` };
+  const [status, emb] = await Promise.all([modelsStatus(), modelsListEmbeddings()]);
+  const st = status.ok ? status.status : undefined;
+  const dataDir = st?.dataDir || managedDataDirFromFile();
+  const chatRunning = !!st?.daemonRunning;
+  const embRunning = !!(emb.ok && emb.daemon?.running);
+  const chatUrl = chatRunning && st && st.daemonUrl ? st.daemonUrl : null;
+  const embPort = embRunning && emb.daemon && emb.daemon.port ? emb.daemon.port : null;
+  const [chatServed, embServed] = await Promise.all([
+    chatUrl ? servedModelId(chatUrl, dataDir) : Promise.resolve(undefined),
+    embPort ? servedModelId(`http://127.0.0.1:${embPort}`, dataDir) : Promise.resolve(undefined),
+  ]);
+  const blocker = removeBlocker(
+    id,
+    { running: chatRunning, activeId: st && st.mode === "managed" ? st.activeModel : null, served: chatServed },
+    { running: embRunning, activeId: (emb.models ?? []).find((m) => m.active)?.id ?? null, served: embServed },
+  );
+  if (blocker) return { ok: false, stdout: "", stderr: "", error: blocker, running: true };
+  if (kind === "chat") return cli(["models", "remove", id], 60_000);
+  if (!emb.ok) return { ok: false, stdout: "", stderr: "", error: emb.error ?? "could not read the embedding catalogue" };
+  if (!(emb.models ?? []).some((m) => m.id === id)) return { ok: false, stdout: "", stderr: "", error: `not an embedding model: ${id}` };
+  const gone = await removeModelDir(dataDir, id);
+  return gone.ok ? { ok: true, stdout: `removed ${id}\n`, stderr: "" } : { ok: false, stdout: "", stderr: "", error: gone.error };
 }
 
 /** `atag models pull-embedding <id>`, streamed like `modelsPull`. */
