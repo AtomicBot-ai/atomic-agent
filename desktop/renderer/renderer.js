@@ -10429,6 +10429,7 @@ function obWizardHTML() {
   const service = k.label.split(' (')[0];
   const unchecked = WIZ.uncheckedFor;
   const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
+  const keyVar = wizKeyVar();
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
     + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
@@ -10437,7 +10438,7 @@ function obWizardHTML() {
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : keyVar ? 'Paste your key, or leave blank to use ' + keyVar : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -10448,8 +10449,9 @@ function obWizardHTML() {
               ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '')
         : '')
     /* Calm (S6, U14): where the key goes, in the user's words; the file, the
-       variable and the mode are the tooltip. */
-    + (k.env ? '<div class="ob-help" title="' + esc('Saved to .env as ' + k.env + ' (mode 0600).') + '">Your key stays on ' + THIS_MACHINE + '.</div>' : '')
+       variable and the mode are the tooltip. ATO-132: true as written — main
+       keeps the key in .env and config.json names the variable. */
+    + (keyVar ? '<div class="ob-help" title="' + esc(keySavedHint(keyVar)) + '">Your key stays on ' + THIS_MACHINE + '.</div>' : '')
     + (verifying ? '<div class="ob-help">Asking ' + esc(service) + ' to answer once with this key…</div>' : '')
     + (unchecked
       ? '<div class="ob-foot">'
@@ -12598,6 +12600,7 @@ async function refreshLiveConfig() {
   if (managed && managed.modelId) S.localModel = managed.modelId;
   render();
   bswRefreshFacts();
+  llmRefreshKeyNames();
   extRefreshModel();
   llmNoteRoute();
   if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) refreshContext();
@@ -15472,7 +15475,7 @@ function wizardHTML() {
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
         + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + (wizKeyVar() ? ' \u2014 blank reads ' + esc(wizKeyVar()) : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
     + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" spellcheck="false">'
     + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>';
@@ -15527,6 +15530,22 @@ function customProviderId(url) {
   const id = ('custom-' + (body || 'endpoint')).slice(0, 32).replace(/-+$/, '');
   return /^[a-z]/.test(id) ? id : 'custom-endpoint';
 }
+
+/* ATO-132: the .env variable a key typed on the key screen is saved under,
+   and the one a blank field reads: the provider's own once it is set up
+   (main keeps it on a blank save), else the row's. The same id wizNextStep
+   writes. Main picks another name only when this one is another provider's
+   or this app's environment sets it (agent-cli.ts upsertProviderIn). */
+function wizKeyVar() {
+  const k = WIZ.row;
+  if (!k) return null;
+  const existing = WIZ.forId ? selProviders().find((p) => p.id === WIZ.forId) : null;
+  const id = existing && existing.kind === k.kind ? existing.id : k.custom ? customProviderId(WIZ.baseUrl) : k.id;
+  const saved = selProviders().find((p) => p.id === id);
+  return (saved && saved.apiKeyEnvVar) || k.env || null;
+}
+/** Where a key typed in the window is kept, as the key screen's tooltip says it. Windows has no file modes. */
+function keySavedHint(name) { return 'Saved to .env as ' + name + (IS_WIN ? '.' : ' (mode 0600).'); }
 
 /* U29: kinds the agent cannot build without a chat model
    (register-built-in-providers.ts). The wizard writes the entry before its
@@ -15624,16 +15643,21 @@ async function wizNextStep() {
   if (k.custom) entry.baseUrl = WIZ.baseUrl;
   else if (k.baseUrl) entry.baseUrl = k.baseUrl;
   else if (existing && existing.baseUrl) entry.baseUrl = existing.baseUrl;
-  if (k.env) entry.apiKeyEnvVar = k.env;
+  /* ATO-132: the variable the key goes in (or a blank field reads) — the
+     provider's own once it has one, which the key check reads too. */
+  const keyVar = wizKeyVar();
+  if (keyVar) entry.apiKeyEnvVar = keyVar;
   if (WIZ.apiKey) entry.apiKey = WIZ.apiKey;
   if (k.apiKeyHeader) entry.apiKeyHeader = k.apiKeyHeader;
   if (k.headers) entry.headers = k.headers;
   /* Backlog 32: a blank field keeps the saved key, and the agent sends the
      saved key before any variable — so on a provider whose saved key is one
      it will not send, blank changes nothing. Say that here, rather than let
-     the check end on "didn't accept this key" for a key nobody typed. */
+     the check end on "didn't accept this key" for a key nobody typed.
+     ATO-132: the saved key is in .env now, not on the entry; savedKeyInvalid
+     reads either. */
   const savedEntry = selProviders().find((p) => p.id === id);
-  if (!WIZ.apiKey && savedEntry && savedEntry.apiKey && savedKeyInvalid(savedEntry)) {
+  if (!WIZ.apiKey && savedEntry && savedKeyInvalid(savedEntry)) {
     WIZ.phase = 'configure'; WIZ.error = savedKeyLine(id); WIZ.errorDetail = null;
     WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
     render(); return;
@@ -19160,6 +19184,21 @@ function llmEnsurePoll() {
   }, 5000);
 }
 function llmTyping() { const el = document.activeElement; return !!el && (el.id === 'llm-filter' || el.id === 'llm-url' || el.id === 'wiz-key' || el.id === 'wiz-url' || el.id === 'sel-key'); }
+/* ATO-132: a key saved from any screen lands in .env, not in its entry, so
+   the names Settings › Models reads keys by are read again whenever the
+   live config is (refreshLiveConfig) — not only when the tab refreshes
+   itself. Only once the tab has read them at all. */
+function llmRefreshKeyNames() {
+  if (!BR || !BR.dotenvKeys || LLMP.dotenvKeys === null) return;
+  const stateDir = memStateDir();
+  if (!stateDir) return;
+  BR.dotenvKeys(stateDir).then((r) => {
+    if (!r || !r.ok || !Array.isArray(r.keys)) return;
+    const was = (LLMP.dotenvKeys || []).join('\n');
+    LLMP.dotenvKeys = r.keys;
+    if (r.keys.join('\n') !== was) llmRepaint();
+  }).catch(() => {});
+}
 async function llmRefresh() {
   if (!BR) return;
   if (LLMP.inflight) return LLMP.inflight;
