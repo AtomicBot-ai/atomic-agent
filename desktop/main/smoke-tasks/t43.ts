@@ -38,7 +38,7 @@ import { join } from "node:path";
 
 import { configGet, configSetWhole, type UserConfigShape } from "../agent-cli.js";
 import { commandOf, resolveBinary } from "../agent-client.js";
-import { bringUpInFlight, supersedeBringUp } from "../backend-switch.js";
+import { bringUpAtLaunch, bringUpInFlight, selectLocalModel, supersedeBringUp } from "../backend-switch.js";
 import {
   DaemonSupervisor,
   MAX_QUICK_DEATHS,
@@ -262,7 +262,7 @@ async function rules(check: Check): Promise<void> {
 const STAND_IN = `const http = require("http");
 const port = Number(process.argv[2]);
 http.createServer((req, res) => {
-  res.writeHead(200, {"content-type": "application/json"});
+  res.writeHead(200, {"content-type": "application/json", "connection": "close"});
   res.end(req.url === "/v1/models" ? '{"data":[{"id":"smoke-t43-model"}]}' : '{"status":"ok"}');
 }).listen(port, "127.0.0.1");
 process.on("SIGTERM", () => process.exit(0));
@@ -307,8 +307,17 @@ async function wiring(js: Js, check: Check): Promise<void> {
   const log = join(dir, "verbs.log");
   const spawnedLog = join(dir, "spawned.log");
   const updateMode = join(dir, "update-mode");
+  const startDelay = join(dir, "start-delay");
   writeFileSync(log, "");
   writeFileSync(spawnedLog, "");
+  const modelId = live.localModels?.managed?.modelId || "qwen-3.5-4b";
+  /* The stop the CLI makes (stopChatAndEmbeddingDaemons): SIGTERM, and the
+     server waited for until it is gone — never a signal to a pid of 0 or 1. */
+  const stopServer = [
+    `p=$(cat ${q(pidFile)} 2>/dev/null)`,
+    `if [ "\${p:-0}" -gt 1 ] 2>/dev/null; then kill -TERM "$p" 2>/dev/null; n=0; while kill -0 "$p" 2>/dev/null && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done; fi`,
+    `rm -f ${q(pidFile)}`,
+  ].join("; ");
   const guard = join(dir, "atag-t43-guard.sh");
   writeFileSync(guard, [
     "#!/bin/sh",
@@ -317,15 +326,19 @@ async function wiring(js: Js, check: Check): Promise<void> {
     `    ELECTRON_RUN_AS_NODE=1 ${q(process.execPath)} ${q(script)} ${port} </dev/null >/dev/null 2>&1 &`,
     `    p=$!; echo "$p" > ${q(pidFile)}; echo "$p" >> ${q(spawnedLog)}`,
     `    n=0; while [ $n -lt 50 ]; do curl -s -o /dev/null http://127.0.0.1:${port}/health && break; sleep 0.1; n=$((n+1)); done`,
+    // A start that is slow to answer once its server is up (B6b): a stop can come in that time.
+    `    d=$(cat ${q(startDelay)} 2>/dev/null); [ -n "$d" ] && sleep "$d"`,
     `    echo "chat: started pid $p, healthy on port ${port}"; echo "models start end" >> ${q(log)}; exit 0;;`,
-    `  "models stop") echo "models stop" >> ${q(log)}; p=$(cat ${q(pidFile)} 2>/dev/null); [ -n "$p" ] && kill -TERM "$p" 2>/dev/null; rm -f ${q(pidFile)}; exit 0;;`,
+    `  "models stop") echo "models stop" >> ${q(log)}; ${stopServer}; exit 0;;`,
     `  "models status") p=$(cat ${q(pidFile)} 2>/dev/null)`,
-    `    if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then printf 'mode:           managed\\ndaemon:         running (pid %s)  http://127.0.0.1:${port}\\nhealth:         ok\\n' "$p"`,
+    `    if [ "\${p:-0}" -gt 1 ] 2>/dev/null && kill -0 "$p" 2>/dev/null; then printf 'mode:           managed\\ndaemon:         running (pid %s)  http://127.0.0.1:${port}\\nhealth:         ok\\n' "$p"`,
     `    else printf 'mode:           managed\\ndaemon:         stopped\\nhealth:         down\\n'; fi; exit 0;;`,
+    // The catalogue a model pick reads: the check's model, on disk and active.
+    `  "models list") printf 'ID | FAMILY | SIZE | CONTEXT | DOWNLOADED | ACTIVE\\n%s | smoke | 1.0 GB | 4096 | yes | *\\n' ${q(modelId)}; exit 0;;`,
     // The llama.cpp update, as the CLI's: it stops the model server to replace the binary and never starts it again.
     `  "models update") echo "models update" >> ${q(log)}; m=$(cat ${q(updateMode)} 2>/dev/null)`,
-    `    if [ "$m" = "ok" ] || [ "$m" = "fail" ]; then p=$(cat ${q(pidFile)} 2>/dev/null); [ -n "$p" ] && kill -TERM "$p" 2>/dev/null; rm -f ${q(pidFile)}; fi`,
-    `    if [ "$m" = "ok" ]; then echo "backend:        updated b1 → b2"; exit 0; fi`,
+    `    if [ "$m" = "ok" ] || [ "$m" = "fail" ]; then ${stopServer}; fi`,
+    `    if [ "$m" = "ok" ]; then echo "done. run 'atomic-agent models start' to use the new backend."; exit 0; fi`,
     `    if [ "$m" = "fail" ]; then echo "the llama.cpp download failed" >&2; exit 1; fi`,
     `    echo "refused models update" >> ${q(log)}; exit 1;;`,
     `  "models pull"|"models pull-embedding") echo "refused $1 $2" >> ${q(log)}; exit 1;;`,
@@ -361,7 +374,6 @@ async function wiring(js: Js, check: Check): Promise<void> {
      directory as the managed data dir, whose pid file the supervisor reads.
      A cloud entry is always there, so a wait on it is a wait on a provider
      the config has. */
-  const modelId = live.localModels?.managed?.modelId || "qwen-3.5-4b";
   const wanted = (autoRestart: boolean, cloud = false): UserConfigShape => {
     const cfg = JSON.parse(JSON.stringify(live)) as UserConfigShape;
     const lm = cfg.localModels ?? {};
@@ -403,6 +415,8 @@ async function wiring(js: Js, check: Check): Promise<void> {
     process.env.ATOMIC_AGENT_BIN = guard;
     guarded = true;
     if (resolveBinary() !== guard) throw new Error(`the guard is not the binary main runs (${resolveBinary()})`);
+    // What the window says now: the start after B7's update tells it, as a ⇄'s would; put back at the end.
+    await js("window.__t43Keep = {text: APPSTATUS.text, tone: APPSTATUS.tone, logs: LOGS.slice()}, true");
     await write(wanted(true));
     // The notices are collected here and not sent on: the window's own words are C's.
     const prev = hostDaemonWatch({ notify: () => {}, say: () => {}, busy: () => false });
@@ -474,25 +488,67 @@ async function wiring(js: Js, check: Check): Promise<void> {
     );
     await until(() => !bringUpInFlight(), 10_000);
 
-    // B6: a server the app finds up when it asks for one is the app's to bring back, as one it started.
+    /* B6: a server the app finds up when it asks for one is the app's to
+       bring back, as one it started — whichever start asked: the launch's (and
+       a ⇄'s) background bring-up, a model pick, Settings' Start. Between the
+       three the server is let go of as a stop on purpose would (noteStopped),
+       and left running. */
     disarm();
     disarm = daemonWatch.arm(1_000);
     await js("window.atomic.modelsStop()");
     const own6 = spawnByHand(script, port);
+    if (own6 <= 1) throw new Error("the stand-in started by hand has no pid");
     writeFileSync(pidFile, String(own6));
     writeFileSync(spawnedLog, `${readFileSync(spawnedLog, "utf8")}${own6}\n`);
     const up6 = await until(async () => (await health(port)) === 200, 10_000);
-    const ownedBefore = daemonWatch.state().owned;
-    const found = await js<{ ok?: boolean; alreadyRunning?: boolean; error?: string }>("window.atomic.modelsStart()");
-    const ownedAfter = daemonWatch.state().owned;
+    const claims: Record<string, { before: boolean; after: boolean; answer: string }> = {};
+    const claim = async (name: string, ask: () => Promise<string>) => {
+      daemonWatch.noteStopped();
+      const before = daemonWatch.state().owned;
+      const answer = await ask();
+      claims[name] = { before, after: daemonWatch.state().owned, answer };
+    };
+    await claim("launch", async () => (await bringUpAtLaunch(modelId)).daemon);
+    await claim("pick", async () => {
+      const r = await selectLocalModel(modelId);
+      return r.ok ? r.daemon ?? "" : `failed: ${r.error ?? ""}`;
+    });
+    await claim("start", async () => {
+      const r = await js<{ ok?: boolean; alreadyRunning?: boolean; error?: string }>("window.atomic.modelsStart()");
+      return r?.alreadyRunning === true ? "alreadyRunning" : JSON.stringify(r);
+    });
     const before6 = starts();
     const killed6 = await byHand();
     const back6 = await backAfter(killed6, 20_000);
+    const claimed = (name: string, answer: string) => claims[name]?.before === false && claims[name]?.after === true && claims[name]?.answer === answer;
     check(
-      "T43 B: a server Settings' Start finds already running becomes the app's — when it dies, the app brings it back",
-      up6 && found?.ok === true && found.alreadyRunning === true && !ownedBefore && ownedAfter && back6 && starts() === before6 + 1,
-      JSON.stringify({ up6, found, ownedBefore, ownedAfter, back6, starts: starts() - before6, verbs: verbs().slice(-6) }),
+      "T43 B: a server found already running by the launch start, a model pick or Settings' Start becomes the app's — when it dies, the app brings it back",
+      up6 && claimed("launch", "untouched") && claimed("pick", "untouched") && claimed("start", "alreadyRunning")
+        && back6 && starts() === before6 + 1,
+      JSON.stringify({ up6, claims, back6, starts: starts() - before6, verbs: verbs().slice(-6) }),
     );
+    await until(() => !bringUpInFlight(), 10_000);
+
+    /* B6b: Settings' Stop while a start is still on its way. The start
+       answers after the stop; it does not make the server the app's, and the
+       app does not bring back what the person stopped. */
+    await js("window.atomic.modelsStop()");
+    writeFileSync(startDelay, "1");
+    const before6b = starts();
+    const slowStart = js<{ ok?: boolean; error?: string }>("window.atomic.modelsStart()");
+    const spawned6b = await until(async () => starts() === before6b + 1 && (await health(port)) === 200, 10_000);
+    const stop6b = await js<{ ok?: boolean }>("window.atomic.modelsStop()");
+    const slow6b = await slowStart;
+    rmSync(startDelay, { force: true });
+    await wait(4_500);
+    check(
+      "T43 B: a start that Settings' Stop overtook does not make the server the app's — what the person stopped stays stopped",
+      spawned6b && stop6b?.ok === true && !daemonWatch.state().owned && starts() === before6b + 1 && (await health(port)) === "refused",
+      JSON.stringify({ spawned6b, stop: stop6b, start: slow6b, state: daemonWatch.state(), starts: starts() - before6b, verbs: verbs().slice(-6) }),
+    );
+
+    // B7 needs a server the app started.
+    await js("window.atomic.modelsStart()");
     await until(() => !bringUpInFlight(), 10_000);
 
     /* B7: the llama.cpp update stops the server itself. That stop is the app's:
@@ -502,13 +558,13 @@ async function wiring(js: Js, check: Check): Promise<void> {
     const seen7 = notices.length;
     const before7 = starts();
     const was7 = serverPid();
-    const updated = await js<{ ok?: boolean; error?: string }>("window.atomic.modelsUpdate()");
+    const updated = await js<{ ok?: boolean; error?: string; stdout?: string }>("window.atomic.modelsUpdate()");
     const back7 = await backAfter(was7, 20_000);
     await until(() => !bringUpInFlight(), 10_000);
     const quiet7 = !kinds(notices.slice(seen7)).includes("restarting");
     check(
-      "T43 B: a llama.cpp update that stops the model server starts it again once it went through — quietly, as the app's own stop, not as a crash",
-      updated?.ok === true && back7 && starts() === before7 + 1 && quiet7 && daemonWatch.state().owned,
+      "T43 B: a llama.cpp update that stops the model server starts it again once it went through — quietly, as the app's own stop, not as a crash — and its answer says so",
+      updated?.ok === true && /starting again/.test(updated.stdout ?? "") && back7 && starts() === before7 + 1 && quiet7 && daemonWatch.state().owned,
       JSON.stringify({ updated, back7, starts: starts() - before7, notices: kinds(notices.slice(seen7)), state: daemonWatch.state(), verbs: verbs().slice(-6) }),
     );
     writeFileSync(updateMode, "fail");
@@ -533,6 +589,7 @@ async function wiring(js: Js, check: Check): Promise<void> {
     if (guarded && resolveBinary() === guard) await js("window.atomic.modelsStop()").catch(() => undefined);
     await until(() => !bringUpInFlight(), 10_000);
     undoHost?.();
+    await js(`(() => { const k = window.__t43Keep; if (k) { APPSTATUS.text = k.text; APPSTATUS.tone = k.tone; LOGS.splice(0, LOGS.length, ...k.logs); delete window.__t43Keep; render(); } return true; })()`).catch(() => undefined);
     if (keepBin === undefined) delete process.env.ATOMIC_AGENT_BIN; else process.env.ATOMIC_AGENT_BIN = keepBin;
     for (const pid of spawned()) killStandIn(pid);
     const back = await configSetWhole(live);
@@ -569,6 +626,10 @@ async function words(js: Js, check: Check): Promise<void> {
       LLMP.mode = 'cloud';
       const restartingOnCloudPane = llmStatusLine();
       LLMP.mode = 'local';
+      // On the local pane its own error comes first: why a Start failed is the news there.
+      LLMP.statusErr = 'models status failed';
+      const errFirst = llmStatusLine();
+      LLMP.statusErr = null;
       dwatchApply({kind: 'gave_up', deaths: 3, fault: 'ggml_metal: out of memory'});
       const gaveUp = waitWhy(wait), gaveUpLine = llmStatusLine();
       dwatchApply({kind: 'restarted', afterMs: 9000});
@@ -593,7 +654,7 @@ async function words(js: Js, check: Check): Promise<void> {
           S.turnId = turn; S.streamId = stream;
         }
       }
-      return {plain, restarting, onCloud, restartingLine, restartingOnCloudPane, gaveUp, gaveUpLine, back, backLine, afterFrame, cleared, frameSkipped};
+      return {plain, restarting, onCloud, restartingLine, restartingOnCloudPane, errFirst, gaveUp, gaveUpLine, back, backLine, afterFrame, cleared, frameSkipped};
     } catch (err) {
       return {error: String(err && err.message || err)};
     } finally {
@@ -619,7 +680,7 @@ async function words(js: Js, check: Check): Promise<void> {
     "T43 C: Settings › Models says when the app stopped restarting a server that kept dying, and why — on every pane, Fusion's included",
     typeof r.gaveUpLine === "string" && /not restarted automatically/.test(r.gaveUpLine) && /out of memory/.test(r.gaveUpLine)
       && typeof r.restartingLine === "string" && /starting it again/.test(r.restartingLine)
-      && r.restartingOnCloudPane === r.restartingLine
+      && r.restartingOnCloudPane === r.restartingLine && r.errFirst === "local daemon: models status failed"
       && r.backLine === "status: ready" && /keeps stopping/.test(String(r.gaveUp)),
     JSON.stringify(r),
   );

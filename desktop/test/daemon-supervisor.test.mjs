@@ -154,6 +154,27 @@ test("an incident still open when the route moves on without a stop is closed", 
   assert.equal(f.notices.at(-1), "clear");
 });
 
+test("a server it stopped trying for is let go of when the route moves on, and only the person's start takes it back", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  f.look = "down";
+  for (let i = 0; i < MAX_QUICK_DEATHS; i++) {
+    later(5_000);
+    await sv.checkNow("refused");
+  }
+  assert.equal(sv.state().gaveUp, true);
+  f.wanted = false;
+  await sv.tick();
+  assert.equal(sv.state().gaveUp, false);
+  assert.equal(sv.state().owned, false);
+  assert.equal(f.notices.at(-1), "clear");
+  f.wanted = true;
+  later(120_000);
+  assert.equal(await sv.checkNow("refused"), false);
+  disarm();
+  assert.equal(f.restarts, MAX_QUICK_DEATHS - 1);
+});
+
 test("the person's own start counts quick deaths afresh", async () => {
   const { sv, f, later, disarm } = standIn();
   sv.noteStarted();
