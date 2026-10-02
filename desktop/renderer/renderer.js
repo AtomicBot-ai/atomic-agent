@@ -17543,7 +17543,7 @@ function skillsTab() {
     // the one big blue button; the Skills Hub card under the list said the same thing a second time.
     const counts = {all: rows.length, enabled: enabledCount, disabled: rows.length - enabledCount};
     const num = (n) => ' <span class="n">' + n + '</span>';
-    const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
+    const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow set-sktb">'
       + '<div class="tk-seg set-seg" role="group" aria-label="Show">'
         + SKP_FILTERS.map((f) => { const on = !tools && f === SKP.filter; return '<button class="skpf' + (on ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + on + '">' + SKP_FILTER_LABELS[f] + (SK.rows ? num(counts[f]) : '') + '</button>'; }).join('')
         // Item 09: this was a toolbar button that closed Settings for the inspector. It is a segment of its own, not one of
@@ -17551,9 +17551,11 @@ function skillsTab() {
         // 940px window and cut Browse Skills Hub off at the pane's edge.
         + '<button class="skpf' + (tools ? ' on' : '') + '" data-act="skills:tools" aria-pressed="' + tools + '" title="/tools">Built-in tools' + (toolCount !== null ? num(toolCount) : '') + '</button>'
       + '</div>'
-      + '<span class="grow"></span>'
-      + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh"' + (SKP.listRefreshing ? ' disabled aria-busy="true">' + '<span class="tk-spin"></span>' : '>' + ic('refresh')) + '</button>'
-      + '<button class="btn btn-blue" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
+      // Refresh and Browse Skills Hub keep to the right; where the row cannot hold them they go to a second line.
+      + '<span class="set-tbend">'
+        + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh"' + (SKP.listRefreshing ? ' disabled aria-busy="true">' + '<span class="tk-spin"></span>' : '>' + ic('refresh')) + '</button>'
+        + '<button class="btn btn-blue" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
+      + '</span>'
       + '</div></div>';
     view = bar
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
@@ -17783,8 +17785,10 @@ function skpHubListHTML() {
       + page.map((r, idx) => {
         const i = idx + start, sel = i === cur;
         const claw = r.source === 'clawhub';
-        // HubRow: identifier · description · downloads (GitHub taps count none).
-        return '<button class="tk-li set-hubrow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:card:' + i + '"' + (sel ? ' aria-selected="true"' : '') + '>'
+        // HubRow: identifier · description · downloads (GitHub taps count none). The row opens the skill it shows,
+        // by identifier: under a search box that holds the caret the rows are swapped without a repaint, and an
+        // index into the new list would open another skill.
+        return '<button class="tk-li set-hubrow' + (sel ? ' on' : '') + '" data-hub-row="' + esc(r.identifier) + '" data-act="skills:open:' + esc(r.identifier) + '"' + (sel ? ' aria-selected="true"' : '') + '>'
           + '<span class="body"><span class="t mono" title="' + esc(r.identifier) + '">' + esc(skpHubIdLabel(r.identifier)) + '</span><span class="d">' + esc(r.description) + '</span></span>'
           + (claw ? '<span class="m" title="' + esc(skpDownloadsWords(r.downloads)) + '">↓' + esc(formatDownloads(r.downloads)) + '</span>'
             : '<span class="m">GitHub</span>') + '</button>';
@@ -17957,10 +17961,15 @@ async function skpBrowse(query, force) {
   const res = await BR.skillBrowse(q).catch((e) => ({ok:false, error:String((e && e.message) || e)}));
   if (seq !== SKP.hubSeq) return;
   SKP.hubLoading = false;
-  if (res && res.ok) skpSetHubRows(key, res.rows || [], res.hubError, res.savedAt || Date.now());
+  const rows = res && res.ok && Array.isArray(res.rows) ? res.rows : null;
+  // A cut answer (a source failed: `hubError`, e.g. a tap rate-limited) is shown unless the list on
+  // screen is fuller; then that list stays. Main turns "nothing found while a source failed" (offline)
+  // into a failure, so it never empties the list either.
+  if (rows && !(res.hubError && rows.length < SKP.hubRows.length)) skpSetHubRows(key, rows, res.hubError, res.savedAt || Date.now());
   else if (SKP.hubRows.length) {
-    // The rows on screen stay; the note says how old they are.
-    SKP.hubError = 'Could not refresh the Skills Hub: ' + ((res && res.error) || 'no answer') + '. Showing the list from ' + relTime(SKP.hubSavedAt || Date.now()) + '.';
+    // The rows on screen stay; the note says why, and how old they are.
+    const why = (res && (res.ok ? res.hubError : res.error)) || 'no answer';
+    SKP.hubError = 'Could not refresh the Skills Hub: ' + why + '. Showing the list from ' + relTime(SKP.hubSavedAt || Date.now()) + '.';
   } else {
     SKP.hubRows = []; SKP.hubError = (res && res.error) || 'skill hub failed';
     SKP.msg = {text:'skill hub failed: ' + SKP.hubError};
@@ -18076,6 +18085,8 @@ function skillsAct(what) {
   if (verb === 'rebrowse') { skpBrowse(SKP.hubQuery, true); return; } // Д45: past the kept answer, to the hub itself
   if (verb === 'hubPage') { const n = SKP.hubRows.length; SKP.hubCursor = Math.max(0, Math.min(SKP.hubCursor + (arg === 'up' ? -SKP_HUB_ROWS : SKP_HUB_ROWS), n - 1)); render(); return; }
   if (verb === 'card') { const i = arg === '' ? SKP.hubCursor : +arg; skpOpenCard(i); return; }
+  // A hub row's own button: the skill it shows, wherever it now sits in the list (gone after a refresh: the list is repainted).
+  if (verb === 'open') { const i = SKP.hubRows.findIndex((r) => r.identifier === arg); if (i >= 0) skpOpenCard(i); else render(); return; }
   if (verb === 'source') { SKP.cardSource = !SKP.cardSource; render(); return; } // Д46: the skill page's Show source fold
   if (verb === 'install') { skpInstall(false); return; }
   if (verb === 'installAck') { skpInstall(true); return; }
