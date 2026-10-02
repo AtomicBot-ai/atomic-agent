@@ -174,6 +174,24 @@ function openFilePath(p) {
   if (OPEN_PATH_DRYRUN) return Promise.resolve({ok:true, dryRun:true});
   return BR.openPath(p);
 }
+/* Chat review (Д23): a path a reply names is a chip only once main has found
+   it on disk inside the home folder (main/reply-paths.ts); until then, and for
+   one that is not there, it stays text. REPLY_PATHS keeps main's answer per
+   path as the reply wrote it — `{ok, abs, kind, reveal, at}`, or 'asking'
+   while the question is out — and a path that was not there is asked about
+   again after REPLY_PATH_RETRY_MS, for a file the turn writes after naming
+   it. Declared up here because the first render() runs long before
+   renderProse's own part of the file. A reply chip opens through main's own
+   check again (openReplyPath), through the same dry-run seam as above. */
+const REPLY_PATHS = new Map();
+const REPLY_PATH_ASK = new Set();
+const REPLY_PATH_RETRY_MS = 15000;
+let REPLY_PATH_TIMER = 0;
+function openReplyPath(p) {
+  LAST_OPEN_PATH = p;
+  if (OPEN_PATH_DRYRUN) return Promise.resolve({ok:true, dryRun:true});
+  return BR.openReplyPath ? BR.openReplyPath(p) : Promise.resolve({ok:false, error:'Not available in this build.'});
+}
 /* Lane B — context before the first message (item 3). `source` is
    'provider' | 'estimate' (the trace, after a turn), 'built' (the branch
    route's own prompt), or 'projected' — the turn-0 scaffold of the last
@@ -5644,7 +5662,8 @@ document.addEventListener('click', (e) => {
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   const fchip = t.closest('[data-file]');
-  if (fchip && BR) { openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~')).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
+  // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
+  if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   /* Calm (S4): the approval card's Details is a native <details>; the click
@@ -16107,10 +16126,14 @@ function renderMarkdown(escaped) {
 
 function renderProse(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
-  const FILE_RE = /(?<![\w\/])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g;
+  // Chat review (Д23): letters of any script, so `~/Документы/отчёт.docx` reads as a path too,
+  // and extensions up to ten characters (`run.command`): main decides what each one is.
+  // The root is `~/` or `/` — with a bare `~` there, `~/notes/a.md` used to match
+  // from its slash, as `/notes/a.md`.
+  const FILE_RE = /(?<![\p{L}\p{N}_\/])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu;
   // Windows: not the tail of `C:/dir/file` either — that whole path is the
   // drive-letter chip below.
-  const FILE_RE_HERE = IS_WIN ? /(?<![\w\/:])((?:~|\/)(?:[\w.@+-]+\/)*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\/])/g : FILE_RE;
+  const FILE_RE_HERE = IS_WIN ? /(?<![\p{L}\p{N}_\/:])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu : FILE_RE;
   const md = renderMarkdown(esc(text));
   let html = md.html;
   html = html.replace(URL_RE, (u) => {
@@ -16119,19 +16142,75 @@ function renderProse(text) {
     const href = core.startsWith('www.') ? 'https://' + core : core;
     return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
   });
-  html = html.replace(FILE_RE_HERE, (p) => {
-    const name = p.split('/').pop();
-    return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
-  });
+  // Chat review (Д23): a chip only for a file main found in the home folder; text until then.
+  html = html.replace(FILE_RE_HERE, (p) => replyPathChip(p, p));
   if (IS_WIN) {
     // Windows: `C:\dir\file.ext` (either separator), the same chip.
     const WIN_FILE_RE = /(?<![\w\\/])([A-Za-z]:[\\/](?:[\w.@+-]+[\\/])*[\w.@+-]+\.[A-Za-z0-9]{1,6})(?![\w\\/])/g;
-    html = html.replace(WIN_FILE_RE, (p) => {
-      const name = pathBase(p);
-      return '<button class="filechip" data-file="' + p + '" title="' + p + '">' + ic('doc') + '<span>' + name + '</span></button>';
-    });
+    html = html.replace(WIN_FILE_RE, (p) => replyPathChip(p, p));
   }
-  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => md.held[+i]);
+  /* Chat review (Д23): most models write a path in a code span
+     (`~/Desktop/report.docx`), which this pass used to leave as code. A code
+     span holding nothing but a path (spaces and all) is that path too, on the
+     same terms; a fence stays code, and so does a span with anything else in
+     it. */
+  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
+    const h = md.held[+i];
+    const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
+    const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
+    return raw && codeSpanIsPath(raw) ? replyPathChip(raw, h) : h;
+  });
+}
+/** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
+function codeSpanIsPath(s) {
+  if (s.length > 1024 || /[\0\n<>"]/.test(s) || /:\/\//.test(s)) return false;
+  return IS_WIN ? /^(?:~[\\/]|[A-Za-z]:[\\/])\S/.test(s) : /^(?:~\/|\/)[^\/\s]/.test(s);
+}
+/** The chip for a path a reply names, once main found it in the home folder;
+    `shown` — the html it was — until then, and for good when it is not there.
+    While main has not answered, `shown` is wrapped in a `[data-rpath]` span,
+    so the answer can put the chip in its place without a repaint. */
+function replyPathChip(raw, shown) {
+  const v = replyPathKnown(raw);
+  if (!v) return '<span data-rpath="' + esc(raw) + '">' + shown + '</span>';
+  if (!v.ok || !v.abs) return shown;
+  const name = pathBase(String(raw).replace(IS_WIN ? /[\\/]+$/ : /\/+$/, '')) || raw;
+  return '<button class="filechip" data-file="' + esc(v.abs) + '" data-reply="1" title="' + esc(v.abs) + '">'
+    + ic(v.kind === 'dir' ? 'folder' : 'doc') + '<span>' + esc(name) + '</span></button>';
+}
+/** Main's answer about a path, or null while there is none — asking for it then. */
+function replyPathKnown(raw) {
+  const v = REPLY_PATHS.get(raw);
+  if (v && v !== 'asking' && (v.ok || Date.now() - v.at < REPLY_PATH_RETRY_MS)) return v;
+  if (v !== 'asking' && BR && BR.replyPaths) {
+    REPLY_PATHS.set(raw, 'asking'); REPLY_PATH_ASK.add(raw);
+    if (!REPLY_PATH_TIMER) REPLY_PATH_TIMER = setTimeout(replyPathsAsk, 0);
+  }
+  return null;
+}
+/** One round trip for every path waiting (64 at a time, main's cap). A path
+    that turned out to be a file takes its chip in place, wherever its text is
+    on screen: nothing else is rebuilt, so no scroll, caret or focus moves. */
+async function replyPathsAsk() {
+  REPLY_PATH_TIMER = 0;
+  const batch = [...REPLY_PATH_ASK].slice(0, 64);
+  batch.forEach((p) => REPLY_PATH_ASK.delete(p));
+  if (REPLY_PATH_ASK.size) REPLY_PATH_TIMER = setTimeout(replyPathsAsk, 0);
+  let res = null;
+  try { res = await BR.replyPaths(batch); } catch (e) { res = null; }
+  const files = res && res.ok && Array.isArray(res.files) ? res.files : [];
+  let landed = false;
+  batch.forEach((p, i) => {
+    const f = files[i] && files[i].path === p ? files[i] : null;
+    const v = {ok: !!(f && f.ok && f.abs), abs: (f && f.abs) || null, kind: (f && f.kind) || null, reveal: !!(f && f.reveal), at: Date.now()};
+    REPLY_PATHS.set(p, v);
+    if (v.ok) landed = true;
+  });
+  if (!landed) return;
+  document.querySelectorAll('[data-rpath]').forEach((n) => {
+    const v = REPLY_PATHS.get(n.dataset.rpath);
+    if (v && v !== 'asking' && v.ok) n.outerHTML = replyPathChip(n.dataset.rpath, n.innerHTML);
+  });
 }
 function homeDir() {
   const wd = S.live.workingDir || '';

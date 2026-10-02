@@ -167,6 +167,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
+import { replyPathVerdict, runsWhenOpened } from "./reply-paths.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -1473,11 +1474,25 @@ function wireIpc(client: AgentClient): void {
     if (typeof p !== "string" || !isAbsoluteOn(process.platform, p) || p.includes("\0")) return null;
     return p;
   };
+  /* Chat review Д23: opening a file the agent produced never runs it. An app,
+     a script, an installer or a link file (runsWhenOpened) is shown in the
+     file manager instead — the agent writes these too, and a click on a chip
+     that ran one would run whatever the model put in it. */
+  const openWithoutRunning = async (path: string): Promise<{ ok: boolean; revealed?: boolean; error?: string }> => {
+    try {
+      const st = await stat(path);
+      if (runsWhenOpened(process.platform, path, st.isDirectory() ? "dir" : "file", st.mode)) {
+        shell.showItemInFolder(path);
+        return { ok: true, revealed: true };
+      }
+    } catch { /* not there: openPath says so in its own words */ }
+    const err = await shell.openPath(path);
+    return err ? { ok: false, error: err } : { ok: true };
+  };
   ipcMain.handle("app:openPath", async (_event, p: unknown) => {
     const path = safePath(p);
     if (!path) return { ok: false, error: "not a path" };
-    const err = await shell.openPath(path);
-    return err ? { ok: false, error: err } : { ok: true };
+    return openWithoutRunning(path);
   });
   // Item 5 (file attachments): read-only existence check for the paths a turn's
   // write tools reported. fs.stat and nothing else — never open, never create.
@@ -1499,13 +1514,30 @@ function wireIpc(client: AgentClient): void {
     }
     return { ok: true, files };
   });
+  /* Chat review Д23: paths a reply names. A path is a chip only when it is a
+     file or folder that exists inside the home folder (replyPathVerdict), and
+     opening one asks again and never runs it. Capped like app:statPaths. */
+  ipcMain.handle("app:replyPaths", async (_event, list: unknown) => {
+    if (!Array.isArray(list)) return { ok: false, error: "not a list" };
+    const home = homedir();
+    return { ok: true, files: await Promise.all(list.slice(0, 64).map((p) => replyPathVerdict(p, home, process.platform))) };
+  });
+  ipcMain.handle("app:openReplyPath", async (_event, p: unknown) => {
+    const v = await replyPathVerdict(p, homedir(), process.platform);
+    if (!v.ok || !v.abs) {
+      return { ok: false, why: v.why, error: v.why === "missing" ? "It is no longer there." : "Only a file in your home folder opens from a reply." };
+    }
+    if (v.reveal) { shell.showItemInFolder(v.abs); return { ok: true, revealed: true }; }
+    const err = await shell.openPath(v.abs);
+    return err ? { ok: false, error: err } : { ok: true };
+  });
 
   ipcMain.handle("app:fileMenu", (event, p: unknown) => {
     const path = safePath(p);
     if (!path) return;
     const { clipboard, Menu } = require("electron") as typeof import("electron");
     const menu = Menu.buildFromTemplate([
-      { label: "Open", click: () => void shell.openPath(path) },
+      { label: "Open", click: () => void openWithoutRunning(path) },
       { label: fileManagerLabel(process.platform), click: () => shell.showItemInFolder(path) },
       { type: "separator" },
       { label: "Copy Path", click: () => clipboard.writeText(path) },
@@ -2778,8 +2810,13 @@ async function smokeTest(): Promise<void> {
     ]);
     check("missing trace file rejects, never hangs", missing.ok === false && typeof missing.error === "string" && missing.error.length > 0, JSON.stringify(missing));
 
+    // Chat review Д23: a path in a reply is a chip only once main has found the
+    // file in the home folder. These two are not on disk, so they stay text —
+    // before main answers and after (t46 drives the ones that are there).
     const chips = await js<number>("window.__pushAssistant('Saved the report to /Users/example/Desktop/report.pdf and the notes to ~/notes/summary.md.')");
-    check("file paths render as chips", chips === 2, `${chips} chips`);
+    await new Promise((r) => setTimeout(r, 400));
+    const chipsAfter = await js<number>("(() => { const t = [...document.querySelectorAll('#scroller .turn')].pop(); return t ? t.querySelectorAll('.prose .filechip').length : -1; })()");
+    check("file paths that are not on disk stay text, not chips", chips === 0 && chipsAfter === 0, `${chips} chips, ${chipsAfter} after main answered`);
 
     // --- first run: a config that has no `llm` block at all. -------------
     // The wizard's first cloud provider is written into a file whose `llm`
