@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { BrowserWindow } from "electron";
 
 import type { HubSkillRow } from "../agent-cli.js";
+import { resolveBinary } from "../agent-client.js";
 import {
   HUB_CACHE_FRESH_MS,
   HUB_CACHE_MAX_AGE_MS,
@@ -41,10 +42,13 @@ import { DESKTOP_STATE_DIR } from "../state-dir.js";
  * (asked before ipcMain's; a probe proves it first) answers `atag skill list`
  * with three staged skills, and stands in for the hub's browse, its kept
  * answer and ClawHub's detail read, each held until the check lets it go.
+ * The offline step goes through main's own `cli:skillBrowse` instead, with a
+ * guard in front of the agent binary that answers `skill browse` as the CLI
+ * does with no network (`(no skills found)`, a WARN per source, exit 1).
  * Main's cache is driven directly on a file of its own, and one staged entry
- * in the app's cache is read back through the real IPC and dropped after.
- * The Skills pane's state, the config read, the window size and the IPCs are
- * all put back.
+ * in the app's cache is read back through the real IPC; that file is put
+ * back byte for byte. The Skills pane's state, the config read, the window
+ * size, the agent binary and the IPCs are all put back.
  */
 
 type Js = <T>(code: string) => Promise<T>;
@@ -89,6 +93,12 @@ const DETAIL = {
   version: "4.0.2", downloads: 482149, skillMd: SKILL_MD,
 };
 const SMOKE_IDS = HUB.map((r) => r.identifier);
+/* What `atag skill browse` writes to stderr with no network (src/cli/skill.ts: browseClawHubSafe, printHubEntries). */
+const OFFLINE_WARN = [
+  "WARN: clawhub: network error fetching https://clawhub.ai/api/v1/skills?limit=100&sort=recommended&nonSuspiciousOnly=true: fetch failed",
+  "WARN: anthropics/skills: network error fetching https://api.github.com/repos/anthropics/skills/git/trees/main?recursive=1: fetch failed",
+];
+const RATE_LIMIT = "anthropics/skills: GitHub rate limit exceeded; set GITHUB_TOKEN to raise the limit";
 
 /** The window's IPC for what the Skills pane asks, as this check needs it. */
 class StandIn {
@@ -134,8 +144,22 @@ class StandIn {
     return [["cli:skillList", this.list], ["cli:skillBrowse", this.browse], ["cli:skillBrowseCached", this.cached], ["app:clawhubSkillDetail", this.detail]];
   }
 
+  private wins: BrowserWindow[] = [];
+
   install(wins: BrowserWindow[]): void {
+    this.wins = wins;
     for (const x of wins) for (const [ch, fn] of this.channels()) { x.webContents.ipc.removeHandler(ch); x.webContents.ipc.handle(ch, fn); }
+  }
+
+  /** Main's own handler answers `channel` until `standIn(channel)` puts the stand-in back. */
+  passThrough(channel: string): void {
+    for (const x of this.wins) if (!x.isDestroyed()) x.webContents.ipc.removeHandler(channel);
+  }
+
+  standIn(channel: string): void {
+    const fn = this.channels().find(([ch]) => ch === channel)?.[1];
+    if (!fn) return;
+    for (const x of this.wins) if (!x.isDestroyed()) { x.webContents.ipc.removeHandler(channel); x.webContents.ipc.handle(channel, fn); }
   }
 
   uninstall(wins: BrowserWindow[]): void {
@@ -247,7 +271,7 @@ async function cacheModule(check: Check): Promise<void> {
     const afterCut = cache.peek("pdf", "cfg-1");
     await cache.refresh("docx", "cfg-1", answer(HUB.slice(2), "clawhub: ClawHub request failed (503)"));
     const cutOnly = cache.peek("docx", "cfg-1");
-    await cache.refresh("nothing", "cfg-1", answer([], "every source failed"));
+    const failed = await cache.refresh("nothing", "cfg-1", answer([], "every source failed"));
     const failure = cache.peek("nothing", "cfg-1");
     const fromDisk = new SkillsHubCache(file, () => now).peek("pdf", "cfg-1");
     now += HUB_CACHE_MAX_AGE_MS;
@@ -263,19 +287,22 @@ async function cacheModule(check: Check): Promise<void> {
       show({ joined, savedAt: [a.savedAt, b.savedAt], fresh, stale: stale && stale.fresh, otherConfig, fromDisk: fromDisk && fromDisk.rows.length, expired, corrupt }),
     );
     check(
-      "T50: a cut answer never replaces a whole one, is never fresh, and a failure is not kept (Д45)",
+      "T50: a cut answer never replaces a whole one and is never fresh; nothing found while a source failed is a failure, not kept (Д45)",
       !!afterCut && afterCut.rows.length === 3 && afterCut.hubError === null
-        && !!cutOnly && cutOnly.rows.length === 1 && !cutOnly.fresh && failure === null,
-      show({ afterCut: afterCut && [afterCut.rows.length, afterCut.hubError], cutOnly: cutOnly && [cutOnly.rows.length, cutOnly.fresh], failure }),
+        && !!cutOnly && cutOnly.rows.length === 1 && !cutOnly.fresh
+        && same(failed, { ok: false, error: "every source failed" }) && failure === null,
+      show({ afterCut: afterCut && [afterCut.rows.length, afterCut.hubError], cutOnly: cutOnly && [cutOnly.rows.length, cutOnly.fresh], failed, failure }),
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-/* Д45: main's IPC serves the app's own cache — a staged entry read back through window.atomic, then dropped. */
+/* Д45: main's IPC serves the app's own cache — a staged entry read back through window.atomic. The app's file
+   is put back byte for byte after and read again, so the staged entry pushes out no search kept there. */
 async function cacheWiring(js: Js, check: Check): Promise<void> {
   const query = "smoke-t50 wiring";
+  const before = existsSync(hubCache.file) ? readFileSync(hubCache.file) : null;
   try {
     await hubCache.refresh(query, hubConfigKey(DESKTOP_STATE_DIR), async () => ({ ok: true, rows: HUB, hubError: null }));
     const got = await safe<{ ok?: boolean; rows?: unknown[]; fresh?: boolean; savedAt?: number }>(js, `window.atomic.skillBrowseCached(${show("Smoke-T50  WIRING")})`);
@@ -285,7 +312,8 @@ async function cacheWiring(js: Js, check: Check): Promise<void> {
       got.err ?? show({ ok: got.ok, rows: got.rows ? got.rows.length : null, fresh: got.fresh }),
     );
   } finally {
-    hubCache.forget(query);
+    if (before === null) rmSync(hubCache.file, { force: true }); else writeFileSync(hubCache.file, before);
+    hubCache.reload();
   }
 }
 
@@ -399,6 +427,27 @@ async function narrow(js: Js, check: Check): Promise<void> {
       !fit.err && fit.width <= 1000 && fit.tabs.length === 4 && fit.tabs.every((t) => t.whole) && fit.seg && fit.row && fit.hubOn,
       fit.err ?? show(fit),
     );
+    // Narrower than the tabs and the buttons together (longer counts, a smaller window): the buttons go to a
+    // second line, at its right, and nothing goes past the row's edge.
+    const wrap = await safe<{ fits: boolean; below: boolean; right: boolean; tabsWhole: boolean }>(js, `(async () => {
+      ${PAGE}
+      const row = document.querySelector('#settings .set-toolbar .set-tbrow');
+      if (!row) return {err: 'no Skills toolbar row'};
+      const keep = row.style.maxWidth;
+      try {
+        row.style.maxWidth = '440px'; await tick(60);
+        const seg = row.querySelector('.set-seg'), hubBtn = row.querySelector('[data-act="skills:hub"]');
+        const rr = row.getBoundingClientRect(), sr = seg.getBoundingClientRect(), hr = hubBtn.getBoundingClientRect();
+        return {fits: row.scrollWidth <= row.clientWidth + 1 && hr.right <= rr.right + 1,
+          below: hr.top >= sr.bottom - 1, right: Math.abs(hr.right - rr.right) <= 1.5,
+          tabsWhole: seg.scrollWidth <= seg.clientWidth + 1};
+      } finally { row.style.maxWidth = keep; }
+    })()`);
+    check(
+      "T50: where the toolbar cannot hold its tabs and buttons on one line, the buttons wrap to its right, nothing is cut",
+      !wrap.err && wrap.fits && wrap.below && wrap.right && wrap.tabsWhole,
+      wrap.err ?? show(wrap),
+    );
   } finally {
     const now = win.getContentSize();
     if (now[0] !== size[0] || now[1] !== size[1]) { win.setContentSize(size[0]!, size[1]!); await wait(400); }
@@ -415,6 +464,8 @@ const HUB_VIEW = `(() => {
     oldLoader: !!b && /browsing the skill hub|loading skill card/.test(b.textContent), error: SKP.hubError || ''};
 })()`;
 type HubView = { mode: string; loading: boolean; rows: string[]; skel: number; spins: string[]; counts: string; againDisabled: boolean; oldLoader: boolean; error: string };
+/** The hub view once `ok` holds, or as it is after `ms` (2 s unless said). */
+type Settle = (ok: (v: HubView) => boolean, ms?: number) => Promise<HubView & Failed>;
 /* Into the hub as after a fresh start: nothing of it in the window's memory, so main's kept answer is all there is. */
 const OPEN_HUB = `(async () => {
   window.__skillsAct('back'); window.__skillsAct('back');
@@ -427,9 +478,10 @@ const OPEN_HUB = `(async () => {
 async function hub(js: Js, check: Check, agent: StandIn): Promise<void> {
   const ids = HUB.map((r) => r.identifier);
   const view = () => safe<HubView>(js, HUB_VIEW);
-  const settle = async (ok: (v: HubView) => boolean): Promise<HubView & Failed> => {
+  const settle: Settle = async (ok, ms = 2000) => {
+    const t0 = Date.now();
     let v = await view();
-    for (let i = 0; i < 40 && !v.err && !ok(v); i++) { await wait(50); v = await view(); }
+    while (!v.err && !ok(v) && Date.now() - t0 < ms) { await wait(50); v = await view(); }
     return v;
   };
 
@@ -486,25 +538,119 @@ async function hub(js: Js, check: Check, agent: StandIn): Promise<void> {
     fresh.err ?? during.err ?? done.err ?? show({ quiet, forced, fresh, during, done }),
   );
 
-  // 4 — The hub does not answer: the kept rows stay, and the note says how old they are.
+  // 4 — Offline, as the real CLI answers it, through main's own handler and cache: the kept rows stay, and the
+  // note says why and how old they are. (Read as an answer, `(no skills found)` emptied the list.)
   agent.kept = { ok: true, rows: HUB.slice(0, 2), hubError: null, savedAt: Date.now() - 2 * 3600_000 - 60_000, fresh: false };
+  await offline(js, check, agent, ids, settle);
+
+  // 5 — A cut answer (a tap rate-limited) smaller than the list on screen: that list stays, the note says why.
+  agent.kept = { ok: true, rows: HUB, hubError: null, savedAt: Date.now() - 2 * 3600_000 - 60_000, fresh: false };
   agent.browseHeld = false;
-  agent.browseAnswer = { ok: false, error: "smoke t50: offline" };
+  agent.browseAnswer = { ok: true, rows: HUB.slice(0, 1), hubError: RATE_LIMIT };
   await safe<boolean>(js, OPEN_HUB);
-  const offline = await settle((v) => !v.loading && v.error !== "");
+  const cut = await settle((v) => !v.loading && v.error !== "");
+  // 6 — A cut answer that is not smaller is shown, its warning beside it.
+  agent.kept = { ok: true, rows: HUB.slice(0, 1), hubError: null, savedAt: Date.now() - 2 * 3600_000 - 60_000, fresh: false };
+  agent.browseAnswer = { ok: true, rows: HUB.slice(0, 2), hubError: RATE_LIMIT };
+  await safe<boolean>(js, OPEN_HUB);
+  const fuller = await settle((v) => !v.loading && v.rows.length === 2);
   agent.browseAnswer = { ok: true, rows: HUB, hubError: null };
   agent.browseHeld = true;
   check(
-    "T50: a refresh that fails keeps the kept rows and says how old they are (Д45)",
-    !offline.err && same(offline.rows, ids.slice(0, 2))
-      && offline.error === "Could not refresh the Skills Hub: smoke t50: offline. Showing the list from 2 hours ago.",
-    offline.err ?? show(offline),
+    "T50: a cut answer never replaces a fuller list on screen, and is shown where it is not smaller (Д45)",
+    !cut.err && !fuller.err && same(cut.rows, ids)
+      && cut.error === `Could not refresh the Skills Hub: ${RATE_LIMIT}. Showing the list from 2 hours ago.`
+      && same(fuller.rows, ids.slice(0, 2)) && fuller.error === RATE_LIMIT,
+    cut.err ?? fuller.err ?? show({ cut, fuller }),
+  );
+
+  // 7 — Newer rows land while the search box holds the caret (no repaint under it): a row on screen still opens
+  // the skill it shows. It is the GitHub row, whose page asks ClawHub nothing.
+  agent.kept = { ok: true, rows: HUB, hubError: null, savedAt: Date.now() - 2 * 3600_000, fresh: false };
+  agent.browseHeld = true;
+  calls = agent.browses.length;
+  await safe<boolean>(js, OPEN_HUB);
+  await settle((v) => v.rows.length === 3);
+  const fetching = await until(() => agent.browses.length > calls, 3000);
+  await safe<unknown>(js, "window.__skillsAct('hubSearch')");
+  agent.releaseBrowses({ ok: true, rows: [...HUB].reverse(), hubError: null });
+  const clicked = await safe<{ typing: boolean; shown: string[]; state: string[]; opened: string | null }>(js, `(async () => {
+    ${PAGE}
+    for (let i = 0; i < 60 && SKP.hubLoading; i++) await tick(50);
+    const typing = !!document.activeElement && document.activeElement.id === 'skp-hubq';
+    const shown = hubRows();
+    const state = SKP.hubRows.map((r) => r.identifier);
+    const row = document.querySelector('#settings .setbody [data-hub-row=${show(HUB[2]!.identifier)}]');
+    if (row) row.click();
+    await tick(60);
+    return {typing, shown, state, opened: SKP.hubCard ? SKP.hubCard.identifier : null};
+  })()`);
+  check(
+    "T50: a hub row opens the skill it shows, even after newer rows landed under the search box (Д45)",
+    !clicked.err && fetching && clicked.typing && same(clicked.shown, ids) && same(clicked.state, [...ids].reverse())
+      && clicked.opened === HUB[2]!.identifier,
+    clicked.err ?? show({ fetching, clicked }),
   );
 
   // Back on the staged rows for the skill pages.
   agent.kept = { ok: true, rows: HUB, hubError: null, savedAt: Date.now() - 60_000, fresh: true };
   await safe<boolean>(js, OPEN_HUB);
   await settle((v) => v.rows.length === 3);
+}
+
+/* Step 4's agent: `skill browse|search` as the CLI answers them with no network, every other verb the real
+   binary's. Each browse it answers is written down. */
+function offlineAgent(dir: string, bin: string | null): { guard: string; asked: () => string[] } {
+  const guard = join(dir, "atag-offline.sh");
+  const log = join(dir, "asked.log");
+  const q = (p: string) => `'${p.replace(/'/g, `'\\''`)}'`;
+  writeFileSync(guard, [
+    "#!/bin/sh",
+    `case "$1 $2" in`,
+    `  "skill browse"|"skill search") printf '%s %s\\n' "$1" "$2" >> ${q(log)}`,
+    `    printf '(no skills found)\\n'`,
+    `    printf '%s\\n' ${OFFLINE_WARN.map(q).join(" ")} >&2`,
+    `    exit 1;;`,
+    "esac",
+    bin ? `exec ${q(bin)} "$@"` : "exit 127",
+    "",
+  ].join("\n"));
+  chmodSync(guard, 0o755);
+  writeFileSync(log, "");
+  return { guard, asked: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+}
+
+async function offline(js: Js, check: Check, agent: StandIn, ids: string[], settle: Settle): Promise<void> {
+  const name = "T50: offline, the kept rows stay and the note says why and how old they are (Д45)";
+  if (process.platform === "win32") {
+    process.stdout.write(`SKIP ${name} — its stand-in agent is a /bin/sh script.\n`);
+    return;
+  }
+  const bin = resolveBinary();
+  const dir = mkdtempSync(join(tmpdir(), "aa-t50-"));
+  const keepBin = process.env.ATOMIC_AGENT_BIN;
+  const agentCli = offlineAgent(dir, bin);
+  try {
+    process.env.ATOMIC_AGENT_BIN = agentCli.guard;
+    if (resolveBinary() !== agentCli.guard) throw new Error(`the stand-in is not the binary main runs (${resolveBinary()})`);
+    agent.passThrough("cli:skillBrowse");
+    await safe<boolean>(js, OPEN_HUB);
+    // A subprocess this time (the stand-in agent): longer than the window's own stand-ins take.
+    const v = await settle((x) => !x.loading && x.error !== "", 15_000);
+    const head = `Could not refresh the Skills Hub: ${OFFLINE_WARN.map((w) => w.slice("WARN: ".length)).join("; ")}.`;
+    check(
+      name,
+      !v.err && agentCli.asked().includes("skill browse") && same(v.rows, ids.slice(0, 2))
+        && v.error === `${head} Showing the list from 2 hours ago.`,
+      v.err ?? show({ asked: agentCli.asked(), rows: v.rows, error: v.error }),
+    );
+  } catch (e) {
+    check(name, false, message(e));
+  } finally {
+    agent.standIn("cli:skillBrowse");
+    if (keepBin === undefined) delete process.env.ATOMIC_AGENT_BIN; else process.env.ATOMIC_AGENT_BIN = keepBin;
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /* What the skill page shows: its head, its geometry and its one loader. */

@@ -179,16 +179,19 @@ describe("browseTap lazy branch resolution", () => {
 });
 
 describe("browseHub / browseTap fan-out", () => {
-  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** Every microtask queued so far, and those they queue, have run. */
+  const drain = () => new Promise<void>((r) => setImmediate(r));
 
   it("reads the taps side by side, not one after the other", async () => {
-    const events: string[] = [];
+    const started: string[] = [];
+    let aSawB = false;
     const client: SkillHubClient = {
       resolveDefaultBranch: async () => "main",
       listSkillManifests: async (owner) => {
-        events.push(`list ${owner}`);
-        await delay(20);
-        events.push(`listed ${owner}`);
+        started.push(owner);
+        // One microtask on: a tap read alongside has begun by now, one read after this one has not.
+        await Promise.resolve();
+        if (owner === "a") aSawB = started.includes("b");
         return [{ dir: "s", manifestPath: "s/SKILL.md" }];
       },
       fetchTextFile: async (owner) => manifest(`${owner}-s`, "x"),
@@ -199,14 +202,14 @@ describe("browseHub / browseTap fan-out", () => {
       { repo: "b/r", path: "" },
     ]);
     expect(entries.map((e) => e.name)).toEqual(["a-s", "b-s"]);
-    expect(events.indexOf("list b")).toBeLessThan(events.indexOf("listed a"));
+    expect(aSawB).toBe(true);
   });
 
-  it("merges in the configured order whichever tap answers first", async () => {
+  it("keeps errors in the configured order whichever tap fails first (an order guard: reading the taps one after the other kept it too)", async () => {
     const client: SkillHubClient = {
       resolveDefaultBranch: async () => "main",
       listSkillManifests: async (owner) => {
-        await delay(owner === "slow" ? 30 : 1);
+        if (owner === "slow") await drain();
         throw new GithubSkillError(`${owner} down`, "rate_limited", 403);
       },
       fetchTextFile: async () => "",
@@ -220,30 +223,44 @@ describe("browseHub / browseTap fan-out", () => {
   });
 
   it("keeps six SKILL.md reads in flight and refills a slot as soon as it frees", async () => {
-    let inFlight = 0;
-    let most = 0;
-    const done: string[] = [];
     const dirs = Array.from({ length: 13 }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    // Each read waits until the test answers it.
+    const pending = new Map<string, () => void>();
+    let most = 0;
     const client: SkillHubClient = {
       resolveDefaultBranch: async () => "main",
       listSkillManifests: async () =>
         dirs.map((dir) => ({ dir, manifestPath: `${dir}/SKILL.md` })),
-      fetchTextFile: async (_o, _r, _ref, path) => {
-        inFlight += 1;
-        most = Math.max(most, inFlight);
+      fetchTextFile: (_o, _r, _ref, path) => {
         const dir = path.split("/")[0]!;
-        // The first file is slow; the rest are quick.
-        await delay(dir === "s00" ? 80 : 5);
-        inFlight -= 1;
-        done.push(dir);
-        return manifest(dir, "x");
+        return new Promise<string>((resolve) => {
+          pending.set(dir, () => {
+            pending.delete(dir);
+            resolve(manifest(dir, "x"));
+          });
+          most = Math.max(most, pending.size);
+        });
       },
       downloadSkillDir: async () => [],
     };
-    const entries = await browseTap(client, { repo: "o/r", path: "" });
+    const answer = async (dir: string) => {
+      pending.get(dir)!();
+      await drain();
+    };
+    const browsing = browseTap(client, { repo: "o/r", path: "" });
+    await drain();
+    expect([...pending.keys()]).toEqual(dirs.slice(0, 6));
+    // s01 answers while s00 is still out: its slot goes to s06 at once.
+    // Fixed batches of six would hold s06…s12 until s00 answered.
+    await answer("s01");
+    expect([...pending.keys()]).toEqual(["s00", "s02", "s03", "s04", "s05", "s06"]);
+    for (let d = [...pending.keys()].find((k) => k !== "s00"); d; d = [...pending.keys()].find((k) => k !== "s00")) {
+      await answer(d);
+    }
+    expect([...pending.keys()]).toEqual(["s00"]);
+    await answer("s00");
+    const entries = await browsing;
     expect(entries.map((e) => e.name)).toEqual(dirs);
     expect(most).toBe(6);
-    // Fixed batches of six would hold s06…s12 behind the slow s00.
-    expect(done.indexOf("s00")).toBe(dirs.length - 1);
   });
 });

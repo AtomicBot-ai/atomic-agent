@@ -127,6 +127,12 @@ export class SkillsHubCache {
    * Run the browse for `query`, once at a time per query (a second ask joins
    * the first), and keep what it answered. The answer goes back with the
    * time it was fetched.
+   *
+   * Nothing found while a source failed is a failure, not an empty
+   * catalogue: offline, `atag skill browse` prints `(no skills found)` and
+   * exits 1 with a WARN per source (src/cli/skill.ts printHubEntries), which
+   * agent-cli.ts reads as rows [] plus `hubError`. Handed on as it was, the
+   * window took it for the hub's answer and emptied a list it was showing.
    */
   refresh(query: string, config: string, run: () => Promise<HubBrowseAnswer>): Promise<HubBrowseAnswer> {
     const key = hubCacheKey(query);
@@ -135,6 +141,7 @@ export class SkillsHubCache {
     const p = (async (): Promise<HubBrowseAnswer> => {
       const res = await run();
       if (!res || !res.ok || !Array.isArray(res.rows)) return res;
+      if (res.rows.length === 0 && res.hubError) return { ok: false, error: res.hubError };
       const savedAt = this.now();
       this.keep(key, { rows: res.rows, hubError: res.hubError ?? null, savedAt, config });
       return { ...res, savedAt };
@@ -143,23 +150,17 @@ export class SkillsHubCache {
     return p;
   }
 
-  /** Drop the answer kept for `query` (the smoke's own entries). */
-  forget(query: string): void {
-    const data = this.load();
-    const key = hubCacheKey(query);
-    if (!(key in data.entries)) return;
-    delete data.entries[key];
-    this.save();
+  /** Read the file again at the next ask (the smoke puts the app's file back under it). */
+  reload(): void {
+    this.data = null;
   }
 
   /**
    * A whole answer replaces what was kept. One with a source missing (a tap
    * rate-limited, ClawHub down: `hubError` set) is kept only where nothing
-   * whole is, so it never pushes out a full list for a cut one; with no rows
-   * at all it is a failure, not a catalogue, and is not kept.
+   * whole is, so it never pushes out a full list for a cut one.
    */
   private keep(key: string, entry: Entry): void {
-    if (entry.hubError !== null && entry.rows.length === 0) return;
     const data = this.load();
     const old = data.entries[key];
     const oldWhole = !!old && old.config === entry.config && old.hubError === null && this.now() - old.savedAt <= HUB_CACHE_MAX_AGE_MS;

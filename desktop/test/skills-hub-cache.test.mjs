@@ -69,20 +69,40 @@ test("asks for one query while one runs share it", async () => {
   } finally { s.done(); }
 });
 
-test("a cut answer never replaces a whole one, is never fresh, and a failure is not kept", async () => {
+test("a cut answer never replaces a whole one and is never fresh", async () => {
   const s = scratch();
   try {
     const cache = new SkillsHubCache(s.file);
     await cache.refresh("", "c", answer(ROWS));
     const cut = await cache.refresh("", "c", answer(ROWS.slice(0, 1), "anthropics/skills: GitHub rate limit exceeded"));
-    assert.equal(cut.rows.length, 1, "the window still gets what came back");
-    assert.equal(cache.peek("", "c").rows.length, 2);
+    // Main hands a cut answer that has rows back as it came; the window shows it only where it is not
+    // smaller than the list on screen, and otherwise keeps that list with a could-not-refresh note (T50).
+    assert.equal(cut.ok, true);
+    assert.equal(cut.rows.length, 1);
+    assert.equal(cut.hubError, "anthropics/skills: GitHub rate limit exceeded");
+    assert.equal(cache.peek("", "c").rows.length, 2, "the kept list stays whole");
     await cache.refresh("docx", "c", answer(ROWS.slice(1), "clawhub: ClawHub request failed (503)"));
     const kept = cache.peek("docx", "c");
     assert.equal(kept.rows.length, 1);
     assert.equal(kept.fresh, false);
-    await cache.refresh("none", "c", answer([], "every source failed"));
+  } finally { s.done(); }
+});
+
+test("nothing found while a source failed is a failure, never an empty catalogue", async () => {
+  const s = scratch();
+  try {
+    const cache = new SkillsHubCache(s.file);
+    await cache.refresh("", "c", answer(ROWS));
+    // Offline: `(no skills found)` and exit 1, read by agent-cli.ts as rows [] with every source's warning.
+    const offline = "clawhub: network error fetching https://clawhub.ai/api/v1/skills: fetch failed; anthropics/skills: fetch failed";
+    assert.deepEqual(await cache.refresh("", "c", answer([], offline)), { ok: false, error: offline });
+    assert.equal(cache.peek("", "c").rows.length, 2, "the kept list is untouched");
+    assert.equal(await cache.refresh("none", "c", answer([], offline)).then((r) => r.ok), false);
     assert.equal(cache.peek("none", "c"), null);
+    // Every source answered and none had a match: a real, empty answer, kept as one.
+    const empty = await cache.refresh("zzz", "c", answer([]));
+    assert.equal(empty.ok, true);
+    assert.equal(cache.peek("zzz", "c").rows.length, 0);
     const failed = await cache.refresh("x", "c", async () => ({ ok: false, error: "no binary" }));
     assert.deepEqual(failed, { ok: false, error: "no binary" });
     assert.equal(cache.peek("x", "c"), null);
@@ -116,8 +136,21 @@ test("the browse is kept past the search cap; the oldest searches go", async () 
     assert.equal(entries.length, HUB_CACHE_MAX_ENTRIES);
     assert.ok(entries.includes(""));
     assert.ok(!entries.includes("q0") && entries.includes(`q${HUB_CACHE_MAX_ENTRIES + 2}`));
-    cache.forget("");
-    assert.equal(cache.peek("", "c"), null);
+  } finally { s.done(); }
+});
+
+test("reload reads the file again: a file put back under the cache is what it serves", async () => {
+  const s = scratch();
+  try {
+    const cache = new SkillsHubCache(s.file);
+    await cache.refresh("", "c", answer(ROWS));
+    const before = readFileSync(s.file);
+    await cache.refresh("staged", "c", answer(ROWS.slice(0, 1)));
+    writeFileSync(s.file, before);
+    assert.ok(cache.peek("staged", "c"), "until reload it serves what it holds");
+    cache.reload();
+    assert.equal(cache.peek("staged", "c"), null);
+    assert.equal(cache.peek("", "c").rows.length, 2);
   } finally { s.done(); }
 });
 

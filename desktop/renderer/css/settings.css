@@ -195,6 +195,10 @@ button.set-search:hover{border-color:var(--bd)}
 .set-submit[disabled]{color:var(--ink-3)!important}
 
 /* ---------------- Skills (ST-06…11) ---------------- */
+/* The list's toolbar: where the tabs and the two buttons do not fit one line (a narrow window, long
+   counts), Refresh and Browse Skills Hub go to a second line, at its right, not past the pane's edge. */
+.set-sktb{flex-wrap:wrap;row-gap:8px}
+.set-sktb > .set-tbend{display:flex;align-items:center;gap:8px;margin-left:auto}
 /* Д43: a tab's count, quieter than its label. */
 .skpf .n{font-weight:500;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .skpf.on .n,.skpf[aria-pressed="true"] .n{color:var(--ink-2)}
