@@ -129,6 +129,9 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-seg{max-width:100%;overflow-x:auto;scrollbar-width:none}
 .set-seg::-webkit-scrollbar{display:none}
 .set-tbrow > .set-counts{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-tbrow > .set-readout{flex:0 1 auto}
+/* The Skills readout is one word (auto / manual); the counts give up width instead. */
+.set-skills .set-tbrow > .set-readout{flex:none}
 .set-search{flex:0 1 280px;min-width:120px;height:34px;padding:0 6px 0 12px;cursor:text;color:var(--ink-3);font-size:13px}
 .set-tbrow > .set-search{flex:0 1 280px}
 .set-tbrow > .set-hubsearch{flex:1 1 300px}
@@ -141,6 +144,12 @@ button.set-search:hover{border-color:var(--bd)}
 .set-search input{font-size:13px}
 .set-search .kc{flex:none}
 .set-hubsearch{flex:1 1 300px}
+.set-readout{display:inline-flex;align-items:center;gap:7px;min-width:0;height:30px;padding:0 10px;border-radius:var(--r-pill);
+  font:400 12px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;cursor:pointer;
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.set-readout:hover{background:var(--hover);color:var(--ink)}
+.set-readout > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-readout .tk-spin{width:12px;height:12px}
 .set-counts{font-size:12.5px;color:var(--ink-2);white-space:nowrap}
 
 /* Notices in a pane */

@@ -4350,7 +4350,7 @@ function settingsNavReveal(menu) {
    in the panes' toolbars. */
 function settingsPoll(pane) {
   if (pane === 'tasks') return TK.mode === 'list' ? {auto: TK.auto, busy: TK.loading, at: TK.lastRefreshedAt} : null;
-  if (pane === 'skills') return SKP.mode === 'list' && SKP.view !== 'tools' && !SKP.hubCard ? {auto: SKP.auto, busy: SK.busy, at: SK.at} : null;
+  if (pane === 'skills') return SKP.mode === 'list' && SKP.view !== 'tools' && !SKP.hubCard ? {auto: SKP.auto !== false, busy: SK.busy, at: SK.at} : null;
   if (pane === 'memory') return {auto: MEM.auto, busy: MEM.loading, at: MEM.lastRefreshedAt};
   if (pane === 'mcp') return {auto: MCP.auto, busy: MCP.loading, at: MCP.lastRefreshedAt};
   return null;
@@ -17005,8 +17005,9 @@ function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
 }
 /* Soft Tactile (ST-01): the Tasks toolbar — the filters as a segmented
-   control (every TK_FILTER_ORDER value), then search, how many tasks show,
-   Refresh and New task. The auto-refresh status is the window's (Д26). */
+   control (every TK_FILTER_ORDER value), then search, the auto-refresh
+   readout, Refresh and New task. `.tuibar` stays on it: tkRefreshBar finds the
+   readout inside. */
 function tkFilterBar(visibleCount) {
   const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
     + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
@@ -17019,11 +17020,17 @@ function tkFilterBar(visibleCount) {
     + '<div class="set-tbrow">' + seg + '</div>'
     + '<div class="set-tbrow">' + search
       + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
-      + '<span class="set-counts">' + esc(visibleCount === TK.rows.length ? visibleCount + (visibleCount === 1 ? ' task' : ' tasks') : visibleCount + ' of ' + TK.rows.length) + '</span>'
+      + tkReadoutHTML(visibleCount)
       + '<span class="grow"></span>'
       + '<button class="btn btn-s sm" data-act="tasks:refresh" title="r refresh">' + ic('refresh') + 'Refresh</button>'
       + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
     + '</div></div>';
+}
+/* Д26: what stands where the auto-refresh readout stood — how many tasks
+   show, "12 tasks" or "3 of 12". Its "auto · refreshed …" part is the
+   window's status line now, beside Done, and tkRefreshBar went with it. */
+function tkReadoutHTML(visibleCount) {
+  return '<span class="set-counts">' + esc(visibleCount === TK.rows.length ? visibleCount + (visibleCount === 1 ? ' task' : ' tasks') : visibleCount + ' of ' + TK.rows.length) + '</span>';
 }
 /* Status chip: running pulses brand, failed red, blocked amber (waiting on
    something), completed green words, cancelled an outline. */
@@ -17582,8 +17589,7 @@ function skillsTab() {
     const groups = tools ? skpBuiltinTools() : null;
     const toolCount = groups ? groups.reduce((n, g) => n + g.tools.length, 0) : 0;
     // FilterBar: `filter: all · enabled · disabled   N shown · E enabled · D disabled · auto · …   built-in tools: /tools` —
-    // a segmented control (the filters and Built-in tools), the counts and the Skills Hub (ST-06). The auto
-    // readout is the window's status line now, beside Done (Д26).
+    // a segmented control (the filters and Built-in tools), the counts, the auto readout and the Skills Hub (ST-06).
     const bar = SKP.mode === 'detail' ? '' : '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
       + '<div class="tk-seg set-seg" role="group" aria-label="Show">'
         + SKP_FILTERS.map((f) => { const on = !tools && f === SKP.filter; return '<button class="skpf' + (on ? ' on' : '') + '" data-act="skills:filter:' + f + '" aria-pressed="' + on + '">' + f + '</button>'; }).join('')
@@ -17594,7 +17600,10 @@ function skillsTab() {
       + '</div>'
       + (tools
         ? '<span class="set-counts">' + (groups ? toolCount + (toolCount === 1 ? ' tool' : ' tools') : '') + '</span>'
-        : '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>')
+        : '<span class="set-counts">' + visible.length + ' shown · ' + enabledCount + ' enabled · ' + (rows.length - enabledCount) + ' disabled</span>'
+          + '<button class="set-readout" data-act="skills:auto" title="Auto-refresh every 5 s — a toggles">'
+            + (SK.busy ? '<span class="tk-spin"></span>' : '<span class="tk-dot ' + (SKP.auto ? 'tk-dot--green' : 'tk-dot--hollow') + '"></span>')
+            + '<span>' + (SKP.auto ? 'auto' : 'manual') + (SK.busy ? ' · …' : '') + '</span></button>')
       + '<span class="grow"></span>'
       + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
       + '<button class="btn btn-t sm" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
