@@ -14,6 +14,7 @@ import { resolveBinary } from "../agent-client.js";
 import {
   agentStarting,
   bringUpInFlight,
+  daemonTurnsOnTheirWay,
   inDaemonTurn,
   lastTurnEnded,
   restartAfterSwitch,
@@ -508,12 +509,19 @@ async function pickThenStop(js: Js, g: Guard, agent: StandIn, n: number): Promis
   try {
     await within(30_000, "the check's daemon turn", begun);
     const pending: Promise<Answer>[] = [];
+    let queued = 0;
     for (let i = 0; i < n; i++) {
       pending.push(js<Answer>(`window.atomic.selectLocalModel(${JSON.stringify(MODEL)})`));
       // Each pick has made its reads and writes and asked for its turn before the next one comes.
       if (!(await g.until(() => count(g.verbs(), "models list end") >= i + 1, 20_000))) throw new Error(`pick ${i + 1} never read the catalogue: ${JSON.stringify(g.verbs())}`);
       if (i === 0 && !(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
-      if (i > 0) await wait(1_500);
+      /* A later pick is counted in the daemon's queue before Stop comes, not
+         given a fixed pause: its reads before it asks can take longer than any
+         pause on a busy machine, and a pick that asks after Stop rightly runs. */
+      if (i > 0 && !(await g.until(() => daemonTurnsOnTheirWay() >= queued + 1, 20_000))) {
+        throw new Error(`pick ${i + 1} never asked for its turn: ${JSON.stringify(g.verbs())}`);
+      }
+      queued = daemonTurnsOnTheirWay();
     }
     stop = await within(10_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
     release();
