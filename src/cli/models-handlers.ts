@@ -36,6 +36,7 @@ import {
   listLocalModels,
   listVulkanDevices,
   AUTO_UPDATE_RECHECK_MS,
+  deviceTableOnce,
   maybeAutoUpdateBackend,
   readBackendVersion,
   readDownloadJob,
@@ -542,11 +543,15 @@ export async function runLocalModelsStart(): Promise<number> {
   const multiGpu = tensorSplit.length > 0;
   const { binaryName } = resolvePlatformAsset();
   const binPath = resolveServerBinPath(dataDir, binaryName);
+  // One `--list-devices` for the launch: the context fit reads the same
+  // table for the free memory (`deviceTableOnce`).
+  const listDevices = deviceTableOnce(binPath);
   const device = await resolveManagedDevice(
     binPath,
     cfg.localModels.managed.device,
     {
       multiGpu,
+      listDevices,
     },
   );
   process.stdout.write(
@@ -579,6 +584,9 @@ export async function runLocalModelsStart(): Promise<number> {
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),
+        // The table `dev` was picked from; the CPU rescue below swaps
+        // the binary and reads no device memory, so it gets none.
+        ...(dev !== "cpu" ? { listDevices } : {}),
         // A configured tensor split only applies while a GPU build
         // serves — the forced-CPU rescue retry (`startWithDevice("cpu")`)
         // must not hand multi-GPU split args to the CPU backend.

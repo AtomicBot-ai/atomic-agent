@@ -203,6 +203,25 @@ export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
   }
 }
 
+/** A launch's device table, read on demand (`deviceTableOnce`). */
+export type ListDevices = () => Promise<readonly GpuDevice[]>;
+
+/**
+ * `<binPath> --list-devices` for one launch: run the first time something
+ * asks, and that answer handed to everyone after. A managed start reads
+ * the table twice — to pick the device, then for the free memory the
+ * context is fitted into — and each run starts the backend (on Apple
+ * silicon, Metal's device and its shader library), so the second spawn
+ * was pure delay before the model began to load. The first start after
+ * a llama.cpp install is slow to start the backend at all (16 s before
+ * the server printed its first line, on a 16 GB Mac), where one run can
+ * use up its whole 5 s deadline.
+ */
+export function deviceTableOnce(binPath: string): ListDevices {
+  let table: Promise<GpuDevice[]> | null = null;
+  return () => (table ??= listVulkanDevices(binPath));
+}
+
 /**
  * Resolve the configured device preference into a concrete value for the
  * daemon argv builder:
@@ -222,16 +241,18 @@ export async function listVulkanDevices(binPath: string): Promise<GpuDevice[]> {
  * split.
  *
  * Best-effort and never throws — enumeration failures fall through to
- * `undefined`.
+ * `undefined`. `opts.listDevices` is the launch's own table
+ * (`deviceTableOnce`), so the context fit after it does not enumerate
+ * again; without it the binary is asked here.
  */
 export async function resolveManagedDevice(
   binPath: string,
   configured: string | undefined,
-  opts?: { multiGpu?: boolean },
+  opts?: { multiGpu?: boolean; listDevices?: ListDevices },
 ): Promise<string | undefined> {
   if (configured === "cpu") return "cpu";
   if (configured && configured !== "auto") return configured;
   if (opts?.multiGpu) return undefined;
-  const devices = await listVulkanDevices(binPath);
+  const devices = await (opts?.listDevices ?? (() => listVulkanDevices(binPath)))();
   return pickBestDevice(devices) ?? undefined;
 }

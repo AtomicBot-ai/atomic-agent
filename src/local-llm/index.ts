@@ -170,9 +170,11 @@ export {
   parseListDevices,
   pickBestDevice,
   listVulkanDevices,
+  deviceTableOnce,
   resolveManagedDevice,
   sharesSystemMemory,
   type GpuDevice,
+  type ListDevices,
 } from "./gpu-devices.js";
 export {
   resolveGpuBudgetGb,
@@ -198,6 +200,10 @@ export {
   stopChatAndEmbeddingDaemons,
   probeThroughput,
   readThroughputRecord,
+  readReusableThroughput,
+  slotsAllIdle,
+  throughputBasis,
+  THROUGHPUT_REUSE_MAX_AGE_MS,
   writeThroughputRecord,
   readLaunchRecord,
   writeLaunchRecord,
