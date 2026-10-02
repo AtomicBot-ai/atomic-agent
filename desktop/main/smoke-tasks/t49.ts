@@ -74,7 +74,7 @@ async function withStandIn(js: Js, channel: string, handler: Handler, probe: str
   win.webContents.ipc.removeHandler(channel);
   win.webContents.ipc.handle(channel, handler);
   try {
-    const answer = await js<{ error?: string; standIn?: string } | null>(probe).catch((e: unknown) => ({ error: message(e) }));
+    const answer = await js<{ error?: string; standIn?: string } | null>(probe).catch((e: unknown): { error?: string; standIn?: string } => ({ error: message(e) }));
     if (!answer || (answer.error !== STAND_IN && answer.standIn !== STAND_IN)) return `the stand-in on ${channel} did not answer the probe: ${show(answer)}`;
     await body();
     return null;
