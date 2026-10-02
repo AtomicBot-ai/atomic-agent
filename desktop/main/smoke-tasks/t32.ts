@@ -312,12 +312,17 @@ async function wizard(js: Js, check: Check, calls: string[]): Promise<void> {
     // A key the check finds bad (one read from .env, the field left blank): the sentence, in red, no Save unchecked.
     seen.length = 0;
     for (const w of wins) w.webContents.ipc.handle("cli:verifyProviderKey", () => ({ ok: false, checked: true, keyChars: true, error: SENTENCE }));
+    /* ATO-161: an empty field is checked only when something is behind it; here that is the .env key this case is about. */
+    for (const w of wins) w.webContents.ipc.handle("cli:providerKeyPresent", () => ({ ok: true, present: true }));
     let fromEnv: Record<string, unknown> = {};
     try {
       fromEnv = await js<Record<string, unknown>>(`(async () => { const k = window.__t32Open(); if (!k) return {field: null};
         act('wiz:next'); await window.__t32Settle(); return window.__t32View(); })()`);
     } finally {
-      for (const w of wins) if (!w.isDestroyed()) w.webContents.ipc.removeHandler("cli:verifyProviderKey");
+      for (const w of wins) if (!w.isDestroyed()) {
+        w.webContents.ipc.removeHandler("cli:verifyProviderKey");
+        w.webContents.ipc.removeHandler("cli:providerKeyPresent");
+      }
     }
     check(
       "T32: when the key check finds such a character (a key read from .env), the setup says the sentence — not \"didn't accept this key\" — with no Save unchecked",

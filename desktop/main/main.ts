@@ -39,6 +39,7 @@ import {
   type ProviderEntry,
   providerModels,
   checkProviderKey,
+  providerKeyPresent,
   removeProvider,
   pruneIncompleteProvidersInFile,
   // ATO-132: config.json (it holds the keys) and .env owner-only, no tmp file of them left behind
@@ -1326,6 +1327,16 @@ function wireIpc(client: AgentClient): void {
     /* ATO-132 review (N9): with no key typed, the saved provider is checked
        as saved, on its own endpoint — not on a URL this message names. */
     return checkProviderKey(e as ProviderEntry, model);
+  });
+  /* ATO-161: an empty key field — is there a saved key or a variable behind it? Yes or no, never the key. */
+  ipcMain.handle("cli:providerKeyPresent", (_event, payload: unknown) => {
+    const { id, kind, apiKeyEnvVar } = (payload ?? {}) as { id?: unknown; kind?: unknown; apiKeyEnvVar?: unknown };
+    if (typeof kind !== "string" || !kind) return { ok: false, error: "kind is required" };
+    return providerKeyPresent({
+      kind,
+      ...(typeof id === "string" && id ? { id } : {}),
+      ...(typeof apiKeyEnvVar === "string" && apiKeyEnvVar ? { apiKeyEnvVar } : {}),
+    });
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };

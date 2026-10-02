@@ -153,6 +153,11 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
   noFundsNote:null,
   /* Calm (S6): the provider's raw words behind a plain error, {for, text}. */
   errorDetail:null,
+  /* ATO-161: the request for a key ("Paste your OpenRouter API key to
+     continue."). It sits in WIZ.error's slot but is drawn as a hint, in ink,
+     with the field unlit: nothing has failed yet. Any other line written to
+     WIZ.error stops matching it and is drawn as the error it is. */
+  softError:null,
   /* Backlog 18: opened on its own — by the download card's "Set up a cloud
      model meanwhile" — rather than from the composer's own panes, so its
      Cancel closes the popover instead of falling back to the backend list. */
@@ -281,6 +286,13 @@ function savedKeyInvalid(p) {
   return (BSW.invalidKeyIds || []).includes(p.id);
 }
 function savedKeyLine(id) { return 'The key saved for ' + providerWord(id) + ' has a character keys don’t have; paste it again.'; }
+/* ATO-161: the add-provider step's request for a key, and whether WIZ.error is that request rather than a failure. */
+function wizService(row) { return String((row && row.label) || '').split(' (')[0] || 'this provider'; }
+function keyAskLine(row) { const svc = wizService(row); return 'Paste your ' + svc + (/\bAPI$/.test(svc) ? ' key' : ' API key') + ' to continue.'; }
+function wizErrSoft() { return !!WIZ.error && WIZ.error === WIZ.softError; }
+/* After a request for a key, the caret goes to the key field (both mounts render it as #wiz-key). */
+function wizFocusKey() { const el = document.getElementById('wiz-key'); if (el) el.focus(); }
+function wizAskKey(row) { WIZ.phase = 'configure'; WIZ.error = WIZ.softError = keyAskLine(row); WIZ.errorDetail = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false; }
 /** For a turn on such a provider: what happened, instead of the fallback's "no connection". */
 function savedKeyTurnLine(id) {
   const name = providerWord(id);
@@ -5200,7 +5212,7 @@ function act(a) {
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
-  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; render(); return; }
+  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
   /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
@@ -6156,7 +6168,8 @@ document.addEventListener('input', (e) => {
        to. A key typed after an error left the old error under it, so the
        screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
-    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.uncheckedFor = null; render(); }
+    /* ATO-161: and a strip the popover kept from the pane before goes with it. */
+    if (WIZ.error || WIZ.uncheckedFor || SEL.err) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; SEL.err = null; render(); }
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
@@ -11391,7 +11404,9 @@ function obWizardHTML() {
      unchecked. Unreachable reads amber, rejected reads red. */
   const service = k.label.split(' (')[0];
   const unchecked = WIZ.uncheckedFor;
-  const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
+  /* ATO-161: a request for a key is a hint in ink, the field unlit; a failure is red. */
+  const soft = wizErrSoft();
+  const tone = WIZ.error && !soft ? (unchecked ? ' is-warn' : ' is-error') : '';
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
     + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
@@ -11404,7 +11419,8 @@ function obWizardHTML() {
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
-    + (WIZ.error
+    + (WIZ.error && soft ? '<div class="ob-help wiz-ask">' + esc(WIZ.error) + '</div>' : '')
+    + (WIZ.error && !soft
         ? '<div class="ob-err' + (unchecked ? ' is-warn' : '') + '">'
           + ic(unchecked ? 'info' : 'alert') + '<span>' + esc(WIZ.error) + '</span></div>'
           + (wizErrDetail()
@@ -13484,7 +13500,8 @@ document.addEventListener('input', (e) => {
        to. A key typed after an error left the old error under it, so the
        screen still read as a failure while it was being fixed. Repaint only
        when there is something to clear: this fires on every character. */
-    if (WIZ.error || WIZ.uncheckedFor) { WIZ.error = null; WIZ.uncheckedFor = null; render(); }
+    /* ATO-161: and a strip the popover kept from the pane before goes with it. */
+    if (WIZ.error || WIZ.uncheckedFor || SEL.err) { WIZ.error = null; WIZ.softError = null; WIZ.uncheckedFor = null; SEL.err = null; render(); }
     return;
   }
   if (e.target.id === 'wiz-url') { WIZ.baseUrl = e.target.value; return; }
@@ -14482,44 +14499,39 @@ function selShell(title, body, foot, lead) {
     + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
     + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
     + body
-    /* The inline colour is the hook drive-selector reads switch errors by. */
-    + (SEL.err ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.err) + '</span></div>' : '')
+    /* The inline colour is the hook drive-selector reads switch errors by.
+       ATO-161: not on the add-provider wizard's screens, which have their own
+       message slot — a strip left over from the pane before used to stay
+       under the key field and the model list after the key was fixed. */
+    + (SEL.err && !WIZ.phase ? '<div class="cap selerr" style="color:var(--danger)">' + ic('alert') + '<span>' + esc(SEL.err) + '</span></div>' : '')
     + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
     + '</div></div>';
 }
 
-async function selSavePreset() {
-  const preset = PRESETS[SEL.presetCur];
+/* ATO-161: the quick "Add a provider" pane no longer saves anything itself.
+   It wrote the preset straight into the config and activated it — no key
+   check, an empty field welcome — so a provider with no key was "saved, but
+   could not activate it", stayed in the list with no key, and the pane then
+   lit up whichever preset slid into the freed row (it read PRESETS by the
+   index of a row in the list of presets NOT configured yet, so with
+   OpenRouter configured, the second row added OpenRouter again and the pane
+   showed AI/ML API as picked). The pick now opens the wizard's key step for
+   that very preset, with what was typed, and runs it: the same key check,
+   the same model step, the same activation as every other way in. */
+function selSavePreset() {
+  const taken = new Set(selProviders().map((p) => p.id));
+  const free = PRESETS.filter((p) => !taken.has(p.id));
+  const preset = free[SEL.presetCur] || free[0];
+  if (!preset) { SEL.addOpen = false; render(); return; }
+  const row = KIND_ROWS.find((k) => k.id === preset.id);
   const input = document.getElementById('sel-key');
-  // Backlog 32: the field's key, cleaned; a key with a character keys don't have goes no further.
   const apiKey = cleanKeyInput(input && input.value);
-  if (!keyCharsOk(apiKey)) { SEL.err = KEY_CHAR_ERROR; render(); return; }
-  SEL.busy = true; SEL.err = null; render();
-  const entry = {id:preset.id, kind:preset.kind, baseUrl:preset.baseUrl, apiKeyEnvVar:preset.env};
-  if (apiKey) entry.apiKey = apiKey;
-  if (preset.apiKeyHeader) entry.apiKeyHeader = preset.apiKeyHeader;
-  if (preset.headers) entry.headers = preset.headers;
-  let res = await BR.upsertProvider(entry);
-  if (res && res.ok === false) { SEL.busy = false; SEL.err = res.error || 'could not save the provider'; render(); return; }
-  if (restartStopsTurn()) { SEL.busy = false; SEL.err = 'saved, but not activated while a turn is running'; render(); refreshLiveConfig(); return; }
-  BSW.line = 'switching…';
-  res = await swxRun(BSW.line, {providerId: preset.id},
-    () => SWXBR.activateProvider(preset.id));
-  SEL.busy = false; BSW.line = '';
-  // U29: an OpenAI-compatible preset has no model until one is picked, and
-  // activating it without one would stop the agent from starting.
-  if (res && res.needsChatModel) { SEL.addOpen = false; SEL.kind = 'model'; SEL.cursor = 0; render(); selLoadModels(preset.id); return; }
-  if (!res || !res.ok) {
-    SEL.err = res && res.needsKey && res.keyInvalid ? savedKeyLine(preset.id)
-      : res && res.needsKey ? 'saved, but could not activate it: no API key (' + preset.env + ')' : 'saved, but could not activate it' + (res && res.error ? ': ' + res.error : '');
-    render(); refreshLiveConfig(); return;
-  }
-  bswReport(res);
-  SEL.addOpen = false;
-  // r5 item 10: swxRun re-read the live config before it resolved.
-  SEL.kind = 'model'; SEL.cursor = 0; render();
-  selLoadModels(preset.id);
-  toast('Provider added', preset.label);
+  SEL.addOpen = false; SEL.err = null;
+  if (!row) { act('sel:add'); return; }
+  Object.assign(WIZ, {row, forId: null, apiKey, baseUrl: '', error: null, softError: null, errorDetail: null,
+    uncheckedFor: null, acceptUnchecked: false, modelChosen: false, alone: false, phase: 'configure'});
+  render();
+  wizNext();
 }
 
 /* ============================================================
@@ -15475,7 +15487,8 @@ async function selChooseBackend(id) {
   const res = await swxRun(BSW.line, want, () => SWXBR.switchBackend(id));
   SEL.busy = false; BSW.line = '';
   if (!res || !res.ok) {
-    if (res && res.needsProvider) { SEL.kind = 'provider'; SEL.addOpen = true; SEL.presetCur = 0; render(); return res; }
+    /* ATO-161: no provider yet opens the wizard's list, which checks the key before it saves anything. */
+    if (res && res.needsProvider) { SEL.kind = 'provider'; act('sel:add'); return res; }
     if (res && res.needsKey) { bswOpenKey(res.providerId, res.keyInvalid); return res; }
     SEL.err = (res && res.error) || 'could not switch to ' + id;
     toast('Could not switch to ' + id, SEL.err);
@@ -16479,16 +16492,24 @@ function wizardHTML() {
   /* Soft Tactile (MP-06…09): the field takes the tone of the line under it —
      red for an error, amber for a key that could not be checked. */
   const urlBad = !!(k.custom && WIZ.error && !/^https?:\/\/\S+$/.test(WIZ.baseUrl));
-  const tone = WIZ.error ? (unchecked ? ' is-warn' : ' is-error') : '';
+  /* ATO-161: a request for a key leaves the field unlit \u2014 only a failure lights it. */
+  const soft = wizErrSoft();
+  const tone = WIZ.error && !soft ? (unchecked ? ' is-warn' : ' is-error') : '';
+  /* ATO-161: the variable the empty field falls back to is a quiet line under
+     the field, for the people who use one, not part of the field's name. It
+     gives way to whatever the step has to say. */
+  const envNote = k.env && !k.local && !WIZ.error && !verifying
+    ? '<p class="ob-help wiz-envnote">Leave it empty to use ' + esc(k.env) + ' from this computer\u2019s environment.</p>' : '';
   const fields = (k.custom
       ? '<label class="tk-lbl" for="wiz-url">Base URL</label>'
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
         + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + (k.env ? ' \u2014 blank reads ' + esc(k.env) : '') + '</label>'
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
-    + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" spellcheck="false">'
-    + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>';
+    + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" placeholder="' + esc(k.local ? 'Only if the server asks for one' : 'Paste the key from your ' + wizService(k) + ' account') + '" spellcheck="false">'
+    + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>'
+    + envNote;
   /* The popover is a flex column with a fixed max-height, and `.selbody` is
      the child that scrolls. Handing it a bare `.ob-wiz` meant nothing
      scrolled: with a 37-model catalogue the content ran straight past the
@@ -16506,7 +16527,8 @@ function wizardHTML() {
   return selShell(k.label,
     '<div class="selbody selwiz">' + fields
     + (verifying ? '<p class="ob-help">Asking the provider to answer once with this key\u2026</p>' : '')
-    + (WIZ.error ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
+    + (WIZ.error && soft ? '<p class="ob-help wiz-ask">' + esc(WIZ.error) + '</p>' : '')
+    + (WIZ.error && !soft ? '<div class="ob-err' + (unchecked ? ' tk-help--warn' : '') + '"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
     + '</div>',
     unchecked
       ? '<button class="btn btn-g xs" data-act="wiz:back">Back</button><span class="grow"></span>'
@@ -16664,6 +16686,21 @@ async function wizNextStep() {
     WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.modelChosen = false;
     render(); return;
   }
+  /* ATO-161: an empty field with nothing behind it — no saved key, no variable
+     the agent would read — is a request for a key, asked here, before anything
+     is written or anyone is called. It used to be saved as it was ("saved, but
+     could not activate it: no API key"), left in the provider list with no
+     key, and the next screens all opened in red. A field left empty on purpose
+     (the key is in the environment or .env) still goes on, as it always did.
+     The model step's second pass has its key settled already. */
+  if (!WIZ.apiKey && !k.local && !WIZ.modelChosen && !(savedEntry && BSW.readyIds.includes(id)) && BR.providerKeyPresent) {
+    let has = null;
+    try {
+      const r = await BR.providerKeyPresent({id, kind: k.kind, apiKeyEnvVar: k.env});
+      if (r && r.ok) has = !!r.present;
+    } catch (e) { /* unknown: the check below answers it, as before */ }
+    if (has === false) { wizAskKey(k); render(); wizFocusKey(); return; }
+  }
 
   // U29: an entry this wizard wrote on an earlier pass (Back from the model
   // step, then Next again) is still this wizard's, not a pre-existing one.
@@ -16731,6 +16768,11 @@ async function wizNextStep() {
        provider turning it down. A refused key is never one to save unchecked. */
     /* Backlog 40: a 402 (an account that cannot pay) is no longer an answer
        here; main reports it as a key that works (noFunds, below). */
+    /* ATO-161: no key at all is not a key turned down \u2014 main's "no API key"
+       answer for an empty field is the request for one, as above. */
+    if (!WIZ.apiKey && !proof.keyChars && !proof.status && /^no API key/.test(String(proof.error || ''))) {
+      wizAskKey(k); render(); refreshLiveConfig(); wizFocusKey(); return;
+    }
     WIZ.error = proof.keyChars ? KEY_CHAR_ERROR
       : service + ' didn\u2019t accept this key. Check that you copied all of it.';
     WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false;
@@ -17555,10 +17597,22 @@ function bswOpenKey(id, keyInvalid) {
   const entry = selProviders().find((p) => p.id === id);
   const row = (entry && KIND_ROWS.find((k) => k.kind === entry.kind)) || KIND_ROWS.find((k) => k.id === id);
   const env = (entry && entry.apiKeyEnvVar) || (row && row.env);
-  SEL.err = keyInvalid || savedKeyInvalid(entry) ? savedKeyLine(id)
-    : 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');
-  if (row) { WIZ.row = row; WIZ.forId = id; WIZ.phase = 'configure'; WIZ.apiKey = ''; WIZ.baseUrl = (entry && entry.baseUrl) || ''; WIZ.error = SEL.err; }
+  const bad = keyInvalid || savedKeyInvalid(entry);
+  const line = bad ? savedKeyLine(id) : 'no API key for ' + id + (env ? ' — enter one or export ' + env : '');
+  /* ATO-161: the key screen says it once. The same line used to go into
+     SEL.err (the popover's red strip) AND WIZ.error (the red line under a
+     red field) — three reds for one missing key — and SEL.err outlived the
+     screen, so it stayed under the model list after a good key went in.
+     With a key screen to open, it carries the message alone, and a key that
+     is simply missing is asked for, not reported. */
+  if (row) {
+    SEL.err = null;
+    WIZ.row = row; WIZ.forId = id; WIZ.apiKey = ''; WIZ.baseUrl = (entry && entry.baseUrl) || '';
+    if (bad) { WIZ.phase = 'configure'; WIZ.error = line; WIZ.softError = null; WIZ.errorDetail = null; }
+    else wizAskKey(row);
+  } else SEL.err = line;
   render();
+  if (row) wizFocusKey();
 }
 
 /** Which providers have a key (the rows' `ready` copy) and, on the local route, the catalogue snapshot the chip and the gate read. */
@@ -24061,7 +24115,7 @@ if (typeof window !== 'undefined') {
   /* item 10 — clears what a FAILED switch deliberately leaves on screen (the
      composer's reason line, the selector's add panel), so the check that
      drives one does not leak that state into whatever runs next. */
-  window.__swxReset = () => { SWX.err = null; SEL.addOpen = false; SEL.err = null; render(); };
+  window.__swxReset = () => { SWX.err = null; SEL.addOpen = false; SEL.err = null; if (WIZ.phase === 'pick_kind') WIZ.phase = null; render(); };   // ATO-161: no provider now opens the wizard's list, not the quick pane
 }
 
 /* ============================================================

@@ -277,6 +277,8 @@
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 #onboarding .ob-offer.ob-offer-inline:hover{background:var(--press);color:var(--ink)}
 #onboarding .ob-help{padding-left:4px}
+/* ATO-161: the request for a key, in ink — nothing has failed. */
+#onboarding .ob-help.wiz-ask{color:var(--ink)}
 #onboarding .ob-explain.ob-examples{font-size:13px;line-height:1.5}
 
 /* Errors: a red notice under the control that caused it; a surface error
